@@ -14,10 +14,21 @@ namespace AlRunner;
 ///             stackFrames, stackTrace} lines, one per completed test as it
 ///             finishes, followed by exactly one terminal
 ///             {"type":"summary", exitCode, passed, failed, errors,
-///             total, cached, changedFiles|omitted, compilationErrors|omitted,
-///             protocolVersion:2} line. `cancelled` on the summary is
-///             schema-defined but not yet populated — it lands with the `cancel`
-///             command, a separate follow-up slice of #1641.
+///             total, cached, cancelled|omitted, changedFiles|omitted,
+///             compilationErrors|omitted, protocolVersion:2} line.
+///             `cancelled` (true) is present only when a concurrent `cancel`
+///             command actually stopped the run before every test ran; omitted
+///             (never `false`) otherwise — see the `cancel` command below.
+///   cancel  : side-channel command (#1641/v1 #1613) — NOT dispatched through the
+///             normal sequential command queue. A dedicated stdin-reader thread
+///             (see Program.cs's RunServerLoop) recognises `cancel` the instant it
+///             is read and answers immediately, even while a `runtests` request is
+///             still streaming on the main dispatch thread — that concurrency is
+///             the entire point: cooperative cancellation only helps if the signal
+///             can arrive mid-run. Response: {"type":"ack","command":"cancel",
+///             "noop":bool}. `noop:true` when there was no active run (or it had
+///             already finished) at the moment the cancel was processed — the v1
+///             shape (#1613/#1614), reused verbatim rather than inventing a new one.
 ///   execute : {exitCode, tests:[{name,status,durationMs,message,stackTrace}],
 ///              messages|null, compilationErrors|null} — single response, not
 ///              streamed (matches v1: only runTests streams).
@@ -80,6 +91,16 @@ public static class ServerProtocol
         => JsonSerializer.Serialize(new { status = "shutting down" }, Opts);
 
     /// <summary>
+    /// Serialize a protocol-v2 <c>{"type":"ack"}</c> line (protocol-v2.schema.json's
+    /// <c>Ack</c>) — the response to a side-channel command, currently only
+    /// <c>cancel</c> (#1641/v1 #1613). <paramref name="noop"/> is true when the
+    /// command had nothing to act on (no active run, or the run already finished
+    /// by the time the cancel was processed) — the v1 shape, reused verbatim.
+    /// </summary>
+    public static string Ack(string command, bool noop)
+        => JsonSerializer.Serialize(new { type = "ack", command, noop }, Opts);
+
+    /// <summary>
     /// Serialize one protocol-v2 <c>test</c> NDJSON line for a single completed
     /// test (the streaming <c>runTests</c> shape — see #1641 / protocol-v2.schema.json's
     /// <c>TestEvent</c>), including the two structured-diagnostics fields:
@@ -127,15 +148,20 @@ public static class ServerProtocol
     /// streaming <c>runTests</c> response (protocol-v2.schema.json's <c>Summary</c>).
     /// <paramref name="changedFiles"/> is only emitted on a cache miss (cache hits
     /// have no diff). <paramref name="compilationErrors"/> is omitted when there
-    /// were none. <c>cancelled</c> is schema-defined but not populated here — the
-    /// <c>cancel</c> command is a separate follow-up slice of #1641.
+    /// were none. <paramref name="cancelled"/> (see #1641/v1 #1613-#1614) is
+    /// carried as <c>true</c> only when a concurrent <c>cancel</c> command actually
+    /// stopped the run before every test ran; omitted entirely otherwise — never
+    /// emitted as a literal <c>false</c>, matching every other optional field on
+    /// this line (WhenWritingNull serialization; "not cancelled" and "cancellation
+    /// wasn't asked for" both read as "absent").
     /// </summary>
     public static string Summary(
         IReadOnlyList<TestResult> tests,
         int exitCode,
         bool cached,
         IReadOnlyList<string>? changedFiles = null,
-        IReadOnlyList<CompilationErrorGroup>? compilationErrors = null)
+        IReadOnlyList<CompilationErrorGroup>? compilationErrors = null,
+        bool cancelled = false)
     {
         var payload = new
         {
@@ -146,6 +172,7 @@ public static class ServerProtocol
             errors = tests.Count(t => t.Outcome == TestOutcome.Error),
             total = tests.Count,
             cached,
+            cancelled = cancelled ? (bool?)true : null,
             changedFiles = cached ? null : changedFiles,
             compilationErrors = compilationErrors is { Count: > 0 }
                 ? compilationErrors.Select(g => new { file = g.File, errors = g.Errors })

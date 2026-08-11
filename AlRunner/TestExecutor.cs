@@ -116,8 +116,21 @@ public sealed class TestExecutor
     /// <c>test</c> line per completed test instead of waiting for the whole
     /// bundle (see #1641). Null (the CLI's default) is a no-op; behaviour and the
     /// returned list are otherwise unchanged either way.
+    ///
+    /// <paramref name="cancellationToken"/> is checked cooperatively BETWEEN
+    /// tests — before instantiating the next test codeunit and before running the
+    /// next [Test] method inside an already-instantiated codeunit — never mid-test
+    /// (a test's own AL body is never interrupted). Matches v1's `cancel` command
+    /// (#1613): "stop before running the next test," not preemptive abort. The
+    /// caller (the <c>--server</c> `runtests` handler) owns the
+    /// <see cref="System.Threading.CancellationTokenSource"/> and inspects
+    /// <c>IsCancellationRequested</c> after <c>Run</c> returns to decide whether
+    /// the summary carries `cancelled:true` — this method does not report that
+    /// itself, it only obeys the token. Default is <c>default</c> (never
+    /// cancellable), so every existing CLI/non-server caller is unaffected.
     /// </summary>
-    public IReadOnlyList<TestResult> Run(Assembly assembly, Action<TestResult>? onTestComplete = null)
+    public IReadOnlyList<TestResult> Run(Assembly assembly, Action<TestResult>? onTestComplete = null,
+        System.Threading.CancellationToken cancellationToken = default)
     {
         var totalSw = System.Diagnostics.Stopwatch.StartNew();
         var results = new List<TestResult>();
@@ -178,6 +191,10 @@ public sealed class TestExecutor
         var stageSw = new System.Diagnostics.Stopwatch();
         foreach (var t in types)
         {
+            // Cooperative cancellation: stop before instantiating the next test
+            // codeunit. See the Run() doc comment — never mid-test.
+            if (cancellationToken.IsCancellationRequested) break;
+
             stageSw.Restart();
             var isTestCu = IsTestCodeunit(t);
             scanMs += stageSw.ElapsedMilliseconds;
@@ -235,6 +252,10 @@ public sealed class TestExecutor
             {
                 foreach (var m in t.GetMethods(BindingFlags.Public | BindingFlags.Instance))
                 {
+                    // Cooperative cancellation: stop before running the next test
+                    // method inside this already-instantiated codeunit.
+                    if (cancellationToken.IsCancellationRequested) break;
+
                     if (!IsTestMethod(m)) continue;
                     if (filter != null && !MethodMatchesFilter(t.Name, m.Name, filter)) continue;
                     var entry = LookupExpectation(t.Name, displayName, m.Name);

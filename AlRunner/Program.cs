@@ -1825,11 +1825,91 @@ return strictExitCode ? computedExitCode : 0;
 // depLoader) and the resolved cache dirs established above. Reads newline-delimited
 // JSON requests from stdin, writes one JSON response line per request to stdout.
 // Protocol shape matches v1 (see ServerProtocol). Returns the process exit code.
+//
+// `cancel` (#1641/v1 #1613-#1614) needs a stdin-reader thread: without one, this
+// loop is fully synchronous — it blocks in ReadLine() while a `runtests` request
+// streams, so a `cancel` sitting on stdin is not even READ until the run finishes,
+// let alone acted on. A dedicated background thread keeps reading stdin the whole
+// time; it recognises `cancel` itself and answers it immediately as a side channel
+// (bypassing the normal one-line-processed-at-a-time queue entirely), while every
+// other command still goes through `mainQueue` and is processed sequentially by
+// this method exactly as before. See `outputLock`/`activeRunCts` below.
 int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
 {
     // Per-session memory of the last served request's .al file hashes, so a cache
     // miss can report which files changed (v1 `changedFiles`).
     Dictionary<string, string>? lastFileHashes = null;
+
+    // Guards every write to `output`: the reader thread's cancel-ack and this
+    // method's normal command responses / streaming runtests output are now genuine
+    // concurrent writers to the same stream once a runtests request is streaming.
+    var outputLock = new object();
+
+    // CancellationTokenSource for the currently-active `runtests` request, or null
+    // when none is running. Written (via Interlocked) at the start/end of
+    // HandleServerRunTests on THIS (main dispatch) thread; read (via Interlocked,
+    // for an atomic reference snapshot) from the READER thread when a `cancel`
+    // command arrives. No `lock` needed — CancellationTokenSource.Cancel() is
+    // itself thread-safe, and Interlocked.CompareExchange gives an atomic
+    // snapshot-or-null read/write of the reference without one.
+    System.Threading.CancellationTokenSource? activeRunCts = null;
+
+    // The side-channel command set: recognised and answered by the reader thread
+    // itself, never enqueued onto mainQueue. Currently only `cancel`.
+    string? HandleSideChannelCommand(AlRunner.ServerRequest? req)
+    {
+        if (!string.Equals(req?.Command, "cancel", StringComparison.OrdinalIgnoreCase))
+            return null;
+
+        // Atomic snapshot read of the reference (see activeRunCts doc comment).
+        var cts = System.Threading.Interlocked.CompareExchange(ref activeRunCts, null, null);
+        if (cts == null || cts.IsCancellationRequested)
+            return AlRunner.ServerProtocol.Ack("cancel", noop: true);
+        try
+        {
+            cts.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+            // Race: HandleServerRunTests's finally already disposed the CTS between
+            // our snapshot and Cancel() — the request had already completed.
+            return AlRunner.ServerProtocol.Ack("cancel", noop: true);
+        }
+        return AlRunner.ServerProtocol.Ack("cancel", noop: false);
+    }
+
+    // Producer: reads stdin continuously on a dedicated background thread so the
+    // main dispatch loop below is never blocked from seeing a `cancel` by a
+    // synchronous `runtests`/`execute` handler. Side-channel commands are answered
+    // here directly; everything else is handed to `mainQueue` for the sequential
+    // dispatch loop, unchanged from before this command existed.
+    var mainQueue = new System.Collections.Concurrent.BlockingCollection<string>();
+    var readerThread = new System.Threading.Thread(() =>
+    {
+        string? readerLine;
+        while ((readerLine = input.ReadLine()) != null)
+        {
+            if (readerLine.Length == 0) continue;
+            AlRunner.ServerRequest? parsed = null;
+            try { parsed = AlRunner.ServerProtocol.Parse(readerLine); }
+            catch { /* malformed JSON — let the main loop's existing catch report it */ }
+
+            var sideChannelResponse = HandleSideChannelCommand(parsed);
+            if (sideChannelResponse != null)
+            {
+                lock (outputLock)
+                {
+                    output.WriteLine(sideChannelResponse);
+                    output.Flush();
+                }
+                continue;
+            }
+            mainQueue.Add(readerLine);
+        }
+        mainQueue.CompleteAdding();
+    })
+    { IsBackground = true, Name = "al-runner-server-stdin" };
+    readerThread.Start();
 
     // The isolation mode in effect when the server started (CLI --isolation, or
     // TestIsolation.Codeunit if not given) — the fallback for any request that
@@ -1840,11 +1920,17 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
     var defaultServerIsolation = executor.Isolation;
 
     // Readiness handshake — MUST be the first line on stdout.
-    output.WriteLine("{\"ready\":true}");
-    output.Flush();
+    lock (outputLock)
+    {
+        output.WriteLine("{\"ready\":true}");
+        output.Flush();
+    }
 
-    string? line;
-    while ((line = input.ReadLine()) != null)
+    // Sequential dispatch loop, unchanged in shape from before `cancel` existed —
+    // it now consumes from `mainQueue` (fed by the reader thread above) instead of
+    // calling input.ReadLine() itself, so a `cancel` sitting ahead of a `runtests`
+    // line in the OS pipe buffer never gets stuck behind it.
+    foreach (var line in mainQueue.GetConsumingEnumerable())
     {
         if (line.Length == 0) continue;
         // Null means "already fully written to output" — currently only the
@@ -1884,8 +1970,11 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
 
         if (response != null)
         {
-            output.WriteLine(response);
-            output.Flush();
+            lock (outputLock)
+            {
+                output.WriteLine(response);
+                output.Flush();
+            }
         }
         if (shuttingDown) return 0;
     }
@@ -1919,64 +2008,101 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
     // {"type":"summary"} line once every bundle has run — protocol-v2
     // (protocol-v2.schema.json), see #1641. Writes directly to `output` rather
     // than returning a single response string, unlike every other command.
+    //
+    // Owns the CancellationTokenSource a concurrent `cancel` side-channel command
+    // signals (see HandleSideChannelCommand above `activeRunCts`). Published to
+    // `activeRunCts` for the WHOLE multi-bundle request, not per-bundle, so a
+    // cancel arriving between two sourcePaths entries still takes effect on the
+    // remaining bundles. Cooperative only (TestExecutor.Run's doc comment): a test
+    // already in flight always finishes; cancellation stops the NEXT one.
     // ─────────────────────────────────────────────────────────────────────────
     void HandleServerRunTests(AlRunner.ServerRequest req, System.IO.TextWriter output)
     {
         if (req.SourcePaths == null || req.SourcePaths.Length == 0)
         {
-            output.WriteLine(AlRunner.ServerProtocol.Error("sourcePaths is required"));
-            output.Flush();
+            lock (outputLock)
+            {
+                output.WriteLine(AlRunner.ServerProtocol.Error("sourcePaths is required"));
+                output.Flush();
+            }
             return;
         }
 
         foreach (var p in req.SourcePaths)
             if (!Directory.Exists(p))
             {
-                output.WriteLine(AlRunner.ServerProtocol.Error($"bundle directory not found: {p}"));
-                output.Flush();
+                lock (outputLock)
+                {
+                    output.WriteLine(AlRunner.ServerProtocol.Error($"bundle directory not found: {p}"));
+                    output.Flush();
+                }
                 return;
             }
 
         var isolationError = ApplyRequestIsolation(req);
         if (isolationError != null)
         {
-            output.WriteLine(isolationError);
-            output.Flush();
+            lock (outputLock)
+            {
+                output.WriteLine(isolationError);
+                output.Flush();
+            }
             return;
         }
 
-        // Flushed after every line so a client watching stdout sees each test the
-        // instant it finishes, not batched behind the whole bundle (or worse, every
-        // bundle in a multi-sourcePaths request).
-        void OnTestComplete(TestResult t)
+        var cts = new System.Threading.CancellationTokenSource();
+        System.Threading.Interlocked.Exchange(ref activeRunCts, cts);
+        try
         {
-            output.WriteLine(AlRunner.ServerProtocol.TestEvent(t));
-            output.Flush();
+            // Flushed after every line so a client watching stdout sees each test the
+            // instant it finishes, not batched behind the whole bundle (or worse, every
+            // bundle in a multi-sourcePaths request).
+            void OnTestComplete(TestResult t)
+            {
+                lock (outputLock)
+                {
+                    output.WriteLine(AlRunner.ServerProtocol.TestEvent(t));
+                    output.Flush();
+                }
+            }
+
+            var runs = RunAllBundlesForServer(req.SourcePaths, req.PackagePaths,
+                asm => executor.Run(asm, OnTestComplete, cts.Token), cts.Token);
+
+            var allTests = runs.SelectMany(r => r.Tests).ToList();
+            var allCompileErrors = runs.SelectMany(r => r.CompileErrors ?? Array.Empty<CompilationErrorGroup>()).ToList();
+            // Same priority as the CLI's computedExitCode: 3 (compile) > 2 (exec) > 1 (test fail) > 0.
+            var exitCode = runs.Count > 0 ? runs.Max(r => r.ExitCode) : 0;
+            var cached = runs.Count > 0 && runs.All(r => r.Cached);
+
+            var combinedHashes = new Dictionary<string, string>();
+            foreach (var r in runs)
+                foreach (var kv in r.FileHashes)
+                    combinedHashes[kv.Key] = kv.Value;
+
+            // changedFiles is only meaningful on a cache miss (a hit means nothing changed).
+            List<string>? changed = null;
+            if (!cached)
+                changed = DiffServerFiles(lastFileHashes, combinedHashes);
+            lastFileHashes = combinedHashes;
+
+            lock (outputLock)
+            {
+                output.WriteLine(AlRunner.ServerProtocol.Summary(
+                    allTests, exitCode, cached, changed,
+                    allCompileErrors.Count > 0 ? allCompileErrors : null,
+                    cancelled: cts.Token.IsCancellationRequested));
+                output.Flush();
+            }
         }
-
-        var runs = RunAllBundlesForServer(req.SourcePaths, req.PackagePaths,
-            asm => executor.Run(asm, OnTestComplete));
-
-        var allTests = runs.SelectMany(r => r.Tests).ToList();
-        var allCompileErrors = runs.SelectMany(r => r.CompileErrors ?? Array.Empty<CompilationErrorGroup>()).ToList();
-        // Same priority as the CLI's computedExitCode: 3 (compile) > 2 (exec) > 1 (test fail) > 0.
-        var exitCode = runs.Count > 0 ? runs.Max(r => r.ExitCode) : 0;
-        var cached = runs.Count > 0 && runs.All(r => r.Cached);
-
-        var combinedHashes = new Dictionary<string, string>();
-        foreach (var r in runs)
-            foreach (var kv in r.FileHashes)
-                combinedHashes[kv.Key] = kv.Value;
-
-        // changedFiles is only meaningful on a cache miss (a hit means nothing changed).
-        List<string>? changed = null;
-        if (!cached)
-            changed = DiffServerFiles(lastFileHashes, combinedHashes);
-        lastFileHashes = combinedHashes;
-
-        output.WriteLine(AlRunner.ServerProtocol.Summary(
-            allTests, exitCode, cached, changed, allCompileErrors.Count > 0 ? allCompileErrors : null));
-        output.Flush();
+        finally
+        {
+            // Race guard mirrors v1 (#1613/#1614): only clear+dispose OUR cts, in
+            // case a pathological caller queued a second runtests while this one was
+            // still active and it already replaced activeRunCts with its own.
+            System.Threading.Interlocked.CompareExchange(ref activeRunCts, null, cts);
+            cts.Dispose();
+        }
     }
 
     // ── execute: run every requested bundle's first OnRun-bearing codeunit
@@ -2029,8 +2155,14 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
     // app + test-app shape --guide recommends) the same way the CLI does before its
     // per-bundle loop: compile whichever bundle a sibling bundle depends on into a
     // package cache the sibling can resolve against.
+    //
+    // `cancellationToken` (default: none, for the `execute` caller which has no
+    // active-run CTS) is checked BETWEEN bundles: a `cancel` landing while bundle 1
+    // of a multi-bundle runTests request is still running must stop bundle 2 from
+    // ever starting, not just stop mid-bundle-1 (that half is TestExecutor.Run's job).
     List<ServerRunResult> RunAllBundlesForServer(string[] sourcePaths, string[]? requestPackagePaths,
-        Func<Assembly, IReadOnlyList<TestResult>> runStep)
+        Func<Assembly, IReadOnlyList<TestResult>> runStep,
+        System.Threading.CancellationToken cancellationToken = default)
     {
         // Drop the previous REQUEST's bundle-derived caches so a reloaded same-named
         // bundle resolves the freshly-emitted Record/Codeunit types and starts with
@@ -2065,7 +2197,10 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
 
         var results = new List<ServerRunResult>(sourcePaths.Length);
         foreach (var bundleDir in sourcePaths)
+        {
+            if (cancellationToken.IsCancellationRequested) break;
             results.Add(RunBundleForServer(bundleDir, requestPackagePaths, runStep));
+        }
         return results;
     }
 

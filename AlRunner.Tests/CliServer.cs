@@ -152,6 +152,70 @@ public sealed class CliServer : IAsyncDisposable
         return lines;
     }
 
+    /// <summary>
+    /// Send a <c>runTests</c> request and, the moment the FIRST <c>{"type":"test"}</c>
+    /// line lands on stdout, push a <c>{"command":"cancel"}</c> request back on stdin
+    /// (see #1641/v1 #1613-#1614). Keeps reading until the terminating
+    /// <c>{"type":"summary"}</c> line and returns the full transcript (test/summary/ack
+    /// lines, in the order the server emitted them — the ack can land interleaved with
+    /// still-streaming test lines, since it's answered by a side-channel thread
+    /// independent of the runtests handler) along with the ack line for the cancel.
+    ///
+    /// Exercises the mid-run cancel path end to end: it only proves anything if the
+    /// server's stdin-reader thread is willing to read and answer another request line
+    /// while `runtests` is still streaming on the main dispatch thread.
+    /// </summary>
+    public async Task<(List<string> Lines, string? AckLine)> SendRequestAndCancelAfterFirstTestAsync(
+        string jsonRequest, TimeSpan? timeout = null)
+    {
+        await _process.StandardInput.WriteLineAsync(jsonRequest);
+        await _process.StandardInput.FlushAsync();
+
+        var t = timeout ?? TimeSpan.FromSeconds(120);
+        var lines = new List<string>();
+        string? ackLine = null;
+        bool cancelSent = false;
+
+        while (true)
+        {
+            var readTask = _process.StandardOutput.ReadLineAsync();
+            var completed = await Task.WhenAny(readTask, Task.Delay(t));
+            if (completed != readTask)
+                throw new TimeoutException(
+                    $"No response within {t.TotalSeconds:F0}s to: {jsonRequest}\n--- stderr ---\n{StdErr}");
+            var line = await readTask
+                ?? throw new Exception($"Server closed stdout before completing: {jsonRequest}\n--- stderr ---\n{StdErr}");
+            lines.Add(line);
+
+            string? type = null;
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(line);
+                if (doc.RootElement.TryGetProperty("type", out var tEl))
+                    type = tEl.GetString();
+            }
+            catch (System.Text.Json.JsonException)
+            {
+                // Tolerate a non-JSON line (should not happen) — it doesn't terminate
+                // the stream and doesn't carry an ack/summary signal we need to act on.
+            }
+
+            // Fire cancel the instant the FIRST test event is observed — proves cts
+            // already exists (OnTestComplete can only fire after HandleServerRunTests
+            // published it), so this cancel is never a "no active run yet" false noop.
+            if (!cancelSent && type == "test")
+            {
+                cancelSent = true;
+                await _process.StandardInput.WriteLineAsync("{\"command\":\"cancel\"}");
+                await _process.StandardInput.FlushAsync();
+            }
+            if (type == "ack" && cancelSent && ackLine == null)
+                ackLine = line;
+            if (type == "summary")
+                return (lines, ackLine);
+        }
+    }
+
     public async Task<bool> WaitForExitAsync(TimeSpan timeout)
     {
         using var cts = new CancellationTokenSource(timeout);

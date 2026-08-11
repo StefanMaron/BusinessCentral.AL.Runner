@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/schemas/protocol-v2.json",
   "title": "AL.Runner Server Protocol v2",
-  "description": "Newline-delimited JSON. A `runtests` request emits zero or more `test` lines, optional `progress` lines, then exactly one `summary` line. Each line is a separate JSON document. STATUS on v2 (#1641): --server streams this shape for `runTests`, and each `test` line carries `errorKind` and `stackFrames`. Still schema-only, in separate slices: `cancelled` and the `ack`/`progress` lines (they land with the `cancel` command), and `capturedValues`/`coverage`/`alSourceFile`/`alSourceLine`, which need the Cecil instrumentation pass tracked on #1640. Absent optional fields mean 'not known', never 'empty'.",
+  "description": "Newline-delimited JSON. A `runtests` request emits zero or more `test` lines, optional `progress` lines, then exactly one `summary` line. Each line is a separate JSON document. STATUS on v2 (#1641): --server streams this shape for `runTests`, and each `test` line carries `errorKind` and `stackFrames`. The `cancel` command and its `ack` response are live, and a run it actually stopped carries `cancelled:true` on the summary — see docs/server-mode.md. `progress` is defined but has no producer yet (same as v1: reserved for a future finer-grained progress signal; `test` lines already give per-test progress). Still schema-only: `capturedValues`/`coverage`/`alSourceFile`/`alSourceLine`, which need the Cecil instrumentation pass tracked on #1640. Absent optional fields mean 'not known', never 'empty'.",
   "definitions": {
     "AlStackFrame": {
       "type": "object",

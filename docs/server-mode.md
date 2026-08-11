@@ -4,8 +4,9 @@
 the BC runtime patches and the dependency symbol set **once**, then serves many
 test runs in the same warm process — turning a ~19 s cold run into ~4 s per
 request. The VS Code extension depends on this flag. `runTests` streams the
-protocol-v2 NDJSON shape (`protocol-v2.schema.json`, see #1641); every other
-command (`execute`, `shutdown`, errors) is a single response line.
+protocol-v2 NDJSON shape (`protocol-v2.schema.json`, see #1641); `cancel` is a
+side channel that can interrupt a `runTests` in progress (see below); every
+other command (`execute`, `shutdown`, errors) is a single response line.
 
 ```
 al-runner --server [--package-cache PATH ...] [--cache DIR]
@@ -31,7 +32,7 @@ al-runner --server [--package-cache PATH ...] [--cache DIR]
 
 ```jsonc
 {
-  "command": "runTests",        // runTests | execute | shutdown (case-insensitive)
+  "command": "runTests",        // runTests | execute | cancel | shutdown (case-insensitive)
   "sourcePaths": ["/path/app"], // bundle dir(s); ALL are run and aggregated —
                                  // e.g. an app + its separate test app, same
                                  // shape as `al-runner MyApp MyApp.Test` on
@@ -97,13 +98,43 @@ streams `test` lines across all of them before the one final `summary`.
 - A bundle that fails to compile short-circuits straight to the `summary` line
   with `exitCode: 3` and `compilationErrors` set — no `test` lines for that
   bundle (there was nothing to run).
-- `cancelled` (on the summary) is defined by `protocol-v2.schema.json` but not
-  populated yet — it lands with the `cancel` command, a separate follow-up
-  slice of #1641. `capturedValues` and `coverage` need the Cecil instrumentation
-  pass tracked on #1640.
+- `cancelled: true` is present on the summary only when a concurrent `cancel`
+  command actually stopped the run before every test ran (see `cancel` below);
+  omitted otherwise (never emitted as `false`). `capturedValues` and `coverage`
+  still need the Cecil instrumentation pass tracked on #1640.
 
 A request-level problem (e.g. a missing `sourcePaths`) returns the usual single
 `{"error":"..."}` line instead of a `test`/`summary` sequence — see Errors below.
+
+### `cancel` — side channel, works mid-stream
+
+```json
+{"command":"cancel"}
+```
+
+```json
+{"type":"ack","command":"cancel","noop":false}
+```
+
+Cooperative cancellation for an in-flight `runTests` request. Unlike every
+other command, `cancel` is answered **immediately**, even while `runTests` is
+still streaming `test` lines — a dedicated stdin-reader thread recognises it
+the instant it is read, independent of the normal one-request-at-a-time
+dispatch loop. That is the whole point: cancellation is only useful if the
+signal can reach the runner mid-run rather than being queued behind it.
+
+- `noop: false` — a run was active and this cancel signalled it. The already-
+  running test still finishes (a test body is never interrupted mid-flight);
+  the *next* test does not start. The terminating `summary` line for that run
+  carries `cancelled: true`.
+- `noop: true` — nothing to cancel: no `runTests` request was active, the
+  active one had already finished, or an earlier `cancel` already signalled it.
+  Sending `cancel` with no run in flight is a well-defined no-op, not an error.
+- `cancel` accepts and ignores any extra fields on the request object
+  (forward-compatible with future protocol additions).
+- There is at most one active run at a time; `cancel` has no request/run id to
+  target — it always addresses whichever `runTests` request is currently
+  streaming, matching v1's shape (#1613/#1614).
 
 ### `execute`
 
