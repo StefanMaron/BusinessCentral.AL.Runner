@@ -11,6 +11,15 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
     <PackageReference Include="xunit" Version="2.9.3" />
+    <!-- Dynamic skip. xunit v2 has none of its own: `Assert.Skip` is not in the shipped
+         xunit.assert 2.9.3 surface, and a Xunit.Sdk.SkipException thrown from a [Fact]
+         is reported Failed, because the v2 execution engine never learned the
+         $XunitDynamicSkip$ token (only xunit.assert references it). Without a skip
+         mechanism the suite's only way to say "this environment cannot run the test"
+         was an early `return`, which xUnit records as PASSED — see TestArtifacts.cs.
+         SkippableFact supplies [SkippableFact]/[SkippableTheory] test cases that turn a
+         Xunit.SkipException into a real Skipped result. -->
+    <PackageReference Include="Xunit.SkippableFact" Version="1.5.61" />
     <PackageReference Include="Spectre.Console.Testing" Version="0.49.1" />
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.0">
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
