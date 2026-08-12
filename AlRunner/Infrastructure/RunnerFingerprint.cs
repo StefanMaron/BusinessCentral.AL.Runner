@@ -82,14 +82,46 @@ public static class RunnerFingerprint
     /// together in one helper so no future cache key can add one without the other.
     /// This overload uses the running process's own fingerprint and its resolved
     /// <see cref="BcArtifacts.SelectedVersion"/> — the production call sites.
+    ///
     /// Callers must have already resolved the BC version (true for every existing call
     /// site — version selection happens once at startup, before any bundle/dependency
-    /// compile) since reading it here for the first time would trigger BcArtifacts' lazy
-    /// latest-in-cache default, silently picking a version rather than honouring the
-    /// run's actual selection.
+    /// compile). This is enforced, not just documented: reading
+    /// <see cref="BcArtifacts.SelectedVersion"/> here for the first time would trigger
+    /// BcArtifacts' lazy latest-in-cache default, silently keying a cache entry to
+    /// whichever version happened to be latest-in-cache rather than the run's actual
+    /// selection — exactly the finding-3 poisoning this type exists to prevent, one call
+    /// site earlier. <see cref="BcArtifacts.IsSelected"/> exists precisely so a caller can
+    /// check without triggering that lazy default, so this throws instead of silently
+    /// defaulting.
     /// </summary>
+    /// <exception cref="InvalidOperationException">
+    /// The BC version has not been selected yet (<see cref="BcArtifacts.IsSelected"/> is
+    /// false). Select it (<c>BcArtifacts.SelectVersion</c>) before computing any cache key.
+    /// </exception>
     public static void WriteKeyLines(Action<string> writeLine)
-        => WriteKeyLines(writeLine, ContentHash, BcArtifacts.SelectedVersion);
+    {
+        RequireBcVersionSelected(BcArtifacts.IsSelected);
+        WriteKeyLines(writeLine, ContentHash, BcArtifacts.SelectedVersion);
+    }
+
+    /// <summary>
+    /// The guard itself, factored out to take <paramref name="isSelected"/> as a plain
+    /// bool rather than reading <see cref="BcArtifacts.IsSelected"/> internally. Once any
+    /// test in a shared process selects a BC version, <see cref="BcArtifacts"/>' selection
+    /// is ambient process-global state that cannot be unset — so a test cannot reliably
+    /// force <see cref="BcArtifacts.IsSelected"/> back to false to exercise this throw.
+    /// Taking the bool as a parameter makes the guard's logic testable in isolation
+    /// without touching that shared state at all.
+    /// </summary>
+    internal static void RequireBcVersionSelected(bool isSelected)
+    {
+        if (!isSelected)
+            throw new InvalidOperationException(
+                $"{nameof(RunnerFingerprint)}.{nameof(WriteKeyLines)}: BC version not yet selected " +
+                $"(BcArtifacts.IsSelected is false). Reading BcArtifacts.SelectedVersion here would " +
+                "trigger its lazy latest-in-cache default and key this cache entry to the wrong BC " +
+                "version instead of the run's actual selection — call BcArtifacts.SelectVersion first.");
+    }
 
     /// <summary>
     /// Testable core of <see cref="WriteKeyLines(Action{string})"/>: takes the content

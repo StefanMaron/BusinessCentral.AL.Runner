@@ -135,4 +135,30 @@ public sealed class RunnerFingerprintTests
 
         Assert.Equal(string.Join("\n", linesA), string.Join("\n", linesB));
     }
+
+    /// <summary>
+    /// The parameterless overload must not silently key a cache entry to whatever BC
+    /// version BcArtifacts' lazy latest-in-cache default happens to pick — that is
+    /// exactly the finding-3 cross-leg poisoning this type exists to prevent, one call
+    /// site earlier. Tested against the extracted pure guard (see
+    /// <see cref="RunnerFingerprint.RequireBcVersionSelected"/>'s doc comment for why:
+    /// BcArtifacts' real selection state is process-global and, once set by any other
+    /// test in this shared xunit process, cannot be forced back to "unselected").
+    /// </summary>
+    [Fact]
+    public void RequireBcVersionSelected_NotSelected_Throws()
+    {
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => RunnerFingerprint.RequireBcVersionSelected(isSelected: false));
+        Assert.Contains("BC version not yet selected", ex.Message);
+        Assert.Contains(nameof(RunnerFingerprint.WriteKeyLines), ex.Message);
+    }
+
+    /// <summary>Negative companion: once selected, the guard is a no-op.</summary>
+    [Fact]
+    public void RequireBcVersionSelected_Selected_DoesNotThrow()
+    {
+        var ex = Record.Exception(() => RunnerFingerprint.RequireBcVersionSelected(isSelected: true));
+        Assert.Null(ex);
+    }
 }

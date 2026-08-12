@@ -98,10 +98,51 @@ jobs:
             -p:AllowBcArtifactDownload=true \
             -c Release
 
-      - name: Restore/save persistent al-runner caches (al-out, compiled-deps, bc-symbols, ncl-cecil, workspace-deps)
+      - name: Restore/save persistent al-runner caches (al-out, compiled-deps, ncl-cecil, workspace-deps)
         uses: actions/cache@v4
         with:
-          path: ~/.cache/al-runner
+          # Deliberately NOT the whole ~/.cache/al-runner tree — bc-symbols is excluded.
+          # Sizes measured locally: bc-symbols 1.9 GB, al-out 227 MB, ncl-cecil 86 MB,
+          # compiled-deps 27 MB, workspace-deps 2.7 MB (~2.2 GB total if everything were
+          # cached). GitHub caps total cache storage at 10 GB per repo with LRU eviction,
+          # so 8 legs at ~2.2 GB each (~17.6 GB) would thrash rather than hit. Restricting
+          # to these four keeps each leg to ~350 MB — 8 legs (~2.8 GB) fit comfortably.
+          #
+          # bc-symbols earns its exclusion twice over, not just on size: BcAppSymbolCache
+          # keys each entry as `{fullpath}|{length}|{mtime.Ticks}|v{CacheVersion}` (see
+          # AlRunner/Patches/BcAppSymbolCache.cs — CachePath/TryRead) and CI RE-DOWNLOADS
+          # the platform/test apps into $HOME/.al-runner every leg (the "Download R2R
+          # platform apps" / "Download the Microsoft test toolkit" steps below), so a
+          # restored bc-symbols entry's mtime never matches the freshly-downloaded .app's
+          # mtime and TryRead misses unconditionally — the exact mtime defect issue #1815
+          # exists to fix, one layer down, on a directory this PR does not touch. It is
+          # also the smallest possible win regardless: measured on the slowest CI leg
+          # (BC 28.2, run 31582527508), the Build step (which is what bc-symbols could
+          # only ever help — parsing the .apps that step downloads) is 28s of a 26m24s
+          # leg, 2% of the total. There is nothing worth caching there. Filed as its own
+          # issue (linked from this PR) rather than folded in here — different cache, same
+          # family of bug, and CachePath/TryRead's mtime-keying is its own fix with its
+          # own test, not a drive-by edit to a workflow file.
+          #
+          # The four kept here are the opposite case. Measured on the same CI run: the
+          # `Run runner-extras` step is 430s (27% of the leg, second-largest after unit
+          # tests), and of that, ~110s (scaled from a local instrumented run of
+          # DependencyLoader.LoadAll) is spent Tier-3-source-compiling four Microsoft
+          # test-toolkit deps (Any, System Application Test Library, Permissions Mock,
+          # Library Assert) that have no R2R DLL and must be compiled from source on every
+          # cold run — exactly what `compiled-deps` caches, and exactly the cache issue
+          # #1815 fixes the key for. `compiled-deps` grew by ~1 MB compiling all four:
+          # the best size-to-saving ratio of any directory here by a wide margin. `al-out`
+          # and `workspace-deps` are the other two content-addressed-by-this-PR caches,
+          # kept for the same reason (real per-run recompute cost, now a stable key).
+          # `ncl-cecil` isn't touched by this PR's key change but persists cleanly (its
+          # own key isn't runner-mtime-based) and its regenerate cost is the ~16s "Warm
+          # the Ncl Cecil rewrite cache" step below, worth avoiding when it hits.
+          path: |
+            ~/.cache/al-runner/al-out
+            ~/.cache/al-runner/compiled-deps
+            ~/.cache/al-runner/ncl-cecil
+            ~/.cache/al-runner/workspace-deps
           # Issue #1815: the AL-output and source-dep cache keys used to embed the runner
           # DLL's LAST-WRITE-TIME, which moves on every rebuild — so a cache persisted
           # across CI runs would MISS 100% of the time regardless of this step. Fixed
@@ -115,14 +156,12 @@ jobs:
           #
           # hashFiles() reads the just-built binary, so this step must run after Build.
           key: al-runner-cache-${{ matrix.target.bc-version }}-${{ hashFiles('AlRunner/bin/Release/net8.0/al-runner.dll') }}
-          # Fallback restore for the caches under ~/.cache/al-runner that are NOT keyed
-          # on the runner fingerprint at all (bc-symbols, ncl-cecil — versioned by BC
-          # artifact version, not runner content). A restore-keys prefix match still
-          # lets those hit on a runner-only change, while al-out/compiled-deps/
-          # workspace-deps entries just MISS-then-repopulate under their own
-          # content-addressed filenames (harmless: stale entries from an old runner
-          # hash sit unused rather than getting served, because the key IS the
-          # filename).
+          # Fallback for ncl-cecil specifically: its own on-disk cache key does NOT depend
+          # on the runner content hash (unlike al-out/compiled-deps/workspace-deps, which
+          # this PR content-addresses), so a runner-only code change still lets it hit via
+          # the BC-version prefix even though the exact key above misses. The other three
+          # just MISS-then-repopulate under their own content-addressed filenames on a
+          # restore-keys partial hit — harmless, since the key IS the filename.
           restore-keys: |
             al-runner-cache-${{ matrix.target.bc-version }}-
 
