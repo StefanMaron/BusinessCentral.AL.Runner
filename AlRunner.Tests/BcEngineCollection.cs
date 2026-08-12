@@ -105,7 +105,19 @@ internal static class BcEngineBootstrap
         {
             // Order mirrors Program.cs: rewrite Ncl FIRST, before any AlRunner type resolves
             // an Ncl type and forces the un-rewritten file to load.
-            var binNcl = Path.Combine(AppContext.BaseDirectory, "Microsoft.Dynamics.Nav.Ncl.dll");
+            //
+            // Deliberately typeof(BcEngineBootstrap).Assembly.Location, NOT
+            // AppContext.BaseDirectory: this initializer can now run inside a process whose
+            // entry assembly is NOT AlRunner.Tests.dll — DOTNET_STARTUP_HOOKS (see
+            // EngineStartupHook.cs) can load this assembly's module from inside the outer
+            // `dotnet test` CLI driver process too, where AppContext.BaseDirectory resolves
+            // to the .NET SDK's own install directory, not AlRunner.Tests' bin dir. Measured:
+            // without this, that combination rewrote Microsoft.Dynamics.Nav.Ncl.dll INTO the
+            // SDK's own folder. Assembly.Location always names THIS assembly's own file, in
+            // every process that loads it, regardless of which assembly is the entry point.
+            var binNcl = Path.Combine(
+                Path.GetDirectoryName(typeof(BcEngineBootstrap).Assembly.Location) ?? AppContext.BaseDirectory,
+                "Microsoft.Dynamics.Nav.Ncl.dll");
 
             // Snapshot before, so we can tell whether the rewrite actually CHANGED the file
             // in this process. Writing bin/…Ncl.dll and then loading it in the same process
@@ -183,4 +195,42 @@ public sealed class BcEngineFixture
 public sealed class BcEngineCollection : ICollectionFixture<BcEngineFixture>
 {
     public const string Name = "bc-engine-serial";
+}
+
+/// <summary>
+/// The acceptance check issue #1813 names: on a CI leg — where BC artifacts are
+/// provisioned and the Cecil cache is warmed by construction (test-matrix.yml) —
+/// <see cref="BcEngineBootstrap.Ready"/> being false is a regression, not a legitimate
+/// skip. Fifteen tests in the bc-engine-serial collection skipped silently on every CI
+/// run for months because VSTest's own DiaSession loaded Microsoft.Dynamics.Nav.Ncl
+/// before <see cref="BcEngineBootstrap.Initialize"/> got a chance to run the Cecil
+/// rewrite — reported Skipped, not Failed, so the leg stayed green while those tests
+/// asserted nothing. See AlRunner.Tests/EngineStartupHook.cs and
+/// AlRunner/EngineTestBinResolverStartupHook.cs for the fix.
+///
+/// Deliberately takes <paramref name="ready"/> / <paramref name="skipReason"/> /
+/// <paramref name="runningOnCi"/> as PARAMETERS rather than reading
+/// <see cref="BcEngineFixture"/> and <see cref="TestArtifacts.RunningOnCi"/> directly —
+/// mirrors <see cref="TestArtifacts.SkipIfMissingIn"/>'s own CI-fails/local-skips shape
+/// exactly, and for the same reason: a pure function is provable in isolation (RED/GREEN
+/// with constructed booleans, in BcEngineReadinessGuardTests) with no BC artifacts and no
+/// CI environment required to run the proving test.
+/// </summary>
+internal static class BcEngineReadinessGuard
+{
+    internal static void AssertReadyOnCi(bool ready, string? skipReason, bool runningOnCi)
+    {
+        if (ready || !runningOnCi) return;
+
+        Assert.Fail(
+            "BcEngineBootstrap.Ready is false on a CI leg where BC artifacts are provisioned and " +
+            "the Cecil cache is pre-warmed before `dotnet test` runs (see the 'Warm the Ncl Cecil " +
+            "rewrite cache' and 'Generate .runsettings for in-process BC engine tests' steps in " +
+            ".github/workflows/test-matrix.yml). That combination means the DOTNET_STARTUP_HOOKS " +
+            "wiring that makes BcEngineBootstrap's [ModuleInitializer] run before VSTest's own " +
+            "DiaSession (see AlRunner.Tests/EngineStartupHook.cs) has silently stopped taking " +
+            "effect — issue #1813 all over again — and every test in the bc-engine-serial " +
+            "collection is now executing NOTHING while this leg still reports green. " +
+            "SkipReason: " + (skipReason ?? "<none>"));
+    }
 }

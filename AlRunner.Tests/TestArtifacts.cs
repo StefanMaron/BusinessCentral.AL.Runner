@@ -151,9 +151,16 @@ internal static class TestArtifacts
     /// provisioning defect, and the leg must go red naming both layouts it searched.
     ///
     /// Deliberately scoped to THIS gate rather than a blanket `Skipped: 0` assertion in the
-    /// workflow: BcEngineFixture legitimately skips on the first pass after a cold Cecil
-    /// rewrite (that is why the workflow re-runs those two classes in a second step), so a
-    /// blanket assertion would fail every run for a correct and unrelated reason.
+    /// workflow: a dev box off CI can legitimately skip artifact-gated tests (nothing
+    /// provisioned locally), so a blanket assertion would fail every local run for a correct
+    /// and unrelated reason. BcEngineFixture's own CI-fails/local-skips check
+    /// (see BcEngineReadinessGuard.AssertReadyOnCi in BcEngineCollection.cs, and
+    /// BcEngineReadinessGuardTests) is the analogous per-gate guard for the in-process BC
+    /// engine bootstrap specifically — it used to need a second `dotnet test` pass in the
+    /// workflow to avoid a guaranteed first-run skip (a cold Cecil rewrite on a fresh CI
+    /// runner); that pass is gone now that the workflow pre-warms the Cecil cache into
+    /// AlRunner.Tests' own bin dir before the one and only `dotnet test` invocation runs
+    /// (see the "Warm the Ncl Cecil rewrite cache" step).
     /// </summary>
     internal static string CiMissingArtifactsMessage(string reason) =>
         "BC artifacts are missing on a CI leg, where provisioning is guaranteed by "

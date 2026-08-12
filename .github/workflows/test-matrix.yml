@@ -140,21 +140,64 @@ jobs:
           ./AlRunner/bin/Release/net8.0/al-runner --quiet AlRunner.Tests/Fixtures/RecordTriggerXRec || true
           ls -la ~/.cache/al-runner/ncl-cecil/ || echo "WARNING: Cecil cache still cold"
 
+          # AlRunner.Tests ships its OWN bin-deployed copy of Microsoft.Dynamics.Nav.Ncl.dll (it
+          # references Nav.Ncl directly — see AlRunner.Tests.csproj), and that copy starts out
+          # PRISTINE (un-rewritten) after every build. Left alone, BcEngineBootstrap (see
+          # AlRunner.Tests/BcEngineCollection.cs) would rewrite it in-process on the very first
+          # `dotnet test` invocation below, then skip rather than load a file it just replaced
+          # (BadImageFormatException 0x80131124 hazard) — on every fresh CI runner, every time,
+          # covering nothing. Pre-copy the ALREADY-rewritten copy from AlRunner's own bin dir
+          # above so the bootstrap below sees a no-op instead of a cold rewrite. This is NOT
+          # about the Cecil disk cache under ~/.cache/al-runner/ncl-cecil (that cache is keyed
+          # off the SERVICE-TIER Ncl's own bytes + the runner assembly's mtime via
+          # NclCecilRewrite.ComputeCacheKey — the bin copy's path/mtime never enters that key,
+          # so a plain `cp`, which does not preserve mtime, cannot affect it either way).
+          # What actually makes this pre-copy work is BcEngineBootstrap's own
+          # before/after SHA-256 CONTENT hash of the bin copy (see the `FileHash` calls around
+          # `RewriteInPlace` in BcEngineCollection.cs): once the bin copy is already
+          # byte-identical to what the rewrite would produce, that comparison reports
+          # `changed == false` regardless of either file's timestamp, so the bootstrap treats
+          # it as already-rewritten and does not skip.
+          cp AlRunner/bin/Release/net8.0/Microsoft.Dynamics.Nav.Ncl.dll AlRunner.Tests/bin/Release/net8.0/Microsoft.Dynamics.Nav.Ncl.dll
+
+      - name: Generate .runsettings for in-process BC engine tests
+        run: |
+          # See AlRunner.Tests/EngineStartupHook.cs and
+          # AlRunner/EngineTestBinResolverStartupHook.cs for the full mechanism (issue #1813):
+          # VSTest's own DiaSession loads Microsoft.Dynamics.Nav.Ncl (for stack-trace source
+          # mapping) before any test code — including our [ModuleInitializer] — gets a chance to
+          # run, which made the Cecil rewrite a no-op and BcEngineBootstrap.Ready false on every
+          # CI run. DOTNET_STARTUP_HOOKS is the earliest hookable point in a .NET process — it
+          # runs strictly before the host's own Main(), so entering our hook assemblies forces
+          # AlRunner.Tests.dll's module (and its [ModuleInitializer]) to run first instead.
+          #
+          # Scoped via RunConfiguration.EnvironmentVariables to the isolated testhost CHILD
+          # process VSTest spawns, deliberately NOT an ambient env var on this step: an ambient
+          # var also runs the bootstrap inside the outer `dotnet test` CLI driver process, where
+          # AppContext.BaseDirectory resolves to the .NET SDK's own install directory instead of
+          # AlRunner.Tests' bin dir (measured: without this, that combination rewrote
+          # Microsoft.Dynamics.Nav.Ncl.dll INTO the SDK's own folder).
+          cat > engine.runsettings <<EOF
+          <?xml version="1.0" encoding="utf-8"?>
+          <RunSettings>
+            <RunConfiguration>
+              <EnvironmentVariables>
+                <DOTNET_STARTUP_HOOKS>$(pwd)/AlRunner.Tests/bin/Release/net8.0/al-runner.dll:$(pwd)/AlRunner.Tests/bin/Release/net8.0/AlRunner.Tests.dll</DOTNET_STARTUP_HOOKS>
+              </EnvironmentVariables>
+            </RunConfiguration>
+          </RunSettings>
+          EOF
+
       - name: Run unit tests (AlRunner.Tests)
         run: |
-          dotnet test AlRunner.Tests/AlRunner.Tests.csproj -c Release --no-build
-
-      - name: Re-run in-process BC engine tests (now that the test bin's Ncl is rewritten)
-        run: |
-          # BcEngineFixture skips when the run itself had to rewrite
-          # AlRunner.Tests/bin/…/Microsoft.Dynamics.Nav.Ncl.dll, because loading a file the
-          # same process just replaced is the BadImageFormatException 0x80131124 hazard.
-          # On a fresh runner that is always the FIRST run — so without this second pass
-          # these two tests would skip on every CI build and quietly cover nothing.
-          # The step above left bin already rewritten, so here the copy is a no-op and
-          # they genuinely execute.
-          dotnet test AlRunner.Tests/AlRunner.Tests.csproj -c Release --no-build \
-            --filter "FullyQualifiedName~BcCompilerEmitRetryTests|FullyQualifiedName~SkeletonSharedObjectContainerLeakTests"
+          # --settings wires the DOTNET_STARTUP_HOOKS chain generated above so the in-process BC
+          # engine tests (BcEngineCollection) execute here, in this single pass, instead of
+          # skipping — see the "Generate .runsettings" step. There used to be a second, separate
+          # `dotnet test --filter` re-run after this step to catch those tests on a "second
+          # pass"; it is gone because there is no longer a first-pass skip for it to work around
+          # (see AlRunner.Tests/BcEngineReadinessGuardTests.cs for the CI-fails-loud regression
+          # guard that replaces it).
+          dotnet test AlRunner.Tests/AlRunner.Tests.csproj -c Release --no-build --settings engine.runsettings
 
       - name: Run al-language corpus
         id: al-language
