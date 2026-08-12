@@ -108,6 +108,8 @@ internal static class WatchSource
     // local so this class has no dependency on Program.cs's top-level-statement local
     // functions, which — being nested inside the synthesized <Main>$ method — cannot be
     // referenced from another file/class regardless of accessibility modifiers.
+    // NOTE: Program.cs's FindBucketRoot is the same walk-up with 8 live call sites
+    // there; the two copies must stay in sync until they're de-duplicated — see #1824.
     private static string? FindBucketRoot(string bundlePath)
     {
         var cur = Directory.Exists(bundlePath) ? bundlePath : Path.GetDirectoryName(bundlePath);

@@ -4085,6 +4085,10 @@ static List<DependencyRef> ReadBundleDependencyRoots(IReadOnlyList<string> manif
     return byKey.Values.ToList();
 }
 
+// NOTE: AlRunner/WatchSource.cs has its own private copy of this exact walk-up
+// (it can't call this one — top-level-statement local functions aren't
+// reachable from another file/class). The two must stay in sync; see #1824
+// for the follow-up to de-duplicate them.
 static string? FindBucketRoot(string bundlePath)
 {
     var cur = Directory.Exists(bundlePath) ? bundlePath : Path.GetDirectoryName(bundlePath);

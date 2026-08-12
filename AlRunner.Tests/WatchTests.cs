@@ -80,6 +80,13 @@ public class WatchTests
                         if (lines[i].Contains("[watch] waiting for AL source")) return i;
                 if (p.HasExited)
                 {
+                    // Pump is fire-and-forget (Task.Run, result discarded): pipe output
+                    // the exiting process already wrote can still be in flight when
+                    // HasExited flips true, so a capture taken right here can truncate
+                    // exactly the lines that would explain the exit. Give the pump
+                    // tasks a moment to drain before dumping — this diagnostic exists
+                    // so a real occurrence is self-explanatory, not half-explanatory.
+                    await Task.Delay(500);
                     string exitedDump; lock (lines) exitedDump = string.Join("\n", lines.TakeLast(40));
                     throw new TimeoutException(
                         $"watch marker not seen — subprocess exited early ({ProcessLiveness()}).\n" +
@@ -87,6 +94,7 @@ public class WatchTests
                 }
                 await Task.Delay(200);
             }
+            if (p.HasExited) await Task.Delay(500); // same drain guard for the deadline path below
             string dump; lock (lines) dump = string.Join("\n", lines.TakeLast(40));
             throw new TimeoutException(
                 $"watch marker not seen. {ProcessLiveness()}\n--- last output ---\n{dump}");
