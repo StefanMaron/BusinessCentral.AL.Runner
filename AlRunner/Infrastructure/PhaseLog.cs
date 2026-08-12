@@ -97,6 +97,13 @@ public sealed class PhaseLogRecord
     public long PeakRssBytes { get; set; }
     public int ExitCode { get; set; }
 
+    // ── Bundle-row only. Named slices of the bundle's turn that are NOT inside any
+    // app group — the block #1828 exists to attribute. Insertion-ordered (a plain
+    // Dictionary does not promise that) so the JSON reads in execution order, which
+    // is how "this stage happens once, that one per app" is spotted by eye.
+    /// <summary>Bundle-level stage timings, in the order the stages were first entered.</summary>
+    public List<KeyValuePair<string, long>> Stages { get; } = new();
+
     private bool IsAppRow => Kind == "app";
     private bool IsProcessRow => Kind != "bundle" && Kind != "app";
 
@@ -131,6 +138,21 @@ public sealed class PhaseLogRecord
             Num(sb, "patches_ms", PatchesMs);
             Num(sb, "peak_rss_bytes", PeakRssBytes);
             Num(sb, "exit_code", ExitCode);
+        }
+        // Bundle rows only, and only when something was measured: an app row must not
+        // carry a bundle-level stage (it did not pay it), and an empty object on every
+        // bundle row would be noise.
+        if (Kind == "bundle" && Stages.Count > 0)
+        {
+            Sep(sb);
+            sb.Append("\"stages\":{");
+            for (var i = 0; i < Stages.Count; i++)
+            {
+                if (i > 0) sb.Append(',');
+                sb.Append(JsonSerializer.Serialize(Stages[i].Key)).Append(':')
+                  .Append(Stages[i].Value.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            }
+            sb.Append('}');
         }
         sb.Append("}\n");
         return sb.ToString();
@@ -323,6 +345,67 @@ public static class PhaseLog
     {
         if (!Enabled) return;
         lock (Gate) { if (_app != null) f(_app); }
+    }
+
+    /// <summary>
+    /// Times one named slice of the bundle's turn that is NOT inside any app group,
+    /// and adds it to the open bundle row.
+    ///
+    /// This is the #1828 instrument. #1826 measured `bundle wall − Σ app wall` at
+    /// 152.3 s on a 357.8 s runner-extras leg (43%) and could say nothing about what
+    /// it was, because the bundle turn was one opaque span either side of the app
+    /// loops. Stages cut that span up.
+    ///
+    /// Two rules make the arithmetic trustworthy, and both are checked by
+    /// PhaseLogTests:
+    ///   * stages must not NEST — a nested stage is counted twice and the sum then
+    ///     exceeds the wall clock it is supposed to decompose;
+    ///   * stages must not overlap an app group — app time is already reported per
+    ///     app, and double-counting it here would manufacture overhead that the
+    ///     report would then chase.
+    /// Whatever the named stages do not cover stays visible as the report's
+    /// "unattributed" line rather than being silently absorbed.
+    ///
+    /// Inert when unset: the returned struct holds a null name, allocates nothing and
+    /// reads no clock.
+    /// </summary>
+    public static StageScope Stage(string name) => new(Enabled ? name : null);
+
+    /// <summary>Adds a stage duration directly, for call sites that cannot use `using`.</summary>
+    public static void AddStage(string name, TimeSpan elapsed)
+    {
+        if (!Enabled) return;
+        var ms = (long)elapsed.TotalMilliseconds;
+        lock (Gate)
+        {
+            if (_bundle == null) return;
+            var stages = _bundle.Stages;
+            for (var i = 0; i < stages.Count; i++)
+            {
+                if (!string.Equals(stages[i].Key, name, StringComparison.Ordinal)) continue;
+                stages[i] = new KeyValuePair<string, long>(name, stages[i].Value + ms);
+                return;
+            }
+            stages.Add(new KeyValuePair<string, long>(name, ms));
+        }
+    }
+
+    /// <summary>Scope returned by <see cref="Stage"/>. A struct, so the disabled path allocates nothing.</summary>
+    public readonly struct StageScope : IDisposable
+    {
+        private readonly string? _name;
+        private readonly long _start;
+
+        internal StageScope(string? name)
+        {
+            _name = name;
+            _start = name == null ? 0 : System.Diagnostics.Stopwatch.GetTimestamp();
+        }
+
+        public void Dispose()
+        {
+            if (_name != null) AddStage(_name, System.Diagnostics.Stopwatch.GetElapsedTime(_start));
+        }
     }
 
     public static void NoteDepsResolved(int count) => Bump(r => r.DepsResolved += count, p => p.DepsResolved += count);

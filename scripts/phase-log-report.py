@@ -217,6 +217,41 @@ def main():
         print(stats_line("overhead outside app work", [r["wall_ms"] - phases(r) for r in bundles]))
         print()
 
+    # ── bundle stages (#1828) ────────────────────────────────────────────────
+    # "overhead outside app work" above is the number #1828 was opened on: 152.3s
+    # of a 357.8s runner-extras leg. This section is what it decomposes into.
+    stage_bundles = [r for r in bundles if r.get("stages")]
+    if stage_bundles:
+        print("── BUNDLE STAGES (work inside the bundle, outside every app group) " + "─" * 10)
+        # `dep-load:<Name>` etc. — group members under their prefix so one expensive
+        # dependency is distinguishable from a dozen mediocre ones, and the group
+        # total is still one line.
+        groups = {}
+        for r in stage_bundles:
+            for name, ms in r["stages"].items():
+                head, _, tail = name.partition(":")
+                g = groups.setdefault(head, {"total": 0, "members": {}})
+                g["total"] += ms
+                if tail:
+                    g["members"][tail] = g["members"].get(tail, 0) + ms
+
+        app_wall = sum(r["wall_ms"] for r in apps)
+        bundle_wall = sum(r["wall_ms"] for r in stage_bundles)
+        staged = sum(g["total"] for g in groups.values())
+        for head, g in sorted(groups.items(), key=lambda kv: -kv[1]["total"]):
+            share = 100 * g["total"] / max(1, bundle_wall)
+            print(f"  {head:<34} {g['total'] / 1000:8.2f}s  {share:5.1f}% of bundle wall")
+            for name, ms in sorted(g["members"].items(), key=lambda kv: -kv[1])[:12]:
+                print(f"    {name:<32} {ms / 1000:8.2f}s")
+        print(f"  {'STAGES TOTAL':<34} {staged / 1000:8.2f}s")
+        print(f"  {'app groups (emit+compile+run+…)':<34} {app_wall / 1000:8.2f}s")
+        # The honesty line. Named stages that do not add up to the bundle wall leave
+        # this positive, which is the signal to add another mark rather than to
+        # believe the breakdown is complete.
+        print(f"  {'UNATTRIBUTED (add a stage mark)':<34} "
+              f"{(bundle_wall - app_wall - staged) / 1000:8.2f}s")
+        print()
+
     # ── per-app ──────────────────────────────────────────────────────────────
     if apps:
         print("── PER APP (one emitted module) " + "─" * 45)

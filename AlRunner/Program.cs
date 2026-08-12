@@ -925,7 +925,11 @@ foreach (var bundle in bundles)
     var bucketRoot = FindBucketRoot(bundleAbs);
     // The dependency closure comes from the bucket root's app.json when it has one, and
     // otherwise from the union of the child apps' manifests — see CollectBundleManifests.
-    var bundleManifests = CollectBundleManifests(bucketRoot, bundleAbs);
+    // Stage-timed from here on: everything between BeginBundle and the app loop is the
+    // block #1828 is attributing. See PhaseLog.Stage for the no-nesting/no-overlap rules.
+    List<string> bundleManifests;
+    using (AlRunner.Infrastructure.PhaseLog.Stage("bundle-manifests"))
+        bundleManifests = CollectBundleManifests(bucketRoot, bundleAbs);
     // Everything below resolves package dirs and loads deps relative to a directory; when
     // the bundle is a parent of many apps there is no bucket root, so the bundle dir is it.
     var depRootDir = bucketRoot ?? bundleAbs;
@@ -935,7 +939,9 @@ foreach (var bundle in bundles)
         {
             try
             {
-                var roots = ReadBundleDependencyRoots(bundleManifests);
+                List<DependencyRef> roots;
+                using (AlRunner.Infrastructure.PhaseLog.Stage("dep-roots"))
+                    roots = ReadBundleDependencyRoots(bundleManifests);
                 // Include the bundle's own .alpackages in the resolver search dirs. They
                 // carry the committed Microsoft platform symbol closure (Base Application /
                 // System Application / …) as real .app files. On CI, packageCacheDirs is
@@ -943,12 +949,16 @@ foreach (var bundle in bundles)
                 // tableextension it ships) references is ONLY resolvable from here. Resolving
                 // it produces the COMPILE spec; LoadAll skips Microsoft platform apps so their
                 // runtime still comes from the service-tier DLLs, not a .app source-compile.
-                var bundlePkgDirs = Directory
-                    .EnumerateDirectories(depRootDir, ".alpackages", SearchOption.AllDirectories)
-                    .ToList();
+                List<string> bundlePkgDirs;
+                using (AlRunner.Infrastructure.PhaseLog.Stage("alpackages-scan"))
+                    bundlePkgDirs = Directory
+                        .EnumerateDirectories(depRootDir, ".alpackages", SearchOption.AllDirectories)
+                        .ToList();
                 var resolverDirs = bundlePkgDirs.Concat(packageCacheDirs).Distinct().ToList();
                 var resolver = new DependencyResolver(resolverDirs);
-                var ordered = resolver.Resolve(roots);
+                IReadOnlyList<(AlRunner.AppManifest Manifest, string AppPath)> ordered;
+                using (AlRunner.Infrastructure.PhaseLog.Stage("dep-resolve"))
+                    ordered = resolver.Resolve(roots);
                 bundleResolvedDeps = ordered;
                 Console.WriteLine($"  [{rel}] resolved {ordered.Count} dep(s)");
                 AlRunner.Infrastructure.PhaseLog.NoteDepsResolved(ordered.Count);
@@ -1000,44 +1010,53 @@ foreach (var bundle in bundles)
                 // for the .app scanner) so the loader can resolve the Microsoft platform
                 // specs (Base App etc.) on CI, where compilerPackageDirs is otherwise empty.
                 var compilerDirs = bundlePkgDirs.Concat(compilerPackageDirs).Distinct().ToList();
-                BcCompiler.SetResolvedDeps(ordered, compilerDirs);
-                if (layeredWorkspaceDirs.Count > 0)
-                    BcCompiler.SetExtraSymbolDirs(layeredWorkspaceDirs);
+                using (AlRunner.Infrastructure.PhaseLog.Stage("dep-symbols"))
+                {
+                    BcCompiler.SetResolvedDeps(ordered, compilerDirs);
+                    if (layeredWorkspaceDirs.Count > 0)
+                        BcCompiler.SetExtraSymbolDirs(layeredWorkspaceDirs);
+                }
+                // Not stage-timed as one block: LoadAll times each dependency separately
+                // as `dep-load:<Name>` (see DependencyLoader.LoadAll). Wrapping it here too
+                // would nest, and nested stages double-count — see PhaseLog.Stage.
                 var loaded = depLoader.LoadAll(ordered, depRootDir);
                 Console.WriteLine($"  [{rel}] loaded {loaded.Count} dep assembl(ies)");
                 AlRunner.Infrastructure.PhaseLog.NoteDepAssembliesLoaded(loaded.Count);
                 // Register dep assemblies (dependency order) so their Subtype=Install
                 // codeunit lifecycle triggers fire before this bundle's tests run.
-                AlRunner.InstallTriggerRunner.SetDependencyAssemblies(loaded);
-                // Source-only dependency loading compiles those dependencies through
-                // BcCompiler too, which updates the process-wide reference state. Restore
-                // this bundle's dependency symbols before emitting the bundle itself.
-                BcCompiler.SetResolvedDeps(ordered, compilerDirs);
-                if (layeredWorkspaceDirs.Count > 0)
-                    BcCompiler.SetExtraSymbolDirs(layeredWorkspaceDirs);
-                // Register dep .app paths with RecordPatches so the NCLMetaTable
-                // populator can fall back to the AL source shipped inside the .app
-                // (NAVX zip) for tables defined in compiled BC dependencies — the
-                // case spike-a-baseapp's Currency-init scenario depends on.
-                foreach (var (_, appPath) in ordered)
-                    AlRunner.Patches.RecordPatches.AddBcAppPath(appPath);
-                // Register any prebuilt bundle-root .app (with SymbolReference.json) so the
-                // generic NCLMetaQuery builder can read this bundle's own query column ids.
-                AlRunner.Patches.RecordPatches.RegisterBundleSymbolApps(depRootDir);
-                // Populate BcRuntime with this bundle's identity for the
-                // NavApp.GetCurrentModuleInfo polyfill shim. A parent-of-many-apps bundle
-                // has no identity of its own; each AppGroup sets its own below.
-                if (File.Exists(appJsonPath)) SetBundleInfoFromAppJson(appJsonPath);
-                // Compile this bundle under its REAL app.json identity so a dependency's
-                // internalsVisibleTo grant (which names this app) matches — otherwise the
-                // synthetic compile identity fails the grant check (AL0161).
-                var bundleId = File.Exists(appJsonPath)
-                    ? AlRunner.Infrastructure.InProcessAppPackager.ReadIdentity(appJsonPath)
-                    : null;
-                if (bundleId != null)
-                    BcCompiler.SetCurrentAppIdentity(bundleId.AppId, bundleId.Publisher, bundleId.Version);
-                else
-                    BcCompiler.SetCurrentAppIdentity(null, null, null);
+                using (AlRunner.Infrastructure.PhaseLog.Stage("dep-register"))
+                {
+                    AlRunner.InstallTriggerRunner.SetDependencyAssemblies(loaded);
+                    // Source-only dependency loading compiles those dependencies through
+                    // BcCompiler too, which updates the process-wide reference state. Restore
+                    // this bundle's dependency symbols before emitting the bundle itself.
+                    BcCompiler.SetResolvedDeps(ordered, compilerDirs);
+                    if (layeredWorkspaceDirs.Count > 0)
+                        BcCompiler.SetExtraSymbolDirs(layeredWorkspaceDirs);
+                    // Register dep .app paths with RecordPatches so the NCLMetaTable
+                    // populator can fall back to the AL source shipped inside the .app
+                    // (NAVX zip) for tables defined in compiled BC dependencies — the
+                    // case spike-a-baseapp's Currency-init scenario depends on.
+                    foreach (var (_, appPath) in ordered)
+                        AlRunner.Patches.RecordPatches.AddBcAppPath(appPath);
+                    // Register any prebuilt bundle-root .app (with SymbolReference.json) so the
+                    // generic NCLMetaQuery builder can read this bundle's own query column ids.
+                    AlRunner.Patches.RecordPatches.RegisterBundleSymbolApps(depRootDir);
+                    // Populate BcRuntime with this bundle's identity for the
+                    // NavApp.GetCurrentModuleInfo polyfill shim. A parent-of-many-apps bundle
+                    // has no identity of its own; each AppGroup sets its own below.
+                    if (File.Exists(appJsonPath)) SetBundleInfoFromAppJson(appJsonPath);
+                    // Compile this bundle under its REAL app.json identity so a dependency's
+                    // internalsVisibleTo grant (which names this app) matches — otherwise the
+                    // synthetic compile identity fails the grant check (AL0161).
+                    var bundleId = File.Exists(appJsonPath)
+                        ? AlRunner.Infrastructure.InProcessAppPackager.ReadIdentity(appJsonPath)
+                        : null;
+                    if (bundleId != null)
+                        BcCompiler.SetCurrentAppIdentity(bundleId.AppId, bundleId.Publisher, bundleId.Version);
+                    else
+                        BcCompiler.SetCurrentAppIdentity(null, null, null);
+                }
             }
             catch (AlRunner.Infrastructure.DependencyLoadException ex)
             {
@@ -1076,11 +1095,14 @@ foreach (var bundle in bundles)
         }
     }
 
-    var suites = EnumerateSuites(bundleAbs).ToList();
+    List<string> suites;
+    using (AlRunner.Infrastructure.PhaseLog.Stage("enumerate-suites"))
+        suites = EnumerateSuites(bundleAbs).ToList();
     if (suites.Count == 0) { Console.WriteLine($"[{i2}/{bundles.Count}] {rel} ... SKIP (no suites)"); continue; }
     Console.WriteLine($"[{i2}/{bundles.Count}] {rel} — {suites.Count} suites");
 
     // Pre-register every src dir for RecordPatches at the bundle level.
+    using (AlRunner.Infrastructure.PhaseLog.Stage("register-source-dirs"))
     foreach (var suite in suites)
     {
         var s = Path.Combine(suite, "src");
@@ -1114,7 +1136,9 @@ foreach (var bundle in bundles)
         //
         // Suites whose AL hits BC emit bugs or bundled-only strictness checks are
         // quarantined via a tests/expectations/ known-gaps-<area>.json entry.
-        var appGroups = BuildAppGroups(suites, bucketRoot, bundleAbs);
+        List<AlRunner.AppGroup> appGroups;
+        using (AlRunner.Infrastructure.PhaseLog.Stage("build-app-groups"))
+            appGroups = BuildAppGroups(suites, bucketRoot, bundleAbs);
 
         // ── in-bundle sibling symbols ──────────────────────────────────────
         // BuildAppGroups orders an app after every sibling it depends on, but ordering
@@ -1128,7 +1152,8 @@ foreach (var bundle in bundles)
         // topological order (a dep-of-a-dep is written before the app that needs it), and
         // chain them into the compiler. Only sibling-dependency TARGETS are compiled here —
         // this is an extra compile per app, and most bundles (the corpus: one app) have none.
-        EmitSiblingSymbols(appGroups, bundleAbs, bundleResolvedDeps);
+        using (AlRunner.Infrastructure.PhaseLog.Stage("sibling-symbols"))
+            EmitSiblingSymbols(appGroups, bundleAbs, bundleResolvedDeps);
 
         var loadedAssemblies = new List<Assembly>();
         // SetTestAssembly re-runs its full body (incl. NavAppResourcePatches.RegisterTestAssembly)
@@ -1144,7 +1169,9 @@ foreach (var bundle in bundles)
         // Ordered dep ids feed every app's cache key but depend only on the bucket root
         // and the package caches — both loop-invariant. Resolving them inside the loop
         // re-scanned the package caches once per app.
-        var orderedDepIds = GetOrderedDepIds(bucketRoot, packageCacheDirs, bundleAbs);
+        IReadOnlyList<string> orderedDepIds;
+        using (AlRunner.Infrastructure.PhaseLog.Stage("ordered-dep-ids"))
+            orderedDepIds = GetOrderedDepIds(bucketRoot, packageCacheDirs, bundleAbs);
 
         int agIdx = 0;
         foreach (var appGroup in appGroups)
@@ -1567,7 +1594,8 @@ foreach (var bundle in bundles)
         // every table's Record CLR type in one pass — including tables belonging to
         // apps that loaded LATER than the app that first registered their NCLMetaTable
         // (pre-registration adds every suite's src/ up front, before any app emits).
-        AlRunner.Patches.RecordPatches.WireFieldTriggerHandlersAll();
+        using (AlRunner.Infrastructure.PhaseLog.Stage("wire-field-triggers"))
+            AlRunner.Patches.RecordPatches.WireFieldTriggerHandlersAll();
 
         int runIdx = 0;
         foreach (var asm in loadedAssemblies)

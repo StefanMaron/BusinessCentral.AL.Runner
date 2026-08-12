@@ -259,6 +259,8 @@ public sealed class PhaseLogIntegrationTests : IDisposable
             Assert.Equal(bundleRows[i].GetProperty("emit_ms").GetInt64(),
                 appRows[i].GetProperty("emit_ms").GetInt64());
 
+        AssertBundleStagesAccountForTheBundleTurn(bundleRows, appRows);
+
         var proc = processRows[0];
         Assert.Equal(2, proc.GetProperty("bundles_in_process").GetInt32());
         Assert.Equal(0, proc.GetProperty("exit_code").GetInt32());
@@ -349,6 +351,73 @@ public sealed class PhaseLogIntegrationTests : IDisposable
         Assert.All(parents, parent =>
             Assert.True(parent.GetProperty("start_ms").GetInt64() <= proc.GetProperty("start_ms").GetInt64(),
                 "a re-exec parent must start before the child it spawned"));
+    }
+
+    /// <summary>
+    /// #1828: the bundle's turn is `Σ app groups + named stages`, and nothing else.
+    ///
+    /// Before this, `bundle wall − Σ app wall` was one opaque 152.3 s block on the CI
+    /// runner-extras leg (43% of the step) that the instrument could not describe. The
+    /// claim under test is not "some stages exist" — it is that the stages ACCOUNT for
+    /// the block: they are non-overlapping (so their sum plus the app groups cannot
+    /// exceed the bundle's wall clock), and they leave almost nothing unexplained.
+    /// </summary>
+    private static void AssertBundleStagesAccountForTheBundleTurn(
+        List<JsonElement> bundleRows, List<JsonElement> appRows)
+    {
+        static Dictionary<string, long> Stages(JsonElement bundle)
+        {
+            Assert.True(bundle.TryGetProperty("stages", out var s),
+                $"bundle row carries no stage breakdown — the #1828 marks are not wired: {bundle}");
+            return s.EnumerateObject().ToDictionary(p => p.Name, p => p.Value.GetInt64());
+        }
+
+        for (var i = 0; i < bundleRows.Count; i++)
+        {
+            var stages = Stages(bundleRows[i]);
+            // Every bundle walks these four, whatever it declares. Named individually
+            // rather than counted, so deleting a mark fails here instead of quietly
+            // moving its time back into the unattributed remainder.
+            foreach (var required in new[]
+                     { "dep-resolve", "enumerate-suites", "build-app-groups", "wire-field-triggers" })
+                Assert.True(stages.ContainsKey(required),
+                    $"stage '{required}' missing from bundle {i + 1}: {string.Join(", ", stages.Keys)}");
+
+            var bundleWall = bundleRows[i].GetProperty("wall_ms").GetInt64();
+            var appWall = appRows
+                .Where(a => a.GetProperty("bundle_index").GetInt32()
+                            == bundleRows[i].GetProperty("bundle_index").GetInt32())
+                .Sum(a => a.GetProperty("wall_ms").GetInt64());
+            var staged = stages.Values.Sum();
+
+            // No stage may nest inside another and no stage may overlap an app group:
+            // either would make the parts sum past the whole, which is precisely the
+            // failure that would send the next reader chasing overhead that isn't there.
+            Assert.True(staged + appWall <= bundleWall + 50,
+                $"stages ({staged}ms) + app groups ({appWall}ms) exceed the bundle's wall clock "
+                + $"({bundleWall}ms) — a stage is double-counting: {bundleRows[i]}");
+
+            // And the attribution is near-complete: whatever the marks miss shows up
+            // here. Measured at 0.06 s of a 401 s runner-extras bundle; these fixtures
+            // are ~1 s bundles, so the allowance is absolute, not proportional.
+            var unattributed = bundleWall - appWall - staged;
+            Assert.True(unattributed <= 750,
+                $"{unattributed}ms of bundle {i + 1}'s turn is attributed to nothing "
+                + $"(wall {bundleWall}ms, apps {appWall}ms, stages {staged}ms) — add a stage mark");
+        }
+
+        // The cohort split, at stage granularity — this is the finding #1828 asked for.
+        // Loading dependencies is what the block mostly IS, so a bundle that declares
+        // none must show no dep-load stage at all, and one that declares them must.
+        var noDeps = Stages(bundleRows[0]).Keys.Where(k => k.StartsWith("dep-load:", StringComparison.Ordinal));
+        Assert.Empty(noDeps);
+        var withDeps = Stages(bundleRows[1])
+            .Where(kv => kv.Key.StartsWith("dep-load:", StringComparison.Ordinal))
+            .ToList();
+        Assert.NotEmpty(withDeps);
+        // Named per dependency, not lumped: one expensive dependency and a dozen cheap
+        // ones are different problems, and only the per-dep split tells them apart.
+        Assert.Contains(withDeps, kv => kv.Key.Length > "dep-load:".Length);
     }
 
     private static int CountOccurrences(string haystack, string needle)

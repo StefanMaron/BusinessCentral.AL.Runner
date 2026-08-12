@@ -44,6 +44,12 @@ public sealed class DependencyLoader
         var list = new List<Assembly>();
         foreach (var (m, path) in ordered)
         {
+            // One stage per dependency, not one for the whole loop. #1828 measured this
+            // loop at 180 s of a 396 s runner-extras bundle — 78% of everything the bundle
+            // spends outside its app groups — and a single number cannot say whether that
+            // is one expensive dependency or twelve mediocre ones. The `dep-load:` prefix
+            // is what groups them back together in scripts/phase-log-report.py.
+            using var depStage = AlRunner.Infrastructure.PhaseLog.Stage($"dep-load:{m.Name}");
             if (_cache.TryGetValue(m.AppId, out var existing))
             {
                 list.Add(existing);

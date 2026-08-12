@@ -130,6 +130,55 @@ public sealed class PhaseLogTests : IDisposable
     }
 
     /// <summary>
+    /// The #1828 breakdown: the bundle row carries named stages for the work it does
+    /// outside every app group, in the order they were entered, with repeated entries
+    /// of the same name summed rather than overwritten (dep-load enters once per
+    /// dependency; the app loop's stages are entered once per app group).
+    ///
+    /// Order is asserted, not just membership: the whole point of the breakdown is to
+    /// read the bundle's turn in execution order, and a Dictionary does not promise it.
+    /// </summary>
+    [Fact]
+    public void BundleRecord_SerialisesItsStageBreakdownInOrderWithRepeatsSummed()
+    {
+        var row = SampleBundle();
+        row.Stages.Add(new KeyValuePair<string, long>("dep-resolve", 512));
+        row.Stages.Add(new KeyValuePair<string, long>("dep-load:Library Assert", 22075));
+        row.Stages.Add(new KeyValuePair<string, long>("sibling-symbols", 29340));
+
+        var json = JsonDocument.Parse(row.ToJsonLine()).RootElement;
+        var stages = json.GetProperty("stages");
+
+        Assert.Equal(
+            new[] { "dep-resolve", "dep-load:Library Assert", "sibling-symbols" },
+            stages.EnumerateObject().Select(p => p.Name));
+        Assert.Equal(512, stages.GetProperty("dep-resolve").GetInt64());
+        Assert.Equal(22075, stages.GetProperty("dep-load:Library Assert").GetInt64());
+        Assert.Equal(29340, stages.GetProperty("sibling-symbols").GetInt64());
+        // Still exactly one line — the breakdown must not break the JSONL contract.
+        Assert.Equal(1, row.ToJsonLine().Count(c => c == '\n'));
+    }
+
+    /// <summary>
+    /// Stages are bundle-level by definition, so an app row must never carry one: an
+    /// app's time is already reported as emit/compile/run, and a stage copied onto it
+    /// would be counted twice by any aggregate that sums both. A bundle that measured
+    /// no stages omits the key entirely rather than emitting an empty object.
+    /// </summary>
+    [Fact]
+    public void StagesAppearOnBundleRowsOnly()
+    {
+        var app = SampleApp();
+        app.Stages.Add(new KeyValuePair<string, long>("dep-resolve", 512));
+        var proc = SampleProcess();
+        proc.Stages.Add(new KeyValuePair<string, long>("dep-resolve", 512));
+
+        Assert.False(JsonDocument.Parse(app.ToJsonLine()).RootElement.TryGetProperty("stages", out _));
+        Assert.False(JsonDocument.Parse(proc.ToJsonLine()).RootElement.TryGetProperty("stages", out _));
+        Assert.False(JsonDocument.Parse(SampleBundle().ToJsonLine()).RootElement.TryGetProperty("stages", out _));
+    }
+
+    /// <summary>
     /// The process record carries them, with the measured values.
     /// </summary>
     [Fact]
