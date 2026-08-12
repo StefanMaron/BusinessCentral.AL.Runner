@@ -235,7 +235,9 @@ public static class MediaSetPatches
             return (index >= 1 && index <= list.Count) ? list[index - 1] : Guid.Empty;
     }
 
-    // ── AddMediaToSetAsync(NavSession, Guid setId, Guid mediaId) → Guid ─────────────────
+    // ── AddMediaToSetAsync(NavSession, Guid setId, Guid mediaId) → ValueTask<Guid>  (BC 28+)
+    // AddMediaToSet(Guid setId, Guid mediaId) → Guid                    (BC 27.x, synchronous)
+    //
     // The shared internal helper EVERY AL-facing MediaSet import path (ImportStream,
     // ImportFile's real body if ever un-faked) funnels through in real BC — see file
     // header. `setId` is the field's CURRENT container Guid (Guid.Empty if this is the
@@ -245,10 +247,44 @@ public static class MediaSetPatches
     // happens entirely in BC's own unmodified code before this is ever called — we only
     // replace the membership bookkeeping BC's real body cannot do without a "Media Set"
     // platform table this runner doesn't declare.
+    //
+    // BC 27.x HAS NO ASYNC SURFACE AT ALL on NavMediaSet (issue #1802, verified by
+    // decompiling Microsoft.Dynamics.Nav.Ncl.dll from the 27.0.38460.53552 and
+    // 28.1.49838.50794 cached service tiers with ilspycmd):
+    //
+    //   BC 27.0: `internal Guid AddMediaToSet(Guid setId, Guid mediaId)` — synchronous, no
+    //            NavSession parameter, plain Guid return. Its real body is otherwise
+    //            IDENTICAL logic to the 28.x async version below (generate a fresh setId
+    //            when empty, ALGet/ALInsert against the same undeclared "Media Set"
+    //            platform table, return setId). Callers on 27.x:
+    //              - `ALImport(DataError, NavStream, string, string, string)` (the 5-param
+    //                overload every ImportStream/ImportFile overload funnels into) calls
+    //                `guid = AddMediaToSet(base.Key.Value, mediaId);` synchronously, then
+    //                `SaveValueToTableField(guid)` — exactly the pattern the file header
+    //                describes for 28.x's ALImportAsync, just without the awaits.
+    //              - `ALInsert(DataError, Guid)` also calls `AddMediaToSet` in its real
+    //                body, but that doesn't matter here: NavMediaSet_ALInsert below is a
+    //                full-body replacement on BOTH versions (BC's own Insert flow has no
+    //                real body worth leaning on — see file header — so we never reach BC's
+    //                real ALInsert on either version, hence never reach AddMediaToSet via
+    //                that path on 27.x either).
+    //   BC 28.x: `internal async ValueTask<Guid> AddMediaToSetAsync(NavSession session,
+    //            Guid setId, Guid mediaId)` — the version this file originally targeted.
+    //
+    // Both shapes are handled by the two helpers below via the SAME shared membership
+    // bookkeeping (AddToSetCore), so 27.x and 28.x observe identical AL-visible behaviour.
+    //
+    // The sibling 27.x-only members `RemoveMediaRecord(Guid) -> bool` and
+    // `GetContainedMedia() -> List<Guid>` do NOT need their own hooks: they are only
+    // reachable from BC's real `ALRemove`/`CountMediaInSet`/`UpdateMediaCache` bodies, and
+    // ALRemove/get_ALCount/ALItem are ALREADY full-body Cecil replacements on both versions
+    // (NavMediaSet_ALRemove / NavMediaSet_get_ALCount / NavMediaSet_ALItem below) — so BC's
+    // real bodies that would call RemoveMediaRecord/GetContainedMedia are never executed on
+    // either version, and those two internal methods are simply dead code from the runner's
+    // perspective. Confirmed by decompiling both versions: their signatures and callers
+    // otherwise match 1:1 (RemoveMediaRecordAsync/GetContainedMediaAsync on 28.x).
 
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    public static System.Threading.Tasks.ValueTask<Guid> NavMediaSet_AddMediaToSetAsync(
-        object self, object session, Guid setId, Guid mediaId)
+    private static Guid AddToSetCore(Guid setId, Guid mediaId)
     {
         var effectiveSetId = setId == Guid.Empty ? Guid.NewGuid() : setId;
         var list = GetOrCreateList(effectiveSetId);
@@ -257,7 +293,24 @@ public static class MediaSetPatches
             if (!list.Contains(mediaId))
                 list.Add(mediaId);
         }
-        return new System.Threading.Tasks.ValueTask<Guid>(effectiveSetId);
+        return effectiveSetId;
+    }
+
+    /// <summary>BC 28.x shape: AddMediaToSetAsync(NavSession, Guid, Guid) → ValueTask&lt;Guid&gt;.</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static System.Threading.Tasks.ValueTask<Guid> NavMediaSet_AddMediaToSetAsync(
+        object self, object session, Guid setId, Guid mediaId)
+    {
+        return new System.Threading.Tasks.ValueTask<Guid>(AddToSetCore(setId, mediaId));
+    }
+
+    /// <summary>BC 27.x shape: AddMediaToSet(Guid, Guid) → Guid — synchronous, no NavSession
+    /// parameter. See the block comment above for why this is its own helper and not a
+    /// re-signature of the async one.</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static Guid NavMediaSet_AddMediaToSet(object self, Guid setId, Guid mediaId)
+    {
+        return AddToSetCore(setId, mediaId);
     }
 
     // ── ALImport(DataError, string fileName, string description) → Guid ──────────────────

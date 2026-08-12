@@ -1724,6 +1724,10 @@ public static class NclCecilRewrite
                     ReplaceBodyWithHelper(asm.MainModule, mInsert, h);
                     mediaSetRewrote++;
                 }
+                else
+                {
+                    Console.Error.WriteLine("[Cecil] WARNING: NavMediaSet.ALInsert(DataError, Guid) not found — hook not installed");
+                }
 
                 // ALRemove(DataError errorLevel, Guid mediaId) → bool
                 var mRemove = navMediaSetCecilType.Methods.FirstOrDefault(m =>
@@ -1733,6 +1737,10 @@ public static class NclCecilRewrite
                     var h = patchTypeMi.GetMethod(nameof(AlRunner.Patches.MediaSetPatches.NavMediaSet_ALRemove), BindingFlags.Public | BindingFlags.Static)!;
                     ReplaceBodyWithHelper(asm.MainModule, mRemove, h);
                     mediaSetRewrote++;
+                }
+                else
+                {
+                    Console.Error.WriteLine("[Cecil] WARNING: NavMediaSet.ALRemove(DataError, Guid) not found — hook not installed");
                 }
 
                 // get_ALCount() → int
@@ -1744,6 +1752,10 @@ public static class NclCecilRewrite
                     ReplaceBodyWithHelper(asm.MainModule, mCount, h);
                     mediaSetRewrote++;
                 }
+                else
+                {
+                    Console.Error.WriteLine("[Cecil] WARNING: NavMediaSet.get_ALCount() not found — hook not installed");
+                }
 
                 // ALItem(int index) → Guid
                 var mItem = navMediaSetCecilType.Methods.FirstOrDefault(m =>
@@ -1754,17 +1766,26 @@ public static class NclCecilRewrite
                     ReplaceBodyWithHelper(asm.MainModule, mItem, h);
                     mediaSetRewrote++;
                 }
+                else
+                {
+                    Console.Error.WriteLine("[Cecil] WARNING: NavMediaSet.ALItem(int) not found — hook not installed");
+                }
 
                 // ALImport overloads — file-based (second param is string fileName)
-                foreach (var m in navMediaSetCecilType.Methods.Where(m2 => m2.Name == "ALImport" && m2.HasBody))
                 {
-                    var ps = m.Parameters;
-                    if (ps.Count < 3 || ps[1].ParameterType.FullName != "System.String") continue;
-                    var replName = ps.Count == 3
-                        ? nameof(AlRunner.Patches.MediaSetPatches.NavMediaSet_ALImport_File2)
-                        : nameof(AlRunner.Patches.MediaSetPatches.NavMediaSet_ALImport_File3);
-                    var h = patchTypeMi.GetMethod(replName, BindingFlags.Public | BindingFlags.Static);
-                    if (h != null) { ReplaceBodyWithHelper(asm.MainModule, m, h); mediaSetRewrote++; }
+                    int fileImportRewrote = 0;
+                    foreach (var m in navMediaSetCecilType.Methods.Where(m2 => m2.Name == "ALImport" && m2.HasBody))
+                    {
+                        var ps = m.Parameters;
+                        if (ps.Count < 3 || ps[1].ParameterType.FullName != "System.String") continue;
+                        var replName = ps.Count == 3
+                            ? nameof(AlRunner.Patches.MediaSetPatches.NavMediaSet_ALImport_File2)
+                            : nameof(AlRunner.Patches.MediaSetPatches.NavMediaSet_ALImport_File3);
+                        var h = patchTypeMi.GetMethod(replName, BindingFlags.Public | BindingFlags.Static);
+                        if (h != null) { ReplaceBodyWithHelper(asm.MainModule, m, h); mediaSetRewrote++; fileImportRewrote++; }
+                    }
+                    if (fileImportRewrote == 0)
+                        Console.Error.WriteLine("[Cecil] WARNING: NavMediaSet.ALImport(DataError, string, string[, string]) file overloads not found — hook not installed");
                 }
 
                 // ALExport(DataError, string fileBaseName) → int
@@ -1776,8 +1797,13 @@ public static class NclCecilRewrite
                     ReplaceBodyWithHelper(asm.MainModule, mExport, h);
                     mediaSetRewrote++;
                 }
+                else
+                {
+                    Console.Error.WriteLine("[Cecil] WARNING: NavMediaSet.ALExport(DataError, string) not found — hook not installed");
+                }
 
-                // AddMediaToSetAsync(NavSession, Guid setId, Guid mediaId) → ValueTask<Guid>
+                // AddMediaToSetAsync(NavSession, Guid setId, Guid mediaId) → ValueTask<Guid>  (BC 28+)
+                // AddMediaToSet(Guid setId, Guid mediaId) → Guid                     (BC 27.x, synchronous)
                 //
                 // The shared internal helper every AL-facing import path (ImportStream's
                 // NavStream-based ALImport overloads chief among them — see #1773 / the
@@ -1787,15 +1813,28 @@ public static class NclCecilRewrite
                 // discarding the insert's success/failure — so the membership never lands
                 // anywhere our ALInsert/get_ALCount/ALItem patches above can see, even
                 // though the real body's earlier content-storage step (into the ALREADY
-                // real/declared Media/TenantMedia tables) succeeds. This was NOT previously
-                // intercepted — only the file-based ALImport overloads were — which is why
-                // ImportStream returned a real, non-null MediaId while Count() stayed 0.
-                var mAddToSet = navMediaSetCecilType.Methods.FirstOrDefault(m =>
-                    m.Name == "AddMediaToSetAsync" && m.HasBody && m.Parameters.Count == 3);
-                if (mAddToSet != null)
+                // real/declared Media/TenantMedia tables) succeeds.
+                //
+                // BC 27.x has NO async surface on NavMediaSet at all — the whole class is
+                // synchronous there (issue #1802, confirmed by decompiling
+                // Microsoft.Dynamics.Nav.Ncl.dll from the 27.0.38460.53552 and
+                // 28.1.49838.50794 cached service tiers: same logic, `AddMediaToSet(Guid,
+                // Guid) -> Guid`, no NavSession parameter). This is a genuine
+                // version-conditional pair, not an optional hook: if NEITHER shape
+                // resolves, every MediaSet membership operation silently degrades to
+                // Count()==0 with no error (see #1802) — a wrong answer, not a missing
+                // feature. Per loud-failures.md, an unknown BC shape here must hard-error
+                // the whole run rather than let that happen again.
+                // Resolution + the hard-error-on-neither-shape is extracted to
+                // ResolveMediaSetAddToSetTarget (below) so it's independently testable —
+                // see MediaSetAddToSetResolutionTests.cs.
+                var mAddToSetTarget = ResolveMediaSetAddToSetTarget(navMediaSetCecilType);
+                var addToSetHelperName = mAddToSetTarget.Name == "AddMediaToSetAsync"
+                    ? nameof(AlRunner.Patches.MediaSetPatches.NavMediaSet_AddMediaToSetAsync)
+                    : nameof(AlRunner.Patches.MediaSetPatches.NavMediaSet_AddMediaToSet);
                 {
-                    var h = patchTypeMi.GetMethod(nameof(AlRunner.Patches.MediaSetPatches.NavMediaSet_AddMediaToSetAsync), BindingFlags.Public | BindingFlags.Static)!;
-                    ReplaceBodyWithHelper(asm.MainModule, mAddToSet, h);
+                    var h = patchTypeMi.GetMethod(addToSetHelperName, BindingFlags.Public | BindingFlags.Static)!;
+                    ReplaceBodyWithHelper(asm.MainModule, mAddToSetTarget, h);
                     mediaSetRewrote++;
                 }
 
@@ -7242,6 +7281,52 @@ public static class NclCecilRewrite
         var type = module.GetType(typeFullName);
         return type?.Methods.FirstOrDefault(x =>
             x.Name == name && (paramCount == null || x.Parameters.Count == paramCount) && x.HasBody);
+    }
+
+    /// <summary>
+    /// Resolves NavMediaSet's internal "add a media id to the set" method for whichever BC
+    /// shape is present on this Ncl — BC 28+'s async
+    /// <c>AddMediaToSetAsync(NavSession, Guid, Guid) -&gt; ValueTask&lt;Guid&gt;</c>, or BC
+    /// 27.x's synchronous <c>AddMediaToSet(Guid, Guid) -&gt; Guid</c> (no NavSession param).
+    /// See the Batch 5 NavMediaSet block for the full story (#1802): BC 27.x has NO async
+    /// surface on NavMediaSet at all, confirmed by decompiling
+    /// Microsoft.Dynamics.Nav.Ncl.dll from both the 27.0.38460.53552 and 28.1.49838.50794
+    /// cached service tiers.
+    ///
+    /// Extracted to a standalone method — independently testable (see
+    /// MediaSetAddToSetResolutionTests.cs) without needing to run the whole Cecil rewrite
+    /// pipeline against a real Ncl assembly.
+    ///
+    /// This is a genuine version-conditional pair, not an optional hook: per
+    /// loud-failures.md, if NEITHER shape resolves, the caller must NOT silently skip the
+    /// hook — every MediaSet membership operation would then degrade to Count()==0 with no
+    /// error (exactly what #1802 reported), a wrong answer rather than a missing feature.
+    /// So an unresolved pair hard-errors the whole run instead.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">
+    /// Neither shape resolved — an unknown BC Ncl surface for the MediaSet membership
+    /// funnel. The message names both candidate signatures so the fix is greppable.
+    /// </exception>
+    internal static MethodDefinition ResolveMediaSetAddToSetTarget(TypeDefinition navMediaSetCecilType)
+    {
+        var mAddToSetAsync = navMediaSetCecilType.Methods.FirstOrDefault(m =>
+            m.Name == "AddMediaToSetAsync" && m.HasBody && m.Parameters.Count == 3);
+        if (mAddToSetAsync != null) return mAddToSetAsync;
+
+        var mAddToSetSync = navMediaSetCecilType.Methods.FirstOrDefault(m =>
+            m.Name == "AddMediaToSet" && m.HasBody && m.Parameters.Count == 2
+            && m.Parameters[0].ParameterType.FullName == "System.Guid"
+            && m.Parameters[1].ParameterType.FullName == "System.Guid");
+        if (mAddToSetSync != null) return mAddToSetSync;
+
+        throw new InvalidOperationException(
+            "[Cecil] FATAL: neither NavMediaSet.AddMediaToSetAsync(NavSession, Guid, Guid) "
+            + "(BC 28+) nor NavMediaSet.AddMediaToSet(Guid, Guid) (BC 27.x) resolved on this "
+            + "Ncl — unknown BC shape for the MediaSet membership funnel. Silently skipping "
+            + "this hook makes ImportStream/ImportFile return a real MediaId while "
+            + "MediaSet.Count() silently stays 0 (see #1802) — a wrong answer, not a missing "
+            + "feature, so this aborts the run instead of degrading quietly. Decompile the "
+            + "new Ncl and add a case for the new shape.");
     }
 
     /// <summary>
