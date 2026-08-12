@@ -3741,12 +3741,13 @@ static string ComputeSourceWorkspaceKey(
         ms.Write(bytes, 0, bytes.Length);
     }
 
-    WriteLine("schema:v1");
-    var runnerLoc = typeof(AlRunner.BcAssembler).Assembly.Location;
-    if (!string.IsNullOrEmpty(runnerLoc) && File.Exists(runnerLoc))
-        WriteLine($"runner:{File.GetLastWriteTimeUtc(runnerLoc).Ticks}:{new FileInfo(runnerLoc).Length}");
-    else
-        WriteLine("runner:unknown");
+    // v2 (issue #1815): runner fingerprint switched from mtime+length to a content hash
+    // (mtime moved on every CI rebuild, so a persisted cache could never hit), and an
+    // explicit bc:<version> line was added (a content hash alone is identical across
+    // every BC-version CI leg building the same commit, so without it all legs would
+    // collide on one cache entry). v1 entries carried neither and must not be served.
+    WriteLine("schema:v2");
+    AlRunner.Infrastructure.RunnerFingerprint.WriteKeyLines(WriteLine);
 
     foreach (var dir in sortedDirs.OrderBy(d => d, StringComparer.OrdinalIgnoreCase))
     {
@@ -4612,15 +4613,20 @@ static string ComputeAlCacheKey(
     //        name). A v8 sidecar deserialises with Captions null, which
     //        AlEnumOptionMetadata already treats as "no captions captured" — silently
     //        wrong for a cache HIT, not a cache miss, without this bump.
-    WriteLine("schema:v9");
+    //    v10: runner fingerprint switched from mtime+length to a content hash of the
+    //        runner assembly (issue #1815 finding 2 — every CI leg rebuilds the runner,
+    //        so mtime moved on every run and a persisted cache could never hit), and an
+    //        explicit bc:<version> line was added (finding 3 — a content hash is
+    //        IDENTICAL across every BC-version leg building the same commit; without an
+    //        explicit version line all 8 legs would collide on one cache entry and a leg
+    //        could load AL output compiled against another BC version's symbols). v9
+    //        entries carried neither and must not be served under the new key shape.
+    WriteLine("schema:v10");
 
-    // 1. Runner assembly fingerprint — any rewriter / polyfill / patch change
-    //    in the runner forces a cache miss.
-    var runnerLoc = typeof(AlRunner.BcAssembler).Assembly.Location;
-    if (!string.IsNullOrEmpty(runnerLoc) && File.Exists(runnerLoc))
-        WriteLine($"runner:{File.GetLastWriteTimeUtc(runnerLoc).Ticks}:{new FileInfo(runnerLoc).Length}");
-    else
-        WriteLine("runner:unknown");
+    // 1. Runner assembly fingerprint (content hash, not mtime — see v10 note above) +
+    //    the selected BC version, so any rewriter/polyfill/patch change in the runner,
+    //    or running against a different BC version, forces a cache miss.
+    AlRunner.Infrastructure.RunnerFingerprint.WriteKeyLines(WriteLine);
 
     WriteLine($"module:{moduleName}");
 

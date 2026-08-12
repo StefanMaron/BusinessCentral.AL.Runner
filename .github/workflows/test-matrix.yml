@@ -98,6 +98,34 @@ jobs:
             -p:AllowBcArtifactDownload=true \
             -c Release
 
+      - name: Restore/save persistent al-runner caches (al-out, compiled-deps, bc-symbols, ncl-cecil, workspace-deps)
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/al-runner
+          # Issue #1815: the AL-output and source-dep cache keys used to embed the runner
+          # DLL's LAST-WRITE-TIME, which moves on every rebuild — so a cache persisted
+          # across CI runs would MISS 100% of the time regardless of this step. Fixed
+          # (RunnerFingerprint, schema v9->v10 / v1->v2) to hash the runner assembly's
+          # CONTENT instead, which is stable across rebuilds of unchanged source. That
+          # alone would collide all 8 BC-version legs on one cache entry (same commit,
+          # same runner content) and let a leg load AL output compiled against another
+          # BC version's symbols, so the workflow key below is BOTH the BC version AND
+          # the runner content hash — mirroring the bc:<version> line the fix added
+          # inside every on-disk key, one more time at the CI-cache-key layer.
+          #
+          # hashFiles() reads the just-built binary, so this step must run after Build.
+          key: al-runner-cache-${{ matrix.target.bc-version }}-${{ hashFiles('AlRunner/bin/Release/net8.0/al-runner.dll') }}
+          # Fallback restore for the caches under ~/.cache/al-runner that are NOT keyed
+          # on the runner fingerprint at all (bc-symbols, ncl-cecil — versioned by BC
+          # artifact version, not runner content). A restore-keys prefix match still
+          # lets those hit on a runner-only change, while al-out/compiled-deps/
+          # workspace-deps entries just MISS-then-repopulate under their own
+          # content-addressed filenames (harmless: stale entries from an old runner
+          # hash sit unused rather than getting served, because the key IS the
+          # filename).
+          restore-keys: |
+            al-runner-cache-${{ matrix.target.bc-version }}-
+
       - name: Download R2R platform apps (Base/System Application, …)
         run: |
           # The corpus ships a SYMBOL-ONLY Base Application in its .alpackages, which is

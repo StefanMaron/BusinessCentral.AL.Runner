@@ -428,12 +428,15 @@ public sealed class DependencyLoader
             ms.Write(bytes, 0, bytes.Length);
         }
 
-        WriteLine("schema:v1");
-        var runnerLoc = typeof(BcAssembler).Assembly.Location;
-        if (!string.IsNullOrEmpty(runnerLoc) && File.Exists(runnerLoc))
-            WriteLine($"runner:{File.GetLastWriteTimeUtc(runnerLoc).Ticks}:{new FileInfo(runnerLoc).Length}");
-        else
-            WriteLine("runner:unknown");
+        // v2 (issue #1815): runner fingerprint switched from mtime+length to a content
+        // hash (mtime moved on every CI rebuild, so a persisted cache could never hit),
+        // and an explicit bc:<version> line was added (a content hash alone is identical
+        // across every BC-version CI leg building the same commit, so without it all legs
+        // would collide on one cache entry and a leg could load a dependency DLL compiled
+        // against another BC version's symbols). v1 entries carried neither and must not
+        // be served under the new key shape.
+        WriteLine("schema:v2");
+        AlRunner.Infrastructure.RunnerFingerprint.WriteKeyLines(WriteLine);
         WriteLine($"app:{manifest.AppId}:{manifest.Publisher}:{manifest.Name}:{manifest.Version}");
         foreach (var dep in manifest.Dependencies.OrderBy(d => $"{d.Publisher}/{d.Name}/{d.Version}/{d.AppId}", StringComparer.OrdinalIgnoreCase))
             WriteLine($"dep:{dep.AppId}:{dep.Publisher}:{dep.Name}:{dep.Version}");
