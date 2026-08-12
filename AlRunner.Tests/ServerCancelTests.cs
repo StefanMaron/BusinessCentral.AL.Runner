@@ -305,24 +305,34 @@ public class ServerCancelTests
     /// clear is still pending: program order on the single server thread guarantees it.
     ///
     /// One iteration already proves the ordering (the test right above this one). This
-    /// repeats it against ONE reused server (no repeated cold BC boot — cheap) so a
+    /// repeats it against ONE reused server (no repeated cold BC boot — the AL-output
+    /// cache also makes every iteration after the first a compile cache HIT) so a
     /// regression that reopens the window — e.g. a future refactor that moves work back
     /// between the write and the clear — has more than one roll of the dice to be
     /// caught by ordinary OS scheduling jitter, without resorting to artificial
     /// CPU/memory pressure (tried and discarded: on a contended shared box it just
     /// produces protocol timeouts, or gets a worker OOM-killed by something else
     /// entirely — noise indistinguishable from a real failure, not signal).
+    ///
+    /// Iteration count is 5, not the 20 first tried during development: each
+    /// runTests+cancel round trip costs real wall clock even on a cache hit (server
+    /// dispatch, JSON framing, process scheduling), measured at roughly 10s/iteration
+    /// against this repo's shared dev box — 20 iterations cost ~4-5 minutes, which is
+    /// indefensible inside a PR whose whole point is cutting CI time. 5 iterations
+    /// (~1-2 minutes here, cheaper again on an uncontended CI runner) keeps the
+    /// jitter-exposure argument above while keeping the tax small.
     /// </summary>
     [SkippableFact]
     public async Task Cancel_AfterRunTestsCompletes_IsNoop_RepeatedAcrossManyRuns()
     {
         TestArtifacts.SkipIfMissing();
 
+        const int iterationCount = 5; // see this test's own doc comment for why 5, not 20.
         var bundle = MakeFastBundle();
         await using var server = await CliServer.StartAsync(ExtraServerArgs());
         var failures = new List<string>();
 
-        for (var i = 0; i < 20; i++)
+        for (var i = 0; i < iterationCount; i++)
         {
             // 120s, not 30s: this test proves ordering (a correctness claim), not
             // latency, and a tight per-call timeout makes the test flaky under
@@ -343,7 +353,7 @@ public class ServerCancelTests
                 failures.Add($"iter {i}: cancel-after-summary returned noop=false");
         }
 
-        Assert.True(failures.Count == 0, $"{failures.Count}/20 iterations hit the race:\n" + string.Join("\n", failures));
+        Assert.True(failures.Count == 0, $"{failures.Count}/{iterationCount} iterations hit the race:\n" + string.Join("\n", failures));
     }
 
     // ------------------------------------------------------------------

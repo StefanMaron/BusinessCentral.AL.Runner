@@ -204,10 +204,11 @@ public class Win32StubsLoudFailureTests
     /// <summary>
     /// GREEN, end-to-end: with a fixture .so dropped at the exact beside-the-binary path
     /// GetOrBuild probes (via the BaseDirectoryForTests test seam), GetOrBuild must load it
-    /// directly — with zero compiler invocation. Proven here by additionally stripping PATH
-    /// down to nothing: if GetOrBuild fell through to the compile-from-source path instead of
-    /// using the prebuilt stub, it would throw (no compiler on PATH) rather than return a
-    /// valid handle.
+    /// directly — with zero compiler invocation. Proven here by additionally forcing the
+    /// "no compiler reachable" branch via the PathEnvironmentForTests seam (#1809 — NOT a real
+    /// PATH mutation; see that seam's doc comment for why): if GetOrBuild fell through to the
+    /// compile-from-source path instead of using the prebuilt stub, it would throw (no
+    /// compiler reachable) rather than return a valid handle.
     /// </summary>
     [SkippableFact]
     public void GetOrBuild_LoadsShippedPrebuiltStub_WithoutInvokingAnyCompiler()
@@ -231,12 +232,11 @@ public class Win32StubsLoudFailureTests
         // but the behaviour under test (GetOrBuild not needing cc at RUN time) doesn't.
         if (proc.ExitCode != 0) { try { Directory.Delete(dir, true); } catch { } return; }
 
-        var savedPath = Environment.GetEnvironmentVariable("PATH");
         var savedOverride = Environment.GetEnvironmentVariable("AL_RUNNER_WIN32_STUBS_SO");
         try
         {
             Environment.SetEnvironmentVariable("AL_RUNNER_WIN32_STUBS_SO", null);
-            Environment.SetEnvironmentVariable("PATH", ""); // no compiler reachable at all
+            Win32Stubs.PathEnvironmentForTests = ""; // no compiler reachable — process-local seam, not real PATH
             Win32Stubs.BaseDirectoryForTests = dir;
             Win32Stubs.ResetForTests();
 
@@ -245,7 +245,7 @@ public class Win32StubsLoudFailureTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PATH", savedPath);
+            Win32Stubs.PathEnvironmentForTests = null;
             Environment.SetEnvironmentVariable("AL_RUNNER_WIN32_STUBS_SO", savedOverride);
             Win32Stubs.BaseDirectoryForTests = null;
             Win32Stubs.ResetForTests();
@@ -255,7 +255,8 @@ public class Win32StubsLoudFailureTests
 
     /// <summary>
     /// Negative direction for the new load-order step: with no prebuilt stub AND no
-    /// compiler on PATH, GetOrBuild must still fail loudly with #1669's message — the new
+    /// compiler reachable (via the PathEnvironmentForTests seam — #1809, not a real PATH
+    /// mutation), GetOrBuild must still fail loudly with #1669's message — the new
     /// "check for a prebuilt" step must not itself swallow the absence and return a
     /// default/zero handle.
     /// </summary>
@@ -265,12 +266,11 @@ public class Win32StubsLoudFailureTests
         var dir = Path.Combine(Path.GetTempPath(), "win32stubs-no-prebuilt-test-" + Guid.NewGuid());
         Directory.CreateDirectory(dir); // deliberately no Win32Stubs/ subfolder inside it
 
-        var savedPath = Environment.GetEnvironmentVariable("PATH");
         var savedOverride = Environment.GetEnvironmentVariable("AL_RUNNER_WIN32_STUBS_SO");
         try
         {
             Environment.SetEnvironmentVariable("AL_RUNNER_WIN32_STUBS_SO", null);
-            Environment.SetEnvironmentVariable("PATH", "");
+            Win32Stubs.PathEnvironmentForTests = ""; // no compiler reachable — process-local seam, not real PATH
             Win32Stubs.BaseDirectoryForTests = dir;
             Win32Stubs.ResetForTests();
 
@@ -279,7 +279,7 @@ public class Win32StubsLoudFailureTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PATH", savedPath);
+            Win32Stubs.PathEnvironmentForTests = null;
             Environment.SetEnvironmentVariable("AL_RUNNER_WIN32_STUBS_SO", savedOverride);
             Win32Stubs.BaseDirectoryForTests = null;
             Win32Stubs.ResetForTests();
