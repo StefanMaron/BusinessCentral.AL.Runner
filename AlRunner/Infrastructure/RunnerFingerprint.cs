@@ -34,7 +34,7 @@
 // cost difference doesn't matter.
 namespace AlRunner.Infrastructure;
 
-public static class RunnerFingerprint
+internal static class RunnerFingerprint
 {
     private static string? _cachedContentHash;
     private static readonly object _lock = new();
@@ -46,7 +46,7 @@ public static class RunnerFingerprint
     /// (one per compiled bundle/dependency) reuses the same hash rather than re-reading
     /// and re-hashing the ~1.6 MB file each time.
     /// </summary>
-    public static string ContentHash
+    internal static string ContentHash
     {
         get
         {
@@ -67,7 +67,7 @@ public static class RunnerFingerprint
     /// missing/empty path, mirroring the previous mtime-based line's "runner:unknown"
     /// fallback for a location-less assembly.
     /// </summary>
-    public static string ComputeContentHash(string assemblyLocation)
+    internal static string ComputeContentHash(string assemblyLocation)
     {
         if (string.IsNullOrEmpty(assemblyLocation) || !File.Exists(assemblyLocation))
             return "unknown";
@@ -98,7 +98,56 @@ public static class RunnerFingerprint
     /// The BC version has not been selected yet (<see cref="BcArtifacts.IsSelected"/> is
     /// false). Select it (<c>BcArtifacts.SelectVersion</c>) before computing any cache key.
     /// </exception>
-    public static void WriteKeyLines(Action<string> writeLine)
+    ///
+    /// <remarks>
+    /// <para><b>Is runner-content + bc:&lt;version&gt; the complete set of "what changes
+    /// codegen but isn't in the runner's own bytes"?</b> Audited deliberately, since this
+    /// PR's whole thesis is that an under-capturing fingerprint used to be masked by an
+    /// accidental mtime invalidation — that masking is gone now, so anything left out here
+    /// is a genuine stale-hit risk, not a free miss.</para>
+    /// <list type="bullet">
+    /// <item><description><b>Roslyn / Mono.Cecil / other NuGet-referenced DLLs</b>
+    /// (<c>Microsoft.CodeAnalysis.CSharp</c>, used by the emit/compile path itself) are
+    /// separate bin-deployed files, not inside al-runner.dll's own bytes — but they're
+    /// exact-pinned <c>PackageReference</c> versions in <c>AlRunner.csproj</c>, and any
+    /// version bump is stamped into al-runner.dll's own AssemblyRef metadata by the
+    /// compiler, so it already changes <see cref="ContentHash"/> without needing a
+    /// separate line. Covered.</description></item>
+    /// <item><description><b>The Cecil-rewritten Ncl.dll content</b> does not need a line:
+    /// the rewrite patches method BODIES only (see precompiled-dll-respect.md — the public
+    /// surface an AL-output bundle compiles against is untouched), so it cannot affect the
+    /// bytes stored in the AL-output cache, only the runtime behaviour of Ncl when the
+    /// cached bundle is later loaded and run — which is gated by ncl-cecil's own separate
+    /// key at every process startup, independent of whether al-out HITs or MISSes. A stale
+    /// rewrite is an ncl-cecil bug, not something an al-out HIT could mask.</description></item>
+    /// <item><description><b>Environment variables</b>: audited every
+    /// <c>Environment.GetEnvironmentVariable</c> read reachable from the emit/compile path
+    /// (<c>AL_RUNNER_EMIT_TIMEOUT_SEC</c>, <c>BCCOMPILER_TIMING</c>/<c>_DIAG</c>/
+    /// <c>_TRACE</c>/<c>_DUMP_CS</c>, <c>AL_RUNNER_ENABLE_R2R</c>/<c>_R2R_REEXECED</c>).
+    /// All are diagnostics, timing output, a debug dump-to-disk side effect, or control
+    /// the runner PROCESS's own R2R execution mode — none alter what bytes
+    /// <c>compilation.Emit</c> produces. None found that qualify.</description></item>
+    /// <item><description><b>BC artifact content vs. the version string</b> — this is the
+    /// one real gap, narrow and CI-safe. <see cref="BcArtifacts.SelectedVersion"/> is
+    /// always the FULL four-part version (<c>System.Version.Parse</c> of the matched
+    /// artifact directory's name) for the standard <c>--bc-version</c> path, which this
+    /// repo's CI always uses (<c>test-matrix.yml</c>) — official artifacts are immutable
+    /// per that exact four-part number in practice, so <c>bc:&lt;version&gt;</c> is
+    /// sufficient there. But <c>--artifact-path</c> (an explicit dev-workflow override that
+    /// bypasses the standard cache and any hash verification — see
+    /// <c>BcArtifacts.VersionFromArtifactRoot</c>) falls back to reading the Ncl.dll's own
+    /// <c>AssemblyName.Version</c> when the pointed-at directory's name doesn't parse as a
+    /// version — and that assembly version is DELIBERATELY coarsened to
+    /// <c>MAJOR.0.0.0</c> (see <c>BcArtifacts.cs</c>'s major-only compatibility check
+    /// comment). Two different <c>--artifact-path</c> directories for the same BC major
+    /// version, both named something other than a parseable version string, would collide
+    /// on the same <c>bc:</c> line despite potentially different actual DLL content. Not
+    /// fixed here: CI never exercises this path, and hashing an entire artifact directory
+    /// on every cache-key computation is a real cost for a dev-only edge case. Flagged so
+    /// it's a documented, deliberate gap rather than a silent one.</description></item>
+    /// </list>
+    /// </remarks>
+    internal static void WriteKeyLines(Action<string> writeLine)
     {
         RequireBcVersionSelected(BcArtifacts.IsSelected);
         WriteKeyLines(writeLine, ContentHash, BcArtifacts.SelectedVersion);
@@ -129,7 +178,7 @@ public static class RunnerFingerprint
     /// needing to swap out the running assembly or the process-global BC version
     /// selection.
     /// </summary>
-    public static void WriteKeyLines(Action<string> writeLine, string contentHash, Version bcVersion)
+    internal static void WriteKeyLines(Action<string> writeLine, string contentHash, Version bcVersion)
     {
         writeLine($"runner:{contentHash}");
         writeLine($"bc:{bcVersion}");
