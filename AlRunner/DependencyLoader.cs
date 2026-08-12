@@ -388,18 +388,17 @@ public sealed class DependencyLoader
         try
         {
             Directory.CreateDirectory(cacheDir);
-            File.WriteAllBytes(cachedDll, compile.AssemblyBytes!);
-            // Persist the report metadata THIS app's emit contributed, so cache
-            // HIT replays it (mirrors the bundle enum-registry sidecar).
             var ownReportIds = AlReportMetadataRegistry.Ids
                 .Where(i => !reportIdsBeforeEmit.Contains(i)).ToArray();
-            int sidecarCount = AlReportMetadataRegistry.SaveSidecar(reportSidecar, ownReportIds);
-            AlReportLayoutRegistry.SaveSidecar(reportLayoutSidecar, ownReportIds);
-            AlPageMetadataRegistry.SaveSidecar(pageMetadataSidecar,
-                AlPageMetadataRegistry.Ids.Where(i => !pageIdsBeforeEmit.Contains(i)).ToArray());
-            AlXmlPortMetadataRegistry.SaveSidecar(xmlPortMetadataSidecar,
-                AlXmlPortMetadataRegistry.Ids.Where(i => !xmlPortIdsBeforeEmit.Contains(i)).ToArray());
-            int enumSidecarCount = AlEnumMetadataRegistry.SaveSidecar(enumRegistrySidecar,
+            var (sidecarCount, enumSidecarCount) = PublishSourceDependencyCache(
+                cachedDll, compile.AssemblyBytes!,
+                reportSidecar, ownReportIds,
+                reportLayoutSidecar,
+                pageMetadataSidecar,
+                AlPageMetadataRegistry.Ids.Where(i => !pageIdsBeforeEmit.Contains(i)).ToArray(),
+                xmlPortMetadataSidecar,
+                AlXmlPortMetadataRegistry.Ids.Where(i => !xmlPortIdsBeforeEmit.Contains(i)).ToArray(),
+                enumRegistrySidecar,
                 AlEnumMetadataRegistry.Ids.Where(i => !enumIdsBeforeEmit.Contains(i)));
             Console.Error.WriteLine(
                 $"[deps] source-cache WROTE: {m.Name} v{m.Version} key={cacheKey[..12]} ({compile.AssemblyBytes!.Length} bytes, {sidecarCount} report-metadata entries, {enumSidecarCount} enum-registry entries)");
@@ -416,6 +415,64 @@ public sealed class DependencyLoader
             Console.Error.WriteLine($"[dep-load-fail] {m.Publisher}_{m.Name} v{m.Version}: LOAD-FAIL — {detail}");
             throw new DependencyLoadException(m.Publisher, m.Name, m.Version.ToString(), "LOAD-FAIL", detail, ex);
         }
+    }
+
+    /// <summary>
+    /// Publishes the six on-disk artifacts of a compiled source-dependency cache entry
+    /// (five metadata sidecars + the DLL). Extracted out of <see cref="LoadOne"/> so
+    /// AlRunner.Tests can pin the write-ordering/atomicity contract directly —
+    /// see AlCacheWriterDependencyCacheOrderingTests.
+    ///
+    /// #1809 follow-up: two concurrent dep compiles that land on the SAME cacheKey
+    /// (same publisher/name/version/appPath — deterministic input) used to race a plain
+    /// File.WriteAllBytes/WriteAllText into these exact paths. A reader's
+    /// File.Exists(cachedDll) check (LoadOne, above) could observe a file mid-write from
+    /// another process's FileStream and hand a torn read to Assembly.Load — same defect
+    /// class as the Ncl.dll SIGBUS fix (NclCecilRewrite.AtomicReplace) and the #1810/#1812
+    /// AL-output cache fix, just with a louder failure mode here
+    /// (BadImageFormatException, not a crash) because Assembly.Load(byte[]) copies rather
+    /// than memory-maps. Parallelizing AlRunner.Tests's subprocess collections (#1809)
+    /// raised the odds of landing in that window.
+    ///
+    /// Fix: publish every artifact via AlCacheWriter.AtomicPublish (temp file in the same
+    /// directory + File.Move(overwrite:true), atomic on both Linux rename(2) and Windows
+    /// MoveFileEx — see AlCacheWriter.cs), and publish the DLL LAST. LoadOne's read side
+    /// only gates on File.Exists(cachedDll), so writing the DLL last makes "the DLL is
+    /// there" imply "every sidecar it depends on is already there too" — the exact
+    /// ordering guarantee AlCacheWriterTests.
+    /// SequencedPublish_SidecarThenDll_DllNeverVisibleBeforeSidecar pins for the
+    /// AL-output cache; this mirrors it for the dependency-compile cache's larger
+    /// 5-sidecars-then-1-DLL shape.
+    /// </summary>
+    ///
+    /// <param name="onSidecarsPublishedBeforeDll">Test-only seam: invoked after all five
+    /// sidecars are committed but before the DLL is published, so a test can assert the
+    /// DLL-not-yet-visible ordering deterministically instead of racing a polling thread
+    /// against the filesystem. Null in production and in every test that doesn't need it
+    /// — see AlCacheWriterDependencyCacheOrderingTests. Same seam shape as
+    /// Win32Stubs.PathEnvironmentForTests.</param>
+    internal static (int sidecarCount, int enumSidecarCount) PublishSourceDependencyCache(
+        string cachedDll, byte[] assemblyBytes,
+        string reportSidecar, int[] ownReportIds,
+        string reportLayoutSidecar,
+        string pageMetadataSidecar, int[] ownPageIds,
+        string xmlPortMetadataSidecar, int[] ownXmlPortIds,
+        string enumRegistrySidecar, IEnumerable<int> ownEnumIds,
+        Action? onSidecarsPublishedBeforeDll = null)
+    {
+        int sidecarCount = AlCacheWriter.AtomicPublish(reportSidecar,
+            tmp => AlReportMetadataRegistry.SaveSidecar(tmp, ownReportIds));
+        AlCacheWriter.AtomicPublish(reportLayoutSidecar,
+            tmp => AlReportLayoutRegistry.SaveSidecar(tmp, ownReportIds));
+        AlCacheWriter.AtomicPublish(pageMetadataSidecar,
+            tmp => AlPageMetadataRegistry.SaveSidecar(tmp, ownPageIds));
+        AlCacheWriter.AtomicPublish(xmlPortMetadataSidecar,
+            tmp => AlXmlPortMetadataRegistry.SaveSidecar(tmp, ownXmlPortIds));
+        int enumSidecarCount = AlCacheWriter.AtomicPublish(enumRegistrySidecar,
+            tmp => AlEnumMetadataRegistry.SaveSidecar(tmp, ownEnumIds));
+        onSidecarsPublishedBeforeDll?.Invoke();
+        AlCacheWriter.AtomicPublish(cachedDll, tmp => File.WriteAllBytes(tmp, assemblyBytes));
+        return (sidecarCount, enumSidecarCount);
     }
 
     private static string ComputeSourceDependencyCacheKey(AppManifest manifest, string appPath)
