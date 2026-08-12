@@ -74,10 +74,29 @@ public sealed class BcCompiler
     // equivalent. Bundling all suites into one Compilation ran into cross-suite
     // object-id collisions and silently produced 0 sources.
     private static NavCA.ISymbolReferenceLoader? _refLoader;
+    // The .app package-scanner half of _refLoader, kept separately so a per-compile
+    // self-exclusion (SelfExcludingSymbolReferenceLoader) can be layered on exactly it —
+    // the JSON-symbols loaders chained ahead of it are unaffected by .app-level exclusion.
+    // Sharing this one object across every compile is what makes the (per-instance,
+    // 8–10 s) symbol warm a once-per-process cost instead of once-per-dependency (#1831).
+    private static NavCA.ISymbolReferenceLoader? _refPackageLoader;
     // Content signature of the inputs _refLoader was built from (package dirs + extra
     // symbol dirs + resolved dep set). GetSharedReferences rebuilds the loader only when
     // this changes, so an unchanged dependency set keeps the warmed loader.
     private static string? _loaderSignature;
+    // How many times the expensive loader (filesystem scan + CreateReferenceLoader +
+    // WarmReferenceLoader) has actually been built in this process, counting both the
+    // shared superset loader and any physically-excluded fallback. The whole point of
+    // #1831 is that this stays at 1 across a bundle's dependency compiles; asserting on
+    // the COUNT is what BcCompilerSharedReferenceMemoTests pins (a duration assertion
+    // would be flaky and would not distinguish "fast" from "correct").
+    private static int _loaderBuildCount;
+    internal static int ReferenceLoaderBuildCount { get { lock (_refSync) return _loaderBuildCount; } }
+    // Single-slot memo for the rare physically-reduced loader — see the fallback branch in
+    // GetSharedReferences. Keyed exactly as the pre-#1831 memo was (reduced scan dirs +
+    // excluded AppId), so a run that needs it behaves exactly as it did before.
+    private static NavCA.ISymbolReferenceLoader? _exclPackageLoader;
+    private static string? _exclSignature;
     private static NavCA.SymbolReferenceSpecification[]? _refSpecs;
     // Cached JSON symbol loaders — one per package dir that has *.symbols.json files.
     // Kept separately so specs can be recomputed with _currentAppId exclusion without
@@ -571,6 +590,74 @@ public sealed class BcCompiler
     private static string? _stageRootCache;
 
     /// <summary>
+    /// One .app package the loader's scan set ended up containing, in scan order. This is
+    /// the exact candidate list BC's own <c>AbstractSymbolReferenceAnalyzer</c> would build
+    /// from the returned dirs, so it is what <see cref="SelfExcludingSymbolReferenceLoader"/>
+    /// reasons about when it decides whether hiding one AppId is equivalent to physically
+    /// deleting its .app from the scan set.
+    /// </summary>
+    internal readonly record struct PackageScanEntry(
+        string Path, Guid AppId, string Publisher, string Name, Version Version);
+
+    // Per-file cache of the two zip reads DeduplicateAppPackageDirs performs on every .app
+    // it scans (ReadManifest + HasSymbolReference). Both re-read the WHOLE package from
+    // disk and unzip it — for a 113-package, 138 MB platform-apps dir that is ~1–2.5 s per
+    // scan, and the scan runs on EVERY GetSharedReferences call (it has to: its output is
+    // what the loader signature is computed from). Keyed by path + length + last-write
+    // ticks, so a package rewritten in place (InProcessAppPackager's synthetic .apps, a
+    // --watch rebuild) invalidates its own entry.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<
+        string, (long Length, long Ticks, AppManifest? Manifest, bool HasSymbolReference)> _appMetaCache = new();
+
+    private static (AppManifest? Manifest, bool HasSymbolReference) ReadAppMeta(FileInfo fi)
+    {
+        var path = fi.FullName;
+        long len, ticks;
+        try { len = fi.Length; ticks = fi.LastWriteTimeUtc.Ticks; }
+        catch { return (AppLoader.ReadManifest(path), AppLoader.HasSymbolReference(path)); }
+
+        if (_appMetaCache.TryGetValue(path, out var hit) && hit.Length == len && hit.Ticks == ticks)
+            return (hit.Manifest, hit.HasSymbolReference);
+
+        var meta = (AppLoader.ReadManifest(path), AppLoader.HasSymbolReference(path));
+        _appMetaCache[path] = (len, ticks, meta.Item1, meta.Item2);
+        return meta;
+    }
+
+    /// <summary>
+    /// Test seam: forget every cached reference loader, its signature, the scan-metadata
+    /// cache and the build counter, so a test can observe rebuild behaviour from a known
+    /// zero. Not used by the runner itself — the caches are process-lifetime by design.
+    /// </summary>
+    internal static void ResetSharedReferencesForTests()
+    {
+        lock (_refSync)
+        {
+            _refLoader = null;
+            _refPackageLoader = null;
+            _loaderSignature = null;
+            _exclPackageLoader = null;
+            _exclSignature = null;
+            _cachedJsonLoaders = null;
+            _refSpecs = null;
+            _siblingSymbols = null;
+            _extraSymbolDirs = null;
+            _resolvedDeps = null;
+            _packageCacheDirs = null;
+            _currentAppId = null;
+            _currentPublisher = null;
+            _currentVersion = null;
+            _usePackageCacheFallback = false;
+            _packageCacheFallbackExcludeId = default;
+            _loaderBuildCount = 0;
+        }
+        _appMetaCache.Clear();
+    }
+
+    private static List<string> DeduplicateAppPackageDirs(List<string> packageDirs, Guid? excludeAppId = null)
+        => DeduplicateAppPackageDirs(packageDirs, excludeAppId, out _);
+
+    /// <summary>
     /// Returns a package-dir list in which each app identity (AppId) appears at most once,
     /// and — when <paramref name="excludeAppId"/> is set — in which that one AppId is absent
     /// entirely. If neither a cross-dir duplicate nor the excluded AppId is found, the
@@ -580,8 +667,10 @@ public sealed class BcCompiler
     /// single-element list pointing at it is returned. Non-.app content (e.g.
     /// *.symbols.json) is intentionally NOT staged here; the caller scans the ORIGINAL dirs
     /// for those. See call site for the AL0275 rationale.
+    /// <paramref name="inventory"/> receives the surviving packages in scan order.
     /// </summary>
-    private static List<string> DeduplicateAppPackageDirs(List<string> packageDirs, Guid? excludeAppId = null)
+    private static List<string> DeduplicateAppPackageDirs(
+        List<string> packageDirs, Guid? excludeAppId, out List<PackageScanEntry> inventory)
     {
         // Collect every .app, keyed by (AppId, Version), preserving dir scan order. The key
         // MUST include the version: the same AppId legitimately ships in multiple versions
@@ -609,15 +698,17 @@ public sealed class BcCompiler
         // source of truth for its own objects during its own compile.
         var seen = new HashSet<(Guid, string)>();
         var picked = new List<string>();
+        inventory = new List<PackageScanEntry>();
         var changed = false;
         foreach (var dir in packageDirs)
         {
-            IEnumerable<string> apps;
-            try { apps = Directory.EnumerateFiles(dir, "*.app", SearchOption.AllDirectories); }
+            IEnumerable<FileInfo> apps;
+            try { apps = new DirectoryInfo(dir).EnumerateFiles("*.app", SearchOption.AllDirectories).ToList(); }
             catch { continue; }
-            foreach (var app in apps)
+            foreach (var appInfo in apps)
             {
-                var m = AppLoader.ReadManifest(app);
+                var app = appInfo.FullName;
+                var (m, hasSymbolReference) = ReadAppMeta(appInfo);
                 if (m == null) continue;
                 if (excludeAppId != null && m.AppId == excludeAppId.Value) { changed = true; continue; }
                 if (!seen.Add((m.AppId, m.Version.ToString()))) { changed = true; continue; }
@@ -639,7 +730,7 @@ public sealed class BcCompiler
                 // paths reach the compiler independently, and BC 27 is far stricter than BC 28
                 // about a malformed package, so a gap here shows up as a version-specific
                 // failure that looks like a runner capability gap and is not one.
-                if (!AppLoader.HasSymbolReference(app)) { changed = true; continue; }
+                if (!hasSymbolReference) { changed = true; continue; }
                 // Normalise to an absolute path BEFORE it is ever used as a symlink target.
                 // `dir` (and therefore `app`) may be a caller-supplied RELATIVE path (e.g. a
                 // relative --package-cache argument, exactly as in issue #1652's repro:
@@ -653,7 +744,9 @@ public sealed class BcCompiler
                 // the emitter crashes on unbound types — the EMIT-ZERO failure this dedup path
                 // is supposed to prevent, not cause. Resolving to an absolute path here makes
                 // every downstream symlink target valid regardless of CWD.
-                picked.Add(Path.GetFullPath(app));
+                var full = Path.GetFullPath(app);
+                picked.Add(full);
+                inventory.Add(new PackageScanEntry(full, m.AppId, m.Publisher, m.Name, m.Version));
             }
         }
         if (!changed) return packageDirs; // common case — leave the hot path untouched
@@ -723,7 +816,14 @@ public sealed class BcCompiler
         // (filesystem scan + symbol warm, ~800ms) once per app. That was invisible while a
         // bundle compiled as a single module; emitting one module per app.json made it fire
         // 68 times on tests/runner-extras and took the run from 23s to 110s.
-        _ = excludeAppId;
+        //
+        // Since #1831 the PRIMARY loader is built from the exclusion-free SUPERSET scan set
+        // (excludeAppId == null), so its signature no longer varies per dependency compile
+        // and one warm loader serves them all; the per-compile exclusion is applied by
+        // SelfExcludingSymbolReferenceLoader on top. excludeAppId is still passed (and still
+        // folded in) for the rare fallback loader built when hiding is NOT provably
+        // equivalent to physically dropping the .app — that one really is per-exclusion.
+        if (excludeAppId != null) parts.Add("E:" + excludeAppId.Value.ToString("N"));
         return string.Join("\n", parts);
     }
 
@@ -732,6 +832,17 @@ public sealed class BcCompiler
     {
         lock (_refSync)
         {
+            // BCCOMPILER_TIMING=1 breaks this method's cost into its four parts. The whole
+            // point of #1831 is that only the first (dedup-scan) runs on a memo HIT; if a
+            // profile ever shows `create-loader`/`warm` repeating per dependency again, the
+            // memo key has drifted back to something exclusion-dependent.
+            bool timing = Environment.GetEnvironmentVariable("BCCOMPILER_TIMING") == "1";
+            var phaseWatch = System.Diagnostics.Stopwatch.StartNew();
+            void Mark(string phase)
+            {
+                if (timing) Console.Error.WriteLine($"[shared-refs] {phase}: {phaseWatch.ElapsedMilliseconds}ms");
+                phaseWatch.Restart();
+            }
             // ── Loader (expensive filesystem scan + symbol warm) — cache and reuse ──
             // The loader scans package dirs for .app files and serves ModuleDefinitions,
             // then WarmReferenceLoader sequentially reads every reachable symbol spec
@@ -778,9 +889,22 @@ public sealed class BcCompiler
             // compile. Staging one .app per unique (non-excluded) AppId is a no-op when there
             // is nothing to dedup/exclude, so the corpus/main-bundle path (which never needs
             // self-exclusion) keeps identical behaviour and cost.
-            var loaderScanDirs = DeduplicateAppPackageDirs(packageDirs, _currentAppId);
+            //
+            // #1831: the exclusion is NOT applied to this scan any more. Applying it here
+            // makes the scan-dir set — and therefore the loader signature — differ for every
+            // dependency compiled from source, so the single memo slot missed every time and
+            // the loader's per-instance symbol warm (8–10 s on the Microsoft test-library dep
+            // set) was paid once per dependency: 8 × ~11.5 s ≈ 92 s of a cold runner-extras
+            // leg. The loader is now built ONCE from the exclusion-free SUPERSET, and the
+            // per-compile exclusion is applied on top by SelfExcludingSymbolReferenceLoader,
+            // which refuses to answer for the excluded AppId using BC's own IsSatisfiedBy
+            // predicate. See that class for why hiding == physically dropping, and for the
+            // one case (a surviving package sharing the excluded app's Name) where it is not
+            // provably so and this code falls back to a physically-reduced loader.
+            var loaderScanDirs = DeduplicateAppPackageDirs(packageDirs, null, out var scanInventory);
+            Mark($"dedup-scan ({scanInventory.Count} pkgs)");
 
-            var loaderSig = ComputeLoaderSignature(loaderScanDirs, _extraSymbolDirs, _resolvedDeps, _currentAppId);
+            var loaderSig = ComputeLoaderSignature(loaderScanDirs, _extraSymbolDirs, _resolvedDeps, null);
             if (_refLoader == null || loaderSig != _loaderSignature)
             {
                 // Chain JSON-symbols loaders for any `*.symbols.json` in the package dirs
@@ -817,6 +941,7 @@ public sealed class BcCompiler
                     .Select(d => new JsonSymbolReferenceLoader(d))
                     .Where(l => l.HasAny)
                     .ToList();
+                Mark("json-loaders");
 
                 // Nothing to serve references from at all — same no-op result as before.
                 // (Deliberately leaves _refLoader / _loaderSignature untouched, as the
@@ -828,6 +953,7 @@ public sealed class BcCompiler
                 NavCA.ISymbolReferenceLoader? packageLoader = loaderScanDirs.Count > 0
                     ? NavSymRef.ReferenceLoaderFactory.CreateReferenceLoader(loaderScanDirs)
                     : null;
+                _refPackageLoader = packageLoader;
                 if (jsonLoaders.Count > 0)
                 {
                     var chain = jsonLoaders.Cast<NavCA.ISymbolReferenceLoader>().ToList();
@@ -838,6 +964,7 @@ public sealed class BcCompiler
                 {
                     _refLoader = packageLoader!;
                 }
+                _loaderBuildCount++;
 
                 // Pre-warm the loader's internal package caches SEQUENTIALLY before the
                 // compiler's parallel reference-loading runs. BC's ReferenceManager fans
@@ -848,7 +975,9 @@ public sealed class BcCompiler
                 // one CPU). Warming every reachable spec here makes that later parallel phase
                 // hit warm caches instead of racing on cold file reads. Best-effort: any
                 // failure just leaves the cold-read path to the compiler as before.
+                Mark("create-loader");
                 WarmReferenceLoader(_refLoader, _resolvedDeps);
+                Mark("warm");
                 _loaderSignature = loaderSig;
             }
 
@@ -946,12 +1075,59 @@ public sealed class BcCompiler
                 if (extra.Length > 0)
                     specs = specs.Concat(extra).ToArray();
             }
+            // ── Per-compile self-exclusion of the PACKAGE loader (#1831) ───────────────
+            // The cached loader was built from the exclusion-free superset. When this
+            // compile is a dependency compiling its own decompiled AL source, that dep's
+            // own .app must not be reachable through the loader (AL0275 self-ambiguity —
+            // see SelfExcludingSymbolReferenceLoader and BcCompilerLoaderSelfExclusionTests).
+            //
+            // The decorator wraps ONLY the package loader and stays at the END of the chain,
+            // exactly where the physically-reduced package loader sat: the JSON-symbols
+            // loaders ahead of it were never affected by the .app-level exclusion (their own
+            // self-exclusion is applied to the SPECS above), and a null answer from the last
+            // child is what a reduced BC loader returns for a package it cannot find.
+            NavCA.ISymbolReferenceLoader? effectiveLoader = _refLoader;
+            if (_currentAppId is Guid selfAppId && _refPackageLoader != null)
+            {
+                var hidden = scanInventory
+                    .Where(e => e.AppId == selfAppId)
+                    .Select(e => (e.Publisher, e.Name, e.AppId, e.Version))
+                    .ToList();
+                if (hidden.Count > 0)
+                {
+                    NavCA.ISymbolReferenceLoader excludedPackageLoader;
+                    if (SelfExcludingSymbolReferenceLoader.CanHideInsteadOfRescan(
+                            scanInventory.Select(e => (e.AppId, e.Name)).ToList(), selfAppId))
+                    {
+                        excludedPackageLoader =
+                            new SelfExcludingSymbolReferenceLoader(_refPackageLoader, hidden);
+                    }
+                    else
+                    {
+                        // Not provably equivalent: some surviving package shares the excluded
+                        // app's Name (or an AppId is empty), so deleting the .app could promote
+                        // that survivor to winner where hiding would answer "not found". Do
+                        // what the runner did before #1831 — a loader over a physically reduced
+                        // scan set, memoised in its own slot so repeats within a run are free.
+                        excludedPackageLoader = GetPhysicallyExcludedPackageLoader(packageDirs, selfAppId);
+                        Mark($"excluded-loader rebuild (name collision, excl={selfAppId})");
+                    }
+
+                    var chain = new List<NavCA.ISymbolReferenceLoader>();
+                    if (_cachedJsonLoaders != null)
+                        chain.AddRange(_cachedJsonLoaders.Cast<NavCA.ISymbolReferenceLoader>());
+                    chain.Add(excludedPackageLoader);
+                    effectiveLoader = chain.Count == 1
+                        ? chain[0]
+                        : new CompositeSymbolReferenceLoader(chain);
+                }
+            }
+
             // Siblings emitted earlier in this bundle. Chained ahead of the cached loader
             // for THIS call only — never stored as _refLoader and never folded into the
             // loader signature, so a sibling appearing mid-bundle costs a dictionary lookup
             // rather than a rebuild + symbol warm. The same self-exclusion applies: an app
             // must not reference its own symbols alongside its own source (AL0275).
-            NavCA.ISymbolReferenceLoader? effectiveLoader = _refLoader;
             if (_siblingSymbols != null && _siblingSymbols.HasAny)
             {
                 var siblingSpecs = _siblingSymbols.EnumerateSpecs()
@@ -978,6 +1154,28 @@ public sealed class BcCompiler
             _refSpecs = specs; // keep for any legacy callers that read _refSpecs directly
             return (effectiveLoader, specs);
         }
+    }
+
+    /// <summary>
+    /// The pre-#1831 path: a package loader over a scan set from which every <c>.app</c> of
+    /// <paramref name="excludeAppId"/> has been physically removed, warmed like the shared
+    /// one. Only reached when hiding is not provably equivalent to removing (see
+    /// <see cref="SelfExcludingSymbolReferenceLoader.CanHideInsteadOfRescan"/>). Memoised in
+    /// its own single slot so a repeat of the same exclusion inside one run is free.
+    /// Caller holds <see cref="_refSync"/>.
+    /// </summary>
+    private static NavCA.ISymbolReferenceLoader GetPhysicallyExcludedPackageLoader(
+        List<string> packageDirs, Guid excludeAppId)
+    {
+        var reducedDirs = DeduplicateAppPackageDirs(packageDirs, excludeAppId);
+        var sig = ComputeLoaderSignature(reducedDirs, _extraSymbolDirs, _resolvedDeps, excludeAppId);
+        if (_exclPackageLoader != null && sig == _exclSignature) return _exclPackageLoader;
+
+        _exclPackageLoader = NavSymRef.ReferenceLoaderFactory.CreateReferenceLoader(reducedDirs);
+        _exclSignature = sig;
+        _loaderBuildCount++;
+        WarmReferenceLoader(_exclPackageLoader, _resolvedDeps);
+        return _exclPackageLoader;
     }
 
     /// <summary>

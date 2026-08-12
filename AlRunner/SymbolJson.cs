@@ -203,6 +203,129 @@ public static class DepsSidecarWriter
 }
 
 /// <summary>
+/// Hides every package of ONE AppId from an already-built package-scanner loader, so a
+/// dependency compiling its own decompiled AL source never sees its own <c>.app</c> as an
+/// external reference (the AL0275 self-ambiguity that
+/// <c>BcCompiler.DeduplicateAppPackageDirs(dirs, excludeAppId)</c> prevents by physically
+/// dropping that <c>.app</c> from the scan set).
+///
+/// Why hide instead of physically dropping
+/// ---------------------------------------
+/// Physically dropping means a DIFFERENT scan-dir set per excluded app, which means a
+/// different <c>BcCompiler.ComputeLoaderSignature</c>, which means a fresh
+/// <c>MemoryCachedSymbolReferenceLoader</c> — whose whole symbol warm (every reachable
+/// <c>SymbolReference.json</c> re-read and re-parsed out of its <c>.app</c>; 8–10 s on the
+/// Microsoft test-library dep set) is per-instance and therefore paid again for every
+/// Tier-3 dependency compile. Issue #1831: 8 dependencies × ~11.5 s ≈ 92 s per cold
+/// runner-extras leg. Hiding lets ONE warm loader serve every compile.
+///
+/// Why hiding is equivalent to dropping
+/// ------------------------------------
+/// BC resolves a reference in <c>AbstractSymbolReferenceAnalyzer.FindMatchingPackageFile</c>:
+/// enumerate every <c>.app</c> in the scan dirs, keep the one with the highest
+/// <c>AppVersion</c> for which <c>spec.IsSatisfiedBy(publisher, name, appId, version)</c>
+/// holds. Deleting a package therefore changes exactly one thing: it is no longer a
+/// candidate. Refusing to answer for it is the same edit to the candidate set — PROVIDED
+/// no surviving package could have become the winner in its place. That proviso is
+/// checked by <see cref="CanHideInsteadOfRescan"/> before this decorator is used; when it
+/// does not hold the caller falls back to a physically-reduced scan set.
+///
+/// The predicate used here is BC's own public <c>SymbolReferenceSpecification.IsSatisfiedBy</c>
+/// — the same call BC's analyzer makes — so "would this package have answered?" is decided
+/// by BC, not by a re-implementation of its matching rules.
+///
+/// Known, deliberate difference: BC's analyzer also emits an <c>AL1022</c>
+/// ("dependency could not be found") diagnostic when a spec matches nothing. A hidden
+/// package produces no such diagnostic. AL1022 is a DECLARATION diagnostic; the
+/// <c>Compilation.Emit</c> path that compiles Tier-3 dependencies never inspects
+/// declaration diagnostics (see BcCompiler.Emit), and no binding decision differs — the
+/// module is absent either way. <c>EmitDepSymbols</c>, the one path that does inspect them,
+/// compiles a source-only app that by construction has no <c>.app</c> in the scan set to
+/// exclude.
+/// </summary>
+public sealed class SelfExcludingSymbolReferenceLoader : ISymbolReferenceLoader
+{
+    private readonly ISymbolReferenceLoader _inner;
+    private readonly IReadOnlyList<(string Publisher, string Name, Guid AppId, Version Version)> _hidden;
+
+    /// <param name="inner">The loader built over the FULL (superset) scan set.</param>
+    /// <param name="hidden">
+    /// Every package of the excluded AppId that the superset scan set contains — all of its
+    /// versions, because <c>DeduplicateAppPackageDirs</c>' exclusion drops all of them.
+    /// </param>
+    public SelfExcludingSymbolReferenceLoader(
+        ISymbolReferenceLoader inner,
+        IReadOnlyList<(string Publisher, string Name, Guid AppId, Version Version)> hidden)
+    {
+        _inner = inner ?? throw new ArgumentNullException(nameof(inner));
+        _hidden = hidden ?? throw new ArgumentNullException(nameof(hidden));
+    }
+
+    /// <summary>
+    /// True when <paramref name="reference"/> would have been answered by one of the hidden
+    /// packages — i.e. exactly when deleting those packages changes this lookup's outcome.
+    /// </summary>
+    public bool Hides(SymbolReferenceSpecification reference)
+    {
+        foreach (var h in _hidden)
+            if (reference.IsSatisfiedBy(h.Publisher, h.Name, h.AppId, h.Version))
+                return true;
+        return false;
+    }
+
+    /// <summary>
+    /// Is hiding <paramref name="excludeAppId"/> observably identical to deleting its
+    /// <c>.app</c> files from <paramref name="inventory"/> (the loader's scan set)?
+    ///
+    /// It is, unless some SURVIVING package could satisfy a spec that a hidden package
+    /// satisfies — then deleting would promote that survivor to winner while hiding just
+    /// answers "not found". Reading <c>SymbolReferenceSpecification.IsSatisfiedBy</c>, a
+    /// package can satisfy a spec three ways: (a) <c>spec.AppId == package.AppId</c>,
+    /// (b) name+publisher equality when either side's AppId is <c>Guid.Empty</c>, or
+    /// (c) name equality for the Microsoft "Application"/platform special case. A survivor
+    /// has a different AppId, so (a) can never make it a stand-in for a hidden package; (b)
+    /// and (c) both require NAME equality. Hence the sufficient condition below: no
+    /// surviving package shares a hidden package's Name, and no AppId in play is
+    /// <c>Guid.Empty</c> (which would let route (b) cross name boundaries).
+    /// </summary>
+    public static bool CanHideInsteadOfRescan(
+        IReadOnlyList<(Guid AppId, string Name)> inventory, Guid excludeAppId)
+    {
+        if (excludeAppId == Guid.Empty) return false;
+
+        var hiddenNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var e in inventory)
+            if (e.AppId == excludeAppId) hiddenNames.Add(e.Name ?? string.Empty);
+        if (hiddenNames.Count == 0) return true; // nothing to hide — trivially equivalent
+
+        foreach (var e in inventory)
+        {
+            if (e.AppId == excludeAppId) continue;
+            if (e.AppId == Guid.Empty) return false;
+            if (hiddenNames.Contains(e.Name ?? string.Empty)) return false;
+        }
+        return true;
+    }
+
+    // BC's own AbstractSymbolReferenceLoader returns null (never throws) when no package in
+    // the scan set matches — see its ReadFromNavAppPackage returning default(T). Returning
+    // null is therefore what a physically-reduced BC loader does, and it is also the
+    // "not mine" signal CompositeSymbolReferenceLoader falls through on.
+    public ModuleDefinition? LoadModule(SymbolReferenceSpecification reference, IList<Diagnostic> diagnostics)
+        => Hides(reference) ? null : _inner.LoadModule(reference, diagnostics);
+
+    public ModuleInfo LoadModuleInfo(SymbolReferenceSpecification reference, IList<Diagnostic> diagnostics, LoadModuleInfoFlags flags)
+        => Hides(reference) ? null! : _inner.LoadModuleInfo(reference, diagnostics, flags);
+
+    // AbstractSymbolReferenceLoader.GetDependencies returns Enumerable.Empty<> when the
+    // package is not in the scan set (ReadFromNavAppPackageManifest yields null → `?? Empty`).
+    public IEnumerable<SymbolReferenceSpecification> GetDependencies(SymbolReferenceSpecification reference, IList<Diagnostic> diagnostics)
+        => Hides(reference)
+            ? Enumerable.Empty<SymbolReferenceSpecification>()
+            : _inner.GetDependencies(reference, diagnostics);
+}
+
+/// <summary>
 /// Tries each child loader in order; first one that resolves a spec wins. Lets us layer
 /// the JSON-symbols loader on top of the standard package-scanner loader without
 /// either replacing the other.
