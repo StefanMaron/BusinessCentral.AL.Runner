@@ -82,6 +82,18 @@ public class Codeunit99989ObjectEventMechanismFixture
 /// handled) — so it was silently discarded. That is exactly the silent-drop shape
 /// loud-failures.md forbids, and this test — run against pre-fix code — fails with a null
 /// lookup for all four kinds, proving the RED state. Post-fix it is GREEN.
+///
+/// SHARED-STATE NOTE: ResetForReload() clears EventSubscriberPatches' global static
+/// registries process-wide. Safe today only because no other test SOURCE FILE touches
+/// EventSubscriberPatches (DispatchEventPublisherDeclTypeTests.cs only exercises the pure,
+/// state-free TryDecodeEventPublisherDeclType seam) and because xUnit here runs one test
+/// class's methods sequentially by default — this class isn't itself parallel-unsafe
+/// against itself. If a SECOND test class is ever added that also calls ResetForReload/
+/// EnsureRegistryFresh/GetObjectEventSubscribers (or any other EventSubscriberPatches
+/// registry accessor), both classes must join a shared serial xUnit collection (see
+/// BcEngineCollection.cs for the established DisableParallelization pattern) — otherwise
+/// xUnit's cross-class parallelization will interleave two tests' resets/scans of the
+/// same static dictionaries.
 /// </summary>
 public class ObjectEventSubscriberRegistrationMechanismTests
 {

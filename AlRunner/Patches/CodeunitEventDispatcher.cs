@@ -34,10 +34,12 @@ public static partial class BcRuntime
     internal const string PublisherKindQuery = "Query";
     internal const string PublisherKindXmlPort = "XmlPort";
 
-    // Checked longest-prefix-first so "XmlPort" (7 chars) isn't mis-decoded as a match for
-    // "Page"/"Report" etc. (it can't be, since none of those are string-prefixes of each
-    // other, but keeping the array in a stable, deliberate order documents that this was
-    // considered rather than accidental).
+    // These six prefixes are mutually non-prefixing (none is a string-prefix of another),
+    // so iteration order here is irrelevant — this is NOT sorted longest-first. The closest
+    // near-miss is "Record" vs "Report", which merely SHARE a "Re" prefix; neither is a
+    // prefix of the other, so it still doesn't matter. If a future object kind's prefix
+    // IS a prefix of (or is prefixed by) one already in this list, order starts to matter
+    // and this array must become longest-first — check that before adding a new entry.
     private static readonly string[] _publisherKindPrefixes =
     {
         PublisherKindCodeunit, PublisherKindTable,
