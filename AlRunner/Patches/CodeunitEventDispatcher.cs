@@ -21,13 +21,36 @@ public static partial class BcRuntime
 
     internal const string PublisherKindCodeunit = "Codeunit";
     internal const string PublisherKindTable = "Record";
+    // Page/Report/Query/XmlPort own-code (triggers, procedures, manually-declared events)
+    // compiles to a class literally named "<Kind><N>" — unlike Table, there is no separate
+    // metadata-only class to disambiguate from (issue #1794). Confirmed empirically by
+    // reflecting over an emitted test assembly: a manually-declared [IntegrationEvent] on
+    // each of these object kinds produces "Page90101+OnProbePageEvent_Scope",
+    // "Report90102+OnProbeReportEvent_Scope", "Query90103+OnProbeQueryEvent_Scope",
+    // "XmlPort90104+OnProbeXmlPortEvent_Scope" — each carrying the same
+    // γeventScope : NavEventScope static field a codeunit publisher's scope class does.
+    internal const string PublisherKindPage = "Page";
+    internal const string PublisherKindReport = "Report";
+    internal const string PublisherKindQuery = "Query";
+    internal const string PublisherKindXmlPort = "XmlPort";
+
+    // Checked longest-prefix-first so "XmlPort" (7 chars) isn't mis-decoded as a match for
+    // "Page"/"Report" etc. (it can't be, since none of those are string-prefixes of each
+    // other, but keeping the array in a stable, deliberate order documents that this was
+    // considered rather than accidental).
+    private static readonly string[] _publisherKindPrefixes =
+    {
+        PublisherKindCodeunit, PublisherKindTable,
+        PublisherKindPage, PublisherKindReport, PublisherKindQuery, PublisherKindXmlPort,
+    };
 
     /// <summary>
     /// Decode a publisher scope's declaring-type name into (kind, publisherId) —
     /// e.g. <c>"Codeunit50041"</c> → <c>(PublisherKindCodeunit, 50041)</c>,
-    /// <c>"Record60976"</c> → <c>(PublisherKindTable, 60976)</c>. Any other prefix
-    /// (Page/Report/Query/XmlPort/…) returns false — those publisher kinds are not
-    /// registered by <c>EventSubscriberPatches.EnsureRegistryFresh</c> at all yet.
+    /// <c>"Record60976"</c> → <c>(PublisherKindTable, 60976)</c>,
+    /// <c>"Page90101"</c> → <c>(PublisherKindPage, 90101)</c>. Any other prefix returns
+    /// false — those publisher kinds are not registered by
+    /// <c>EventSubscriberPatches.EnsureRegistryFresh</c>.
     ///
     /// Extracted as a pure, unit-testable seam (see DispatchObserveAsyncResultTests.cs for the
     /// established pattern of pinning dispatcher behavior at a seam that can't be reached from
@@ -35,10 +58,13 @@ public static partial class BcRuntime
     /// prefix was recognized, so a table object's OWN code — which compiles to a class named
     /// "Record&lt;N&gt;", not "Table&lt;N&gt;" — never matched, and a manually-declared
     /// [IntegrationEvent] raised from inside a table's trigger silently never dispatched.
+    /// Issue #1794 extends the same decode to Page/Report/Query/XmlPort publishers, which had
+    /// no branch here at all (not even a wrong one) — their manually-declared events were never
+    /// recognized as a dispatchable publisher, so a subscriber to one silently never fired.
     /// </summary>
     internal static bool TryDecodeEventPublisherDeclType(string declTypeName, out string publisherKind, out int publisherId)
     {
-        foreach (var prefix in new[] { PublisherKindCodeunit, PublisherKindTable })
+        foreach (var prefix in _publisherKindPrefixes)
         {
             if (declTypeName.StartsWith(prefix, StringComparison.Ordinal)
                 && int.TryParse(declTypeName.AsSpan(prefix.Length), out publisherId))
@@ -118,6 +144,8 @@ public static partial class BcRuntime
         {
             PublisherKindCodeunit => EventSubscriberPatches.GetCodeunitSubscribers(publisherId, eventMethodName),
             PublisherKindTable => EventSubscriberPatches.GetTableEventSubscribers(publisherId, eventMethodName),
+            PublisherKindPage or PublisherKindReport or PublisherKindQuery or PublisherKindXmlPort
+                => EventSubscriberPatches.GetObjectEventSubscribers(publisherKind, publisherId, eventMethodName),
             _ => null,
         };
         if (subs == null || subs.Count == 0) return;

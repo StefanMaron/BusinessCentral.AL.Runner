@@ -48,6 +48,21 @@ public static class EventSubscriberPatches
     /// </summary>
     private readonly record struct TableEventKey(int PublisherTableId, string EventMethodName);
 
+    /// <summary>
+    /// Key for a manually-declared [IntegrationEvent]/[BusinessEvent] published from inside a
+    /// PAGE/REPORT/QUERY/XMLPORT object's own code (issue #1794 — the sibling gap #1770's
+    /// table-publisher fix deliberately left out). Unlike a table, none of these four object
+    /// kinds has BC's fixed NavTriggerEventType ordinal set at all (that's table-trigger-only),
+    /// so every manually-declared event on one of them goes through this single universal path
+    /// — no ordinal branch to fall out of first. <see cref="PublisherKind"/> is the CLR
+    /// declaring-type name prefix ("Page"/"Report"/"Query"/"XmlPort" — see
+    /// <see cref="BcRuntime.TryDecodeEventPublisherDeclType"/>), confirmed empirically (not
+    /// guessed — see PR description) to be the object's OWN generated class name, with no
+    /// separate metadata-only class to disambiguate from the way Table has Record&lt;N&gt; vs
+    /// Table&lt;N&gt;.
+    /// </summary>
+    private readonly record struct ObjectEventKey(string PublisherKind, int PublisherId, string EventMethodName);
+
     private sealed record SubscriberHandle(
         Type CodeunitType,
         int CodeunitId,
@@ -66,6 +81,7 @@ public static class EventSubscriberPatches
     private static readonly Dictionary<Key, List<SubscriberHandle>> _byKey = new();
     private static readonly Dictionary<CodeunitEventKey, List<MethodInfo>> _byCodeunitKey = new();
     private static readonly Dictionary<TableEventKey, List<MethodInfo>> _byTableEventKey = new();
+    private static readonly Dictionary<ObjectEventKey, List<MethodInfo>> _byObjectEventKey = new();
     private static readonly List<ValidateSub> _validateSubs = new();
 
     /// <summary>
@@ -91,6 +107,20 @@ public static class EventSubscriberPatches
         lock (_lock)
         {
             return _byTableEventKey.TryGetValue(new TableEventKey(publisherTableId, eventMethodName), out var l) ? l : null;
+        }
+    }
+
+    /// <summary>
+    /// Look up subscribers to a manually-declared event published from a Page/Report/Query/
+    /// XmlPort object's own code, keyed by (publisherKind, publisherId, eventMethodName).
+    /// See <see cref="ObjectEventKey"/>.
+    /// </summary>
+    public static IReadOnlyList<MethodInfo>? GetObjectEventSubscribers(string publisherKind, int publisherId, string eventMethodName)
+    {
+        EnsureRegistryFresh();
+        lock (_lock)
+        {
+            return _byObjectEventKey.TryGetValue(new ObjectEventKey(publisherKind, publisherId, eventMethodName), out var l) ? l : null;
         }
     }
     private static readonly HashSet<MethodInfo> _injectedSubscriberMethods = new();
@@ -195,11 +225,13 @@ public static class EventSubscriberPatches
         DoInjectValidate(_publisherLookup);
         SeedCodeunitEventScopeSentinels();
         SeedTableEventScopeSentinels();
+        SeedObjectEventScopeSentinels();
     }
 
     private static readonly HashSet<Type> _seededScopeTypes = new();
     private static readonly Dictionary<int, Type?> _codeunitTypeCache = new();
     private static readonly Dictionary<int, Type?> _tableTypeCache = new();
+    private static readonly Dictionary<(string Kind, int Id), Type?> _objectEventTypeCache = new();
     private static object? _sentinelNavEventScope;
 
     /// <summary>
@@ -237,6 +269,32 @@ public static class EventSubscriberPatches
             _byTableEventKey.Count,
             FindTableClrType,
             "Table");
+    }
+
+    /// <summary>
+    /// Same as <see cref="SeedCodeunitEventScopeSentinels"/>, for manually-declared events
+    /// published from a Page/Report/Query/XmlPort object's own code (<see cref="_byObjectEventKey"/>,
+    /// issue #1794). Each of those object kinds' own-code class carries the exact same static
+    /// <c>γeventScope</c> + <c>OnRunEventAsync</c> shape a codeunit publisher's does — only the
+    /// declaring-type name prefix differs ("Page"/"Report"/"Query"/"XmlPort" instead of
+    /// "Codeunit") — confirmed empirically (see PR description), not guessed. Grouped by kind so
+    /// the per-call diagnostic label (<c>publisherKindLabel</c>) stays accurate per object type.
+    /// </summary>
+    private static void SeedObjectEventScopeSentinels()
+    {
+        if (_byObjectEventKey.Count == 0) return;
+        foreach (var kind in _byObjectEventKey.Keys.Select(k => k.PublisherKind).Distinct().ToList())
+        {
+            var keysForKind = _byObjectEventKey.Keys
+                .Where(k => k.PublisherKind == kind)
+                .Select(k => (k.PublisherId, k.EventMethodName))
+                .ToList();
+            SeedEventScopeSentinelsFor(
+                keysForKind,
+                keysForKind.Count,
+                id => FindObjectEventClrType(kind, id),
+                kind);
+        }
     }
 
     /// <summary>
@@ -334,9 +392,11 @@ public static class EventSubscriberPatches
             _byKey.Clear();
             _byCodeunitKey.Clear();
             _byTableEventKey.Clear();
+            _byObjectEventKey.Clear();
             _validateSubs.Clear();
             _codeunitTypeCache.Clear();
             _tableTypeCache.Clear();
+            _objectEventTypeCache.Clear();
             _injectedSubscriberMethods.Clear();
             _seededScopeTypes.Clear();
             _lastScannedCount = 0;
@@ -355,11 +415,32 @@ public static class EventSubscriberPatches
     private static Type? FindTableClrType(int tableId) =>
         FindClrType(_tableTypeCache, "Record", tableId);
 
+    // Page/Report/Query/XmlPort own-code compiles to a class literally named "<Kind><N>" — no
+    // Record<N>-vs-Table<N> split to worry about (issue #1794; see the empirical confirmation
+    // on TryDecodeEventPublisherDeclType). Cached per (kind, id) since one dictionary now
+    // serves all four object kinds.
+    private static Type? FindObjectEventClrType(string publisherKind, int publisherId)
+    {
+        if (_objectEventTypeCache.TryGetValue((publisherKind, publisherId), out var cached)) return cached;
+        var found = ResolveBusinessApplicationType(publisherKind + publisherId);
+        _objectEventTypeCache[(publisherKind, publisherId)] = found;
+        return found;
+    }
+
     private static Type? FindClrType(Dictionary<int, Type?> cache, string namePrefix, int objectId)
     {
         if (cache.TryGetValue(objectId, out var cached)) return cached;
-        var name = namePrefix + objectId;
-        Type? found = null;
+        var found = ResolveBusinessApplicationType(namePrefix + objectId);
+        cache[objectId] = found;
+        return found;
+    }
+
+    /// <summary>Scan loaded assemblies (skipping stale bundle copies and framework/runner
+    /// assemblies) for a type named <c>Microsoft.Dynamics.Nav.BusinessApplication.&lt;name&gt;</c>.
+    /// Shared by <see cref="FindClrType"/> (single-int-keyed callers) and
+    /// <see cref="FindObjectEventClrType"/> (kind+id-keyed).</summary>
+    private static Type? ResolveBusinessApplicationType(string name)
+    {
         foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
         {
             var n = asm.GetName().Name ?? "";
@@ -369,11 +450,10 @@ public static class EventSubscriberPatches
                 || n.StartsWith("Microsoft.CodeAnalysis")) continue;
             // Skip a previous bundle assembly still loaded after a server reload.
             if (BcRuntime.IsStaleBundleAssembly(asm)) continue;
-            try { var t = asm.GetType("Microsoft.Dynamics.Nav.BusinessApplication." + name); if (t != null) { found = t; break; } }
+            try { var t = asm.GetType("Microsoft.Dynamics.Nav.BusinessApplication." + name); if (t != null) return t; }
             catch { }
         }
-        cache[objectId] = found;
-        return found;
+        return null;
     }
 
     private static void DoInject(Func<int, object?> getNclMetaTable)
@@ -741,6 +821,26 @@ public static class EventSubscriberPatches
                             clst.Add(m);
                             added++;
                         }
+                        else if (ObjectTypeToEventPublisherKind(publisherObjType) is string okind)
+                        {
+                            // Page(8)/Report(3)/Query(9)/XmlPort(6): a manually-declared
+                            // [IntegrationEvent]/[BusinessEvent] on one of these object kinds
+                            // (issue #1794 — the gap #1770's table fix deliberately left open).
+                            // None of them has BC's fixed NavTriggerEventType ordinal set (that's
+                            // table-trigger-only), so unlike the Table branch above there is no
+                            // ordinal check to fall through first — every event from these kinds
+                            // is dispatched via the same universal <EventName>_Scope path codeunit
+                            // publishers use. Before this branch existed, subscribers to these
+                            // events were read off the assembly (scannedAttrs still counted them)
+                            // and then silently discarded — never added to any registry, the
+                            // silent-drop shape loud-failures.md warns about.
+                            var okey = new ObjectEventKey(okind, publisherId, methodName);
+                            if (!_byObjectEventKey.TryGetValue(okey, out var olst))
+                                _byObjectEventKey[okey] = olst = new List<MethodInfo>();
+                            if (olst.Contains(m)) continue;
+                            olst.Add(m);
+                            added++;
+                        }
                     }
                 }
             }
@@ -816,6 +916,28 @@ public static class EventSubscriberPatches
         "OnBeforeValidateEvent" => 9,
         "OnAfterValidateEvent"  => 10,
         _ => 0,
+    };
+
+    /// <summary>
+    /// Maps a [NavEventSubscriberAttribute] TargetObjectId's ObjectType ordinal (BC's
+    /// <c>Microsoft.Dynamics.Nav.Types.ObjectType</c> enum, read via reflection in
+    /// <see cref="TryReadAttribute"/>) to the CLR declaring-type name prefix that object
+    /// kind's own code compiles to, for the four kinds handled by
+    /// <see cref="_byObjectEventKey"/> (issue #1794). Values confirmed by reflecting over
+    /// <c>Microsoft.Dynamics.Nav.Types.dll</c>'s ObjectType enum, not guessed:
+    /// Table=1, Report=3, CodeUnit=5, XmlPort=6, Page=8, Query=9 (Table and CodeUnit are
+    /// handled by their own existing branches above and are deliberately absent here).
+    /// Returns null for every other ordinal (Form/Dataport/MenuSuite/System/extension object
+    /// types/…) — those are a separate, not-yet-investigated gap, left alone here rather than
+    /// guessed at (no-assumption-fixes.md).
+    /// </summary>
+    private static string? ObjectTypeToEventPublisherKind(int objectTypeOrdinal) => objectTypeOrdinal switch
+    {
+        3 => BcRuntime.PublisherKindReport,
+        6 => BcRuntime.PublisherKindXmlPort,
+        8 => BcRuntime.PublisherKindPage,
+        9 => BcRuntime.PublisherKindQuery,
+        _ => null,
     };
 
     private static object? BuildSubscription(SubscriberHandle sub)
