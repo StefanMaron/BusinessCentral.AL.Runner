@@ -90,7 +90,7 @@ public class Win32StubsLoudFailureTests
     /// environment) purely as test fixture data; the assertion is that Win32Stubs picks it
     /// up via the env var, not that this specific test environment has a compiler.
     /// </summary>
-    [Fact]
+    [SkippableFact]
     public void GetOrBuild_HonoursSoOverride_WhenFileExists()
     {
         var dir = Path.Combine(Path.GetTempPath(), "win32stubs-test-" + Guid.NewGuid());
@@ -105,7 +105,8 @@ public class Win32StubsLoudFailureTests
         proc.WaitForExit(10000);
         // Skip (not fail) on a machine with no compiler at all — the override path itself
         // is what's under test, not whether this box can compile C.
-        if (proc.ExitCode != 0) return;
+        TestArtifacts.SkipIf(proc.ExitCode != 0,
+            $"no working C compiler on this machine: `cc -shared` exited {proc.ExitCode}.");
 
         var saved = Environment.GetEnvironmentVariable("AL_RUNNER_WIN32_STUBS_SO");
         try
@@ -159,11 +160,12 @@ public class Win32StubsLoudFailureTests
     /// which is itself keyed off the live <c>RuntimeInformation.ProcessArchitecture</c> so
     /// the test can't fake a mismatched RID past it.
     /// </summary>
-    [Fact]
+    [SkippableFact]
     public void LocatePrebuiltSo_ReturnsComposedPath_WhenFileExists()
     {
         var name = Win32Stubs.PrebuiltStubFileName();
-        if (name is null) return; // unsupported RID (e.g. not Linux, or non-x64/arm64) — nothing to assert
+        TestArtifacts.SkipIf(name is null,
+            $"no prebuilt-stub convention for this RID ({System.Runtime.InteropServices.RuntimeInformation.RuntimeIdentifier}) — Linux x64/arm64 only.");
         var expected = Path.Combine("/fake/base", "Win32Stubs", name);
 
         var found = Win32Stubs.LocatePrebuiltSo("/fake/base", path => path == expected);
@@ -189,11 +191,12 @@ public class Win32StubsLoudFailureTests
     /// the wrong architecture's shim (an ELF class mismatch that fails at NativeLibrary.Load
     /// time with a confusing "wrong ELF class" error, not at compile time).
     /// </summary>
-    [Fact]
+    [SkippableFact]
     public void PrebuiltStubFileName_NamesTheRidExplicitly_WhenSupported()
     {
         var name = Win32Stubs.PrebuiltStubFileName();
-        if (name is null) return; // e.g. running this test suite on macOS/Windows
+        TestArtifacts.SkipIf(name is null,
+            $"no prebuilt-stub convention for this RID ({System.Runtime.InteropServices.RuntimeInformation.RuntimeIdentifier}) — Linux x64/arm64 only.");
         Assert.True(name is "libwin32_stubs.linux-x64.so" or "libwin32_stubs.linux-arm64.so",
             $"Unexpected prebuilt stub filename: {name}");
     }
@@ -206,11 +209,12 @@ public class Win32StubsLoudFailureTests
     /// using the prebuilt stub, it would throw (no compiler on PATH) rather than return a
     /// valid handle.
     /// </summary>
-    [Fact]
+    [SkippableFact]
     public void GetOrBuild_LoadsShippedPrebuiltStub_WithoutInvokingAnyCompiler()
     {
         var ridName = Win32Stubs.PrebuiltStubFileName();
-        if (ridName is null) return; // no prebuilt convention for this OS/arch — nothing to prove here
+        TestArtifacts.SkipIf(ridName is null,
+            $"no prebuilt-stub convention for this RID ({System.Runtime.InteropServices.RuntimeInformation.RuntimeIdentifier}) — Linux x64/arm64 only.");
 
         var dir = Path.Combine(Path.GetTempPath(), "win32stubs-prebuilt-test-" + Guid.NewGuid());
         var stubDir = Path.Combine(dir, "Win32Stubs");

@@ -41,10 +41,11 @@ public sealed class EnumCaptionCaptureTests : IDisposable
         try { Directory.Delete(_root, recursive: true); } catch { /* best-effort cleanup */ }
     }
 
-    [Fact]
+    [SkippableFact]
     public void CaptureOutputter_ReadsDeclaredCaption_AndFallsBackToNameWhenAbsent()
     {
-        if (!_engine.Ready) return; // no BC artifacts provisioned — skip, don't fail
+        TestArtifacts.SkipIf(!_engine.Ready,
+            _engine.SkipReason ?? "the in-process BC engine is not ready (see BcEngineCollection).");
 
         File.WriteAllText(Path.Combine(_root, "CaptionKind.al"), """
             enum 90200 "EnumCaptionTest Kind"
@@ -87,10 +88,11 @@ public sealed class EnumCaptionCaptureTests : IDisposable
         Assert.Equal("NoCaptionDeclared", meta.GetCaptionFromIndex(entry.Indexes[idxNoCaption]));
     }
 
-    [Fact]
+    [SkippableFact]
     public void CaptureOutputter_EnumExtensionValueCaption_RegisteredAgainstBaseId()
     {
-        if (!_engine.Ready) return; // no BC artifacts provisioned — skip, don't fail
+        TestArtifacts.SkipIf(!_engine.Ready,
+            _engine.SkipReason ?? "the in-process BC engine is not ready (see BcEngineCollection).");
 
         File.WriteAllText(Path.Combine(_root, "BaseKind.al"), """
             enum 90201 "EnumCaptionTest Base Kind"

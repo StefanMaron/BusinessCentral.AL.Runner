@@ -23,12 +23,6 @@ public class LayeredCacheTests
         Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
     private static readonly string ProjectPath = Path.Combine(RepoRoot, "AlRunner");
 
-    private static bool ArtifactsPresent()
-    {
-        var home = Environment.GetEnvironmentVariable("HOME");
-        return !string.IsNullOrEmpty(home) && Directory.Exists(Path.Combine(home, ".bcartifacts.cache", "sandbox"));
-    }
-
     private static string CurrentFramework()
     {
         var v = Environment.Version;
@@ -78,10 +72,10 @@ public class LayeredCacheTests
         lock (sb) return (sb.ToString(), p.ExitCode);
     }
 
-    [Fact]
+    [SkippableFact]
     public void EditingOneImpl_DoesNotRebuildSiblingImpl()
     {
-        if (!ArtifactsPresent()) { Console.Error.WriteLine("[skip] BC artifact cache not present"); return; }
+        TestArtifacts.SkipIfMissing();
 
         var root = Path.Combine(Path.GetTempPath(), "al-runner-layered-cache", Guid.NewGuid().ToString("N"));
         var cacheDir = Path.Combine(root, "al-out");

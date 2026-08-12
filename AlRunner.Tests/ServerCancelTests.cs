@@ -16,30 +16,15 @@ namespace AlRunner.Tests;
 /// The no-active-run tests need no BC compile at all (cancel is answered
 /// instantly regardless of whether anything has ever been compiled) and always
 /// run. The tests that need a real run in flight need the BC artifact caches;
-/// they skip (not fail) when absent — see ArtifactsPresent()/PlatformAppsDir(),
-/// same convention as CacheKeyDependencyClosureTests.
+/// they report Skipped (not Passed) when absent — see TestArtifacts, same convention
+/// as CacheKeyDependencyClosureTests.
 /// </summary>
 [Collection("server-serial")]
 public class ServerCancelTests
 {
-    private static bool ArtifactsPresent()
-    {
-        var home = Environment.GetEnvironmentVariable("HOME")
-            ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        var stdCache = Path.Combine(home, ".local", "share", "al-runner", "artifacts");
-        return Directory.Exists(stdCache) && Directory.EnumerateDirectories(stdCache).Any();
-    }
-
-    private static string PlatformAppsDir()
-    {
-        var home = Environment.GetEnvironmentVariable("HOME")
-            ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        return Path.Combine(home, ".al-runner", "platform-apps");
-    }
-
     private static string[] ExtraServerArgs()
     {
-        var platformApps = PlatformAppsDir();
+        var platformApps = TestArtifacts.PlatformAppsDir();
         return Directory.Exists(platformApps)
             ? new[] { "--package-cache", platformApps }
             : Array.Empty<string>();
@@ -279,10 +264,10 @@ public class ServerCancelTests
         Assert.True(doc.GetProperty("noop").GetBoolean());
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Cancel_AfterRunTestsCompletes_IsNoop()
     {
-        if (!ArtifactsPresent()) { Console.Error.WriteLine("[skip] BC artifacts not present"); return; }
+        TestArtifacts.SkipIfMissing();
 
         var bundle = MakeFastBundle();
         await using var server = await CliServer.StartAsync(ExtraServerArgs());
@@ -307,10 +292,10 @@ public class ServerCancelTests
     // parsed — and (c) the terminal summary carries cancelled:true.
     // ------------------------------------------------------------------
 
-    [Fact]
+    [SkippableFact]
     public async Task RunTests_CancelDuringRun_StopsEarly_AckNoopFalse_SummaryCancelledTrue()
     {
-        if (!ArtifactsPresent()) { Console.Error.WriteLine("[skip] BC artifacts not present"); return; }
+        TestArtifacts.SkipIfMissing();
 
         const int testCount = 20;
         await using var server = await CliServer.StartAsync(ExtraServerArgs());
@@ -390,13 +375,13 @@ public class ServerCancelTests
         Assert.Equal(testEventCount, summary.GetProperty("total").GetInt32());
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task RunTests_NoCancelSent_SummaryNeverCarriesCancelled()
     {
         // Negative companion to the cancel-during-run test above: an UNCANCELLED
         // run must run every test and must NOT carry `cancelled` on the summary at
         // all (never a literal false — see ServerProtocol.Summary's doc comment).
-        if (!ArtifactsPresent()) { Console.Error.WriteLine("[skip] BC artifacts not present"); return; }
+        TestArtifacts.SkipIfMissing();
 
         var bundle = MakeFastBundle();
         await using var server = await CliServer.StartAsync(ExtraServerArgs());

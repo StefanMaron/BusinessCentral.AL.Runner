@@ -67,14 +67,15 @@ public sealed class BcCompilerEmitRetryTests : IDisposable
     // (The artifacts probe moved into BcEngineFixture, which now owns the whole
     // in-process engine bootstrap and exposes the result as BcEngineFixture.Ready.)
 
-    [Fact]
+    [SkippableFact]
     public void Emit_RecoversHealthyCodeunit_WhenAnUnrelatedObjectCrashesTheModuleEmit()
     {
         // The Ncl Cecil rewrite + runtime-patch bootstrap now happens ONCE in BcEngineFixture,
         // before any test in the bc-engine-serial collection runs. Doing it here instead meant
         // overwriting bin/…Ncl.dll while a parallel test class was loading types out of it —
         // see BcEngineCollection.cs for the torn-image failures that caused.
-        if (!_engine.Ready) return; // no BC artifacts provisioned — skip, don't fail
+        TestArtifacts.SkipIf(!_engine.Ready,
+            _engine.SkipReason ?? "the in-process BC engine is not ready (see BcEngineCollection).");
 
         // One healthy codeunit whose real body must survive the retry...
         File.WriteAllText(Path.Combine(_root, "Good.al"), """

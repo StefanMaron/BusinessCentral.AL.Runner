@@ -48,15 +48,6 @@ public sealed class DefineFlagIntegrationTests : IDisposable
         try { Directory.Delete(_root, recursive: true); } catch { }
     }
 
-    private static bool ArtifactsPresent()
-    {
-        var home = Environment.GetEnvironmentVariable("HOME")
-            ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        var stdCache = Path.Combine(home, ".local", "share", "al-runner", "artifacts");
-        return Directory.Exists(stdCache) &&
-               Directory.EnumerateDirectories(stdCache).Any();
-    }
-
     /// <summary>
     /// Writes a minimal AL package to <paramref name="dir"/>:
     ///   - app.json (no dependencies, id range 62100..62109)
@@ -158,10 +149,10 @@ public sealed class DefineFlagIntegrationTests : IDisposable
     /// Without --define the #else branch compiles, the unconditional assert(1==0)
     /// fails, and the runner exits non-zero (--strict).  This is the RED proof.
     /// </summary>
-    [Fact]
+    [SkippableFact]
     public void WithoutDefine_TestFails()
     {
-        if (!ArtifactsPresent()) { Console.Error.WriteLine("[skip] BC artifacts not present"); return; }
+        TestArtifacts.SkipIfMissing();
 
         var (output, exit) = RunRunner();
 
@@ -173,10 +164,10 @@ public sealed class DefineFlagIntegrationTests : IDisposable
     /// With --define MY_TEST_SYMBOL the #if branch compiles, the assert(1==1)
     /// passes, and the runner exits 0.  Reverting the .Concat line breaks this test.
     /// </summary>
-    [Fact]
+    [SkippableFact]
     public void WithDefine_TestPasses()
     {
-        if (!ArtifactsPresent()) { Console.Error.WriteLine("[skip] BC artifacts not present"); return; }
+        TestArtifacts.SkipIfMissing();
 
         var (output, exit) = RunRunner("--define MY_TEST_SYMBOL");
 
@@ -188,10 +179,10 @@ public sealed class DefineFlagIntegrationTests : IDisposable
     /// <summary>
     /// Same as WithDefine_TestPasses but uses --preprocessor-symbols (the batch alias).
     /// </summary>
-    [Fact]
+    [SkippableFact]
     public void WithPreprocessorSymbols_TestPasses()
     {
-        if (!ArtifactsPresent()) { Console.Error.WriteLine("[skip] BC artifacts not present"); return; }
+        TestArtifacts.SkipIfMissing();
 
         var (output, exit) = RunRunner("--preprocessor-symbols MY_TEST_SYMBOL");
 

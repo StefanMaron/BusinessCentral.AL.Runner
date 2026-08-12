@@ -8,9 +8,10 @@ namespace AlRunner.Tests;
 /// the VS Code extension depends on, plus the warm in-process same-bundle reload
 /// (edit a table, re-run in the SAME process, the change must show — not stale).
 ///
-/// These spawn the real runner and need the BC artifact caches present
-/// (~/.bcartifacts.cache). When they are absent the tests skip rather than fail,
-/// so CI without artifacts stays green; locally they run for real.
+/// These spawn the real runner and need BC artifacts provisioned; see TestArtifacts
+/// for where those live and why the gate is shared. When artifacts are absent the
+/// tests report Skipped with a reason — not Passed, which is what the old private
+/// gate produced on every CI run because it probed a path CI never creates.
 /// </summary>
 [Collection("server-serial")]
 public class ServerTests
@@ -21,13 +22,6 @@ public class ServerTests
     private static readonly string FixtureSrc = Path.GetFullPath(Path.Combine(
         AppContext.BaseDirectory, "..", "..", "..",
         "Fixtures", "RecordTriggerXRec"));
-
-    private static bool ArtifactsPresent()
-    {
-        var home = Environment.GetEnvironmentVariable("HOME");
-        if (string.IsNullOrEmpty(home)) return false;
-        return Directory.Exists(Path.Combine(home, ".bcartifacts.cache", "sandbox"));
-    }
 
     private static string MakeTempBundle()
     {
@@ -48,10 +42,10 @@ public class ServerTests
             packagePaths = Array.Empty<string>(),
         });
 
-    [Fact]
+    [SkippableFact]
     public async Task RunTests_Then_EditTable_Then_RunAgain_PicksUpChange()
     {
-        if (!ArtifactsPresent()) { Console.Error.WriteLine("[skip] BC artifact cache (~/.bcartifacts.cache) not present"); return; }
+        TestArtifacts.SkipIfMissing();
 
         var bundle = MakeTempBundle();
         var cacheDir = Path.Combine(Path.GetTempPath(), "al-runner-server-tests-cache", Guid.NewGuid().ToString("N"));
@@ -132,10 +126,10 @@ public class ServerTests
         return dir;
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Execute_RunsOnRun_SurfacesAlError()
     {
-        if (!ArtifactsPresent()) { Console.Error.WriteLine("[skip] BC artifact cache not present"); return; }
+        TestArtifacts.SkipIfMissing();
         var bundle = MakeExecuteBundle();
         var cacheDir = Path.Combine(Path.GetTempPath(), "al-runner-server-exec-cache", Guid.NewGuid().ToString("N"));
         await using var server = await CliServer.StartAsync(new[] { "--cache", cacheDir });
@@ -152,10 +146,10 @@ public class ServerTests
         Assert.Contains("executed-onrun-boom", tests[0].GetProperty("message").GetString());
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Execute_InlineCode_NotSupported_ReturnsError()
     {
-        if (!ArtifactsPresent()) { Console.Error.WriteLine("[skip] BC artifact cache not present"); return; }
+        TestArtifacts.SkipIfMissing();
         await using var server = await CliServer.StartAsync();
         var r = await server.SendAsync("{\"command\":\"execute\",\"code\":\"Message('hi');\"}");
         var d = JsonSerializer.Deserialize<JsonElement>(r);
@@ -236,10 +230,10 @@ public class ServerTests
         return root;
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task RunTests_MultipleSourcePaths_RunsAppAndTestBundle()
     {
-        if (!ArtifactsPresent()) { Console.Error.WriteLine("[skip] BC artifact cache not present"); return; }
+        TestArtifacts.SkipIfMissing();
 
         MakeAppTestPair(out var appDir, out var testDir);
         var cacheDir = Path.Combine(Path.GetTempPath(), "al-runner-server-multi-cache", Guid.NewGuid().ToString("N"));
@@ -265,10 +259,10 @@ public class ServerTests
         Assert.Equal("AnswerIs42", events[0].GetProperty("name").GetString()!.Split('.').Last());
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task UnknownCommand_ReturnsError()
     {
-        if (!ArtifactsPresent()) { Console.Error.WriteLine("[skip] BC artifact cache (~/.bcartifacts.cache) not present"); return; }
+        TestArtifacts.SkipIfMissing();
         await using var server = await CliServer.StartAsync();
         var r = await server.SendAsync("{\"command\":\"bogus\"}");
         var d = JsonSerializer.Deserialize<JsonElement>(r);

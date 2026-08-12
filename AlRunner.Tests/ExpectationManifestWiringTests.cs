@@ -41,14 +41,6 @@ public sealed class ExpectationManifestWiringTests
     private static readonly string MalformedManifestDir = Path.Combine(
         RepoRoot, "AlRunner.Tests", "Fixtures", "ExpectationsManifestMalformed");
 
-    private static bool ArtifactsPresent()
-    {
-        var home = Environment.GetEnvironmentVariable("HOME")
-            ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        var stdCache = Path.Combine(home, ".local", "share", "al-runner", "artifacts");
-        return Directory.Exists(stdCache) && Directory.EnumerateDirectories(stdCache).Any();
-    }
-
     private static (string Output, int Exit) RunRunner(string runnerArgs, string? workingDir = null)
     {
         var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
@@ -88,10 +80,10 @@ public sealed class ExpectationManifestWiringTests
     /// green run that got there via quarantined tests must not read as an unqualified
     /// green), and the skip-declared body must never execute.
     /// </summary>
-    [Fact]
+    [SkippableFact]
     public void DeclaredExpectations_ReclassifyToGreen_AndReachTheExitCode()
     {
-        if (!ArtifactsPresent()) { Console.Error.WriteLine("[skip] BC artifacts not provisioned"); return; }
+        TestArtifacts.SkipIfMissing();
 
         var (output, exit) = RunRunner(
             $"--expectations \"{ManifestDir}\" --test GreenPath \"{SuitePath}\"");
@@ -119,10 +111,10 @@ public sealed class ExpectationManifestWiringTests
     /// reason, and a failure carrying no out-of-scope signal at all must all still
     /// fail. Plus the two #1741 divergence directions. Manifest drift is loud.
     /// </summary>
-    [Fact]
+    [SkippableFact]
     public void ManifestDrift_EveryDirection_FailsTheRunLoudly()
     {
-        if (!ArtifactsPresent()) { Console.Error.WriteLine("[skip] BC artifacts not provisioned"); return; }
+        TestArtifacts.SkipIfMissing();
 
         var (output, exit) = RunRunner($"--expectations \"{ManifestDir}\" \"{SuitePath}\"");
 
@@ -165,10 +157,10 @@ public sealed class ExpectationManifestWiringTests
     /// A malformed manifest (unknown Mode) must abort startup loudly, naming the file
     /// and the bad value — never run tests against a manifest it could not parse.
     /// </summary>
-    [Fact]
+    [SkippableFact]
     public void MalformedManifest_AbortsStartupLoudly()
     {
-        if (!ArtifactsPresent()) { Console.Error.WriteLine("[skip] BC artifacts not provisioned"); return; }
+        TestArtifacts.SkipIfMissing();
 
         var (output, exit) = RunRunner(
             $"--expectations \"{MalformedManifestDir}\" \"{SuitePath}\"");
@@ -189,10 +181,10 @@ public sealed class ExpectationManifestWiringTests
     /// still hold if classification ran unconditionally and rewrote every user-facing
     /// OOS failure into manifest advice.
     /// </summary>
-    [Fact]
+    [SkippableFact]
     public void NoManifest_UnchangedBehaviour_OosIsAPlainFail()
     {
-        if (!ArtifactsPresent()) { Console.Error.WriteLine("[skip] BC artifacts not provisioned"); return; }
+        TestArtifacts.SkipIfMissing();
 
         var (output, exit) = RunRunner(
             $"--test Drift_OosThrownButNoEntry \"{SuitePath}\"",

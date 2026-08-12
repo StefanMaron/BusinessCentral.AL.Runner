@@ -7,18 +7,12 @@ namespace AlRunner.Tests;
 /// #1616: --server's `runTests` had no way to ask for per-method test isolation
 /// (the CLI's `--test-isolation method` equivalent), so tests that depend on a
 /// per-method reset cross-pollute under --server even though the identical CLI
-/// invocation passes. These spawn the real runner and need the BC artifact caches
-/// present (~/.bcartifacts.cache); when absent, they skip rather than fail.
+/// invocation passes. These spawn the real runner and need BC artifacts provisioned
+/// (see TestArtifacts); when absent they report Skipped with a reason, not Passed.
 /// </summary>
 [Collection("server-serial")]
 public class ServerTestIsolationTests
 {
-    private static bool ArtifactsPresent()
-    {
-        var home = Environment.GetEnvironmentVariable("HOME");
-        if (string.IsNullOrEmpty(home)) return false;
-        return Directory.Exists(Path.Combine(home, ".bcartifacts.cache", "sandbox"));
-    }
 
     // Two [Test] procs in the SAME codeunit both insert a row with the SAME primary
     // key. Under TestIsolation.Codeunit (the default — no reset between methods
@@ -90,10 +84,10 @@ public class ServerTestIsolationTests
             testIsolation,
         });
 
-    [Fact]
+    [SkippableFact]
     public async Task RunTests_NoTestIsolationField_DefaultsToCodeunit_SecondInsertFails()
     {
-        if (!ArtifactsPresent()) { Console.Error.WriteLine("[skip] BC artifact cache not present"); return; }
+        TestArtifacts.SkipIfMissing();
 
         var bundle = MakeIsolationBundle();
         var cacheDir = Path.Combine(Path.GetTempPath(), "al-runner-server-isolation-cache", Guid.NewGuid().ToString("N"));
@@ -107,10 +101,10 @@ public class ServerTestIsolationTests
         Assert.Equal(1, d.GetProperty("failed").GetInt32());
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task RunTests_TestIsolationMethod_BothInsertsSucceed()
     {
-        if (!ArtifactsPresent()) { Console.Error.WriteLine("[skip] BC artifact cache not present"); return; }
+        TestArtifacts.SkipIfMissing();
 
         var bundle = MakeIsolationBundle();
         var cacheDir = Path.Combine(Path.GetTempPath(), "al-runner-server-isolation-cache2", Guid.NewGuid().ToString("N"));
@@ -124,14 +118,14 @@ public class ServerTestIsolationTests
         Assert.Equal(0, d.GetProperty("failed").GetInt32());
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task RunTests_TestIsolationDoesNotStickAcrossRequests()
     {
         // Request 1 asks for "method" (both pass). Request 2 (fresh bundle copy,
         // same server process) omits testIsolation and must fall back to the
         // server's own default (Codeunit) — not silently inherit "method" from
         // request 1.
-        if (!ArtifactsPresent()) { Console.Error.WriteLine("[skip] BC artifact cache not present"); return; }
+        TestArtifacts.SkipIfMissing();
 
         var bundle1 = MakeIsolationBundle();
         var bundle2 = MakeIsolationBundle();
@@ -148,10 +142,10 @@ public class ServerTestIsolationTests
         Assert.Equal(1, d2.GetProperty("failed").GetInt32());
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task RunTests_UnknownTestIsolationMode_ReturnsError()
     {
-        if (!ArtifactsPresent()) { Console.Error.WriteLine("[skip] BC artifact cache not present"); return; }
+        TestArtifacts.SkipIfMissing();
 
         var bundle = MakeIsolationBundle();
         var cacheDir = Path.Combine(Path.GetTempPath(), "al-runner-server-isolation-cache4", Guid.NewGuid().ToString("N"));

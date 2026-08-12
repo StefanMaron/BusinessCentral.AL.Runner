@@ -22,22 +22,16 @@ public class WatchTests
     private static readonly string FixtureSrc = Path.GetFullPath(Path.Combine(
         AppContext.BaseDirectory, "..", "..", "..", "Fixtures", "RecordTriggerXRec"));
 
-    private static bool ArtifactsPresent()
-    {
-        var home = Environment.GetEnvironmentVariable("HOME");
-        return !string.IsNullOrEmpty(home) && Directory.Exists(Path.Combine(home, ".bcartifacts.cache", "sandbox"));
-    }
-
     private static string CurrentFramework()
     {
         var v = Environment.Version;
         return $"net{v.Major}.{v.Minor}";
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Watch_PicksUpEdit_InProcess_OnNextCycle()
     {
-        if (!ArtifactsPresent()) { Console.Error.WriteLine("[skip] BC artifact cache not present"); return; }
+        TestArtifacts.SkipIfMissing();
 
         var bundle = Path.Combine(Path.GetTempPath(), "al-runner-watch", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(bundle);

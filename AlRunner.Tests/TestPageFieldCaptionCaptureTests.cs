@@ -48,10 +48,11 @@ public sealed class TestPageFieldCaptionCaptureTests : IDisposable
         try { Directory.Delete(_root, recursive: true); } catch { /* best-effort cleanup */ }
     }
 
-    [Fact]
+    [SkippableFact]
     public void TryGetParsedFieldCaption_ReturnsDeclaredCaption_AndNullWhenAbsent()
     {
-        if (!_engine.Ready) return; // no BC artifacts provisioned — skip, don't fail
+        TestArtifacts.SkipIf(!_engine.Ready,
+            _engine.SkipReason ?? "the in-process BC engine is not ready (see BcEngineCollection).");
 
         File.WriteAllText(Path.Combine(_root, "FieldCaptionCaptureRow.al"), """
             table 90210 "FieldCaptionCapture Row"

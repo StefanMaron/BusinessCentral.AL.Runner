@@ -53,19 +53,9 @@ public sealed class TestPageDrillDownDispatchTests : IDisposable
         try { Directory.Delete(_root, recursive: true); } catch { /* best-effort cleanup */ }
     }
 
-    private static bool ArtifactsPresent()
-    {
-        var home = Environment.GetEnvironmentVariable("HOME")
-            ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        var stdCache = Path.Combine(home, ".local", "share", "al-runner", "artifacts");
-        return Directory.Exists(stdCache) && Directory.EnumerateDirectories(stdCache).Any();
-    }
-
     private static string[] ExtraPackageCacheArgs()
     {
-        var home = Environment.GetEnvironmentVariable("HOME")
-            ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        var platformApps = Path.Combine(home, ".al-runner", "platform-apps");
+        var platformApps = TestArtifacts.PlatformAppsDir();
         return Directory.Exists(platformApps)
             ? new[] { "--package-cache", platformApps }
             : Array.Empty<string>();
@@ -242,10 +232,10 @@ public sealed class TestPageDrillDownDispatchTests : IDisposable
     /// not throw"), and the trigger-less control's DrillDown() must raise the exact BC
     /// platform error rather than silently doing nothing.
     /// </summary>
-    [Fact]
+    [SkippableFact]
     public void DrillDown_DispatchesTriggerAndRefusesWhenAbsent()
     {
-        if (!ArtifactsPresent()) { Console.Error.WriteLine("[skip] BC artifacts not present"); return; }
+        TestArtifacts.SkipIfMissing();
 
         WriteBundle();
         var (output, exit) = RunBundled();

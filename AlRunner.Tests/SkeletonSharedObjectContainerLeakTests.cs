@@ -49,10 +49,11 @@ public class SkeletonSharedObjectContainerLeakTests
 
     public SkeletonSharedObjectContainerLeakTests(BcEngineFixture engine) => _engine = engine;
 
-    [Fact]
+    [SkippableFact]
     public void ResetPerTestState_SweepsSkeletonContainerChildren_AcrossManyCycles()
     {
-        if (!_engine.Ready) return; // no BC artifacts provisioned — skip, don't fail
+        TestArtifacts.SkipIf(!_engine.Ready,
+            _engine.SkipReason ?? "the in-process BC engine is not ready (see BcEngineCollection).");
 
         var nclAssembly = typeof(ITreeObject).Assembly;
 
@@ -100,14 +101,15 @@ public class SkeletonSharedObjectContainerLeakTests
         }
     }
 
-    [Fact]
+    [SkippableFact]
     public void WithoutReset_SkeletonContainerChildren_GrowLinearlyWithCyclesAsBaseline()
     {
         // Sanity companion to the test above: proves the harness itself is capable of
         // observing growth (i.e. it isn't accidentally bounded for some unrelated reason,
         // such as the container silently refusing to parent children). Never calls
         // ResetPerTestState(), so the child count must equal everything created.
-        if (!_engine.Ready) return; // no BC artifacts provisioned — skip, don't fail
+        TestArtifacts.SkipIf(!_engine.Ready,
+            _engine.SkipReason ?? "the in-process BC engine is not ready (see BcEngineCollection).");
 
         var nclAssembly = typeof(ITreeObject).Assembly;
         var root = new RootTreeObject();

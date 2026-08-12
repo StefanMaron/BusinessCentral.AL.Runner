@@ -46,21 +46,6 @@ public sealed class CacheKeyDependencyClosureTests : IDisposable
         try { Directory.Delete(_scratch, recursive: true); } catch { }
     }
 
-    private static string PlatformAppsDir()
-    {
-        var home = Environment.GetEnvironmentVariable("HOME")
-            ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        return Path.Combine(home, ".al-runner", "platform-apps");
-    }
-
-    private static bool ArtifactsPresent()
-    {
-        var home = Environment.GetEnvironmentVariable("HOME")
-            ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        var stdCache = Path.Combine(home, ".local", "share", "al-runner", "artifacts");
-        return Directory.Exists(stdCache) && Directory.EnumerateDirectories(stdCache).Any();
-    }
-
     /// <summary>Runs the fixture against one package cache and returns the cache key it computed.</summary>
     private static string RunAndReadCacheKey(string packageCacheDir, string alCacheDir)
     {
@@ -95,12 +80,12 @@ public sealed class CacheKeyDependencyClosureTests : IDisposable
     /// different keys. Reverting GetOrderedDepIds to resolve without the bundle's
     /// .alpackages makes both keys collapse to the same value and fails this.
     /// </summary>
-    [Fact]
+    [SkippableFact]
     public void DifferentDependencyClosure_ProducesDifferentCacheKey()
     {
-        if (!ArtifactsPresent()) { Console.Error.WriteLine("[skip] BC artifacts not provisioned"); return; }
-        var platformApps = PlatformAppsDir();
-        if (!Directory.Exists(platformApps)) { Console.Error.WriteLine("[skip] platform-apps not provisioned"); return; }
+        TestArtifacts.SkipIfMissing();
+        var platformApps = TestArtifacts.PlatformAppsDir();
+        TestArtifacts.SkipIfDirectoryMissing(platformApps, "R2R platform apps");
 
         var full = Path.Combine(_scratch, "full");
         var reduced = Path.Combine(_scratch, "reduced");
@@ -108,7 +93,8 @@ public sealed class CacheKeyDependencyClosureTests : IDisposable
         Directory.CreateDirectory(reduced);
 
         var apps = Directory.GetFiles(platformApps, "*.app");
-        if (apps.Length < 2) { Console.Error.WriteLine("[skip] need >= 2 platform apps to vary the closure"); return; }
+        TestArtifacts.SkipIf(apps.Length < 2,
+            $"varying the dependency closure needs >= 2 platform apps; '{platformApps}' holds {apps.Length}.");
 
         foreach (var a in apps) File.Copy(a, Path.Combine(full, Path.GetFileName(a)));
 
@@ -142,12 +128,12 @@ public sealed class CacheKeyDependencyClosureTests : IDisposable
     /// produce the SAME key, so the cache still hits. A key that varied on every run would
     /// satisfy the inequality above while destroying the cache.
     /// </summary>
-    [Fact]
+    [SkippableFact]
     public void SameDependencyClosure_ProducesStableCacheKey()
     {
-        if (!ArtifactsPresent()) { Console.Error.WriteLine("[skip] BC artifacts not provisioned"); return; }
-        var platformApps = PlatformAppsDir();
-        if (!Directory.Exists(platformApps)) { Console.Error.WriteLine("[skip] platform-apps not provisioned"); return; }
+        TestArtifacts.SkipIfMissing();
+        var platformApps = TestArtifacts.PlatformAppsDir();
+        TestArtifacts.SkipIfDirectoryMissing(platformApps, "R2R platform apps");
 
         var alCache = Path.Combine(_scratch, "cache-stable");
         var first = RunAndReadCacheKey(platformApps, alCache);

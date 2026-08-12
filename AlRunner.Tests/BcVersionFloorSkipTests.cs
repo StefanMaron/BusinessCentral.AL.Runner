@@ -27,14 +27,6 @@ public sealed class BcVersionFloorSkipTests
     private static readonly string BundlePath = Path.Combine(
         RepoRoot, "AlRunner.Tests", "Fixtures", "BcFloorSkip");
 
-    private static bool ArtifactsPresent()
-    {
-        var home = Environment.GetEnvironmentVariable("HOME")
-            ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        var stdCache = Path.Combine(home, ".local", "share", "al-runner", "artifacts");
-        return Directory.Exists(stdCache) && Directory.EnumerateDirectories(stdCache).Any();
-    }
-
     private static (string Output, int Exit) RunRunner(string target)
     {
         var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
@@ -66,10 +58,10 @@ public sealed class BcVersionFloorSkipTests
     /// And asserting the sibling PASSED rules out the opposite failure: a runner that skipped the
     /// entire bundle would exit 0 while covering nothing at all.
     /// </summary>
-    [Fact]
+    [SkippableFact]
     public void SuiteDeclaringANewerBc_IsSkippedWhileItsSiblingStillRuns()
     {
-        if (!ArtifactsPresent()) { Console.Error.WriteLine("[skip] BC artifacts not provisioned"); return; }
+        TestArtifacts.SkipIfMissing();
 
         var (output, exit) = RunRunner(BundlePath);
 
@@ -94,10 +86,10 @@ public sealed class BcVersionFloorSkipTests
     /// skip. Without this, `ReadMinimumBcVersion` returning "always skip" (or BuildAppGroups
     /// dropping every suite carrying a floor) would still satisfy the test above.
     /// </summary>
-    [Fact]
+    [SkippableFact]
     public void SuiteDeclaringASatisfiableFloor_IsNotSkipped()
     {
-        if (!ArtifactsPresent()) { Console.Error.WriteLine("[skip] BC artifacts not provisioned"); return; }
+        TestArtifacts.SkipIfMissing();
 
         var (output, exit) = RunRunner(Path.Combine(BundlePath, "healthy-suite"));
 

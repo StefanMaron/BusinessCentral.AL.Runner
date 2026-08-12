@@ -45,18 +45,6 @@ public class SourceDepCacheEnumMetadataTests
         Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
     private static readonly string ProjectPath = Path.Combine(RepoRoot, "AlRunner");
 
-    private static bool ArtifactsPresent()
-    {
-        var home = Environment.GetEnvironmentVariable("HOME")
-            ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        if (string.IsNullOrEmpty(home)) return false;
-        if (Directory.Exists(Path.Combine(home, ".bcartifacts.cache", "sandbox"))) return true;
-        // This environment provisions artifacts under .local/share/al-runner/artifacts
-        // instead (see CacheKeyDependencyClosureTests.ArtifactsPresent for the same check).
-        var stdCache = Path.Combine(home, ".local", "share", "al-runner", "artifacts");
-        return Directory.Exists(stdCache) && Directory.EnumerateDirectories(stdCache).Any();
-    }
-
     private static (string output, int exit) RunRunner(string bundleDir, string alCacheDir, string absentPackageCache)
     {
         var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
@@ -97,10 +85,10 @@ public class SourceDepCacheEnumMetadataTests
         lock (sb) return (sb.ToString(), p.ExitCode);
     }
 
-    [Fact]
+    [SkippableFact]
     public void SourceDepCacheHit_BundleMiss_KeepsDepEnumMetadata()
     {
-        if (!ArtifactsPresent()) { Console.Error.WriteLine("[skip] BC artifact cache not present"); return; }
+        TestArtifacts.SkipIfMissing();
 
         var scratchRoot = Path.Combine(Path.GetTempPath(), "al-runner-depcache-enum", Guid.NewGuid().ToString("N"));
         var depDir = Path.Combine(scratchRoot, "dep-app");

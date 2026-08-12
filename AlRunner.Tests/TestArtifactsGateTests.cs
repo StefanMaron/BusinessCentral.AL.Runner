@@ -118,11 +118,11 @@ public class TestArtifactsGateTests
     /// off the end of the method and be recorded as Passed.
     /// </summary>
     [Fact]
-    public void SkipIfMissing_RaisesASkip_WhenArtifactsAreAbsent()
+    public void SkipIfMissing_RaisesASkip_WhenArtifactsAreAbsent_OffCi()
     {
         var home = NewTempHome();
 
-        var ex = Record.Exception(() => TestArtifacts.SkipIfMissingIn(home));
+        var ex = Record.Exception(() => TestArtifacts.SkipIfMissingIn(home, runningOnCi: false));
 
         Assert.NotNull(ex);
         Assert.IsType<SkipException>(ex);
@@ -136,7 +136,66 @@ public class TestArtifactsGateTests
         var home = NewTempHome();
         Directory.CreateDirectory(Path.Combine(home, ".local", "share", "al-runner", "artifacts", "28.1.49838.50794"));
 
-        Assert.Null(Record.Exception(() => TestArtifacts.SkipIfMissingIn(home)));
+        Assert.Null(Record.Exception(() => TestArtifacts.SkipIfMissingIn(home, runningOnCi: false)));
+        Assert.Null(Record.Exception(() => TestArtifacts.SkipIfMissingIn(home, runningOnCi: true)));
+    }
+
+    // ---- 2b. on CI, "artifacts missing" is a defect, not a skip -----------------
+
+    /// <summary>
+    /// The hole a visible skip alone still leaves open, and the reason this rule exists:
+    /// if the workflow moves where it provisions artifacts, <see cref="TestArtifacts.Present"/>
+    /// answers false for EVERY test, all of them skip — visibly, correctly, and CI stays
+    /// green. That is the same "nothing ran and nobody noticed" failure one level up, and
+    /// the drift guards below would all still pass.
+    ///
+    /// On a CI leg every artifact is provisioned by construction, so "artifacts missing"
+    /// there is a provisioning defect. It must FAIL the leg, naming both layouts that were
+    /// searched so the fix is obvious from the log alone.
+    /// </summary>
+    [Fact]
+    public void SkipIfMissing_FailsRatherThanSkips_WhenArtifactsAreAbsentOnCi()
+    {
+        var home = NewTempHome();
+
+        var ex = Record.Exception(() => TestArtifacts.SkipIfMissingIn(home, runningOnCi: true));
+
+        Assert.NotNull(ex);
+        Assert.IsNotType<SkipException>(ex);
+        Assert.IsAssignableFrom<Xunit.Sdk.XunitException>(ex);
+
+        var msg = ex!.Message.Replace('\\', '/');
+        // Both candidate layouts, so the log says exactly where it looked.
+        Assert.Contains(".local/share/al-runner/artifacts", msg, StringComparison.Ordinal);
+        Assert.Contains(".bcartifacts.cache/sandbox", msg, StringComparison.Ordinal);
+        // And why a skip was refused here specifically.
+        Assert.Contains("CI", msg, StringComparison.Ordinal);
+        Assert.Contains("provisioning", msg, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData("GITHUB_ACTIONS", "true", true)]
+    [InlineData("CI", "true", true)]
+    [InlineData("CI", "1", true)]
+    // A workflow that explicitly disables the flag means what it says.
+    [InlineData("CI", "false", false)]
+    [InlineData("CI", "0", false)]
+    [InlineData("CI", "", false)]
+    // A dev box sets neither.
+    [InlineData("UNRELATED", "true", false)]
+    public void IsCiEnvironment_ReadsTheStandardFlags(string name, string value, bool expected)
+    {
+        Assert.Equal(expected, TestArtifacts.IsCiEnvironment(n => n == name ? value : null));
+    }
+
+    /// <summary>
+    /// Pins the flags themselves: GitHub Actions sets both, and dropping either from the
+    /// list would silently re-open the "all skipped, still green" hole on some runner.
+    /// </summary>
+    [Fact]
+    public void CiEnvironmentVariables_CoverGithubActionsAndTheGenericFlag()
+    {
+        Assert.Equal(new[] { "GITHUB_ACTIONS", "CI" }, TestArtifacts.CiEnvironmentVariables);
     }
 
     [Fact]
@@ -183,23 +242,32 @@ public class TestArtifactsGateTests
     }
 
     /// <summary>
-    /// Only the shared helper may name the artifact cache paths. A class that spells
-    /// a path itself is a fresh copy of the gate waiting to drift out of step with
-    /// what the workflow provisions.
+    /// Only the shared helper may name an artifact cache path in CODE. A class that
+    /// spells a path itself is a fresh copy of the gate waiting to drift out of step
+    /// with what the workflow provisions — which is exactly how six of them ended up
+    /// probing a directory nothing creates. (Comments may still discuss the paths;
+    /// prose cannot drift into a wrong runtime answer.)
     /// </summary>
     [Fact]
-    public void OnlyTheSharedHelperNamesTheArtifactCachePaths()
+    public void OnlyTheSharedHelperNamesTheArtifactCachePathsInCode()
     {
-        var offenders = TestSources()
-            .Where(s => s.File != "TestArtifacts.cs" && s.File != "TestArtifactsGateTests.cs")
-            .Where(s => s.Text.Contains(".bcartifacts.cache", StringComparison.Ordinal))
-            .Select(s => s.File)
-            .OrderBy(f => f, StringComparer.Ordinal)
-            .ToList();
+        var offenders = new List<string>();
+        foreach (var (file, text) in TestSources())
+        {
+            if (file is "TestArtifacts.cs" or "TestArtifactsGateTests.cs") continue;
+            foreach (var line in text.Split('\n'))
+            {
+                var trimmed = line.TrimStart();
+                if (trimmed.StartsWith("//", StringComparison.Ordinal)) continue;
+                if (trimmed.Contains(".bcartifacts.cache", StringComparison.Ordinal)
+                    || trimmed.Contains("\"al-runner\", \"artifacts\"", StringComparison.Ordinal))
+                    offenders.Add($"{file}: {trimmed.Trim()}");
+            }
+        }
 
         Assert.True(offenders.Count == 0,
-            "these files name ~/.bcartifacts.cache themselves instead of asking TestArtifacts: "
-            + string.Join(", ", offenders));
+            "these lines spell an artifact cache path instead of asking TestArtifacts:\n"
+            + string.Join("\n", offenders));
     }
 
     /// <summary>

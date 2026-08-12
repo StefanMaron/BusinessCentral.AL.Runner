@@ -44,15 +44,6 @@ public sealed class TestIsolationMethodAliasTests : IDisposable
         try { Directory.Delete(_root, recursive: true); } catch { }
     }
 
-    private static bool ArtifactsPresent()
-    {
-        var home = Environment.GetEnvironmentVariable("HOME")
-            ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        var stdCache = Path.Combine(home, ".local", "share", "al-runner", "artifacts");
-        return Directory.Exists(stdCache) &&
-               Directory.EnumerateDirectories(stdCache).Any();
-    }
-
     /// <summary>
     /// Writes a minimal AL package to <paramref name="dir"/>:
     ///   - app.json (no dependencies, id range 62110..62119)
@@ -165,10 +156,10 @@ public sealed class TestIsolationMethodAliasTests : IDisposable
     /// every [Test] procedure. Before the fix (method aliased to Codeunit isolation)
     /// Step2 sees the row Step1 inserted and fails; this is the RED proof.
     /// </summary>
-    [Fact]
+    [SkippableFact]
     public void TestIsolationMethod_ResetsStateBetweenTestMethods()
     {
-        if (!ArtifactsPresent()) { Console.Error.WriteLine("[skip] BC artifacts not present"); return; }
+        TestArtifacts.SkipIfMissing();
 
         var (output, exit) = RunRunner("--test-isolation method");
 
@@ -182,10 +173,10 @@ public sealed class TestIsolationMethodAliasTests : IDisposable
     /// Same assertion via the short `--isolation` flag spelling, which shares the
     /// same alias-mapping switch.
     /// </summary>
-    [Fact]
+    [SkippableFact]
     public void IsolationMethod_ResetsStateBetweenTestMethods()
     {
-        if (!ArtifactsPresent()) { Console.Error.WriteLine("[skip] BC artifacts not present"); return; }
+        TestArtifacts.SkipIfMissing();
 
         var (output, exit) = RunRunner("--isolation method");
 
@@ -201,10 +192,10 @@ public sealed class TestIsolationMethodAliasTests : IDisposable
     /// that keeps `method` pointed at Codeunit isolation would make this outcome
     /// identical to the `method` runs above, not just "some test passes".
     /// </summary>
-    [Fact]
+    [SkippableFact]
     public void TestIsolationCodeunit_SharesStateBetweenTestMethods()
     {
-        if (!ArtifactsPresent()) { Console.Error.WriteLine("[skip] BC artifacts not present"); return; }
+        TestArtifacts.SkipIfMissing();
 
         var (output, exit) = RunRunner("--test-isolation codeunit");
 

@@ -45,20 +45,10 @@ public class SourceDepSymbolsWithoutPackageCacheTests
         Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
     private static readonly string ProjectPath = Path.Combine(RepoRoot, "AlRunner");
 
-    private static bool ArtifactsPresent()
-    {
-        var home = Environment.GetEnvironmentVariable("HOME")
-            ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        if (string.IsNullOrEmpty(home)) return false;
-        if (Directory.Exists(Path.Combine(home, ".bcartifacts.cache", "sandbox"))) return true;
-        var stdCache = Path.Combine(home, ".local", "share", "al-runner", "artifacts");
-        return Directory.Exists(stdCache) && Directory.EnumerateDirectories(stdCache).Any();
-    }
-
-    [Fact]
+    [SkippableFact]
     public void SiblingSourceDep_CompilesWithZeroPackageCacheDirs()
     {
-        if (!ArtifactsPresent()) { Console.Error.WriteLine("[skip] BC artifact cache not present"); return; }
+        TestArtifacts.SkipIfMissing();
 
         var scratchRoot = Path.Combine(
             Path.GetTempPath(), "al-runner-srcdep-nopkgcache", Guid.NewGuid().ToString("N"));

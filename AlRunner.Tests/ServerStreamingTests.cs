@@ -11,18 +11,12 @@ namespace AlRunner.Tests;
 /// v1-shaped response object. <c>execute</c>/<c>shutdown</c>/unknown-command
 /// responses are unaffected (still one line).
 ///
-/// These spawn the real runner and need the BC artifact caches present
-/// (~/.bcartifacts.cache); when absent, they skip rather than fail.
+/// These spawn the real runner and need BC artifacts provisioned (see TestArtifacts);
+/// when absent they report Skipped with a reason, not Passed.
 /// </summary>
 [Collection("server-serial")]
 public class ServerStreamingTests
 {
-    private static bool ArtifactsPresent()
-    {
-        var home = Environment.GetEnvironmentVariable("HOME");
-        if (string.IsNullOrEmpty(home)) return false;
-        return Directory.Exists(Path.Combine(home, ".bcartifacts.cache", "sandbox"));
-    }
 
     // One passing test, one failing test (with a recognisable Error() message) —
     // exercises both status branches of the streamed `test` event shape.
@@ -71,10 +65,10 @@ public class ServerStreamingTests
             packagePaths = Array.Empty<string>(),
         });
 
-    [Fact]
+    [SkippableFact]
     public async Task RunTests_StreamsOneTestEventPerTest_ThenSummary()
     {
-        if (!ArtifactsPresent()) { Console.Error.WriteLine("[skip] BC artifact cache not present"); return; }
+        TestArtifacts.SkipIfMissing();
 
         var bundle = MakeMixedBundle();
         var cacheDir = Path.Combine(Path.GetTempPath(), "al-runner-server-streaming-cache", Guid.NewGuid().ToString("N"));
@@ -120,10 +114,10 @@ public class ServerStreamingTests
         Assert.Equal(1, summary.GetProperty("exitCode").GetInt32());
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task RunTests_MissingSourcePaths_ReturnsSingleErrorLine_NoTestOrSummaryLines()
     {
-        if (!ArtifactsPresent()) { Console.Error.WriteLine("[skip] BC artifact cache not present"); return; }
+        TestArtifacts.SkipIfMissing();
 
         await using var server = await CliServer.StartAsync();
         var lines = await server.SendRequestStreamingAsync(
@@ -136,10 +130,10 @@ public class ServerStreamingTests
         Assert.False(d.TryGetProperty("type", out _));
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Execute_StillReturnsSingleLine_NotStreamed()
     {
-        if (!ArtifactsPresent()) { Console.Error.WriteLine("[skip] BC artifact cache not present"); return; }
+        TestArtifacts.SkipIfMissing();
 
         var bundle = MakeMixedBundle();
         var cacheDir = Path.Combine(Path.GetTempPath(), "al-runner-server-streaming-exec-cache", Guid.NewGuid().ToString("N"));

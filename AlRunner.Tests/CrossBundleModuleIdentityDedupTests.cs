@@ -34,12 +34,6 @@ public class CrossBundleModuleIdentityDedupTests
         Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
     private static readonly string ProjectPath = Path.Combine(RepoRoot, "AlRunner");
 
-    private static bool ArtifactsPresent()
-    {
-        var home = Environment.GetEnvironmentVariable("HOME");
-        return !string.IsNullOrEmpty(home) && Directory.Exists(Path.Combine(home, ".bcartifacts.cache", "sandbox"));
-    }
-
     private static (string output, int exit) RunRunner(params string[] bundles)
     {
         var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
@@ -62,10 +56,10 @@ public class CrossBundleModuleIdentityDedupTests
         lock (sb) return (sb.ToString(), p.ExitCode);
     }
 
-    [Fact]
+    [SkippableFact]
     public void DepAppOwnBundlePlusDependentTestApp_InstallTriggerSubscriberFiresCleanly()
     {
-        if (!ArtifactsPresent()) { Console.Error.WriteLine("[skip] BC artifact cache not present"); return; }
+        TestArtifacts.SkipIfMissing();
 
         var root = Path.Combine(Path.GetTempPath(), "al-runner-xbundle-dedup", Guid.NewGuid().ToString("N"));
         var depDir = Path.Combine(root, "dep-app");

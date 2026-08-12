@@ -55,15 +55,6 @@ public sealed class TestFilterFlagTests : IDisposable
         try { Directory.Delete(_root, recursive: true); } catch { }
     }
 
-    private static bool ArtifactsPresent()
-    {
-        var home = Environment.GetEnvironmentVariable("HOME")
-            ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        var stdCache = Path.Combine(home, ".local", "share", "al-runner", "artifacts");
-        return Directory.Exists(stdCache) &&
-               Directory.EnumerateDirectories(stdCache).Any();
-    }
-
     /// <summary>
     /// Writes a minimal AL package to <paramref name="dir"/>:
     ///   - app.json (no dependencies, id range 62140..62149)
@@ -163,10 +154,10 @@ public sealed class TestFilterFlagTests : IDisposable
     /// Sanity control: with no `--test` flag, both codeunits run. Establishes the
     /// baseline the filtered cases below are contrasted against.
     /// </summary>
-    [Fact]
+    [SkippableFact]
     public void NoFilter_BothCodeunitsRun()
     {
-        if (!ArtifactsPresent()) { Console.Error.WriteLine("[skip] BC artifacts not present"); return; }
+        TestArtifacts.SkipIfMissing();
 
         var (output, exit) = RunRunner();
 
@@ -181,10 +172,10 @@ public sealed class TestFilterFlagTests : IDisposable
     /// "AlphaCheck", so this can only pass via that branch. Negative in the same
     /// assertion: Beta ("Codeunit62143") must NOT run.
     /// </summary>
-    [Fact]
+    [SkippableFact]
     public void TestFlag_CodeunitTypeNameSubstring_RunsOnlyMatchingCodeunit()
     {
-        if (!ArtifactsPresent()) { Console.Error.WriteLine("[skip] BC artifacts not present"); return; }
+        TestArtifacts.SkipIfMissing();
 
         var (output, exit) = RunRunner("--test 62142");
 
@@ -199,10 +190,10 @@ public sealed class TestFilterFlagTests : IDisposable
     /// OR bare method name" check on "AlphaCheck". Negative in the same assertion: Beta
     /// must NOT run — a no-op filter (accept-everything) would fail that half.
     /// </summary>
-    [Fact]
+    [SkippableFact]
     public void TestFlag_MethodNameSubstring_RunsOnlyMatchingCodeunit()
     {
-        if (!ArtifactsPresent()) { Console.Error.WriteLine("[skip] BC artifacts not present"); return; }
+        TestArtifacts.SkipIfMissing();
 
         var (output, exit) = RunRunner("--test Alpha");
 
@@ -215,10 +206,10 @@ public sealed class TestFilterFlagTests : IDisposable
     /// Contrast case for the one above, proving the filter is not just "always match
     /// the first codeunit": `--test Beta` flips which codeunit runs.
     /// </summary>
-    [Fact]
+    [SkippableFact]
     public void TestFlag_MethodNameSubstring_OtherCodeunit_RunsOnlyThatOne()
     {
-        if (!ArtifactsPresent()) { Console.Error.WriteLine("[skip] BC artifacts not present"); return; }
+        TestArtifacts.SkipIfMissing();
 
         var (output, exit) = RunRunner("--test Beta");
 
@@ -231,10 +222,10 @@ public sealed class TestFilterFlagTests : IDisposable
     /// Positive: filter matching is case-insensitive (NormaliseFilter lowercases both
     /// the filter and the compared names).
     /// </summary>
-    [Fact]
+    [SkippableFact]
     public void TestFlag_IsCaseInsensitive()
     {
-        if (!ArtifactsPresent()) { Console.Error.WriteLine("[skip] BC artifacts not present"); return; }
+        TestArtifacts.SkipIfMissing();
 
         var (output, exit) = RunRunner("--test ALPHA");
 
@@ -248,10 +239,10 @@ public sealed class TestFilterFlagTests : IDisposable
     /// (NormaliseFilter), so `--test *Alpha*` behaves identically to `--test Alpha`
     /// rather than being treated as a literal character requiring an exact glob match.
     /// </summary>
-    [Fact]
+    [SkippableFact]
     public void TestFlag_LeadingTrailingWildcard_IsStrippedAsNoOp()
     {
-        if (!ArtifactsPresent()) { Console.Error.WriteLine("[skip] BC artifacts not present"); return; }
+        TestArtifacts.SkipIfMissing();
 
         var (output, exit) = RunRunner("--test *Alpha*");
 
@@ -265,10 +256,10 @@ public sealed class TestFilterFlagTests : IDisposable
     /// everything and still exits 0 — proves the filter can produce an empty result set
     /// rather than silently falling back to "run all" when nothing matches.
     /// </summary>
-    [Fact]
+    [SkippableFact]
     public void TestFlag_NoMatch_RunsNeitherCodeunit()
     {
-        if (!ArtifactsPresent()) { Console.Error.WriteLine("[skip] BC artifacts not present"); return; }
+        TestArtifacts.SkipIfMissing();
 
         var (output, exit) = RunRunner("--test NoSuchTestExists");
 
@@ -283,10 +274,10 @@ public sealed class TestFilterFlagTests : IDisposable
     /// `args[i] == "--test" || args[i] == "--filter"`). Proves the alias actually wires
     /// to the same TestExecutor.TestFilter, not a dead/ignored flag.
     /// </summary>
-    [Fact]
+    [SkippableFact]
     public void FilterFlag_IsSynonymForTestFlag()
     {
-        if (!ArtifactsPresent()) { Console.Error.WriteLine("[skip] BC artifacts not present"); return; }
+        TestArtifacts.SkipIfMissing();
 
         var (output, exit) = RunRunner("--filter Beta");
 

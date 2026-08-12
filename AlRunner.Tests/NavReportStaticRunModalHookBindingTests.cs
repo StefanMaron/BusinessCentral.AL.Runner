@@ -37,12 +37,13 @@ public class NavReportStaticRunModalHookBindingTests
     private static Type NavReportType => typeof(ITreeObject).Assembly
         .GetType("Microsoft.Dynamics.Nav.Runtime.NavReport")!;
 
-    [Theory]
+    [SkippableTheory]
     [InlineData("Run")]
     [InlineData("RunModal")]
     public void StaticRunOverloads_AreNotOrphanedHooks(string methodName)
     {
-        if (!_engine.Ready) return; // no BC artifacts provisioned — skip, don't fail
+        TestArtifacts.SkipIf(!_engine.Ready,
+            _engine.SkipReason ?? "the in-process BC engine is not ready (see BcEngineCollection).");
 
         // Every static int-based overload (1..4 params) must be Cecil-owned so a JmpHook
         // registered against it (present in older code, and possibly future
@@ -57,7 +58,7 @@ public class NavReportStaticRunModalHookBindingTests
         }
     }
 
-    [Theory]
+    [SkippableTheory]
     [InlineData("Run", 1)]
     [InlineData("Run", 2)]
     [InlineData("Run", 3)]
@@ -67,7 +68,8 @@ public class NavReportStaticRunModalHookBindingTests
     public void StaticRunOverloads_UnresolvableReportId_ThrowsRunnerOutOfScope_NotSilentNoOp(
         string methodName, int arity)
     {
-        if (!_engine.Ready) return; // no BC artifacts provisioned — skip, don't fail
+        TestArtifacts.SkipIf(!_engine.Ready,
+            _engine.SkipReason ?? "the in-process BC engine is not ready (see BcEngineCollection).");
 
         // A report id that exists nowhere (no AL test assembly declares it, so the runner's
         // NCLMetadata cache never learns it) — the one path SyncStaticRun cannot construct a
@@ -94,10 +96,11 @@ public class NavReportStaticRunModalHookBindingTests
         Assert.StartsWith("out-of-scope: ", inner.Message);
     }
 
-    [Fact]
+    [SkippableFact]
     public void StaticRun_ReportRunOptionsOverload_ThrowsUnrecognisedShapeOos_NotSilentNoOp()
     {
-        if (!_engine.Ready) return; // no BC artifacts provisioned — skip, don't fail
+        TestArtifacts.SkipIf(!_engine.Ready,
+            _engine.SkipReason ?? "the in-process BC engine is not ready (see BcEngineCollection).");
 
         // The one static Run overload whose first parameter isn't `int` — deliberately NOT
         // routed to SyncStaticRun (the runner has no ReportRunOptions construction path).
@@ -109,11 +112,13 @@ public class NavReportStaticRunModalHookBindingTests
             ?? AppDomain.CurrentDomain.GetAssemblies()
                 .SelectMany(a => { try { return a.GetTypes(); } catch { return Array.Empty<Type>(); } })
                 .FirstOrDefault(t => t.FullName == "Microsoft.Dynamics.Nav.Types.Report.Base.ReportRunOptions");
-        if (reportRunOptionsType == null) return; // type not present in this BC version — nothing to assert
+        TestArtifacts.SkipIf(reportRunOptionsType == null,
+            "Microsoft.Dynamics.Nav.Types.Report.Base.ReportRunOptions is not present in this BC version.");
 
         var m = NavReportType.GetMethod("Run",
-            BindingFlags.Public | BindingFlags.Static, null, new[] { reportRunOptionsType }, null);
-        if (m == null) return; // overload not present in this BC version — nothing to assert
+            BindingFlags.Public | BindingFlags.Static, null, new[] { reportRunOptionsType! }, null);
+        TestArtifacts.SkipIf(m == null,
+            "NavReport.Run(ReportRunOptions) is not present in this BC version.");
 
         // The unrecognised-shape branch never dereferences its argument before throwing, so an
         // uninitialized instance is sufficient — this test is about which branch the Cecil

@@ -43,15 +43,6 @@ public sealed class TestTimeoutFlagTests : IDisposable
         try { Directory.Delete(_root, recursive: true); } catch { }
     }
 
-    private static bool ArtifactsPresent()
-    {
-        var home = Environment.GetEnvironmentVariable("HOME")
-            ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        var stdCache = Path.Combine(home, ".local", "share", "al-runner", "artifacts");
-        return Directory.Exists(stdCache) &&
-               Directory.EnumerateDirectories(stdCache).Any();
-    }
-
     /// <summary>
     /// Writes a minimal AL package: app.json (no dependencies, id range 62120..62129)
     /// and a test codeunit with one [Test] procedure that loops forever — it never
@@ -120,10 +111,10 @@ public sealed class TestTimeoutFlagTests : IDisposable
     /// Before the fix, the flag did not exist (unknown-option error) or, if merely
     /// wired but not to the message, would read "TIMEOUT after 2s" instead.
     /// </summary>
-    [Fact]
+    [SkippableFact]
     public void TestTimeout_CutsOffInfiniteLoop_WithV1CompatibleMessage()
     {
-        if (!ArtifactsPresent()) { Console.Error.WriteLine("[skip] BC artifacts not present"); return; }
+        TestArtifacts.SkipIfMissing();
 
         var (output, _) = RunRunner("--test-timeout 2");
 

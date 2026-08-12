@@ -162,11 +162,12 @@ public sealed class BcArtifactSelectionTests : IDisposable
     /// version carries no minor. If this ever starts failing, Microsoft changed their
     /// stamping and the baked-in attribute may no longer be needed.
     /// </summary>
-    [Fact]
+    [SkippableFact]
     public void NclAssemblyVersion_CarriesNoUsableMinor()
     {
         var ncl = BcArtifacts.EngineVersion(AppContext.BaseDirectory);
-        if (ncl == null) return; // no engine in bin — nothing to assert
+        TestArtifacts.SkipIf(ncl == null,
+            $"no Microsoft.Dynamics.Nav.Ncl.dll in '{AppContext.BaseDirectory}' to read a version from.");
         Assert.True(ncl.Minor == 0 && ncl.Build <= 0,
             $"Ncl.dll now reports a detailed version ({ncl}) — revisit EngineBuiltVersion.");
     }
