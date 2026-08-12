@@ -1189,7 +1189,15 @@ foreach (var bundle in bundles)
                     File.Exists(cachePath), File.Exists(sidecarPath),
                     bundleDeclaresQuery, File.Exists(querySidecarPath)))
             {
-                try { cachedBytes = File.ReadAllBytes(cachePath); }
+                try
+                {
+                    cachedBytes = File.ReadAllBytes(cachePath);
+                    // A short read of a file another process is still writing is not an I/O
+                    // error — ReadAllBytes happily hands back whatever bytes are on disk.
+                    // Validate the PE image explicitly so a torn/truncated entry is rejected
+                    // here as a MISS instead of reaching Assembly.Load downstream (issue #1810).
+                    AlRunner.Infrastructure.AlCacheSidecars.ValidateCachedAssemblyBytes(cachedBytes, cachePath);
+                }
                 catch (Exception ex)
                 {
                     Console.Error.WriteLine($"  [cache] read failed for {cachePath}: {ex.Message}");
@@ -1402,17 +1410,29 @@ foreach (var bundle in bundles)
                     {
                         try
                         {
-                            File.WriteAllBytes(cachePath, assemblyBytes);
+                            // Publish atomically, sidecars first and the DLL last (issue
+                            // #1810): AlCacheSidecars.IsCompleteEntry gates a HIT on the DLL's
+                            // presence, so the DLL becoming visible must be the commit point —
+                            // AtomicPublish writes each artifact to a same-directory temp file
+                            // and renames it into place, so a concurrent reader observing the
+                            // directory at any point sees either the old complete entry, no
+                            // entry, or the new complete entry, never a torn file or a DLL
+                            // whose sidecar isn't there yet.
+                            //
                             // Sidecar: persist the AlEnumMetadataRegistry side-effect that
                             // emit just populated. Without this, cache HIT replays the DLL
                             // but leaves the registry empty → enum tests fail.
-                            int written = SaveEnumRegistrySidecar(sidecarPath!);
+                            int written = AlRunner.Infrastructure.AlCacheWriter.AtomicPublish(
+                                sidecarPath!, tmp => SaveEnumRegistrySidecar(tmp));
                             // Same for the query symbols emit just serialized — without
                             // this the next HIT has no MetaQuery design (see
                             // AlCacheSidecars).
                             var qsrc = BcCompiler.LastBundleQuerySymbolsPath;
                             if (qsrc != null && File.Exists(qsrc))
-                                File.Copy(qsrc, querySidecarPath!, overwrite: true);
+                                AlRunner.Infrastructure.AlCacheWriter.AtomicPublish(
+                                    querySidecarPath!, tmp => File.Copy(qsrc, tmp, overwrite: true));
+                            AlRunner.Infrastructure.AlCacheWriter.AtomicPublish(
+                                cachePath, tmp => File.WriteAllBytes(tmp, assemblyBytes));
                             Console.Error.WriteLine($"  [cache] WROTE key={cacheKey} path={cachePath} ({assemblyBytes.Length} bytes, {written} enum entries → sidecar)");
                         }
                         catch (Exception ex)
@@ -2303,6 +2323,10 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                 try
                 {
                     var bytes = File.ReadAllBytes(cachePath);
+                    // Same short-read defence as the CLI path above (issue #1810): a torn
+                    // DLL is not a read error, so validate the PE image explicitly before
+                    // trusting it.
+                    AlRunner.Infrastructure.AlCacheSidecars.ValidateCachedAssemblyBytes(bytes, cachePath);
                     LoadEnumRegistrySidecar(sidecarPath);
                     if (bundleDeclaresQuery)
                         AlRunner.Patches.RecordPatches.RegisterBundleQuerySymbolsJson(querySidecarPath);
@@ -2374,11 +2398,16 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
             {
                 try
                 {
-                    File.WriteAllBytes(cachePath, assemblyBytes);
-                    SaveEnumRegistrySidecar(sidecarPath!);
+                    // Same atomic, sidecars-first-DLL-last publish as the CLI path above
+                    // (issue #1810) — see the comment there for why the ordering matters.
+                    AlRunner.Infrastructure.AlCacheWriter.AtomicPublish(
+                        sidecarPath!, tmp => SaveEnumRegistrySidecar(tmp));
                     var qsrc = BcCompiler.LastBundleQuerySymbolsPath;
                     if (qsrc != null && File.Exists(qsrc))
-                        File.Copy(qsrc, querySidecarPath!, overwrite: true);
+                        AlRunner.Infrastructure.AlCacheWriter.AtomicPublish(
+                            querySidecarPath!, tmp => File.Copy(qsrc, tmp, overwrite: true));
+                    AlRunner.Infrastructure.AlCacheWriter.AtomicPublish(
+                        cachePath, tmp => File.WriteAllBytes(tmp, assemblyBytes));
                 }
                 catch (Exception ex) { Console.Error.WriteLine($"  [cache] write failed: {ex.Message}"); }
             }

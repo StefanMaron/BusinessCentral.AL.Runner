@@ -48,4 +48,46 @@ public sealed class AlCacheSidecarsTests
         Assert.False(AlCacheSidecars.IsCompleteEntry(false, true, false, true));
         Assert.False(AlCacheSidecars.IsCompleteEntry(true, false, false, true));
     }
+
+    // Negative direction for issue #1810: a truncated <key>.dll next to otherwise-valid
+    // sidecars satisfies IsCompleteEntry (both files present) but must still be rejected
+    // by the reader before it reaches Assembly.Load — a short file is not a read error,
+    // File.ReadAllBytes succeeds and hands back whatever bytes are on disk. This is
+    // defence in depth kept even after the atomic-write fix: a GH Actions cache restore
+    // or a full disk can produce a short file that no write-ordering discipline prevents.
+    [Fact]
+    public void ValidateCachedAssemblyBytes_TruncatedDll_ThrowsWithTruncatedOrCorruptMessage()
+    {
+        var fullBytes = File.ReadAllBytes(typeof(AlCacheSidecarsTests).Assembly.Location);
+        var truncated = fullBytes.Take(fullBytes.Length / 2).ToArray();
+
+        var ex = Assert.Throws<InvalidDataException>(
+            () => AlCacheSidecars.ValidateCachedAssemblyBytes(truncated, "/cache/abc123.dll"));
+
+        Assert.Contains("truncated or corrupt", ex.Message);
+        Assert.Contains($"{truncated.Length} bytes", ex.Message);
+    }
+
+    [Fact]
+    public void ValidateCachedAssemblyBytes_EmptyFile_ThrowsWithTruncatedOrCorruptMessage()
+    {
+        var ex = Assert.Throws<InvalidDataException>(
+            () => AlCacheSidecars.ValidateCachedAssemblyBytes(Array.Empty<byte>(), "/cache/abc123.dll"));
+
+        Assert.Contains("truncated or corrupt", ex.Message);
+    }
+
+    // Positive control for the same method: a complete, real managed-assembly image must
+    // NOT be rejected — otherwise the negative test above would be proving nothing (a
+    // validator that always throws would also pass it).
+    [Fact]
+    public void ValidateCachedAssemblyBytes_CompleteAssembly_DoesNotThrow()
+    {
+        var fullBytes = File.ReadAllBytes(typeof(AlCacheSidecarsTests).Assembly.Location);
+
+        var exception = Record.Exception(
+            () => AlCacheSidecars.ValidateCachedAssemblyBytes(fullBytes, "/cache/abc123.dll"));
+
+        Assert.Null(exception);
+    }
 }
