@@ -12,8 +12,10 @@ namespace AlRunner.Tests;
 /// for where those live and why the gate is shared. When artifacts are absent the
 /// tests report Skipped with a reason — not Passed, which is what the old private
 /// gate produced on every CI run because it probed a path CI never creates.
+///
+/// See DefineFlagIntegrationTests for why this used to be
+/// [Collection("server-serial")] and no longer is — #1809.
 /// </summary>
-[Collection("server-serial")]
 public class ServerTests
 {
     // The fixture bundle: a table whose OnInsert trigger reads xRec and a test

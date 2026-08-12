@@ -26,9 +26,8 @@ using Xunit;
 
 namespace AlRunner.Tests;
 
-// See DefineFlagIntegrationTests for why this is serialized with the other
-// runner-subprocess integration tests.
-[Collection("server-serial")]
+// See DefineFlagIntegrationTests for why this used to be [Collection("server-serial")]
+// and no longer is — #1809.
 public sealed class BatchAppIdentityTests : IDisposable
 {
     private static readonly string RepoRoot = Path.GetFullPath(

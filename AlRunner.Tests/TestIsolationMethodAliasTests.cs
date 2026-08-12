@@ -20,10 +20,9 @@ using Xunit;
 
 namespace AlRunner.Tests;
 
-// Serialized with the other runner-subprocess integration tests — see
-// DefineFlagIntegrationTests for why (shared native BC engine state, SIGBUS flakes
-// under xUnit's default parallelization).
-[Collection("server-serial")]
+// Used to be serialized with the other runner-subprocess integration tests
+// (shared native BC engine state, SIGBUS flakes under xUnit's default
+// parallelization) — see DefineFlagIntegrationTests; no longer is — #1809.
 public sealed class TestIsolationMethodAliasTests : IDisposable
 {
     private static readonly string RepoRoot = Path.GetFullPath(

@@ -31,6 +31,21 @@
     <ProjectReference Include="../AlRunner/AlRunner.csproj" />
   </ItemGroup>
 
+  <!-- #1809: caps xUnit's own collection parallelism at 4 threads. xUnit's own default is
+       already Environment.ProcessorCount, which IS 4 on GitHub's Linux runners today — so
+       this setting is a NO-OP on CI as things stand; its only real effect right now is
+       capping a bigger local dev box down to the ~488MB-peak-RSS-per-subprocess-measured
+       ceiling instead of oversubscribing on however many cores that box has. If GitHub
+       moves to 8-vCPU runners this value silently stops tracking the default and needs
+       revisiting (bump it, or drop the explicit value and let xUnit's default follow the
+       runner again — check the RSS math still holds at whatever the new default is first).
+       Must be copied next to the test DLL (xUnit only reads it from the assembly's own
+       directory) — the SDK does not do that
+       for arbitrary *.json by default. -->
+  <ItemGroup>
+    <None Include="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
   <!-- BC CodeAnalysis / Ncl types (SymbolReferenceSpecification, ISymbolReferenceLoader,
        ITreeObject, TreeHandler, TreeSharedObjectContainer, …) used by
        JsonLoaderDependencyFallthroughTests and SkeletonSharedObjectContainerLeakTests.

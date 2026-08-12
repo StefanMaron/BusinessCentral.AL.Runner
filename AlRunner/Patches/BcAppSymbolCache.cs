@@ -4,6 +4,7 @@ using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using AlRunner.Infrastructure;
 
 namespace AlRunner.Patches;
 
@@ -253,13 +254,29 @@ internal static partial class BcAppSymbolCache
         }
     }
 
-    private static void TryWrite(string cachePath, FileInfo appInfo, AppSymbols symbols)
+    // internal (not private): AlRunner.Tests exercises this directly to pin the
+    // atomic-publish contract at this specific call site — see
+    // BcAppSymbolCacheAtomicWriteTests.cs.
+    internal static void TryWrite(string cachePath, FileInfo appInfo, AppSymbols symbols)
     {
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(cachePath)!);
             var payload = new CachePayload(appInfo.Length, appInfo.LastWriteTimeUtc.Ticks, symbols.Tables, symbols.Enums, symbols.Queries, symbols.Objects, symbols.Reports, symbols.Pages);
-            File.WriteAllText(cachePath, JsonSerializer.Serialize(payload));
+            // #1809 follow-up: cachePath is content-keyed (hash of the .app file),
+            // so two subprocesses parsing the same app concurrently used to race a
+            // plain File.WriteAllText into the same path. TryRead already treats any
+            // exception (including a partial-JSON parse failure from a torn read) as
+            // a cache miss, so this was never a crash — but it was a silent-ish
+            // "MISS when it should have been a HIT" that reparses on every collision,
+            // which is exactly the kind of intermittent-and-unexplained cost
+            // parallelizing AlRunner.Tests's subprocess collections (#1809) makes
+            // more likely to hit. Fix: publish atomically like every other
+            // content-keyed cache in this codebase (AlCacheWriter.AtomicPublish —
+            // temp file in the same directory + File.Move(overwrite:true)), so a
+            // concurrent reader only ever sees "file absent" or "file complete",
+            // never a torn write.
+            AlCacheWriter.AtomicPublish(cachePath, tmp => File.WriteAllText(tmp, JsonSerializer.Serialize(payload)));
         }
         catch (Exception ex)
         {

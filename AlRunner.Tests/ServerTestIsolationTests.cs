@@ -9,8 +9,10 @@ namespace AlRunner.Tests;
 /// per-method reset cross-pollute under --server even though the identical CLI
 /// invocation passes. These spawn the real runner and need BC artifacts provisioned
 /// (see TestArtifacts); when absent they report Skipped with a reason, not Passed.
+///
+/// See DefineFlagIntegrationTests for why this used to be
+/// [Collection("server-serial")] and no longer is — #1809.
 /// </summary>
-[Collection("server-serial")]
 public class ServerTestIsolationTests
 {
 

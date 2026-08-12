@@ -1701,12 +1701,17 @@ if (watchUi)
     // keyboard scrolling AND the file-change watcher in one interleaved poll loop.
     // The dashboard frequently exceeds the screen, so we paint only the visible
     // window at the current scroll offset and let arrow/page/home/end keys move it.
+    // The paint runs from inside onArmed, which WatchSource invokes only AFTER
+    // every FileSystemWatcher is live (#1822) — so "● watching" can never be
+    // painted before the watch is actually armed.
     var idleTs = DateTime.Now;
     watchScroll = 0;
-    var lines = RenderDashboardLines(WatchStatus.Idle, idleTs, cycleDur);
-    watchScroll = PaintWatchViewport(lines, watchScroll);
-
-    var armed = ArmSourceWatch(bundles);
+    List<string> lines = new();
+    var armed = WatchSource.ArmSourceWatch(bundles, onArmed: () =>
+        {
+            lines = RenderDashboardLines(WatchStatus.Idle, idleTs, cycleDur);
+            watchScroll = PaintWatchViewport(lines, watchScroll);
+        });
     if (armed == null) return 0;
     var (signal, watchers) = armed.Value;
     bool changed = false;
@@ -1765,13 +1770,18 @@ else
     // integration test asserts on these exact markers — do not change them.
     Reporter.PrintPerTest(results, Console.Out, showPass);
     Reporter.PrintSummary(results, Console.Out);
-    Console.WriteLine("[watch] waiting for AL source changes… (Ctrl+C to quit)");
-    // Flush before blocking: when stdout is a pipe/file (a TUI front-end, VS Code, or
-    // a test harness) it is block-buffered, so the cycle's results + this marker would
-    // otherwise sit unflushed for the entire idle wait. A TTY auto-flushes, but piped
-    // consumers must see each cycle as it completes.
-    Console.Out.Flush();
-    if (!WaitForSourceChange(bundles))
+    // The marker is printed from inside onArmed, which WatchSource invokes only
+    // AFTER every FileSystemWatcher is live (#1822) — so it can never be a promise
+    // the process has not yet kept. Flush before blocking: when stdout is a
+    // pipe/file (a TUI front-end, VS Code, or a test harness) it is block-buffered,
+    // so the cycle's results + this marker would otherwise sit unflushed for the
+    // entire idle wait. A TTY auto-flushes, but piped consumers must see each cycle
+    // as it completes.
+    if (!WatchSource.WaitForSourceChange(bundles, onArmed: () =>
+        {
+            Console.WriteLine("[watch] waiting for AL source changes… (Ctrl+C to quit)");
+            Console.Out.Flush();
+        }))
         return 0;
     Console.WriteLine("[watch] change detected — re-running…");
     Console.Out.Flush();
@@ -2106,20 +2116,43 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                 changed = DiffServerFiles(lastFileHashes, combinedHashes);
             lastFileHashes = combinedHashes;
 
+            // Read BEFORE clearing activeRunCts below (still valid — not yet disposed).
+            var cancelled = cts.Token.IsCancellationRequested;
+
+            // #1809: clear activeRunCts BEFORE writing+flushing the summary line, not
+            // after (the old code cleared it in `finally`, which runs AFTER this write).
+            // The reader thread's `cancel` side channel (HandleSideChannelCommand,
+            // above) only has something to observe once the client sends a `cancel`
+            // request, and a well-behaved client can only do that once it has actually
+            // read the summary line this method is about to emit. So clearing first
+            // makes "cancel sent right after the summary" ALWAYS see activeRunCts
+            // already null — by program order on this one thread, not by winning a race
+            // against the reader thread. The old ordering left a real gap: the client
+            // could read+flush-observe the summary and fire `cancel` before this
+            // thread ever reached its `finally`, during which HandleSideChannelCommand
+            // would still see the stale non-null cts and answer noop:false for a run
+            // that had already finished — a bug the wider concurrency #1809 introduces
+            // (more collections running at once → more scheduler contention → this
+            // window widens) makes far more likely to actually land, not merely a
+            // theoretical TOCTOU. See ServerCancelTests.Cancel_AfterRunTestsCompletes_IsNoop.
+            System.Threading.Interlocked.CompareExchange(ref activeRunCts, null, cts);
+
             lock (outputLock)
             {
                 output.WriteLine(AlRunner.ServerProtocol.Summary(
                     allTests, exitCode, cached, changed,
                     allCompileErrors.Count > 0 ? allCompileErrors : null,
-                    cancelled: cts.Token.IsCancellationRequested));
+                    cancelled: cancelled));
                 output.Flush();
             }
         }
         finally
         {
-            // Race guard mirrors v1 (#1613/#1614): only clear+dispose OUR cts, in
-            // case a pathological caller queued a second runtests while this one was
-            // still active and it already replaced activeRunCts with its own.
+            // Belt-and-braces: reaches the same state as the explicit clear above on
+            // every path, INCLUDING an exception thrown before that point (e.g. from
+            // RunAllBundlesForServer) — a pathological caller must never be left with a
+            // permanently-stuck activeRunCts pointing at a cts nothing will ever
+            // complete. A no-op on the normal path (already null there).
             System.Threading.Interlocked.CompareExchange(ref activeRunCts, null, cts);
             cts.Dispose();
         }
@@ -2541,73 +2574,9 @@ static List<string> DiffServerFiles(Dictionary<string, string>? prev, Dictionary
 }
 
 // ── --watch helpers ───────────────────────────────────────────────────────────
-
-// Block until an .al file changes under any watched bundle's bucket root. Returns true
-// on a change (loop again), false if there is nothing to watch.
-static bool WaitForSourceChange(List<string> bundles)
-{
-    var armed = ArmSourceWatch(bundles);
-    if (armed == null) return false;
-    var (signal, watchers) = armed.Value;
-    try
-    {
-        signal.Wait();                       // block until the first .al change
-        System.Threading.Thread.Sleep(250);  // debounce: let a save storm settle
-        return true;
-    }
-    finally
-    {
-        foreach (var w in watchers) { w.EnableRaisingEvents = false; w.Dispose(); }
-        signal.Dispose();
-    }
-}
-
-/// <summary>
-/// Arm FileSystemWatchers over the bundles' source roots and return a settable
-/// signal + the watchers so the caller can interleave the file-change wait with
-/// other work (e.g. the interactive dashboard's keyboard polling). Returns null
-/// if there are no source dirs to watch. The caller owns disposal of both.
-/// </summary>
-static (System.Threading.ManualResetEventSlim Signal, List<FileSystemWatcher> Watchers)? ArmSourceWatch(List<string> bundles)
-{
-    var dirs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-    foreach (var b in bundles)
-    {
-        var abs = Path.GetFullPath(b);
-        var root = FindBucketRoot(abs) ?? abs;
-        if (Directory.Exists(root)) dirs.Add(root);
-    }
-    if (dirs.Count == 0)
-    {
-        Console.Error.WriteLine("[watch] no source directories to watch.");
-        return null;
-    }
-
-    var signal = new System.Threading.ManualResetEventSlim(false);
-    void OnChanged(object _, FileSystemEventArgs e)
-    {
-        if (e.FullPath.EndsWith(".al", StringComparison.OrdinalIgnoreCase)) signal.Set();
-    }
-    void OnRenamed(object _, RenamedEventArgs e)
-    {
-        if (e.FullPath.EndsWith(".al", StringComparison.OrdinalIgnoreCase)) signal.Set();
-    }
-
-    var watchers = new List<FileSystemWatcher>();
-    foreach (var d in dirs)
-    {
-        var w = new FileSystemWatcher(d)
-        {
-            IncludeSubdirectories = true,
-            Filter = "*.al",
-            NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.Size,
-            EnableRaisingEvents = true,
-        };
-        w.Changed += OnChanged; w.Created += OnChanged; w.Deleted += OnChanged; w.Renamed += OnRenamed;
-        watchers.Add(w);
-    }
-    return (signal, watchers);
-}
+// WaitForSourceChange / ArmSourceWatch moved to AlRunner.WatchSource (see #1822):
+// local functions declared here cannot be unit-tested, and the arm-before-announce
+// ordering contract needed a deterministic test.
 
 static void DumpCsharpSources(string dir, string moduleName, IReadOnlyList<EmittedSource> sources)
 {
@@ -4140,6 +4109,10 @@ static List<DependencyRef> ReadBundleDependencyRoots(IReadOnlyList<string> manif
     return byKey.Values.ToList();
 }
 
+// NOTE: AlRunner/WatchSource.cs has its own private copy of this exact walk-up
+// (it can't call this one — top-level-statement local functions aren't
+// reachable from another file/class). The two must stay in sync; see #1824
+// for the follow-up to de-duplicate them.
 static string? FindBucketRoot(string bundlePath)
 {
     var cur = Directory.Exists(bundlePath) ? bundlePath : Path.GetDirectoryName(bundlePath);

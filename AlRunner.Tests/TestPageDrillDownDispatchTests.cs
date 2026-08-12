@@ -31,9 +31,12 @@ using Xunit;
 
 namespace AlRunner.Tests;
 
-// Spawns the runner as a subprocess, same convention as BatchAppIdentityTests — serialized
-// with the other runner-subprocess integration tests to avoid concurrent `dotnet run`s.
-[Collection("server-serial")]
+// Spawns the runner as a subprocess, same convention as BatchAppIdentityTests. Used to be
+// [Collection("server-serial")] to avoid concurrent `dotnet run`s and no longer is — #1809.
+// This test's own flake under box contention (seen while developing #1808) was traced to
+// generic shared-box starvation, not a timing assumption in the test itself: RunBundled()
+// already waits up to 600s for the subprocess and the fixture uses a per-instance Guid temp
+// dir, so there is no fixed-timeout or shared-path race here to fix.
 public sealed class TestPageDrillDownDispatchTests : IDisposable
 {
     private static readonly string RepoRoot = Path.GetFullPath(

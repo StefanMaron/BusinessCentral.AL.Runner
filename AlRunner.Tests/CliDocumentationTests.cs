@@ -15,9 +15,8 @@ namespace AlRunner.Tests;
 /// These tests pin the help/guide surface against drift. They exercise the real
 /// CLI (both flags are handled before any BC type loads, so this is fast).
 /// </summary>
-// See DefineFlagIntegrationTests for why this is serialized with the other
-// runner-subprocess integration tests.
-[Collection("server-serial")]
+// See DefineFlagIntegrationTests for why this used to be [Collection("server-serial")]
+// and no longer is — #1809.
 public sealed class CliDocumentationTests
 {
     private static readonly string RepoRoot = Path.GetFullPath(

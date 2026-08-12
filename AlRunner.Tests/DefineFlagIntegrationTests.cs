@@ -22,12 +22,20 @@ using Xunit;
 
 namespace AlRunner.Tests;
 
-// Serialized with the other runner-subprocess integration tests: each spawns a real
-// `dotnet run --project AlRunner` process (native BC engine, R2R/EventPipe). Running
-// several concurrently under xUnit's default parallelization contends for shared
-// caches and native process state and has produced SIGBUS crashes (exit code 135 =
-// 128+SIGBUS) — a flake that does not reproduce when the same invocation runs alone.
-[Collection("server-serial")]
+// Used to be [Collection("server-serial")] with every other runner-subprocess
+// integration test — see #1809. That was a real, documented reaction to real SIGBUS
+// (exit 135) crashes, not habit: each of these classes spawns a real `dotnet run
+// --project AlRunner` process (native BC engine, R2R/EventPipe), and running several
+// concurrently under xUnit's default parallelization used to hit them. Root cause
+// (found later, same v2-cutover work): NclCecilRewrite.RewriteInPlace published the
+// rewritten Ncl.dll with a plain truncate-in-place write; every loaded assembly is
+// memory-mapped, so a second process's page fault against the half-written file
+// raised SIGBUS. That was fixed with an atomic temp-file+rename publish (see
+// NclCecilRewrite.AtomicReplace) well before this comment, and the AL-output cache
+// got the same atomic-publish treatment in #1810. #1808 additionally stopped these
+// tests from going through `dotnet run` at all — TestBuildConfig.RunArgs invokes the
+// built al-runner.dll directly. #1809 removed the serialization now that its actual
+// cause is fixed; see that issue for the investigation.
 public sealed class DefineFlagIntegrationTests : IDisposable
 {
     private static readonly string RepoRoot = Path.GetFullPath(
