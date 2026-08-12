@@ -67,7 +67,7 @@ While impls work, sweep the PR queue once:
 Agent({
   subagent_type: "orchestrator",
   description: "PR queue sanity-review and merge pass",
-  prompt: "Run one orchestrator pass per your agent definition. Sanity-read every `status: review-ready` PR against its linked issue, apply mechanical checks (CHANGELOG / coverage.yaml / SA-implementation), merge what passes, leave actionable comments on what doesn't. Handle `status: blocked` issues if any can be resolved. Do **not** triage new issues (the triager owns that). Exit after one full pass with no further actions."
+  prompt: "Run one orchestrator pass per your agent definition. Sanity-read every `status: review-ready` PR against its linked issue, apply mechanical checks (CHANGELOG / tests/al-language edits / SA-implementation), merge what passes, leave actionable comments on what doesn't. Handle `status: blocked` issues if any can be resolved. Do **not** triage new issues (the triager owns that). Exit after one full pass with no further actions."
 })
 ```
 
