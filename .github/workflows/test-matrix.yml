@@ -188,7 +188,18 @@ jobs:
           </RunSettings>
           EOF
 
+      # Issue #1825: AL_RUNNER_PHASE_LOG makes each runner subprocess append one JSONL
+      # record per app group / bundle / process to a shared file. The 76 spawns' stdout
+      # is captured into strings and discarded by the tests (and several assert on it
+      # verbatim), so this is the only way to see where their minutes go. Opt-in and
+      # completely inert without the variable. The start marker is a separate step so
+      # the run block below stays byte-identical and rebases cleanly.
+      - name: Phase-log start marker (unit tests)
+        run: date +%s > phase-step-start-unit
+
       - name: Run unit tests (AlRunner.Tests)
+        env:
+          AL_RUNNER_PHASE_LOG: ${{ github.workspace }}/phase-log-unit.jsonl
         run: |
           # --settings wires the DOTNET_STARTUP_HOOKS chain generated above so the in-process BC
           # engine tests (BcEngineCollection) execute here, in this single pass, instead of
@@ -199,8 +210,20 @@ jobs:
           # guard that replaces it).
           dotnet test AlRunner.Tests/AlRunner.Tests.csproj -c Release --no-build --settings engine.runsettings
 
+      - name: Phase-log report (unit tests)
+        # always(): a red unit-test step is exactly when the timings are most worth
+        # seeing, and this must never be the thing that fails the leg.
+        if: always()
+        continue-on-error: true
+        run: |
+          python3 scripts/phase-log-report.py phase-log-unit.jsonl \
+              --label "AlRunner.Tests — BC ${{ matrix.target.bc-version }} (4-way parallel, CONTENDED)" \
+              --step-seconds $(( $(date +%s) - $(cat phase-step-start-unit 2>/dev/null || date +%s) ))
+
       - name: Run al-language corpus
         id: al-language
+        env:
+          AL_RUNNER_PHASE_LOG: ${{ github.workspace }}/phase-log-corpus.jsonl
         run: |
           # The canonical corpus lives in the tests/al-language submodule.
           # See docs/expectations.md for how OOS-by-design tests are declared.
@@ -244,10 +267,19 @@ jobs:
               --test "Codeunit6020" \
               --strict
 
+      - name: Phase-log report (al-language corpus)
+        if: always()
+        continue-on-error: true
+        run: |
+          python3 scripts/phase-log-report.py phase-log-corpus.jsonl \
+              --label "al-language corpus — BC ${{ matrix.target.bc-version }} (single process)"
+
       - name: Run runner-extras (if present)
         # always() so a failed (red) corpus leg above doesn't skip this — runner-extras
         # is an independent gate. --strict so any runner-extra failure also fails the leg.
         if: ${{ always() && hashFiles('tests/runner-extras/**/*.al') != '' }}
+        env:
+          AL_RUNNER_PHASE_LOG: ${{ github.workspace }}/phase-log-runner-extras.jsonl
         run: |
           # Same package cache the corpus leg gets. Without it this leg saw
           # "package caches: 0 dir(s)" and aborted on the first suite declaring a
@@ -259,6 +291,15 @@ jobs:
               --package-cache "$HOME/.al-runner/test-apps" \
               --strict \
               --out runner-extras-results.json
+
+      - name: Phase-log report (runner-extras)
+        # The step with the most to say: 38 app groups in ONE process, so engine boot is
+        # amortised away and the per-app-group tax is visible on its own.
+        if: always()
+        continue-on-error: true
+        run: |
+          python3 scripts/phase-log-report.py phase-log-runner-extras.jsonl \
+              --label "runner-extras — BC ${{ matrix.target.bc-version }} (single process, 38 app groups)"
 
       - name: Server-mode integration (multi-bundle contract)
         # always() for the same reason as runner-extras: an independent gate.
@@ -281,6 +322,9 @@ jobs:
           path: |
             al-language-results.json
             runner-extras-results.json
+            phase-log-unit.jsonl
+            phase-log-corpus.jsonl
+            phase-log-runner-extras.jsonl
           if-no-files-found: ignore
 
   smoke:

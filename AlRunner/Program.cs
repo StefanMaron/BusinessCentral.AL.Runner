@@ -30,6 +30,14 @@ if (Environment.GetEnvironmentVariable("AL_RUNNER_DIAG_FIRSTCHANCE") is string f
     };
 }
 
+// Opt-in per-bundle / per-process cost instrumentation (issue #1825). Installed
+// before the --help / --guide / --version fast paths on purpose: those return
+// before any BC type loads, so their rows measure the bare process floor (host
+// startup + the full-opt JIT <TieredCompilation>false</TieredCompilation> forces)
+// with zero phases — the baseline every residual is read against. Completely inert
+// unless AL_RUNNER_PHASE_LOG names a path. See AlRunner/Infrastructure/PhaseLog.cs.
+AlRunner.Infrastructure.PhaseLog.Install();
+
 if (args.Length == 0 || args[0] == "--help" || args[0] == "-h" || args[0] == "help")
 {
     PrintHelp(args.Length == 0 ? Console.Error : Console.Out);
@@ -93,6 +101,12 @@ if (Environment.GetEnvironmentVariable("DOTNET_ReadyToRun") is null
     psi.Environment["DOTNET_ReadyToRun"] = "0";
     psi.Environment["AL_RUNNER_R2R_REEXECED"] = "1";
     Console.Error.WriteLine("[r2r] re-execing with DOTNET_ReadyToRun=0 (hooks fire deterministically; AL_RUNNER_ENABLE_R2R=1 to disable)");
+    // Every invocation without DOTNET_ReadyToRun preset takes this branch, so the
+    // "one runner spawn" the tests believe they made is really two OS processes.
+    // Keep the outer one's row (its wall clock minus the child's IS the cost of the
+    // extra process start, which is a real per-spawn tax worth sizing) but label it
+    // so aggregates summing `kind=="process"` do not count the child's time twice.
+    AlRunner.Infrastructure.PhaseLog.MarkReexecParent();
     using var r2rChild = System.Diagnostics.Process.Start(psi)!;
     r2rChild.WaitForExit();
     return r2rChild.ExitCode;
@@ -546,6 +560,10 @@ Console.WriteLine(serverMode
             psi.ArgumentList.Add(a);
         psi.Environment["AL_RUNNER_REEXECED"] = "1";
         Console.Error.WriteLine("[Cecil] Fresh rewrite done — re-execing for a clean Ncl load");
+        // This process waits for the child below, so its wall clock CONTAINS the
+        // child's entire run. Re-label the row so aggregates that sum `kind=="process"`
+        // do not double-count it.
+        AlRunner.Infrastructure.PhaseLog.MarkReexecParent();
         using var child = System.Diagnostics.Process.Start(psi)!;
         child.WaitForExit();
         return child.ExitCode;
@@ -556,6 +574,8 @@ var packageCacheDirs = packageCacheArgs.Count > 0
     ? ExpandPackageCacheDirs(packageCacheArgs).ToList()
     : DefaultPackageCacheDirs().ToList();
 Console.WriteLine($"  package caches: {packageCacheDirs.Count} dir(s)");
+AlRunner.Infrastructure.PhaseLog.SetPackageCacheDirs(packageCacheDirs.Count);
+AlRunner.Infrastructure.PhaseLog.SetBundles(bundles);
 
 // Issue #1678: the platform-app R2R gate below used to scan ONLY packageCacheDirs
 // (the home-rooted default caches / explicit --package-cache dirs) — never the target
@@ -710,6 +730,7 @@ if (Environment.GetEnvironmentVariable("AL_RUNNER_DIAG_FCE") is "1" or "2")
 var t0 = System.Diagnostics.Stopwatch.StartNew();
 BcRuntime.EnsureApplied();
 Console.WriteLine($"BC runtime patches applied ({t0.ElapsedMilliseconds}ms)");
+AlRunner.Infrastructure.PhaseLog.SetPatchesMs(t0.ElapsedMilliseconds);
 AlRunner.PerfTrace.Log($"BcRuntime.EnsureApplied {t0.ElapsedMilliseconds}ms");
 
 var emitter = new BcCompiler();
@@ -875,6 +896,7 @@ foreach (var bundle in bundles)
     i2++;
     var bundleAbs = Path.GetFullPath(bundle);
     var rel = Path.GetRelativePath(Environment.CurrentDirectory, bundleAbs);
+    AlRunner.Infrastructure.PhaseLog.BeginBundle(rel, i2);
 
     // Watch mode re-runs the SAME process across edits, so drop the previous
     // iteration's bundle-derived caches (record/codeunit types, parsed schemas,
@@ -929,6 +951,7 @@ foreach (var bundle in bundles)
                 var ordered = resolver.Resolve(roots);
                 bundleResolvedDeps = ordered;
                 Console.WriteLine($"  [{rel}] resolved {ordered.Count} dep(s)");
+                AlRunner.Infrastructure.PhaseLog.NoteDepsResolved(ordered.Count);
                 // Under --verbose, name the package that actually WON for each
                 // dependency, with the file it came from. Resolution picks by highest
                 // version across every scanned dir, so a symbols-only .app can outrank
@@ -982,6 +1005,7 @@ foreach (var bundle in bundles)
                     BcCompiler.SetExtraSymbolDirs(layeredWorkspaceDirs);
                 var loaded = depLoader.LoadAll(ordered, depRootDir);
                 Console.WriteLine($"  [{rel}] loaded {loaded.Count} dep assembl(ies)");
+                AlRunner.Infrastructure.PhaseLog.NoteDepAssembliesLoaded(loaded.Count);
                 // Register dep assemblies (dependency order) so their Subtype=Install
                 // codeunit lifecycle triggers fire before this bundle's tests run.
                 AlRunner.InstallTriggerRunner.SetDependencyAssemblies(loaded);
@@ -1122,10 +1146,17 @@ foreach (var bundle in bundles)
         // re-scanned the package caches once per app.
         var orderedDepIds = GetOrderedDepIds(bucketRoot, packageCacheDirs, bundleAbs);
 
+        int agIdx = 0;
         foreach (var appGroup in appGroups)
         {
         var allPaths = appGroup.Paths;
         var moduleName = appGroup.ModuleName;
+        // The app group — one emitted module — is the finest unit of compile+run work
+        // and the one #1825 needs counted: CI passes `tests/runner-extras` as a SINGLE
+        // bundle holding 38 of these, so a per-bundle row alone would collapse that
+        // whole step to one data point. Auto-closes the previous group, so the many
+        // `continue` paths below cannot leak a row.
+        AlRunner.Infrastructure.PhaseLog.BeginApp(moduleName, ++agIdx, appGroups.Count);
 
         // Compile THIS app under its own app.json identity, overriding the
         // bundle-level identity set before the suite loop. This is what makes
@@ -1237,12 +1268,17 @@ foreach (var bundle in bundles)
             if (cachedBytes != null)
             {
                 Console.Error.WriteLine($"  [cache] HIT  key={cacheKey} path={cachePath} ({cachedBytes.Length} bytes, {replayed} enum entries replayed) — skipping Emit+Compile");
+                AlRunner.Infrastructure.PhaseLog.NoteCacheHit();
                 assemblyBytes = cachedBytes;
             }
         }
         if (needCompile && assemblyBytes == null)
         {
-            if (alCacheDir != null) Console.Error.WriteLine($"  [cache] MISS key={cacheKey} — running Emit+Compile");
+            if (alCacheDir != null)
+            {
+                Console.Error.WriteLine($"  [cache] MISS key={cacheKey} — running Emit+Compile");
+                AlRunner.Infrastructure.PhaseLog.NoteCacheMiss();
+            }
             var et = System.Diagnostics.Stopwatch.StartNew();
             IReadOnlyList<EmittedSource> sources = Array.Empty<EmittedSource>();
             IReadOnlyList<string> alDiagnostics = Array.Empty<string>();
@@ -1337,6 +1373,7 @@ foreach (var bundle in bundles)
             {
                 et.Stop();
                 bundleEmit += et.Elapsed;
+                AlRunner.Infrastructure.PhaseLog.AddAppEmit(et.Elapsed);
             }
 
             // Partial silent emit-drop guard. #1620 already catches the ALL-objects-missing
@@ -1390,6 +1427,7 @@ foreach (var bundle in bundles)
                 var ct = System.Diagnostics.Stopwatch.StartNew();
                 var compile = assembler.Compile(moduleName, sources);
                 ct.Stop(); bundleComp += ct.Elapsed;
+                AlRunner.Infrastructure.PhaseLog.AddAppCompile(ct.Elapsed);
                 if (!compile.Success)
                 {
                     Console.Error.WriteLine($"<bundled>: COMPILE-FAIL — {compile.Errors.Count} error(s):");
@@ -1520,6 +1558,10 @@ foreach (var bundle in bundles)
             loadedAssemblies.Add(asm);
         }
         } // ── end per-app emit/compile/load loop ────────────────────────────────
+        // Close the last app's emit/compile turn here, not at the bundle's end: the
+        // test run below is a SEPARATE pass, and leaving this row open would bank the
+        // whole pass onto it.
+        AlRunner.Infrastructure.PhaseLog.EndApp();
 
         // Every app's assembly is now in the AppDomain, so this single walk resolves
         // every table's Record CLR type in one pass — including tables belonging to
@@ -1527,8 +1569,14 @@ foreach (var bundle in bundles)
         // (pre-registration adds every suite's src/ up front, before any app emits).
         AlRunner.Patches.RecordPatches.WireFieldTriggerHandlersAll();
 
+        int runIdx = 0;
         foreach (var asm in loadedAssemblies)
         {
+            // Reopens THIS app's row (matched by module name) so its test-run time lands
+            // on the app that owns it. See PhaseLog.BeginApp for why it is two passes.
+            runIdx++;
+            AlRunner.Infrastructure.PhaseLog.BeginApp(
+                asm.GetName().Name ?? $"<asm {runIdx}>", runIdx, loadedAssemblies.Count);
             var rt = System.Diagnostics.Stopwatch.StartNew();
             IReadOnlyList<TestResult> tests;
             try
@@ -1548,6 +1596,7 @@ foreach (var bundle in bundles)
             catch (Exception ex)
             {
                 rt.Stop(); bundleRun += rt.Elapsed;
+                AlRunner.Infrastructure.PhaseLog.AddAppRun(rt.Elapsed);
                 // A ReflectionTypeLoadException (possibly wrapped) otherwise surfaces only its
                 // opaque top line ("Unable to load one or more of the requested types"),
                 // hiding WHICH type/dependency could not load. Dig out the concrete
@@ -1574,6 +1623,7 @@ foreach (var bundle in bundles)
                 BcRuntime.OosHooksActive = false;
             }
             rt.Stop(); bundleRun += rt.Elapsed;
+            AlRunner.Infrastructure.PhaseLog.AddAppRun(rt.Elapsed);
             bundleTests.AddRange(tests);
             sP += tests.Count(t => t.Outcome == TestOutcome.Pass);
             sF += tests.Count(t => t.Outcome == TestOutcome.Fail);
@@ -1587,6 +1637,10 @@ foreach (var bundle in bundles)
         {
             si++;
             var suiteName = Path.GetRelativePath(bundleAbs, suite);
+            // Non-bundled mode emits one module per SUITE, so the suite is the app
+            // group here. Same unit, same row kind — the instrument must not go blind
+            // just because --isolation moved the compile boundary.
+            AlRunner.Infrastructure.PhaseLog.BeginApp($"V2_{Path.GetFileName(suite)}", si, suites.Count);
             var suitePaths = CollectSuitePaths(suite, bucketRoot);
             if (suitePaths.Count == 0) continue;
 
@@ -1602,16 +1656,19 @@ foreach (var bundle in bundles)
             catch (Exception ex)
             {
                 et.Stop(); bundleEmit += et.Elapsed;
+                AlRunner.Infrastructure.PhaseLog.AddAppEmit(et.Elapsed);
                 Console.Error.WriteLine($"{suiteName}: EMIT-FAIL — {ex.GetType().Name}: {ex.Message}");
                 if (ex.StackTrace is { } st) Console.Error.WriteLine(st);
                 bundleErrors.Add($"{suiteName}: EMIT-FAIL: {ex.Message.Split('\n')[0]}");
                 continue;
             }
             et.Stop(); bundleEmit += et.Elapsed;
+            AlRunner.Infrastructure.PhaseLog.AddAppEmit(et.Elapsed);
 
             var ct = System.Diagnostics.Stopwatch.StartNew();
             var compile = assembler.Compile($"V2_{Path.GetFileName(suite)}", sources);
             ct.Stop(); bundleComp += ct.Elapsed;
+            AlRunner.Infrastructure.PhaseLog.AddAppCompile(ct.Elapsed);
             if (!compile.Success)
             {
                 Console.Error.WriteLine($"{suiteName}: COMPILE-FAIL — {compile.Errors.Count} error(s):");
@@ -1640,6 +1697,7 @@ foreach (var bundle in bundles)
             catch (Exception ex)
             {
                 rt.Stop(); bundleRun += rt.Elapsed;
+                AlRunner.Infrastructure.PhaseLog.AddAppRun(rt.Elapsed);
                 bundleErrors.Add($"{suiteName}: EXEC-FAIL: {ex.Message.Split('\n')[0]}");
                 continue;
             }
@@ -1648,6 +1706,7 @@ foreach (var bundle in bundles)
                 BcRuntime.OosHooksActive = false;
             }
             rt.Stop(); bundleRun += rt.Elapsed;
+            AlRunner.Infrastructure.PhaseLog.AddAppRun(rt.Elapsed);
             bundleTests.AddRange(tests);
             sP += tests.Count(t => t.Outcome == TestOutcome.Pass);
             sF += tests.Count(t => t.Outcome == TestOutcome.Fail);
@@ -1675,6 +1734,11 @@ foreach (var bundle in bundles)
     results.Add(new BucketResult(bundleAbs, bundleStage,
         bundleErrors, null, bundleTests,
         bundleEmit, bundleComp, bundleRun));
+    // Appended here, not buffered to process exit: a run that dies mid-way still
+    // yields a row for every bundle it did finish. The row's wall clock covers this
+    // whole loop turn, so wall − (emit+compile+run) is the per-bundle overhead
+    // (dep resolution, symbol/module registration) #1825 is hunting.
+    AlRunner.Infrastructure.PhaseLog.EndBundle(bundleEmit, bundleComp, bundleRun);
 }
 
 // Restore the streams silenced for the clean-loading frame (#5) before any dashboard
@@ -2945,6 +3009,11 @@ static void PrintHelp(TextWriter w)
     w.WriteLine("  AL_RUNNER_HOOK_TRACE=1       Trace every JmpHook fire to");
     w.WriteLine("                               /tmp/al-runner-hook-trace.log.");
     w.WriteLine("  AL_RUNNER_EMIT_TIMEOUT_SEC=N Override the 120 s default emit-phase timeout.");
+    w.WriteLine("  AL_RUNNER_PHASE_LOG=PATH     Append one JSONL cost record per app group, per");
+    w.WriteLine("                               bundle and per process to PATH (emit/compile/run");
+    w.WriteLine("                               ms, deps, cache HIT/MISS, wall clock, peak RSS).");
+    w.WriteLine("                               Safe for concurrent runners. Summarise with");
+    w.WriteLine("                               scripts/phase-log-report.py. Inert when unset.");
     w.WriteLine();
     w.WriteLine("EXAMPLES");
     w.WriteLine("  # Run the al-language corpus");
