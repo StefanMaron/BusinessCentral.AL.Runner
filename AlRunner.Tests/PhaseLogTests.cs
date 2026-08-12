@@ -192,6 +192,29 @@ public sealed class PhaseLogTests : IDisposable
         }
     }
 
+    /// <summary>
+    /// Every row carries start_ms, the Unix-epoch millisecond at which its clock started
+    /// (issue #1829). Durations alone answer "how much work" but not "when were the workers
+    /// idle" — start_ms + wall_ms is an interval, and a set of intervals is an occupancy
+    /// timeline. Without it a 1.83x concurrency figure cannot be told apart from a
+    /// saturated run with a long single-threaded tail, which is what it turned out to be.
+    /// Asserted on all three kinds because the aggregate reads them uniformly.
+    /// </summary>
+    [Fact]
+    public void EveryRecordKind_CarriesTheStartTimestampTheTimelineIsBuiltFrom()
+    {
+        foreach (var (kind, record) in new (string, PhaseLogRecord)[]
+                 {
+                     ("bundle", SampleBundle()), ("app", SampleApp()), ("process", SampleProcess()),
+                 })
+        {
+            record.StartMs = 1_760_000_000_123;
+            var json = JsonDocument.Parse(record.ToJsonLine()).RootElement;
+            Assert.Equal(kind, json.GetProperty("kind").GetString());
+            Assert.Equal(1_760_000_000_123, json.GetProperty("start_ms").GetInt64());
+        }
+    }
+
     /// <summary>A record is exactly one physical line — JSONL, not pretty-printed.</summary>
     [Fact]
     public void ToJsonLine_IsExactlyOneLine()

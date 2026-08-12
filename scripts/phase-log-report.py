@@ -66,6 +66,64 @@ def cohort_report(rows, unit, dep_field):
         print("    only one cohort present — no comparison possible")
 
 
+def occupancy_report(rows, step_seconds=None, buckets=48):
+    """Issue #1829: turn per-row (start_ms, wall_ms) intervals into a picture of WHEN the
+    workers were busy.
+
+    Summed wall clock answers "how much work"; it cannot tell a run that is short of
+    threads apart from one that is saturated and then trails off single-threaded. Those
+    have nothing in common as fixes — the first wants a bigger cap or less memory per
+    spawn, the second wants the longest unit dispatched earlier. This section is what
+    separates them, and it is why AlRunner.Tests' 1.83x turned out to be "4.0/4 for two
+    thirds of the run, then 1.0 for the last 157 s".
+
+    Intervals are the host-observed spawns: a re-exec parent's interval CONTAINS its
+    child's, so counting both would double-count. Parents are preferred where present.
+    """
+    spans = [(r["start_ms"], r["start_ms"] + r.get("wall_ms", 0))
+             for r in rows if r.get("start_ms", 0) > 0]
+    if len(spans) < 2:
+        return
+    t0 = min(s for s, _ in spans)
+    t1 = max(e for _, e in spans)
+    span_s = (t1 - t0) / 1000.0
+    if span_s <= 0:
+        return
+
+    print("── OCCUPANCY TIMELINE " + "─" * 55)
+    print(f"  {len(spans)} intervals over {span_s:.1f}s"
+          + (f" (CI step: {step_seconds:.1f}s)" if step_seconds else ""))
+    width = (t1 - t0) / buckets
+    busy = [0.0] * buckets
+    for s, e in spans:
+        i = int((s - t0) / width)
+        while i < buckets and t0 + i * width < e:
+            lo = max(s, t0 + i * width)
+            hi = min(e, t0 + (i + 1) * width)
+            busy[i] += max(0.0, hi - lo) / width
+            i += 1
+
+    peak = max(busy)
+    print(f"  bucket = {width / 1000:.1f}s, value = mean concurrent processes, peak = {peak:.2f}")
+    for chunk in range(0, buckets, 24):
+        row = busy[chunk:chunk + 24]
+        print(f"  t={(chunk * width) / 1000:6.0f}s " + "".join(f"{v:5.1f}" for v in row))
+    mean = sum(busy) / buckets
+    print(f"  mean concurrency over the span      {mean:8.2f}")
+    # The tail is the actionable half of the picture: a long stretch below half of peak
+    # means work was still queued when it should already have been running.
+    tail = 0
+    for v in reversed(busy):
+        if v > peak / 2:
+            break
+        tail += 1
+    print(f"  trailing buckets below half peak    {tail:8d}  ({tail * width / 1000:.0f}s)")
+    if tail * width / 1000 > 0.15 * span_s:
+        print("    → RAMP-DOWN: the run ends underloaded. Dispatch the longest unit earlier;")
+        print("      raising the thread cap cannot help a stretch that has no work to give it.")
+    print()
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("path")
@@ -135,6 +193,11 @@ def main():
             print(f"  {'achieved concurrency':<34} "
                   f"{total_proc_wall / 1000 / max(0.001, args.step_seconds):8.2f}x")
         print()
+
+    # A re-exec parent wraps its child, so its interval is the host-observed span of one
+    # spawn. Where there are none (single-process steps), fall back to bundle rows, which
+    # are the only intervals that exist within one process.
+    occupancy_report(parents or procs or bundles, args.step_seconds)
 
     if parents:
         print("── RE-EXEC PARENTS " + "─" * 58)

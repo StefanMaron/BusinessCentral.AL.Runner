@@ -188,7 +188,9 @@ public sealed class PhaseLogIntegrationTests : IDisposable
     {
         TestArtifacts.SkipIfMissing();
 
+        var before = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         var (output, exit) = RunBundles(_logPath, _noDeps, _withDeps);
+        var after = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         Assert.Equal(0, exit);
         Assert.True(File.Exists(_logPath), $"no phase log written. Runner output:\n{output}");
 
@@ -310,6 +312,43 @@ public sealed class PhaseLogIntegrationTests : IDisposable
             Assert.Equal(0, parent.GetProperty("bundles_in_process").GetInt32());
             Assert.Equal(0, parent.GetProperty("emit_ms").GetInt64());
         });
+
+        // ── start_ms: the field that turns durations into an occupancy timeline (#1829).
+        //
+        // Summed wall clock over a step tells you how much work happened, never when the
+        // workers were idle. (start_ms, start_ms + wall_ms) is an interval, and a set of
+        // intervals is a timeline — which is how "1.83x achieved concurrency" was resolved
+        // into "saturated for two thirds of the run, then single-threaded". None of that
+        // arithmetic survives a stamp that is defaulted, per-row-arbitrary, or on a
+        // different clock per process, so all three are pinned here on a real run.
+        //
+        // The window carries a 2 s slack because a process row's start_ms comes from
+        // Process.StartTime, which on Linux is derived from the jiffy-granular
+        // /proc/<pid>/stat starttime plus an estimated boot time and lands a few ms either
+        // side of the true value. 2 s is still six orders of magnitude away from the
+        // failure this catches — an unstamped row reading 0, i.e. January 1970.
+        const long clockSlackMs = 2000;
+        var allRows = bundleRows.Concat(appRows).Concat(processRows).Concat(parents).ToList();
+        Assert.All(allRows, r =>
+            Assert.InRange(r.GetProperty("start_ms").GetInt64(), before - clockSlackMs, after + clockSlackMs));
+
+        // Bundles run one after another inside a process, so bundle 2 starts no earlier
+        // than bundle 1 ends. This is the property that makes overlapping intervals mean
+        // real concurrency rather than clock skew.
+        var b0Start = bundleRows[0].GetProperty("start_ms").GetInt64();
+        var b1Start = bundleRows[1].GetProperty("start_ms").GetInt64();
+        Assert.True(b1Start >= b0Start + bundleRows[0].GetProperty("wall_ms").GetInt64(),
+            $"bundle 2 starts at {b1Start} before bundle 1 ends — start_ms is not a real clock reading");
+        // An app row opens inside its bundle's turn, never before it.
+        Assert.True(appRows[0].GetProperty("start_ms").GetInt64() >= b0Start,
+            "app row starts before the bundle that contains it");
+        // The process row is stamped from OS process start, so it precedes all its work,
+        // and every re-exec parent precedes the child it spawned and waited on.
+        Assert.True(proc.GetProperty("start_ms").GetInt64() < b0Start,
+            "process start_ms is not measured from OS process start");
+        Assert.All(parents, parent =>
+            Assert.True(parent.GetProperty("start_ms").GetInt64() <= proc.GetProperty("start_ms").GetInt64(),
+                "a re-exec parent must start before the child it spawned"));
     }
 
     private static int CountOccurrences(string haystack, string needle)

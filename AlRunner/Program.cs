@@ -3011,7 +3011,9 @@ static void PrintHelp(TextWriter w)
     w.WriteLine("  AL_RUNNER_EMIT_TIMEOUT_SEC=N Override the 120 s default emit-phase timeout.");
     w.WriteLine("  AL_RUNNER_PHASE_LOG=PATH     Append one JSONL cost record per app group, per");
     w.WriteLine("                               bundle and per process to PATH (emit/compile/run");
-    w.WriteLine("                               ms, deps, cache HIT/MISS, wall clock, peak RSS).");
+    w.WriteLine("                               ms, deps, cache HIT/MISS, start + wall clock,");
+    w.WriteLine("                               peak RSS; start_ms + wall_ms give an occupancy");
+    w.WriteLine("                               timeline across concurrent runners).");
     w.WriteLine("                               Safe for concurrent runners. Summarise with");
     w.WriteLine("                               scripts/phase-log-report.py. Inert when unset.");
     w.WriteLine();

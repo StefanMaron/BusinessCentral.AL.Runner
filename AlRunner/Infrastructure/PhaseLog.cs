@@ -78,6 +78,17 @@ public sealed class PhaseLogRecord
     /// <summary>Bundle rows: wall clock of the bundle's whole turn in the loop. Process rows: since OS process start.</summary>
     public long WallMs { get; set; }
 
+    /// <summary>
+    /// Unix-epoch millisecond at which this row's clock started, so (StartMs, StartMs +
+    /// WallMs) is an interval and a set of rows is an occupancy TIMELINE rather than a bag
+    /// of durations (issue #1829). Summed wall clock over a step says how much work
+    /// happened; only the timeline says when the workers were idle — the difference between
+    /// "the thread cap is too low" and "the longest unit was scheduled last", which have
+    /// nothing in common as fixes. Epoch rather than a process-relative clock because rows
+    /// from up to four concurrent processes have to land on one axis.
+    /// </summary>
+    public long StartMs { get; set; }
+
     // ── Once-per-process fields. Deliberately ABSENT from bundle rows: duplicating a
     // 4.5 s engine boot onto all 38 rows of a runner-extras run would invent ~170 s
     // of cost that was never paid.
@@ -113,6 +124,7 @@ public sealed class PhaseLogRecord
         Num(sb, "cache_hits", CacheHits);
         Num(sb, "cache_misses", CacheMisses);
         Num(sb, "wall_ms", WallMs);
+        Num(sb, "start_ms", StartMs);
         if (IsProcessRow)
         {
             Num(sb, "package_cache_dirs", PackageCacheDirs);
@@ -226,6 +238,7 @@ public static class PhaseLog
                 Bundle = bundle,
                 BundleIndex = index,
                 BundlesInProcess = Process_.BundlesInProcess,
+                StartMs = NowMs(),
             };
             _bundleClock = System.Diagnostics.Stopwatch.StartNew();
             Apps.Clear();
@@ -270,6 +283,10 @@ public static class PhaseLog
                     AppsInBundle = appsInBundle,
                     DepsResolved = _bundle?.DepsResolved ?? 0,
                     DepAssembliesLoaded = _bundle?.DepAssembliesLoaded ?? 0,
+                    // First-seen, deliberately: an app row is REOPENED by the second
+                    // (test-execution) pass, and the interval that matters for a timeline is
+                    // "when did this module first start costing anything", not the later turn.
+                    StartMs = NowMs(),
                 };
                 AppsByName[app] = row;
                 Apps.Add(row);
@@ -378,15 +395,21 @@ public static class PhaseLog
             try
             {
                 using var self = System.Diagnostics.Process.GetCurrentProcess();
-                row.WallMs = (long)(DateTime.UtcNow - self.StartTime.ToUniversalTime()).TotalMilliseconds;
+                var startUtc = self.StartTime.ToUniversalTime();
+                row.WallMs = (long)(DateTime.UtcNow - startUtc).TotalMilliseconds;
+                row.StartMs = new DateTimeOffset(startUtc, TimeSpan.Zero).ToUnixTimeMilliseconds();
             }
             catch
             {
                 row.WallMs = Environment.TickCount64;
+                row.StartMs = NowMs() - row.WallMs;
             }
         }
         Append(Path_!, row.ToJsonLine());
     }
+
+    /// <summary>Unix-epoch milliseconds — the single axis every row's interval is placed on.</summary>
+    private static long NowMs() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
     /// <summary>
     /// This process's resident-set high-water mark in bytes. Linux reads VmHWM from

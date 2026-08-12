@@ -208,7 +208,25 @@ jobs:
           # pass"; it is gone because there is no longer a first-pass skip for it to work around
           # (see AlRunner.Tests/BcEngineReadinessGuardTests.cs for the CI-fails-loud regression
           # guard that replaces it).
-          dotnet test AlRunner.Tests/AlRunner.Tests.csproj -c Release --no-build --settings engine.runsettings
+          #
+          # --logger trx (issue #1829): VSTest records startTime/endTime per test, which is
+          # the only per-TEST occupancy signal there is. The phase log sees the spawned
+          # runner processes, and their summed wall clock over the step wall clock reads
+          # 1.83x — a figure that structurally understates occupancy, because much of each
+          # test's time is host-side work outside the subprocess. Real thread occupancy was
+          # 3.00x, and the whole shortfall was a single-threaded tail. See the report step.
+          dotnet test AlRunner.Tests/AlRunner.Tests.csproj -c Release --no-build --settings engine.runsettings \
+              --logger "trx;LogFileName=unit-tests.trx" --results-directory "$PWD/trx"
+
+      - name: TRX occupancy report (unit tests)
+        # always(): the timeline is most worth seeing on a red leg, and this must never be
+        # the thing that fails one.
+        if: always()
+        continue-on-error: true
+        run: |
+          python3 scripts/trx-occupancy.py trx/unit-tests.trx \
+              --label "AlRunner.Tests — BC ${{ matrix.target.bc-version }}" \
+              --threads 4
 
       - name: Phase-log report (unit tests)
         # always(): a red unit-test step is exactly when the timings are most worth
@@ -325,6 +343,7 @@ jobs:
             phase-log-unit.jsonl
             phase-log-corpus.jsonl
             phase-log-runner-extras.jsonl
+            trx/unit-tests.trx
           if-no-files-found: ignore
 
   smoke:
