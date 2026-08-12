@@ -18,8 +18,15 @@ namespace AlRunner.Tests;
 /// run. The tests that need a real run in flight need the BC artifact caches;
 /// they report Skipped (not Passed) when absent — see TestArtifacts, same convention
 /// as CacheKeyDependencyClosureTests.
+///
+/// See DefineFlagIntegrationTests for why this class used to be
+/// [Collection("server-serial")] and no longer is — #1809. The one genuine
+/// concurrency hazard this class ever exposed — a TOCTOU race in
+/// HandleServerRunTests clearing activeRunCts too late relative to when a client
+/// could observe the summary and fire `cancel` — is fixed at the source (see the
+/// #1809 comment in Program.cs's HandleServerRunTests) rather than papered over
+/// by serializing the tests that happened to be likely to notice it.
 /// </summary>
-[Collection("server-serial")]
 public class ServerCancelTests
 {
     private static string[] ExtraServerArgs()
@@ -283,6 +290,60 @@ public class ServerCancelTests
         Assert.True(cancelResponse.GetProperty("noop").GetBoolean(),
             "cancel sent after the run's own summary line arrived must be a noop " +
             "— there is nothing left to cancel.");
+    }
+
+    /// <summary>
+    /// #1809: HandleServerRunTests used to clear <c>activeRunCts</c> in its `finally`
+    /// block — which runs AFTER the summary line is already written+flushed to the
+    /// client. That left a real (if narrow) TOCTOU window: a client that reads the
+    /// summary and immediately sends `cancel` could land inside the gap between "the
+    /// summary is on the wire" and "the server thread has actually reached `finally`",
+    /// and would observe the stale non-null cts — the same cts the ack path in
+    /// HandleSideChannelCommand answers against — and get back noop:false for a run
+    /// that had already finished. Fixed by clearing activeRunCts BEFORE the write, so
+    /// there is no interleaving in which the client can observe the summary while the
+    /// clear is still pending: program order on the single server thread guarantees it.
+    ///
+    /// One iteration already proves the ordering (the test right above this one). This
+    /// repeats it against ONE reused server (no repeated cold BC boot — cheap) so a
+    /// regression that reopens the window — e.g. a future refactor that moves work back
+    /// between the write and the clear — has more than one roll of the dice to be
+    /// caught by ordinary OS scheduling jitter, without resorting to artificial
+    /// CPU/memory pressure (tried and discarded: on a contended shared box it just
+    /// produces protocol timeouts, or gets a worker OOM-killed by something else
+    /// entirely — noise indistinguishable from a real failure, not signal).
+    /// </summary>
+    [SkippableFact]
+    public async Task Cancel_AfterRunTestsCompletes_IsNoop_RepeatedAcrossManyRuns()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        var bundle = MakeFastBundle();
+        await using var server = await CliServer.StartAsync(ExtraServerArgs());
+        var failures = new List<string>();
+
+        for (var i = 0; i < 20; i++)
+        {
+            // 120s, not 30s: this test proves ordering (a correctness claim), not
+            // latency, and a tight per-call timeout makes the test flaky under
+            // ordinary shared-box CPU contention for a reason that has nothing to
+            // do with the TOCTOU window it exists to catch — the exact kind of
+            // "trades a slow suite for an intermittently red one" outcome #1809
+            // was raised to avoid. 120s matches CliServer's own default timeout.
+            var lines = await server.SendRequestStreamingAsync(RunTestsReq(bundle), TimeSpan.FromSeconds(120));
+            var lastType = JsonDocument.Parse(lines[^1]).RootElement.GetProperty("type").GetString();
+            if (lastType != "summary")
+            {
+                failures.Add($"iter {i}: last line type={lastType}, not summary");
+                continue;
+            }
+            var cancelResponse = JsonDocument.Parse(
+                await server.SendAsync("{\"command\":\"cancel\"}", TimeSpan.FromSeconds(120))).RootElement;
+            if (!cancelResponse.GetProperty("noop").GetBoolean())
+                failures.Add($"iter {i}: cancel-after-summary returned noop=false");
+        }
+
+        Assert.True(failures.Count == 0, $"{failures.Count}/20 iterations hit the race:\n" + string.Join("\n", failures));
     }
 
     // ------------------------------------------------------------------

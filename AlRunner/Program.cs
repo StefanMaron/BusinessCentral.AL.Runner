@@ -2106,20 +2106,43 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                 changed = DiffServerFiles(lastFileHashes, combinedHashes);
             lastFileHashes = combinedHashes;
 
+            // Read BEFORE clearing activeRunCts below (still valid — not yet disposed).
+            var cancelled = cts.Token.IsCancellationRequested;
+
+            // #1809: clear activeRunCts BEFORE writing+flushing the summary line, not
+            // after (the old code cleared it in `finally`, which runs AFTER this write).
+            // The reader thread's `cancel` side channel (HandleSideChannelCommand,
+            // above) only has something to observe once the client sends a `cancel`
+            // request, and a well-behaved client can only do that once it has actually
+            // read the summary line this method is about to emit. So clearing first
+            // makes "cancel sent right after the summary" ALWAYS see activeRunCts
+            // already null — by program order on this one thread, not by winning a race
+            // against the reader thread. The old ordering left a real gap: the client
+            // could read+flush-observe the summary and fire `cancel` before this
+            // thread ever reached its `finally`, during which HandleSideChannelCommand
+            // would still see the stale non-null cts and answer noop:false for a run
+            // that had already finished — a bug the wider concurrency #1809 introduces
+            // (more collections running at once → more scheduler contention → this
+            // window widens) makes far more likely to actually land, not merely a
+            // theoretical TOCTOU. See ServerCancelTests.Cancel_AfterRunTestsCompletes_IsNoop.
+            System.Threading.Interlocked.CompareExchange(ref activeRunCts, null, cts);
+
             lock (outputLock)
             {
                 output.WriteLine(AlRunner.ServerProtocol.Summary(
                     allTests, exitCode, cached, changed,
                     allCompileErrors.Count > 0 ? allCompileErrors : null,
-                    cancelled: cts.Token.IsCancellationRequested));
+                    cancelled: cancelled));
                 output.Flush();
             }
         }
         finally
         {
-            // Race guard mirrors v1 (#1613/#1614): only clear+dispose OUR cts, in
-            // case a pathological caller queued a second runtests while this one was
-            // still active and it already replaced activeRunCts with its own.
+            // Belt-and-braces: reaches the same state as the explicit clear above on
+            // every path, INCLUDING an exception thrown before that point (e.g. from
+            // RunAllBundlesForServer) — a pathological caller must never be left with a
+            // permanently-stuck activeRunCts pointing at a cts nothing will ever
+            // complete. A no-op on the normal path (already null there).
             System.Threading.Interlocked.CompareExchange(ref activeRunCts, null, cts);
             cts.Dispose();
         }

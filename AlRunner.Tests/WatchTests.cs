@@ -12,8 +12,9 @@ namespace AlRunner.Tests;
 /// keep it passing.
 ///
 /// Spawns the real runner; needs the BC artifact cache. Skips (no-op) when absent.
+/// See DefineFlagIntegrationTests for why this used to be
+/// [Collection("server-serial")] and no longer is — #1809.
 /// </summary>
-[Collection("server-serial")]
 public class WatchTests
 {
     private static readonly string RepoRoot = Path.GetFullPath(

@@ -26,8 +26,8 @@ using Xunit;
 
 namespace AlRunner.Tests;
 
-// See DefineFlagIntegrationTests for why runner-subprocess tests are serialized.
-[Collection("server-serial")]
+// See DefineFlagIntegrationTests for why runner-subprocess tests used to be
+// [Collection("server-serial")] and no longer are — #1809.
 public sealed class EmitExclusionLoudnessTests
 {
     private static readonly string RepoRoot = Path.GetFullPath(

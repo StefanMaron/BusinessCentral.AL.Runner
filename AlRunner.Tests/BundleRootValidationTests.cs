@@ -28,9 +28,8 @@ using Xunit;
 
 namespace AlRunner.Tests;
 
-// See DefineFlagIntegrationTests for why the subprocess tests are serialized with the
-// other runner-subprocess integration tests.
-[Collection("server-serial")]
+// See DefineFlagIntegrationTests for why the subprocess tests used to be
+// [Collection("server-serial")] and no longer are — #1809.
 public sealed class BundleRootValidationTests : IDisposable
 {
     private static readonly string RepoRoot = Path.GetFullPath(

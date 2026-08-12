@@ -31,6 +31,15 @@
     <ProjectReference Include="../AlRunner/AlRunner.csproj" />
   </ItemGroup>
 
+  <!-- #1809: caps xUnit's own collection parallelism at 4 threads, matching the CI runner's
+       4 vCPUs and the ~488MB-peak-RSS-per-subprocess measurement that put the realistic
+       concurrent-subprocess ceiling at ~4x, not 8x. Must be copied next to the test DLL
+       (xUnit only reads it from the assembly's own directory) — the SDK does not do that
+       for arbitrary *.json by default. -->
+  <ItemGroup>
+    <None Include="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
   <!-- BC CodeAnalysis / Ncl types (SymbolReferenceSpecification, ISymbolReferenceLoader,
        ITreeObject, TreeHandler, TreeSharedObjectContainer, …) used by
        JsonLoaderDependencyFallthroughTests and SkeletonSharedObjectContainerLeakTests.
