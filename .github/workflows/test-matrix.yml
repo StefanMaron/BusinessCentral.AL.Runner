@@ -99,6 +99,18 @@ jobs:
             -c Release
 
       - name: Restore/save persistent al-runner caches (al-out, compiled-deps, ncl-cecil, workspace-deps)
+        # BISECT (issue #1815 / PR #1817): temporarily disabled to isolate whether the
+        # actions/cache RESTORE is what's causing WatchTests.Watch_PicksUpEdit_InProcess_
+        # OnNextCycle's cycle-2 hang (2/2 CI runs so far, different BC legs each time,
+        # identical 4m12s timeout shape) — versus the content-addressed cache-KEY changes
+        # in RunnerFingerprint/DependencyLoader/Program.cs, which stay live either way.
+        # The foreign-restore hypothesis: compiled-deps/workspace-deps/ncl-cecil/bc-symbols
+        # all hardcode ~/.cache/al-runner/<name> and ignore --cache (see #1821), so
+        # WatchTests' per-test --cache dir never isolated them from a cache this step
+        # pre-populates from a DIFFERENT machine's run before "Run unit tests" starts.
+        # If disabling this step alone makes WatchTests stop failing, that confirms the
+        # restore (not the key schema) is the cause. Re-enable once the bisect concludes.
+        if: false
         uses: actions/cache@v4
         with:
           # Deliberately NOT the whole ~/.cache/al-runner tree — bc-symbols is excluded.
