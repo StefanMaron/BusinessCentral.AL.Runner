@@ -59,6 +59,17 @@ public class WatchTests
         Pump(p.StandardOutput);
         Pump(p.StandardError);
 
+        // A marker that never shows up is ambiguous on its own: it's byte-identical
+        // whether the watcher armed-but-never-fired OR the subprocess quietly died while
+        // idling (a killed child produces the same "marker, then silence" shape as a deaf
+        // watcher). Neither this timeout message nor the loop used to distinguish the two
+        // — see #1822 discussion: don't let a future occurrence turn into another round of
+        // speculation about which one happened. p.HasExited/p.ExitCode settle it directly,
+        // and checking it on every poll also fails fast (no need to burn the whole budget)
+        // when the process is already gone.
+        string ProcessLiveness() =>
+            p.HasExited ? $"process alive=false exit={p.ExitCode}" : "process alive=true";
+
         async Task<int> WaitForMarkerAfter(int fromIndex, TimeSpan timeout)
         {
             var deadline = DateTime.UtcNow + timeout;
@@ -67,10 +78,18 @@ public class WatchTests
                 lock (lines)
                     for (int i = fromIndex; i < lines.Count; i++)
                         if (lines[i].Contains("[watch] waiting for AL source")) return i;
+                if (p.HasExited)
+                {
+                    string exitedDump; lock (lines) exitedDump = string.Join("\n", lines.TakeLast(40));
+                    throw new TimeoutException(
+                        $"watch marker not seen — subprocess exited early ({ProcessLiveness()}).\n" +
+                        $"--- last output ---\n{exitedDump}");
+                }
                 await Task.Delay(200);
             }
             string dump; lock (lines) dump = string.Join("\n", lines.TakeLast(40));
-            throw new TimeoutException($"watch marker not seen.\n--- last output ---\n{dump}");
+            throw new TimeoutException(
+                $"watch marker not seen. {ProcessLiveness()}\n--- last output ---\n{dump}");
         }
 
         string Segment(int from, int to)
