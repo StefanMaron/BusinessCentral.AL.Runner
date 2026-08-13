@@ -1104,6 +1104,16 @@ public static partial class RecordPatches
             // "try again later" case. A tableextension may still contribute field
             // triggers, so extension wiring must run regardless (issue #1835: the
             // usual PTE-extends-a-triggerless-table shape skipped it entirely).
+            //
+            // "Complete" also leans on the EXTENSION assemblies being loaded, which
+            // this return value cannot see. That holds at both call sites: bundled
+            // mode runs WireFieldTriggerHandlersAll once after every assembly has
+            // loaded (see BcRuntime.SetTestAssembly's wireFieldTriggers contract),
+            // and lazily-built precompiled tables wire at record-materialisation
+            // time, after all loads. The one shape this does not cover — a bundle
+            // reload introducing a NEW tableextension on a table already recorded in
+            // _fieldTriggersWiredTables — is skipped by the wired-tables guard, and
+            // always has been for the OnBefore/OnAfterValidate lists too.
             if (byField.Count == 0)
             {
                 WireExtensionValidateHandlers(built, tableId);
