@@ -1,0 +1,37 @@
+<Project>
+
+  <!--
+    Prevent the git commit SHA from being embedded in build output.
+
+    The .NET SDK, by default, does two independent things that stamp the current commit
+    into every project's assembly bytes:
+
+      1. IncludeSourceRevisionInInformationalVersion (default true) appends "+<sha>" to
+         AssemblyInformationalVersionAttribute.
+      2. Implicit SourceLink auto-import (controlled by SuppressImplicitGitSourceLink,
+         effectively false/unset by default even with zero Microsoft.SourceLink.* package
+         references) generates obj/**/<Project>.sourcelink.json embedding the commit SHA in
+         a raw.githubusercontent.com URL. That file is embedded in the portable PDB, which
+         changes the PDB's content/GUID, which is reflected back into the DLL's own Debug
+         Directory (CodeView) entry — so the DLL's bytes change even though DebugType is
+         "portable" (a separate .pdb file, not embedded in the DLL itself).
+
+    RunnerFingerprint.ComputeContentHash (AlRunner/Infrastructure/RunnerFingerprint.cs) is a
+    whole-file SHA-256 of al-runner.dll, stamped into every runner-owned cache key. Left
+    unchecked, both behaviors above make that hash a hash of the *commit*, not of the
+    runner's *code* — invalidating every cache on every commit, including commits that touch
+    only docs or CI config. See issue #1881.
+
+    Both properties are required together — disabling only #1 still leaves the SourceLink
+    auto-import changing the DLL's debug-directory bytes across commits.
+
+    Nothing in this repo reads the informational version at runtime: al-runner's version
+    flag reports Assembly.GetName().Version (AssemblyVersion, e.g. "2.0.0.0"), not the
+    informational version.
+  -->
+  <PropertyGroup>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+    <SuppressImplicitGitSourceLink>true</SuppressImplicitGitSourceLink>
+  </PropertyGroup>
+
+</Project>
