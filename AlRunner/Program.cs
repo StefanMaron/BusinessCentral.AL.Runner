@@ -1719,7 +1719,11 @@ foreach (var bundle in bundles)
                 // too — see suiteDirByAssembly's declaration for why.
                 if (suiteDirByAssembly.TryGetValue(asm, out var suiteDir))
                     AlRunner.Patches.NavAppResourcePatches.SetCurrentBundleDir(suiteDir);
-                BcRuntime.SetTestAssembly(asm, wireFieldTriggers: false);
+                // #1861: SetTestAssembly is one of the candidates the issue names for the
+                // flat ~4.8s-per-app-group tax inside this run turn — mark it explicitly
+                // rather than letting it fall into whatever executor.Run's own marks miss.
+                using (AlRunner.Infrastructure.PhaseLog.AppStage("set-test-assembly"))
+                    BcRuntime.SetTestAssembly(asm, wireFieldTriggers: false);
                 BcRuntime.OosHooksActive = true;
                 var execSw = System.Diagnostics.Stopwatch.StartNew();
                 tests = executor.Run(asm);
@@ -1822,8 +1826,13 @@ foreach (var bundle in bundles)
             try
             {
                 var asm = Assembly.Load(compile.AssemblyBytes!);
-                BcRuntime.SetTestAssembly(asm);
-                BcRuntime.RegisterTestAssemblyInfo(asm);
+                // #1861: same mark as the bundled-mode run loop, so the app-stage report
+                // is consistent whichever compile boundary --isolation chose.
+                using (AlRunner.Infrastructure.PhaseLog.AppStage("set-test-assembly"))
+                {
+                    BcRuntime.SetTestAssembly(asm);
+                    BcRuntime.RegisterTestAssemblyInfo(asm);
+                }
                 BcRuntime.OosHooksActive = true;
                 tests = executor.Run(asm);
             }

@@ -99,11 +99,16 @@ public sealed class PhaseLogRecord
     public long PeakRssBytes { get; set; }
     public int ExitCode { get; set; }
 
-    // ── Bundle-row only. Named slices of the bundle's turn that are NOT inside any
-    // app group — the block #1828 exists to attribute. Insertion-ordered (a plain
-    // Dictionary does not promise that) so the JSON reads in execution order, which
-    // is how "this stage happens once, that one per app" is spotted by eye.
-    /// <summary>Bundle-level stage timings, in the order the stages were first entered.</summary>
+    // ── Bundle-row and app-row only. Named slices of the row's turn that are NOT
+    // already reported elsewhere on it — for a bundle row, the block #1828 exists to
+    // attribute (work outside every app group); for an app row, the block #1861
+    // exists to attribute (the flat ~4.8s-per-group tax inside `run_ms`: SetTestAssembly,
+    // type discovery, install-trigger/company seeding, per-codeunit setup/teardown —
+    // see PhaseLog.AppStage). Insertion-ordered (a plain Dictionary does not promise
+    // that) so the JSON reads in execution order, which is how "this stage happens
+    // once, that one per app" is spotted by eye. Never present on a process row: the
+    // once-per-process costs already have their own named fields (PatchesMs, etc.).
+    /// <summary>Stage timings, in the order the stages were first entered.</summary>
     public List<KeyValuePair<string, long>> Stages { get; } = new();
 
     private bool IsAppRow => Kind == "app";
@@ -141,10 +146,10 @@ public sealed class PhaseLogRecord
             Num(sb, "peak_rss_bytes", PeakRssBytes);
             Num(sb, "exit_code", ExitCode);
         }
-        // Bundle rows only, and only when something was measured: an app row must not
-        // carry a bundle-level stage (it did not pay it), and an empty object on every
-        // bundle row would be noise.
-        if (Kind == "bundle" && Stages.Count > 0)
+        // Bundle and app rows only, and only when something was measured: a process
+        // row's once-per-process costs already have their own named fields, and an
+        // empty "stages" object on every row would be noise.
+        if ((Kind == "bundle" || IsAppRow) && Stages.Count > 0)
         {
             Sep(sb);
             sb.Append("\"stages\":{");
@@ -371,17 +376,38 @@ public static class PhaseLog
     /// Inert when unset: the returned struct holds a null name, allocates nothing and
     /// reads no clock.
     /// </summary>
-    public static StageScope Stage(string name) => new(Enabled ? name : null);
+    public static StageScope Stage(string name) => new(Enabled ? name : null, forApp: false);
 
-    /// <summary>Adds a stage duration directly, for call sites that cannot use `using`.</summary>
-    public static void AddStage(string name, TimeSpan elapsed)
+    /// <summary>
+    /// Times one named slice of the CURRENT APP GROUP's run turn (the #1861 sibling of
+    /// <see cref="Stage"/>) and adds it to the open app row.
+    ///
+    /// #1861 measured `run_ms − Σ reported test duration` at ~4.8s per app group,
+    /// flat across 23 wildly-different app groups (110.5s of a 128.8s "test run"
+    /// phase) — a floor being paid per group, not workload proportional to test
+    /// content. Same two rules as <see cref="Stage"/>, checked by PhaseLogTests and
+    /// PhaseLogIntegrationTests, just one level down: stages must not nest, and must
+    /// not double-count time a test's own reported Duration already covers.
+    ///
+    /// Inert when unset, exactly like <see cref="Stage"/>.
+    /// </summary>
+    public static StageScope AppStage(string name) => new(Enabled ? name : null, forApp: true);
+
+    /// <summary>Adds a bundle-level stage duration directly, for call sites that cannot use `using`.</summary>
+    public static void AddStage(string name, TimeSpan elapsed) => AddStageTo(() => _bundle, name, elapsed);
+
+    /// <summary>Adds an app-level stage duration directly, for call sites that cannot use `using`.</summary>
+    public static void AddAppStage(string name, TimeSpan elapsed) => AddStageTo(() => _app, name, elapsed);
+
+    private static void AddStageTo(Func<PhaseLogRecord?> row, string name, TimeSpan elapsed)
     {
         if (!Enabled) return;
         var ms = (long)elapsed.TotalMilliseconds;
         lock (Gate)
         {
-            if (_bundle == null) return;
-            var stages = _bundle.Stages;
+            var target = row();
+            if (target == null) return;
+            var stages = target.Stages;
             for (var i = 0; i < stages.Count; i++)
             {
                 if (!string.Equals(stages[i].Key, name, StringComparison.Ordinal)) continue;
@@ -392,21 +418,26 @@ public static class PhaseLog
         }
     }
 
-    /// <summary>Scope returned by <see cref="Stage"/>. A struct, so the disabled path allocates nothing.</summary>
+    /// <summary>Scope returned by <see cref="Stage"/> / <see cref="AppStage"/>. A struct, so the disabled path allocates nothing.</summary>
     public readonly struct StageScope : IDisposable
     {
         private readonly string? _name;
         private readonly long _start;
+        private readonly bool _forApp;
 
-        internal StageScope(string? name)
+        internal StageScope(string? name, bool forApp)
         {
             _name = name;
+            _forApp = forApp;
             _start = name == null ? 0 : System.Diagnostics.Stopwatch.GetTimestamp();
         }
 
         public void Dispose()
         {
-            if (_name != null) AddStage(_name, System.Diagnostics.Stopwatch.GetElapsedTime(_start));
+            if (_name == null) return;
+            var elapsed = System.Diagnostics.Stopwatch.GetElapsedTime(_start);
+            if (_forApp) AddAppStage(_name, elapsed);
+            else AddStage(_name, elapsed);
         }
     }
 

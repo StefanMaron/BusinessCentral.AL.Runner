@@ -261,6 +261,7 @@ public sealed class PhaseLogIntegrationTests : IDisposable
                 appRows[i].GetProperty("emit_ms").GetInt64());
 
         AssertBundleStagesAccountForTheBundleTurn(bundleRows, appRows);
+        AssertAppStagesAccountForTheRunTurn(appRows);
 
         var proc = processRows[0];
         Assert.Equal(2, proc.GetProperty("bundles_in_process").GetInt32());
@@ -419,6 +420,56 @@ public sealed class PhaseLogIntegrationTests : IDisposable
         // Named per dependency, not lumped: one expensive dependency and a dozen cheap
         // ones are different problems, and only the per-dep split tells them apart.
         Assert.Contains(withDeps, kv => kv.Key.Length > "dep-load:".Length);
+    }
+
+    /// <summary>
+    /// #1861: an app row's `run_ms` is `Σ named stages + whatever they miss`, mirroring
+    /// #1828's bundle-level claim one level down.
+    ///
+    /// #1861 measured `run_ms − Σ reported test duration` at ~4.8s per app group on CI,
+    /// essentially constant across 23 wildly different app groups (110.5s of a 128.8s
+    /// "test run" phase, 51% of the whole runner-extras step) — a floor being paid per
+    /// group, not workload. Before this, that floor was invisible inside one opaque
+    /// `AddAppRun` span. The claim under test is that the marks ACCOUNT for it: every
+    /// app row this fixture produces carries the full named breakdown, and — like the
+    /// bundle-level check — the sum leaves almost nothing unattributed.
+    /// </summary>
+    private static void AssertAppStagesAccountForTheRunTurn(List<JsonElement> appRows)
+    {
+        foreach (var app in appRows)
+        {
+            Assert.True(app.TryGetProperty("stages", out var s),
+                $"app row carries no stage breakdown — the #1861 marks are not wired: {app}");
+            var stages = s.EnumerateObject().ToDictionary(p => p.Name, p => p.Value.GetInt64());
+
+            // Every app group walks these, whatever it declares. Named individually
+            // rather than counted, so deleting a mark fails here instead of quietly
+            // moving its time back into the unattributed remainder.
+            foreach (var required in new[]
+                     {
+                         "set-test-assembly", "type-discovery", "install-seed", "codeunit-scan",
+                         "event-subscriber-inject", "codeunit-reset", "codeunit-instantiate",
+                         "resolve-display-name", "run-test-methods", "codeunit-dispose",
+                     })
+                Assert.True(stages.ContainsKey(required),
+                    $"app stage '{required}' missing: {string.Join(", ", stages.Keys)}");
+
+            var runMs = app.GetProperty("run_ms").GetInt64();
+            var staged = stages.Values.Sum();
+
+            // No stage may exceed the run turn it decomposes — that would mean a stage
+            // is double-counting time (e.g. nesting inside another mark).
+            Assert.True(staged <= runMs + 50,
+                $"app stages ({staged}ms) exceed run_ms ({runMs}ms) — a stage is double-counting: {app}");
+
+            // And the attribution is near-complete: whatever the marks miss shows up
+            // here. These fixtures run one [Test] each on a near-empty install baseline,
+            // so both run_ms and any residual are small; the allowance is absolute.
+            var unattributed = runMs - staged;
+            Assert.True(unattributed <= 250,
+                $"{unattributed}ms of app run_ms is attributed to nothing "
+                + $"(run_ms {runMs}ms, stages {staged}ms) — add a stage mark: {app}");
+        }
     }
 
     private static int CountOccurrences(string haystack, string needle)

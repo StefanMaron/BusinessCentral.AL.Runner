@@ -252,6 +252,42 @@ def main():
               f"{(bundle_wall - app_wall - staged) / 1000:8.2f}s")
         print()
 
+    # ── app stages (#1861) ───────────────────────────────────────────────────
+    # #1828's "overhead outside app work" decomposed the bundle's own turn; this is
+    # the same idea one level down. #1861 measured `run_ms − Σ reported test
+    # duration` at ~4.8s per app group, flat across 23 wildly different app groups
+    # (110.5s of a 128.8s "test run" phase, 51% of the whole runner-extras step) —
+    # a floor being paid per group regardless of how much test content it holds.
+    # This section is what that floor decomposes into.
+    stage_apps = [r for r in apps if r.get("stages")]
+    if stage_apps:
+        print("── APP STAGES (work inside each app group's run turn) " + "─" * 24)
+        totals = {}
+        per_app_totals = []
+        for r in stage_apps:
+            staged_here = 0
+            for name, ms in r["stages"].items():
+                totals[name] = totals.get(name, 0) + ms
+                staged_here += ms
+            per_app_totals.append(staged_here)
+
+        run_total = sum(r["run_ms"] for r in stage_apps)
+        staged_total = sum(totals.values())
+        n = len(stage_apps)
+        for name, total in sorted(totals.items(), key=lambda kv: -kv[1]):
+            share = 100 * total / max(1, run_total)
+            print(f"  {name:<34} {total / 1000:8.2f}s  mean/app={total / n / 1000:6.3f}s  "
+                  f"{share:5.1f}% of run_ms")
+        print(f"  {'STAGES TOTAL':<34} {staged_total / 1000:8.2f}s")
+        print(f"  {'run_ms (all app groups)':<34} {run_total / 1000:8.2f}s")
+        # The honesty line, same contract as the bundle-stage section: named stages
+        # that do not add up to run_ms leave this positive, which is the signal to
+        # add another mark rather than to believe the breakdown is complete.
+        print(f"  {'UNATTRIBUTED (add a stage mark)':<34} "
+              f"{(run_total - staged_total) / 1000:8.2f}s"
+              f"  ({100 * (run_total - staged_total) / max(1, run_total):5.1f}% of run_ms)")
+        print()
+
     # ── per-app ──────────────────────────────────────────────────────────────
     if apps:
         print("── PER APP (one emitted module) " + "─" * 45)

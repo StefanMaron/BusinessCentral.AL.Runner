@@ -161,22 +161,59 @@ public sealed class PhaseLogTests : IDisposable
     }
 
     /// <summary>
-    /// Stages are bundle-level by definition, so an app row must never carry one: an
-    /// app's time is already reported as emit/compile/run, and a stage copied onto it
-    /// would be counted twice by any aggregate that sums both. A bundle that measured
-    /// no stages omits the key entirely rather than emitting an empty object.
+    /// A row with nothing measured omits the "stages" key entirely rather than
+    /// emitting an empty object — true for bundle AND app rows (both can legitimately
+    /// carry a breakdown; see <see cref="AppRecord_SerialisesItsStageBreakdownInOrderWithRepeatsSummed"/>
+    /// for #1861's app-level sibling of #1828's bundle-level breakdown).
     /// </summary>
     [Fact]
-    public void StagesAppearOnBundleRowsOnly()
+    public void StagesOmittedWhenNoneWereMeasured()
     {
-        var app = SampleApp();
-        app.Stages.Add(new KeyValuePair<string, long>("dep-resolve", 512));
+        Assert.False(JsonDocument.Parse(SampleApp().ToJsonLine()).RootElement.TryGetProperty("stages", out _));
+        Assert.False(JsonDocument.Parse(SampleBundle().ToJsonLine()).RootElement.TryGetProperty("stages", out _));
+    }
+
+    /// <summary>
+    /// Stages must NEVER appear on a process row: the once-per-process costs already
+    /// have their own named fields (PatchesMs, PeakRssBytes, …), and a "stages" object
+    /// there would be a second, redundant way to report the same numbers — the kind of
+    /// duplication that makes an aggregate double-count if it ever sums both.
+    /// </summary>
+    [Fact]
+    public void StagesNeverAppearOnProcessRows()
+    {
         var proc = SampleProcess();
         proc.Stages.Add(new KeyValuePair<string, long>("dep-resolve", 512));
 
-        Assert.False(JsonDocument.Parse(app.ToJsonLine()).RootElement.TryGetProperty("stages", out _));
         Assert.False(JsonDocument.Parse(proc.ToJsonLine()).RootElement.TryGetProperty("stages", out _));
-        Assert.False(JsonDocument.Parse(SampleBundle().ToJsonLine()).RootElement.TryGetProperty("stages", out _));
+    }
+
+    /// <summary>
+    /// The #1861 breakdown: an app row carries named stages for the work done inside
+    /// its own run turn that is NOT one of the reported test durations — the flat
+    /// ~4.8s-per-app-group tax #1861 measured (110.5s of 128.8s "test run" phase,
+    /// essentially constant across 23 wildly different app groups). Same ordering and
+    /// repeat-summing contract as the bundle-level breakdown (#1828).
+    /// </summary>
+    [Fact]
+    public void AppRecord_SerialisesItsStageBreakdownInOrderWithRepeatsSummed()
+    {
+        var row = SampleApp();
+        row.Stages.Add(new KeyValuePair<string, long>("set-test-assembly", 120));
+        row.Stages.Add(new KeyValuePair<string, long>("type-discovery", 340));
+        row.Stages.Add(new KeyValuePair<string, long>("install-seed", 4100));
+
+        var json = JsonDocument.Parse(row.ToJsonLine()).RootElement;
+        var stages = json.GetProperty("stages");
+
+        Assert.Equal(
+            new[] { "set-test-assembly", "type-discovery", "install-seed" },
+            stages.EnumerateObject().Select(p => p.Name));
+        Assert.Equal(120, stages.GetProperty("set-test-assembly").GetInt64());
+        Assert.Equal(340, stages.GetProperty("type-discovery").GetInt64());
+        Assert.Equal(4100, stages.GetProperty("install-seed").GetInt64());
+        // Still exactly one line — the breakdown must not break the JSONL contract.
+        Assert.Equal(1, row.ToJsonLine().Count(c => c == '\n'));
     }
 
     /// <summary>

@@ -164,6 +164,11 @@ public sealed class TestExecutor
         }
         typeSw.Stop();
         PerfTrace.Log($"TestExecutor.GetTypes {types.Length} type(s) {typeSw.ElapsedMilliseconds}ms");
+        // #1861: reflecting over the freshly-loaded module's types is one of the issue's
+        // named candidates for the flat per-app-group tax. Marked directly (not via
+        // PhaseLog.AppStage's `using`) because the Stopwatch above already spans the
+        // try/catch and re-timing it would double the cost of GetTypes itself.
+        AlRunner.Infrastructure.PhaseLog.AddAppStage("type-discovery", typeSw.Elapsed);
 
         // Model a freshly-installed bundle: register this assembly with the
         // install-trigger runner and fire every loaded app's Subtype=Install
@@ -185,9 +190,16 @@ public sealed class TestExecutor
         // (Company Information, Source Code Setup, …) are part of what every test is restored to.
         CompanyInitializer.EnsureCompanyInitialized();
         AlRunner.Patches.RecordPatches.CaptureInstallBaseline();
+        seedSw.Stop();
         PerfTrace.Log($"TestExecutor.InitialInstallSeed {seedSw.ElapsedMilliseconds}ms");
+        // #1861: "session, company, permission-set setup per app group" — this seed runs
+        // once per app group (see the comment above), so its cost is exactly the shape
+        // the issue is hunting: paid per group regardless of how much test content the
+        // group holds.
+        AlRunner.Infrastructure.PhaseLog.AddAppStage("install-seed", seedSw.Elapsed);
 
         long scanMs = 0, instMs = 0, dispMs = 0, methodsMs = 0, disposeMs = 0, methodLoopMs = 0;   // PERF attribution accumulators
+        long injectMs = 0, resetMs = 0;   // #1861 app-stage accumulators, same shape as the above
         var stageSw = new System.Diagnostics.Stopwatch();
         foreach (var t in types)
         {
@@ -208,6 +220,7 @@ public sealed class TestExecutor
             var injectSw = System.Diagnostics.Stopwatch.StartNew();
             AlRunner.Patches.EventSubscriberPatches.InjectAllUsingStoredLookup();
             injectSw.Stop();
+            injectMs += injectSw.ElapsedMilliseconds;
             PerfTrace.Log($"EventSubscriber.InjectAllUsingStoredLookup {t.Name} {injectSw.ElapsedMilliseconds}ms");
 
             // Per-codeunit reset: BC's 130450 "Test Runner - Isol. Codeunit" wraps
@@ -217,6 +230,8 @@ public sealed class TestExecutor
             {
                 var resetSw = System.Diagnostics.Stopwatch.StartNew();
                 AlRunner.Patches.RecordPatches.RestoreInstallBaseline();
+                resetSw.Stop();
+                resetMs += resetSw.ElapsedMilliseconds;
                 PerfTrace.Log($"TestExecutor.CodeunitBoundary {t.Name} restore={resetSw.ElapsedMilliseconds}ms t={totalSw.ElapsedMilliseconds}ms");
             }
 
@@ -307,6 +322,21 @@ public sealed class TestExecutor
         totalSw.Stop();
         PerfTrace.Log($"TestExecutor stages scan={scanMs}ms instantiate={instMs}ms displayName={dispMs}ms runOneOuter={methodsMs}ms dispose={disposeMs}ms methodLoop={methodLoopMs}ms");
         PerfTrace.Log($"TestExecutor total {results.Count} test(s) {totalSw.ElapsedMilliseconds}ms");
+        // #1861: hand the same per-loop accumulators PerfTrace has always logged
+        // (unstructured, easy to miss under CI's noise) to the phase log too, so the
+        // per-app-group sub-stage report can attribute run_ms instead of leaving it as
+        // one opaque span. "run-test-methods" is the ONE stage here that is genuine
+        // per-test workload, not a flat tax — it is what the issue's 18.3s summed-PASS-
+        // duration figure roughly reconciles against; every other mark below is exactly
+        // the kind of cost the issue is hunting: paid once per app group, independent of
+        // how much test content the group holds.
+        AlRunner.Infrastructure.PhaseLog.AddAppStage("codeunit-scan", TimeSpan.FromMilliseconds(scanMs));
+        AlRunner.Infrastructure.PhaseLog.AddAppStage("event-subscriber-inject", TimeSpan.FromMilliseconds(injectMs));
+        AlRunner.Infrastructure.PhaseLog.AddAppStage("codeunit-reset", TimeSpan.FromMilliseconds(resetMs));
+        AlRunner.Infrastructure.PhaseLog.AddAppStage("codeunit-instantiate", TimeSpan.FromMilliseconds(instMs));
+        AlRunner.Infrastructure.PhaseLog.AddAppStage("resolve-display-name", TimeSpan.FromMilliseconds(dispMs));
+        AlRunner.Infrastructure.PhaseLog.AddAppStage("run-test-methods", TimeSpan.FromMilliseconds(methodsMs));
+        AlRunner.Infrastructure.PhaseLog.AddAppStage("codeunit-dispose", TimeSpan.FromMilliseconds(disposeMs));
         return results;
     }
 
