@@ -206,11 +206,12 @@ jobs:
           # ON: `dotnet pack`'s nuspec RepositoryUrl/RepositoryCommit come from
           # SourceLink's git task, and PackAsTool=true (AlRunner.csproj) ships this to
           # nuget.org under MSDyn365BC.AL.Runner — losing that would silently strip
-          # commit provenance / source-stepping from every released package. Safe to
-          # override here specifically: this job's output is a one-off release build
-          # that never feeds a RunnerFingerprint.ContentHash-keyed cache (that's the
-          # dev/CI/test-matrix path only), so re-enabling both properties cannot
-          # reintroduce the #1881 cache-invalidation bug.
+          # commit provenance / source-stepping from every released package.
+          #
+          # Safe to override here specifically: a released package's bytes are fixed for a
+          # given version, so the ContentHash an end user's run computes from it is stable.
+          # Commit-embedding only invalidates caches when the SAME code is rebuilt
+          # commit-to-commit — the dev/CI/test-matrix path, never the release path.
           dotnet build AlRunner/ -p:AllowBcArtifactDownload=true
           dotnet pack AlRunner/ -p:AllowBcArtifactDownload=true -p:Version=${{ inputs.version }} \
             -p:SuppressImplicitGitSourceLink=false -p:IncludeSourceRevisionInInformationalVersion=true \

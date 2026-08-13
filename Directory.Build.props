@@ -34,10 +34,14 @@
     nuget.org as MSDyn365BC.AL.Runner) deliberately turns BOTH properties back on at pack
     time (`-p:SuppressImplicitGitSourceLink=false -p:IncludeSourceRevisionInInformationalVersion=true`)
     so released packages keep real commit provenance (nuspec RepositoryUrl/RepositoryCommit)
-    and source-stepping for consumers. That override is safe and intentional: the pack job's
-    output is a one-off release build that never feeds a RunnerFingerprint.ContentHash-keyed
-    cache (only dev/CI/test-matrix builds of al-runner.dll do), so it cannot reintroduce the
-    #1881 cache-invalidation bug these repo-wide defaults exist to fix.
+    and source-stepping for consumers. That override is safe and intentional — not because
+    the released al-runner.dll is exempt from RunnerFingerprint.ContentHash-keyed caching
+    (PackAsTool=true means it's exactly what end users run, and an ordinary run hashes it at
+    all three ComputeContentHash call sites like any other build), but because a released
+    package's bytes are fixed for a given version, so the ContentHash an end user's run
+    computes from it is stable. Commit-embedding only invalidates caches when the SAME code
+    is rebuilt commit-to-commit — the dev/CI/test-matrix path, never the release path — so
+    re-enabling both properties here cannot reintroduce the #1881 cache-invalidation bug.
   -->
   <PropertyGroup>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
