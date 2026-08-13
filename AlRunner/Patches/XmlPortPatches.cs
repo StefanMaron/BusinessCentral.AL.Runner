@@ -289,19 +289,81 @@ public static partial class BcRuntime
     /// <summary>BeginInitialization() — called from the BC-generated XmlPort{ID} ctor.
     /// Skeleton ctor-time scaffolding — required so XmlPort{ID} construction succeeds;
     /// no observable AL-test behavior to fake.
-    /// Dereferences Session.MetadataProvider (null on skeleton) → NRE. Stub as no-op;
-    /// fields it would populate (metadata, fieldDelimiter, …) are not needed for our
-    /// Export/Import/Run/SetTableView loud-failure hooks.</summary>
+    /// The real body dereferences Session.MetadataProvider (null on skeleton) → NRE, so
+    /// it stays a no-op for that part. But making it a TOTAL no-op reopened a second,
+    /// separate NRE one step later: BC-emitted XmlPort{ID}.InitializeComponent() always
+    /// tail-calls `RequestOptionsPage = new RequestPage(this, Metadata.RequestFormMetadata)`
+    /// — real, unpatched NavXmlPort code, not ours to touch (precompiled-dll-respect.md).
+    /// `NavXmlPort.metadata` (backing `get_Metadata()`) is never set by the ctor; only the
+    /// real BeginInitialization body would have set it. Left null, `Metadata` is null and
+    /// `.RequestFormMetadata` NREs on the null receiver — the exact failure mode discovered
+    /// once BeginInitialization/EndInitialization/Add stopped being orphaned JmpHook
+    /// registrations (#1800) and started actually running.
+    /// Fix, mirroring the established NavReport.BeginInitialization stub-metadata pattern
+    /// (NavReportSync.StubInitializeMetadata / BuildEmptyMasterPage): install an
+    /// uninitialized MetaXmlPort whose `requestFormMetadata` field points at an empty
+    /// MasterPage, so `Metadata.RequestFormMetadata` returns a non-null (if inert) value
+    /// instead of NREing. This is ctor-time plumbing, not xmlport business logic — no
+    /// AL-observable behavior is being faked; Export/Import/Run/SetTableView are the loud
+    /// not-yet-implemented guards that still fire once construction completes.</summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static void NavXmlPort_BeginInitialization(object self)
     {
+        try
+        {
+            EnsureNavXmlPortMetadataField(self.GetType());
+            if (_fNavXmlPortMetadata == null) return;
+            if (_fNavXmlPortMetadata.GetValue(self) != null) return; // idempotent
+
+            var typesAsm = AppDomain.CurrentDomain.GetAssemblies()
+                .FirstOrDefault(a => a.GetName().Name == "Microsoft.Dynamics.Nav.Types");
+            if (typesAsm == null) return;
+            var metaXmlPortType = typesAsm.GetType("Microsoft.Dynamics.Nav.Types.Metadata.MetaXmlPort");
+            var masterPageType = typesAsm.GetType("Microsoft.Dynamics.Nav.Types.Metadata.MasterPage");
+            if (metaXmlPortType == null || masterPageType == null) return;
+
+            var fRequestFormMetadata = metaXmlPortType.GetField("requestFormMetadata",
+                BindingFlags.Instance | BindingFlags.NonPublic);
+            if (fRequestFormMetadata == null) return;
+
+            var masterPage = AlRunner.NavReportSync.BuildEmptyMasterPage(typesAsm, masterPageType);
+            var metaXmlPort = RuntimeHelpers.GetUninitializedObject(metaXmlPortType);
+            fRequestFormMetadata.SetValue(metaXmlPort, masterPage);
+            _fNavXmlPortMetadata.SetValue(self, metaXmlPort);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[BcRuntime] NavXmlPort_BeginInitialization stub-metadata install failed: {ex.Message}");
+        }
+    }
+
+    private static System.Reflection.FieldInfo? _fNavXmlPortMetadata;
+
+    private static void EnsureNavXmlPortMetadataField(Type derivedType)
+    {
+        if (_fNavXmlPortMetadata != null) return;
+        var t = derivedType;
+        while (t != null)
+        {
+            var f = t.GetField("metadata", BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly);
+            if (f != null)
+            {
+                System.Threading.Interlocked.CompareExchange(ref _fNavXmlPortMetadata, f, null);
+                return;
+            }
+            t = t.BaseType;
+        }
     }
 
     /// <summary>EndInitialization() — called from the BC-generated XmlPort{ID} ctor after
     /// the node-building code. Skeleton ctor-time scaffolding — required so XmlPort{ID}
     /// construction succeeds; no observable AL-test behavior to fake.
-    /// Accesses metadata.UseRequestForm and requestOptionsPage
-    /// (both null on skeleton after BeginInitialization is no-op'd) → NRE. Stub as no-op.</summary>
+    /// Accesses metadata.UseRequestForm and requestOptionsPage — the latter is null-safe
+    /// only because NavXmlPort_BeginInitialization now installs a stub Metadata object
+    /// (above); requestOptionsPage itself is set by BC's own real, unpatched
+    /// set_RequestOptionsPage before EndInitialization is even called (see
+    /// XmlPort{ID}.InitializeComponent), so no-op is still the correct replacement here —
+    /// EndInitialization has nothing left to legitimately do against the skeleton.</summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static void NavXmlPort_EndInitialization(object self)
     {
