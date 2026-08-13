@@ -253,13 +253,14 @@ jobs:
           # declared OOS-by-design in tests/expectations/, which reclassifies it to a
           # pass). Crash codes (134/139) also surface here as a non-zero exit → red.
           #
-          # --count-baseline (#1880) is the companion floor: --strict only fails on a
+          # --count-baseline (#1880) is the companion guard: --strict only fails on a
           # test FAILING, so a bundle/app-group that silently stops being discovered
           # (dependency rename, duplicate app-id collision — #1850, dropped app group —
-          # #1861) still exits 0 as long as every SURVIVING test passes. A DROP below
-          # the recorded floor now exits 4; growth is never a failure but prints a loud
-          # [count-baseline] NOTE so tests/expectations/count-baseline/ gets bumped in
-          # the same PR that grew the suite.
+          # #1861) still exits 0 as long as every SURVIVING test passes. It is an EXACT
+          # match, not a floor: a DROP below the recorded baseline exits 4, and so does
+          # GROWTH above it — the count must be bumped in
+          # tests/expectations/count-baseline/ in the same PR that changed it, or this
+          # leg goes red with the exact expected/actual numbers to use.
           rc=0
           start=$SECONDS
           dotnet run --no-build --project AlRunner -c Release --framework net8.0 -- \
@@ -271,7 +272,7 @@ jobs:
           elapsed=$(( SECONDS - start ))
           echo "elapsed=${elapsed}s" >> "$GITHUB_OUTPUT"
           if [ "$rc" -ne 0 ]; then
-            echo "::error::al-language run failed (exit $rc: 1=test failure, 2=exec fail, 3=compile fail, 4=count-baseline drop, 134/139=crash)"
+            echo "::error::al-language run failed (exit $rc: 1=test failure, 2=exec fail, 3=compile fail, 4=count-baseline mismatch, 134/139=crash)"
             exit "$rc"
           fi
 
@@ -317,8 +318,8 @@ jobs:
           # above. runner-extras genuinely has fewer tests on BC 27.0/27.3/27.5 than
           # 28.x (some AL surfaces are gated on preprocessor symbols only defined from
           # 28.0 on) — tests/expectations/count-baseline/test-count-baseline.json
-          # carries a per-BC-version floor for exactly that reason, not a single global
-          # minimum.
+          # carries a per-BC-version expected count for exactly that reason, not a
+          # single global value.
           dotnet run --no-build --project AlRunner -c Release --framework net8.0 -- \
               tests/runner-extras \
               --package-cache "$HOME/.al-runner/platform-apps" \

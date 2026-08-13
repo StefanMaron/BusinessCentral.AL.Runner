@@ -262,8 +262,8 @@ var extraPreprocessorSymbols = new List<string>();
 // existing directory activates classification, so ordinary runs outside this repo are
 // untouched.
 string? expectationsDirArg = null;
-// --count-baseline PATH: opt-in test/app-group count floor manifest (issue #1880; see
-// AlRunner/Infrastructure/CountBaseline.cs for the schema and rationale). Unlike
+// --count-baseline PATH: opt-in test/app-group expected-count manifest (issue #1880;
+// see AlRunner/Infrastructure/CountBaseline.cs for the schema and rationale). Unlike
 // --expectations there is NO auto-probed default — a baseline built for a full-corpus
 // leg must never silently fire on a narrower invocation of the same directory (the
 // xmlport-isolation CI leg passes --test against the SAME al-language root), so this
@@ -2040,11 +2040,14 @@ else
 }
 } // end while(true) watch loop
 
-// ── Count-baseline floor check (issue #1880) ───────────────────────────────────────
+// ── Count-baseline check (issue #1880) ──────────────────────────────────────────────
 // Runs once, after every bundle has finished, against the FULL `results` list — same
 // timing as the exit-code computation right below, which it feeds into. See
-// AlRunner/Infrastructure/CountBaseline.cs for the schema/semantics.
-bool countBaselineDropped = false;
+// AlRunner/Infrastructure/CountBaseline.cs for the schema/semantics. This is an EXACT
+// match, not a floor: a mismatch in EITHER direction fails the run (PR #1882 review —
+// a "growth never fails" rule lets the baseline go stale on a passing run, and a
+// later real drop can then land above the stale number unnoticed).
+bool countBaselineMismatch = false;
 if (countBaseline != null)
 {
     // A --test/--filter narrows scope ON PURPOSE (e.g. the xmlport-isolation CI leg
@@ -2078,18 +2081,40 @@ if (countBaseline != null)
         var (drops, growths) = AlRunner.Infrastructure.CountBaselineCheck.Evaluate(
             countBaseline, actualBySuite, bcVersionKey);
 
-        // Growth is never a failure — adding tests is the normal case — but it must be
-        // loud, the same way tests/expectations/ drift is loud in both directions, so a
-        // stale (too-low) baseline gets bumped in the SAME PR that grew the suite
-        // instead of silently drifting further out of date on every later drop check.
-        foreach (var g in growths)
-            Console.Error.WriteLine(
-                $"[count-baseline] NOTE: {g} — grew past the baseline. Bump it in "
-                + $"{countBaselinePath} in this PR.");
+        // BucketResult.RanGroupCount means app groups in bundled mode but SUITES under
+        // --per-suite (see Reporter.cs), so an `appGroups` baseline recorded against
+        // one mode is not a meaningful number in the other. Stand down just that
+        // metric — loudly, same shape as the --test stand-down above — rather than
+        // silently comparing suite-count-as-if-it-were-app-group-count.
+        if (!bundledMode)
+        {
+            var standDown = drops.Concat(growths).Where(f => f.Metric == "appGroups").ToList();
+            if (standDown.Count > 0)
+            {
+                Console.Error.WriteLine(
+                    "[count-baseline] appGroups check skipped: --per-suite changes what "
+                    + "RanGroupCount counts (suites, not app groups) — an appGroups baseline "
+                    + "is only valid for the mode it was recorded in.");
+                drops = drops.Where(f => f.Metric != "appGroups").ToList();
+                growths = growths.Where(f => f.Metric != "appGroups").ToList();
+            }
+        }
+
+        // Growth is also a hard failure, not just a notice — see the header comment
+        // above. The message still says "grew" (not "DROP") so the diagnostic tells
+        // the reader which direction it needs to bump the baseline.
+        if (growths.Count > 0)
+        {
+            countBaselineMismatch = true;
+            foreach (var g in growths)
+                Console.Error.WriteLine(
+                    $"[count-baseline] GROWTH: {g} — grew past the baseline; "
+                    + $"--count-baseline requires an exact match. Bump {countBaselinePath} in this PR.");
+        }
 
         if (drops.Count > 0)
         {
-            countBaselineDropped = true;
+            countBaselineMismatch = true;
             foreach (var d in drops)
                 Console.Error.WriteLine(
                     $"[count-baseline] DROP: {d} — a bundle or app group may have silently "
@@ -2125,7 +2150,7 @@ int computedExitCode = 0;
     computedExitCode = compileFail > 0 ? 3       // compile errors
         : execFail > 0 ? 2                       // bucket-level execution error
         : (failed + errored > 0 ? 1               // at least one test failed
-        : (countBaselineDropped ? 4 : 0));       // #1880: suite shrank below its floor
+        : (countBaselineMismatch ? 4 : 0));      // #1880: suite's count didn't exactly match its baseline
 }
 
 if (outputJson)
@@ -3234,8 +3259,8 @@ static void PrintHelp(TextWriter w)
     w.WriteLine("                               also a bad invocation — unknown flag, or a bundle");
     w.WriteLine("                               path that does not exist)");
     w.WriteLine("                            3  a bundle could not compile");
-    w.WriteLine("                            4  --count-baseline: a suite's test or app-group count");
-    w.WriteLine("                               dropped below its declared floor (see --count-baseline)");
+    w.WriteLine("                            4  --count-baseline: a suite's test or app-group count did");
+    w.WriteLine("                               not exactly match its declared baseline (see --count-baseline)");
     w.WriteLine("  --no-strict-exit        Always exit 0 regardless of test outcome, so callers can");
     w.WriteLine("                          parse the JSON output without the process failing the step.");
     w.WriteLine("  --dump-csharp DIR       Write the intermediate C# emitted by BC's Compilation.Emit");
@@ -3250,16 +3275,17 @@ static void PrintHelp(TextWriter w)
     w.WriteLine("                          invoked. Manifest drift is loud: an entry whose test now");
     w.WriteLine("                          passes, or an out-of-scope throw with no entry, fails");
     w.WriteLine("                          the run with a diagnostic naming the entry to fix.");
-    w.WriteLine("  --count-baseline PATH   Load a per-suite test/app-group count floor manifest");
+    w.WriteLine("  --count-baseline PATH   Load a per-suite test/app-group expected-count manifest");
     w.WriteLine("                          (schema: AlRunner/Infrastructure/CountBaseline.cs) and");
-    w.WriteLine("                          fail the run (exit 4) if a suite's count dropped below");
-    w.WriteLine("                          its floor for the selected BC version — the guard for");
-    w.WriteLine("                          \"a bundle silently stopped being discovered\" (#1880).");
+    w.WriteLine("                          fail the run (exit 4) if a suite's count does not exactly");
+    w.WriteLine("                          match its baseline for the selected BC version — the guard");
+    w.WriteLine("                          for \"a bundle silently stopped being discovered\" (#1880).");
     w.WriteLine("                          Off by default, unlike --expectations: a baseline sized");
     w.WriteLine("                          for the full corpus must not fire on a narrower run of");
     w.WriteLine("                          the same directory (e.g. one filtered with --test), so");
-    w.WriteLine("                          this never auto-activates. Growth never fails but always");
-    w.WriteLine("                          prints a notice to bump the baseline in the same PR.");
+    w.WriteLine("                          this never auto-activates. A mismatch in EITHER direction");
+    w.WriteLine("                          (growth or drop) fails and prints a diagnostic naming");
+    w.WriteLine("                          expected vs actual — bump the baseline in the same PR.");
     w.WriteLine();
     w.WriteLine("SUBCOMMANDS");
     w.WriteLine("  provision [<bundle-dir>] Download and install the BC artifacts matching the");

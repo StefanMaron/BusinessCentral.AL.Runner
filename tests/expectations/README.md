@@ -33,7 +33,7 @@ between files.
 `*.json` file directly under `tests/expectations/` as an array of
 per-test classification entries. `--count-baseline` (see
 `AlRunner/Infrastructure/CountBaseline.cs`, #1880) is a *different* schema
-entirely — an expected minimum aggregate test/app-group COUNT per suite, not
+entirely — an expected EXACT aggregate test/app-group COUNT per suite, not
 a classification of one named test. It lives in the
 `tests/expectations/count-baseline/` **subdirectory** specifically so the
 `--expectations` directory scan (non-recursive) never tries to parse it as

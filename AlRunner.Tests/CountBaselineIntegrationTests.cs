@@ -6,22 +6,27 @@
 //
 // These spawn the real runner (same TestBuildConfig.RunArgs idiom as
 // DefineFlagIntegrationTests — direct al-runner.dll invocation, no MSBuild
-// evaluation) against a tiny two-test fixture, and prove:
+// evaluation) against a tiny two-test fixture, and prove --count-baseline is an
+// EXACT match, not a floor (PR #1882 review: a "growth never fails" rule lets the
+// baseline go stale on a passing run, and a later real drop can then land above the
+// stale number unnoticed):
 //   - a baseline set ABOVE the actual count fails the run with exit 4, naming the
 //     suite, the expected count and the actual count (RED — the "a bundle silently
 //     stopped being discovered" scenario, reproduced deliberately);
 //   - a baseline set AT the actual count does not fail (GREEN — an unchanged run);
-//   - a baseline set BELOW the actual count does not fail, but prints a growth
-//     notice (GREEN — adding tests is normal, but must be loud so the baseline gets
-//     bumped);
+//   - a baseline set BELOW the actual count ALSO fails the run with exit 4, naming
+//     the suite, the expected count and the actual count (RED — the "the baseline
+//     itself went stale" scenario: growth is normal, but an unbumped baseline must
+//     not stay green);
 //   - the SAME above-actual baseline that would drop the whole-bundle run is stood
 ///    down when --test narrows scope on purpose (mirrors the xmlport-isolation CI
 //     leg, which runs the same al-language root filtered).
-//   - flooring the APP-GROUP count (not just tests) fires the same way.
+//   - an expected APP-GROUP count (not just tests) mismatching fires the same way.
 //
-// A gutted implementation (--count-baseline parsed but never compared, or always
-// returning "no drop") would pass GREEN tests here but fail every RED one below —
-// these are not satisfiable by a no-op.
+// A gutted implementation (--count-baseline parsed but never compared, always
+// returning "no mismatch", or one that only fails on drops) would pass GREEN tests
+// here but fail every RED one below — these are not satisfiable by a no-op or by
+// the pre-review floor semantics.
 using System.Diagnostics;
 using System.Text;
 using Xunit;
@@ -56,8 +61,8 @@ public sealed class CountBaselineIntegrationTests : IDisposable
 
     /// <summary>
     /// A minimal AL package (no dependencies) with exactly TWO passing [Test]
-    /// procedures in ONE app group — so "tests" and "appGroups" floors are both
-    /// exercisable from one fixture (tests=2, appGroups=1).
+    /// procedures in ONE app group — so "tests" and "appGroups" expected counts are
+    /// both exercisable from one fixture (tests=2, appGroups=1).
     /// </summary>
     private static void WriteFixture(string dir)
     {
@@ -135,13 +140,13 @@ public sealed class CountBaselineIntegrationTests : IDisposable
     }
 
     /// <summary>
-    /// RED: the fixture has 2 tests; a baseline floor of 3 simulates "a bundle
-    /// silently stopped being discovered" (one test's worth of coverage missing).
-    /// Must exit 4 (not 0/1/2/3 — those already mean something else) and the
-    /// message must name the suite, the expected count and the actual count.
+    /// RED: the fixture has 2 tests; a baseline of 3 simulates "a bundle silently
+    /// stopped being discovered" (one test's worth of coverage missing). Must exit 4
+    /// (not 0/1/2/3 — those already mean something else) and the message must name
+    /// the suite, the expected count and the actual count.
     /// </summary>
     [SkippableFact]
-    public void Drop_TestsBelowFloor_Exits4WithSuiteExpectedAndActual()
+    public void Drop_TestsBelowExpected_Exits4WithSuiteExpectedAndActual()
     {
         TestArtifacts.SkipIfMissing();
         WriteBaseline(TestsBaseline(testsDefault: 3));
@@ -154,14 +159,14 @@ public sealed class CountBaselineIntegrationTests : IDisposable
         Assert.Contains("expected 3", output);
         Assert.Contains("actual 2", output);
         // The underlying tests themselves must NOT have failed — this exit code is
-        // attributable ONLY to the count floor, not to a real test failure. Proves the
+        // attributable ONLY to the count guard, not to a real test failure. Proves the
         // guard is a distinct signal, not a relabeling of the existing fail-count gate.
         Assert.DoesNotContain("FAIL  Codeunit", output);
     }
 
     /// <summary>GREEN (unchanged run): a baseline exactly matching the actual count never fails.</summary>
     [SkippableFact]
-    public void MatchingFloor_DoesNotFail()
+    public void MatchingBaseline_DoesNotFail()
     {
         TestArtifacts.SkipIfMissing();
         WriteBaseline(TestsBaseline(testsDefault: 2));
@@ -170,40 +175,45 @@ public sealed class CountBaselineIntegrationTests : IDisposable
 
         Assert.Equal(0, exit);
         Assert.DoesNotContain("[count-baseline] DROP", output);
+        Assert.DoesNotContain("[count-baseline] GROWTH", output);
     }
 
     /// <summary>
-    /// GREEN (growth): a baseline BELOW the actual count must never fail — adding
-    /// tests is the normal case — but must print a loud, specific notice so the
-    /// baseline gets bumped in the same PR (mirrors tests/expectations/ drift being
-    /// loud in both directions).
+    /// RED (growth): --count-baseline is an EXACT match, not a floor (PR #1882
+    /// review). A baseline BELOW the actual count must ALSO fail — a "growth never
+    /// fails" rule prints a notice on an otherwise-green run that nobody reads, the
+    /// baseline goes stale, and a LATER real drop can land above the stale (too-low)
+    /// number and pass unnoticed. So growth exits 4 too, naming expected vs actual,
+    /// and (mirroring the drop test above) the underlying tests must NOT have failed
+    /// — this exit code is attributable ONLY to the count guard.
     /// </summary>
     [SkippableFact]
-    public void Growth_AboveFloor_DoesNotFailButPrintsLoudNotice()
+    public void Growth_AboveExpected_Exits4WithSuiteExpectedAndActual()
     {
         TestArtifacts.SkipIfMissing();
         WriteBaseline(TestsBaseline(testsDefault: 1));
 
         var (output, exit) = RunRunner();
 
-        Assert.Equal(0, exit);
+        Assert.Equal(4, exit);
         Assert.DoesNotContain("[count-baseline] DROP", output);
-        Assert.Contains("[count-baseline] NOTE", output);
+        Assert.Contains("[count-baseline] GROWTH", output);
         Assert.Contains($"suite '{_suiteKey}'", output);
         Assert.Contains("expected 1", output);
         Assert.Contains("actual 2", output);
         Assert.Contains(_baselinePath, output);
+        Assert.DoesNotContain("FAIL  Codeunit", output);
     }
 
     /// <summary>
-    /// Negative direction of the drop scenario: the SAME floor that fails the whole
-    /// bundle (3 > 2) must stand down when --test intentionally narrows scope to one
-    /// test — mirrors the real xmlport-isolation CI leg, which filters the SAME
-    /// al-language root a baseline is sized for. Without this, adding --count-baseline
-    /// to CI would break that leg.
+    /// Negative direction of the drop scenario: the SAME baseline that fails the
+    /// whole bundle (3 != 2) must stand down when --test intentionally narrows scope
+    /// to one test — mirrors the real xmlport-isolation CI leg, which filters the
+    /// SAME al-language root a baseline is sized for. Without this, adding
+    /// --count-baseline to CI would break that leg.
     /// </summary>
     [SkippableFact]
-    public void FilteredRun_SkipsTheGuardEvenWhenBaselineWouldOtherwiseDrop()
+    public void FilteredRun_SkipsTheGuardEvenWhenBaselineWouldOtherwiseMismatch()
     {
         TestArtifacts.SkipIfMissing();
         WriteBaseline(TestsBaseline(testsDefault: 3));
@@ -216,13 +226,13 @@ public sealed class CountBaselineIntegrationTests : IDisposable
     }
 
     /// <summary>
-    /// The app-group floor is a SEPARATE metric from the test-count floor (#1880's
-    /// "strongly consider flooring the app-group / bundle count too"). This fixture is
-    /// one app.json (appGroups=1); a floor of 2 must drop it independently of the
-    /// tests floor, which is absent from this baseline entirely.
+    /// The app-group expected count is a SEPARATE metric from the test-count one
+    /// (#1880's "strongly consider flooring the app-group / bundle count too"). This
+    /// fixture is one app.json (appGroups=1); an expected count of 2 must drop it
+    /// independently of the tests count, which is absent from this baseline entirely.
     /// </summary>
     [SkippableFact]
-    public void Drop_AppGroupsBelowFloor_Exits4()
+    public void Drop_AppGroupsBelowExpected_Exits4()
     {
         TestArtifacts.SkipIfMissing();
         WriteBaseline(AppGroupsBaseline(appGroupsDefault: 2));
@@ -234,5 +244,27 @@ public sealed class CountBaselineIntegrationTests : IDisposable
         Assert.Contains("appGroups", output);
         Assert.Contains("expected 2", output);
         Assert.Contains("actual 1", output);
+    }
+
+    /// <summary>
+    /// BucketResult.RanGroupCount means app groups in bundled mode but SUITES under
+    /// --per-suite (see Reporter.cs), so an `appGroups` baseline recorded for bundled
+    /// mode is not a meaningful number under --per-suite. The SAME baseline that
+    /// would DROP in bundled mode (expected 2, actual 1) must stand down instead of
+    /// firing under --per-suite — proves the guard does not silently compare
+    /// suite-count-as-if-it-were-app-group-count across modes.
+    /// </summary>
+    [SkippableFact]
+    public void PerSuiteMode_SkipsTheAppGroupsMetric_EvenWhenBaselineWouldOtherwiseDrop()
+    {
+        TestArtifacts.SkipIfMissing();
+        WriteBaseline(AppGroupsBaseline(appGroupsDefault: 2));
+
+        var (output, exit) = RunRunner("--per-suite");
+
+        Assert.Equal(0, exit);
+        Assert.Contains("[count-baseline] appGroups check skipped", output);
+        Assert.DoesNotContain("[count-baseline] DROP", output);
+        Assert.DoesNotContain("[count-baseline] GROWTH", output);
     }
 }

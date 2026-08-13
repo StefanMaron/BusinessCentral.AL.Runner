@@ -5,7 +5,7 @@
 // every survivor still passes, so --strict's fail-count gate never fires and the CI
 // leg reports success on strictly less coverage than it had before.
 //
-// This is a runner-owned floor manifest, opt-in via `--count-baseline PATH`. It is
+// This is a runner-owned count baseline, opt-in via `--count-baseline PATH`. It is
 // deliberately a SEPARATE schema from tests/expectations/, not folded into
 // ExpectationManifest: expectations declare the expected CLASSIFICATION of one named
 // test; this declares the expected aggregate COUNT of a whole suite. Mixing "what
@@ -14,30 +14,38 @@
 // changes when a single test's behaviour is reclassified; a count baseline changes
 // when the corpus grows or shrinks).
 //
-// Semantics (see the issue for the full design rationale):
-//   - FAIL LOUD on a DROP: actual < the expected floor for that suite+metric+BC-version.
-//   - Never fail on GROWTH — adding tests to the corpus/runner-extras is the normal
-//     case — but print a loud notice so the baseline gets bumped in the same PR that
-//     grew it. Mirrors how tests/expectations/ drift is loud in BOTH directions; here
-//     only one direction is a hard failure, but both directions are always visible.
+// Semantics (see the issue for the full design rationale, and PR #1882's review for
+// why this is an EXACT match rather than a floor):
+//   - FAIL LOUD on ANY MISMATCH: actual != the expected count for that
+//     suite+metric+BC-version, in EITHER direction. A drop (actual < expected) is
+//     the "a bundle silently stopped being discovered" scenario the issue exists to
+//     catch. Growth (actual > expected) must ALSO fail: if it didn't, a grown suite
+//     would print a notice on an otherwise-green run, nobody reads stderr on green,
+//     the baseline goes stale, and a LATER real drop can land above the stale
+//     (too-low) number and pass unnoticed — the guard silently stops guarding itself.
+//     Making both directions hard mirrors tests/expectations/ drift, which is loud
+//     in both directions; the only difference here is both directions are also a
+//     hard failure, not just one.
 //   - Per-BC-version counts can legitimately differ and must be handled explicitly,
-//     not by taking min(all versions) as a single floor. Verified against the live
-//     matrix: tests/runner-extras currently reports 110 tests on BC 27.0/27.3/27.5 and
-//     116 on BC 28.0/28.1/28.2/28.3/28.4 (some AL surfaces are gated on preprocessor
-//     symbols only defined from 28.0 on). A single global floor of 110 would let a
-//     six-test regression on any 28.x leg through unnoticed; a single global floor of
-//     116 would permanently fail every 27.x leg. A `byBcVersion` override table avoids
-//     both: `default` is the floor for every version not explicitly listed.
+//     not by taking a single expected value across all versions. Verified against
+//     the live matrix: tests/runner-extras currently reports 110 tests on BC
+//     27.0/27.3/27.5 and 116 on BC 28.0/28.1/28.2/28.3/28.4 (some AL surfaces are
+//     gated on preprocessor symbols only defined from 28.0 on). A single global
+//     expected count of 110 would fail every 28.x leg; a single global expected
+//     count of 116 would fail every 27.x leg. A `byBcVersion` override table avoids
+//     both: `default` is the expected count for every version not explicitly listed.
 using System.Text.Json;
 
 namespace AlRunner.Infrastructure;
 
 /// <summary>
-/// Expected minimum count for one metric (tests or app groups) of one suite, with an
+/// Expected count for one metric (tests or app groups) of one suite, with an
 /// optional per-BC-version override table. <see cref="Resolve"/> picks the
-/// BC-version-specific floor when declared for the given key, else <see cref="Default"/>.
+/// BC-version-specific expected count when declared for the given key, else
+/// <see cref="Default"/>. A run whose actual count differs from the resolved value
+/// in EITHER direction is a mismatch — see <see cref="CountBaselineCheck"/>.
 /// </summary>
-public sealed record CountFloor(int Default, IReadOnlyDictionary<string, int>? ByBcVersion)
+public sealed record ExpectedCount(int Default, IReadOnlyDictionary<string, int>? ByBcVersion)
 {
     public int Resolve(string? bcVersionKey) =>
         bcVersionKey != null && ByBcVersion != null && ByBcVersion.TryGetValue(bcVersionKey, out var v)
@@ -45,8 +53,8 @@ public sealed record CountFloor(int Default, IReadOnlyDictionary<string, int>? B
             : Default;
 }
 
-/// <summary>Baseline for one suite: a floor for its test count and/or its app-group count. Either may be omitted.</summary>
-public sealed record SuiteCountBaseline(CountFloor? Tests, CountFloor? AppGroups);
+/// <summary>Baseline for one suite: an expected count for its test count and/or its app-group count. Either may be omitted.</summary>
+public sealed record SuiteCountBaseline(ExpectedCount? Tests, ExpectedCount? AppGroups);
 
 /// <summary>Actual counts observed for one suite in this run.</summary>
 public sealed record SuiteCountActual(int Tests, int AppGroups);
@@ -118,8 +126,8 @@ public sealed class CountBaselineManifest
                 var suiteName = suiteProp.Name;
                 if (suiteProp.Value.ValueKind != JsonValueKind.Object)
                     throw new InvalidOperationException($"--count-baseline: {path}: suite '{suiteName}' must be an object");
-                var tests = ParseFloor(suiteProp.Value, "tests", path, suiteName);
-                var appGroups = ParseFloor(suiteProp.Value, "appGroups", path, suiteName);
+                var tests = ParseExpectedCount(suiteProp.Value, "tests", path, suiteName);
+                var appGroups = ParseExpectedCount(suiteProp.Value, "appGroups", path, suiteName);
                 if (tests == null && appGroups == null)
                     throw new InvalidOperationException(
                         $"--count-baseline: {path}: suite '{suiteName}' declares neither 'tests' nor 'appGroups'");
@@ -129,7 +137,7 @@ public sealed class CountBaselineManifest
         }
     }
 
-    private static CountFloor? ParseFloor(JsonElement suiteEl, string metric, string path, string suiteName)
+    private static ExpectedCount? ParseExpectedCount(JsonElement suiteEl, string metric, string path, string suiteName)
     {
         if (!suiteEl.TryGetProperty(metric, out var metricEl)) return null;
         if (metricEl.ValueKind != JsonValueKind.Object)
@@ -155,16 +163,18 @@ public sealed class CountBaselineManifest
                 byVersion[verProp.Name] = verProp.Value.GetInt32();
             }
         }
-        return new CountFloor(def, byVersion);
+        return new ExpectedCount(def, byVersion);
     }
 }
 
 /// <summary>
-/// Pure comparison: baseline vs actual, split into drops (must fail the run) and
-/// growths (must be reported loudly but must never fail — adding tests is normal).
-/// A suite the manifest does not mention imposes no floor; a suite the manifest
-/// mentions but this run did not touch is silently skipped (a baseline written for
-/// CI's two legs must not fire when someone points the runner at an unrelated bundle).
+/// Pure comparison: baseline vs actual, split into drops (actual below expected) and
+/// growths (actual above expected) — purely for message wording ("shrank" vs "grew").
+/// BOTH are mismatches that must fail the run: see the header comment on why growth
+/// is not exempted. A suite the manifest does not mention imposes no expectation; a
+/// suite the manifest mentions but this run did not touch is silently skipped (a
+/// baseline written for CI's two legs must not fire when someone points the runner
+/// at an unrelated bundle).
 /// </summary>
 public static class CountBaselineCheck
 {
@@ -180,10 +190,10 @@ public static class CountBaselineCheck
         {
             if (!actualBySuite.TryGetValue(suite, out var actual)) continue;
 
-            if (baseline.Tests is { } testsFloor)
-                Compare(suite, "tests", testsFloor.Resolve(bcVersionKey), actual.Tests, bcVersionKey, drops, growths);
-            if (baseline.AppGroups is { } groupsFloor)
-                Compare(suite, "appGroups", groupsFloor.Resolve(bcVersionKey), actual.AppGroups, bcVersionKey, drops, growths);
+            if (baseline.Tests is { } testsExpected)
+                Compare(suite, "tests", testsExpected.Resolve(bcVersionKey), actual.Tests, bcVersionKey, drops, growths);
+            if (baseline.AppGroups is { } groupsExpected)
+                Compare(suite, "appGroups", groupsExpected.Resolve(bcVersionKey), actual.AppGroups, bcVersionKey, drops, growths);
         }
 
         return (drops, growths);

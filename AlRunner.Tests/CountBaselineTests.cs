@@ -118,12 +118,12 @@ public sealed class CountBaselineCheckTests
         rows.ToDictionary(r => r.Suite, r => new SuiteCountActual(r.Tests, r.Groups));
 
     /// <summary>
-    /// The core proving case: actual below the floor is a DROP, never a growth, and
+    /// The core proving case: actual below the expected count is a DROP, never a growth, and
     /// the finding carries the exact suite/metric/expected/actual — a stub that always
     /// returns "no drops" would fail this immediately.
     /// </summary>
     [Fact]
-    public void ActualBelowFloor_IsADrop_WithExactFields()
+    public void ActualBelowExpected_IsADrop_WithExactFields()
     {
         var manifest = ManifestWith("""
         "al-language": { "tests": { "default": 2073 } }
@@ -140,9 +140,9 @@ public sealed class CountBaselineCheckTests
         Assert.Empty(growths);
     }
 
-    /// <summary>Negative: actual exactly at the floor is neither a drop nor a growth.</summary>
+    /// <summary>Negative: actual exactly at the expected count is neither a drop nor a growth.</summary>
     [Fact]
-    public void ActualEqualsFloor_IsNeitherDropNorGrowth()
+    public void ActualEqualsExpected_IsNeitherDropNorGrowth()
     {
         var manifest = ManifestWith("""
         "al-language": { "tests": { "default": 2073 } }
@@ -155,9 +155,9 @@ public sealed class CountBaselineCheckTests
         Assert.Empty(growths);
     }
 
-    /// <summary>Positive: actual above the floor is a growth, and specifically NOT a drop.</summary>
+    /// <summary>Positive: actual above the expected count is a growth, and specifically NOT a drop.</summary>
     [Fact]
-    public void ActualAboveFloor_IsAGrowth_NeverADrop()
+    public void ActualAboveExpected_IsAGrowth_NeverADrop()
     {
         var manifest = ManifestWith("""
         "al-language": { "tests": { "default": 2073 } }
@@ -175,11 +175,11 @@ public sealed class CountBaselineCheckTests
     /// <summary>
     /// Design constraint #4: per-BC-version counts legitimately differ, and must be
     /// resolved EXPLICITLY per version — not by taking a single min() across every
-    /// version. The SAME actual count (110) is a drop against 28.1's floor (116) but
-    /// a clean match against 27.0's floor (110), in the SAME manifest.
+    /// version. The SAME actual count (110) is a drop against 28.1's expected count (116) but
+    /// a clean match against 27.0's expected count (110), in the SAME manifest.
     /// </summary>
     [Fact]
-    public void ByBcVersion_DifferentVersionsGetDifferentFloors_NotAGlobalMinimum()
+    public void ByBcVersion_DifferentVersionsGetDifferentExpectedCounts_NotAGlobalMinimum()
     {
         var manifest = ManifestWith("""
         "runner-extras": { "tests": { "default": 116, "byBcVersion": { "27.0": 110 } } }
@@ -189,7 +189,7 @@ public sealed class CountBaselineCheckTests
         var (dropsOn28_1, _) = CountBaselineCheck.Evaluate(manifest, actual, bcVersionKey: "28.1");
         var (dropsOn27_0, _) = CountBaselineCheck.Evaluate(manifest, actual, bcVersionKey: "27.0");
 
-        Assert.Single(dropsOn28_1);              // 110 < 116 (default floor) -> drop
+        Assert.Single(dropsOn28_1);              // 110 < 116 (default expected count) -> drop
         Assert.Equal(116, dropsOn28_1[0].Expected);
         Assert.Empty(dropsOn27_0);                // 110 == 110 (27.0 override) -> no drop
     }
@@ -221,7 +221,7 @@ public sealed class CountBaselineCheckTests
         Assert.Equal("tests", growth.Metric);
     }
 
-    /// <summary>A suite the manifest does not mention imposes no floor at all.</summary>
+    /// <summary>A suite the manifest does not mention imposes no expectation at all.</summary>
     [Fact]
     public void SuiteNotInManifest_IsIgnored()
     {
