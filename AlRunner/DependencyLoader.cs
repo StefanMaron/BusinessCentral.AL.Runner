@@ -182,7 +182,13 @@ public sealed class DependencyLoader
             try
             {
                 var bytes = File.ReadAllBytes(precompiled);
-                return Assembly.Load(bytes);
+                var asm = Assembly.Load(bytes);
+                // #1852: pre-warm the Report{id} type-name cache from the bytes we already
+                // hold, so RecordPatches.CompiledReportIds() never has to call
+                // asm.GetTypes() on this assembly (asm.Location is empty for a byte[]-loaded
+                // assembly, so it couldn't cheaply re-derive this later on its own).
+                AlRunner.Patches.RecordPatches.SeedCompiledReportIdsFromPEBytes(asm, bytes);
+                return asm;
             }
             catch (Exception ex)
             {
@@ -210,6 +216,10 @@ public sealed class DependencyLoader
                     try
                     {
                         var asm = Assembly.Load(dll);
+                        // #1852: same pre-warm as Tier 1 — these R2R chunks are exactly the
+                        // multi-thousand-type BaseApplication/SystemApplication assemblies
+                        // whose GetTypes() cost was measured at 0.7s-4.3s EACH.
+                        AlRunner.Patches.RecordPatches.SeedCompiledReportIdsFromPEBytes(asm, dll);
                         var n = asm.GetName().Name ?? "";
                         _byName[n] = asm;
                         primary ??= asm;
