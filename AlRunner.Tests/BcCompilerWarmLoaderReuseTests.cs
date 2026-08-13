@@ -1,15 +1,15 @@
-// BcCompilerWarmLoaderReuseTests — a change to the resolved DEP SET must not throw away the
-// warmed symbol-reference loader.
+// BcCompilerWarmLoaderReuseTests — REMOVING a resolved dep must not throw away the warmed
+// symbol-reference loader; adding or changing one still must.
 //
 // Issue #1832
 // -----------
 // #1831 made the loader memo survive the per-compile SELF-EXCLUSION. It did not make it
-// survive a change to the resolved dep LIST, which ComputeLoaderSignature still folded in
-// as `D:` lines. That mattered because `BcCompiler.ScopeSymbolBearingDepsOnly()` narrows the
-// dep list — it drops resolved deps whose .app carries no SymbolReference.json (synthetic
-// source-only packages) — around every compile that inspects declaration diagnostics.
-// Entering that scope changed the signature, the single memo slot missed, and the loader was
-// rebuilt and re-warmed from scratch.
+// survive a change to the resolved dep LIST, which ComputeLoaderSignature folded in as `D:`
+// lines and compared for EQUALITY. That mattered because
+// `BcCompiler.ScopeSymbolBearingDepsOnly()` REMOVES entries from the dep list — the
+// synthetic source-only .apps, which carry no SymbolReference.json — around every compile
+// that inspects declaration diagnostics. Entering that scope changed the signature, the
+// single memo slot missed, and the loader was rebuilt and re-warmed from scratch.
 //
 // Measured on a cold `tests/runner-extras` bundle (38 app groups) at main 71816f30:
 // the `sibling-symbols` stage was 35.77 s, and 14.32 s of it was one such rebuild —
@@ -17,17 +17,30 @@
 // scope dropping a single synthetic .app from the dep list. The scan dirs were byte-identical
 // either side of it; the sigdiff was one `D:` line.
 //
-// The fix splits the signature: the loader OBJECT is keyed only on what it is CONSTRUCTED
-// from (the scanned package dirs + the extra *.symbols.json dirs), and the dep list drives
-// only WarmReferenceLoader's prefill walk, which is now incremental per loader instance.
+// The fix compares the dep list as a SUBSET instead: the loader is reused when the current
+// dep set is contained in the one it was built for. Removal is free; anything that adds or
+// changes a key rebuilds exactly as before.
+//
+// Why "adds or changes" must keep rebuilding
+// ------------------------------------------
+// A source dependency recompiled from edited AL is republished under a NEW content-addressed
+// path (`~/.cache/al-runner/workspace-deps/<hash>/…`). That new `AppPath@Version` key is the
+// ONLY thing that tells the runner the cached loader's indexed symbols are stale — the
+// scanned dirs do not change, because the synthetic .app carries no SymbolReference.json and
+// is filtered out of the .app scan set entirely, reaching the compile through the JSON
+// symbol loaders instead, which index at construction. Dropping the dep list from the
+// invalidation rule altogether made `scripts/tests/server-mode-test.sh` assertions 2+3 fail:
+// after a dep schema edit the main bundle compiled green against the OLD schema and died at
+// runtime (exitCode 1) instead of failing loudly at compile time (exitCode 3).
 //
 // What these tests pin
 // --------------------
 //  * POSITIVE  — narrowing (and restoring) the dep set builds the loader exactly ONCE and
 //                performs exactly ZERO additional warm work. Counts, never durations.
-//  * NEGATIVE  — a dep the loader has never been warmed for IS warmed (+1 spec, still 0
-//                rebuilds), and a genuinely different scan set STILL rebuilds. Without these
-//                a memo that never invalidates and a warm that never runs would both pass.
+//  * NEGATIVE  — an ADDED dep rebuilds and re-warms; a dep REPUBLISHED AT A NEW PATH (the
+//                server-mode regression above, in unit form) rebuilds; a changed scan-dir
+//                set rebuilds. Without these a memo that never invalidates would pass the
+//                positive tests.
 //  * EQUIVALENCE — the reused loader answers, module for module, exactly what BC's own
 //                ReferenceLoaderFactory produces for the narrowed configuration; and the
 //                requested SPEC list still loses the dropped dep, so reusing the loader
@@ -122,15 +135,15 @@ public sealed class BcCompilerWarmLoaderReuseTests : IDisposable
         Assert.Equal(WarmedSpecs(3), BcCompiler.ReferenceLoaderWarmSpecCount);
     }
 
-    // ── NEGATIVE: the warm must still happen when it genuinely has to ─────────────────
+    // ── NEGATIVE: adding or changing a dep must still rebuild ─────────────────────────
 
     /// <summary>
-    /// A dep the current loader instance was never warmed for must still be warmed — without
-    /// rebuilding the loader. This is the assertion that stops the fix degenerating into
-    /// "warm once, never again": a dep set that GROWS adds exactly the specs it added.
+    /// A dep the loader was NOT built for must still force a rebuild — the reuse rule is
+    /// subset, not "any dep set will do". This is the assertion that stops the fix
+    /// degenerating into a memo that never invalidates.
     /// </summary>
     [Fact]
-    public void ADepTheLoaderWasNeverWarmedFor_IsWarmed_WithoutRebuildingTheLoader()
+    public void AddingAResolvedDep_StillRebuildsAndRewarms()
     {
         var dir = MakeDir("pkg");
         var apps = WriteApps(dir, 3);
@@ -143,13 +156,68 @@ public sealed class BcCompilerWarmLoaderReuseTests : IDisposable
         SetDeps(dir, apps);
         InvokeGetSharedReferences(new[] { dir });
 
-        Assert.Equal(1, BcCompiler.ReferenceLoaderBuildCount);            // no rebuild …
-        Assert.Equal(WarmedSpecs(3), BcCompiler.ReferenceLoaderWarmSpecCount); // … +1: the new dep IS warmed
+        Assert.Equal(2, BcCompiler.ReferenceLoaderBuildCount);
+        // The rebuilt instance starts cold — BC's MemoryCachedSymbolReferenceLoader caches
+        // in instance fields — so its whole closure is walked again on top of the first's.
+        Assert.Equal(WarmedSpecs(2) + WarmedSpecs(3), BcCompiler.ReferenceLoaderWarmSpecCount);
+
+        // …and the widened set is itself reusable: repeating it does not rebuild again.
+        InvokeGetSharedReferences(new[] { dir });
+        Assert.Equal(2, BcCompiler.ReferenceLoaderBuildCount);
     }
 
     /// <summary>
-    /// A genuinely different reference set must still rebuild. Dropping the dep list from the
-    /// signature must not drop the package dirs with it.
+    /// The `scripts/tests/server-mode-test.sh` regression in unit form. A source dependency
+    /// recompiled from edited AL keeps its AppId, Name and Version but is republished under a
+    /// NEW content-addressed path. Nothing else moves — the scanned .app dirs are unchanged,
+    /// because a synthetic source-only package carries no SymbolReference.json and is
+    /// filtered out of the .app scan set entirely. The changed dep KEY is therefore the only
+    /// signal that the cached loader's symbols are stale, and it must rebuild: otherwise the
+    /// dependent app compiles green against the OLD schema and fails at runtime instead of
+    /// failing loudly at compile time.
+    /// </summary>
+    [Fact]
+    public void ASymbolLessDepRepublishedAtANewPath_RebuildsTheLoader_EvenThoughTheScanSetIsIdentical()
+    {
+        // A stable .app scan set the loader is really built from…
+        var pkg = MakeDir("pkg");
+        var platform = WriteApps(pkg, 2);
+
+        // …plus a synthetic source-only dep, symbol-less, in a content-addressed dir.
+        var v1 = MakeDir("workspace-deps/9c31b7ece106");
+        var dep = WriteSymbolLessApp(v1, "AL_Runner_Src_Dep_1_0_0_0.app", "Src Dep");
+
+        BcCompiler.SetResolvedDeps(
+            platform.Append(dep).Select(a => (ManifestFor(a), PathFor(a))).ToList(),
+            new[] { pkg, v1 });
+        InvokeGetSharedReferences(new[] { pkg });
+        Assert.Equal(1, BcCompiler.ReferenceLoaderBuildCount);
+
+        // Republish the same identity under a new content-addressed dir — exactly what the
+        // layered pre-pass does when the dep's AL changes.
+        var v2 = MakeDir("workspace-deps/d750c87b300c");
+        var republished = Path.Combine(v2, "AL_Runner_Src_Dep_1_0_0_0.app");
+        File.Copy(_files[dep.AppId], republished);
+        _files[dep.AppId] = republished;
+
+        BcCompiler.SetResolvedDeps(
+            platform.Append(dep).Select(a => (ManifestFor(a), PathFor(a))).ToList(),
+            new[] { pkg, v2 });
+
+        // Control: the .app SCAN set really is unchanged — a symbol-less package is filtered
+        // out of it, so the dedup staging key (the picked-app set) is identical either side.
+        // Without the dep key in the rule, nothing here would invalidate the loader.
+        Assert.Equal(
+            InvokeDedupScanSet(new List<string> { pkg, v1 }),
+            InvokeDedupScanSet(new List<string> { pkg, v2 }));
+
+        InvokeGetSharedReferences(new[] { pkg });
+        Assert.Equal(2, BcCompiler.ReferenceLoaderBuildCount);
+    }
+
+    /// <summary>
+    /// A genuinely different scan set must still rebuild. Moving the dep list out of the
+    /// signature must not take the package dirs with it.
     /// </summary>
     [Fact]
     public void AddingAPackageDir_StillRebuildsAndRewarms()
@@ -330,6 +398,19 @@ public sealed class BcCompilerWarmLoaderReuseTests : IDisposable
                 (SymbolReferenceSpecification[])t.GetField("Item2")!.GetValue(result)!);
     }
 
+    /// <summary>
+    /// The .app scan-dir list DeduplicateAppPackageDirs produces — what the loader is
+    /// actually constructed from, and what ComputeLoaderSignature keys on.
+    /// </summary>
+    private static string InvokeDedupScanSet(List<string> dirs)
+    {
+        var method = typeof(BcCompiler).GetMethods(BindingFlags.NonPublic | BindingFlags.Static)
+            .Single(m => m.Name == "DeduplicateAppPackageDirs" && m.GetParameters().Length == 3);
+        var args = new object?[] { dirs, null, null };
+        var result = (List<string>)method.Invoke(null, args)!;
+        return string.Join("\n", result);
+    }
+
     private void SetDeps(string dir, IReadOnlyList<AppFixture> apps)
         => BcCompiler.SetResolvedDeps(
             apps.Select(a => (ManifestFor(a), PathFor(a))).ToList(), new[] { dir });
@@ -349,7 +430,7 @@ public sealed class BcCompilerWarmLoaderReuseTests : IDisposable
 
     private string MakeDir(string name)
     {
-        var d = Path.Combine(_root, name);
+        var d = Path.Combine(_root, name.Replace('/', Path.DirectorySeparatorChar));
         Directory.CreateDirectory(d);
         return d;
     }

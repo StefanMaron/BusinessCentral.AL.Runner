@@ -80,27 +80,32 @@ public sealed class BcCompiler
     // Sharing this one object across every compile is what makes the (per-instance,
     // 8–10 s) symbol warm a once-per-process cost instead of once-per-dependency (#1831).
     private static NavCA.ISymbolReferenceLoader? _refPackageLoader;
-    // Content signature of the inputs _refLoader was built from — the STRUCTURAL inputs
-    // only: the package dirs it scans plus the extra symbol dirs. GetSharedReferences
-    // rebuilds the loader only when this changes.
-    //
-    // #1832: the resolved DEP SET is deliberately NOT part of this signature. A BC
-    // reference loader is constructed from a directory scan (CreateReferenceLoader) — the
-    // dep list never reaches it. The dep list drives two other things, both of which are
-    // recomputed per call and unaffected by reuse: the requested SPEC array (built fresh at
-    // the bottom of GetSharedReferences) and WarmReferenceLoader's walk, which is a
-    // read-only cache prefill. Signing on the dep set therefore rebuilt an
-    // answer-for-answer identical loader whenever the dep list merely SHRANK —
-    // ScopeSymbolBearingDepsOnly drops the synthetic source-only .apps for exactly one
-    // compile — and paid the per-instance symbol warm again: measured 14.3 s of the 35.8 s
-    // `sibling-symbols` stage on a cold tests/runner-extras bundle.
+    // Content signature of the DIRECTORY inputs _refLoader was built from: the package dirs
+    // it scans plus the extra symbol dirs. Paired with _loaderDepUniverse below — together
+    // they decide when the loader is rebuilt.
     private static string? _loaderSignature;
-    // Spec keys already walked through the CURRENT _refLoader instance by
-    // WarmReferenceLoader. Persisted across calls so warming stays INCREMENTAL: a dep set
-    // that shrinks needs no work at all, and one that grows warms only the genuinely new
-    // closure. Cleared whenever _refLoader is rebuilt — a fresh loader instance has cold
-    // caches (BC's MemoryCachedSymbolReferenceLoader holds them in instance fields).
-    private static HashSet<string>? _warmedSpecKeys;
+    // The resolved-dep keys (`AppPath@Version`) the current _refLoader was BUILT FOR.
+    //
+    // #1832: the dep list used to be folded into _loaderSignature, i.e. compared for
+    // EQUALITY, so any change to it — including one that only REMOVED entries — rebuilt the
+    // loader. `ScopeSymbolBearingDepsOnly` removes entries (the synthetic source-only .apps)
+    // around every compile that inspects declaration diagnostics, so entering it cost a full
+    // rebuild + per-instance symbol warm: 14.3 s of the 35.8 s `sibling-symbols` stage on a
+    // cold tests/runner-extras bundle.
+    //
+    // The comparison is now SUBSET, not equality: the loader is reused when the current dep
+    // list is a subset of the one it was built for. Removal is provably free — a BC
+    // reference loader is constructed from a directory scan (CreateReferenceLoader never
+    // sees the dep list), the removed dep's files are still on disk in the same dirs, and
+    // the dep list's two real jobs are both redone per call anyway: the requested SPEC array
+    // is rebuilt at the bottom of GetSharedReferences (so it really does shrink), and
+    // WarmReferenceLoader is a read-only cache prefill (so a superset warm subsumes a subset
+    // one). Anything that ADDS or CHANGES a key still rebuilds, exactly as before — which
+    // matters: a source dependency recompiled from edited AL is republished under a NEW
+    // content-addressed path (`~/.cache/al-runner/workspace-deps/<hash>/…`), and that new
+    // key is what makes the next compile see the new symbols instead of the cached loader's
+    // stale ones (scripts/tests/server-mode-test.sh assertions 2+3).
+    private static HashSet<string>? _loaderDepUniverse;
     // How many times the expensive loader (filesystem scan + CreateReferenceLoader +
     // WarmReferenceLoader) has actually been built in this process, counting both the
     // shared superset loader and any physically-excluded fallback. The whole point of
@@ -120,8 +125,8 @@ public sealed class BcCompiler
     // excluded AppId), so a run that needs it behaves exactly as it did before.
     private static NavCA.ISymbolReferenceLoader? _exclPackageLoader;
     private static string? _exclSignature;
-    // _warmedSpecKeys' counterpart for the fallback loader instance.
-    private static HashSet<string>? _exclWarmedSpecKeys;
+    // _loaderDepUniverse's counterpart for the fallback loader instance.
+    private static HashSet<string>? _exclDepUniverse;
     private static NavCA.SymbolReferenceSpecification[]? _refSpecs;
     // Cached JSON symbol loaders — one per package dir that has *.symbols.json files.
     // Kept separately so specs can be recomputed with _currentAppId exclusion without
@@ -669,11 +674,11 @@ public sealed class BcCompiler
             _refLoader = null;
             _refPackageLoader = null;
             _loaderSignature = null;
-            _warmedSpecKeys = null;
+            _loaderDepUniverse = null;
             _warmSpecCount = 0;
             _exclPackageLoader = null;
             _exclSignature = null;
-            _exclWarmedSpecKeys = null;
+            _exclDepUniverse = null;
             _cachedJsonLoaders = null;
             _refSpecs = null;
             _siblingSymbols = null;
@@ -832,13 +837,10 @@ public sealed class BcCompiler
     /// from: the dirs it scans, plus the extra <c>*.symbols.json</c> dirs chained ahead of
     /// it (and, for the rare physically-reduced fallback, the excluded AppId).
     ///
-    /// #1832: the resolved dep set used to be folded in here as <c>D:</c> lines. It is not a
-    /// construction input — <see cref="NavSymRef.ReferenceLoaderFactory.CreateReferenceLoader"/>
-    /// only ever sees <paramref name="packageDirs"/> — so two loaders built from the same
-    /// dirs with different dep lists answer identically for every query. Its only
-    /// loader-side role is deciding WHICH specs <see cref="WarmReferenceLoader"/> prefills,
-    /// and that is a read-only cache walk, now tracked incrementally in
-    /// <c>_warmedSpecKeys</c> instead of by invalidating the whole loader.
+    /// #1832: the resolved dep set used to be folded in here as <c>D:</c> lines, i.e.
+    /// compared for equality. It moved to <see cref="_loaderDepUniverse"/>, which compares
+    /// it as a SUBSET — see there for why removing a dep cannot change a loader's answers
+    /// and why adding or changing one still must.
     /// </summary>
     private static string ComputeLoaderSignature(
         List<string> packageDirs,
@@ -950,7 +952,9 @@ public sealed class BcCompiler
             Mark($"dedup-scan ({scanInventory.Count} pkgs)");
 
             var loaderSig = ComputeLoaderSignature(loaderScanDirs, _extraSymbolDirs, null);
-            if (_refLoader == null || loaderSig != _loaderSignature)
+            var depKeys = DepUniverseKeys(_resolvedDeps);
+            if (_refLoader == null || loaderSig != _loaderSignature
+                || !depKeys.IsSubsetOf(_loaderDepUniverse ?? new HashSet<string>(StringComparer.Ordinal)))
             {
                 // Chain JSON-symbols loaders for any `*.symbols.json` in the package dirs
                 // (written by EmitDepSymbols for source dependencies we compiled ourselves).
@@ -1021,24 +1025,12 @@ public sealed class BcCompiler
                 // hit warm caches instead of racing on cold file reads. Best-effort: any
                 // failure just leaves the cold-read path to the compiler as before.
                 Mark("create-loader");
-                // Fresh instance ⇒ cold caches ⇒ nothing is warm yet, whatever the previous
-                // loader had already been walked for.
-                _warmedSpecKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                WarmReferenceLoader(_refLoader, _resolvedDeps, _warmedSpecKeys);
+                WarmReferenceLoader(_refLoader, _resolvedDeps);
                 Mark("warm");
                 _loaderSignature = loaderSig;
-            }
-            else
-            {
-                // Structurally identical loader, reused (#1832). The dep set may still have
-                // CHANGED — ScopeSymbolBearingDepsOnly narrows it, its Dispose widens it
-                // back, and a later bundle can bring genuinely new deps. Top the warm up
-                // incrementally: specs already walked through THIS loader instance are
-                // skipped by _warmedSpecKeys, so a narrowing costs a handful of hash lookups
-                // and a widening warms only the new closure.
-                WarmReferenceLoader(_refLoader!, _resolvedDeps,
-                    _warmedSpecKeys ??= new HashSet<string>(StringComparer.OrdinalIgnoreCase));
-                Mark("warm-topup");
+                // This instance is warm for exactly these dep keys; a later call whose deps
+                // are a subset of them reuses it (#1832).
+                _loaderDepUniverse = depKeys;
             }
 
             // ── Specs (cheap) — recompute each call with _currentAppId exclusion ──
@@ -1228,22 +1220,35 @@ public sealed class BcCompiler
         List<string> packageDirs, Guid excludeAppId)
     {
         var reducedDirs = DeduplicateAppPackageDirs(packageDirs, excludeAppId);
-        // Same #1832 split as the shared loader: reducedDirs (which already encode the
-        // exclusion) are the construction input; the dep set is not.
+        // Same #1832 rule as the shared loader: reducedDirs (which already encode the
+        // exclusion) are compared for equality, the dep set for subset.
         var sig = ComputeLoaderSignature(reducedDirs, _extraSymbolDirs, excludeAppId);
-        if (_exclPackageLoader != null && sig == _exclSignature)
-        {
-            WarmReferenceLoader(_exclPackageLoader, _resolvedDeps,
-                _exclWarmedSpecKeys ??= new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+        var depKeys = DepUniverseKeys(_resolvedDeps);
+        if (_exclPackageLoader != null && sig == _exclSignature
+            && depKeys.IsSubsetOf(_exclDepUniverse ?? new HashSet<string>(StringComparer.Ordinal)))
             return _exclPackageLoader;
-        }
 
         _exclPackageLoader = NavSymRef.ReferenceLoaderFactory.CreateReferenceLoader(reducedDirs);
         _exclSignature = sig;
         _loaderBuildCount++;
-        _exclWarmedSpecKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        WarmReferenceLoader(_exclPackageLoader, _resolvedDeps, _exclWarmedSpecKeys);
+        WarmReferenceLoader(_exclPackageLoader, _resolvedDeps);
+        _exclDepUniverse = depKeys;
         return _exclPackageLoader;
+    }
+
+    /// <summary>
+    /// The identity of a resolved dep set as far as a reference loader is concerned:
+    /// <c>AppPath@Version</c> per dep — exactly the <c>D:</c> lines the pre-#1832 loader
+    /// signature carried, so "this key changed" means what it always meant. Compared as a
+    /// SUBSET rather than for equality; see <see cref="_loaderDepUniverse"/>.
+    /// </summary>
+    private static HashSet<string> DepUniverseKeys(
+        IReadOnlyList<(AppManifest Manifest, string AppPath)>? deps)
+    {
+        var keys = new HashSet<string>(StringComparer.Ordinal);
+        if (deps == null) return keys;
+        foreach (var d in deps) keys.Add(d.AppPath + "@" + d.Manifest.Version);
+        return keys;
     }
 
     /// <summary>
@@ -1252,21 +1257,15 @@ public sealed class BcCompiler
     /// Defeats the NavAppPackageReader.CreateEmbeddedReader CopyTo race on bundles that
     /// pull R2R MS test-library deps. Best-effort: swallows all failures (the compiler then
     /// just re-reads cold, exactly as before this warm existed).
-    ///
-    /// <paramref name="alreadyWarmed"/> carries the walk's dedup set ACROSS calls for one
-    /// loader instance (#1832), so warming is incremental: a repeat call with the same — or
-    /// a narrower — dep set does no loader work at all, and a widened one walks only the
-    /// specs it actually adds. It is the caller's job to hand a FRESH set whenever the
-    /// loader instance is replaced; a new instance starts cold.
     /// </summary>
     private static void WarmReferenceLoader(
         NavCA.ISymbolReferenceLoader loader,
-        IReadOnlyList<(AppManifest Manifest, string AppPath)>? resolvedDeps,
-        HashSet<string> alreadyWarmed)
+        IReadOnlyList<(AppManifest Manifest, string AppPath)>? resolvedDeps)
     {
         if (loader == null || resolvedDeps == null || resolvedDeps.Count == 0) return;
         try
         {
+            var alreadyWarmed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var queue = new Queue<NavCA.SymbolReferenceSpecification>();
             foreach (var d in resolvedDeps)
                 queue.Enqueue(new NavCA.SymbolReferenceSpecification(
