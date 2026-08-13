@@ -114,8 +114,9 @@ public sealed class PhaseLogTests : IDisposable
 
     /// <summary>
     /// The once-per-process costs must NOT appear on bundle rows. Duplicating a
-    /// 4.5 s engine boot onto all 38 bundle records of a runner-extras run would
-    /// invent ~170 s of cost that was never paid, which is precisely the kind of
+    /// 4.5 s engine boot onto all bundle records of a runner-extras run (23 app
+    /// groups as of #1847's consolidation, was 38 before it) would invent tens of
+    /// seconds of cost that was never paid, which is precisely the kind of
     /// arithmetic this instrument exists to stop.
     /// </summary>
     [Fact]
@@ -201,8 +202,9 @@ public sealed class PhaseLogTests : IDisposable
     /// The app row is the finest unit — one emitted module, which is where emit,
     /// compile and run actually happen. It must locate itself both within its bundle
     /// AND within the process, because CI passes `tests/runner-extras` as ONE bundle
-    /// containing 38 app groups: without app rows that whole step reports a single
-    /// data point and the per-unit tax it is meant to expose stays invisible.
+    /// containing many app groups (23 as of #1847's consolidation): without app rows
+    /// that whole step reports a single data point and the per-unit tax it is meant
+    /// to expose stays invisible.
     /// </summary>
     [Fact]
     public void AppRecord_LocatesItselfWithinItsBundleAndProcess()

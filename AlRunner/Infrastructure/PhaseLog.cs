@@ -11,9 +11,11 @@
 //     <TieredCompilation>false</TieredCompilation> so JmpHooks written at tier-0
 //     addresses survive, which every process pays for at startup), and
 //   * a per-BUNDLE tax, which is the one that dominates the single-process steps:
-//     `Run runner-extras` compiles 38 bundles and takes 2.5x as long as
+//     `Run runner-extras` originally compiled 38 bundles and took 2.5x as long as
 //     `Run al-language corpus`, which has 5x the AL source in ONE bundle. Boot is
-//     paid once in each, so it cannot be the explanation.
+//     paid once in each, so it cannot be the explanation. (#1847 folded 16 of
+//     those 38 bundles together, cutting the count to 23 — the per-bundle tax
+//     this instrument measures is exactly what motivated that consolidation.)
 //
 // One record per process cannot see the second of those, so the primary unit here
 // is the BUNDLE record, with a single process record carrying the once-per-process

@@ -311,13 +311,17 @@ jobs:
               --out runner-extras-results.json
 
       - name: Phase-log report (runner-extras)
-        # The step with the most to say: 38 app groups in ONE process, so engine boot is
-        # amortised away and the per-app-group tax is visible on its own.
+        # The step with the most to say: 23 app groups in ONE process (down from 38 —
+        # see #1847, which folded 16 standalone-with-no-hazard suites into
+        # tests/runner-extras/standalone-suites/ and left the 2 install-trigger suites
+        # plus the 20 structurally-dependent dep/main and Microsoft-dependency pairs
+        # isolated), so engine boot is amortised away and the per-app-group tax is
+        # visible on its own.
         if: always()
         continue-on-error: true
         run: |
           python3 scripts/phase-log-report.py phase-log-runner-extras.jsonl \
-              --label "runner-extras — BC ${{ matrix.target.bc-version }} (single process, 38 app groups)"
+              --label "runner-extras — BC ${{ matrix.target.bc-version }} (single process, 23 app groups)"
 
       - name: Server-mode integration (multi-bundle contract)
         # always() for the same reason as runner-extras: an independent gate.
