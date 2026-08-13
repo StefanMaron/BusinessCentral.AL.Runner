@@ -1100,10 +1100,15 @@ public static partial class RecordPatches
                 }
             }
             // recordType WAS resolved even if it declares no field triggers — that is a
-            // real, complete result (nothing to wire), not a "try again later" case.
-            // Preserves prior behaviour exactly: WireExtensionValidateHandlers was
-            // (and still is) only reached below, after this early return.
-            if (byField.Count == 0) return true;
+            // real, complete result (nothing to wire on the base table itself), not a
+            // "try again later" case. A tableextension may still contribute field
+            // triggers, so extension wiring must run regardless (issue #1835: the
+            // usual PTE-extends-a-triggerless-table shape skipped it entirely).
+            if (byField.Count == 0)
+            {
+                WireExtensionValidateHandlers(built, tableId);
+                return true;
+            }
 
             // For each field with handler(s): build EventTriggerData, set ValidateHandler/LookupHandler,
             // poke onto NCLMetaField.EventTriggerDataValue backing field.
@@ -1146,11 +1151,18 @@ public static partial class RecordPatches
     /// <summary>
     /// Wire the OnBeforeValidate / OnAfterValidate field triggers declared in a tableextension's
     /// `modify(field) { trigger OnBeforeValidate(); trigger OnAfterValidate(); }` block into the
-    /// base table's NCLMetaField before/after handler lists. NavRecord.ValidateFieldAsync runs
-    /// those lists around the base field's OnValidate; each handler's HandlerType is the
-    /// TableExtension{id} CLR type so InvokeFieldTriggerHandler dispatches to the registered
-    /// extension instance (see RegisterParsedTableExtensions). Idempotent: rebuilds the lists
-    /// from scratch on every call (WireFieldTriggerHandlersAll may run on each bundle (re)load).
+    /// base table's NCLMetaField before/after handler lists, and the OnValidate / OnLookup
+    /// triggers of fields the tableextension ADDS onto those fields' ValidateHandler /
+    /// LookupHandler slots (issue #1835: the AL compiler emits a new ext field's trigger on
+    /// TableExtension{id}, never on Record{id}, so base-table wiring alone leaves the slot
+    /// empty and Rec.Validate silently skips the trigger). NavRecord.ValidateFieldAsync runs
+    /// the before/after lists around the field's ValidateHandler; each handler's HandlerType
+    /// is the TableExtension{id} CLR type so InvokeFieldTriggerHandler dispatches to the
+    /// registered extension instance (see RegisterParsedTableExtensions). Valid AL cannot
+    /// collide an extension OnValidate with a base-table one — modify() blocks only accept
+    /// OnBefore/OnAfterValidate, and an extension can only declare OnValidate on fields it
+    /// adds. Idempotent: rebuilds the lists from scratch on every call
+    /// (WireFieldTriggerHandlersAll may run on each bundle (re)load).
     /// </summary>
     private static void WireExtensionValidateHandlers(NCLMetaTable built, int tableId)
     {
@@ -1166,6 +1178,9 @@ public static partial class RecordPatches
         // fieldNo → (before handlers, after handlers), preserving extension declaration order.
         var beforeByField = new Dictionary<int, List<object>>();
         var afterByField = new Dictionary<int, List<object>>();
+        // fieldNo → single handler for the ext-added field's own OnValidate / OnLookup.
+        var validateByField = new Dictionary<int, object>();
+        var lookupByField = new Dictionary<int, object>();
 
         foreach (var extId in extIds)
         {
@@ -1182,6 +1197,14 @@ public static partial class RecordPatches
                     var fieldNo = (int)_tFieldTriggerHandlerAttr!.GetProperty("FieldNo")!.GetValue(a)!;
                     var ttObj = _tFieldTriggerHandlerAttr.GetProperty("TriggerType")!.GetValue(a)!;
                     var ttName = Enum.GetName(_tFieldTriggerType!, ttObj);
+                    if (ttName == "OnValidate" || ttName == "OnLookup")
+                    {
+                        var single = BuildFieldTriggerHandler(mi, extType);
+                        if (single == null) continue;
+                        if (ttName == "OnValidate") validateByField[fieldNo] = single;
+                        else lookupByField[fieldNo] = single;
+                        continue;
+                    }
                     var target = ttName == "OnBeforeValidate" ? beforeByField
                                : ttName == "OnAfterValidate" ? afterByField
                                : null;
@@ -1197,6 +1220,8 @@ public static partial class RecordPatches
 
         var fieldsToWire = new HashSet<int>(beforeByField.Keys);
         fieldsToWire.UnionWith(afterByField.Keys);
+        fieldsToWire.UnionWith(validateByField.Keys);
+        fieldsToWire.UnionWith(lookupByField.Keys);
         foreach (var fieldNo in fieldsToWire)
         {
             NCLMetaField? metaField;
@@ -1210,6 +1235,10 @@ public static partial class RecordPatches
                 _pOnBeforeValidateHandlers.SetValue(etd, ToHandlerList(before));
             if (afterByField.TryGetValue(fieldNo, out var after))
                 _pOnAfterValidateHandlers.SetValue(etd, ToHandlerList(after));
+            if (validateByField.TryGetValue(fieldNo, out var extValidate) && _fValidateHandlerBacking != null)
+                AlRunner.Infrastructure.FieldPoke.SetInstance(_fValidateHandlerBacking, etd, extValidate);
+            if (lookupByField.TryGetValue(fieldNo, out var extLookup) && _fLookupHandlerBacking != null)
+                AlRunner.Infrastructure.FieldPoke.SetInstance(_fLookupHandlerBacking, etd, extLookup);
             AlRunner.Infrastructure.FieldPoke.SetInstance(_fEventTriggerDataValueBacking, metaField, etd);
         }
     }
