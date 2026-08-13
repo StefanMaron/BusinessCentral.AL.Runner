@@ -39,6 +39,10 @@ public class InstallSeedDepCompanyCacheTests
     private static readonly string ProjectPath = Path.Combine(RepoRoot, "AlRunner");
 
     private static (string output, int exit) RunRunner(params string[] bundles)
+        => RunRunner(extraEnv: null, bundles);
+
+    private static (string output, int exit) RunRunner(
+        System.Collections.Generic.IDictionary<string, string>? extraEnv, params string[] bundles)
     {
         var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
         args.Append(TestBuildConfig.BcVersionArg);
@@ -55,6 +59,8 @@ public class InstallSeedDepCompanyCacheTests
             UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
             Environment = { ["AL_RUNNER_PERF"] = "1" },
         };
+        if (extraEnv != null)
+            foreach (var (k, v) in extraEnv) psi.Environment[k] = v;
         var sb = new StringBuilder();
         var p = Process.Start(psi)!;
         p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
@@ -109,28 +115,81 @@ public class InstallSeedDepCompanyCacheTests
         TestArtifacts.SkipIfMissing();
 
         var root = Path.Combine(Path.GetTempPath(), "al-runner-depcompany-cache", Guid.NewGuid().ToString("N"));
-        var appA = Path.Combine(root, "app-a");
-        var appB = Path.Combine(root, "app-b");
-        WriteSameDepClosureApp(appA, 61900, "AppA");
-        WriteSameDepClosureApp(appB, 61910, "AppB");
+        try
+        {
+            var appA = Path.Combine(root, "app-a");
+            var appB = Path.Combine(root, "app-b");
+            WriteSameDepClosureApp(appA, 61900, "AppA");
+            WriteSameDepClosureApp(appB, 61910, "AppB");
 
-        var (output, exitCode) = RunRunner(appA, appB);
+            var (output, exitCode) = RunRunner(appA, appB);
 
-        // [THEN] Both app groups' Company-Initialize assertion actually passed — the
-        // cache did not silently skip seeding for either.
-        Assert.Equal(0, exitCode);
-        var passLines = CountOccurrences(output, "1P/0F/0E");
-        Assert.True(passLines >= 2,
-            $"expected both app groups to report 1P/0F/0E, got:\n{output}");
+            // [THEN] Both app groups' Company-Initialize assertion actually passed — the
+            // cache did not silently skip seeding for either.
+            Assert.Equal(0, exitCode);
+            var passLines = CountOccurrences(output, "1P/0F/0E");
+            Assert.True(passLines >= 2,
+                $"expected both app groups to report 1P/0F/0E, got:\n{output}");
 
-        // [THEN] Exactly one fresh computation (MISS) and at least one reuse (HIT) for
-        // the shared MS-platform-only dependency closure — proving the SECOND app group
-        // genuinely reused the first's result instead of re-running dependency Install
-        // triggers + Company-Initialize from scratch.
-        var missCount = CountOccurrences(output, "InstallBaseline.DepCompanyCache MISS");
-        var hitCount = CountOccurrences(output, "InstallBaseline.DepCompanyCache HIT");
-        Assert.Equal(1, missCount);
-        Assert.True(hitCount >= 1, $"expected at least one cache HIT, got:\n{output}");
+            // [THEN] Exactly one fresh computation (MISS) and at least one reuse (HIT) for
+            // the shared MS-platform-only dependency closure — proving the SECOND app group
+            // genuinely reused the first's result instead of re-running dependency Install
+            // triggers + Company-Initialize from scratch.
+            var missCount = CountOccurrences(output, "InstallBaseline.DepCompanyCache MISS");
+            var hitCount = CountOccurrences(output, "InstallBaseline.DepCompanyCache HIT");
+            Assert.Equal(1, missCount);
+            Assert.True(hitCount >= 1, $"expected at least one cache HIT, got:\n{output}");
+        }
+        finally
+        {
+            try { Directory.Delete(root, true); } catch { }
+        }
+    }
+
+    /// <summary>
+    /// Clean inversion of <see cref="SecondAppGroupWithSameDependencyClosure_ReusesCachedDepCompanyBaseline"/>:
+    /// same two-app-group, same-dependency-closure scenario, but with the permanent kill
+    /// switch (AL_RUNNER_NO_DEP_COMPANY_CACHE=1) set on the spawned process. Proves the
+    /// switch actually disables reuse rather than merely existing — both app groups must
+    /// independently MISS (fresh dependency Install triggers + Company-Initialize) and
+    /// neither may HIT, even though their dependency-set key is identical.
+    /// </summary>
+    [SkippableFact]
+    public void KillSwitchEnvVar_ForcesEveryLookupToMiss_EvenForSameDependencyClosure()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        var root = Path.Combine(Path.GetTempPath(), "al-runner-depcompany-cache-killswitch", Guid.NewGuid().ToString("N"));
+        try
+        {
+            var appA = Path.Combine(root, "app-a");
+            var appB = Path.Combine(root, "app-b");
+            WriteSameDepClosureApp(appA, 61950, "AppA");
+            WriteSameDepClosureApp(appB, 61960, "AppB");
+
+            var (output, exitCode) = RunRunner(
+                new System.Collections.Generic.Dictionary<string, string> { ["AL_RUNNER_NO_DEP_COMPANY_CACHE"] = "1" },
+                appA, appB);
+
+            // [THEN] Both app groups' Company-Initialize assertion still passed — the kill
+            // switch disables the cache, not the seeding itself.
+            Assert.Equal(0, exitCode);
+            var passLines = CountOccurrences(output, "1P/0F/0E");
+            Assert.True(passLines >= 2,
+                $"expected both app groups to report 1P/0F/0E, got:\n{output}");
+
+            // [THEN] Exactly two fresh computations (MISS) and zero reuse (HIT) — with the
+            // kill switch set, the SAME dependency closure that produced 1 MISS + >=1 HIT in
+            // the positive test above must now produce 2 MISSes and 0 HITs.
+            var missCount = CountOccurrences(output, "InstallBaseline.DepCompanyCache MISS");
+            var hitCount = CountOccurrences(output, "InstallBaseline.DepCompanyCache HIT");
+            Assert.Equal(2, missCount);
+            Assert.Equal(0, hitCount);
+        }
+        finally
+        {
+            try { Directory.Delete(root, true); } catch { }
+        }
     }
 
     [SkippableFact]
@@ -139,6 +198,8 @@ public class InstallSeedDepCompanyCacheTests
         TestArtifacts.SkipIfMissing();
 
         var root = Path.Combine(Path.GetTempPath(), "al-runner-depcompany-cache-neg", Guid.NewGuid().ToString("N"));
+        try
+        {
         var appA = Path.Combine(root, "app-a");
         WriteSameDepClosureApp(appA, 61920, "AppA");
 
@@ -216,6 +277,11 @@ public class InstallSeedDepCompanyCacheTests
         var missCount = CountOccurrences(output, "InstallBaseline.DepCompanyCache MISS");
         Assert.True(missCount >= 2,
             $"expected at least 2 distinct-dependency-closure MISSes, got {missCount}:\n{output}");
+        }
+        finally
+        {
+            try { Directory.Delete(root, true); } catch { }
+        }
     }
 
     private static int CountOccurrences(string haystack, string needle)
