@@ -5,8 +5,10 @@ name: Test Matrix
 # actions/cache persistence for compiled-deps+workspace-deps (control / cold /
 # warm), driven entirely by YAML-only edits between pushes so the
 # compiled-deps cache key (which hashes al-runner.dll's content) never moves.
-# This commit is the COLD run: cache step present, first use of this key —
-# nothing to restore, save-only at the end of the job.
+# This commit is the WARM run: same key as the previous (cold) commit — only
+# this comment line changed, and YAML isn't compiled into al-runner.dll, so
+# the compiled-deps cache key (which hashes that DLL's content) is identical.
+# Expect a restore HIT this time, plus save-if-changed at the end.
 # See #1877 for the full write-up. Not a proposal to merge as-is.
 
 on:
