@@ -1927,9 +1927,12 @@ public static partial class BcRuntime
             //     Hook(runXmlPortMethod, nameof(NavXmlPort_RunXmlPort), "NavXmlPort.RunXmlPort()");
 
             // XMLPORT.RUN(id [, reqPage [, import [, record]]]) in AL compiles to static
-            // NavXmlPort.Run(int, ...) overloads. Without these hooks, BC tries to look up the
-            // XmlPort in NCLMetadata → ThrowMetaApplicationObjectNotFound for every test-assembly
-            // XmlPort. Hook all four overloads as no-ops.
+            // NavXmlPort.Run(int, ...) overloads — a genuine, permanent OOS surface (see the
+            // canonical comment above NavXmlPort_StaticRun1..4 in
+            // AlRunner/Patches/XmlPortPatches.cs). Hook all four overloads to our typed OOS
+            // throw. JmpHook itself is disabled by default (Cecil ownership in
+            // NclCecilRewrite.cs is what actually fires); registered here too for defence in
+            // depth against an AL_RUNNER_ENABLE_JMPHOOK=1 diagnostic pass.
             {
                 int staticRunHooked = 0;
                 var sr1 = navXmlPortType.GetMethod("Run",
@@ -1966,17 +1969,12 @@ public static partial class BcRuntime
             // BeginInitialization/EndInitialization/Add(TableNode|FieldNode|TextNode) used to
             // be Hook(...) call sites right here — orphaned, like Export/Import/Run/SetTableView
             // above (JmpHook is disabled by default, so none of these ever fired; BC's real,
-            // unpatched bodies ran instead). Investigated as part of #1800: an earlier revision
-            // Cecil-owned BeginInitialization to install stub metadata, believing
-            // Session.MetadataProvider is null on the skeleton and NREs the ctor. That was a
-            // misdiagnosis — AlRunner/Patches/MetadataPatches.cs's InjectSkeletonSystemTenant
-            // already seeds session.tenant/systemTenant for exactly this call path (its own
-            // comment names NavXmlPort.BeginInitialization as the motivating case) — and an
-            // active regression (14 previously-passing al-language corpus tests broke,
-            // Codeunit60206/60207). BC's real, unpatched BeginInitialization/EndInitialization/
-            // Add bodies already construct correctly on the skeleton, proven empirically against
-            // a pristine, unpatched build. So these Hook(...) call sites were deleted outright,
-            // not left dead: there is nothing to redirect to, BC's own body is already correct.
+            // unpatched bodies ran instead). Deleted outright, not left dead: BC's own body is
+            // already correct on the skeleton. Full misdiagnosis-and-correction record (an
+            // earlier revision Cecil-owned BeginInitialization on a false premise and regressed
+            // 14 corpus tests before being reverted) lives once, canonically, in the big comment
+            // block above NavXmlPort_StaticRun1..4 in AlRunner/Patches/XmlPortPatches.cs — see
+            // there, not here.
             var nclAssembly = navXmlPortType.Assembly;
             var tableNodeType = nclAssembly.GetType("Microsoft.Dynamics.Nav.Runtime.NavXmlPortTableNode");
 

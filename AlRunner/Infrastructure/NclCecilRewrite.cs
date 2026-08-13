@@ -138,32 +138,20 @@ public static class NclCecilRewrite
         "Microsoft.Dynamics.Nav.Runtime.NavReport::RunModal/3",
         "Microsoft.Dynamics.Nav.Runtime.NavReport::RunModal/4",
         // NavXmlPort static Run(id[, requestWindow[, import[, record]]]) — #1800. These four
-        // overloads were orphaned JmpHook.Hook(...) registrations in BcRuntime.cs (JmpHook is
-        // disabled by default, so they never fired) and BC's real, unpatched bodies genuinely
-        // throw standalone — proven empirically: XmlPort.Run(<unresolvable id>) throws
-        // NavALException ("object with that ID does not exist"), and XmlPort.Run(<a real id>)
-        // throws NavNCLCallbackNotAllowedException ("Callback functions are not allowed"),
-        // both against a pristine, unpatched build. Cecil-own them to a no-op instead of a
-        // JmpHook registration that can silently fail to bind. See
+        // overloads are a genuine, permanent out-of-scope surface (docs/scope.md#file-storage,
+        // same bucket as NavFile.ALUpload/ALDownload's browser round-trip): BC's real body
+        // always routes through NavFile.InternalUpload/InternalDownload → the client-callback
+        // file-browse dialog, for every overload and argument combination. Cecil-own them to
+        // our typed OOS throw instead of a JmpHook registration that can silently fail to bind.
+        // The instance Export/Import/Run/RunXmlPort/SetTableView/BeginInitialization/
+        // EndInitialization/Add(*Node) methods in the same cluster are the OPPOSITE case — BC's
+        // real body is already correct there, nothing to redirect to — and are deliberately NOT
+        // listed below. Full evidence (decompiled source) and the
+        // misdiagnosis-and-correction record for the eight already-correct methods live once,
+        // canonically, in the big comment block above NavXmlPort_StaticRun1..4 in
+        // AlRunner/Patches/XmlPortPatches.cs. See also
         // tests/runner-extras/standalone-suites/xmlport-cluster-hooks-1800 for the RED→GREEN
-        // proof and the #1800 PR body for the rest of the orphan-hook inventory.
-        //
-        // BeginInitialization/EndInitialization/Add(TableNode|FieldNode|TextNode) and the
-        // instance Export/Import/Run/RunXmlPort/SetTableView were ALSO orphaned JmpHook
-        // registrations here, and were investigated as part of the same #1800 pass — but they
-        // are NOT listed below, deliberately. An earlier version of this fix Cecil-owned
-        // BeginInitialization to install stub metadata (believing Session.MetadataProvider was
-        // null on the skeleton and NREd the ctor), which then regressed 14 previously-passing
-        // al-language corpus tests (Codeunit60206/60207). Root cause: Session.MetadataProvider
-        // is NOT null — AlRunner/Patches/MetadataPatches.cs's InjectSkeletonSystemTenant already
-        // seeds session.tenant/systemTenant for exactly this call path (its own comment names
-        // NavXmlPort.BeginInitialization as the motivating case), so BC's real, unpatched
-        // BeginInitialization/EndInitialization/Add bodies already construct correctly, and its
-        // real Export/Import/Run/SetTableView bodies already handle well-formed AL usage
-        // correctly once construction succeeds. All of that cluster's Hook(...) call sites in
-        // BcRuntime.cs were deleted outright (not left dead): there is nothing to redirect to,
-        // BC's own body is already correct. See the removal there and the PR discussion on
-        // #1800 for the full misdiagnosis-and-correction record.
+        // proof.
         "Microsoft.Dynamics.Nav.Runtime.NavXmlPort::Run/1",
         "Microsoft.Dynamics.Nav.Runtime.NavXmlPort::Run/2",
         "Microsoft.Dynamics.Nav.Runtime.NavXmlPort::Run/3",
@@ -5031,36 +5019,23 @@ public static class NclCecilRewrite
 
         // NavXmlPort static Run(id[, requestWindow[, import[, record]]]) — #1800.
         //
-        // These four overloads were orphaned JmpHook.Hook(...) registrations in BcRuntime.cs
-        // (JmpHook is disabled by default, so they never fired), and BC's real, unpatched
-        // bodies genuinely throw standalone — proven empirically: XmlPort.Run(<unresolvable
-        // id>) throws NavALException ("object with that ID does not exist"), and
-        // XmlPort.Run(<a real id>) throws NavNCLCallbackNotAllowedException ("Callback
-        // functions are not allowed"), both against a pristine, unpatched build. Cecil-own
-        // them to a no-op instead of a JmpHook registration that can silently fail to bind.
-        // See tests/runner-extras/standalone-suites/xmlport-cluster-hooks-1800 for the
-        // RED→GREEN proof.
+        // These four overloads are a genuine, permanent out-of-scope surface
+        // (docs/scope.md#file-storage — the same "browser round-trip" bucket as
+        // NavFile.ALUpload/ALDownload, see FilePatches.cs): decompiling BC's real, unpatched
+        // Ncl.dll body shows every overload's RunXmlPort() unconditionally calls
+        // NavFile.InternalUpload/InternalDownload with displayDialog:true, which resolves to
+        // Session.ClientCallback.UploadFileAction/DownloadFileAction — a client callback the
+        // runner's non-interactive skeleton session cannot satisfy. Cecil-own them to our
+        // typed OOS throw instead of a JmpHook registration that can silently fail to bind.
         //
-        // BeginInitialization/EndInitialization/Add(TableNode|FieldNode|TextNode) and the
-        // instance Export/Import/Run/RunXmlPort/SetTableView were ALSO orphaned JmpHook
-        // registrations in the same NavXmlPort cluster, investigated as part of the same
-        // #1800 pass — but they are deliberately NOT Cecil-owned. An earlier version of this
-        // fix Cecil-owned BeginInitialization to install stub metadata, on the belief that
-        // Session.MetadataProvider is null on the skeleton and NREs the ctor. That turned out
-        // to be a misdiagnosis (and an active regression: it broke 14 previously-passing
-        // al-language corpus tests, Codeunit60206/60207). Root cause: Session.MetadataProvider
-        // is NOT null on the skeleton — AlRunner/Patches/MetadataPatches.cs's
-        // InjectSkeletonSystemTenant already seeds session.tenant/systemTenant for exactly
-        // this call path (its own comment names NavXmlPort.BeginInitialization as the
-        // motivating case). So BC's real, unpatched BeginInitialization/EndInitialization/Add
-        // bodies already construct correctly, and its real Export/Import/Run/SetTableView
-        // bodies already handle well-formed AL usage correctly once construction succeeds —
-        // proven by the full al-language corpus run (Codeunit60206/60207: nested-table
-        // export/import, text-variable triggers, auto-update/auto-replace, SetTableView row
-        // filtering, all passing against the unpatched precompiled body). All of that
-        // cluster's Hook(...) call sites in BcRuntime.cs were deleted outright (not left
-        // dead): there is nothing to redirect to, BC's own body is already correct. See the
-        // removal there and the #1800 PR body for the full misdiagnosis-and-correction record.
+        // The instance Export/Import/Run/RunXmlPort/SetTableView/BeginInitialization/
+        // EndInitialization/Add(*Node) methods in the same cluster are the OPPOSITE case — BC's
+        // real body is already correct there, nothing to redirect to — and are deliberately NOT
+        // Cecil-owned. Full decompiled-source evidence and the misdiagnosis-and-correction
+        // record for those eight already-correct methods live once, canonically, in the big
+        // comment block above NavXmlPort_StaticRun1..4 in AlRunner/Patches/XmlPortPatches.cs.
+        // See also tests/runner-extras/standalone-suites/xmlport-cluster-hooks-1800 for the
+        // RED→GREEN proof.
         {
             var navXmlPortT = asm.MainModule.Types
                 .FirstOrDefault(t => t.FullName == "Microsoft.Dynamics.Nav.Runtime.NavXmlPort");
@@ -5068,7 +5043,7 @@ public static class NclCecilRewrite
             const string NavRecordName = "Microsoft.Dynamics.Nav.Runtime.NavRecord";
 
             // Static XMLPORT.RUN(id[, requestWindow[, import[, record]]]) — 4 overloads, all
-            // safe no-ops in standalone mode (no request page, no interactive I/O target).
+            // redirected to a typed OOS throw (see the comment above this block).
             if (navXmlPortT != null)
             {
                 void RedirectStaticRun(TypeReference[] sig, string replName)
@@ -5117,7 +5092,7 @@ public static class NclCecilRewrite
                     RedirectStaticRun(new[] { tInt32, tBool, tBool, refNavRecordForStatic }, nameof(AlRunner.BcRuntime.NavXmlPort_StaticRun4));
             }
 
-            Console.Error.WriteLine($"[Cecil] Rewrote {xmlPortRewrites} NavXmlPort static Run overload(s) to no-op (ctor-scaffolding and instance Export/Import/Run/SetTableView left to BC's real, unpatched body)");
+            Console.Error.WriteLine($"[Cecil] Rewrote {xmlPortRewrites} NavXmlPort static Run overload(s) to OOS-throw (ctor-scaffolding and instance Export/Import/Run/SetTableView left to BC's real, unpatched body)");
         }
 
         // §report-processor-factory — the TRUE out-of-scope boundary for report
