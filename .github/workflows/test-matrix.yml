@@ -252,17 +252,26 @@ jobs:
           # So this leg stays red until every corpus test passes (or its failure is
           # declared OOS-by-design in tests/expectations/, which reclassifies it to a
           # pass). Crash codes (134/139) also surface here as a non-zero exit → red.
+          #
+          # --count-baseline (#1880) is the companion floor: --strict only fails on a
+          # test FAILING, so a bundle/app-group that silently stops being discovered
+          # (dependency rename, duplicate app-id collision — #1850, dropped app group —
+          # #1861) still exits 0 as long as every SURVIVING test passes. A DROP below
+          # the recorded floor now exits 4; growth is never a failure but prints a loud
+          # [count-baseline] NOTE so tests/expectations/count-baseline/ gets bumped in
+          # the same PR that grew the suite.
           rc=0
           start=$SECONDS
           dotnet run --no-build --project AlRunner -c Release --framework net8.0 -- \
               tests/al-language/tests/al-language \
               --package-cache "$HOME/.al-runner/platform-apps" \
               --strict \
+              --count-baseline tests/expectations/count-baseline/test-count-baseline.json \
               --out al-language-results.json || rc=$?
           elapsed=$(( SECONDS - start ))
           echo "elapsed=${elapsed}s" >> "$GITHUB_OUTPUT"
           if [ "$rc" -ne 0 ]; then
-            echo "::error::al-language run failed (exit $rc: 1=test failure, 2=exec fail, 3=compile fail, 134/139=crash)"
+            echo "::error::al-language run failed (exit $rc: 1=test failure, 2=exec fail, 3=compile fail, 4=count-baseline drop, 134/139=crash)"
             exit "$rc"
           fi
 
@@ -303,11 +312,19 @@ jobs:
           # "package caches: 0 dir(s)" and aborted on the first suite declaring a
           # Microsoft dependency (microsoft-dependencies -> Application Test Library)
           # before running a single test.
+          #
+          # --count-baseline (#1880), same rationale as the al-language corpus leg
+          # above. runner-extras genuinely has fewer tests on BC 27.0/27.3/27.5 than
+          # 28.x (some AL surfaces are gated on preprocessor symbols only defined from
+          # 28.0 on) — tests/expectations/count-baseline/test-count-baseline.json
+          # carries a per-BC-version floor for exactly that reason, not a single global
+          # minimum.
           dotnet run --no-build --project AlRunner -c Release --framework net8.0 -- \
               tests/runner-extras \
               --package-cache "$HOME/.al-runner/platform-apps" \
               --package-cache "$HOME/.al-runner/test-apps" \
               --strict \
+              --count-baseline tests/expectations/count-baseline/test-count-baseline.json \
               --out runner-extras-results.json
 
       - name: Phase-log report (runner-extras)

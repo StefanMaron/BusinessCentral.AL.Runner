@@ -10,7 +10,17 @@ public sealed record BucketResult(string BucketPath, BucketStage Stage,
                                    IReadOnlyList<string> CompileErrors,
                                    string? ProcessError,
                                    IReadOnlyList<TestResult> Tests,
-                                   TimeSpan EmitTime, TimeSpan CompileTime, TimeSpan RunTime);
+                                   TimeSpan EmitTime, TimeSpan CompileTime, TimeSpan RunTime,
+                                   // Number of app groups (bundled mode) / suites (--per-suite) that
+                                   // actually executed to completion — i.e. reached the point of
+                                   // contributing their tests to `Tests`, not merely discovered on
+                                   // disk. Optional/trailing so existing call sites (tests included)
+                                   // that don't care about it keep compiling unchanged. Consumed by
+                                   // Infrastructure.CountBaselineCheck (#1880) as a second, coarser
+                                   // signal alongside the test-count floor — see that file's header
+                                   // for why a whole-group-vanished bug can hide behind an unchanged
+                                   // test count.
+                                   int RanGroupCount = 0);
 
 public static class Reporter
 {

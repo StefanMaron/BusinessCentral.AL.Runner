@@ -1,0 +1,16 @@
+{
+  "_comment": "Consumed by --count-baseline (AlRunner/Infrastructure/CountBaseline.cs), a DIFFERENT schema from the oos-/known-gaps-/divergence-/disabled- files in this directory: those declare the expected CLASSIFICATION of one named test, this declares the expected minimum COUNT of a whole suite. See #1880. Suite keys are the basename of the bundle directory CI passes on the command line (tests/al-language/tests/al-language -> 'al-language', tests/runner-extras -> 'runner-extras'), matching the '--out <name>-results.json' convention CI already uses. Values below were read directly off the last known-green Test Matrix run (see PR for the run URL) via the runner's own 'Buckets/Tests' summary and a --count-baseline probe against a deliberately-too-high floor (which reports the real actual count in its DROP message) - not guessed. A GROWN suite must have this file bumped in the SAME PR that grew it (the runner prints a loud [count-baseline] NOTE reminding you); a DROP must never be silenced by raising these numbers without first explaining why the drop is expected.",
+  "suites": {
+    "al-language": {
+      "tests": { "default": 2073 },
+      "appGroups": { "default": 1 }
+    },
+    "runner-extras": {
+      "tests": {
+        "default": 116,
+        "byBcVersion": { "27.0": 110, "27.3": 110, "27.5": 110 }
+      },
+      "appGroups": { "default": 23 }
+    }
+  }
+}

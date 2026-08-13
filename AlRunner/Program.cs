@@ -262,6 +262,13 @@ var extraPreprocessorSymbols = new List<string>();
 // existing directory activates classification, so ordinary runs outside this repo are
 // untouched.
 string? expectationsDirArg = null;
+// --count-baseline PATH: opt-in test/app-group count floor manifest (issue #1880; see
+// AlRunner/Infrastructure/CountBaseline.cs for the schema and rationale). Unlike
+// --expectations there is NO auto-probed default — a baseline built for a full-corpus
+// leg must never silently fire on a narrower invocation of the same directory (the
+// xmlport-isolation CI leg passes --test against the SAME al-language root), so this
+// only ever activates when the caller explicitly opts in.
+string? countBaselinePath = null;
 // `provision` subcommand: `al-runner provision [<project>]` provisions the BC artifacts
 // for the project's version and exits (no test run). `--auto-provision` provisions on the
 // fly when artifacts are missing, then continues the normal run. Both are the opt-in that
@@ -282,6 +289,7 @@ for (int i = 0; i < args.Length; i++)
     if (args[i] == "--per-suite") { bundledMode = false; continue; }
     if (args[i] == "--bundled") { bundledMode = true; continue; }
     if (args[i] == "--expectations" && i + 1 < args.Length) { expectationsDirArg = args[++i]; continue; }
+    if (args[i] == "--count-baseline" && i + 1 < args.Length) { countBaselinePath = args[++i]; continue; }
     // #1821: the SAME --cache value also becomes the isolation root for the four
     // caches (compiled-deps/workspace-deps/ncl-cecil/bc-symbols) that used to ignore
     // it — see AlRunner.Infrastructure.CacheRoots for why al-out itself is unaffected.
@@ -405,6 +413,24 @@ AlRunner.Infrastructure.ExpectationManifest? expectations = null;
             Console.Error.WriteLine($"expectations manifest ({expectationsDir}): {ex.Message}");
             return 2;
         }
+    }
+}
+// ── Count-baseline manifest (issue #1880; AlRunner/Infrastructure/CountBaseline.cs) ──
+// Loaded HERE too — same reasoning as --expectations above: a malformed baseline
+// aborts before any test runs (exit 2), not after paying for a full corpus run.
+// Deliberately explicit-only (no auto-probed default) — see CountBaselinePath's
+// declaration comment for why.
+AlRunner.Infrastructure.CountBaselineManifest? countBaseline = null;
+if (countBaselinePath != null)
+{
+    try
+    {
+        countBaseline = AlRunner.Infrastructure.CountBaselineManifest.Load(countBaselinePath);
+    }
+    catch (InvalidOperationException ex)
+    {
+        Console.Error.WriteLine(ex.Message);
+        return 2;
     }
 }
 // --output-json: stdout must be JSON-only, matching the documented contract ("Replace
@@ -1164,6 +1190,11 @@ foreach (var bundle in bundles)
     var bundleErrors = new List<string>();
     var bundleStage = BucketStage.Ran;
     int sP = 0, sF = 0, sE = 0;
+    // #1880: counts app groups (bundled mode) / suites (--per-suite) that actually
+    // reached test execution and contributed to bundleTests — incremented at the
+    // SAME point as bundleTests.AddRange below, in both loops, so a group that threw
+    // before that point (compile/exec fail, `continue`d away) is correctly NOT counted.
+    int ranGroupCount = 0;
 
     if (bundledMode)
     {
@@ -1775,6 +1806,7 @@ foreach (var bundle in bundles)
             rt.Stop(); bundleRun += rt.Elapsed;
             AlRunner.Infrastructure.PhaseLog.AddAppRun(rt.Elapsed);
             bundleTests.AddRange(tests);
+            ranGroupCount++;
             sP += tests.Count(t => t.Outcome == TestOutcome.Pass);
             sF += tests.Count(t => t.Outcome == TestOutcome.Fail);
             sE += tests.Count(t => t.Outcome == TestOutcome.Error);
@@ -1863,6 +1895,7 @@ foreach (var bundle in bundles)
             rt.Stop(); bundleRun += rt.Elapsed;
             AlRunner.Infrastructure.PhaseLog.AddAppRun(rt.Elapsed);
             bundleTests.AddRange(tests);
+            ranGroupCount++;
             sP += tests.Count(t => t.Outcome == TestOutcome.Pass);
             sF += tests.Count(t => t.Outcome == TestOutcome.Fail);
             sE += tests.Count(t => t.Outcome == TestOutcome.Error);
@@ -1888,7 +1921,7 @@ foreach (var bundle in bundles)
     if (bundleTests.Count == 0 && bundleErrors.Count > 0) bundleStage = BucketStage.CompileFailed;
     results.Add(new BucketResult(bundleAbs, bundleStage,
         bundleErrors, null, bundleTests,
-        bundleEmit, bundleComp, bundleRun));
+        bundleEmit, bundleComp, bundleRun, ranGroupCount));
     // Appended here, not buffered to process exit: a run that dies mid-way still
     // yields a row for every bundle it did finish. The row's wall clock covers this
     // whole loop turn, so wall − (emit+compile+run) is the per-bundle overhead
@@ -2007,6 +2040,64 @@ else
 }
 } // end while(true) watch loop
 
+// ── Count-baseline floor check (issue #1880) ───────────────────────────────────────
+// Runs once, after every bundle has finished, against the FULL `results` list — same
+// timing as the exit-code computation right below, which it feeds into. See
+// AlRunner/Infrastructure/CountBaseline.cs for the schema/semantics.
+bool countBaselineDropped = false;
+if (countBaseline != null)
+{
+    // A --test/--filter narrows scope ON PURPOSE (e.g. the xmlport-isolation CI leg
+    // runs the SAME al-language root with --test "Codeunit6020"), so a baseline sized
+    // for the full suite must not fire here. Loud, not silent: anyone who passes both
+    // flags together sees exactly why the guard stood down.
+    if (testFilter != null)
+    {
+        Console.Error.WriteLine(
+            $"[count-baseline] skipped: --test '{testFilter}' narrows scope intentionally.");
+    }
+    else
+    {
+        var actualBySuite = new Dictionary<string, AlRunner.Infrastructure.SuiteCountActual>();
+        foreach (var b in results)
+        {
+            var suiteKey = Path.GetFileName(b.BucketPath.TrimEnd(
+                Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+            var testCount = b.Tests.Count;
+            var groupCount = b.RanGroupCount;
+            if (actualBySuite.TryGetValue(suiteKey, out var prior))
+                actualBySuite[suiteKey] = new AlRunner.Infrastructure.SuiteCountActual(
+                    prior.Tests + testCount, prior.AppGroups + groupCount);
+            else
+                actualBySuite[suiteKey] = new AlRunner.Infrastructure.SuiteCountActual(testCount, groupCount);
+        }
+
+        var selectedVersion = AlRunner.Infrastructure.BcArtifacts.SelectedVersion;
+        var bcVersionKey = $"{selectedVersion.Major}.{selectedVersion.Minor}";
+
+        var (drops, growths) = AlRunner.Infrastructure.CountBaselineCheck.Evaluate(
+            countBaseline, actualBySuite, bcVersionKey);
+
+        // Growth is never a failure — adding tests is the normal case — but it must be
+        // loud, the same way tests/expectations/ drift is loud in both directions, so a
+        // stale (too-low) baseline gets bumped in the SAME PR that grew the suite
+        // instead of silently drifting further out of date on every later drop check.
+        foreach (var g in growths)
+            Console.Error.WriteLine(
+                $"[count-baseline] NOTE: {g} — grew past the baseline. Bump it in "
+                + $"{countBaselinePath} in this PR.");
+
+        if (drops.Count > 0)
+        {
+            countBaselineDropped = true;
+            foreach (var d in drops)
+                Console.Error.WriteLine(
+                    $"[count-baseline] DROP: {d} — a bundle or app group may have silently "
+                    + $"stopped being discovered/executed. See {countBaselinePath}.");
+        }
+    }
+}
+
 // Computed once regardless of --no-strict-exit: needed both as the process exit code
 // and as the "exitCode" field in --output-json, which reports the real outcome even
 // when the process itself exits 0 for JSON-only consumers.
@@ -2033,7 +2124,8 @@ int computedExitCode = 0;
     }
     computedExitCode = compileFail > 0 ? 3       // compile errors
         : execFail > 0 ? 2                       // bucket-level execution error
-        : (failed + errored > 0 ? 1 : 0);        // at least one test failed
+        : (failed + errored > 0 ? 1               // at least one test failed
+        : (countBaselineDropped ? 4 : 0));       // #1880: suite shrank below its floor
 }
 
 if (outputJson)
@@ -3142,6 +3234,8 @@ static void PrintHelp(TextWriter w)
     w.WriteLine("                               also a bad invocation — unknown flag, or a bundle");
     w.WriteLine("                               path that does not exist)");
     w.WriteLine("                            3  a bundle could not compile");
+    w.WriteLine("                            4  --count-baseline: a suite's test or app-group count");
+    w.WriteLine("                               dropped below its declared floor (see --count-baseline)");
     w.WriteLine("  --no-strict-exit        Always exit 0 regardless of test outcome, so callers can");
     w.WriteLine("                          parse the JSON output without the process failing the step.");
     w.WriteLine("  --dump-csharp DIR       Write the intermediate C# emitted by BC's Compilation.Emit");
@@ -3156,6 +3250,16 @@ static void PrintHelp(TextWriter w)
     w.WriteLine("                          invoked. Manifest drift is loud: an entry whose test now");
     w.WriteLine("                          passes, or an out-of-scope throw with no entry, fails");
     w.WriteLine("                          the run with a diagnostic naming the entry to fix.");
+    w.WriteLine("  --count-baseline PATH   Load a per-suite test/app-group count floor manifest");
+    w.WriteLine("                          (schema: AlRunner/Infrastructure/CountBaseline.cs) and");
+    w.WriteLine("                          fail the run (exit 4) if a suite's count dropped below");
+    w.WriteLine("                          its floor for the selected BC version — the guard for");
+    w.WriteLine("                          \"a bundle silently stopped being discovered\" (#1880).");
+    w.WriteLine("                          Off by default, unlike --expectations: a baseline sized");
+    w.WriteLine("                          for the full corpus must not fire on a narrower run of");
+    w.WriteLine("                          the same directory (e.g. one filtered with --test), so");
+    w.WriteLine("                          this never auto-activates. Growth never fails but always");
+    w.WriteLine("                          prints a notice to bump the baseline in the same PR.");
     w.WriteLine();
     w.WriteLine("SUBCOMMANDS");
     w.WriteLine("  provision [<bundle-dir>] Download and install the BC artifacts matching the");

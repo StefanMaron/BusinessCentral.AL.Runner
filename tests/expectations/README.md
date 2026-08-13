@@ -26,3 +26,17 @@ expectation should touch one file with one entry.
 The file prefix and the entry's `Mode` must agree — the prefix is what a human
 scanning the directory reads. Moving an entry between modes means moving it
 between files.
+
+## `count-baseline/` is a different concern, deliberately not a top-level `.json`
+
+`--expectations` (this directory, auto-probed by default) loads every
+`*.json` file directly under `tests/expectations/` as an array of
+per-test classification entries. `--count-baseline` (see
+`AlRunner/Infrastructure/CountBaseline.cs`, #1880) is a *different* schema
+entirely — an expected minimum aggregate test/app-group COUNT per suite, not
+a classification of one named test. It lives in the
+`tests/expectations/count-baseline/` **subdirectory** specifically so the
+`--expectations` directory scan (non-recursive) never tries to parse it as
+a classification array. Do not add `*.json` files directly under
+`tests/expectations/` unless they follow the classification-entry schema
+above.
