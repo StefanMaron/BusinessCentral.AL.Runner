@@ -1,5 +1,13 @@
 name: Test Matrix
 
+# MEASUREMENT (#1877): this file is being edited commit-by-commit on
+# agent/impl-2/issue-1877 to produce a controlled, same-repo A/B/C of
+# actions/cache persistence for compiled-deps+workspace-deps (control / cold /
+# warm), driven entirely by YAML-only edits between pushes so the
+# compiled-deps cache key (which hashes al-runner.dll's content) never moves.
+# This commit is the CONTROL run: no cache step, matches main's behaviour.
+# See #1877 for the full write-up. Not a proposal to merge as-is.
+
 on:
   push:
     branches: [main]
