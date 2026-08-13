@@ -67,7 +67,11 @@ Branch: `agent/<AGENT-ID>/issue-<N>`.
 Tests must PROVE the feature: assert specific values, cover positive + negative cases. A test that passes with a no-op implementation is invalid. Full proving-test rules and the run/flag reference live in the `al-runner-tests` skill — read it, don't guess the command. Key points worth repeating here because they cost real CI runs when missed:
 
 - **`--package-cache "$HOME/.al-runner/platform-apps"` is required on every corpus run in this repo's CI** (see `.github/workflows/test-matrix.yml`) — the runner build's default BC major and the corpus's platform apps don't line up without it, and the run aborts on a provisioning-gap message before executing a single test. If that cache directory doesn't exist yet on your machine, run `al-runner provision` (or pass `--auto-provision`) first, or fetch it with `tools/DownloadArtifacts` (see the skill and `test-matrix.yml` for the exact invocation).
-- **Never background a corpus run and end your turn.** A backgrounded process is killed when the turn ends, no completion notification arrives, and the work sits uncommitted. A cold full-corpus run (build + AL emit + C# compile + execute ~2000 tests) is not a few-seconds operation — budget several minutes and run it in the foreground with a correspondingly generous timeout, or use `--cache <dir>` (see the skill) to skip recompilation on repeat runs. Do not chain short sleeps to fake a wait, either — either wait on the foreground command or truly move on.
+- **Never background a long-running command and end your turn.** A backgrounded process is killed when the turn ends, no completion notification arrives, and the work sits uncommitted. You will then wait forever on something that is already dead. This applies to **any** long command, not just corpus runs — repeat-iteration flake loops, `dotnet test` sweeps, provisioning, artifact downloads. Run it in the **foreground** with a correspondingly generous timeout. Do not chain short sleeps to fake a wait, either — either wait on the foreground command or truly move on.
+
+  A cold full-corpus run (build + AL emit + C# compile + execute ~2000 tests) is not a few-seconds operation — budget several minutes, or use `--cache <dir>` (see the skill) to skip recompilation on repeat runs.
+
+  **Commit and push before you start anything long.** A push is the only thing that makes your work survive a turn ending unexpectedly, and it gets CI working in parallel with you instead of after you.
 
 ### What to run before you push — targeted, not everything
 
@@ -88,6 +92,17 @@ Then push. CI runs the corpus, all of `runner-extras`, the xmlport isolation gua
 - CI came back red and you need to iterate locally rather than burn matrix runs guessing.
 
 **Never** report suite results in a PR body that you did not actually run in that state. An unrun claim is worse than no claim.
+
+### Repeat-iteration runs (flakes): make the "before" cheap, the "after" expensive
+
+Fixing a flake means running one test many times, and the naive shape — N iterations before, N iterations after — can cost hours when the flaky test is also a slow one. Split the budget asymmetrically instead:
+
+- **Before — reproduce once, then stop.** Loop *until the first failure*, with a hard cap. One reproduction is all the evidence you need that the race is real and reachable on this machine; iterations 2..N prove nothing further. Record which iteration failed and any diagnostic the test printed.
+- **After — the full clean run.** This is where the iterations belong, because "it did not fail in 50 tries" is the actual claim you are making.
+
+If you hit the cap without reproducing, **say so and keep going** — a non-reproducing "before" is a fact to report in the PR body, not a reason to grind. Static evidence (the racing code path, the ordering that can invert) can carry the diagnosis on its own.
+
+Watch for the case where the "after" loop is still slow: if your fix was supposed to remove synthesised wall clock and the iterations did not get cheaper, that is a signal the cost did not actually go away — report the per-iteration time either way.
 
 ### Object ID coordination
 
