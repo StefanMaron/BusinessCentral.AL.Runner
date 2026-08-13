@@ -100,6 +100,7 @@ tier with SQL Server.
 | API | Reason |
 |---|---|
 | `File.Download`, `File.Upload` (browser round-trip) | Browser interaction; no client. |
+| `XmlPort.Run(id[, requestWindow[, import[, record]]])` — all four static overloads | Same browser round-trip as `File.Download`/`Upload`, one level down: BC's real `RunXmlPort()` body hard-codes `displayDialog: true` on both the upload and the download branch, so no combination of `requestWindow`/`import`/`record` avoids the client-callback file dialog — `record` only ever narrows `SetTableView`, it never reaches the I/O stream. Do not confuse this with two other xmlport surfaces that are *not* affected by this entry: (1) the **instance** `Export()`/`Import()`/`Run()`/`SetTableView()` methods on an AL xmlport variable, already in scope (§1 — BC's real, unmodified body runs once construction succeeds); (2) the **static** `XmlPort.Export(id, stream, record)` / `XmlPort.Import(id, stream, record)` forms, which take a stream directly and never show a dialog — a separate in-scope-but-not-yet-implemented case, see §4. |
 | Azure Blob Storage, Azure Files connectors | External storage. |
 | `File Management.BLOBImportFromServerFile` etc. against real filesystems outside the test directory | External filesystem dependency. |
 
@@ -218,6 +219,7 @@ hitting them files a runner-gap issue rather than silently passing.
 | `FilterGroup(n)` scoped filter groups | Track group state on Record | known gap |
 | Manual-binding event subscribers (`BindSubscription`) | Auto-binding subscribers work as of `c4bce11a`; manual-binding wiring deferred | follow-on to W-8b |
 | `NavMethodScope` recursion-depth threshold (currently hard-coded 500) | Make configurable / verify matches real BC's limit precisely | follow-on to `f8367536` |
+| Static `XmlPort.Export(id, stream, record)` / `XmlPort.Import(id, stream, record)` — in-memory xmlport serialization | No dialog involved (unlike static `Run`, §3.4) — a faithful in-process implementation is plausible; not yet built. `NavXmlPort_StaticExport`/`StaticImport` in `XmlPortPatches.cs` throw `not-yet-implemented` today. | HANDOFF.md / SCOPE-AUDIT.md |
 
 ---
 
