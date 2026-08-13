@@ -210,6 +210,14 @@ bool bundledMode = true;
 string? alCacheDir = Path.Combine(
     Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
     ".cache", "al-runner", "al-out");
+// --print-cache-key (issue #1851): a diagnostic/test-support mode. Reaches the SAME
+// ComputeAlCacheKey call, with the SAME arguments, that a real run would use for the
+// first app group it processes — then prints it and exits, before Emit+Compile even
+// starts. Exists so callers that only need to assert a property of the KEY (not of a
+// compiled DLL) don't have to pay for a full cold AL compile to get one. There is no
+// second/parallel key computation — see the call site below, unchanged from the normal
+// path up to and including the ComputeAlCacheKey call itself.
+bool printCacheKeyOnly = false;
 // Test isolation mode — default matches BC's "Test Runner - Isol. Codeunit" (130450).
 var isolation = AlRunner.TestIsolation.Codeunit;
 // Exit non-zero if any test fails or a bucket fails to compile/execute — matches v1/main
@@ -272,6 +280,7 @@ for (int i = 0; i < args.Length; i++)
     if (args[i] == "--expectations" && i + 1 < args.Length) { expectationsDirArg = args[++i]; continue; }
     if (args[i] == "--cache" && i + 1 < args.Length) { alCacheDir = args[++i]; continue; }
     if (args[i] == "--no-cache") { alCacheDir = null; continue; }
+    if (args[i] == "--print-cache-key") { printCacheKeyOnly = true; continue; }
     if (args[i] == "--watch") { watchMode = true; continue; }
     if (args[i] == "--server") { continue; }  // handled above (serverMode); consume so it isn't "unknown"
     if (args[i] == "--verbose") { AlRunner.Log.Verbose = true; continue; }
@@ -1276,6 +1285,30 @@ foreach (var bundle in bundles)
                 var missing = !File.Exists(sidecarPath) ? sidecarPath : querySidecarPath;
                 Console.Error.WriteLine($"  [cache] DLL present but sidecar missing — treating as MISS ({missing})");
             }
+        }
+
+        // ── --print-cache-key short-circuit (issue #1851) ──────────────────
+        // cacheKey above was computed by the SAME ComputeAlCacheKey call, with the SAME
+        // arguments, a real run reaches for this app group — nothing here recomputes it a
+        // second way. Print it and exit before touching Emit+Compile at all, whether this
+        // would have been a HIT or a MISS on a real run (irrelevant to the key itself).
+        // Only handles the first app group of the first bundle — that is exactly the shape
+        // every caller of this flag needs (a single-app bundle probing its own key), and a
+        // second app group would need its own process anyway to avoid cross-bundle module
+        // dedup skewing its key relative to a real cold run.
+        if (printCacheKeyOnly)
+        {
+            if (cacheKey == null)
+            {
+                Console.Error.WriteLine(
+                    "--print-cache-key found no key to print: either the AL-output cache is " +
+                    "disabled (--no-cache) or this app group's module was already loaded " +
+                    "earlier in this process (cross-bundle dedup, issue #1683) and so never " +
+                    "reached the ComputeAlCacheKey call. Re-run without --no-cache, alone.");
+                return 2;
+            }
+            Console.WriteLine($"  [{rel}] {moduleName}: [cache] KEY key={cacheKey}");
+            return 0;
         }
 
         byte[]? assemblyBytes = null;
@@ -2967,6 +3000,12 @@ static void PrintHelp(TextWriter w)
     w.WriteLine("                          re-used on subsequent runs if inputs are unchanged");
     w.WriteLine("                          (key = hash of .al sources, resolved deps, runner mtime).");
     w.WriteLine("  --no-cache              Disable the AL-output cache for this run.");
+    w.WriteLine("  --print-cache-key       Diagnostic/test-support mode: compute the AL-output cache");
+    w.WriteLine("                          key for the first app group of the first bundle exactly as");
+    w.WriteLine("                          a real run would, print \"[cache] KEY key=<hash>\", and exit");
+    w.WriteLine("                          before Emit+Compile starts. Requires the cache to be");
+    w.WriteLine("                          enabled (default; not --no-cache). Exit code 2 if no key");
+    w.WriteLine("                          could be computed.");
     w.WriteLine("  --watch                 Stay resident with warm dependencies and re-run IN-PROCESS");
     w.WriteLine("                          on every .al change (deps loaded once → ~seconds/save, not");
     w.WriteLine("                          a cold re-run). Ctrl+C to quit.");
