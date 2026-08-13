@@ -56,6 +56,45 @@ internal static partial class BcAppSymbolCache
     // answers, not a cache miss, hence the bump.
     private const int CacheVersion = 13;
     private static readonly ConcurrentDictionary<string, AppSymbols> ProcessCache = new(StringComparer.OrdinalIgnoreCase);
+    // Issue #1820 — path -> content-hash memo. ComputeAppContentHash needs to read the
+    // WHOLE .app to hash it (unlike the FileInfo.Length/LastWriteTimeUtc stat it replaced,
+    // which touched no file bytes), and Get() is called once per virtual-table lookup —
+    // often a dozen or more times for the SAME dependency .app within a single run (Pages,
+    // Tables, Enums, Objects, Reports, Queries each have their own call site). Caching the
+    // hash per full path means that cost is paid once per unique .app per process, not once
+    // per Get() call. Content doesn't change mid-run (nothing in this process writes to a
+    // dependency .app), so no invalidation beyond "one entry per path" is needed.
+    private static readonly ConcurrentDictionary<string, string> AppContentHashCache = new(StringComparer.OrdinalIgnoreCase);
+
+    // Test-only instrumentation: counts genuine Parse() invocations (i.e. an on-disk cache
+    // MISS that required reparsing SymbolReference.json), PER full .app path — not a single
+    // global counter, because this project's xunit.runner.json runs test collections in
+    // parallel (parallelizeTestCollections=true) and every BcAppSymbolCache*Tests class is
+    // its own collection, all sharing this static type; a plain global counter would be
+    // incremented by unrelated concurrent tests' own Get() calls, making a "before/after"
+    // delta unreliable. Keying by path means a test using its own uniquely-named temp .app
+    // observes only ITS OWN Parse() calls, immune to what any other collection is doing.
+    // Exists so BcAppSymbolCacheContentAddressedKeyTests can assert "the second Get() call,
+    // from a simulated fresh process, was a real disk HIT" deterministically — PerfTrace/
+    // stderr capture was considered and rejected for the same parallel-collections reason
+    // (Console.Error and environment variables are process-global).
+    private static readonly ConcurrentDictionary<string, int> ParseInvocationCountByPath = new(StringComparer.OrdinalIgnoreCase);
+
+    internal static int ParseInvocationCountForTests(string appPath)
+        => ParseInvocationCountByPath.TryGetValue(Path.GetFullPath(appPath), out var count) ? count : 0;
+
+    /// <summary>
+    /// Clears the in-memory ProcessCache (and the content-hash memo) — for tests that
+    /// simulate multiple independent process runs inside one xunit process (a real CI leg
+    /// always starts with an empty ProcessCache). Never touches the on-disk cache, and never
+    /// touches <see cref="ParseInvocationCountByPath"/> — that counter is meant to persist
+    /// across a test's simulated "process restarts" so it can observe totals across them.
+    /// </summary>
+    internal static void ResetProcessCacheForTests()
+    {
+        ProcessCache.Clear();
+        AppContentHashCache.Clear();
+    }
 
     internal sealed record AppSymbols(List<ParsedTable> Tables, List<EnumSymbol> Enums, List<QuerySymbol> Queries,
         List<ObjectSymbol> Objects, List<ReportSymbol> Reports, List<PageSymbol> Pages);
@@ -184,7 +223,12 @@ internal static partial class BcAppSymbolCache
     // SourceColumn is the field NAME on RelatedTable; Id is the BC column id; Caption optional.
     internal sealed record QueryColumnSymbol(int Id, string Name, string SourceColumn, string? Caption);
 
-    private sealed record CachePayload(long Length, long LastWriteUtcTicks,
+    // #1820: ContentHash replaces Length/LastWriteUtcTicks. The KEY (below, in Get) already
+    // switched from mtime to a content hash, so an old Length/LastWriteUtcTicks payload can
+    // never be found under a new key anyway (different key string -> different SHA-256 ->
+    // different on-disk filename, see CachePath) — no CacheVersion bump needed, this changes
+    // cache-key VALIDATION, not what Parse extracts from SymbolReference.json.
+    private sealed record CachePayload(string ContentHash,
         List<ParsedTable> Tables, List<EnumSymbol> Enums, List<QuerySymbol> Queries,
         List<ObjectSymbol>? Objects, List<ReportSymbol>? Reports, List<PageSymbol>? Pages);
 
@@ -211,14 +255,15 @@ internal static partial class BcAppSymbolCache
 
     internal static AppSymbols Get(string appPath)
     {
-        var info = new FileInfo(appPath);
-        var key = $"{Path.GetFullPath(appPath)}|{info.Length}|{info.LastWriteTimeUtc.Ticks}|v{CacheVersion}";
+        var fullPath = Path.GetFullPath(appPath);
+        var contentHash = ComputeAppContentHash(fullPath);
+        var key = $"{fullPath}|hash:{contentHash}|v{CacheVersion}";
         if (ProcessCache.TryGetValue(key, out var cachedInProcess))
             return cachedInProcess;
 
         var sw = Stopwatch.StartNew();
         var cachePath = CachePath(key);
-        var cached = TryRead(cachePath, info);
+        var cached = TryRead(cachePath, contentHash);
         if (cached != null)
         {
             PerfTrace.Log($"bc-symbols HIT {Path.GetFileName(appPath)} tables={cached.Tables.Count} enums={cached.Enums.Count} queries={cached.Queries.Count} {sw.ElapsedMilliseconds}ms");
@@ -226,22 +271,41 @@ internal static partial class BcAppSymbolCache
             return cached;
         }
 
+        ParseInvocationCountByPath.AddOrUpdate(fullPath, 1, static (_, count) => count + 1);
         var parsed = Parse(appPath);
-        TryWrite(cachePath, info, parsed);
+        TryWrite(cachePath, contentHash, parsed);
         PerfTrace.Log($"bc-symbols MISS {Path.GetFileName(appPath)} tables={parsed.Tables.Count} enums={parsed.Enums.Count} queries={parsed.Queries.Count} {sw.ElapsedMilliseconds}ms");
         ProcessCache[key] = parsed;
         return parsed;
     }
 
-    private static AppSymbols? TryRead(string cachePath, FileInfo appInfo)
+    /// <summary>
+    /// Content hash (hex SHA-256) of a .app file's bytes — the cache-key component that
+    /// replaced FileInfo.Length/LastWriteTimeUtc (#1820, same defect family as #1815: CI
+    /// re-downloads every platform/test-toolkit .app on every run, so LastWriteTimeUtc is
+    /// fresh even when the bytes are byte-for-byte identical to a prior run's, and an
+    /// mtime-keyed entry persisted across CI runs would MISS unconditionally regardless of
+    /// content). Delegates to RunnerFingerprint.ComputeContentHash — the same
+    /// content-hash-of-bytes helper #1817 introduced for the AL-output/source-dep caches —
+    /// rather than a second hashing convention; that helper already handles the
+    /// missing-file "unknown" sentinel generically.
+    ///
+    /// Memoized per full path in <see cref="AppContentHashCache"/> — see that field's
+    /// comment for why a per-Get()-call hash would be a regression, not just correct.
+    /// </summary>
+    internal static string ComputeAppContentHash(string appPath)
+    {
+        var fullPath = Path.GetFullPath(appPath);
+        return AppContentHashCache.GetOrAdd(fullPath, static p => RunnerFingerprint.ComputeContentHash(p));
+    }
+
+    private static AppSymbols? TryRead(string cachePath, string contentHash)
     {
         if (!File.Exists(cachePath)) return null;
         try
         {
             var payload = JsonSerializer.Deserialize<CachePayload>(File.ReadAllText(cachePath));
-            if (payload == null
-                || payload.Length != appInfo.Length
-                || payload.LastWriteUtcTicks != appInfo.LastWriteTimeUtc.Ticks)
+            if (payload == null || payload.ContentHash != contentHash)
                 return null;
             return new AppSymbols(payload.Tables, payload.Enums, payload.Queries ?? new List<QuerySymbol>(),
                 payload.Objects ?? new List<ObjectSymbol>(), payload.Reports ?? new List<ReportSymbol>(),
@@ -257,12 +321,12 @@ internal static partial class BcAppSymbolCache
     // internal (not private): AlRunner.Tests exercises this directly to pin the
     // atomic-publish contract at this specific call site — see
     // BcAppSymbolCacheAtomicWriteTests.cs.
-    internal static void TryWrite(string cachePath, FileInfo appInfo, AppSymbols symbols)
+    internal static void TryWrite(string cachePath, string contentHash, AppSymbols symbols)
     {
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(cachePath)!);
-            var payload = new CachePayload(appInfo.Length, appInfo.LastWriteTimeUtc.Ticks, symbols.Tables, symbols.Enums, symbols.Queries, symbols.Objects, symbols.Reports, symbols.Pages);
+            var payload = new CachePayload(contentHash, symbols.Tables, symbols.Enums, symbols.Queries, symbols.Objects, symbols.Reports, symbols.Pages);
             // #1809 follow-up: cachePath is content-keyed (hash of the .app file),
             // so two subprocesses parsing the same app concurrently used to race a
             // plain File.WriteAllText into the same path. TryRead already treats any

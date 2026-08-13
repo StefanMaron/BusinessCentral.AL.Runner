@@ -4,9 +4,11 @@
 //
 // Gap being fixed
 // ----------------
-// TryWrite's cachePath is content-keyed (SHA-256 of appPath|length|mtime|CacheVersion),
-// so two subprocesses parsing the SAME dependency .app concurrently compute and write the
-// SAME cachePath. The old implementation was a plain `File.WriteAllText(cachePath, json)`
+// TryWrite's cachePath is content-keyed (SHA-256 of appPath|hash:<.app content hash>|
+// CacheVersion — the hash component switched from length+mtime to a content hash of the
+// .app's bytes in #1820), so two subprocesses parsing the SAME dependency .app
+// concurrently compute and write the SAME cachePath. The old implementation was a plain
+// `File.WriteAllText(cachePath, json)`
 // — FileMode.Create truncates the target to zero bytes the instant the call starts, then
 // streams the new content in. A reader (BcAppSymbolCache.TryRead, or any other process's
 // TryWrite about to overwrite the same path) that lands inside that window sees a
@@ -81,10 +83,9 @@ public sealed class BcAppSymbolCacheAtomicWriteTests
             // complete-and-valid bytes with an incomplete file, not just create one.
             File.WriteAllText(cachePath, JsonSerializer.Serialize(new { marker = "old-content" }));
 
-            // A real file backs FileInfo.Length/LastWriteTimeUtc — content is irrelevant.
-            var appInfoPath = Path.Combine(dir, "fake.app");
-            File.WriteAllBytes(appInfoPath, new byte[] { 1, 2, 3 });
-            var appInfo = new FileInfo(appInfoPath);
+            // #1820: TryWrite now takes the content hash directly, not a FileInfo — its
+            // actual value is irrelevant to this atomic-publish test.
+            var contentHash = "deadbeef";
 
             var bigSymbols = BuildLargeSymbols(objectCount: 60_000);
 
@@ -129,7 +130,7 @@ public sealed class BcAppSymbolCacheAtomicWriteTests
                 }
             });
 
-            BcAppSymbolCache.TryWrite(cachePath, appInfo, bigSymbols);
+            BcAppSymbolCache.TryWrite(cachePath, contentHash, bigSymbols);
 
             Volatile.Write(ref stop, true);
             reader.Wait(TimeSpan.FromSeconds(10));
@@ -153,13 +154,10 @@ public sealed class BcAppSymbolCacheAtomicWriteTests
         try
         {
             var cachePath = Path.Combine(dir, "entry.json");
-            var appInfoPath = Path.Combine(dir, "fake.app");
-            File.WriteAllBytes(appInfoPath, new byte[] { 1 });
-            var appInfo = new FileInfo(appInfoPath);
 
-            BcAppSymbolCache.TryWrite(cachePath, appInfo, BuildLargeSymbols(objectCount: 1));
+            BcAppSymbolCache.TryWrite(cachePath, "deadbeef", BuildLargeSymbols(objectCount: 1));
 
-            var leftovers = Directory.GetFiles(dir).Where(f => !string.Equals(f, cachePath) && !string.Equals(f, appInfoPath)).ToArray();
+            var leftovers = Directory.GetFiles(dir).Where(f => !string.Equals(f, cachePath)).ToArray();
             Assert.Empty(leftovers);
         }
         finally { Directory.Delete(dir, recursive: true); }
