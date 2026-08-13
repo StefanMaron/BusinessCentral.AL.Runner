@@ -10,14 +10,12 @@ public sealed class WatchOutputSlicingTests
     private const string TimingNeedle = "GetSharedReferences";
 
     /// <summary>
-    /// Builds the exact list shape a starved stderr pump produces: cycle 1's stdout chatter,
-    /// the m1 marker, cycle 2's stdout chatter (FAIL + fixture name), the m2 marker — and
-    /// ONLY THEN, appended after m2, the stderr timing line that was actually written, in
-    /// program order, during cycle 2 (before m2). That inversion is the bug: the write
-    /// happened before m2, but the pump's ReadLineAsync continuation that appends it to the
-    /// shared list got scheduled after the stdout pump's append of m2.
+    /// Builds the exact list shape a starved stderr pump produces on the UPPER-bound side:
+    /// cycle 1's stdout chatter, the m1 marker, cycle 2's stdout chatter (FAIL + fixture
+    /// name), the m2 marker — and ONLY THEN, appended after m2, the stderr timing line that
+    /// was actually written, in program order, during cycle 2 (before m2).
     /// </summary>
-    private static (List<CapturedLine> lines, int m1, int m2) StarvedStderrPumpScenario()
+    private static (List<CapturedLine> lines, int m1, int m2) StarvedPastM2Scenario()
     {
         var lines = new List<CapturedLine>
         {
@@ -39,45 +37,102 @@ public sealed class WatchOutputSlicingTests
     }
 
     /// <summary>
-    /// THE PROOF THAT MATTERS. Cycle 2's timing search must find the diagnostic even though
-    /// its list index is past m2 — because it was written, in program order, before m2. This
-    /// is the RED/GREEN pivot: before the fix, CycleTimingSearchText bounded its scan at
-    /// `to` (mirroring the old Segment(m1+1, m2) window) and this assertion failed. After the
-    /// fix, the stderr search ignores `to` entirely and finds it.
+    /// Mirrors StarvedPastM2Scenario in the OTHER direction: cycle 1's COLD timing line
+    /// (the ~40s reload) is also starved — its pump continuation loses the race against the
+    /// m1 marker's stdout pump and lands AFTER m1, before cycle 2 even starts. Cycle 2's warm
+    /// line follows normally, after m2. A fix that merely drops the upper bound and keeps
+    /// scanning forward from m1+1 would read cycle 1's ~40000ms line as cycle 2's timing.
+    /// </summary>
+    private static (List<CapturedLine> lines, int m1, int m2) StarvedPastM1AndM2Scenario()
+    {
+        var lines = new List<CapturedLine>
+        {
+            new(OutputStream.Stdout, "PASS  Codeunit 60001 Insert_OnInsertReadsXRec_BuildsConcreteBeforeImage"),
+        };
+        int m1 = lines.Count;
+        lines.Add(new(OutputStream.Stdout, WatchOutputSlicing.WaitingForSourceMarker + "… (Ctrl+C to quit)"));
+
+        // Cycle 1's own (cold) timing line, starved past m1 — written before m1 in program
+        // order, but scheduled onto the shared list after it.
+        lines.Add(new(OutputStream.Stderr, "[emit-timing] GetSharedReferences (5 specs): 41000ms"));
+
+        lines.Add(new(OutputStream.Stdout, "[watch] change detected — re-running…"));
+        lines.Add(new(OutputStream.Stdout, "FAIL  Codeunit 60001 Insert_OnInsertReadsXRec_BuildsConcreteBeforeImage"));
+        int m2 = lines.Count;
+        lines.Add(new(OutputStream.Stdout, WatchOutputSlicing.WaitingForSourceMarker + "… (Ctrl+C to quit)"));
+
+        // Cycle 2's warm line, also starved past m2 — the original #1843 shape.
+        lines.Add(new(OutputStream.Stderr, "[emit-timing] GetSharedReferences (5 specs): 12ms"));
+
+        return (lines, m1, m2);
+    }
+
+    /// <summary>
+    /// THE ORIGINAL #1843 PROOF. Cycle 2's timing must be found even though its list index
+    /// is past m2 — because it was written, in program order, before m2.
     /// </summary>
     [Fact]
-    public void CycleTimingSearchText_FindsTimingLine_EvenWhenStderrPumpIsStarvedPastTheNextStdoutMarker()
+    public void LastWarmTimingMs_FindsTiming_EvenWhenStderrPumpIsStarvedPastTheNextStdoutMarker()
     {
-        var (lines, m1, m2) = StarvedStderrPumpScenario();
+        var (lines, _, _) = StarvedPastM2Scenario();
 
-        var searchText = WatchOutputSlicing.CycleTimingSearchText(lines, m1 + 1, m2);
+        var elapsedMs = WatchOutputSlicing.LastWarmTimingMs(lines);
 
-        Assert.Contains(TimingNeedle, searchText);
-        var match = System.Text.RegularExpressions.Regex.Match(
-            searchText, @"GetSharedReferences[^:]*:\s*(\d+)ms");
-        Assert.True(match.Success, $"expected a parseable timing line, got:\n{searchText}");
-        Assert.Equal(12, int.Parse(match.Groups[1].Value));
+        Assert.Equal(12, elapsedMs);
+    }
+
+    /// <summary>
+    /// THE MIRRORED PROOF (review round 2). A fix that just drops the upper bound and keeps
+    /// scanning forward from m1+1 is exposed to the identical race in the other direction:
+    /// cycle 1's cold ~41000ms line, starved past m1, would be the FIRST match in that
+    /// unbounded-forward scan and get misread as cycle 2's warm timing. The real fix takes
+    /// the LAST match across the entire (unbounded, in both directions) stderr stream —
+    /// correct here because stderr has exactly one pump, so cycle 1's line is always before
+    /// cycle 2's regardless of either line's position relative to the stdout markers.
+    /// </summary>
+    [Fact]
+    public void LastWarmTimingMs_FindsCycle2sTiming_EvenWhenCycle1sColdLineIsAlsoStarvedPastM1()
+    {
+        var (lines, _, _) = StarvedPastM1AndM2Scenario();
+
+        var elapsedMs = WatchOutputSlicing.LastWarmTimingMs(lines);
+
+        Assert.Equal(12, elapsedMs);
     }
 
     /// <summary>
     /// Negative/mutation companion: if the warm re-emit genuinely never wrote a timing line
-    /// for cycle 2 (the feature is broken, or BCCOMPILER_TIMING wasn't honoured), the search
-    /// text must NOT contain the needle. This is what stops the fix from degenerating into
-    /// "always return everything, so the assertion always finds something" — a fix that just
-    /// concatenated the WHOLE list unconditionally would pass the positive test above but
-    /// also pass this one falsely if it leaked content across an unrelated boundary. Here we
-    /// only remove the diagnostic line entirely: with it gone, even an unbounded-forward
-    /// search must correctly report nothing.
+    /// for either cycle (the feature is broken, or BCCOMPILER_TIMING wasn't honoured), there
+    /// is nothing to find. This is what stops the fix from degenerating into "always return
+    /// something, so the assertion always finds something".
     /// </summary>
     [Fact]
-    public void CycleTimingSearchText_FindsNothing_WhenNoWarmTimingLineWasEverWritten()
+    public void LastWarmTimingMs_ReturnsNull_WhenNoWarmTimingLineWasEverWritten()
     {
-        var (lines, m1, m2) = StarvedStderrPumpScenario();
+        var (lines, _, _) = StarvedPastM2Scenario();
         lines.RemoveAt(lines.Count - 1); // drop the stderr timing line entirely
 
-        var searchText = WatchOutputSlicing.CycleTimingSearchText(lines, m1 + 1, m2);
+        var elapsedMs = WatchOutputSlicing.LastWarmTimingMs(lines);
 
-        Assert.DoesNotContain(TimingNeedle, searchText);
+        Assert.Null(elapsedMs);
+    }
+
+    /// <summary>
+    /// StderrText itself (used for the Assert.Contains presence check and diagnostic dump in
+    /// WatchTests) must include every stderr line regardless of its position relative to
+    /// stdout markers, and must exclude stdout content.
+    /// </summary>
+    [Fact]
+    public void StderrText_IncludesAllStderrLines_RegardlessOfPositionRelativeToStdoutMarkers()
+    {
+        var (lines, _, _) = StarvedPastM1AndM2Scenario();
+
+        var stderrText = WatchOutputSlicing.StderrText(lines);
+
+        Assert.Contains("41000ms", stderrText);
+        Assert.Contains("12ms", stderrText);
+        Assert.DoesNotContain("FAIL", stderrText);
+        Assert.DoesNotContain(WatchOutputSlicing.WaitingForSourceMarker, stderrText);
     }
 
     /// <summary>
@@ -100,6 +155,22 @@ public sealed class WatchOutputSlicingTests
     }
 
     /// <summary>
+    /// Covers the `fromIndex` parameter WatchTests' WaitForMarkerAfter actually uses to poll
+    /// for the NEXT marker after a given cycle start — this is the real call shape, not just
+    /// the default-from-zero overload.
+    /// </summary>
+    [Fact]
+    public void FindStdoutMarkerIndices_FromIndex_SkipsMarkersAtOrBeforeIt()
+    {
+        var (lines, m1, m2) = StarvedPastM2Scenario();
+
+        var indices = WatchOutputSlicing.FindStdoutMarkerIndices(
+            lines, WatchOutputSlicing.WaitingForSourceMarker, m1 + 1);
+
+        Assert.Equal(new[] { m2 }, indices);
+    }
+
+    /// <summary>
     /// MergedJoin still preserves stdout-vs-stdout relative order within the bounded window
     /// — the PASS/FAIL/fixture-name assertions are unaffected by this fix, since they only
     /// ever look at stdout content whose order is stable (single pump per stream).
@@ -107,7 +178,7 @@ public sealed class WatchOutputSlicingTests
     [Fact]
     public void MergedJoin_PreservesOrderAndBounds()
     {
-        var (lines, m1, m2) = StarvedStderrPumpScenario();
+        var (lines, m1, m2) = StarvedPastM2Scenario();
 
         var cycle2 = WatchOutputSlicing.MergedJoin(lines, m1 + 1, m2);
 

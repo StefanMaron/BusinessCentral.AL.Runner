@@ -83,11 +83,11 @@ public class WatchTests
             var deadline = DateTime.UtcNow + timeout;
             while (DateTime.UtcNow < deadline)
             {
+                List<int> found;
                 lock (lines)
-                    for (int i = fromIndex; i < lines.Count; i++)
-                        if (lines[i].Stream == OutputStream.Stdout
-                            && lines[i].Text.Contains(WatchOutputSlicing.WaitingForSourceMarker))
-                            return i;
+                    found = WatchOutputSlicing.FindStdoutMarkerIndices(
+                        lines, WatchOutputSlicing.WaitingForSourceMarker, fromIndex);
+                if (found.Count > 0) return found[0];
                 if (p.HasExited)
                 {
                     // Pump is fire-and-forget (Task.Run, result discarded): pipe output
@@ -158,24 +158,31 @@ public class WatchTests
             // claim is warm (milliseconds) vs cold (tens of seconds), so a generous
             // ceiling still fails loudly if the loader ever goes cold here.
             //
-            // Deliberately NOT scoped to `cycle2` (the stdout-marker-bounded window) — this
-            // diagnostic is on STDERR (BcCompiler.cs's `_mark`), merged into `lines` via a
-            // pump independent from the stdout pump that positions m1/m2. List order is
-            // pump-scheduling order, not cross-stream write order, so a starved stderr pump
-            // continuation can append this line at an index >= m2 even though, in program
-            // order, GetSharedReferences finished (and was timed) well inside cycle 2. See
+            // Deliberately NOT scoped to `cycle2` (the stdout-marker-bounded window), and NOT
+            // scoped by index at all — this diagnostic is on STDERR (BcCompiler.cs's
+            // `_mark`), merged into `lines` via a pump independent from the stdout pump that
+            // positions m1/m2. List order is pump-scheduling order, not cross-stream write
+            // order, so a starved stderr pump continuation can append EITHER cycle's timing
+            // line on the wrong side of EITHER stdout marker. Cycle 1 also writes a
+            // GetSharedReferences line (its ~40s cold reload), so an index window bounded
+            // only below (at m1+1) is exposed to the identical race, mirrored.
+            //
+            // Stderr itself has exactly one pump, so stderr-internal order IS write order:
+            // cycle 1's line is always before cycle 2's. With exactly two cycles, cycle 2's
+            // timing is therefore always the LAST GetSharedReferences match in the entirely
+            // unbounded stderr stream — no index window, in either direction. See
             // WatchOutputSlicing.cs's header — #1843 — for the full mechanism and the
             // deterministic synthetic-sequence proof in WatchOutputSlicingTests.
-            string timingSearchText;
-            lock (lines) timingSearchText = WatchOutputSlicing.CycleTimingSearchText(lines, m1 + 1, m2);
-            Assert.Contains("GetSharedReferences", timingSearchText);
+            string stderrText;
+            lock (lines) stderrText = WatchOutputSlicing.StderrText(lines);
+            Assert.Contains("GetSharedReferences", stderrText);
             // The label carries a parenthetical, e.g.
             //   [emit-timing] GetSharedReferences (5 specs): 787ms
-            var timing = System.Text.RegularExpressions.Regex.Match(
-                timingSearchText, @"GetSharedReferences[^:]*:\s*(\d+)ms");
-            Assert.True(timing.Success,
-                $"expected an '[emit-timing] GetSharedReferences: <n>ms' line in cycle 2, got:\n{timingSearchText}");
-            var elapsedMs = int.Parse(timing.Groups[1].Value);
+            int? elapsedMsOpt;
+            lock (lines) elapsedMsOpt = WatchOutputSlicing.LastWarmTimingMs(lines);
+            Assert.True(elapsedMsOpt.HasValue,
+                $"expected an '[emit-timing] GetSharedReferences: <n>ms' line, got:\n{stderrText}");
+            var elapsedMs = elapsedMsOpt!.Value;
             Assert.True(elapsedMs < 5_000,
                 $"warm in-process symbol load took {elapsedMs}ms — a warm re-emit must not pay " +
                 "the cold ~40s dependency reload. The loader did not stay warm across the edit.");
