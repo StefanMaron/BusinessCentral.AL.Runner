@@ -73,6 +73,10 @@ Tests must PROVE the feature: assert specific values, cover positive + negative 
 
   **Commit and push before you start anything long.** A push is the only thing that makes your work survive a turn ending unexpectedly, and it gets CI working in parallel with you instead of after you.
 
+  **The "don't poll, wait for the notification" guidance does not apply to you here.** That guidance is written for an *orchestrator* waiting on subagents it dispatched with the `Agent` tool — those genuinely do notify. A background `Bash` task you started inside your own turn is a different thing entirely: it is your child, it dies with your turn, and **no notification will ever arrive**. Three separate agents have now stopped mid-issue reasoning "I'll stop polling and resume when the notification comes," and all three lost their work. If you catch yourself about to end a turn while something you launched is still running, that is the bug — not patience.
+
+  The correct shapes, in order of preference: run it in the foreground; or push first so the loss is survivable and let CI be the verdict; or genuinely abandon it and say so. "End the turn and wait" is not on the list.
+
 ### What to run before you push — targeted, not everything
 
 **Run the tests your change touches, plus `AlRunner.Tests`. Then push and let CI do the full sweep.**
