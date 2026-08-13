@@ -30,8 +30,12 @@ public static partial class RecordPatches
     private static Type? _tFieldMetadataRelation;
     private static Type? _tNavType;
     private static Type? _tFieldClass;
+    // Microsoft.Dynamics.Nav.Types.Metadata.ObsoleteState — MetaField's obsoleteState ctor
+    // param type (#1780). Bound in Register() alongside the other MetaField-adjacent types.
+    private static Type? _tObsoleteState;
     private static Type? _tMetaCalcFormula;
     private static Type? _tMetaFilter;
+    private static Type? _tMetaCondition;
     private static Type? _tMetaFieldRelation;
     private static Type? _tFilterType;
     private static Type? _tNCLMetaTable;
@@ -196,8 +200,10 @@ public static partial class RecordPatches
         _tFieldMetadataRelation = typesAsm.GetType("Microsoft.Dynamics.Nav.Types.Metadata.FieldMetadataRelation")!;
         _tNavType   = typesAsm.GetType("Microsoft.Dynamics.Nav.Types.NavType")!;
         _tFieldClass = typesAsm.GetType("Microsoft.Dynamics.Nav.Types.Metadata.FieldClass")!;
+        _tObsoleteState = typesAsm.GetType("Microsoft.Dynamics.Nav.Types.Metadata.ObsoleteState")!;
         _tMetaCalcFormula = typesAsm.GetType("Microsoft.Dynamics.Nav.Types.Metadata.MetaCalcFormula")!;
         _tMetaFilter  = typesAsm.GetType("Microsoft.Dynamics.Nav.Types.Metadata.MetaFilter")!;
+        _tMetaCondition = typesAsm.GetType("Microsoft.Dynamics.Nav.Types.Metadata.MetaCondition")!;
         _tMetaFieldRelation = typesAsm.GetType("Microsoft.Dynamics.Nav.Types.Metadata.MetaFieldRelation")!;
         _tFilterType  = typesAsm.GetType("Microsoft.Dynamics.Nav.Types.Metadata.FilterType")!;
 
@@ -1110,6 +1116,15 @@ public static partial class RecordPatches
         // a test's writes are rolled back on completion.
         AlRunner.Patches.TenantStoragePatches.ResetForTest();
 
+        // MediaSet membership store — per-test reset matches BC semantics: a MediaSet
+        // field's "Media Set" rows are as much part of the per-test transaction as any
+        // other row, so they must not survive into the next test. See MediaSetPatches
+        // file header (LIFETIME) for why this store needs an explicit reset instead of
+        // relying on GC (the fix for #1773 keys it on a real, durable Guid rather than a
+        // transient NavRecord instance, which is exactly what makes it durable — and
+        // exactly why it needs this reset).
+        AlRunner.Patches.MediaSetPatches.ResetForTest();
+
         // Write-transaction state behind Database.IsInWriteTransaction(). A test that
         // writes without committing must not leave the next test believing it started
         // inside a transaction — BC's per-test rollback ends the transaction either way.
@@ -1130,6 +1145,21 @@ public static partial class RecordPatches
     }
 
     public static object NavDataAccessSource_GetDataAccessForTable(object self, NCLMetaTable table, bool isTemporary)
+    {
+        var dataAccess = GetDataAccessForTableCore(self, table, isTemporary);
+
+        // Both branches below land on a TempTableDataProvider, so the provider alone
+        // cannot say whether it is standing in for SQL or genuinely serving a
+        // `temporary` record — and the two shapes disagree about whether an
+        // uncommitted BLOB write reaches the stored row (corpus 60940, issue #1751).
+        // This is the one place that still knows, so record it here.
+        if (!isTemporary)
+            BlobStoreIsolationPatches.MarkDatabaseBacked(dataAccess);
+
+        return dataAccess;
+    }
+
+    private static object GetDataAccessForTableCore(object self, NCLMetaTable table, bool isTemporary)
     {
         try
         {
@@ -1300,6 +1330,40 @@ public static partial class RecordPatches
                 }
                 PopulateTableMetadataVirtualTable(tableMetaDa, table);
                 return tableMetaDa;
+            }
+
+            // ── Page Metadata (2000000138) ───────────────────────────────────────────────
+            // Virtual on the service tier too: one row per page in the application. An
+            // empty store makes every lookup answer "no such page", which is what broke
+            // Base App "Page Management".GetDefaultCardPageID's SourceTable+PageType scan
+            // fallback for tables declaring no LookupPageId. See
+            // RecordPatches.PageMetadataVirtualTable.cs (#1769).
+            if (IsPageMetadataVirtualTable(table))
+            {
+                if (!perTable.TryGetValue(tableId, out var pageMetaDa))
+                {
+                    var createdPageMeta = _mCreateTempDataAccess!.Invoke(self, new object[] { table })!;
+                    pageMetaDa = perTable.GetOrAdd(tableId, createdPageMeta);
+                }
+                PopulatePageMetadataVirtualTable(pageMetaDa, table);
+                return pageMetaDa;
+            }
+
+            // ── Page Control Field (2000000192) ──────────────────────────────────────────
+            // Virtual on the service tier too: one row per field control declared on a
+            // page, INCLUDING controls declared Visible = false. An empty store made every
+            // filtered query answer "no rows" silently (no error), so a test asserting a
+            // control is absent would have passed against a broken provider too. See
+            // RecordPatches.PageControlFieldVirtualTable.cs (#1779).
+            if (IsPageControlFieldVirtualTable(table))
+            {
+                if (!perTable.TryGetValue(tableId, out var pageControlFieldDa))
+                {
+                    var createdPageControlField = _mCreateTempDataAccess!.Invoke(self, new object[] { table })!;
+                    pageControlFieldDa = perTable.GetOrAdd(tableId, createdPageControlField);
+                }
+                PopulatePageControlFieldVirtualTable(pageControlFieldDa, table);
+                return pageControlFieldDa;
             }
 
             if (perTable.TryGetValue(tableId, out var cached))

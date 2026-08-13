@@ -1,0 +1,26 @@
+{
+  "id": "9c5e1f83-7d24-4a6e-b1f0-3e8a52c96d47",
+  "name": "Runner Extras - Manual Binding Via Dependency",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Regression for issue #1729: a Manual event subscriber inside a DEPENDENCY app must not fire unbound.",
+  "description": "The BC-language contract (EventSubscriberInstance = Manual fires only while bound) is proven upstream in the al-language corpus (Test Event Manual Binding, 60240) where the subscriber lives in the SAME emitted bundle. This suite pins the runner-specific half: the Manual flag must survive the runner's DEPENDENCY-compile pipeline. It declares the exact app.json dependency from issue #1729 (Microsoft Tests-TestLibraries), whose transitive dep System Application Test Library ships codeunit 132513 'Confirm Test Library' - a Manual subscriber to Confirm Management Impl.OnBeforeGuiAllowed whose unbound default answers GuiAllowed=false. If the runner ever again dispatches it unbound, Confirm Management.GetResponseOrDefault silently returns its default instead of raising the confirm, and these [ConfirmHandler] tests go red. Tests-TestLibraries first ships in BC 28.0, hence the floor.",
+  "dependencies": [
+    {
+      "id": "5d86850b-0d76-4eca-bd7b-951ad998e997",
+      "name": "Tests-TestLibraries",
+      "publisher": "Microsoft",
+      "version": "28.0.0.0"
+    }
+  ],
+  "idRanges": [
+    {
+      "from": 62210,
+      "to": 62219
+    }
+  ],
+  "platform": "28.0.0.0",
+  "application": "28.0.0.0",
+  "runtime": "17.0",
+  "target": "Cloud"
+}

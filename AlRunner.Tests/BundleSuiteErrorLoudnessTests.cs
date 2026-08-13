@@ -27,8 +27,8 @@ using Xunit;
 
 namespace AlRunner.Tests;
 
-// See DefineFlagIntegrationTests for why runner-subprocess tests are serialized.
-[Collection("server-serial")]
+// See DefineFlagIntegrationTests for why runner-subprocess tests used to be
+// [Collection("server-serial")] and no longer are — #1809.
 public sealed class BundleSuiteErrorLoudnessTests
 {
     private static readonly string RepoRoot = Path.GetFullPath(
@@ -36,14 +36,6 @@ public sealed class BundleSuiteErrorLoudnessTests
     private static readonly string ProjectPath = Path.Combine(RepoRoot, "AlRunner");
     private static readonly string BundlePath = Path.Combine(
         RepoRoot, "AlRunner.Tests", "Fixtures", "EmitExclusionBundle");
-
-    private static bool ArtifactsPresent()
-    {
-        var home = Environment.GetEnvironmentVariable("HOME")
-            ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        var stdCache = Path.Combine(home, ".local", "share", "al-runner", "artifacts");
-        return Directory.Exists(stdCache) && Directory.EnumerateDirectories(stdCache).Any();
-    }
 
     private static (string Output, int Exit) RunRunner(string target)
     {
@@ -76,10 +68,10 @@ public sealed class BundleSuiteErrorLoudnessTests
     /// the healthy test passing and "1 suite errors" printed — the run reporting success
     /// while silently covering one suite less than the bundle declares.
     /// </summary>
-    [Fact]
+    [SkippableFact]
     public void SuiteErrorAlongsideAPassingSibling_StillFailsTheRun()
     {
-        if (!ArtifactsPresent()) { Console.Error.WriteLine("[skip] BC artifacts not provisioned"); return; }
+        TestArtifacts.SkipIfMissing();
 
         var (output, exit) = RunRunner(BundlePath);
 
@@ -104,10 +96,10 @@ public sealed class BundleSuiteErrorLoudnessTests
     /// above would still hold if the runner had started failing every bundle outright, which
     /// would be a far worse bug wearing the same green checkmark.
     /// </summary>
-    [Fact]
+    [SkippableFact]
     public void HealthySuiteAlone_ExitsZero()
     {
-        if (!ArtifactsPresent()) { Console.Error.WriteLine("[skip] BC artifacts not provisioned"); return; }
+        TestArtifacts.SkipIfMissing();
 
         var (output, exit) = RunRunner(Path.Combine(BundlePath, "healthy-suite"));
 

@@ -1433,18 +1433,14 @@ public static partial class BcRuntime
             }
         }
 
-        // ALTaskScheduler.CheckCodeUnit — calls NCLMetadata.GetMetaCodeunitById to verify the
-        // codeunit exists. We resolve codeunits via assembly-scan in CreateTarget; the metadata
-        // verification is redundant. No-op so ALCreateTaskAsync proceeds.
-        var alTaskSchedType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.ALTaskScheduler");
-        if (alTaskSchedType != null && sessType != null)
-        {
-            var checkCu = alTaskSchedType.GetMethod("CheckCodeUnit",
-                BindingFlags.NonPublic | BindingFlags.Static, null,
-                new[] { sessType, typeof(int) }, null);
-            if (checkCu != null)
-                Hook(checkCu, nameof(NoOp2), "ALTaskScheduler.CheckCodeUnit");
-        }
+        // ALTaskScheduler.CheckCodeUnit / ALCanCreateTask / CanCreateTask (scope.md §3.6,
+        // #1733) are now Cecil-owned (see NclCecilRewrite.cs, CecilOwned + the ALTaskScheduler
+        // block in RewriteNcl). This JmpHook registration used to live here as a no-op for
+        // CheckCodeUnit, but JmpHook is off by default (Cecil-only) — the registration was
+        // silently dead, and BC's real CheckCodeUnit body ran and threw a codeunit-resolution
+        // error before ever reaching CanCreateTask. Deleted rather than left as a redundant
+        // Hook(...) call site (JmpHook.Apply auto-skips Cecil-owned keys anyway, but a call
+        // site with no effect either way is dead code the audit would just flag).
 
         // ALMethodScope.AssignScopeId is Cecil-owned (see NclCecilRewrite.cs, "NavMethodScope
         // cluster") — chains through Session.NCLMetadata which is null; no-op leaves scopeId =
@@ -1592,82 +1588,17 @@ public static partial class BcRuntime
         // NavReportHandle.CreateTarget and NavQueryHandle.CreateTarget are Cecil-owned (see
         // NclCecilRewrite.cs, CreateTarget family).
 
-        // REPORT.RUN(id [, reqPage [, sysPrinter [, record]]]) in AL compiles to static
-        // NavReport.Run(int, ...) overloads; REPORT.RUNMODAL(...) to NavReport.RunModal(...).
-        // Without hooks BC calls NCLMetadata.GetMetaReportById → ThrowMetaApplicationObjectNotFound.
-        // All Run/RunModal overloads are void → silent no-op is correct for standalone mode.
-        var navReportType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NavReport");
-        if (navReportType != null)
-        {
-            var reportNavRecordType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NavRecord");
-
-            // Resolve ReportRunOptions from whichever assembly exposes it.
-            var reportRunOptionsType = AppDomain.CurrentDomain.GetAssemblies()
-                .SelectMany(a => { try { return a.GetTypes(); } catch { return Array.Empty<Type>(); } })
-                .FirstOrDefault(t => t.FullName == "Microsoft.Dynamics.Nav.Types.Report.Base.ReportRunOptions");
-
-            int staticRunHooked = 0;
-            int staticRunModalHooked = 0;
-
-            // ── Run overloads ──────────────────────────────────────────
-            var rr1 = navReportType.GetMethod("Run",
-                BindingFlags.Public | BindingFlags.Static, null, new[] { typeof(int) }, null);
-            if (rr1 != null) { Hook(rr1, nameof(NavReport_StaticRun1), "NavReport.Run(int)"); staticRunHooked++; }
-
-            var rr2 = navReportType.GetMethod("Run",
-                BindingFlags.Public | BindingFlags.Static, null, new[] { typeof(int), typeof(bool) }, null);
-            if (rr2 != null) { Hook(rr2, nameof(NavReport_StaticRun2), "NavReport.Run(int,bool)"); staticRunHooked++; }
-
-            if (reportRunOptionsType != null)
-            {
-                var rrOpts = navReportType.GetMethod("Run",
-                    BindingFlags.Public | BindingFlags.Static, null, new[] { reportRunOptionsType }, null);
-                if (rrOpts != null) { Hook(rrOpts, nameof(NavReport_StaticRunOpts), "NavReport.Run(ReportRunOptions)"); staticRunHooked++; }
-            }
-
-            var rr3 = navReportType.GetMethod("Run",
-                BindingFlags.Public | BindingFlags.Static, null,
-                new[] { typeof(int), typeof(bool), typeof(bool) }, null);
-            if (rr3 != null) { Hook(rr3, nameof(NavReport_StaticRun3), "NavReport.Run(int,bool,bool)"); staticRunHooked++; }
-
-            if (reportNavRecordType != null)
-            {
-                var rr4 = navReportType.GetMethod("Run",
-                    BindingFlags.Public | BindingFlags.Static, null,
-                    new[] { typeof(int), typeof(bool), typeof(bool), reportNavRecordType }, null);
-                if (rr4 != null) { Hook(rr4, nameof(NavReport_StaticRun4), "NavReport.Run(int,bool,bool,NavRecord)"); staticRunHooked++; }
-            }
-
-            Console.Error.WriteLine($"[BcRuntime] NavReport.Run static overloads: {staticRunHooked} hooked");
-
-            // ── RunModal overloads ─────────────────────────────────────
-            var rm1 = navReportType.GetMethod("RunModal",
-                BindingFlags.Public | BindingFlags.Static, null, new[] { typeof(int) }, null);
-            if (rm1 != null) { Hook(rm1, nameof(NavReport_StaticRunModal1), "NavReport.RunModal(int)"); staticRunModalHooked++; }
-
-            var rm2 = navReportType.GetMethod("RunModal",
-                BindingFlags.Public | BindingFlags.Static, null, new[] { typeof(int), typeof(bool) }, null);
-            if (rm2 != null) { Hook(rm2, nameof(NavReport_StaticRunModal2), "NavReport.RunModal(int,bool)"); staticRunModalHooked++; }
-
-            var rm3 = navReportType.GetMethod("RunModal",
-                BindingFlags.Public | BindingFlags.Static, null,
-                new[] { typeof(int), typeof(bool), typeof(bool) }, null);
-            if (rm3 != null) { Hook(rm3, nameof(NavReport_StaticRunModal3), "NavReport.RunModal(int,bool,bool)"); staticRunModalHooked++; }
-
-            if (reportNavRecordType != null)
-            {
-                var rm4 = navReportType.GetMethod("RunModal",
-                    BindingFlags.Public | BindingFlags.Static, null,
-                    new[] { typeof(int), typeof(bool), typeof(bool), reportNavRecordType }, null);
-                if (rm4 != null) { Hook(rm4, nameof(NavReport_StaticRunModal4), "NavReport.RunModal(int,bool,bool,NavRecord)"); staticRunModalHooked++; }
-            }
-
-            Console.Error.WriteLine($"[BcRuntime] NavReport.RunModal static overloads: {staticRunModalHooked} hooked");
-
-            // Instance Run() / RunModal() — 0 arg, void. Cecil rewrites the
-            // body to call NavReportSync.SyncRun(this) directly (see
-            // NclCecilRewrite.cs). No JmpHook needed.
-        }
+        // REPORT.RUN(id [, reqPage [, sysPrinter [, record]]]) / REPORT.RUNMODAL(...) in AL
+        // compile to the static NavReport.Run(int, ...) / RunModal(int, ...) overloads.
+        // #1771: these used to be JmpHook targets here (NavReport_StaticRun1..4 /
+        // NavReport_StaticRunModal1..4 in ReportPatches.cs, each throwing an OOS
+        // InvalidOperationException). That JmpHook never fired under the default
+        // Cecil-only runtime — JmpHook.Apply silently skips any target that is not
+        // Cecil-owned unless AL_RUNNER_ENABLE_JMPHOOK=1 — so the static call fell straight
+        // into the Cecil-rewritten `ret` body and silently did nothing (false PASS with 0
+        // dataset iterations). Migrated to a direct Cecil-emitted call to
+        // NavReportSync.SyncStaticRun (see NclCecilRewrite.cs §NavReport block); no JmpHook
+        // needed, same as instance Run()/RunModal() below.
 
         // ALDatabase.ALSid — BC's real getter walks NavCurrentThread.Session.Identity
         // and NREs on the skeleton (no real session). Hook to return a constant stub
@@ -1839,18 +1770,11 @@ public static partial class BcRuntime
             if (lockTODurGet != null) Hook(lockTODurGet, nameof(ReturnZero_0Args), "ALDatabase.get_ALLockTimeoutDuration");
         }
 
-        // ALTaskScheduler.CanCreateTask(NavSession) — checks permissions via the
-        // session that is null on skeleton. Returning true lets the task-scheduler
-        // calls proceed; ALCreateTaskAsync still NREs further in but the immediate
-        // CanCreateTask cluster is drained.
-        var alTaskSchedType_b = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.ALTaskScheduler");
-        if (alTaskSchedType_b != null)
-        {
-            var canCreate = alTaskSchedType_b.GetMethod("CanCreateTask",
-                BindingFlags.NonPublic | BindingFlags.Static);
-            if (canCreate != null)
-                Hook(canCreate, nameof(ReturnTrue_OneArg), "ALTaskScheduler.CanCreateTask");
-        }
+        // ALTaskScheduler.CanCreateTask(NavSession) is Cecil-owned (see NclCecilRewrite.cs,
+        // scope.md §3.6, #1733): rewritten to return false — faithful, the runner has no
+        // scheduler. A JmpHook registration used to live here trying to make it return TRUE
+        // instead, which directly contradicted the documented/Cecil behaviour; it was always
+        // dead (JmpHook is off by default), which is exactly how it went unnoticed.
 
         // NavDialog.ALClose() / ALUpdateAsync are Cecil-owned (see NclCecilRewrite.cs).
 
@@ -1905,19 +1829,12 @@ public static partial class BcRuntime
             // was also wrong: BC's @@DBTS is strictly positive.
         }
 
-        // ALTaskScheduler.ALCreateTaskAsync — 8-arg ValueTask<Guid> static. Hook
-        // to return a fresh Guid; AL test code typically only verifies the
-        // returned id is non-zero or stores it for later cancellation.
-        if (alTaskSchedType_b != null)
-        {
-            foreach (var m in alTaskSchedType_b.GetMethods(
-                         BindingFlags.Public | BindingFlags.Static))
-            {
-                if (m.Name != "ALCreateTaskAsync") continue;
-                if (m.GetParameters().Length == 8)
-                    Hook(m, nameof(ReturnValueTaskGuid_8Args), "ALTaskScheduler.ALCreateTaskAsync");
-            }
-        }
+        // ALTaskScheduler.ALCreateTaskAsync is deliberately LEFT UNMODIFIED (see
+        // NclCecilRewrite.cs, scope.md §3.6, #1733): its real body already throws BC's own
+        // NavCreateScheduledTasksNotAllowedException once CanCreateTask/CheckCodeUnit are
+        // patched to let it reach that gate. A JmpHook registration used to live here trying
+        // to make it return a fresh Guid instead — a silent fake suppressing BC's own guard —
+        // and was always dead (JmpHook is off by default).
 
         // SessionTransactionExtensions.SetRecordConsistent / SetRecordInconsistent
         // — extension methods on NavSession that reach DataAccessSource (null on
@@ -2222,20 +2139,11 @@ public static partial class BcRuntime
             }
         }
 
-        // NavRecord.GetCallerRecord(NavSession) — internal static, NREs at
-        // session.CurrentMethodScope on the headless skeleton (CurrentMethodScope
-        // is null until a real scope is pushed). The real body returns null when
-        // ApplicationObject is null, so returning null directly is the faithful
-        // fallback. Caller (ALValidateSafe) handles null by raising a regular AL
-        // error rather than NRE.
-        var navRecordTypeForCaller = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NavRecord");
-        if (navRecordTypeForCaller != null)
-        {
-            var getCallerRecord = navRecordTypeForCaller.GetMethod("GetCallerRecord",
-                BindingFlags.NonPublic | BindingFlags.Static);
-            if (getCallerRecord != null && getCallerRecord.GetParameters().Length == 1)
-                Hook(getCallerRecord, nameof(ReturnNull_OneArg), "NavRecord.GetCallerRecord");
-        }
+        // NavRecord.GetCallerRecord(NavSession) — migrated to the Cecil layer (see
+        // GetCallerRecordPatches.NavRecord_GetCallerRecord and its CecilOwned registration in
+        // NclCecilRewrite.cs). It used to be unconditionally hooked to return null here, which
+        // meant BC's nested-Validate "skip the xRec re-snapshot when the caller IS the record
+        // already being validated" optimization could never fire — see #1781.
 
         // NavFile.GetTenantIds(NavSession) — internal static, NREs at session.Tenant
         // on the skeleton. Return (Guid.Empty, "STANDALONE") to align with the

@@ -76,7 +76,16 @@ dispatch, and report/request-page variables support a limited standalone surface
 - Field `Visible`, `Enabled`, and `Editable` are not evaluated against real page metadata.
 - `TestPage` methods like `GoToRecord`, `Next`, `New`, `GetPart`, and filter reads are
   mock-backed rather than UI-backed.
-- `TestPage` action `Invoke()` dispatches the compiled `OnAction` trigger for custom actions; field `Visible`/`Enabled`/`Editable` are not evaluated against real page metadata.
+- `TestPage` action `Invoke()` saves the row the page is on and then dispatches the
+  compiled `OnAction` trigger, the same order a real client uses — so `OnAction` reads a
+  `Rec` that is already in the table, with the page's `AutoSplitKey` field assigned
+  (BC's own `NavForm.SplitKey`, in 10000 increments). A plain `SetValue` still does not
+  save: the row is written when something leaves it (a cursor move, an action, or close).
+  The `AutoSplitKey` *values* are not yet BC's: the runner has no client cursor to take an
+  insertion point from, so an empty grid starts at 10000 where BC starts at 20000, and a
+  line appended to a grid numbered from something other than 10000 does not continue from
+  the last row. Tracked in
+  [#1755](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/1755).
 - `Page.Run()` is a no-op. `Page.RunModal()` dispatches to `[ModalPageHandler]` if
   registered, otherwise throws.
 - Request pages can be handled via `[RequestPageHandler]`, but this is handler dispatch
@@ -84,7 +93,19 @@ dispatch, and report/request-page variables support a limited standalone surface
 - Report variables support `Run()`, `RunRequestPage()`, `SetTableView()`, and
   helper procedures. Report triggers execute: `OnPreReport`, `OnPreDataItem`,
   `OnAfterGetRecord` (once per row in the in-memory table), `OnPostDataItem`, and
-  `OnPostReport`. Report layout/rendering is still not available.
+  `OnPostReport`. `Run()` drives BC's own data-item loop, so `SetTableView(Rec)`
+  constrains the matching data item to the applied view, and `DataItemTableView`,
+  `DataItemLink`, nested data items and `CurrReport.Skip`/`Break` behave as the
+  runtime engine defines them. Report layout/rendering is still not available.
+- The static `Report.Run(id[, requestWindow[, systemPrinter[, record]]])` /
+  `Report.RunModal(id, ...)` forms (called on the `Report` codeunit-like object, without
+  first declaring a report variable) execute the report the same way the report-variable
+  form does — construct the report from its id, then run the same trigger lifecycle.
+  `requestWindow` / `systemPrinter` are accepted but not acted on: no dialog is ever raised
+  from `Run`/`RunModal` (request pages are handler dispatch only, see above); a report that
+  needs its request page's `[RequestPageHandler]` to fire should call the static/instance
+  `RunRequestPage()` explicitly. The `Report.Run(ReportRunOptions)` overload is not
+  implemented and throws `out-of-scope: static NavReport.Run`.
 
 ### No debugger infrastructure
 

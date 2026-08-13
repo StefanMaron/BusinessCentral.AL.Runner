@@ -120,10 +120,13 @@ public sealed class BcCompilerLoaderSelfExclusionTests : IDisposable
 
     private static List<string> InvokeDeduplicateAppPackageDirs(List<string> packageDirs, Guid? excludeAppId)
     {
-        var method = typeof(BcCompiler).GetMethod(
-            "DeduplicateAppPackageDirs", BindingFlags.NonPublic | BindingFlags.Static)
+        // Overloaded since #1831 (a 3-arg variant also yields the scan inventory), so select
+        // by arity — a plain GetMethod throws AmbiguousMatchException.
+        var method = typeof(BcCompiler)
+            .GetMethods(BindingFlags.NonPublic | BindingFlags.Static)
+            .SingleOrDefault(m => m.Name == "DeduplicateAppPackageDirs" && m.GetParameters().Length == 2)
             ?? throw new InvalidOperationException(
-                "BcCompiler.DeduplicateAppPackageDirs not found by reflection — signature may have changed.");
+                "BcCompiler.DeduplicateAppPackageDirs(dirs, excludeAppId) not found by reflection — signature may have changed.");
         return (List<string>)method.Invoke(null, new object?[] { packageDirs, excludeAppId })!;
     }
 

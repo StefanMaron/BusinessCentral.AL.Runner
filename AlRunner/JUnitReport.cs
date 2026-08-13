@@ -26,6 +26,7 @@ public static class JUnitReport
         int totalTests = tests.Count;
         int totalFailures = tests.Count(t => t.Outcome == TestOutcome.Fail);
         int totalErrors = tests.Count(t => t.Outcome == TestOutcome.Error);
+        int totalSkipped = tests.Count(t => t.Outcome == TestOutcome.Skipped);
 
         using var writer = XmlWriter.Create(outputPath, new XmlWriterSettings
         {
@@ -38,6 +39,7 @@ public static class JUnitReport
         writer.WriteAttributeString("tests", totalTests.ToString());
         writer.WriteAttributeString("failures", totalFailures.ToString());
         writer.WriteAttributeString("errors", totalErrors.ToString());
+        writer.WriteAttributeString("skipped", totalSkipped.ToString());
         writer.WriteAttributeString("time", totalSeconds.ToString("F3", System.Globalization.CultureInfo.InvariantCulture));
 
         foreach (var suite in suites)
@@ -46,12 +48,14 @@ public static class JUnitReport
             double suiteSeconds = suiteTests.Sum(t => t.Duration.TotalSeconds);
             int suiteFailures = suiteTests.Count(t => t.Outcome == TestOutcome.Fail);
             int suiteErrors = suiteTests.Count(t => t.Outcome == TestOutcome.Error);
+            int suiteSkipped = suiteTests.Count(t => t.Outcome == TestOutcome.Skipped);
 
             writer.WriteStartElement("testsuite");
             writer.WriteAttributeString("name", suite.Key);
             writer.WriteAttributeString("tests", suiteTests.Count.ToString());
             writer.WriteAttributeString("failures", suiteFailures.ToString());
             writer.WriteAttributeString("errors", suiteErrors.ToString());
+            writer.WriteAttributeString("skipped", suiteSkipped.ToString());
             writer.WriteAttributeString("time", suiteSeconds.ToString("F3", System.Globalization.CultureInfo.InvariantCulture));
 
             foreach (var test in suiteTests)
@@ -74,6 +78,12 @@ public static class JUnitReport
                     writer.WriteAttributeString("message", test.Message ?? "Runner error");
                     writer.WriteString(BuildBody(test));
                     writer.WriteEndElement(); // error
+                }
+                else if (test.Outcome == TestOutcome.Skipped)
+                {
+                    writer.WriteStartElement("skipped");
+                    writer.WriteAttributeString("message", test.Message ?? "Skipped by expectations manifest");
+                    writer.WriteEndElement(); // skipped
                 }
 
                 writer.WriteEndElement(); // testcase

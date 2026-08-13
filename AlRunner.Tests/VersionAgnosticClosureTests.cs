@@ -63,17 +63,22 @@ public sealed class VersionAgnosticClosureTests
             "so the DependencyLoader ALC resolver serves the selected version from the artifact dir.");
     }
 
-    [Fact]
+    [SkippableFact]
     public void Resolver_ServesBcAppClosure_FromSelectedArtifactDir_WhenArtifactsPresent()
     {
-        // Env-guarded: only assert live resolution when an artifact dir is actually present
-        // (e.g. a dev box with BC artifacts downloaded). On a bare CI leg this is a no-op.
-        string serviceTierDir;
+        // Env-guarded: only assert live resolution when an artifact dir is actually present.
+        // An unprovisioned environment SKIPS visibly — it used to return, which xUnit records
+        // as a pass, so "the resolver serves BC's copy" looked proven when nothing had run.
+        string serviceTierDir = string.Empty;
+        string? selectionError = null;
         try { serviceTierDir = AlRunner.Infrastructure.BcArtifacts.ServiceTierDir; }
-        catch { return; }
+        catch (Exception ex) { selectionError = ex.Message; }
+        TestArtifacts.SkipIf(selectionError != null,
+            $"no BC service-tier artifact directory could be selected: {selectionError}");
 
         var probe = Path.Combine(serviceTierDir, "Microsoft.Identity.ServiceEssentials.Core.dll");
-        if (!File.Exists(probe)) return; // no artifacts provisioned in this environment
+        TestArtifacts.SkipIf(!File.Exists(probe),
+            $"BC artifacts are incomplete: '{probe}' does not exist.");
 
         DependencyLoader.EnsureResolverInstalled_Public();
 

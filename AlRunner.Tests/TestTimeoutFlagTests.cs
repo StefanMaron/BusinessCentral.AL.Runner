@@ -19,10 +19,9 @@ using Xunit;
 
 namespace AlRunner.Tests;
 
-// Serialized with the other runner-subprocess integration tests — see
-// DefineFlagIntegrationTests for why (shared native BC engine state, SIGBUS flakes
-// under xUnit's default parallelization).
-[Collection("server-serial")]
+// Used to be serialized with the other runner-subprocess integration tests
+// (shared native BC engine state, SIGBUS flakes under xUnit's default
+// parallelization) — see DefineFlagIntegrationTests; no longer is — #1809.
 public sealed class TestTimeoutFlagTests : IDisposable
 {
     private static readonly string RepoRoot = Path.GetFullPath(
@@ -41,15 +40,6 @@ public sealed class TestTimeoutFlagTests : IDisposable
     public void Dispose()
     {
         try { Directory.Delete(_root, recursive: true); } catch { }
-    }
-
-    private static bool ArtifactsPresent()
-    {
-        var home = Environment.GetEnvironmentVariable("HOME")
-            ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        var stdCache = Path.Combine(home, ".local", "share", "al-runner", "artifacts");
-        return Directory.Exists(stdCache) &&
-               Directory.EnumerateDirectories(stdCache).Any();
     }
 
     /// <summary>
@@ -120,10 +110,10 @@ public sealed class TestTimeoutFlagTests : IDisposable
     /// Before the fix, the flag did not exist (unknown-option error) or, if merely
     /// wired but not to the message, would read "TIMEOUT after 2s" instead.
     /// </summary>
-    [Fact]
+    [SkippableFact]
     public void TestTimeout_CutsOffInfiniteLoop_WithV1CompatibleMessage()
     {
-        if (!ArtifactsPresent()) { Console.Error.WriteLine("[skip] BC artifacts not present"); return; }
+        TestArtifacts.SkipIfMissing();
 
         var (output, _) = RunRunner("--test-timeout 2");
 

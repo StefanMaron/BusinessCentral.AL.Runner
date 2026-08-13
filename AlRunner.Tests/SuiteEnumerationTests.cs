@@ -27,9 +27,8 @@ using Xunit;
 
 namespace AlRunner.Tests;
 
-// See DefineFlagIntegrationTests for why this is serialized with the other
-// runner-subprocess integration tests.
-[Collection("server-serial")]
+// See DefineFlagIntegrationTests for why this used to be serialized with the
+// other runner-subprocess integration tests and no longer is — #1809.
 public sealed class SuiteEnumerationTests : IDisposable
 {
     private static readonly string RepoRoot = Path.GetFullPath(
@@ -47,14 +46,6 @@ public sealed class SuiteEnumerationTests : IDisposable
     public void Dispose()
     {
         try { Directory.Delete(_root, recursive: true); } catch { }
-    }
-
-    private static bool ArtifactsPresent()
-    {
-        var home = Environment.GetEnvironmentVariable("HOME")
-            ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        var stdCache = Path.Combine(home, ".local", "share", "al-runner", "artifacts");
-        return Directory.Exists(stdCache) && Directory.EnumerateDirectories(stdCache).Any();
     }
 
     /// <summary>
@@ -154,10 +145,10 @@ public sealed class SuiteEnumerationTests : IDisposable
     /// RED before the fix: three flat app.json suites under one parent collapsed to a
     /// single bucket and only one suite's tests ran. All three must run.
     /// </summary>
-    [Fact]
+    [SkippableFact]
     public void ParentDirWithFlatAppJsonChildren_RunsEverySuite()
     {
-        if (!ArtifactsPresent()) { Console.Error.WriteLine("[skip] BC artifacts not present"); return; }
+        TestArtifacts.SkipIfMissing();
 
         WriteFlatSuite(Path.Combine(_root, "alpha"), "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa", 62200, "Alpha");
         WriteFlatSuite(Path.Combine(_root, "beta"), "bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb", 62210, "Beta");
@@ -179,10 +170,10 @@ public sealed class SuiteEnumerationTests : IDisposable
     /// ONE app and must stay one bucket — the fix must check the root before
     /// descending into children.
     /// </summary>
-    [Fact]
+    [SkippableFact]
     public void SingleAppWithCategorySubdirs_StaysOneBucket()
     {
-        if (!ArtifactsPresent()) { Console.Error.WriteLine("[skip] BC artifacts not present"); return; }
+        TestArtifacts.SkipIfMissing();
 
         WriteFlatSuite(_root, "dddddddd-4444-4444-8444-dddddddddddd", 62230, "Solo");
         // Category subdirectory with an extra .al file and NO app.json of its own —

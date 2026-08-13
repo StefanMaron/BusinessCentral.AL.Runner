@@ -19,6 +19,67 @@ public static partial class BcRuntime
     private static int _dispatchCount;
     private static int _dispatchFiredCount;
 
+    internal const string PublisherKindCodeunit = "Codeunit";
+    internal const string PublisherKindTable = "Record";
+    // Page/Report/Query/XmlPort own-code (triggers, procedures, manually-declared events)
+    // compiles to a class literally named "<Kind><N>" — unlike Table, there is no separate
+    // metadata-only class to disambiguate from (issue #1794). Confirmed empirically by
+    // reflecting over an emitted test assembly: a manually-declared [IntegrationEvent] on
+    // each of these object kinds produces "Page90101+OnProbePageEvent_Scope",
+    // "Report90102+OnProbeReportEvent_Scope", "Query90103+OnProbeQueryEvent_Scope",
+    // "XmlPort90104+OnProbeXmlPortEvent_Scope" — each carrying the same
+    // γeventScope : NavEventScope static field a codeunit publisher's scope class does.
+    internal const string PublisherKindPage = "Page";
+    internal const string PublisherKindReport = "Report";
+    internal const string PublisherKindQuery = "Query";
+    internal const string PublisherKindXmlPort = "XmlPort";
+
+    // These six prefixes are mutually non-prefixing (none is a string-prefix of another),
+    // so iteration order here is irrelevant — this is NOT sorted longest-first. The closest
+    // near-miss is "Record" vs "Report", which merely SHARE a "Re" prefix; neither is a
+    // prefix of the other, so it still doesn't matter. If a future object kind's prefix
+    // IS a prefix of (or is prefixed by) one already in this list, order starts to matter
+    // and this array must become longest-first — check that before adding a new entry.
+    private static readonly string[] _publisherKindPrefixes =
+    {
+        PublisherKindCodeunit, PublisherKindTable,
+        PublisherKindPage, PublisherKindReport, PublisherKindQuery, PublisherKindXmlPort,
+    };
+
+    /// <summary>
+    /// Decode a publisher scope's declaring-type name into (kind, publisherId) —
+    /// e.g. <c>"Codeunit50041"</c> → <c>(PublisherKindCodeunit, 50041)</c>,
+    /// <c>"Record60976"</c> → <c>(PublisherKindTable, 60976)</c>,
+    /// <c>"Page90101"</c> → <c>(PublisherKindPage, 90101)</c>. Any other prefix returns
+    /// false — those publisher kinds are not registered by
+    /// <c>EventSubscriberPatches.EnsureRegistryFresh</c>.
+    ///
+    /// Extracted as a pure, unit-testable seam (see DispatchObserveAsyncResultTests.cs for the
+    /// established pattern of pinning dispatcher behavior at a seam that can't be reached from
+    /// first-party AL). Issue #1770 was exactly a miss in this decode: only the "Codeunit"
+    /// prefix was recognized, so a table object's OWN code — which compiles to a class named
+    /// "Record&lt;N&gt;", not "Table&lt;N&gt;" — never matched, and a manually-declared
+    /// [IntegrationEvent] raised from inside a table's trigger silently never dispatched.
+    /// Issue #1794 extends the same decode to Page/Report/Query/XmlPort publishers, which had
+    /// no branch here at all (not even a wrong one) — their manually-declared events were never
+    /// recognized as a dispatchable publisher, so a subscriber to one silently never fired.
+    /// </summary>
+    internal static bool TryDecodeEventPublisherDeclType(string declTypeName, out string publisherKind, out int publisherId)
+    {
+        foreach (var prefix in _publisherKindPrefixes)
+        {
+            if (declTypeName.StartsWith(prefix, StringComparison.Ordinal)
+                && int.TryParse(declTypeName.AsSpan(prefix.Length), out publisherId))
+            {
+                publisherKind = prefix;
+                return true;
+            }
+        }
+        publisherKind = "";
+        publisherId = 0;
+        return false;
+    }
+
     /// <summary>
     /// Entry point called from the Cecil-rewritten NavMethodScope.OnRunEventAsync.
     /// Returns default ValueTask — synchronous execution model.
@@ -58,19 +119,37 @@ public static partial class BcRuntime
         Interlocked.Increment(ref _dispatchCount);
         if (!_firstDispatchLogged) { _firstDispatchLogged = true; Console.Error.WriteLine($"[Dispatch] first call: scope={scopeType.FullName}"); }
 
-        // Decode publisher codeunit id + event method name from scope type name.
+        // Decode publisher id + event method name from scope type name.
         //   Microsoft.Dynamics.Nav.BusinessApplication.Codeunit50041+OnDoCalc_Scope
+        //   Microsoft.Dynamics.Nav.BusinessApplication.Record50140+OnAfterXyz_Scope
+        //
+        // A manually-declared [IntegrationEvent]/[BusinessEvent] compiles to this same
+        // generic <EventName>_Scope + OnRunEventAsync pattern regardless of which AL object
+        // kind declares it — BC's NavTriggerEventType ordinals (Insert/Modify/Delete/Rename/
+        // Validate) only cover the implicit table-trigger events, which fire through the
+        // separate NavTableTriggerEventHandler path and never reach here. So a table object
+        // that ALSO declares its own custom event needs the same universal dispatch as a
+        // codeunit publisher, just keyed by table id instead of codeunit id (see issue #1770).
+        // A table object's OWN code (triggers, procedures, and any manually-declared event)
+        // compiles to a class named "Record<N>", NOT "Table<N>" (that name is a separate,
+        // metadata-only class) — confirmed by reflecting over the emitted assembly.
         var declType = scopeType.DeclaringType;
         if (declType == null) return;
         var declName = declType.Name;
-        if (!declName.StartsWith("Codeunit", StringComparison.Ordinal)) return;
-        if (!int.TryParse(declName.AsSpan("Codeunit".Length), out int codeunitId)) return;
         var scopeName = scopeType.Name;
         int us = scopeName.IndexOf('_');
         if (us < 0) return;
         string eventMethodName = scopeName.Substring(0, us);
 
-        var subs = EventSubscriberPatches.GetCodeunitSubscribers(codeunitId, eventMethodName);
+        if (!TryDecodeEventPublisherDeclType(declName, out var publisherKind, out int publisherId)) return;
+        IReadOnlyList<MethodInfo>? subs = publisherKind switch
+        {
+            PublisherKindCodeunit => EventSubscriberPatches.GetCodeunitSubscribers(publisherId, eventMethodName),
+            PublisherKindTable => EventSubscriberPatches.GetTableEventSubscribers(publisherId, eventMethodName),
+            PublisherKindPage or PublisherKindReport or PublisherKindQuery or PublisherKindXmlPort
+                => EventSubscriberPatches.GetObjectEventSubscribers(publisherKind, publisherId, eventMethodName),
+            _ => null,
+        };
         if (subs == null || subs.Count == 0) return;
         Interlocked.Increment(ref _dispatchFiredCount);
         if (!_firstFireLogged) { _firstFireLogged = true; Console.Error.WriteLine($"[Dispatch] first FIRE: {declName}.{eventMethodName} → {subs.Count} subs"); }
@@ -96,7 +175,24 @@ public static partial class BcRuntime
         foreach (var sub in subs)
         {
             if (!seen.Add(SubscriberAlIdentity(sub))) continue;
-            try { InvokeOneSubscriber(publisherScope, scopeType, pubObj, sub); }
+            try
+            {
+                if (IsManualBindingCodeunitType(sub.DeclaringType!))
+                {
+                    // EventSubscriberInstance = Manual: BC dispatches only to instances
+                    // currently bound via BindSubscription — on those very instances, so
+                    // the binder observes their state afterwards. Unbound → no fire at
+                    // all (container-verified; the unbound default state must never leak
+                    // into an event, e.g. System Application Test Library's 132513
+                    // "Confirm Test Library" answering OnBeforeGuiAllowed with false).
+                    foreach (var bound in BoundInstancesOf(ExtractCodeunitIdFromTypeName(sub.DeclaringType!)))
+                        InvokeOneSubscriber(publisherScope, scopeType, pubObj, sub, bound);
+                }
+                else
+                {
+                    InvokeOneSubscriber(publisherScope, scopeType, pubObj, sub, null);
+                }
+            }
             catch (TargetInvocationException tie)
             {
                 if (Environment.GetEnvironmentVariable("ALRUNNER_DISPATCH_TRACE") == "1")
@@ -106,6 +202,85 @@ public static partial class BcRuntime
                 throw tie.InnerException ?? tie;
             }
         }
+    }
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<Type, bool> _manualBindingTypeCache = new();
+
+    /// <summary>Drop the manual-binding type cache on a server-mode bundle reload — its keys
+    /// are Types from the previous bundle's emitted assembly (same reason
+    /// EventSubscriberPatches.ResetForReload clears its codeunit-type cache).</summary>
+    internal static void ResetManualBindingCacheForReload() => _manualBindingTypeCache.Clear();
+
+    /// <summary>
+    /// Does this AL-emitted Codeunit{N} class declare <c>EventSubscriberInstance = Manual</c>?
+    /// Read off [NavCodeunitOptionsAttribute] exactly like
+    /// <see cref="NCLMetaCodeunit_get_IsEventManualBinding"/> (which serves BC's own
+    /// BindSubscription path) so both sides agree on what "manual" is.
+    ///
+    /// The single definition of "Manual" in the runner: the codeunit-event dispatcher below
+    /// consults it directly, and the table-event path reports it out of
+    /// <c>EventSubscriberPatches.AlEventSubscriberAdapter.IsEventManualBinding</c> so BC's own
+    /// NavEventScope dispatch classifies the subscription the same way. Two answers here would
+    /// let the two paths drift on what Manual means.
+    /// </summary>
+    internal static bool IsManualBindingCodeunitType(Type codeunitClrType)
+        => _manualBindingTypeCache.GetOrAdd(codeunitClrType, static t =>
+        {
+            foreach (var attr in t.GetCustomAttributes(inherit: false))
+            {
+                var at = attr.GetType();
+                if (at.Name != "NavCodeunitOptionsAttribute") continue;
+                var isManual = at.GetProperty("IsEventManualBinding",
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                if (isManual != null)
+                {
+                    try { return (bool)isManual.GetValue(attr)!; } catch { }
+                }
+                var optionsProp = at.GetProperty("Options",
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                var v = optionsProp?.GetValue(attr);
+                if (v != null)
+                    return (Convert.ToInt32(v) & 1) != 0; // EventManualBinding flag = 1
+            }
+            return false;
+        });
+
+    private static PropertyInfo? _piSessionEventBindings;
+    private static bool _eventBindingsLookupFailed;
+
+    /// <summary>
+    /// Instances of codeunit <paramref name="codeunitId"/> currently bound via AL
+    /// BindSubscription. BC's own NavCodeunit.BindSubscription/UnbindSubscription bodies
+    /// maintain <c>Session.EventBindings</c> (a List&lt;NavCodeunit&gt; seeded on the
+    /// skeleton session); reading that list keeps bind/unbind/double-bind semantics BC's
+    /// business, not ours. Snapshot before invoking — a subscriber body may bind/unbind.
+    /// </summary>
+    private static List<object> BoundInstancesOf(int codeunitId)
+    {
+        var result = new List<object>();
+        if (codeunitId == 0) return result;
+        var session = SkeletonSession;
+        if (session == null) return result;
+        if (_piSessionEventBindings == null && !_eventBindingsLookupFailed)
+        {
+            _piSessionEventBindings = session.GetType().GetProperty("EventBindings",
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            if (_piSessionEventBindings == null)
+            {
+                _eventBindingsLookupFailed = true;
+                Console.Error.WriteLine(
+                    "[Dispatch] NavSession.EventBindings NOT FOUND — Ncl shape changed; "
+                    + "manually-bound event subscribers will never fire");
+            }
+        }
+        if (_piSessionEventBindings?.GetValue(session) is not System.Collections.IEnumerable bindings)
+            return result;
+        foreach (var bound in bindings)
+        {
+            if (bound != null && ExtractCodeunitIdFromTypeName(bound.GetType()) == codeunitId)
+                result.Add(bound);
+        }
+        return result;
     }
 
     /// <summary>
@@ -166,7 +341,8 @@ public static partial class BcRuntime
     private static ConstructorInfo? _ciNavCodeunitHandleByInstance;
     private static PropertyInfo? _pNavCodeunitHandle_Target;
 
-    private static void InvokeOneSubscriber(object publisherScope, Type scopeType, object treeObj, MethodInfo subscriberMethod)
+    private static void InvokeOneSubscriber(object publisherScope, Type scopeType, object treeObj, MethodInfo subscriberMethod,
+        object? boundInstance)
     {
         EnsureCodeunitHandleReflection();
 
@@ -174,17 +350,21 @@ public static partial class BcRuntime
         int subscriberCodeunitId = ExtractCodeunitIdFromTypeName(subscriberClrType);
         if (subscriberCodeunitId == 0) return;
 
-        // The subscriber handle is parented on the PUBLISHER, and a publisher can outlive the
-        // scope it was created in — a SingleInstance codeunit is cached for the whole test, so
-        // by the time it publishes again its original tree may be disposed. Everything that
-        // reads the tree off it then throws ObjectDisposedException("Tree"), which took out
-        // event dispatch for the rest of the run (measured on Base App codeunit 43 publishing
-        // OnGetLanguageIdOrDefault). Parenting on the session instead is what BC's own
-        // "resolve this codeunit in the current session" amounts to, and the session is alive
-        // for exactly as long as dispatch can be running.
-        var handle = _ciNavCodeunitHandleByIdInt!.Invoke(
-            new object?[] { LiveParentFor(treeObj), subscriberCodeunitId });
-        var subscriberInstance = _pNavCodeunitHandle_Target!.GetValue(handle);
+        object? subscriberInstance = boundInstance;
+        if (subscriberInstance == null)
+        {
+            // The subscriber handle is parented on the PUBLISHER, and a publisher can outlive the
+            // scope it was created in — a SingleInstance codeunit is cached for the whole test, so
+            // by the time it publishes again its original tree may be disposed. Everything that
+            // reads the tree off it then throws ObjectDisposedException("Tree"), which took out
+            // event dispatch for the rest of the run (measured on Base App codeunit 43 publishing
+            // OnGetLanguageIdOrDefault). Parenting on the session instead is what BC's own
+            // "resolve this codeunit in the current session" amounts to, and the session is alive
+            // for exactly as long as dispatch can be running.
+            var handle = _ciNavCodeunitHandleByIdInt!.Invoke(
+                new object?[] { LiveParentFor(treeObj), subscriberCodeunitId });
+            subscriberInstance = _pNavCodeunitHandle_Target!.GetValue(handle);
+        }
         if (subscriberInstance == null) return;
 
         // Cross-assembly type mismatch: the registry may hold this MethodInfo from a

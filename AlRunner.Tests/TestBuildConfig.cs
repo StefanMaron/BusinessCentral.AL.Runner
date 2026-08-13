@@ -29,11 +29,42 @@ internal static class TestBuildConfig
         $"net{Environment.Version.Major}.{Environment.Version.Minor}";
 
     /// <summary>
-    /// The leading `dotnet run` arguments for invoking the runner project, up to and
-    /// including the `--` separator. Callers append their own runner arguments.
+    /// The leading `dotnet` argument for invoking the runner directly: the quoted path
+    /// to the built `al-runner.dll`, so the caller's own runner arguments append straight
+    /// onto it and the whole line is `dotnet "&lt;dll&gt;" &lt;args...&gt;`.
+    ///
+    /// This used to be `run --no-build -c {Configuration} --framework {Framework} --project
+    /// "{projectPath}" --`, which pays ~800ms of MSBuild project evaluation on every spawn
+    /// (issue #1808). Since AlRunner.Tests always builds AlRunner as a project reference
+    /// first, the DLL this test assembly was built against is already on disk — invoking it
+    /// directly skips that evaluation entirely. Dropped the trailing `--`: it was a
+    /// `dotnet run` argument separator: under `dotnet &lt;dll&gt;` there is no MSBuild
+    /// argument parsing to separate from, so forwarding it would hand the runner's own CLI
+    /// parser a stray `--` token.
     /// </summary>
     internal static string RunArgs(string projectPath) =>
-        $"run --no-build -c {Configuration} --framework {Framework} --project \"{projectPath}\" --";
+        $"\"{ResolveAssemblyPath(projectPath)}\"";
+
+    /// <summary>
+    /// Resolves the built runner assembly path and fails loudly (naming the searched path)
+    /// if it is not on disk, rather than silently falling back to `dotnet run` — a fallback
+    /// would hide the very MSBuild-evaluation regression this method exists to avoid, per
+    /// .claude/rules/loud-failures.md.
+    /// </summary>
+    private static string ResolveAssemblyPath(string projectPath)
+    {
+        var path = Path.Combine(projectPath, "bin", Configuration, Framework, "al-runner.dll");
+        if (!File.Exists(path))
+        {
+            throw new FileNotFoundException(
+                $"Runner assembly not found at '{path}'. Build the AlRunner project " +
+                $"(dotnet build -c {Configuration} AlRunner/AlRunner.csproj) before running " +
+                "tests that spawn it.",
+                path);
+        }
+
+        return path;
+    }
 
     /// <summary>
     /// The ` --bc-version &lt;version&gt;` argument to pass to a spawned runner, pinned to the

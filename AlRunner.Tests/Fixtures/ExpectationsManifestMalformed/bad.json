@@ -1,0 +1,9 @@
+[
+  {
+    "codeunitId": 60810,
+    "CodeunitName": "Expct Fixture Tests",
+    "Method": "GreenPath_PlainPass",
+    "Mode": "expect-magic",
+    "Note": "Malformed on purpose: unknown Mode must abort runner startup loudly."
+  }
+]

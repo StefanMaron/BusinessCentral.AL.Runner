@@ -62,6 +62,32 @@ internal sealed class RunnerPageInstance
             .GetValue(_form) is true;
 
     /// <summary>
+    /// The page's real caption. Read off BC's own NavForm.PageCaption rather than a constant:
+    /// InitializeFromMetadata seeds it from the page's static Caption property, and
+    /// <c>CurrPage.Caption := '…'</c> (a plain property setter the AL compiler emits onto the
+    /// SAME field) overwrites it at runtime. One read site therefore answers both — a runner
+    /// that only modelled the static case would go right on issue #1776's first repro and
+    /// wrong on its second, which is exactly the split that shipped: TestPage.Caption()
+    /// answered empty for both, because nothing read this property at all.
+    /// </summary>
+    internal string PageCaption
+        => _form.GetType()
+            .GetProperty("PageCaption", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?
+            .GetValue(_form) as string ?? string.Empty;
+
+    /// <summary>
+    /// The control's own declared Caption (<c>field(Foo; Rec.Foo) { Caption = '…'; }</c>), or
+    /// null when the control declares none. This is the FIRST source in the client's caption
+    /// precedence — it wins over the source field's own Caption, which is why callers must
+    /// check this before falling back to field metadata (see issue #1777).
+    /// </summary>
+    internal string? TryGetControlCaption(int controlId)
+    {
+        var caption = ControlDefinition(controlId)?.Caption;
+        return string.IsNullOrEmpty(caption) ? null : caption;
+    }
+
+    /// <summary>
     /// Build and initialise the AL page object for <paramref name="pageId"/>, bound to
     /// <paramref name="record"/>. Returns null when the page has no compiled type or no
     /// real metadata — never a half-initialised instance, because a page whose source
@@ -438,6 +464,27 @@ internal sealed class RunnerPageInstance
     }
 
     /// <summary>
+    /// Run the control's OnDrillDown trigger — the AL a user's drilldown click would run.
+    ///
+    /// Unlike OnLookup's TableRelation fallback (which needs a related list page the runner
+    /// cannot stand up), a control with no OnDrillDown trigger has a documented, deterministic
+    /// answer on real BC that does not depend on any UI: TestPage DrillDown() raises a fixed
+    /// platform error, "The NavDrilldownAction method is not supported." — confirmed against
+    /// real BC 27.5 and 28.3 in al-language's TestPageFieldDrillDown_Tests
+    /// (FieldDrillDownWithNoTriggerIsRefused). That is reproducible in-process with no UI, so
+    /// it is raised as a genuine AL error via NavNCLDialogException (same mechanism as
+    /// BcRuntime's DataTransfer-out-of-context message), not a RunnerOutOfScopeException —
+    /// this is not a capability the runner lacks, it is exactly what BC itself does here.
+    /// </summary>
+    internal void RaiseOnDrillDown(int controlId)
+    {
+        var trigger = FindTrigger(controlId, "_OnDrillDown", "OnDrillDown");
+        if (trigger == null)
+            throw AlRunner.BcRuntime.MakeNavDrilldownActionNotSupportedException();
+        Invoke(trigger);
+    }
+
+    /// <summary>
     /// Run the page's own OnAfterGetRecord trigger.
     ///
     /// BC fires it every time the page loads a row, and it is where a page computes the
@@ -506,6 +553,85 @@ internal sealed class RunnerPageInstance
     internal bool RaiseOnInsertRecord(bool belowXRec)
         => InvokeRecordTrigger("OnInsertRecord", new[] { typeof(bool) }, new object[] { belowXRec })
            is not false;
+
+    /// <summary>
+    /// Assign the page's <c>AutoSplitKey</c> field on the row about to be inserted — BC's own
+    /// <c>NavForm.SplitKey()</c>, called at exactly the point BC calls it
+    /// (<c>SaveRecordAsync</c> / <c>InsertAsync(belowXRec)</c>: SplitKey, then OnInsertRecord,
+    /// then the record's Insert).
+    ///
+    /// Reused rather than reimplemented, and the detail is why. SplitKey is not "last line no.
+    /// + 10000": it reads <c>MasterPage.PageProperties.SourceObject.AutoSplitKey</c> to decide
+    /// whether to act at all, takes the LAST field of the primary key, refuses a key field that
+    /// is not GUID/Integer/BigInteger/Decimal, leaves a value the AL already set alone, splits
+    /// the interval when the row is being inserted BETWEEN two existing ones, and falls back to
+    /// "after the last row in the filtered set" when the computed key collides. Every one of
+    /// those is observable from AL, and a hand-rolled version gets the easy case right while
+    /// silently answering the rest differently.
+    ///
+    /// A page with no AutoSplitKey is a no-op inside BC's own guard, so this is safe to call
+    /// unconditionally — the runner does not need to duplicate the property lookup.
+    /// </summary>
+    internal void SplitKey()
+    {
+        var splitKey = FindNavFormMethod("SplitKey", Type.EmptyTypes)
+            ?? throw new InvalidOperationException(
+                "NavForm.SplitKey not found on " + _form.GetType().FullName + " — BC page shape changed");
+        try { splitKey.Invoke(_form, Array.Empty<object>()); }
+        catch (TargetInvocationException tie) when (tie.InnerException != null)
+        {
+            // BC throws NavNCLNotSupportedTypeException here for a page whose last primary-key
+            // field is not a splittable type. That is the page's own error and belongs to the
+            // AL test unwrapped, exactly like an Error() raised in a trigger.
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw();
+        }
+    }
+
+    /// <summary>
+    /// Whether the page declares <c>AutoSplitKey</c> — BC's own <c>NavForm.NeedAutoSplitKey</c>,
+    /// off the same metadata it reads (that property is private; <c>MasterPage</c> is public).
+    ///
+    /// SplitKey guards on this itself, so callers do not need it to decide whether to CALL
+    /// SplitKey. It exists so the client-side work that feeds SplitKey — see
+    /// <see cref="SetAutoKeyValue"/> — is skipped entirely for the pages where it would be
+    /// thrown away, which is most of them.
+    /// </summary>
+    internal bool NeedsAutoSplitKey
+        => _form is NavForm form
+           && form.MasterPage?.PageProperties?.SourceObject?.AutoSplitKey == true;
+
+    /// <summary>
+    /// Hand BC's <c>NavForm.SplitKey()</c> the key the CLIENT proposes for the row about to be
+    /// inserted — <c>NavForm.AutoKeyValue</c>, the first thing SplitKey consults.
+    ///
+    /// This is a real channel in BC's own design, not a back door. On a service tier the client
+    /// computes the new row's key itself (<c>AutoKeyGenerator.GenerateKey</c> in
+    /// Microsoft.Dynamics.Nav.Client.UI) and ships it in <c>NavRecordState.AutoKeyValues</c>;
+    /// <c>NSDataSetState.ApplyToRecordWithoutPositioning</c> lands it on
+    /// <c>NavForm.AutoKeyValue</c>, and SplitKey then VALIDATES it — takes it only if no row
+    /// already holds it, and otherwise falls back to its own bound arithmetic. The runner
+    /// replaces that client, so without this the field is always null and SplitKey computes
+    /// from bounds nobody populated.
+    ///
+    /// Pass null to clear it: a stale value from a previous insert would be offered for the
+    /// next row, and SplitKey has no way to tell it apart from a fresh proposal.
+    /// </summary>
+    internal void SetAutoKeyValue(object? value)
+    {
+        if (_form is NavForm form) form.AutoKeyValue = value;
+    }
+
+    private MethodInfo? FindNavFormMethod(string name, Type[] parameterTypes)
+    {
+        for (var t = _form.GetType(); t != null; t = t.BaseType)
+        {
+            var mi = t.GetMethod(name,
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly,
+                binder: null, types: parameterTypes, modifiers: null);
+            if (mi != null) return mi;
+        }
+        return null;
+    }
 
     /// <summary>
     /// Start a new row the way the page itself would: BC's own NavForm.NewRecord, which does

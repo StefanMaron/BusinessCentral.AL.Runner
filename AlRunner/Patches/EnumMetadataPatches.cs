@@ -41,13 +41,22 @@ using ITreeObject = Microsoft.Dynamics.Nav.Runtime.ITreeObject;
 namespace AlRunner;
 
 /// <summary>
-/// Captures (id, name, options[], indexes[]) for every AL enum compiled by
+/// Captures (id, name, options[], indexes[], captions[]) for every AL enum compiled by
 /// <see cref="BcCompiler"/>. Populated at emit time by <c>CaptureOutputter</c>;
 /// consumed at runtime by <see cref="BcRuntime.NCLEnumMetadata_CreateById"/>.
 /// </summary>
 public static class AlEnumMetadataRegistry
 {
-    public sealed record Entry(int Id, string Name, string[] Options, int[] Indexes, int[][] Implementations);
+    // Captions is parallel to Options/Indexes: Captions[i] is value i's declared
+    // `Caption = '...'` text, or null when the value declares no Caption at all (issue
+    // #1775). Null is meaningful — "declares none" — and the consumer
+    // (AlEnumOptionMetadata.GetCaptionFromIndex) applies AL's own default (the member
+    // name) rather than this record baking that default in, matching the same
+    // null-means-"declares none" convention RecordPatches.AlSourceParser already uses
+    // for field-level Caption. A null Captions array (not just a null element) means
+    // "captured before caption-ingestion existed / caller didn't supply one" and is
+    // treated exactly like an array of all-nulls.
+    public sealed record Entry(int Id, string Name, string[] Options, int[] Indexes, int[][] Implementations, string?[]? Captions = null);
 
     // Base-enum registrations, keyed by the enum's own object Id. This also
     // absorbs precompiled-dependency enums (RegisterFromAppPath) and cache
@@ -72,14 +81,16 @@ public static class AlEnumMetadataRegistry
     /// <summary>Last-writer-wins for the base enum itself; bundle-wide enum-id
     /// collisions are quarantined upstream. Enumextension values are tracked
     /// separately — see <see cref="RegisterExtension"/>.</summary>
-    public static void Register(int id, string name, string[] options, int[] indexes, int[][]? implementations = null)
+    public static void Register(int id, string name, string[] options, int[] indexes, int[][]? implementations = null, string?[]? captions = null)
     {
         if (options == null || indexes == null) return;
         if (options.Length != indexes.Length) return;
         implementations ??= Array.Empty<int[]>();
         if (implementations.Length != options.Length)
             implementations = Array.Empty<int[]>();
-        _byId[id] = new Entry(id, name ?? string.Empty, options, indexes, implementations);
+        if (captions != null && captions.Length != options.Length)
+            captions = null;
+        _byId[id] = new Entry(id, name ?? string.Empty, options, indexes, implementations, captions);
     }
 
     /// <summary>
@@ -87,14 +98,16 @@ public static class AlEnumMetadataRegistry
     /// extends. Multiple extensions targeting the same base enum accumulate;
     /// none of them overwrite the base entry or each other.
     /// </summary>
-    public static void RegisterExtension(int targetId, string name, string[] options, int[] indexes, int[][]? implementations = null)
+    public static void RegisterExtension(int targetId, string name, string[] options, int[] indexes, int[][]? implementations = null, string?[]? captions = null)
     {
         if (options == null || indexes == null) return;
         if (options.Length != indexes.Length) return;
         implementations ??= Array.Empty<int[]>();
         if (implementations.Length != options.Length)
             implementations = Array.Empty<int[]>();
-        var entry = new Entry(targetId, name ?? string.Empty, options, indexes, implementations);
+        if (captions != null && captions.Length != options.Length)
+            captions = null;
+        var entry = new Entry(targetId, name ?? string.Empty, options, indexes, implementations, captions);
         _extByTargetId.AddOrUpdate(
             targetId,
             ImmutableList.Create(entry),
@@ -128,6 +141,7 @@ public static class AlEnumMetadataRegistry
         var options = new List<string>();
         var indexes = new List<int>();
         var implementations = new List<int[]>();
+        var captions = new List<string?>();
         var seenOrdinals = new HashSet<int>();
 
         void AddValues(Entry e)
@@ -139,6 +153,7 @@ public static class AlEnumMetadataRegistry
                 options.Add(e.Options[i]);
                 indexes.Add(e.Indexes[i]);
                 implementations.Add(i < e.Implementations.Length ? e.Implementations[i] : Array.Empty<int>());
+                captions.Add(e.Captions != null && i < e.Captions.Length ? e.Captions[i] : null);
             }
         }
 
@@ -147,7 +162,7 @@ public static class AlEnumMetadataRegistry
         foreach (var ext in extensions)
             AddValues(ext);
 
-        entry = new Entry(id, name, options.ToArray(), indexes.ToArray(), implementations.ToArray());
+        entry = new Entry(id, name, options.ToArray(), indexes.ToArray(), implementations.ToArray(), captions.ToArray());
         return true;
     }
 
@@ -170,7 +185,8 @@ public static class AlEnumMetadataRegistry
                     enumSymbol.Name,
                     enumSymbol.Options.ToArray(),
                     enumSymbol.Indexes.ToArray(),
-                    enumSymbol.Implementations.Select(i => i.ToArray()).ToArray());
+                    enumSymbol.Implementations.Select(i => i.ToArray()).ToArray(),
+                    enumSymbol.Captions?.ToArray());
         }
         catch (Exception ex)
         {
@@ -196,6 +212,118 @@ public static class AlEnumMetadataRegistry
         return result.OrderBy(e => e.Id).ToList();
     }
 
+    /// <summary>Every enum id currently registered (base ids ∪ enumextension target
+    /// ids) — used by <see cref="DependencyLoader"/> to snapshot "before this dep's
+    /// emit" / "after this dep's emit" sets so a source-dep compile can persist only
+    /// the entries IT contributed to its own cache sidecar (issue #1731's fix).</summary>
+    public static int[] Ids
+    {
+        get
+        {
+            var ids = new HashSet<int>(_byId.Keys);
+            ids.UnionWith(_extByTargetId.Keys);
+            return ids.ToArray();
+        }
+    }
+
+    /// <summary>
+    /// Serialize the given enum ids' MERGED entries (base + enumextension values
+    /// already flattened by <see cref="TryGet"/>) to a sidecar file. Mirrors
+    /// Program.cs's bundle-level <c>SaveEnumRegistrySidecar</c> (schema v3), but
+    /// scoped to <paramref name="onlyIds"/> so the dependency-loader's per-dep
+    /// cache sidecar does not leak sibling-app/bundle entries into its own file —
+    /// same convention as <see cref="AlReportMetadataRegistry.SaveSidecar(string, IEnumerable{int})"/>.
+    /// Returns the number of entries written.
+    /// </summary>
+    public static int SaveSidecar(string path, IEnumerable<int> onlyIds)
+    {
+        var idSet = new HashSet<int>(onlyIds);
+        var entries = new List<Entry>(idSet.Count);
+        foreach (var id in idSet)
+            if (TryGet(id, out var merged))
+                entries.Add(merged);
+        entries = entries.OrderBy(e => e.Id).ToList();
+
+        var dto = new
+        {
+            enums = entries.Select(e => new
+            {
+                id = e.Id,
+                name = e.Name,
+                options = e.Options,
+                indexes = e.Indexes,
+                implementations = e.Implementations,
+                captions = e.Captions,
+            }).ToArray(),
+        };
+        var json = System.Text.Json.JsonSerializer.Serialize(dto);
+        File.WriteAllText(path, json);
+        return entries.Count;
+    }
+
+    /// <summary>
+    /// Replay entries from a sidecar written by <see cref="SaveSidecar"/>. Each
+    /// entry is already the merged base+extension set, so replay uses plain
+    /// <see cref="Register"/> (never <see cref="RegisterExtension"/>) — matching
+    /// how Program.cs's bundle-level sidecar replay works. Throws on corrupt JSON;
+    /// callers treat that as a cache MISS and rebuild. Returns replayed entry count.
+    /// </summary>
+    public static int LoadSidecar(string path)
+    {
+        var json = File.ReadAllText(path);
+        using var doc = System.Text.Json.JsonDocument.Parse(json);
+        if (!doc.RootElement.TryGetProperty("enums", out var arr)
+            || arr.ValueKind != System.Text.Json.JsonValueKind.Array)
+            throw new InvalidDataException("enum-registry.json: missing 'enums' array");
+        int count = 0;
+        foreach (var e in arr.EnumerateArray())
+        {
+            int id = e.GetProperty("id").GetInt32();
+            string name = e.GetProperty("name").GetString() ?? string.Empty;
+            var optsEl = e.GetProperty("options");
+            var idxEl = e.GetProperty("indexes");
+            var opts = new string[optsEl.GetArrayLength()];
+            int oi = 0;
+            foreach (var o in optsEl.EnumerateArray()) opts[oi++] = o.GetString() ?? string.Empty;
+            var idxs = new int[idxEl.GetArrayLength()];
+            int ii = 0;
+            foreach (var x in idxEl.EnumerateArray()) idxs[ii++] = x.GetInt32();
+            int[][] implementations = Array.Empty<int[]>();
+            if (e.TryGetProperty("implementations", out var implEl)
+                && implEl.ValueKind == System.Text.Json.JsonValueKind.Array
+                && implEl.GetArrayLength() == opts.Length)
+            {
+                implementations = new int[implEl.GetArrayLength()][];
+                int vi = 0;
+                foreach (var valueImplEl in implEl.EnumerateArray())
+                {
+                    if (valueImplEl.ValueKind != System.Text.Json.JsonValueKind.Array)
+                    {
+                        implementations = Array.Empty<int[]>();
+                        break;
+                    }
+                    var ids = new int[valueImplEl.GetArrayLength()];
+                    int idi = 0;
+                    foreach (var implId in valueImplEl.EnumerateArray())
+                        ids[idi++] = implId.GetInt32();
+                    implementations[vi++] = ids;
+                }
+            }
+            string?[]? captions = null;
+            if (e.TryGetProperty("captions", out var capEl)
+                && capEl.ValueKind == System.Text.Json.JsonValueKind.Array
+                && capEl.GetArrayLength() == opts.Length)
+            {
+                captions = new string?[capEl.GetArrayLength()];
+                int ci = 0;
+                foreach (var c in capEl.EnumerateArray())
+                    captions[ci++] = c.ValueKind == System.Text.Json.JsonValueKind.Null ? null : c.GetString();
+            }
+            Register(id, name, opts, idxs, implementations, captions);
+            count++;
+        }
+        return count;
+    }
 }
 
 /// <summary>
@@ -209,10 +337,11 @@ internal sealed class AlEnumOptionMetadata : NCLOptionMetadata
     private readonly NavListInt _ordinals;
     private readonly int[] _ordinalValues;
     private readonly int[][] _implementations;
+    private readonly string?[] _captions;
     private readonly string _name;
     private readonly int _id;
 
-    public AlEnumOptionMetadata(string name, int id, string[] options, int[] indexes, int[][]? implementations = null)
+    public AlEnumOptionMetadata(string name, int id, string[] options, int[] indexes, int[][]? implementations = null, string?[]? captions = null)
         : base(JoinOptions(options))
     {
         _name = name;
@@ -221,6 +350,9 @@ internal sealed class AlEnumOptionMetadata : NCLOptionMetadata
         _implementations = implementations != null && implementations.Length == options.Length
             ? implementations
             : Array.Empty<int[]>();
+        _captions = captions != null && captions.Length == options.Length
+            ? captions
+            : new string?[options.Length];
         _optionNames = options;
         _names = (NavList)NavListCtorOfNavText.Invoke(
             new object[] { options.Select(o => NavText.Create(o ?? string.Empty)).ToList(), /*asReadOnly*/ true });
@@ -249,9 +381,7 @@ internal sealed class AlEnumOptionMetadata : NCLOptionMetadata
     //
     // The real BC subclass NCLEnumMetadata.GetOptionFromIndex (line 158792)
     // walks indexes[] looking for the matching ordinal value; we mirror that
-    // here using our _ordinalValues. Likewise for GetCaptionFromIndex —
-    // captions on AL-runner-emitted enums collapse to the member name (we
-    // don't ingest CaptionML), so it forwards to GetOptionFromIndex.
+    // here using our _ordinalValues. Likewise for GetCaptionFromIndex.
     public override string GetOptionFromIndex(int index, bool emptyIfNotFound = false)
     {
         for (int i = 0; i < _ordinalValues.Length; i++)
@@ -270,8 +400,23 @@ internal sealed class AlEnumOptionMetadata : NCLOptionMetadata
         return string.Empty;
     }
 
+    // Issue #1775 — Format(<enum value>) and FieldRef.GetEnumValueCaptionFromOrdinalValue
+    // both chain through here; a value's declared `Caption = '...'` (captured by
+    // BcCompiler.CaptureOutputter off the resolved IEnumValueSymbol's Caption property
+    // at emit time — see ReadEnumValueCaption) must win over the member name. A value
+    // with NO declared Caption falls back to the member name, matching AL's own default
+    // (the same fallback GetOptionFromIndex already returns) rather than returning an
+    // empty string — an enum value's caption is never blank unless the AL author wrote
+    // `Caption = '';` explicitly, and that case is indistinguishable from "no capture"
+    // only in the sense that BOTH already resolve to the empty string here, which is
+    // correct for BOTH.
     public override string GetCaptionFromIndex(int index)
     {
+        for (int i = 0; i < _ordinalValues.Length; i++)
+        {
+            if (_ordinalValues[i] == index)
+                return _captions[i] ?? _optionNames[i];
+        }
         return GetOptionFromIndex(index);
     }
 
@@ -363,7 +508,7 @@ public static partial class BcRuntime
         {
             try
             {
-                var meta = new AlEnumOptionMetadata(e.Name, e.Id, e.Options, e.Indexes, e.Implementations);
+                var meta = new AlEnumOptionMetadata(e.Name, e.Id, e.Options, e.Indexes, e.Implementations, e.Captions);
                 return _alEnumCache.GetOrAdd(id, meta);
             }
             catch

@@ -26,8 +26,8 @@ using Xunit;
 
 namespace AlRunner.Tests;
 
-// See DefineFlagIntegrationTests for why runner-subprocess tests are serialized.
-[Collection("server-serial")]
+// See DefineFlagIntegrationTests for why runner-subprocess tests used to be
+// [Collection("server-serial")] and no longer are — #1809.
 public sealed class EmitExclusionLoudnessTests
 {
     private static readonly string RepoRoot = Path.GetFullPath(
@@ -35,14 +35,6 @@ public sealed class EmitExclusionLoudnessTests
     private static readonly string ProjectPath = Path.Combine(RepoRoot, "AlRunner");
     private static readonly string FixturePath = Path.Combine(
         RepoRoot, "AlRunner.Tests", "Fixtures", "EmitExclusion");
-
-    private static bool ArtifactsPresent()
-    {
-        var home = Environment.GetEnvironmentVariable("HOME")
-            ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        var stdCache = Path.Combine(home, ".local", "share", "al-runner", "artifacts");
-        return Directory.Exists(stdCache) && Directory.EnumerateDirectories(stdCache).Any();
-    }
 
     private static (string Output, int Exit) RunRunner()
     {
@@ -75,10 +67,10 @@ public sealed class EmitExclusionLoudnessTests
     /// [BcCompiler] EMIT-FAIL line (filtered away at this verbosity), if the excluded
     /// names are omitted, or if the runner exits 0 after compiling the healthy remainder.
     /// </summary>
-    [Fact]
+    [SkippableFact]
     public void ExcludedObject_IsReportedAndFailsTheRun()
     {
-        if (!ArtifactsPresent()) { Console.Error.WriteLine("[skip] BC artifacts not provisioned"); return; }
+        TestArtifacts.SkipIfMissing();
 
         var (output, exit) = RunRunner();
 
@@ -101,10 +93,10 @@ public sealed class EmitExclusionLoudnessTests
     /// this, the test above would still pass if the runner had simply broken outright on the
     /// fixture — proving nothing about exclusion detection specifically.
     /// </summary>
-    [Fact]
+    [SkippableFact]
     public void HealthyObjectsAlone_StillPass()
     {
-        if (!ArtifactsPresent()) { Console.Error.WriteLine("[skip] BC artifacts not provisioned"); return; }
+        TestArtifacts.SkipIfMissing();
 
         var tmp = Path.Combine(Path.GetTempPath(), "al-runner-emit-excl", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(tmp);

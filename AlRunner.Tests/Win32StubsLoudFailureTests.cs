@@ -90,7 +90,7 @@ public class Win32StubsLoudFailureTests
     /// environment) purely as test fixture data; the assertion is that Win32Stubs picks it
     /// up via the env var, not that this specific test environment has a compiler.
     /// </summary>
-    [Fact]
+    [SkippableFact]
     public void GetOrBuild_HonoursSoOverride_WhenFileExists()
     {
         var dir = Path.Combine(Path.GetTempPath(), "win32stubs-test-" + Guid.NewGuid());
@@ -105,7 +105,8 @@ public class Win32StubsLoudFailureTests
         proc.WaitForExit(10000);
         // Skip (not fail) on a machine with no compiler at all — the override path itself
         // is what's under test, not whether this box can compile C.
-        if (proc.ExitCode != 0) return;
+        TestArtifacts.SkipIf(proc.ExitCode != 0,
+            $"no working C compiler on this machine: `cc -shared` exited {proc.ExitCode}.");
 
         var saved = Environment.GetEnvironmentVariable("AL_RUNNER_WIN32_STUBS_SO");
         try
@@ -159,11 +160,12 @@ public class Win32StubsLoudFailureTests
     /// which is itself keyed off the live <c>RuntimeInformation.ProcessArchitecture</c> so
     /// the test can't fake a mismatched RID past it.
     /// </summary>
-    [Fact]
+    [SkippableFact]
     public void LocatePrebuiltSo_ReturnsComposedPath_WhenFileExists()
     {
         var name = Win32Stubs.PrebuiltStubFileName();
-        if (name is null) return; // unsupported RID (e.g. not Linux, or non-x64/arm64) — nothing to assert
+        TestArtifacts.SkipIf(name is null,
+            $"no prebuilt-stub convention for this RID ({System.Runtime.InteropServices.RuntimeInformation.RuntimeIdentifier}) — Linux x64/arm64 only.");
         var expected = Path.Combine("/fake/base", "Win32Stubs", name);
 
         var found = Win32Stubs.LocatePrebuiltSo("/fake/base", path => path == expected);
@@ -189,11 +191,12 @@ public class Win32StubsLoudFailureTests
     /// the wrong architecture's shim (an ELF class mismatch that fails at NativeLibrary.Load
     /// time with a confusing "wrong ELF class" error, not at compile time).
     /// </summary>
-    [Fact]
+    [SkippableFact]
     public void PrebuiltStubFileName_NamesTheRidExplicitly_WhenSupported()
     {
         var name = Win32Stubs.PrebuiltStubFileName();
-        if (name is null) return; // e.g. running this test suite on macOS/Windows
+        TestArtifacts.SkipIf(name is null,
+            $"no prebuilt-stub convention for this RID ({System.Runtime.InteropServices.RuntimeInformation.RuntimeIdentifier}) — Linux x64/arm64 only.");
         Assert.True(name is "libwin32_stubs.linux-x64.so" or "libwin32_stubs.linux-arm64.so",
             $"Unexpected prebuilt stub filename: {name}");
     }
@@ -201,16 +204,18 @@ public class Win32StubsLoudFailureTests
     /// <summary>
     /// GREEN, end-to-end: with a fixture .so dropped at the exact beside-the-binary path
     /// GetOrBuild probes (via the BaseDirectoryForTests test seam), GetOrBuild must load it
-    /// directly — with zero compiler invocation. Proven here by additionally stripping PATH
-    /// down to nothing: if GetOrBuild fell through to the compile-from-source path instead of
-    /// using the prebuilt stub, it would throw (no compiler on PATH) rather than return a
-    /// valid handle.
+    /// directly — with zero compiler invocation. Proven here by additionally forcing the
+    /// "no compiler reachable" branch via the PathEnvironmentForTests seam (#1809 — NOT a real
+    /// PATH mutation; see that seam's doc comment for why): if GetOrBuild fell through to the
+    /// compile-from-source path instead of using the prebuilt stub, it would throw (no
+    /// compiler reachable) rather than return a valid handle.
     /// </summary>
-    [Fact]
+    [SkippableFact]
     public void GetOrBuild_LoadsShippedPrebuiltStub_WithoutInvokingAnyCompiler()
     {
         var ridName = Win32Stubs.PrebuiltStubFileName();
-        if (ridName is null) return; // no prebuilt convention for this OS/arch — nothing to prove here
+        TestArtifacts.SkipIf(ridName is null,
+            $"no prebuilt-stub convention for this RID ({System.Runtime.InteropServices.RuntimeInformation.RuntimeIdentifier}) — Linux x64/arm64 only.");
 
         var dir = Path.Combine(Path.GetTempPath(), "win32stubs-prebuilt-test-" + Guid.NewGuid());
         var stubDir = Path.Combine(dir, "Win32Stubs");
@@ -227,12 +232,11 @@ public class Win32StubsLoudFailureTests
         // but the behaviour under test (GetOrBuild not needing cc at RUN time) doesn't.
         if (proc.ExitCode != 0) { try { Directory.Delete(dir, true); } catch { } return; }
 
-        var savedPath = Environment.GetEnvironmentVariable("PATH");
         var savedOverride = Environment.GetEnvironmentVariable("AL_RUNNER_WIN32_STUBS_SO");
         try
         {
             Environment.SetEnvironmentVariable("AL_RUNNER_WIN32_STUBS_SO", null);
-            Environment.SetEnvironmentVariable("PATH", ""); // no compiler reachable at all
+            Win32Stubs.PathEnvironmentForTests = ""; // no compiler reachable — process-local seam, not real PATH
             Win32Stubs.BaseDirectoryForTests = dir;
             Win32Stubs.ResetForTests();
 
@@ -241,7 +245,7 @@ public class Win32StubsLoudFailureTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PATH", savedPath);
+            Win32Stubs.PathEnvironmentForTests = null;
             Environment.SetEnvironmentVariable("AL_RUNNER_WIN32_STUBS_SO", savedOverride);
             Win32Stubs.BaseDirectoryForTests = null;
             Win32Stubs.ResetForTests();
@@ -251,7 +255,8 @@ public class Win32StubsLoudFailureTests
 
     /// <summary>
     /// Negative direction for the new load-order step: with no prebuilt stub AND no
-    /// compiler on PATH, GetOrBuild must still fail loudly with #1669's message — the new
+    /// compiler reachable (via the PathEnvironmentForTests seam — #1809, not a real PATH
+    /// mutation), GetOrBuild must still fail loudly with #1669's message — the new
     /// "check for a prebuilt" step must not itself swallow the absence and return a
     /// default/zero handle.
     /// </summary>
@@ -261,12 +266,11 @@ public class Win32StubsLoudFailureTests
         var dir = Path.Combine(Path.GetTempPath(), "win32stubs-no-prebuilt-test-" + Guid.NewGuid());
         Directory.CreateDirectory(dir); // deliberately no Win32Stubs/ subfolder inside it
 
-        var savedPath = Environment.GetEnvironmentVariable("PATH");
         var savedOverride = Environment.GetEnvironmentVariable("AL_RUNNER_WIN32_STUBS_SO");
         try
         {
             Environment.SetEnvironmentVariable("AL_RUNNER_WIN32_STUBS_SO", null);
-            Environment.SetEnvironmentVariable("PATH", "");
+            Win32Stubs.PathEnvironmentForTests = ""; // no compiler reachable — process-local seam, not real PATH
             Win32Stubs.BaseDirectoryForTests = dir;
             Win32Stubs.ResetForTests();
 
@@ -275,7 +279,7 @@ public class Win32StubsLoudFailureTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable("PATH", savedPath);
+            Win32Stubs.PathEnvironmentForTests = null;
             Environment.SetEnvironmentVariable("AL_RUNNER_WIN32_STUBS_SO", savedOverride);
             Win32Stubs.BaseDirectoryForTests = null;
             Win32Stubs.ResetForTests();

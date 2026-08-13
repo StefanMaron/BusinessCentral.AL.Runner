@@ -16,9 +16,8 @@ using Xunit;
 
 namespace AlRunner.Tests;
 
-// See DefineFlagIntegrationTests for why this is serialized with the other
-// runner-subprocess integration tests.
-[Collection("server-serial")]
+// See DefineFlagIntegrationTests for why this used to be serialized with the
+// other runner-subprocess integration tests and no longer is — #1809.
 public sealed class OutputFormatTests : IDisposable
 {
     private static readonly string RepoRoot = Path.GetFullPath(
@@ -37,15 +36,6 @@ public sealed class OutputFormatTests : IDisposable
     public void Dispose()
     {
         try { Directory.Delete(_root, recursive: true); } catch { }
-    }
-
-    private static bool ArtifactsPresent()
-    {
-        var home = Environment.GetEnvironmentVariable("HOME")
-            ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        var stdCache = Path.Combine(home, ".local", "share", "al-runner", "artifacts");
-        return Directory.Exists(stdCache) &&
-               Directory.EnumerateDirectories(stdCache).Any();
     }
 
     // One passing test, one failing test — enough to prove both status values and
@@ -130,10 +120,10 @@ public sealed class OutputFormatTests : IDisposable
         lock (sb) return (sb.ToString(), p.ExitCode);
     }
 
-    [Fact]
+    [SkippableFact]
     public void OutputJson_MixedResults_EmitsExpectedShape()
     {
-        if (!ArtifactsPresent()) { Console.Error.WriteLine("[skip] BC artifacts not present"); return; }
+        TestArtifacts.SkipIfMissing();
 
         var (output, exit) = RunRunner("--output-json");
 
@@ -164,10 +154,10 @@ public sealed class OutputFormatTests : IDisposable
         Assert.Equal("pass", passing.GetProperty("status").GetString());
     }
 
-    [Fact]
+    [SkippableFact]
     public void OutputJunit_MixedResults_WritesValidXmlWithFailureElement()
     {
-        if (!ArtifactsPresent()) { Console.Error.WriteLine("[skip] BC artifacts not present"); return; }
+        TestArtifacts.SkipIfMissing();
 
         var junitPath = Path.Combine(_root, "junit-out.xml");
         var (_, exit) = RunRunner($"--output-junit \"{junitPath}\"");

@@ -1,42 +1,32 @@
-// ReportPatches — static NavReport.Run / NavReport.RunModal replacements.
+// ReportPatches — NavReport.Run / NavReport.RunModal instance helpers.
 //
-// REPORT.RUN(id [, reqPage [, sysPrinter [, record]]]) in AL compiles to static
-// NavReport.Run(int, ...) overloads, and REPORT.RUNMODAL(...) to NavReport.RunModal(...).
-// Without hooks these call NCLMetadata.GetMetaReportById → ThrowMetaApplicationObjectNotFound
-// for every test-assembly report.
-//
-// Policy: in-process construction of a NavReport from an id is not yet wired (would need
-// a sync analogue of NavReportHandle.CreateTarget driven by reportId). Until it lands,
-// the static Run / RunModal overloads throw an AL-observable InvalidOperationException
-// with the "out-of-scope:" prefix. Tests wrap these calls in `asserterror` +
-// `Assert.ExpectedError('out-of-scope: static NavReport.Run')`. No silent no-ops.
+// The static NavReport.Run(int, ...) / RunModal(int, ...) overloads (AL
+// `Report.Run(id, ...)` / `Report.RunModal(id, ...)`) used to be JmpHook targets defined
+// here, each throwing an out-of-scope InvalidOperationException on the theory that
+// in-process construction of a NavReport from a bare id was not yet wired. #1771: that
+// JmpHook never actually fired — JmpHook.Apply silently skips any target that is not
+// Cecil-owned under the default Cecil-only runtime (AL_RUNNER_ENABLE_JMPHOOK unset) — so the
+// static call fell straight through the Cecil-rewritten `ret` placeholder body and silently
+// did nothing (a false PASS, not the intended loud throw). Construction from a bare id was
+// also, by then, already wired (NavReportSync.CreateReportInstance, used by
+// NavReportHandle_CreateTarget and SyncRunRequestPage). Both overload families are now
+// Cecil-owned directly: real execution for the `int[, bool[, bool[, NavRecord]]]` shapes via
+// NavReportSync.SyncStaticRun, and a loud OOS throw (emitted as IL, not a JmpHook) for the
+// unrecognised ReportRunOptions overload shape. See NclCecilRewrite.cs §NavReport block.
 using System.Runtime.CompilerServices;
 
 namespace AlRunner;
 
 public static partial class BcRuntime
 {
-    private const string StaticRunOosPrefix =
-        "out-of-scope: static NavReport.Run (in-process construction from reportId not yet wired; " +
-        "construct the report as an AL variable and call instance Run() instead)";
-    private const string StaticRunModalOosPrefix =
-        "out-of-scope: static NavReport.RunModal (in-process construction from reportId not yet wired; " +
-        "construct the report as an AL variable and call instance Run() instead)";
-
     // ──────────────────────────────────────────────────────────────────
     // NavReport.Run / RunModal instance (0-arg, void) — execute lifecycle
     // ──────────────────────────────────────────────────────────────────
-    // The Cecil rewrite in NclCecilRewrite.cs leaves the instance Run() / RunModal()
-    // bodies as a `ret` placeholder. At runtime, BcRuntime wires a JmpHook here so
-    // the call instead dispatches to NavReportSync.SyncRun(this), which reflectively
-    // invokes OnInitReport / OnPreReport / DataItem Pre+Post / OnPostReport on the
-    // same NavReport instance the AL code constructed. Managed→managed call —
-    // avoids a cross-assembly metadata reference inside the rewritten Ncl.dll.
-
-    // NavReport.Run/RunModal — Cecil-rewritten directly to call SyncRun(this).
-    // The static overloads below remain JmpHook targets (OOS throws).
-    // Instance NavReport_InstanceRun{,Modal} kept here for any external caller
-    // that wants to invoke the lifecycle programmatically.
+    // The Cecil rewrite in NclCecilRewrite.cs rewrites the instance Run() / RunModal()
+    // bodies to call NavReportSync.SyncRun(this) directly. NavReport_InstanceRun{,Modal}
+    // are kept here for any external caller that wants to invoke the lifecycle
+    // programmatically (managed→managed call — avoids a cross-assembly metadata
+    // reference inside the rewritten Ncl.dll).
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static void NavReport_InstanceRun(object self)
@@ -48,67 +38,5 @@ public static partial class BcRuntime
     public static void NavReport_InstanceRunModal(object self)
     {
         NavReportSync.SyncRun(self);
-    }
-
-    // ──────────────────────────────────────────────────────────────────
-    // NavReport.Run static overloads — throw OOS (no silent no-ops)
-    // ──────────────────────────────────────────────────────────────────
-
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    public static void NavReport_StaticRun1(int reportId)
-    {
-        throw new InvalidOperationException($"{StaticRunOosPrefix} [reportId={reportId}]");
-    }
-
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    public static void NavReport_StaticRun2(int reportId, bool requestWindow)
-    {
-        throw new InvalidOperationException($"{StaticRunOosPrefix} [reportId={reportId}]");
-    }
-
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    public static void NavReport_StaticRunOpts(object reportRunOptions)
-    {
-        throw new InvalidOperationException(StaticRunOosPrefix);
-    }
-
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    public static void NavReport_StaticRun3(int reportId, bool requestWindow, bool systemPrinter)
-    {
-        throw new InvalidOperationException($"{StaticRunOosPrefix} [reportId={reportId}]");
-    }
-
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    public static void NavReport_StaticRun4(int reportId, bool requestWindow, bool systemPrinter, object record)
-    {
-        throw new InvalidOperationException($"{StaticRunOosPrefix} [reportId={reportId}]");
-    }
-
-    // ──────────────────────────────────────────────────────────────────
-    // NavReport.RunModal static overloads — throw OOS
-    // ──────────────────────────────────────────────────────────────────
-
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    public static void NavReport_StaticRunModal1(int reportId)
-    {
-        throw new InvalidOperationException($"{StaticRunModalOosPrefix} [reportId={reportId}]");
-    }
-
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    public static void NavReport_StaticRunModal2(int reportId, bool requestWindow)
-    {
-        throw new InvalidOperationException($"{StaticRunModalOosPrefix} [reportId={reportId}]");
-    }
-
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    public static void NavReport_StaticRunModal3(int reportId, bool requestWindow, bool systemPrinter)
-    {
-        throw new InvalidOperationException($"{StaticRunModalOosPrefix} [reportId={reportId}]");
-    }
-
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    public static void NavReport_StaticRunModal4(int reportId, bool requestWindow, bool systemPrinter, object record)
-    {
-        throw new InvalidOperationException($"{StaticRunModalOosPrefix} [reportId={reportId}]");
     }
 }

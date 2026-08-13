@@ -29,33 +29,69 @@ internal static class TestPageFactory
         // control bound to a page VARIABLE (rather than to a Rec field) resolves through.
         RecordPatches.EnsureRealPageMetadata(pageId);
 
+        // GetSourceTableIdForPage only knows pages the runner AL-source-parsed itself; a
+        // precompiled dependency's page (Base App / System App / an ISV .app) falls back to
+        // its SymbolReference.json's own SourceTable property — see
+        // RecordPatches.TryGetDependencySourceTableIdForPage.
         var tableId = RecordPatches.GetSourceTableIdForPage(pageId);
+        if (tableId == 0)
+            tableId = RecordPatches.TryGetDependencySourceTableIdForPage(pageId);
         if (tableId == 0)
         {
             why = $"page {pageId} declares no SourceTable";
             return null;
         }
 
+        // isTemporary: false — TestPage over a temporary-source-table page is not this
+        // path's concern today; only the plain-page-variable caller below currently needs
+        // it (issue #1719's Page 700 "Error Messages"), and changing this one's shape is
+        // out of scope for that fix.
+        var record = TryBuildBlankRecord(owner, tableId, isTemporary: false, out var recordWhy);
+        if (record == null)
+        {
+            why = $"page {pageId}: {recordWhy}";
+            return null;
+        }
+
+        return new Built(record, RunnerPageInstance.TryCreate(owner, pageId, record), tableId);
+    }
+
+    /// <summary>
+    /// A blank (unpositioned) cursor over <paramref name="tableId"/>, owned by
+    /// <paramref name="owner"/> — the same shape BC's real page construction binds Rec to
+    /// before any row is read. Shared by the TestPage path above and by
+    /// <c>CodeunitPatches.NavFormHandle_CreateTarget</c>, which needs the identical record
+    /// to bind a plain <c>Page X</c> variable's Rec (see issue #1719: a page variable built
+    /// via the single-arg ctor never gets one, so any Base App page method reading Rec NREs
+    /// before AL ever runs).
+    /// <para><paramref name="isTemporary"/> must match the page's own
+    /// <c>SourceTableTemporary</c> declaration — Page 700 "Error Messages" declares it
+    /// true, and its SetRecords body does <c>Rec.Copy(TempErrorMessage, true)</c>, which
+    /// real BC's Copy(shareTable: true) refuses unless BOTH records are temporary
+    /// ("The COPY function can only be used with the shareTable argument set to true if
+    /// both records are temporary").</para>
+    /// </summary>
+    internal static NavRecord? TryBuildBlankRecord(object owner, int tableId, bool isTemporary, out string? why)
+    {
+        why = null;
         var metaTable = RecordPatches.GetOrBuildNCLMetaTable(tableId);
         var recordType = RecordPatches.FindRecordType(tableId);
         if (metaTable == null || recordType == null)
         {
-            why = $"page {pageId}: source table {tableId} has no runtime record type here";
+            why = $"source table {tableId} has no runtime record type here";
             return null;
         }
 
         var ctor = recordType.GetConstructors().FirstOrDefault(c => c.GetParameters().Length == 6);
         if (ctor == null)
         {
-            why = $"page {pageId}: Record{tableId} has no 6-arg constructor";
+            why = $"Record{tableId} has no 6-arg constructor";
             return null;
         }
 
-        var record = (NavRecord)ctor.Invoke(new object?[]
+        return (NavRecord)ctor.Invoke(new object?[]
         {
-            owner, metaTable, false, null, null, SecurityFiltering.Ignored
+            owner, metaTable, isTemporary, null, null, SecurityFiltering.Ignored
         });
-
-        return new Built(record, RunnerPageInstance.TryCreate(owner, pageId, record), tableId);
     }
 }

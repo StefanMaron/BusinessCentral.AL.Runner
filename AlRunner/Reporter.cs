@@ -16,7 +16,8 @@ public static class Reporter
 {
     public static void PrintSummary(IReadOnlyList<BucketResult> buckets, TextWriter w)
     {
-        int totalTests = 0, pass = 0, fail = 0, err = 0;
+        int totalTests = 0, pass = 0, fail = 0, err = 0, skipped = 0;
+        int passOos = 0, passKnownGap = 0, passDivergence = 0;
         int compileFailed = 0, execFailed = 0;
         TimeSpan emit = TimeSpan.Zero, comp = TimeSpan.Zero, run = TimeSpan.Zero;
         foreach (var b in buckets)
@@ -27,8 +28,15 @@ public static class Reporter
             foreach (var t in b.Tests)
             {
                 totalTests++;
-                if (t.Outcome == TestOutcome.Pass) pass++;
+                if (t.Outcome == TestOutcome.Pass)
+                {
+                    pass++;
+                    if (t.Expectation == Infrastructure.ExpectationResult.PassOos) passOos++;
+                    else if (t.Expectation == Infrastructure.ExpectationResult.PassKnownGap) passKnownGap++;
+                    else if (t.Expectation == Infrastructure.ExpectationResult.PassDivergence) passDivergence++;
+                }
                 else if (t.Outcome == TestOutcome.Fail) fail++;
+                else if (t.Outcome == TestOutcome.Skipped) skipped++;
                 else err++;
             }
         }
@@ -42,8 +50,19 @@ public static class Reporter
         w.WriteLine($"  exec-fail:   {execFailed}");
         w.WriteLine($"Tests:         {totalTests} total");
         w.WriteLine($"  pass:        {pass}");
+        // Manifest reclassifications (docs/expectations.md) are surfaced DISTINCTLY so
+        // a green run that got there via quarantined tests does not read as an
+        // unqualified green. Zero-count lines are omitted: no manifest, no noise.
+        if (passOos > 0)
+            w.WriteLine($"    pass-oos:        {passOos}");
+        if (passKnownGap > 0)
+            w.WriteLine($"    pass-known-gap:  {passKnownGap}");
+        if (passDivergence > 0)
+            w.WriteLine($"    pass-divergence: {passDivergence}");
         w.WriteLine($"  fail:        {fail}");
         w.WriteLine($"  error:       {err}");
+        if (skipped > 0)
+            w.WriteLine($"  skipped:     {skipped}");
         w.WriteLine($"Time:");
         w.WriteLine($"  AL emit:     {emit.TotalSeconds:F1}s");
         w.WriteLine($"  C# compile:  {comp.TotalSeconds:F1}s");
@@ -84,9 +103,13 @@ public static class Reporter
             {
                 var label = t.Outcome switch
                 {
+                    TestOutcome.Pass when t.Expectation == Infrastructure.ExpectationResult.PassOos => "PASS (oos)",
+                    TestOutcome.Pass when t.Expectation == Infrastructure.ExpectationResult.PassKnownGap => "PASS (known-gap)",
+                    TestOutcome.Pass when t.Expectation == Infrastructure.ExpectationResult.PassDivergence => "PASS (divergence)",
                     TestOutcome.Pass => "PASS ",
                     TestOutcome.Fail => "FAIL ",
                     TestOutcome.Error => "ERROR",
+                    TestOutcome.Skipped => "SKIP ",
                     _ => "?    "
                 };
                 long ms = (long)t.Duration.TotalMilliseconds;
@@ -119,7 +142,7 @@ public static class Reporter
     {
         var groups = buckets
             .Where(b => b.Stage == BucketStage.Ran)
-            .SelectMany(b => b.Tests.Where(t => t.Outcome != TestOutcome.Pass))
+            .SelectMany(b => b.Tests.Where(t => t.Outcome is TestOutcome.Fail or TestOutcome.Error))
             .GroupBy(t => ClassifyTest(t.Message ?? "", t.FullException ?? ""))
             .Select(g => (Classification: g.Key, Count: g.Count(),
                           Sample: g.First()))
@@ -201,10 +224,24 @@ public static class Reporter
                 durationMs = (long)t.Duration.TotalMilliseconds,
                 message = t.Message,
                 stackTrace = (t.AlCallStack ?? t.FullException)?.TrimEnd(),
+                // Manifest reclassification (docs/expectations.md): "pass-oos",
+                // "pass-known-gap", "pass-divergence", "skipped" or
+                // "fail-manifest-drift". Omitted (null) for results the manifest
+                // did not touch.
+                expectation = t.Expectation switch
+                {
+                    Infrastructure.ExpectationResult.PassOos => "pass-oos",
+                    Infrastructure.ExpectationResult.PassKnownGap => "pass-known-gap",
+                    Infrastructure.ExpectationResult.PassDivergence => "pass-divergence",
+                    Infrastructure.ExpectationResult.Skipped => "skipped",
+                    Infrastructure.ExpectationResult.FailManifestDrift => "fail-manifest-drift",
+                    _ => null,
+                },
             }),
             passed = tests.Count(t => t.Outcome == TestOutcome.Pass),
             failed = tests.Count(t => t.Outcome == TestOutcome.Fail),
             errors = tests.Count(t => t.Outcome == TestOutcome.Error),
+            skipped = tests.Count(t => t.Outcome == TestOutcome.Skipped),
             total = tests.Count,
             exitCode,
             compilationErrors = compileErrors.Count > 0 ? compileErrors : null,
@@ -244,7 +281,7 @@ public static class Reporter
             }
             else
             {
-                foreach (var t in b.Tests.Where(t => t.Outcome != TestOutcome.Pass))
+                foreach (var t in b.Tests.Where(t => t.Outcome is TestOutcome.Fail or TestOutcome.Error))
                 {
                     failures.Add(new
                     {
@@ -303,22 +340,14 @@ public static class Reporter
     {
         // Out-of-scope failures (loud-failures.md / docs/scope.md) are classified
         // by API name, not by stack frame — contract surface, not an NRE.
-        // Stable message format (see RunnerOutOfScopeException.BuildMessage):
-        //     out-of-scope: <api> — <reason> — see docs/scope.md#<anchor>
-        const string OosPrefix = "out-of-scope: ";
-        int prefixIdx = message.IndexOf(OosPrefix, StringComparison.Ordinal);
-        if (prefixIdx < 0) prefixIdx = full.IndexOf(OosPrefix, StringComparison.Ordinal);
-        if (prefixIdx >= 0)
+        // The convention is parsed in exactly one place, Infrastructure.
+        // OutOfScopeMessage, which the expectations manifest reads too (#1743).
+        if (Infrastructure.OutOfScopeMessage.TryParse(message, out var oosSignal)
+            || Infrastructure.OutOfScopeMessage.TryParse(full, out oosSignal))
         {
-            string tail = (prefixIdx < message.Length ? message : full)[prefixIdx..];
-            int start = OosPrefix.Length;
-            int sep = tail.IndexOf(" — ", start, StringComparison.Ordinal);
-            if (sep > start)
-            {
-                var api = tail[start..sep].Trim();
-                return $"out-of-scope/{api}";
-            }
-            return "out-of-scope/unknown";
+            return oosSignal.Reason.Length == 0
+                ? "out-of-scope/unknown"
+                : $"out-of-scope/{oosSignal.Api}";
         }
 
         // Classify by the FIRST (innermost) BC stack frame — that's where the actual NRE

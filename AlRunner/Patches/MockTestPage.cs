@@ -72,7 +72,7 @@ internal class MockITestPage : ITestPage
     public int        ValidationErrorCount => 0;
     public virtual FormResult FormResult   => FormResult.OK;
     public string     Name                 => string.Empty;
-    public string     Caption              => string.Empty;
+    public virtual string Caption          => string.Empty;
     public virtual int PageId            => 0;
     public virtual Guid FormHandle         => Guid.Empty;
     public virtual bool Creatable          => false;
@@ -153,6 +153,13 @@ internal class LiveNavTestPage : MockITestPage
     // A constant true made every `CurrPage.Editable(false)` invisible to the test that was
     // written to check it.
     public override bool RuntimeEditable => _staticEditable;
+
+    // TestPage.Caption() (#1776). The base mock answered a constant empty string, which was
+    // wrong for BOTH of a page's caption sources: the static `Caption = '…'` property AND a
+    // runtime `CurrPage.Caption := '…'` assignment made from OnOpenPage. Both write the same
+    // underlying NavForm.PageCaption — reading it here is what makes a single accessor answer
+    // correctly whether or not the page ever touched CurrPage.Caption at all.
+    public override string Caption => _page?.PageCaption ?? string.Empty;
 
     /// <summary>
     /// The subpage part hosted by <paramref name="controlId"/>, driven live over its own
@@ -284,7 +291,7 @@ internal class LiveNavTestPage : MockITestPage
     {
         if (_page == null) return base.GetAction(actionId);
         if (!_liveActions.TryGetValue(actionId, out var action))
-            _liveActions[actionId] = action = new LiveNavTestAction(_page, actionId);
+            _liveActions[actionId] = action = new LiveNavTestAction(this, _page, actionId);
         return action;
     }
 
@@ -377,6 +384,11 @@ internal class LiveNavTestPage : MockITestPage
     {
         FlushPendingNewRow();   // starting a second row persists the first
 
+        // The rows around the insert decide the new row's AutoSplitKey number, and the row
+        // the cursor sits on is about to be wiped by NewRecord's ALInit — so the position is
+        // read NOW and the number computed from it at flush time (ProposeAutoSplitKey).
+        CaptureInsertPosition();
+
         // Ask the page to start the row, exactly as it would for a user: BC's NavForm.NewRecord
         // does ALInit, fills the linking fields in from the page's own filters, and raises
         // OnNewRecord. A filtered page is showing one parent's rows, so a row created on it
@@ -400,6 +412,15 @@ internal class LiveNavTestPage : MockITestPage
     {
         if (!_pendingNewRow) return;
         _pendingNewRow = false;
+        // AutoSplitKey, in BC's own order: SplitKey, then OnInsertRecord, then the record's
+        // Insert (NavForm.SaveRecordAsync / NavForm.InsertAsync(belowXRec) both do exactly
+        // this). Skipping it left the last primary-key field at its Init() default, so a page
+        // whose whole numbering scheme is AutoSplitKey — every editable line grid in BC —
+        // wrote its first row at line no. 0 and could not write a second one at all: the same
+        // key, so the insert failed on a duplicate. It is a no-op inside BC's own guard for a
+        // page that does not declare the property.
+        ProposeAutoSplitKey();
+        _page?.SplitKey();
         // OnInsertRecord is the page's last word before the row exists, and its RETURN VALUE
         // is a veto — a page can refuse the insert outright. Running it and discarding the
         // answer would be worse than not running it: the row lands anyway, but now it also
@@ -414,6 +435,258 @@ internal class LiveNavTestPage : MockITestPage
 
     /// <summary>Abandon an in-progress new row without writing it — how Cancel closes.</summary>
     internal void DiscardPendingNewRow() { _pendingNewRow = false; _pendingModify = false; }
+
+    // BC's AutoSplitKey increment. Named NavForm.AutoSplitKeyIncrement there, and the same
+    // literal in the client's AutoKeyGenerator — both sides of the wire agree on 10000.
+    private const int AutoSplitKeyIncrement = 10000;
+
+    /// <summary>
+    /// Do the CLIENT half of AutoSplitKey: work out the key the new row should get and offer it
+    /// to BC's <c>NavForm.SplitKey()</c> as <c>AutoKeyValue</c>. SplitKey still owns the answer —
+    /// it validates the proposal against the table and falls back to its own arithmetic if the
+    /// key is taken — but without a proposal it has nothing to compute from.
+    ///
+    /// WHY THE RUNNER HAS TO DO THIS AT ALL
+    ///   SplitKey's inputs are all client-supplied: <c>AutoKeyValue</c>, and the
+    ///   <c>InsertLowerBoundBookmark</c> / <c>InsertUpperBoundBookmark</c> pair naming the rows
+    ///   the new one is being inserted between. On a service tier those come off the repeater's
+    ///   loaded rows (<c>NavRecordStateHandler.GetUpperAndLowerRowEntryBookmarks</c> and
+    ///   <c>AutoKeyGenerator.GenerateKey</c>) and travel in <c>NavRecordState</c>. This class IS
+    ///   the client, so all three were null on every insert and
+    ///   <c>CalculateAutoSplitKeyValue(null, null)</c> answered a flat 10000 — the same constant
+    ///   for every row, derived from no data at all. On an empty grid that is one interval low;
+    ///   on a grid whose rows start anywhere else it puts the new row BEFORE them (a grid holding
+    ///   a line at 50000 got 10000, not 60000).
+    ///
+    /// WHAT BC'S CLIENT COMPUTES
+    ///   <c>AutoKeyGenerator.CalculateNumericKeyValue</c> is
+    ///   <c>rangeStart + (draftRowsBefore + 1) * 10000</c>, where <c>rangeStart</c> is the key of
+    ///   the nearest NON-draft row before the insertion point (0 when there is none) and
+    ///   <c>draftRowsBefore</c> counts the unsaved rows between the two.
+    ///
+    /// WHY AN EMPTY GRID STARTS AT 20000 AND NOT 10000
+    ///   Because <c>draftRowsBefore</c> is 1 there, not 0. An insertable repeater always carries a
+    ///   trailing blank row past its data — <c>DraftLinePattern.MakeDraftLines</c> adds one as soon
+    ///   as the binding manager is filled, including when it filled with nothing — and
+    ///   <c>TestPageProxy.InsertEmptyRow</c> inserts the test's row AFTER the current one
+    ///   (<c>InsertBehavior = RowUpdateBehavior.After</c>, whatever <c>beforeCurrent</c> says). On
+    ///   an empty grid the current row is that placeholder, so the test's first row is the SECOND
+    ///   draft and takes the second interval: 0 + 2 * 10000. The placeholder itself is never
+    ///   persisted — nothing edits it — which is why no row at 10000 ever appears. On a grid that
+    ///   already has data the current row is a real one, the placeholder sits after the new row,
+    ///   and the count is 0: last + 1 * 10000. Both are measured on real BC 27.5 and 28.3 by
+    ///   corpus CU60922.
+    ///
+    /// THE RUNNER'S INSERTION POINT
+    ///   The row the cursor sits on when New() is called, read by
+    ///   <see cref="CaptureInsertPosition"/> before NewRecord wipes it: <c>rangeStart</c> is
+    ///   that row's key (the last row of the filtered set when the page holds no cursor),
+    ///   <c>rangeEnd</c> is the next row of the same parent when the insert lands mid-grid,
+    ///   and the placeholder draft is counted where the measurements put it — BEFORE the
+    ///   insert on an empty grid (the 20000), AFTER it when the insert is at the end of a
+    ///   non-empty rowset. That last count is load-bearing and was measured, not derived: a
+    ///   grid holding one line at -10000 numbers the next row -6667 on real BC 27.5/28.3
+    ///   (corpus CU60929) — the range up to zero split in THREE, the trailing placeholder
+    ///   taking the third share. Mid-grid the placeholder sits beyond <c>rangeEnd</c> and
+    ///   does not participate, which the measured -1 for a -10000..10000 insert pins.
+    /// </summary>
+    private void ProposeAutoSplitKey()
+    {
+        if (_page == null || !_page.NeedsAutoSplitKey) return;
+        _page.SetAutoKeyValue(ClientAutoKeyValue());
+    }
+
+    // The insert position CaptureInsertPosition read at New() time, consumed at flush time.
+    // Null bounds are meaningful (no saved row on that side), so a separate flag records
+    // whether a capture happened at all.
+    private object? _insertRangeStart;
+    private object? _insertRangeEnd;
+    private int _insertDraftRowsBefore;
+    private int _insertDraftRowsAfter;
+    private bool _insertPositionCaptured;
+
+    /// <summary>
+    /// Read the rows around the insertion point — the client half of AutoSplitKey that must
+    /// run at New() time, because NewRecord's ALInit erases the cursor row it reads.
+    /// </summary>
+    private void CaptureInsertPosition()
+    {
+        _insertPositionCaptured = false;
+        if (_page == null || !_page.NeedsAutoSplitKey) return;
+        // The AutoSplitKey field is the LAST field of the primary key — BC picks it the same
+        // way inside SplitKey, so a page whose key shape the runner read differently would
+        // number a different field than BC validates.
+        var primaryKey = _record.MetaTable?.PrimaryKey;
+        if (primaryKey == null || primaryKey.KeyFieldCount == 0) return;
+        var keyFieldNo = primaryKey.KeyFieldsList[primaryKey.KeyFieldCount - 1].FieldNo;
+
+        _insertRangeStart = null;
+        _insertRangeEnd = null;
+        _insertDraftRowsBefore = 0;
+        _insertDraftRowsAfter = 0;
+
+        // Cloned with reset:false so it carries the page's filters (a subpage part's
+        // SubPageLink above all: without it this would walk the lines of SOME OTHER header)
+        // and cannot disturb the cursor the page is on.
+        using var probe = _record.CloneRecord(_record.Parent, reset: false, keepCompany: true);
+
+        // "The cursor sits on a saved row" is decided the way SplitKey itself decides it — a
+        // row with the cursor's ALRecordId exists. With no cursor row the client viewport's
+        // insert goes after the LAST row of the set (BC's own ALFindLast over the page's
+        // filters); with no rows at all the grid is empty.
+        var positioned = probe.ExistsAsync(probe.ALRecordId).AsTask().GetAwaiter().GetResult()
+            || probe.ALFindLastAsync(DataError.TrapError).GetAwaiter().GetResult();
+        if (positioned)
+        {
+            _insertRangeStart = Unwrap(probe.GetFieldValue(keyFieldNo));
+            _insertRangeEnd = NextRowKeyInSequence();
+            // At the end of the rowset the trailing blank placeholder row sits AFTER the
+            // insert and shares the range; mid-grid it sits beyond rangeEnd and does not.
+            // Measured, not derived: -6667 (not -5000) after a single line at -10000.
+            _insertDraftRowsAfter = _insertRangeEnd == null ? 1 : 0;
+        }
+        else
+        {
+            // Empty grid: the placeholder is the row the insert lands AFTER, so it burns the
+            // first interval — the measured 20000 for a first line (corpus CU60922).
+            _insertDraftRowsBefore = 1;
+        }
+        _insertPositionCaptured = true;
+
+        // The next row of the SAME parent, or null when the cursor row ends its sequence —
+        // the prefix-compare mirror of NavForm.IsPositionedAtEndOfSequence: iteration is
+        // unfiltered primary-key order, so "next row belongs to another parent" shows as its
+        // other key fields changing.
+        object? NextRowKeyInSequence()
+        {
+            var prefix = new object?[primaryKey.KeyFieldCount - 1];
+            for (var i = 0; i < prefix.Length; i++)
+                prefix[i] = Unwrap(probe.GetFieldValue(primaryKey.KeyFieldsList[i].FieldNo));
+            if (probe.ALNext() <= 0) return null;
+            for (var i = 0; i < prefix.Length; i++)
+                if (!Equals(Unwrap(probe.GetFieldValue(primaryKey.KeyFieldsList[i].FieldNo)), prefix[i]))
+                    return null;
+            return Unwrap(probe.GetFieldValue(keyFieldNo));
+        }
+    }
+
+    private object? ClientAutoKeyValue()
+    {
+        if (!_insertPositionCaptured) return null;
+        _insertPositionCaptured = false;
+        var primaryKey = _record.MetaTable?.PrimaryKey;
+        if (primaryKey == null || primaryKey.KeyFieldCount == 0) return null;
+        var keyFieldNo = primaryKey.KeyFieldsList[primaryKey.KeyFieldCount - 1].FieldNo;
+
+        // The key field's CLR type steers the arithmetic, read off the freshly initialised
+        // buffer so the proposal is typed like the field: SplitKey feeds it to
+        // NavValue.CreateNavValueFromObject, which converts per the field's NCL type, and an
+        // Int32 offered for a BigInteger or Decimal key is a different value than BC's
+        // client would have sent.
+        var draftRowCount = _insertDraftRowsBefore + 1 + _insertDraftRowsAfter;
+        return Unwrap(_record.GetFieldValue(keyFieldNo)) switch
+        {
+            int => Box(CalculateClientAutoKey<int>(
+                (int?)_insertRangeStart, (int?)_insertRangeEnd, draftRowCount, _insertDraftRowsBefore)),
+            long => Box(CalculateClientAutoKey<long>(
+                (long?)_insertRangeStart, (long?)_insertRangeEnd, draftRowCount, _insertDraftRowsBefore)),
+            decimal => Box(CalculateClientAutoKey<decimal>(
+                (decimal?)_insertRangeStart, (decimal?)_insertRangeEnd, draftRowCount, _insertDraftRowsBefore)),
+            // GUID: BC's client and SplitKey both just mint a fresh Guid, so no proposal adds
+            // nothing. Unsupported key types: SplitKey must be the one to throw, so the AL
+            // sees BC's message.
+            _ => null,
+        };
+
+        static object? Box<T>(T? value) where T : struct => value.HasValue ? value.Value : null;
+    }
+
+    /// <summary>
+    /// Verbatim port of the client's <c>AutoKeyGenerator.CalculateNumericKeyValue</c>
+    /// (Microsoft.Dynamics.Nav.Client.UI.dll) — the algorithm that decides what number a new
+    /// grid row gets on a real service tier. Ported rather than invoked because constructing
+    /// the real generator needs a live client ColumnBinder; the arithmetic itself is
+    /// self-contained. Adjudicated against real BC 27.5/28.3 by corpus CU60922 and CU60929:
+    /// append, empty-grid, wide-gap cap, zero-crossing and the placeholder-in-the-divisor
+    /// cases are all pinned by measurement.
+    ///
+    /// Null means "no proposal", which is a real answer and not a failure: the client raises
+    /// AutoKeyException there (key space exhausted, overflow), and SplitKey's own bound
+    /// arithmetic answers instead.
+    /// </summary>
+    private static T? CalculateClientAutoKey<T>(
+        T? rangeStart, T? rangeEnd, int draftRowCount, int index)
+        where T : struct, System.Numerics.INumber<T>
+    {
+        var hasStart = rangeStart.HasValue;
+        var hasEnd = rangeEnd.HasValue;
+        var isDecimal = typeof(T) == typeof(decimal);
+        checked
+        {
+            try
+            {
+                var inc = T.CreateChecked(AutoSplitKeyIncrement);
+                if (!hasStart && !hasEnd)
+                    return Step(T.Zero, inc, false);
+                if (hasStart && !hasEnd && rangeStart!.Value >= T.Zero)
+                    return Step(rangeStart.Value, inc, false);
+                if (hasEnd && !hasStart && rangeEnd!.Value <= T.Zero)
+                    return Step(rangeEnd.Value, -inc, false);
+
+                var slots = T.CreateChecked(draftRowCount + 1);
+                var lowerBound = hasStart ? rangeStart!.Value : T.Min(T.Zero, rangeEnd!.Value - slots);
+                var upperBound = hasEnd ? rangeEnd!.Value : T.Max(T.Zero, rangeStart!.Value + slots);
+                if (lowerBound >= upperBound) return null;
+                var crossesZero = lowerBound < T.Zero && upperBound > T.Zero;
+                if (!isDecimal && crossesZero)
+                {
+                    var negRoom = T.Zero - lowerBound;
+                    var posRoom = upperBound - T.Zero;
+                    if (negRoom >= slots && hasStart && !hasEnd)
+                        upperBound = T.Zero;
+                    else if (posRoom >= slots && hasEnd && !hasStart)
+                        lowerBound = T.Zero;
+                    else
+                    {
+                        var range = upperBound - lowerBound;
+                        if (range < slots + T.One)
+                        {
+                            if (!hasStart)
+                                lowerBound -= range - upperBound;
+                            else
+                            {
+                                if (hasEnd) return null;
+                                upperBound += range + lowerBound;
+                            }
+                        }
+                    }
+                }
+                var delta = T.Min(
+                    (upperBound - lowerBound - ((crossesZero && !isDecimal) ? T.One : T.Zero)) / slots,
+                    inc);
+                if (!isDecimal && delta < T.One) return null;
+                if (delta <= T.Zero) return null;
+                return Step(lowerBound, delta, crossesZero);
+            }
+            catch (OverflowException)
+            {
+                return null;
+            }
+
+            T Step(T lowerBound, T delta, bool compensateForZero)
+            {
+                var value = lowerBound + T.CreateChecked(index + 1) * delta;
+                if (compensateForZero)
+                {
+                    if (isDecimal && value == T.Zero)
+                        value -= delta / T.CreateChecked(2);
+                    else if (!isDecimal && value >= T.Zero)
+                        value += T.One;
+                }
+                return value;
+            }
+        }
+    }
 
     // The same client model as _pendingNewRow, for the other half of editing: a SetValue on an
     // EXISTING row writes into the record buffer, and the row is persisted when the cursor
@@ -439,15 +712,55 @@ internal class LiveNavTestPage : MockITestPage
         _pendingModify = false;
         // OnModifyRecord vetoes exactly as OnInsertRecord does.
         if (_page != null && !_page.RaiseOnModifyRecord()) return;
-        // ThrowError, not TrapError: a Modify that cannot be performed is something the user of
-        // a real client would be told about. Trapping it turned "this page is not positioned on
-        // a row" into an edit that appeared to succeed and quietly went nowhere.
-        _record.ALModifyAsync(DataError.ThrowError, true).GetAwaiter().GetResult();
+
+        // SystemModifiedAt/By are stamped by a Cecil prepend on NavRecord.ALModifyAsync — the
+        // CODE-driven entry point this method deliberately does NOT use (see below). Real BC
+        // stamps them in the data layer, so they move on a page write too; call the same helper
+        // the prepend calls so switching entry points does not silently freeze them.
+        BcRuntime.StampSystemFieldsOnModify(_record);
+
+        // ModifyAsync, NOT ALModifyAsync — and the difference is the whole xRec contract.
+        //
+        //   NavRecord.ALModifyAsync  (what AL `Rec.Modify()` lowers to) opens with
+        //       OldRecord.ALAssign(this)
+        //   before delegating to ModifyAsync, so a code-driven Modify deliberately makes xRec
+        //   MIRROR Rec — there is no before-image on that path (corpus CU60179
+        //   OnModify_xRec_MirrorsRecValues_WhenCalledFromCode pins exactly that).
+        //
+        //   NavForm.SaveRecordAsync — BC's own page-write path — skips that assignment and calls
+        //       SafeSourceTable.ModifyAsync(DataError.ThrowError, runApplicationTrigger: true,
+        //                                   runGlobalTrigger: true)
+        //   directly, precisely so the before-image the form snapshotted when it loaded the row
+        //   (SnapshotBeforeImage below) survives into the table's OnModify. That is why a
+        //   PAGE-driven Modify sees the PREVIOUS value in xRec (corpus CU60235
+        //   Record_Modify_FromPage_xRecHoldsPreviousValue).
+        //
+        // Same three arguments BC passes, for the same reasons: ThrowError, because a Modify
+        // that cannot be performed is something the user of a real client would be told about —
+        // trapping it turned "this page is not positioned on a row" into an edit that appeared
+        // to succeed and quietly went nowhere; and both trigger flags on, because a page write
+        // runs the table's OnModify and the global-trigger hook exactly like Rec.Modify(true).
+        _record.ModifyAsync(DataError.ThrowError, true, true).GetAwaiter().GetResult();
     }
 
     // Order matters at every flush point: an in-progress new row is finished by an Insert, an
     // edited existing row by a Modify, and only one of the two is ever pending.
     private void FlushRow() { FlushPendingNewRow(); FlushPendingModify(); }
+
+    /// <summary>
+    /// Persist whatever row the page is in the middle of editing — BC's NavForm.SaveRecord,
+    /// the "the cursor is leaving this row" step.
+    ///
+    /// Every OTHER leave-the-row moment in this class already does this (the four cursor
+    /// moves, Close, Dispose, the built-in OK action); invoking a page ACTION is the one that
+    /// did not, and it is the moment BC's client is most obviously at: the client sends the
+    /// edited row to the server before it runs the action, which is why an AL action reads
+    /// <c>Rec</c> as a row that exists. Without it the action ran against a row that was still
+    /// only a buffer — its AutoSplitKey field unassigned and no row of its own in the table —
+    /// so an OnAction that looked the row up, or passed its key to a posting routine, silently
+    /// found nothing.
+    /// </summary>
+    internal void SaveCurrentRow() { FlushParts(); FlushRow(); }
 
     // BC routes TestPage teardown through both Close() and Dispose() depending on whether
     // the AL test calls Close() explicitly or lets the variable go out of scope. Flush on
@@ -530,9 +843,32 @@ internal class LiveNavTestPage : MockITestPage
     /// </summary>
     private bool Loaded(bool found)
     {
-        if (found) _page?.RaiseOnAfterGetRecord();
+        if (found)
+        {
+            _page?.RaiseOnAfterGetRecord();
+            SnapshotBeforeImage();
+        }
         return found;
     }
+
+    /// <summary>
+    /// Take the page's before-image of the current row — what the table's <c>OnModify</c> reads
+    /// as <c>xRec</c> when the edit is driven from a page.
+    ///
+    /// This is the tail of BC's own <c>NavForm.AfterGetRecordAsync</c> AND of
+    /// <c>NavForm.AfterGetCurrRecordAsync</c> — both end with
+    /// <c>OldRecord.ALAssign(SourceTable)</c>, and <c>NavForm.OldRecord</c> is literally
+    /// <c>SafeSourceTable.OldRecord</c>, so the target is this record's own xRec slot. Those two
+    /// are exactly the pair of triggers RaiseOnAfterGetRecord above fires, which is why the
+    /// snapshot belongs here and nowhere else: "a row became the current row" is the only moment
+    /// BC takes it, and nothing on the page-write path overwrites it (see FlushPendingModify),
+    /// so by the time OnModify runs xRec still holds the row AS FETCHED.
+    ///
+    /// Without this the page had no before-image at all: <c>ALModifyAsync</c>'s own
+    /// <c>OldRecord.ALAssign(this)</c> was the only thing that ever populated xRec, which is
+    /// what made a page-driven Modify report the NEW value as the old one.
+    /// </summary>
+    private void SnapshotBeforeImage() => _record.OldRecord.ALAssign(_record);
 
     public override object? GetBookmark() => _record.ALGetPosition();
 
@@ -839,7 +1175,20 @@ internal sealed class LiveNavTestField : ITestField
         => _page != null && _controlId != 0 ? _page.TryGetOptionCaptions(_controlId) : null;
 
     public string Name => Caption;
-    public string Caption => TryGetMetaFieldName() ?? $"Field {_fieldNo}";
+
+    // TestPage field Caption() (#1777). BC's own precedence, control-declared wins over the
+    // source field's Caption, which wins over the field's bare name:
+    //   1. the control's own Caption (field(Foo; Rec.Foo) { Caption = '…'; }) — page metadata
+    //      that only exists when this field is bound to a live control, not a bare NavRecord.
+    //   2. the source table field's declared Caption (field(2; Foo; Text[30]) { Caption = '…'; })
+    //      — read straight from the parse-time metadata, bypassing NCLMetaField.FieldCaption
+    //      (JmpHooked to always answer the field NAME; see TryGetParsedFieldCaption).
+    //   3. the field's technical name, BC's own fallback when neither is declared.
+    public string Caption
+        => (_page != null && _controlId != 0 ? _page.TryGetControlCaption(_controlId) : null)
+           ?? TryGetMetaFieldCaption()
+           ?? TryGetMetaFieldName()
+           ?? $"Field {_fieldNo}";
     public NavType FieldType => TryGetMetaFieldType() ?? NavType.Text;
     public int ValidationErrorCount => 0;
     public long LastUsedValidationErrorId => 0;
@@ -882,7 +1231,26 @@ internal sealed class LiveNavTestField : ITestField
 
     public void Lookup(NavDataSet dataSet) => Lookup();
     public void AssistEdit() { }
-    public void Drilldown() { }
+
+    /// <summary>
+    /// Run the control's OnDrillDown trigger — see RunnerPageInstance.RaiseOnDrillDown for the
+    /// full contract, including the fixed error real BC raises when no trigger is declared.
+    /// Left #57's literal no-op (`public void Drilldown() { }`), which let a test call
+    /// DrillDown(), observe nothing happened, and pass anyway — the trigger's effect (or its
+    /// documented absence-error) never ran, and the test only tripped one step later on a
+    /// missing side effect that pointed at the wrong place.
+    /// </summary>
+    public void Drilldown()
+    {
+        if (_page == null)
+            throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+                $"TestPage drilldown on field {_fieldNo}",
+                "testpage-drilldown — no AL page object was built for this page, so its "
+                + "OnDrillDown trigger cannot be reached. See docs/scope.md");
+
+        _page.RaiseOnDrillDown(_controlId);
+    }
+
     public void Invoke() { }
     public string ValueToString(object? value) => Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty;
 
@@ -897,6 +1265,14 @@ internal sealed class LiveNavTestField : ITestField
     private string? TryGetMetaFieldName()
     {
         return _record.MetaTable.TryGetFieldByNo(_fieldNo, out var field) ? field.FieldName : null;
+    }
+
+    // The source field's own declared Caption — see RecordPatches.TryGetParsedFieldCaption
+    // for why this cannot go through NCLMetaField.FieldCaption.
+    private string? TryGetMetaFieldCaption()
+    {
+        var tableId = _record.MetaTable.TableId;
+        return tableId != 0 ? RecordPatches.TryGetParsedFieldCaption(tableId, _fieldNo) : null;
     }
 
     private NavType? TryGetMetaFieldType()
@@ -983,7 +1359,8 @@ internal sealed class PageVariableTestField : ITestField
     }
     public void Lookup(NavDataSet dataSet) => Lookup();
     public void AssistEdit() { }
-    public void Drilldown() { }
+    /// <summary>Run the control's OnDrillDown trigger — see LiveNavTestField.Drilldown.</summary>
+    public void Drilldown() => _page.RaiseOnDrillDown(_controlId);
     public void Invoke() { }
     public string ValueToString(object? value) => Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty;
     public string GetOption(int index) => string.Empty;
@@ -1039,16 +1416,29 @@ internal sealed class MockITestAction : ITestAction
 /// </summary>
 internal sealed class LiveNavTestAction : ITestAction
 {
+    private readonly LiveNavTestPage _testPage;
     private readonly RunnerPageInstance _page;
     private readonly int _actionId;
 
-    public LiveNavTestAction(RunnerPageInstance page, int actionId)
+    public LiveNavTestAction(LiveNavTestPage testPage, RunnerPageInstance page, int actionId)
     {
+        _testPage = testPage;
         _page = page;
         _actionId = actionId;
     }
 
-    public void Invoke() => _page.RaiseOnAction(_actionId);
+    /// <summary>
+    /// Save the current row, then run OnAction — BC's order, and the order matters. A real
+    /// client sends the row it is on to the server before it invokes an action, so the AL in
+    /// OnAction reads a <c>Rec</c> that exists in the table, with its AutoSplitKey field
+    /// assigned. Dispatching straight to the trigger let the action see the field values a
+    /// test had just set while the row itself was still nowhere.
+    /// </summary>
+    public void Invoke()
+    {
+        _testPage.SaveCurrentRow();
+        _page.RaiseOnAction(_actionId);
+    }
 
     public bool Visible => _page.ActionVisible(_actionId);
     public bool Enabled => _page.ActionEnabled(_actionId);

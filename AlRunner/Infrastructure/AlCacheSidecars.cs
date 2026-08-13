@@ -15,6 +15,8 @@
 // The query sidecar is only written for bundles that actually declare an AL query, so
 // it is required for a HIT only when the bundle declares one. That also self-heals
 // cache entries written before the sidecar existed: they simply miss once.
+using System.Reflection.Metadata;
+
 namespace AlRunner.Infrastructure;
 
 public static class AlCacheSidecars
@@ -29,4 +31,36 @@ public static class AlCacheSidecars
     public static bool IsCompleteEntry(
         bool dllExists, bool enumSidecarExists, bool bundleDeclaresQuery, bool querySidecarExists)
         => dllExists && enumSidecarExists && (!bundleDeclaresQuery || querySidecarExists);
+
+    /// <summary>
+    /// Rejects a cache-entry DLL that is present but truncated or otherwise not a loadable
+    /// managed assembly image. Defence in depth for issue #1810: even with the write path
+    /// publishing atomically (AlCacheWriter — DLL is the last rename, so its presence means
+    /// "complete"), a short/corrupt file can still land here from something no write-ordering
+    /// discipline prevents — a GH Actions cache restore truncated mid-transfer, a full disk
+    /// during the rename's temp-file write, a killed process before the rename. Without this
+    /// check, File.ReadAllBytes on such a file is not an I/O error — it just hands back
+    /// whatever bytes are on disk — and the truncated bytes flow straight to Assembly.Load,
+    /// which throws BadImageFormatException far from the cache-classification code, reading as
+    /// mysterious flakiness rather than a cache problem.
+    /// Throws <see cref="InvalidDataException"/> (never lets a BadImageFormatException escape
+    /// un-wrapped) so callers can catch one exception type and fall through to cache MISS.
+    /// </summary>
+    public static void ValidateCachedAssemblyBytes(byte[] bytes, string cachePath)
+    {
+        try
+        {
+            using var peReader = new System.Reflection.PortableExecutable.PEReader(
+                new MemoryStream(bytes, writable: false));
+            if (!peReader.HasMetadata)
+                throw new BadImageFormatException("no CLI metadata directory — not a managed assembly image");
+            _ = peReader.GetMetadataReader();
+        }
+        catch (Exception ex) when (ex is BadImageFormatException or IOException or EndOfStreamException
+            or IndexOutOfRangeException or ArgumentOutOfRangeException)
+        {
+            throw new InvalidDataException(
+                $"AL-output cache entry is truncated or corrupt ({bytes.Length} bytes): {ex.Message}", ex);
+        }
+    }
 }

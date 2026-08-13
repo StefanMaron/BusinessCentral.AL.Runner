@@ -58,17 +58,18 @@ dotnet run --project AlRunner -c Release -- --out results.json tests/al-language
 
 Today the reporter prints raw PASS / FAIL / ERROR per test plus aggregate counts. Exit codes: `0` all pass, `1` real failures, `2` runner-limitations only, `3` AL compile error.
 
-`AlRunner/Infrastructure/ExpectationManifest.cs` exists and can load the schema described in `docs/expectations.md`, but it is **not yet wired into `Reporter`**. Once it is, the same run will additionally classify failures as:
+`AlRunner/Infrastructure/ExpectationManifest.cs` loads the schema described in `docs/expectations.md` and is wired into the run, so results are additionally classified as:
 
 | Classification | Meaning |
 |---|---|
 | `pass` | Test ran and passed. |
-| `pass-oos` | Test threw `RunnerOutOfScopeException` with the expected reason (declared in `oos-<area>.json`). Counted as success. |
+| `pass-oos` | Test raised an out-of-scope signal with the expected reason anchor — typed `RunnerOutOfScopeException` or the `out-of-scope: <api> — <reason>` message convention (declared in `oos-<area>.json`). Counted as success. |
 | `pass-known-gap` | Test failed and matches a `known-gaps-<area>.json` entry. Linked GH issue tracks the fix. |
+| `pass-divergence` | Test failed and matches a `divergence-<area>.json` entry — the runner intentionally answers differently from BC. Permanent; `Doc` cites the decision. |
 | `skipped` | Test matched a `disabled-<area>.json` entry; not executed. |
-| `fail` | Real failure — either unexpected, or expectation drift in either direction. |
+| `fail` | Real failure — either unexpected, or expectation drift in any direction. |
 
-Drift is loud in both directions: a test passing despite an `expect-oos` entry fails with "remove the entry"; a test throwing OOS without an entry fails with "add an entry". See `docs/expectations.md`.
+Drift is loud in every direction: a test passing despite an entry fails with "remove the entry"; a test raising an OOS signal without an entry fails with "add an entry"; a wrong or near-miss `Reason` still fails. See `docs/expectations.md`.
 
 ## Proving-test rules
 

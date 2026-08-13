@@ -120,6 +120,7 @@ public static class WatchDashboard
                         TestOutcome.Pass => ("PASS", "green"),
                         TestOutcome.Fail => ("FAIL", "red"),
                         TestOutcome.Error => ("ERROR", "yellow"),
+                        TestOutcome.Skipped => ("SKIP", "grey"),
                         _ => ("?", "grey"),
                     };
                     long ms = (long)t.Duration.TotalMilliseconds;
@@ -193,6 +194,7 @@ public static class WatchDashboard
                 {
                     case TestOutcome.Pass: pass++; break;
                     case TestOutcome.Fail: fail++; break;
+                    case TestOutcome.Skipped: break;   // manifest-declared skip; not an error
                     default: err++; break;
                 }
             }

@@ -1,0 +1,11 @@
+[
+  {
+    "codeunitId": 60874,
+    "CodeunitName": "Test HttpClient",
+    "Method": "HttpClient_Get_ValidUrl_ReturnsSuccessResponse",
+    "Mode": "expect-oos",
+    "Reason": "external-http",
+    "Doc": "docs/scope.md#external-http",
+    "Note": "HTTP egress is permanently out of scope (docs/scope.md §3.2). The throw site is Cecil-injected IL in NclCecilRewrite (NavHttpClient.ALGet), which cannot construct our typed RunnerOutOfScopeException — it carries the documented 'out-of-scope: HttpClient.Get — external-http — see docs/scope.md#external-http' message instead. Since #1743 expect-oos recognises both shapes, so this is a plain expect-oos rather than the abuse of expect-fail-known-gap it used to be."
+  }
+]

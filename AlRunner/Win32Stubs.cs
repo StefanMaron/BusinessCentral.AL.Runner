@@ -82,6 +82,22 @@ internal static class Win32Stubs
     /// <see cref="GetOrBuild"/>'s own base-directory resolution below.</summary>
     internal static string? BaseDirectoryForTests;
 
+    /// <summary>
+    /// #1809: test-only seam so <see cref="IsOnPath"/> can be exercised with an empty
+    /// search path ("no compiler reachable") WITHOUT
+    /// <c>Environment.SetEnvironmentVariable("PATH", "")</c> — that call mutates
+    /// process-wide state, and this class's own resolver runs on the
+    /// AppDomain.AssemblyLoad event from arbitrary threads, so a test-owned PATH wipe
+    /// races every other test in the assembly that spawns a "dotnet" child process
+    /// via PATH lookup. Parallelizing AlRunner.Tests's collections (#1809) turned that
+    /// from a latent cross-test hazard into a real one: up to 4 collections now spawn
+    /// concurrently, any of which can land inside a PATH-restore window and get
+    /// Win32Exception ("An error occurred trying to start process 'dotnet'"). Null in
+    /// production and in every test that doesn't need this — only read here, never
+    /// from production code paths.
+    /// </summary>
+    internal static string? PathEnvironmentForTests;
+
     private static void TryRegister(Assembly asm)
     {
         var n = asm.GetName().Name ?? "";
@@ -201,7 +217,7 @@ internal static class Win32Stubs
 
     private static bool IsOnPath(string command)
     {
-        var pathVar = Environment.GetEnvironmentVariable("PATH") ?? "";
+        var pathVar = PathEnvironmentForTests ?? Environment.GetEnvironmentVariable("PATH") ?? "";
         foreach (var dir in pathVar.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
         {
             try { if (File.Exists(Path.Combine(dir, command))) return true; }

@@ -1,0 +1,25 @@
+{
+  "id": "a7c1d2e3-8f90-4b1c-9d2e-3f4a5b6c7d80",
+  "name": "Runner Tests Fixture - Expectations Bundle",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Exercises every ExpectationManifest classification path (#1734).",
+  "description": "One test codeunit whose methods cover the green reclassification paths (pass, pass-oos, pass-known-gap, skipped) and the drift directions (stale expect-oos entry, stale known-gap entry, undeclared out-of-scope throw). The paired manifest lives in Fixtures/ExpectationsManifest.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "platform": "1.0.0.0",
+  "application": "1.0.0.0",
+  "idRanges": [
+    {
+      "from": 60800,
+      "to": 60849
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}

@@ -4,8 +4,9 @@
 the BC runtime patches and the dependency symbol set **once**, then serves many
 test runs in the same warm process — turning a ~19 s cold run into ~4 s per
 request. The VS Code extension depends on this flag. `runTests` streams the
-protocol-v2 NDJSON shape (`protocol-v2.schema.json`, see #1641); every other
-command (`execute`, `shutdown`, errors) is a single response line.
+protocol-v2 NDJSON shape (`protocol-v2.schema.json`, see #1641); `cancel` is a
+side channel that can interrupt a `runTests` in progress (see below); every
+other command (`execute`, `shutdown`, errors) is a single response line.
 
 ```
 al-runner --server [--package-cache PATH ...] [--cache DIR]
@@ -31,7 +32,7 @@ al-runner --server [--package-cache PATH ...] [--cache DIR]
 
 ```jsonc
 {
-  "command": "runTests",        // runTests | execute | shutdown (case-insensitive)
+  "command": "runTests",        // runTests | execute | cancel | shutdown (case-insensitive)
   "sourcePaths": ["/path/app"], // bundle dir(s); ALL are run and aggregated —
                                  // e.g. an app + its separate test app, same
                                  // shape as `al-runner MyApp MyApp.Test` on
@@ -61,16 +62,33 @@ streams `test` lines across all of them before the one final `summary`.
 
 ```jsonc
 {"type":"test","name":"Codeunit60110.MyTest","status":"pass","durationMs":12}
-{"type":"test","name":"Codeunit60110.OtherTest","status":"fail","durationMs":3,"message":"...","stackTrace":"..."}
+{"type":"test","name":"Codeunit60110.OtherTest","status":"fail","durationMs":3,
+ "message":"NavNCLDialogException: boom","errorKind":"runtime",
+ "stackFrames":[{"name":"\"My Test CU\"(CodeUnit 60110).OtherTest","line":2,
+                 "presentationHint":"normal"}],
+ "stackTrace":"..."}
 {"type":"summary","exitCode":1,"passed":1,"failed":1,"errors":0,"total":2,
  "cached":false,"changedFiles":["XRecProbe.Table.al"],"compilationErrors":null,
  "protocolVersion":2}
 ```
 
-- `status` is `pass` | `fail` | `error`.
+- `status` is `pass` | `fail` | `error` | `skipped`.
 - `stackTrace` is the AL call stack for AL-originated errors, falling back to
   the raw C# exception for runner-internal failures (matching the normal-mode
   rule). `message`/`stackTrace` are omitted (not `null`) on a passing test.
+- `errorKind` buckets the failure so a client can vary its UI:
+  `runtime` · `setup` (thrown before any `[Test]` body ran — codeunit
+  instantiation) · `timeout` (the per-test `--test-timeout` guard fired) ·
+  `compile` · `assertion` · `unknown` (an error with no exception behind it).
+  Omitted entirely on a `pass`/`skipped` — there is no error to bucket.
+  Note: BC's `Assert` codeunits ultimately call AL `Error()`, which surfaces as
+  the same `NavNCLDialogException` as any other AL error, so assertion failures
+  currently report `runtime`; see the note in `AlRunner/ErrorClassifier.cs`.
+- `stackFrames` is `stackTrace` parsed into structured frames — same order
+  (deepest first), one object per frame, with `name`, and `line` when BC
+  supplied one. Omitted when no AL call stack was captured (a runner-internal
+  failure); never emitted as an empty array, and `source`/`column` are omitted
+  rather than invented, since BC's call-stack format carries no file path.
 - `exitCode`: `0` ok · `1` test fail · `2` exec · `3` compile (same ladder as
   normal mode).
 - `changedFiles` is only present on a cache miss (a hit means nothing changed);
@@ -80,24 +98,61 @@ streams `test` lines across all of them before the one final `summary`.
 - A bundle that fails to compile short-circuits straight to the `summary` line
   with `exitCode: 3` and `compilationErrors` set — no `test` lines for that
   bundle (there was nothing to run).
-- `errorKind` (per-test) and `cancelled` (on the summary) are defined by
-  `protocol-v2.schema.json` but not populated yet — separate follow-up slices
-  of #1641, along with the `cancel` command.
+- `cancelled: true` is present on the summary only when a concurrent `cancel`
+  command actually stopped the run before every test ran (see `cancel` below);
+  omitted otherwise (never emitted as `false`). `capturedValues` and `coverage`
+  still need the Cecil instrumentation pass tracked on #1640.
 
 A request-level problem (e.g. a missing `sourcePaths`) returns the usual single
 `{"error":"..."}` line instead of a `test`/`summary` sequence — see Errors below.
 
-### `execute`
-
-Not yet implemented in v2. Returns a structured error rather than a silent
-fake (per `.claude/rules/loud-failures.md`):
+### `cancel` — side channel, works mid-stream
 
 ```json
-{"error":"execute: inline AL execution / run-mode is not yet implemented in v2 — use 'runTests'. See docs/server-mode.md."}
+{"command":"cancel"}
 ```
 
-v1's `execute` ran inline AL or the first codeunit's `OnRun`. v2 has no inline-AL
-execution / run-mode pipeline yet; this is tracked as a follow-up.
+```json
+{"type":"ack","command":"cancel","noop":false}
+```
+
+Cooperative cancellation for an in-flight `runTests` request. Unlike every
+other command, `cancel` is answered **immediately**, even while `runTests` is
+still streaming `test` lines — a dedicated stdin-reader thread recognises it
+the instant it is read, independent of the normal one-request-at-a-time
+dispatch loop. That is the whole point: cancellation is only useful if the
+signal can reach the runner mid-run rather than being queued behind it.
+
+- `noop: false` — a run was active and this cancel signalled it. The already-
+  running test still finishes (a test body is never interrupted mid-flight);
+  the *next* test does not start. The terminating `summary` line for that run
+  carries `cancelled: true`.
+- `noop: true` — nothing to cancel: no `runTests` request was active, the
+  active one had already finished, or an earlier `cancel` already signalled it.
+  Sending `cancel` with no run in flight is a well-defined no-op, not an error.
+- `cancel` accepts and ignores any extra fields on the request object
+  (forward-compatible with future protocol additions).
+- There is at most one active run at a time; `cancel` has no request/run id to
+  target — it always addresses whichever `runTests` request is currently
+  streaming, matching v1's shape (#1613/#1614).
+
+### `execute`
+
+Runs each bundle's first `OnRun`-bearing codeunit (run-mode). Unlike `runTests`
+this is **not** streamed — one v1-shaped response line, no `type` discriminator:
+
+```json
+{"exitCode":0,"tests":[{"name":"Codeunit60110.OnRun","status":"pass","durationMs":7}]}
+```
+
+v1's `execute` also accepted an inline `code` string and a `captureValues` flag.
+v2 has no inline-AL compile path and no value capture (the latter needs the
+Cecil instrumentation pass on #1640), so both fail loudly with a structured
+error rather than a silent fake, per `.claude/rules/loud-failures.md`:
+
+```json
+{"error":"execute: inline AL 'code' is not yet supported in v2 — pass 'sourcePaths' to run the bundle's OnRun codeunit. See docs/server-mode.md."}
+```
 
 ### `shutdown`
 

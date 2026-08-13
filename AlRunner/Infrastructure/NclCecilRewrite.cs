@@ -118,6 +118,25 @@ public static class NclCecilRewrite
         "Microsoft.Dynamics.Nav.Runtime.NavReportHandle::CreateTarget/0",
         "Microsoft.Dynamics.Nav.Runtime.NavQueryHandle::CreateTarget/0",
         "Microsoft.Dynamics.Nav.Runtime.NavXmlPortHandle::CreateTarget/0",
+        // Static NavReport.Run(int, ...) / RunModal(int, ...) — #1771. No Hook(...) call site
+        // registers these anymore (the pre-fix JmpHook in ReportPatches.cs was dead code: it
+        // never fired under the default Cecil-only runtime, so the call silently fell through
+        // the Cecil-blanked `ret` body instead of throwing). Registered here anyway, matching
+        // the CreateTarget family above, so a future JmpHook re-registration against one of
+        // these methods (accidental regression, or an AL_RUNNER_ENABLE_JMPHOOK=1 diagnostic
+        // pass) is recognised as redundant rather than silently recreating the coexistence
+        // double-dispatch this bug class is named for. Keyed by param count only (Key() does
+        // not encode parameter types), so this also covers the ReportRunOptions overload of
+        // Run/1 — also Cecil-owned now (throws an "unrecognised overload shape" OOS instead of
+        // being routed to SyncStaticRun).
+        "Microsoft.Dynamics.Nav.Runtime.NavReport::Run/1",
+        "Microsoft.Dynamics.Nav.Runtime.NavReport::Run/2",
+        "Microsoft.Dynamics.Nav.Runtime.NavReport::Run/3",
+        "Microsoft.Dynamics.Nav.Runtime.NavReport::Run/4",
+        "Microsoft.Dynamics.Nav.Runtime.NavReport::RunModal/1",
+        "Microsoft.Dynamics.Nav.Runtime.NavReport::RunModal/2",
+        "Microsoft.Dynamics.Nav.Runtime.NavReport::RunModal/3",
+        "Microsoft.Dynamics.Nav.Runtime.NavReport::RunModal/4",
         // NavApplicationObjectBase..ctor keystone (Batch 4) — the 3-arg
         // (ITreeObject, ApplicationObjectId, NCLStaticMetadata) ctor.
         "Microsoft.Dynamics.Nav.Runtime.NavApplicationObjectBase::.ctor/3",
@@ -173,6 +192,10 @@ public static class NclCecilRewrite
         "Microsoft.Dynamics.Nav.Runtime.NavRecordId::get_CollationAwareStringComparer/0",
         // NavRecord no-ops
         "Microsoft.Dynamics.Nav.Runtime.NavRecord::Dispose/1",
+        // NavRecord.GetCallerRecord(NavSession) — faithful reimplementation reading the actual
+        // tracked NavSession.CurrentMethodScope backing field (see GetCallerRecordPatches.cs
+        // and #1781: nested Validate re-snapshotting xRec because this used to be forced null).
+        "Microsoft.Dynamics.Nav.Runtime.NavRecord::GetCallerRecord/1",
         // NavRecord::UpdateReferencesOnRenameAsync/2 is deliberately NOT here: BC's real
         // body runs (rename propagation to validated TableRelation fields, issue #1730).
         // RecordLink / management
@@ -289,6 +312,14 @@ public static class NclCecilRewrite
         // NavNCLDotNetCreateException (which is trappable and would be silently swallowed
         // by TryInvokeAsync → TryInitializeFromCurrentApp returns false with no OOS signal).
         "Microsoft.Dynamics.Nav.Runtime.NavDotNet::CreateDotNet/1",
+        // ALTaskScheduler cluster (scope.md §3.6, #1733) — CanCreateTask/ALCanCreateTask
+        // rewritten to return false (no scheduler headlessly) and CheckCodeUnit no-op'd so
+        // ALCreateTaskAsync's real body reaches that CanCreateTask gate instead of throwing
+        // a codeunit-resolution error first. See the RewriteNcl block below for detail.
+        "Microsoft.Dynamics.Nav.Runtime.ALTaskScheduler::ALCanCreateTask/0",
+        "Microsoft.Dynamics.Nav.Runtime.ALTaskScheduler::ALCanCreateTask/1",
+        "Microsoft.Dynamics.Nav.Runtime.ALTaskScheduler::CanCreateTask/1",
+        "Microsoft.Dynamics.Nav.Runtime.ALTaskScheduler::CheckCodeUnit/2",
     };
 
     /// <summary>
@@ -1693,6 +1724,10 @@ public static class NclCecilRewrite
                     ReplaceBodyWithHelper(asm.MainModule, mInsert, h);
                     mediaSetRewrote++;
                 }
+                else
+                {
+                    Console.Error.WriteLine("[Cecil] WARNING: NavMediaSet.ALInsert(DataError, Guid) not found — hook not installed");
+                }
 
                 // ALRemove(DataError errorLevel, Guid mediaId) → bool
                 var mRemove = navMediaSetCecilType.Methods.FirstOrDefault(m =>
@@ -1702,6 +1737,10 @@ public static class NclCecilRewrite
                     var h = patchTypeMi.GetMethod(nameof(AlRunner.Patches.MediaSetPatches.NavMediaSet_ALRemove), BindingFlags.Public | BindingFlags.Static)!;
                     ReplaceBodyWithHelper(asm.MainModule, mRemove, h);
                     mediaSetRewrote++;
+                }
+                else
+                {
+                    Console.Error.WriteLine("[Cecil] WARNING: NavMediaSet.ALRemove(DataError, Guid) not found — hook not installed");
                 }
 
                 // get_ALCount() → int
@@ -1713,6 +1752,10 @@ public static class NclCecilRewrite
                     ReplaceBodyWithHelper(asm.MainModule, mCount, h);
                     mediaSetRewrote++;
                 }
+                else
+                {
+                    Console.Error.WriteLine("[Cecil] WARNING: NavMediaSet.get_ALCount() not found — hook not installed");
+                }
 
                 // ALItem(int index) → Guid
                 var mItem = navMediaSetCecilType.Methods.FirstOrDefault(m =>
@@ -1723,17 +1766,26 @@ public static class NclCecilRewrite
                     ReplaceBodyWithHelper(asm.MainModule, mItem, h);
                     mediaSetRewrote++;
                 }
+                else
+                {
+                    Console.Error.WriteLine("[Cecil] WARNING: NavMediaSet.ALItem(int) not found — hook not installed");
+                }
 
                 // ALImport overloads — file-based (second param is string fileName)
-                foreach (var m in navMediaSetCecilType.Methods.Where(m2 => m2.Name == "ALImport" && m2.HasBody))
                 {
-                    var ps = m.Parameters;
-                    if (ps.Count < 3 || ps[1].ParameterType.FullName != "System.String") continue;
-                    var replName = ps.Count == 3
-                        ? nameof(AlRunner.Patches.MediaSetPatches.NavMediaSet_ALImport_File2)
-                        : nameof(AlRunner.Patches.MediaSetPatches.NavMediaSet_ALImport_File3);
-                    var h = patchTypeMi.GetMethod(replName, BindingFlags.Public | BindingFlags.Static);
-                    if (h != null) { ReplaceBodyWithHelper(asm.MainModule, m, h); mediaSetRewrote++; }
+                    int fileImportRewrote = 0;
+                    foreach (var m in navMediaSetCecilType.Methods.Where(m2 => m2.Name == "ALImport" && m2.HasBody))
+                    {
+                        var ps = m.Parameters;
+                        if (ps.Count < 3 || ps[1].ParameterType.FullName != "System.String") continue;
+                        var replName = ps.Count == 3
+                            ? nameof(AlRunner.Patches.MediaSetPatches.NavMediaSet_ALImport_File2)
+                            : nameof(AlRunner.Patches.MediaSetPatches.NavMediaSet_ALImport_File3);
+                        var h = patchTypeMi.GetMethod(replName, BindingFlags.Public | BindingFlags.Static);
+                        if (h != null) { ReplaceBodyWithHelper(asm.MainModule, m, h); mediaSetRewrote++; fileImportRewrote++; }
+                    }
+                    if (fileImportRewrote == 0)
+                        Console.Error.WriteLine("[Cecil] WARNING: NavMediaSet.ALImport(DataError, string, string[, string]) file overloads not found — hook not installed");
                 }
 
                 // ALExport(DataError, string fileBaseName) → int
@@ -1743,6 +1795,46 @@ public static class NclCecilRewrite
                 {
                     var h = patchTypeMi.GetMethod(nameof(AlRunner.Patches.MediaSetPatches.NavMediaSet_ALExport), BindingFlags.Public | BindingFlags.Static)!;
                     ReplaceBodyWithHelper(asm.MainModule, mExport, h);
+                    mediaSetRewrote++;
+                }
+                else
+                {
+                    Console.Error.WriteLine("[Cecil] WARNING: NavMediaSet.ALExport(DataError, string) not found — hook not installed");
+                }
+
+                // AddMediaToSetAsync(NavSession, Guid setId, Guid mediaId) → ValueTask<Guid>  (BC 28+)
+                // AddMediaToSet(Guid setId, Guid mediaId) → Guid                     (BC 27.x, synchronous)
+                //
+                // The shared internal helper every AL-facing import path (ImportStream's
+                // NavStream-based ALImport overloads chief among them — see #1773 / the
+                // MediaSetPatches file header) funnels through to add a media id to the set.
+                // Its real body reaches an undeclared "Media Set" platform table via
+                // NavSession.GetGlobalRecordInstance + ALGetAsync/ALInsertAsync, silently
+                // discarding the insert's success/failure — so the membership never lands
+                // anywhere our ALInsert/get_ALCount/ALItem patches above can see, even
+                // though the real body's earlier content-storage step (into the ALREADY
+                // real/declared Media/TenantMedia tables) succeeds.
+                //
+                // BC 27.x has NO async surface on NavMediaSet at all — the whole class is
+                // synchronous there (issue #1802, confirmed by decompiling
+                // Microsoft.Dynamics.Nav.Ncl.dll from the 27.0.38460.53552 and
+                // 28.1.49838.50794 cached service tiers: same logic, `AddMediaToSet(Guid,
+                // Guid) -> Guid`, no NavSession parameter). This is a genuine
+                // version-conditional pair, not an optional hook: if NEITHER shape
+                // resolves, every MediaSet membership operation silently degrades to
+                // Count()==0 with no error (see #1802) — a wrong answer, not a missing
+                // feature. Per loud-failures.md, an unknown BC shape here must hard-error
+                // the whole run rather than let that happen again.
+                // Resolution + the hard-error-on-neither-shape is extracted to
+                // ResolveMediaSetAddToSetTarget (below) so it's independently testable —
+                // see MediaSetAddToSetResolutionTests.cs.
+                var mAddToSetTarget = ResolveMediaSetAddToSetTarget(navMediaSetCecilType);
+                var addToSetHelperName = mAddToSetTarget.Name == "AddMediaToSetAsync"
+                    ? nameof(AlRunner.Patches.MediaSetPatches.NavMediaSet_AddMediaToSetAsync)
+                    : nameof(AlRunner.Patches.MediaSetPatches.NavMediaSet_AddMediaToSet);
+                {
+                    var h = patchTypeMi.GetMethod(addToSetHelperName, BindingFlags.Public | BindingFlags.Static)!;
+                    ReplaceBodyWithHelper(asm.MainModule, mAddToSetTarget, h);
                     mediaSetRewrote++;
                 }
 
@@ -2120,6 +2212,34 @@ public static class NclCecilRewrite
                     ilc.Append(ilc.Create(OpCodes.Ret));
                     body.MaxStackSize = 1;
                     Console.Error.WriteLine($"[Cecil] Rewrote ALTaskScheduler.{m.Name} → return false");
+                }
+
+                // ALTaskScheduler.CheckCodeUnit(NavSession, int) — the ALCreateTaskAsync
+                // state machine calls this TWICE (codeunitId, then failureCodeunitId) BEFORE
+                // it ever reaches the CanCreateTask gate above (#1733). Its real body calls
+                // NCLMetadata.GetMetaCodeunitById, which does not know about a freshly
+                // compiled test bundle's own codeunits, and throws a codeunit-resolution
+                // NavALException naming the calling test codeunit itself — CanCreateTask is
+                // never reached, so the documented scope.md §3.6 contract (unguarded CreateTask
+                // hits BC's own NavCreateScheduledTasksNotAllowedException) never manifests.
+                // The runner resolves codeunits via assembly-scan elsewhere (CreateTarget), so
+                // this metadata check is redundant here; no-op lets execution fall through to
+                // the CanCreateTask gate. A JmpHook no-op for this used to live in BcRuntime.cs
+                // but JmpHook is off by default (Cecil-only) — that registration was silently
+                // dead, which is exactly how this bug presented.
+                foreach (var m in alTaskSchedulerType.Methods
+                    .Where(x => x.Name == "CheckCodeUnit"
+                                && x.ReturnType.FullName == "System.Void"
+                                && x.HasBody))
+                {
+                    var body = m.Body;
+                    body.Instructions.Clear();
+                    body.Variables.Clear();
+                    body.ExceptionHandlers.Clear();
+                    var ilc = body.GetILProcessor();
+                    ilc.Append(ilc.Create(OpCodes.Ret));
+                    body.MaxStackSize = 0;
+                    Console.Error.WriteLine($"[Cecil] Rewrote ALTaskScheduler.{m.Name} → no-op");
                 }
             }
         }
@@ -3251,6 +3371,109 @@ public static class NclCecilRewrite
             il.Append(il.Create(OpCodes.Ret));
             body.MaxStackSize = 1;
             Console.Error.WriteLine("[Cecil] Replaced FlowFieldsHelper.FieldsAndFormulaAreSelfReferencing → FlowFieldPatches (null-safe)");
+        }
+
+        // ── FlowFieldsHelper.CalcFieldsAsync (the 9-arg static) ─────────────────────
+        // #1757. Rewriting RecordImplementation.CalcFieldsAsync (above) keeps AL's own
+        // CalcFields off the broken async pipeline, but BC re-enters this STATIC from
+        // inside its own code and the record-level hooks never see those calls:
+        //
+        //   GetFilterFromMetaFilterCollection, case FieldClass.FlowField:
+        //       NavValue value = CalcFieldsAsync(session, companyToken, currentRecord,
+        //                            filtersAndMarks, new[] { nCLMetaField }, false,
+        //                            securityFiltering, alIsolationLevel, recursionLevel)
+        //                        .AsTask().GetAwaiter().GetResult()[filter.ValueField];
+        //
+        // — i.e. a `where(X = field("<a FlowField>"))` condition is resolved by RECURSIVELY
+        // calculating the referenced FlowField. RecordIsWithinFilteredFlowFieldsAsync reaches
+        // the same static. Both used to land in the async body that NREs on the skeleton
+        // session, which is why #1716 had to refuse the whole formula.
+        //
+        // Hooking the static (rather than pre-computing values into the parent buffer and
+        // presenting the value field as Normal) leaves BC's dispatch in charge: BC decides
+        // when to recurse, in what order the conditions resolve, and BC's own recursion
+        // guards still run — FlowFieldPatches reproduces both of them (recursionLevel > 50
+        // and FieldsAndFormulaAreSelfReferencing → NavNCLStackOverflowException) inside the
+        // shared core. Every other BC caller of this method is served for free.
+        //
+        // Body shape emitted:
+        //   FieldDictionary<NavValue> fd = (FieldDictionary<NavValue>)
+        //       FlowFieldPatches.FlowFieldsHelper_CalcFieldsAsync(
+        //           session, companyToken, recordBuffer, filtersAndMarks, fieldsToCalc,
+        //           onlyFieldsSourcedFromVirtualTables, (object)securityFiltering,
+        //           (object)alIsolationLevel, recursionLevel);
+        //   return new ValueTask<FieldDictionary<NavValue>>(fd);
+        //
+        // The helper takes `object` for every Ncl-internal parameter type (NavSession,
+        // IRecordBuffer, FiltersAndMarks) and returns `object`, because FieldDictionary<>,
+        // FiltersAndMarks and IRecordBuffer are all INTERNAL to Ncl and cannot be named from
+        // Runner.dll. The two enum arguments are boxed at the call site; the returned
+        // dictionary is castclass'd back here, where the real type IS nameable.
+        {
+            var ffh = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.FlowFieldsHelper")
+                ?? throw new InvalidOperationException("FlowFieldsHelper type not found");
+            var calcStatic = ffh.Methods.FirstOrDefault(x =>
+                x.Name == "CalcFieldsAsync" && x.IsStatic && x.Parameters.Count == 9)
+                ?? throw new InvalidOperationException(
+                    "FlowFieldsHelper.CalcFieldsAsync(9 args) not found — Ncl shape changed");
+
+            // ValueTask`1<FieldDictionary`1<NavValue>> — taken from the method's own signature
+            // so the generic instantiation never has to be rebuilt by hand.
+            if (calcStatic.ReturnType is not GenericInstanceType retType
+                || retType.GenericArguments.Count != 1)
+                throw new InvalidOperationException(
+                    "FlowFieldsHelper.CalcFieldsAsync return type is not ValueTask<T> — Ncl shape changed");
+            var fieldDictionaryType = retType.GenericArguments[0];
+
+            var helperMi = typeof(AlRunner.Patches.FlowFieldPatches).GetMethod(
+                nameof(AlRunner.Patches.FlowFieldPatches.FlowFieldsHelper_CalcFieldsAsync),
+                BindingFlags.Public | BindingFlags.Static)
+                ?? throw new InvalidOperationException("FlowFieldPatches.FlowFieldsHelper_CalcFieldsAsync not found");
+            var helperRef = asm.MainModule.ImportReference(helperMi);
+
+            // ValueTask<TResult>(TResult result) — the single-arg ctor whose parameter is the
+            // type's own generic parameter (the other single-arg ctor takes Task<TResult>).
+            var vtCtorOpen = typeof(System.Threading.Tasks.ValueTask<>).GetConstructors()
+                .FirstOrDefault(c => c.GetParameters().Length == 1
+                                     && c.GetParameters()[0].ParameterType.IsGenericParameter)
+                ?? throw new InvalidOperationException("ValueTask<TResult>(TResult) ctor not found");
+            var vtCtorRef = asm.MainModule.ImportReference(vtCtorOpen);
+            var boundCtor = new MethodReference(vtCtorRef.Name, vtCtorRef.ReturnType, retType)
+            {
+                HasThis = true,
+                ExplicitThis = false,
+                CallingConvention = vtCtorRef.CallingConvention,
+            };
+            foreach (var p in vtCtorRef.Parameters)
+                boundCtor.Parameters.Add(new ParameterDefinition(p.ParameterType));
+
+            var asyncAttr = calcStatic.CustomAttributes
+                .FirstOrDefault(ca => ca.AttributeType.Name == "AsyncStateMachineAttribute");
+            if (asyncAttr != null) calcStatic.CustomAttributes.Remove(asyncAttr);
+
+            var body = calcStatic.Body;
+            body.Instructions.Clear();
+            body.Variables.Clear();
+            body.ExceptionHandlers.Clear();
+            var il = body.GetILProcessor();
+            il.Append(il.Create(OpCodes.Ldarg_0));                                  // NavSession       → object
+            il.Append(il.Create(OpCodes.Ldarg_1));                                  // int companyToken
+            il.Append(il.Create(OpCodes.Ldarg_2));                                  // IRecordBuffer    → object
+            il.Append(il.Create(OpCodes.Ldarg_3));                                  // FiltersAndMarks  → object
+            il.Append(il.Create(OpCodes.Ldarg_S, calcStatic.Parameters[4]));        // NCLMetaField[]   → Array
+            il.Append(il.Create(OpCodes.Ldarg_S, calcStatic.Parameters[5]));        // bool
+            il.Append(il.Create(OpCodes.Ldarg_S, calcStatic.Parameters[6]));        // SecurityFiltering
+            il.Append(il.Create(OpCodes.Box, calcStatic.Parameters[6].ParameterType));
+            il.Append(il.Create(OpCodes.Ldarg_S, calcStatic.Parameters[7]));        // ALIsolationLevel
+            il.Append(il.Create(OpCodes.Box, calcStatic.Parameters[7].ParameterType));
+            il.Append(il.Create(OpCodes.Ldarg_S, calcStatic.Parameters[8]));        // int recursionLevel
+            il.Append(il.Create(OpCodes.Call, helperRef));
+            il.Append(il.Create(OpCodes.Castclass, fieldDictionaryType));
+            il.Append(il.Create(OpCodes.Newobj, boundCtor));
+            il.Append(il.Create(OpCodes.Ret));
+            body.MaxStackSize = 9;
+            Console.Error.WriteLine(
+                "[Cecil] Replaced FlowFieldsHelper.CalcFieldsAsync(9) → FlowFieldPatches.FlowFieldsHelper_CalcFieldsAsync");
         }
 
         // ── RecordImplementation.InternalFindRecordWithoutCheckingValuesAsync ─────
@@ -4493,6 +4716,12 @@ public static class NclCecilRewrite
                     new[] { typeof(object), typeof(int), typeof(string) })
                 ?? throw new InvalidOperationException(
                     "NavReportSync.SyncRunRequestPage(object,int,string) not found — do not commit"));
+            var syncStaticRunRef = asm.MainModule.ImportReference(
+                typeof(AlRunner.NavReportSync).GetMethod(
+                    nameof(AlRunner.NavReportSync.SyncStaticRun),
+                    new[] { typeof(int), typeof(bool), typeof(bool), typeof(object) })
+                ?? throw new InvalidOperationException(
+                    "NavReportSync.SyncStaticRun(int,bool,bool,object) not found — do not commit"));
             // NavNCLDialogException is the AL Error() carrier; ctor takes (PrivacyClassification, string).
             // Resolving cross-assembly type refs here is brittle (Diagnostic enum lives in
             // Microsoft.Dynamics.Nav.Diagnostic.dll) — InvalidOperationException is caught by AL
@@ -4625,20 +4854,61 @@ public static class NclCecilRewrite
                         body.MaxStackSize = 1;
                         reportRewrites++;
                     }
-                    // Static Run() / RunModal() overloads remain as `ret`
-                    // placeholders here — separate JmpHooks in ReportPatches.cs
-                    // throw OOS (in-process construction-from-id not wired).
+                    // Static Run(id[, requestWindow[, systemPrinter[, record]]]) /
+                    // RunModal(same shapes) → NavReportSync.SyncStaticRun(id, requestWindow,
+                    // systemPrinter, record). #1771: these bodies used to be blanked to a bare
+                    // `ret`, with a separate JmpHook in ReportPatches.cs throwing an OOS
+                    // InvalidOperationException on top. That JmpHook never actually fired
+                    // under the default Cecil-only runtime (JmpHook.Apply silently skips
+                    // methods it doesn't own unless AL_RUNNER_ENABLE_JMPHOOK=1), so the call
+                    // fell straight through the `ret` — a silent no-op, not the intended
+                    // loud OOS throw. Cecil-own the body directly (like the instance
+                    // Run/RunModal rewrite above) so the redirect is real IL, not a hook that
+                    // can silently fail to bind. Missing trailing args get BC's own
+                    // documented defaults (RequestWindow=true, SystemPrinter=false) — inert
+                    // today since SyncStaticRun does not raise a dialog, but correct in case a
+                    // future implementation reads them.
+                    //
+                    // The one shape NOT handled here is the ReportRunOptions overload
+                    // (Run(ReportRunOptions) only — RunModal has no such overload): its single
+                    // parameter isn't `int`, so it falls through to the "unrecognised shape"
+                    // branch below and throws loud OOS instead of silently no-op'ing, exactly
+                    // like RunRequestPage's unknown-shape branch.
                     else if ((method.Name == "Run" || method.Name == "RunModal")
                         && method.IsStatic
                         && method.ReturnType.FullName == "System.Void")
                     {
+                        var sps = method.Parameters;
+                        bool known = sps.Count >= 1 && sps.Count <= 4
+                            && sps[0].ParameterType.FullName == "System.Int32"
+                            && (sps.Count < 2 || sps[1].ParameterType.FullName == "System.Boolean")
+                            && (sps.Count < 3 || sps[2].ParameterType.FullName == "System.Boolean")
+                            && (sps.Count < 4 || !sps[3].ParameterType.IsValueType);
+
                         var body = method.Body;
                         body.Instructions.Clear();
                         body.ExceptionHandlers.Clear();
                         body.Variables.Clear();
                         var il = body.GetILProcessor();
-                        il.Append(il.Create(OpCodes.Ret));
-                        body.MaxStackSize = 0;
+
+                        if (!known)
+                        {
+                            il.Append(il.Create(OpCodes.Ldstr,
+                                $"out-of-scope: static NavReport.{method.Name} (unrecognised overload shape)"));
+                            il.Append(il.Create(OpCodes.Newobj, ioeCtor));
+                            il.Append(il.Create(OpCodes.Throw));
+                            body.MaxStackSize = 1;
+                        }
+                        else
+                        {
+                            il.Append(il.Create(OpCodes.Ldarg_0)); // reportId
+                            il.Append(sps.Count >= 2 ? il.Create(OpCodes.Ldarg_1) : il.Create(OpCodes.Ldc_I4_1)); // requestWindow (BC default: true)
+                            il.Append(sps.Count >= 3 ? il.Create(OpCodes.Ldarg_2) : il.Create(OpCodes.Ldc_I4_0)); // systemPrinter (BC default: false)
+                            il.Append(sps.Count >= 4 ? il.Create(OpCodes.Ldarg_3) : il.Create(OpCodes.Ldnull));   // record (no filter)
+                            il.Append(il.Create(OpCodes.Call, syncStaticRunRef));
+                            il.Append(il.Create(OpCodes.Ret));
+                            body.MaxStackSize = 4;
+                        }
                         reportRewrites++;
                     }
                     // RunRequestPage (any sync overload returning string) →
@@ -4758,16 +5028,23 @@ public static class NclCecilRewrite
             int factoryRewrites = 0;
             foreach (var m in factoryT.Methods.Where(mm => mm.HasBody).ToList())
             {
+                // Message shape is the documented convention
+                //     out-of-scope: <api> — <reason> — see docs/scope.md#<anchor>
+                // (Infrastructure.OutOfScopeMessage). The <api> slot must name the
+                // BC API that was touched and the <reason> slot must LEAD with the
+                // scope.md anchor, because tests/expectations/ matches expect-oos
+                // entries on that anchor (#1743). Free-text detail goes after a
+                // further em-dash.
                 string? reason = m.Name switch
                 {
                     "GetRdlcResultSetProcessor" =>
-                        "out-of-scope: report-rendering-external — RDLC layout processing requires an external renderer — see docs/scope.md#report-rendering",
+                        "out-of-scope: ReportResultSetProcessorFactory.GetRdlcResultSetProcessor — report-rendering-external — RDLC layout processing requires an external renderer — see docs/scope.md#report-rendering",
                     "GetWordResultSetProcessor" =>
-                        "out-of-scope: report-rendering-external — Word layout merge (Aspose) requires an external renderer — see docs/scope.md#report-rendering",
+                        "out-of-scope: ReportResultSetProcessorFactory.GetWordResultSetProcessor — report-rendering-external — Word layout merge (Aspose) requires an external renderer — see docs/scope.md#report-rendering",
                     "GetExcelResultSetProcessor" =>
-                        "out-of-scope: report-rendering-external — Excel layout rendering (Aspose) requires an external renderer — see docs/scope.md#report-rendering",
+                        "out-of-scope: ReportResultSetProcessorFactory.GetExcelResultSetProcessor — report-rendering-external — Excel layout rendering (Aspose) requires an external renderer — see docs/scope.md#report-rendering",
                     "GetExcelDatasetResultSetProcessor" =>
-                        "out-of-scope: report-rendering-external — Excel dataset rendering (Aspose) requires an external renderer — see docs/scope.md#report-rendering",
+                        "out-of-scope: ReportResultSetProcessorFactory.GetExcelDatasetResultSetProcessor — report-rendering-external — Excel dataset rendering (Aspose) requires an external renderer — see docs/scope.md#report-rendering",
                     _ => null,
                 };
                 if (reason == null) continue;
@@ -4785,7 +5062,7 @@ public static class NclCecilRewrite
                 foreach (var ctor in printProcT.Methods.Where(mm => mm.IsConstructor && !mm.IsStatic && mm.HasBody).ToList())
                 {
                     ThrowBody(ctor,
-                        "out-of-scope: printing — physical/print-server printing requires an external print service — see docs/scope.md#report-rendering");
+                        "out-of-scope: ReportServerResultSetProcessor..ctor — printing — physical/print-server printing requires an external print service — see docs/scope.md#report-rendering");
                     printCtorRewrites++;
                 }
             }
@@ -4796,7 +5073,7 @@ public static class NclCecilRewrite
                 foreach (var ctor in docSvcT.Methods.Where(mm => mm.IsConstructor && !mm.IsStatic && mm.HasBody).ToList())
                 {
                     ThrowBody(ctor,
-                        "out-of-scope: document-service — document-service upload requires an external service — see docs/scope.md#report-rendering");
+                        "out-of-scope: ReportResultSetDocumentServiceDecorator..ctor — document-service — document-service upload requires an external service — see docs/scope.md#report-rendering");
                     docSvcCtorRewrites++;
                 }
             }
@@ -6149,6 +6426,51 @@ public static class NclCecilRewrite
                 ByParams(Rt + "TempTableDataProvider", "CalcNumeric", "CalcNumericProviderRequest"),
                 H(recordPatches, "TempTableDataProvider_CalcNumeric"));
 
+            // ── BLOB store isolation for database-backed tables (issue #1751) ──────
+            // Ncl's TempTableDataProvider.Insert copies the record's NavBLOB into the
+            // stored row BY REFERENCE and only CloneBlobs()es the dirty ones, so a BLOB
+            // that carried no value at Insert stays shared with the record variable —
+            // and a later `CreateOutStream`+write with no Modify() mutates the stored
+            // row. Real BC does exactly this for a `temporary` record and the opposite
+            // for a database-backed one (corpus 60940, green on BC 27.5 and 28.3), so
+            // the runner cannot simply always copy: every runner table is backed by
+            // this same provider.
+            //
+            // Two prepends. The first latches which kind of provider this insert is
+            // for; the second detaches the stored row's BLOBs when it is the SQL
+            // stand-in. Both leave the original bodies intact, so the dirty-BLOB clone
+            // Ncl already performs is unchanged. See Patches/BlobStoreIsolationPatches.cs.
+            {
+                var blobIsolation = typeof(AlRunner.Patches.BlobStoreIsolationPatches);
+
+                PrependStaticCall(nclMod,
+                    ByParams(Rt + "TempTableDataProvider", "Insert",
+                        "Int32", "MutableRecordBuffer", "InsertOptions", "ReadOnlyRecordBuffer&"),
+                    H(blobIsolation, "OnBeforeStoreInsert"),
+                    argSlots: 1); // `this` — the provider
+
+                PrependStaticCall(nclMod,
+                    ByParams(Rt + "TempTableRecordBuffer", "CloneBlobs", "MutableRecordBuffer"),
+                    H(blobIsolation, "DetachStoredBlobs"),
+                    argSlots: 1); // `this` — the freshly stored row
+
+                // ── Rename store-aliasing boundary for `temporary` records (issue #1765) ──
+                // A temporary record's BLOB committed with Modify() is LOST across a
+                // subsequent Rename() on real BC (corpus 60944, green on BC 27.5/28.3) —
+                // the mirror-image surprise to the leak fixed above. Rename() routes
+                // through this SAME ModifyAllTrees (RecordImplementation.RenameRecordAsync
+                // calls dataAccess.ModifyAsync, same as a plain Modify), so one more
+                // prepend here marks the renamed row's carried-over (non-dirty) BLOB as
+                // ineligible for FlowFieldPatches.LoadBlobField's by-key CalcFields
+                // reload — see BlobStoreIsolationPatches.OnModifyAllTrees for the full
+                // reasoning and why the database-backed shape is untouched.
+                PrependStaticCall(nclMod,
+                    ByParams(Rt + "TempTableDataProvider", "ModifyAllTrees",
+                        "MutableRecordBuffer", "TempTableRecordBuffer", "TempTableRecordBuffer", "Boolean"),
+                    H(blobIsolation, "OnModifyAllTrees"),
+                    argSlots: 4); // `this`, mutableRecordBuffer, workTableBuffer, storedTableBuffer
+            }
+
             // ── TempTableDataProvider.Find / FindFromPosition (query column projection) ──
             // Single-dataitem query reads route through GetDataAccessForQuery → the same
             // in-memory TempTableDataProvider that holds the inserted rows. The provider is
@@ -6251,6 +6573,15 @@ public static class NclCecilRewrite
             ReplaceBodyWithHelper(nclMod,
                 ByParams(Rt + "NavRecord", "Dispose", "Boolean"),
                 H(helperShims, "NoOp2"));
+
+            // NavRecord.GetCallerRecord(NavSession) — faithful reimplementation (#1781: nested
+            // Validate re-snapshotting xRec because this used to be a blanket ReturnNull hook).
+            // See GetCallerRecordPatches.NavRecord_GetCallerRecord for why this reads the
+            // tracked CurrentMethodScope backing field directly instead of going through
+            // NavSession.CurrentMethodScope's own (deliberately flattened) getter.
+            ReplaceBodyWithHelper(nclMod,
+                FindNclMethod(nclMod, Rt + "NavRecord", "GetCallerRecord", 1),
+                H(helperShims, "NavRecord_GetCallerRecord"));
             // NavRecord.IsGlobalTriggerImplemented is NOT rewritten: BC's body is
             // `(GlobalTriggers.GetTriggersOnTable(TableID) & wanted) != 0`, which now works
             // because GetTriggersOnTable is real again. It used to be forced to false, so
@@ -6953,6 +7284,52 @@ public static class NclCecilRewrite
     }
 
     /// <summary>
+    /// Resolves NavMediaSet's internal "add a media id to the set" method for whichever BC
+    /// shape is present on this Ncl — BC 28+'s async
+    /// <c>AddMediaToSetAsync(NavSession, Guid, Guid) -&gt; ValueTask&lt;Guid&gt;</c>, or BC
+    /// 27.x's synchronous <c>AddMediaToSet(Guid, Guid) -&gt; Guid</c> (no NavSession param).
+    /// See the Batch 5 NavMediaSet block for the full story (#1802): BC 27.x has NO async
+    /// surface on NavMediaSet at all, confirmed by decompiling
+    /// Microsoft.Dynamics.Nav.Ncl.dll from both the 27.0.38460.53552 and 28.1.49838.50794
+    /// cached service tiers.
+    ///
+    /// Extracted to a standalone method — independently testable (see
+    /// MediaSetAddToSetResolutionTests.cs) without needing to run the whole Cecil rewrite
+    /// pipeline against a real Ncl assembly.
+    ///
+    /// This is a genuine version-conditional pair, not an optional hook: per
+    /// loud-failures.md, if NEITHER shape resolves, the caller must NOT silently skip the
+    /// hook — every MediaSet membership operation would then degrade to Count()==0 with no
+    /// error (exactly what #1802 reported), a wrong answer rather than a missing feature.
+    /// So an unresolved pair hard-errors the whole run instead.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">
+    /// Neither shape resolved — an unknown BC Ncl surface for the MediaSet membership
+    /// funnel. The message names both candidate signatures so the fix is greppable.
+    /// </exception>
+    internal static MethodDefinition ResolveMediaSetAddToSetTarget(TypeDefinition navMediaSetCecilType)
+    {
+        var mAddToSetAsync = navMediaSetCecilType.Methods.FirstOrDefault(m =>
+            m.Name == "AddMediaToSetAsync" && m.HasBody && m.Parameters.Count == 3);
+        if (mAddToSetAsync != null) return mAddToSetAsync;
+
+        var mAddToSetSync = navMediaSetCecilType.Methods.FirstOrDefault(m =>
+            m.Name == "AddMediaToSet" && m.HasBody && m.Parameters.Count == 2
+            && m.Parameters[0].ParameterType.FullName == "System.Guid"
+            && m.Parameters[1].ParameterType.FullName == "System.Guid");
+        if (mAddToSetSync != null) return mAddToSetSync;
+
+        throw new InvalidOperationException(
+            "[Cecil] FATAL: neither NavMediaSet.AddMediaToSetAsync(NavSession, Guid, Guid) "
+            + "(BC 28+) nor NavMediaSet.AddMediaToSet(Guid, Guid) (BC 27.x) resolved on this "
+            + "Ncl — unknown BC shape for the MediaSet membership funnel. Silently skipping "
+            + "this hook makes ImportStream/ImportFile return a real MediaId while "
+            + "MediaSet.Count() silently stays 0 (see #1802) — a wrong answer, not a missing "
+            + "feature, so this aborts the run instead of degrading quietly. Decompile the "
+            + "new Ncl and add a case for the new shape.");
+    }
+
+    /// <summary>
     /// Clear <paramref name="target"/>'s body and emit `ldarg.0..N; call BcRuntime.helper; ret`,
     /// forwarding every IL argument (incl. `this` for instance methods) to the static helper.
     /// The helper's return value (if any) is left on the stack as the method result.
@@ -6966,6 +7343,46 @@ public static class NclCecilRewrite
             ?? throw new InvalidOperationException(
                 $"[Cecil] BcRuntime.{bcRuntimeHelperName} not found");
         ReplaceBodyWithHelper(module, target, helperMi);
+    }
+
+    /// <summary>
+    /// Emit `ldarg.0..argSlots-1; call helper;` BEFORE <paramref name="target"/>'s existing
+    /// first instruction, leaving the original body — and every branch target in it —
+    /// untouched. Use when the patch is an observer/side-effect that must run first and
+    /// BC's own behaviour must still happen (as opposed to ReplaceBodyWithHelper, which
+    /// discards the body entirely).
+    ///
+    /// The helper must return void and take exactly <paramref name="argSlots"/> reference-typed
+    /// parameters, taken from the front of the IL arg list (slot 0 is `this` on an instance
+    /// method). No boxing is emitted, so only reference-typed slots may be forwarded.
+    /// </summary>
+    private static void PrependStaticCall(
+        ModuleDefinition module, MethodDefinition target, MethodInfo helperMi, int argSlots)
+    {
+        if (helperMi.ReturnType != typeof(void))
+            throw new InvalidOperationException(
+                $"[Cecil] prepend helper {helperMi.DeclaringType?.Name}.{helperMi.Name} must return void");
+        if (helperMi.GetParameters().Length != argSlots)
+            throw new InvalidOperationException(
+                $"[Cecil] prepend helper {helperMi.DeclaringType?.Name}.{helperMi.Name} takes "
+                + $"{helperMi.GetParameters().Length} parameter(s) but {argSlots} arg slot(s) were requested");
+        int available = target.Parameters.Count + (target.HasThis ? 1 : 0);
+        if (argSlots > available)
+            throw new InvalidOperationException(
+                $"[Cecil] {target.DeclaringType.Name}.{target.Name} has only {available} arg slot(s), "
+                + $"{argSlots} requested — Ncl shape changed; do not commit");
+
+        var helperRef = module.ImportReference(helperMi);
+        var body = target.Body;
+        var il = body.GetILProcessor();
+        var first = body.Instructions[0];
+        for (int i = 0; i < argSlots; i++)
+            il.InsertBefore(first, il.Create(OpCodes.Ldarg, i));
+        il.InsertBefore(first, il.Create(OpCodes.Call, helperRef));
+        if (body.MaxStackSize < argSlots) body.MaxStackSize = argSlots;
+        Console.Error.WriteLine(
+            $"[Cecil] Prepended {helperMi.DeclaringType?.Name}.{helperMi.Name} to "
+            + $"{target.DeclaringType.Name}.{target.Name}");
     }
 
     /// <summary>

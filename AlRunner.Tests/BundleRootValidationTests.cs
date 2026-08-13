@@ -28,9 +28,8 @@ using Xunit;
 
 namespace AlRunner.Tests;
 
-// See DefineFlagIntegrationTests for why the subprocess tests are serialized with the
-// other runner-subprocess integration tests.
-[Collection("server-serial")]
+// See DefineFlagIntegrationTests for why the subprocess tests used to be
+// [Collection("server-serial")] and no longer are — #1809.
 public sealed class BundleRootValidationTests : IDisposable
 {
     private static readonly string RepoRoot = Path.GetFullPath(
@@ -48,14 +47,6 @@ public sealed class BundleRootValidationTests : IDisposable
     public void Dispose()
     {
         try { Directory.Delete(_root, recursive: true); } catch { }
-    }
-
-    private static bool ArtifactsPresent()
-    {
-        var home = Environment.GetEnvironmentVariable("HOME")
-            ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        var stdCache = Path.Combine(home, ".local", "share", "al-runner", "artifacts");
-        return Directory.Exists(stdCache) && Directory.EnumerateDirectories(stdCache).Any();
     }
 
     private static (int ExitCode, string StdOut, string StdErr) RunCli(params string[] args)
@@ -150,10 +141,10 @@ public sealed class BundleRootValidationTests : IDisposable
         Assert.DoesNotContain($"no such directory: {good}", all);
     }
 
-    [Fact]
+    [SkippableFact]
     public void ExistingBundlePath_StillRuns_AndIsNotRejected()
     {
-        if (!ArtifactsPresent()) { Console.Error.WriteLine("[skip] BC artifacts not present"); return; }
+        TestArtifacts.SkipIfMissing();
 
         // An existing but empty directory is a valid invocation: the runner must get all
         // the way through to its own "SKIP (no suites)" outcome and exit 0. An over-eager

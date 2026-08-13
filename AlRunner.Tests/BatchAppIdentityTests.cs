@@ -26,9 +26,8 @@ using Xunit;
 
 namespace AlRunner.Tests;
 
-// See DefineFlagIntegrationTests for why this is serialized with the other
-// runner-subprocess integration tests.
-[Collection("server-serial")]
+// See DefineFlagIntegrationTests for why this used to be [Collection("server-serial")]
+// and no longer is — #1809.
 public sealed class BatchAppIdentityTests : IDisposable
 {
     private static readonly string RepoRoot = Path.GetFullPath(
@@ -46,14 +45,6 @@ public sealed class BatchAppIdentityTests : IDisposable
     public void Dispose()
     {
         try { Directory.Delete(_root, recursive: true); } catch { }
-    }
-
-    private static bool ArtifactsPresent()
-    {
-        var home = Environment.GetEnvironmentVariable("HOME")
-            ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        var stdCache = Path.Combine(home, ".local", "share", "al-runner", "artifacts");
-        return Directory.Exists(stdCache) && Directory.EnumerateDirectories(stdCache).Any();
     }
 
     /// <summary>
@@ -139,10 +130,10 @@ public sealed class BatchAppIdentityTests : IDisposable
     /// version. Before the fix both saw the synthetic "V2_&lt;bundle-dir&gt;" identity
     /// and all four assertions failed.
     /// </summary>
-    [Fact]
+    [SkippableFact]
     public void BundledRun_EachAppSeesItsOwnModuleIdentity()
     {
-        if (!ArtifactsPresent()) { Console.Error.WriteLine("[skip] BC artifacts not present"); return; }
+        TestArtifacts.SkipIfMissing();
 
         WriteIdentityApp(Path.Combine(_root, "app-one"),
             "11111111-aaaa-4aaa-8aaa-111111111111", "Batch Ident One", "2.5.0.0", 62300, "One");
@@ -168,10 +159,10 @@ public sealed class BatchAppIdentityTests : IDisposable
     /// this, the positive test above would still pass if GetCurrentModuleInfo were
     /// hardwired to echo whatever the assertion expected.
     /// </summary>
-    [Fact]
+    [SkippableFact]
     public void BundledRun_WrongExpectedIdentity_FailsNamingWhatItSaw()
     {
-        if (!ArtifactsPresent()) { Console.Error.WriteLine("[skip] BC artifacts not present"); return; }
+        TestArtifacts.SkipIfMissing();
 
         // app.json says "Batch Ident Real"; the AL asserts it is called "Wrong Name".
         var dir = Path.Combine(_root, "app-mismatch");

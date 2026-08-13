@@ -4,6 +4,7 @@ using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using AlRunner.Infrastructure;
 
 namespace AlRunner.Patches;
 
@@ -28,11 +29,76 @@ internal static partial class BcAppSymbolCache
     // (2000000136) virtual table. A v8 payload deserialises cleanly with both null, so
     // without this bump every cached dependency would report "declares no lookup page"
     // for tables that plainly declare one — a silent wrong answer, not a cache miss.
-    private const int CacheVersion = 9;
+    // v10: added Pages — just Id/Name/SourceTable, feeding
+    // RecordPatches.TryGetDependencySourceTableIdForPage (issue #1719): a plain `Page X`
+    // variable over a precompiled dependency's page needs its SourceTable to bind Rec, and
+    // the runner's own AL-source page parser never sees a page it did not compile.
+    // v11: PageSymbol gained SourceTableTemporary. A v10 payload deserialises with it
+    // defaulted to false, so without this bump a temporary-source-table page (Page 700
+    // "Error Messages") would silently get a NON-temporary Rec, and its own body's
+    // Rec.Copy(source, shareTable: true) would throw NavNCLArgumentException — a correctness
+    // regression, not a cache miss.
+    // v12: EnumSymbol gained Captions (issue #1775 — Format(<enum value>) on a
+    // dependency's enum must return the declared Caption, not the member name). A v11
+    // payload deserialises with Captions null, which AlEnumOptionMetadata already treats
+    // as "no captions captured" (falls back to member name for every value) — silently
+    // wrong for any dependency enum whose Caption differs from its name, not a cache miss.
+    // v13: PageSymbol gained PageType/Caption/Editable/InsertAllowed/ModifyAllowed/
+    // DeleteAllowed/CardPageName and its field-control tree (Controls), feeding the "Page
+    // Metadata" (2000000138) and "Page Control Field" (2000000192) virtual tables for a
+    // page that lives in a precompiled dependency .app (issues #1769 / #1779). A v12
+    // payload deserialises with PageType null / Controls empty / CardPageName null, which
+    // the Page Metadata provider would read as "declares no PageType" (defaults to Card,
+    // right only by coincidence) and "declares no CardPageId" (CardPageID = 0, which is
+    // exactly the value Base App "Page Management".GetDefaultCardPageID uses to decide a
+    // table has no card page at all — a real behavioral divergence, not a display nit),
+    // and the Page Control Field provider would read as "no controls" — silent wrong
+    // answers, not a cache miss, hence the bump.
+    private const int CacheVersion = 13;
     private static readonly ConcurrentDictionary<string, AppSymbols> ProcessCache = new(StringComparer.OrdinalIgnoreCase);
 
     internal sealed record AppSymbols(List<ParsedTable> Tables, List<EnumSymbol> Enums, List<QuerySymbol> Queries,
-        List<ObjectSymbol> Objects, List<ReportSymbol> Reports);
+        List<ObjectSymbol> Objects, List<ReportSymbol> Reports, List<PageSymbol> Pages);
+
+    /// <summary>
+    /// A precompiled dependency's page, as far as SymbolReference.json states it — just
+    /// enough to bind a plain page variable's Rec (issue #1719). <c>SourceTableId</c> is 0
+    /// when the page declares no SourceTable (a legal AL page with no bound record).
+    /// <c>SourceTableTemporary</c> matters for the SAME bind: Page 700 "Error Messages"
+    /// declares <c>SourceTableTemporary = true</c>, and its own SetRecords body does
+    /// <c>Rec.Copy(TempErrorMessage, true)</c> — real BC's Copy(shareTable: true) requires
+    /// BOTH sides temporary, so a page whose SourceTable is declared temporary needs its
+    /// bound Rec built temporary too, not just any record of the right table.
+    /// </summary>
+    internal sealed record PageSymbol(
+        int Id, string Name, int SourceTableId, bool SourceTableTemporary,
+        // Everything below feeds the "Page Metadata" (2000000138) virtual table (#1769).
+        // AL defaults: PageType = Card (MS docs), Editable/InsertAllowed/ModifyAllowed/
+        // DeleteAllowed = true, all only when the symbol file states nothing to the contrary.
+        string PageType = "Card", string? Caption = null,
+        bool Editable = true, bool InsertAllowed = true, bool ModifyAllowed = true, bool DeleteAllowed = true,
+        // Field controls with a real SourceExpression, feeding "Page Control Field"
+        // (2000000192) (#1779). Unlike the source-parsed path (Rec.-bound only, see
+        // RecordPatches.AlPageParser.cs), the symbol file states EVERY field control's
+        // SourceExpression verbatim, Rec.-bound or not — see TryParsePageSymbol.
+        List<PageControlSymbol>? Controls = null,
+        // AL's CardPageId property, stated by the symbol file as the target page's NAME
+        // (verified: Base Application 28.1's "Customer List" carries
+        // CardPageID = "Customer Card", not a numeric id) — resolved against the run's page
+        // inventory at Page Metadata row-build time, same as the source-parsed path.
+        string? CardPageName = null);
+
+    /// <summary>
+    /// One field control of a precompiled dependency page, as SymbolReference.json states
+    /// it. <c>SourceExpression</c>/<c>Visible</c>/<c>Editable</c>/<c>Enabled</c> are the raw
+    /// property text the compiler recorded — e.g. Base Application's Customer Card control
+    /// "No." carries <c>Visible = "NoFieldVisible"</c> (a global Boolean variable name, not
+    /// a literal), which is exactly what the real "Page Control Field" table's Text columns
+    /// hold for a control whose Visible is driven by code rather than a constant.
+    /// </summary>
+    internal sealed record PageControlSymbol(
+        int Id, string Name, string SourceExpression,
+        string? VisibleExpr, string? EditableExpr, string? EnabledExpr, int Sequence);
 
     /// <summary>
     /// A precompiled dependency's report, as far as SymbolReference.json states it. Feeds
@@ -96,7 +162,11 @@ internal static partial class BcAppSymbolCache
         ("PermissionSets", "PermissionSet"),
         ("PermissionSetExtensions", "PermissionSetExtension"),
     };
-    internal sealed record EnumSymbol(int Id, string Name, List<string> Options, List<int> Indexes, List<List<int>> Implementations);
+    // Captions[i] is value i's declared Caption text, or null when it declares none
+    // (issue #1775 — Format(<enum value>) must return the Caption, not the member
+    // name, for enums coming from a prebuilt dependency .app too, not just enums
+    // compiled from this bundle's own source).
+    internal sealed record EnumSymbol(int Id, string Name, List<string> Options, List<int> Indexes, List<List<int>> Implementations, List<string?>? Captions = null);
 
     // Parsed query SymbolReference.json shape. A query is a tree of dataitems; the root
     // dataitem(s) live under the query's "Elements", nested dataitems under "DataItems".
@@ -116,7 +186,7 @@ internal static partial class BcAppSymbolCache
 
     private sealed record CachePayload(long Length, long LastWriteUtcTicks,
         List<ParsedTable> Tables, List<EnumSymbol> Enums, List<QuerySymbol> Queries,
-        List<ObjectSymbol>? Objects, List<ReportSymbol>? Reports);
+        List<ObjectSymbol>? Objects, List<ReportSymbol>? Reports, List<PageSymbol>? Pages);
 
     /// <summary>
     /// Parse a loose <c>SymbolReference.json</c> file (the raw module JSON, NOT a .app
@@ -132,10 +202,11 @@ internal static partial class BcAppSymbolCache
         var queries = new Dictionary<int, QuerySymbol>();
         var objects = new Dictionary<(string, int), ObjectSymbol>();
         var reports = new Dictionary<int, ReportSymbol>();
+        var pages = new Dictionary<int, PageSymbol>();
         using var doc = JsonDocument.Parse(File.ReadAllText(jsonPath));
-        VisitSymbolContainer(doc.RootElement, tables, enums, queries, objects, reports);
+        VisitSymbolContainer(doc.RootElement, tables, enums, queries, objects, reports, pages);
         return new AppSymbols(tables.Values.ToList(), enums.Values.ToList(), queries.Values.ToList(),
-            objects.Values.ToList(), reports.Values.ToList());
+            objects.Values.ToList(), reports.Values.ToList(), pages.Values.ToList());
     }
 
     internal static AppSymbols Get(string appPath)
@@ -173,7 +244,8 @@ internal static partial class BcAppSymbolCache
                 || payload.LastWriteUtcTicks != appInfo.LastWriteTimeUtc.Ticks)
                 return null;
             return new AppSymbols(payload.Tables, payload.Enums, payload.Queries ?? new List<QuerySymbol>(),
-                payload.Objects ?? new List<ObjectSymbol>(), payload.Reports ?? new List<ReportSymbol>());
+                payload.Objects ?? new List<ObjectSymbol>(), payload.Reports ?? new List<ReportSymbol>(),
+                payload.Pages ?? new List<PageSymbol>());
         }
         catch (Exception ex)
         {
@@ -182,13 +254,29 @@ internal static partial class BcAppSymbolCache
         }
     }
 
-    private static void TryWrite(string cachePath, FileInfo appInfo, AppSymbols symbols)
+    // internal (not private): AlRunner.Tests exercises this directly to pin the
+    // atomic-publish contract at this specific call site — see
+    // BcAppSymbolCacheAtomicWriteTests.cs.
+    internal static void TryWrite(string cachePath, FileInfo appInfo, AppSymbols symbols)
     {
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(cachePath)!);
-            var payload = new CachePayload(appInfo.Length, appInfo.LastWriteTimeUtc.Ticks, symbols.Tables, symbols.Enums, symbols.Queries, symbols.Objects, symbols.Reports);
-            File.WriteAllText(cachePath, JsonSerializer.Serialize(payload));
+            var payload = new CachePayload(appInfo.Length, appInfo.LastWriteTimeUtc.Ticks, symbols.Tables, symbols.Enums, symbols.Queries, symbols.Objects, symbols.Reports, symbols.Pages);
+            // #1809 follow-up: cachePath is content-keyed (hash of the .app file),
+            // so two subprocesses parsing the same app concurrently used to race a
+            // plain File.WriteAllText into the same path. TryRead already treats any
+            // exception (including a partial-JSON parse failure from a torn read) as
+            // a cache miss, so this was never a crash — but it was a silent-ish
+            // "MISS when it should have been a HIT" that reparses on every collision,
+            // which is exactly the kind of intermittent-and-unexplained cost
+            // parallelizing AlRunner.Tests's subprocess collections (#1809) makes
+            // more likely to hit. Fix: publish atomically like every other
+            // content-keyed cache in this codebase (AlCacheWriter.AtomicPublish —
+            // temp file in the same directory + File.Move(overwrite:true)), so a
+            // concurrent reader only ever sees "file absent" or "file complete",
+            // never a torn write.
+            AlCacheWriter.AtomicPublish(cachePath, tmp => File.WriteAllText(tmp, JsonSerializer.Serialize(payload)));
         }
         catch (Exception ex)
         {
@@ -203,16 +291,17 @@ internal static partial class BcAppSymbolCache
         var queries = new Dictionary<int, QuerySymbol>();
         var objects = new Dictionary<(string, int), ObjectSymbol>();
         var reports = new Dictionary<int, ReportSymbol>();
+        var pages = new Dictionary<int, PageSymbol>();
         foreach (var json in ReadSymbolReferences(appPath))
         {
             using var doc = JsonDocument.Parse(json);
-            VisitSymbolContainer(doc.RootElement, tables, enums, queries, objects, reports);
+            VisitSymbolContainer(doc.RootElement, tables, enums, queries, objects, reports, pages);
         }
         return new AppSymbols(tables.Values.ToList(), enums.Values.ToList(), queries.Values.ToList(),
-            objects.Values.ToList(), reports.Values.ToList());
+            objects.Values.ToList(), reports.Values.ToList(), pages.Values.ToList());
     }
 
-    private static void VisitSymbolContainer(JsonElement container, Dictionary<int, ParsedTable> tables, Dictionary<int, EnumSymbol> enums, Dictionary<int, QuerySymbol> queries, Dictionary<(string, int), ObjectSymbol> objects, Dictionary<int, ReportSymbol> reports)
+    private static void VisitSymbolContainer(JsonElement container, Dictionary<int, ParsedTable> tables, Dictionary<int, EnumSymbol> enums, Dictionary<int, QuerySymbol> queries, Dictionary<(string, int), ObjectSymbol> objects, Dictionary<int, ReportSymbol> reports, Dictionary<int, PageSymbol> pages)
     {
         // Flat (kind, id, name) sweep for AllObj. Independent of the typed parsing below
         // so a kind we do not model in depth still shows up as an existing object.
@@ -271,12 +360,106 @@ internal static partial class BcAppSymbolCache
             }
         }
 
+        if (container.TryGetProperty("Pages", out var pageArray) && pageArray.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var p in pageArray.EnumerateArray())
+            {
+                var parsed = TryParsePageSymbol(p);
+                if (parsed != null && !pages.ContainsKey(parsed.Id))
+                    pages[parsed.Id] = parsed;
+            }
+        }
+
         if (container.TryGetProperty("Namespaces", out var namespaces) && namespaces.ValueKind == JsonValueKind.Array)
         {
             foreach (var ns in namespaces.EnumerateArray())
-                VisitSymbolContainer(ns, tables, enums, queries, objects, reports);
+                VisitSymbolContainer(ns, tables, enums, queries, objects, reports, pages);
         }
     }
+
+    /// <summary>
+    /// Parse one entry of a SymbolReference.json <c>Pages</c> array. Only <c>SourceTable</c>
+    /// is needed (issue #1719: binding a plain page variable's Rec) — everything else about
+    /// a precompiled page (its control tree) is out of reach without parsing its AL source,
+    /// which <see cref="RunnerPageInstance"/> already declines to do for a page the runner
+    /// did not compile itself.
+    /// <para><c>SourceTable</c>'s Properties value is the table's numeric ID as text (see
+    /// e.g. Base Application's Page 700 "Error Messages": <c>SourceTable = "700"</c>), unlike
+    /// <c>LookupPageId</c>/<c>DrillDownPageId</c> on a table, which are page NAMES — so this
+    /// needs no name-to-id resolution pass.</para>
+    /// </summary>
+    private static PageSymbol? TryParsePageSymbol(JsonElement page)
+    {
+        if (!page.TryGetProperty("Id", out var idProp) || !idProp.TryGetInt32(out var pageId) || pageId <= 0)
+            return null;
+        var name = page.TryGetProperty("Name", out var nameProp) ? nameProp.GetString() : null;
+        if (string.IsNullOrEmpty(name)) return null;
+
+        var props = SymbolProperties(page);
+        int sourceTableId = props.TryGetValue("SourceTable", out var st) && int.TryParse(st, out var stId) ? stId : 0;
+        bool sourceTableTemporary = SymbolBool(props, "SourceTableTemporary");
+
+        props.TryGetValue("PageType", out var pageType);
+        props.TryGetValue("Caption", out var caption);
+        // SymbolProperties is case-insensitive, covering both "CardPageID" (observed on
+        // Base Application 28.1) and any "CardPageId" spelling — same tolerance Table
+        // Metadata already applies to LookupPageId/LookupPageID.
+        props.TryGetValue("CardPageId", out var cardPageName);
+        // AL defaults for these four: true, only an explicit "false"/"0" flips them — same
+        // rule ParsePageControls uses for the source-parsed path.
+        bool editable = !SymbolBoolFalse(props, "Editable");
+        bool insertAllowed = !SymbolBoolFalse(props, "InsertAllowed");
+        bool modifyAllowed = !SymbolBoolFalse(props, "ModifyAllowed");
+        bool deleteAllowed = !SymbolBoolFalse(props, "DeleteAllowed");
+
+        var controls = new List<PageControlSymbol>();
+        int seq = 0;
+        if (page.TryGetProperty("Controls", out var controlsArr) && controlsArr.ValueKind == JsonValueKind.Array)
+            foreach (var c in controlsArr.EnumerateArray())
+                CollectPageControlSymbols(c, controls, ref seq);
+
+        return new PageSymbol(pageId, name!, sourceTableId, sourceTableTemporary,
+            string.IsNullOrWhiteSpace(pageType) ? "Card" : pageType!, caption,
+            editable, insertAllowed, modifyAllowed, deleteAllowed, controls,
+            string.IsNullOrWhiteSpace(cardPageName) ? null : cardPageName);
+    }
+
+    /// <summary>
+    /// Recursively collect every "Kind 8" field control (identified by having a
+    /// <c>SourceExpression</c> property, NOT a hardcoded Kind number — verified against
+    /// Base Application 28.1: every one of its 36890 <c>SourceExpression</c>-bearing
+    /// controls is Kind 8, and no other Kind ever carries one) out of a page's <c>Controls</c>
+    /// tree, which nests group/repeater/cuegroup/etc. the same way a report's data items nest.
+    /// Sequence is assigned here, depth-first in document order — the same order a real page
+    /// renders its controls.
+    /// </summary>
+    private static void CollectPageControlSymbols(JsonElement control, List<PageControlSymbol> into, ref int sequence)
+    {
+        var props = SymbolProperties(control);
+        if (props.TryGetValue("SourceExpression", out var srcExpr))
+        {
+            var name = control.TryGetProperty("Name", out var n) ? n.GetString() : null;
+            int id = control.TryGetProperty("Id", out var idProp) && idProp.TryGetInt32(out var idv) ? idv : 0;
+            if (!string.IsNullOrEmpty(name) && id != 0)
+            {
+                sequence++;
+                props.TryGetValue("Visible", out var visible);
+                props.TryGetValue("Editable", out var editable);
+                props.TryGetValue("Enabled", out var enabled);
+                into.Add(new PageControlSymbol(id, name!, srcExpr, visible, editable, enabled, sequence));
+            }
+        }
+
+        if (control.TryGetProperty("Controls", out var children) && children.ValueKind == JsonValueKind.Array)
+            foreach (var child in children.EnumerateArray())
+                CollectPageControlSymbols(child, into, ref sequence);
+    }
+
+    private static bool SymbolBool(Dictionary<string, string> props, string name)
+        => props.TryGetValue(name, out var v) && (v == "1" || string.Equals(v, "true", StringComparison.OrdinalIgnoreCase));
+
+    private static bool SymbolBoolFalse(Dictionary<string, string> props, string name)
+        => props.TryGetValue(name, out var v) && (v == "0" || string.Equals(v, "false", StringComparison.OrdinalIgnoreCase));
 
     /// <summary>
     /// Parse one entry of a SymbolReference.json <c>Reports</c> array into the subset the
@@ -478,6 +661,12 @@ internal static partial class BcAppSymbolCache
                 var props = SymbolProperties(field);
                 var isFlowField = props.TryGetValue("FieldClass", out var fieldClass)
                     && string.Equals(fieldClass, "FlowField", StringComparison.OrdinalIgnoreCase);
+                // #1716 — carry FlowFilter through too. The ~105 Base Application FlowFields
+                // that read a flow filter reach their FlowFilter field through THIS path, and
+                // FlowFieldsHelper dispatches on the value field's FieldClass; a FlowFilter
+                // field arriving as Normal is read as a stored (always blank) value instead.
+                var isFlowFilter = props.TryGetValue("FieldClass", out var fieldClass2)
+                    && string.Equals(fieldClass2, "FlowFilter", StringComparison.OrdinalIgnoreCase);
                 ParsedCalcFormula? calcFormula = null;
                 if (isFlowField && props.TryGetValue("CalcFormula", out var calcFormulaText))
                     calcFormula = RecordPatches.TryParseCalcFormula($"CalcFormula = {calcFormulaText};");
@@ -486,7 +675,7 @@ internal static partial class BcAppSymbolCache
                 var isAutoIncrement = props.TryGetValue("AutoIncrement", out var autoIncrement)
                     && (autoIncrement == "1" || autoIncrement.Equals("true", StringComparison.OrdinalIgnoreCase));
                 fields.Add(new ParsedField(fieldId, fieldName, typeName, SymbolTypeLength(typeName), isFlowField, calcFormula,
-                    optionMembers, initValue, isAutoIncrement));
+                    optionMembers, initValue, isAutoIncrement, IsFlowFilter: isFlowFilter));
             }
         }
 
@@ -552,6 +741,7 @@ internal static partial class BcAppSymbolCache
         var options = new List<string>();
         var indexes = new List<int>();
         var implementations = new List<List<int>>();
+        var captions = new List<string?>();
         var nextOrdinal = 0;
         foreach (var value in values.EnumerateArray())
         {
@@ -574,9 +764,16 @@ internal static partial class BcAppSymbolCache
                 }
             }
             implementations.Add(implementationIds);
+            // Issue #1775 — a value's declared Caption, same SymbolProperties read the
+            // report/query/field Caption capture already uses elsewhere in this file.
+            // Missing/empty means "declares none"; the consumer (AlEnumOptionMetadata.
+            // GetCaptionFromIndex) falls back to the member name for that case.
+            captions.Add(props.TryGetValue("Caption", out var captionText) && !string.IsNullOrEmpty(captionText)
+                ? captionText
+                : null);
             nextOrdinal = ordinal + 1;
         }
-        return new EnumSymbol(id, name, options, indexes, implementations);
+        return new EnumSymbol(id, name, options, indexes, implementations, captions);
     }
 
     private static Dictionary<string, string> SymbolProperties(JsonElement element)
