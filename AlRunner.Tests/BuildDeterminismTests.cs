@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Reflection;
 using System.Security.Cryptography;
 using Xunit;
 
@@ -50,6 +51,15 @@ namespace AlRunner.Tests;
 /// <c>SourceRevisionId</c> "Condition=\"'$(SourceRevisionId)' == ''\"" — i.e. an explicit
 /// override IS exactly what a different real commit would have produced, without paying for
 /// a git checkout inside the test.
+///
+/// The probe test alone proves only that the shipped <c>Directory.Build.props</c> makes *a*
+/// classlib deterministic — it would stay green even if someone later set
+/// <c>IncludeSourceRevisionInInformationalVersion=true</c> (or reintroduced SourceLink)
+/// directly inside <c>AlRunner.csproj</c>, overriding the repo-wide default on the exact
+/// assembly that matters. <see cref="InformationalVersion_OnTheActualRunnerAssembly_DoesNotContainAGitSha"/>
+/// closes that gap for near-zero cost: a plain reflection read of the already-built
+/// al-runner.dll under test, no extra <c>dotnet build</c>, no subprocess. The two tests cover
+/// different halves — mechanism vs. the real artifact.
 /// </summary>
 public class BuildDeterminismTests
 {
@@ -170,5 +180,29 @@ public class BuildDeterminismTests
         {
             if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
         }
+    }
+
+    /// <summary>
+    /// Pins the fix directly on the assembly it actually has to hold for: al-runner.dll
+    /// itself, as already built for this test run (no extra `dotnet build`, no subprocess —
+    /// a plain reflection read). The probe test above proves the MECHANISM works on a generic
+    /// classlib; it would stay green even if AlRunner.csproj later set
+    /// IncludeSourceRevisionInInformationalVersion=true (or reintroduced SourceLink) directly,
+    /// silently overriding the repo-wide Directory.Build.props default on the one assembly
+    /// RunnerFingerprint.ContentHash actually hashes. This closes that gap.
+    ///
+    /// Asserts on a 40-hex-char match rather than on the literal "+": SemVer build metadata is
+    /// legitimate and may reappear in AssemblyInformationalVersionAttribute for other reasons
+    /// (e.g. a future prerelease/build tag) — a 40-character hex git SHA is specifically the
+    /// thing that must never be there again.
+    /// </summary>
+    [Fact]
+    public void InformationalVersion_OnTheActualRunnerAssembly_DoesNotContainAGitSha()
+    {
+        var info = typeof(AlRunner.Infrastructure.RunnerFingerprint).Assembly
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()
+            !.InformationalVersion;
+
+        Assert.DoesNotMatch("[0-9a-f]{40}", info);
     }
 }

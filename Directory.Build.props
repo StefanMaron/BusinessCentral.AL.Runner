@@ -28,6 +28,16 @@
     Nothing in this repo reads the informational version at runtime: al-runner's version
     flag reports Assembly.GetName().Version (AssemblyVersion, e.g. "2.0.0.0"), not the
     informational version.
+
+    DO NOT DELETE THESE AS "REDUNDANT" IF YOU SEE THEM OVERRIDDEN ELSEWHERE. The published
+    NuGet package (publish.yml's `dotnet pack AlRunner/`, PackAsTool=true, pushed to
+    nuget.org as MSDyn365BC.AL.Runner) deliberately turns BOTH properties back on at pack
+    time (`-p:SuppressImplicitGitSourceLink=false -p:IncludeSourceRevisionInInformationalVersion=true`)
+    so released packages keep real commit provenance (nuspec RepositoryUrl/RepositoryCommit)
+    and source-stepping for consumers. That override is safe and intentional: the pack job's
+    output is a one-off release build that never feeds a RunnerFingerprint.ContentHash-keyed
+    cache (only dev/CI/test-matrix builds of al-runner.dll do), so it cannot reintroduce the
+    #1881 cache-invalidation bug these repo-wide defaults exist to fix.
   -->
   <PropertyGroup>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>

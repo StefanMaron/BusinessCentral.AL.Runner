@@ -71,3 +71,10 @@ tests/runner-extras/dotnet-interop/
 # #1672: prebuilt Win32 stub shims are build artifacts, produced fresh per-arch by
 # AlRunner.csproj's BuildWin32PrebuiltStubs target — never committed as binaries.
 AlRunner/Win32Stubs/*.so
+
+# #1881: BuildDeterminismTests (AlRunner.Tests) generates a throwaway probe project
+# directly under the repo root (so it inherits Directory.Build.props via MSBuild's
+# normal upward search) and deletes it in a `finally`. A hard crash/kill/timeout can
+# leave one behind — ignore it so a stray copy never shows up as untracked or gets
+# swept into a `git add -A`.
+/.build-determinism-probe-*/

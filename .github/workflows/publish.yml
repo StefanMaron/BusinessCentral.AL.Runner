@@ -198,8 +198,23 @@ jobs:
           # with (AssemblyMetadata BcEngineVersion). It also runs
           # BuildWin32PrebuiltStubs (see AlRunner.csproj) which ships the prebuilt
           # libwin32_stubs.linux-{x64,arm64}.so shims in the resulting nupkg.
+          #
+          # #1881's Directory.Build.props turns OFF IncludeSourceRevisionInInformationalVersion
+          # and SuppressImplicitGitSourceLink=true repo-wide, so every dev/CI build of
+          # al-runner.dll is content-addressable (RunnerFingerprint.ContentHash stops
+          # being a hash of the commit). This is the ONE place that must turn them back
+          # ON: `dotnet pack`'s nuspec RepositoryUrl/RepositoryCommit come from
+          # SourceLink's git task, and PackAsTool=true (AlRunner.csproj) ships this to
+          # nuget.org under MSDyn365BC.AL.Runner — losing that would silently strip
+          # commit provenance / source-stepping from every released package. Safe to
+          # override here specifically: this job's output is a one-off release build
+          # that never feeds a RunnerFingerprint.ContentHash-keyed cache (that's the
+          # dev/CI/test-matrix path only), so re-enabling both properties cannot
+          # reintroduce the #1881 cache-invalidation bug.
           dotnet build AlRunner/ -p:AllowBcArtifactDownload=true
-          dotnet pack AlRunner/ -p:AllowBcArtifactDownload=true -p:Version=${{ inputs.version }} -o ./nupkg
+          dotnet pack AlRunner/ -p:AllowBcArtifactDownload=true -p:Version=${{ inputs.version }} \
+            -p:SuppressImplicitGitSourceLink=false -p:IncludeSourceRevisionInInformationalVersion=true \
+            -o ./nupkg
 
       - name: Push to NuGet
         run: dotnet nuget push ./nupkg/*.nupkg --api-key ${{ secrets.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json --skip-duplicate
