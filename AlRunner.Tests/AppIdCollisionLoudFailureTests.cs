@@ -184,6 +184,38 @@ public class AppIdCollisionLoudFailureTests
         Assert.Equal(appId, ex.AppId);
         Assert.Equal("/bundles/collide-a", ex.ExistingSourcePath);
         Assert.Equal("/bundles/collide-b", ex.NewSourcePath);
+        // Genuinely different apps (different Name) — the "regenerate the id" wording
+        // is correct here, not the version-skew wording. See the sibling test below.
+        Assert.False(ex.IsVersionSkew);
+        Assert.Contains("Regenerate the", ex.Message);
+    }
+
+    [Fact]
+    public void TryGetByAppId_SameNamePublisherDifferentVersion_ThrowsVersionSkewMessage()
+    {
+        // PR #1862 review, Note 1: Name+Publisher match but Version differs is the
+        // SAME app built twice (most likely a stale .app in the package cache
+        // shadowing a rebuilt source suite), not two unrelated apps that need a new
+        // id. "Regenerate the id" would be actively wrong advice here — the id is
+        // correct; the fix is a rebuild or a package/AL-output cache clear. The
+        // check itself must still abort (two live modules for one AL identity is
+        // exactly the #1683 TargetException hazard), but the message must say so.
+        var appId = Guid.NewGuid();
+        var asmA = typeof(DependencyLoader).Assembly;
+        DependencyLoader.RegisterLoaded(
+            appId, asmA, "AC Version Skew Suite 1850", "Repro1850", "1.0.0.0", "/bundles/skew-old");
+
+        var ex = Assert.Throws<AlRunner.Infrastructure.AppIdCollisionException>(() =>
+            DependencyLoader.TryGetByAppId(
+                appId, "AC Version Skew Suite 1850", "Repro1850", "2.0.0.0", "/bundles/skew-new"));
+
+        Assert.True(ex.IsVersionSkew);
+        Assert.Contains(appId.ToString(), ex.Message);
+        Assert.Contains("/bundles/skew-old", ex.Message);
+        Assert.Contains("/bundles/skew-new", ex.Message);
+        Assert.Contains("same app", ex.Message);
+        Assert.Contains("stale build", ex.Message);
+        Assert.DoesNotContain("Regenerate the", ex.Message);
     }
 
     [Fact]

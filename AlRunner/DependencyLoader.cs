@@ -44,6 +44,19 @@ public sealed class DependencyLoader
     /// carry it), not a different app that happens to share the GUID. Ordinal for Version
     /// (already a normalized ToString()), case-insensitive for Name/Publisher (app.json
     /// casing is not semantically significant to BC's own identity resolution).
+    ///
+    /// The two callers read Publisher from different places and must keep agreeing on
+    /// what "absent" means, or a legitimately-same app could read as a collision (or
+    /// worse, vice versa): the app-group path (Program.cs → InProcessAppPackager.ReadIdentity)
+    /// defaults a missing `publisher` in app.json to "Unknown"; the dependency path
+    /// (AppLoader's NAVX manifest reader) defaults a missing `Publisher` attribute to "".
+    /// Checked (PR #1862 review) that this does not bite in practice: InProcessAppPackager
+    /// always writes the NAVX it packages with `Publisher=identity.Publisher`, so an
+    /// "Unknown" default round-trips as "Unknown" through both readers for any app this
+    /// runner itself packaged. The only way to actually hit the mismatch is a third-party
+    /// `.app` whose NAVX omits `Publisher` AND whose app.json (if it is also discovered as
+    /// a source suite) omits `publisher` — both paths, both fields missing at once. If you
+    /// change either default, keep the other in sync or this comparison silently drifts.
     /// </summary>
     private static bool IdentityMatches(LoadedAppEntry entry, string name, string publisher, string version)
         => string.Equals(entry.Name, name, StringComparison.OrdinalIgnoreCase)

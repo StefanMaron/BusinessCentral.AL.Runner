@@ -31,12 +31,27 @@ namespace AlRunner.Infrastructure;
 /// not the legitimate #1683 same-app reuse case. Names both source paths and
 /// the shared AppId so the developer can see immediately which app.json needs
 /// a new id.
+///
+/// Two sub-cases get two different messages (PR #1862 review): Name+Publisher
+/// matching but Version differing is "the same app, stale build" — advising
+/// "regenerate the id" would be actively wrong, since the id is correct and the
+/// fix is a rebuild or a package-cache clear instead. Anything else is a genuine
+/// GUID collision between unrelated apps, where regenerating the id IS the fix.
+/// Both cases still abort: two live modules for one AL identity is the
+/// TargetException hazard #1683 exists to prevent, so silently picking whichever
+/// version arrived first would be its own silent-wrong-answer.
 /// </summary>
 public sealed class AppIdCollisionException : Exception
 {
     public Guid AppId { get; }
     public string ExistingSourcePath { get; }
     public string NewSourcePath { get; }
+
+    /// <summary>
+    /// True when the collision is the same app (Name + Publisher match) at two
+    /// different versions, rather than two genuinely unrelated apps.
+    /// </summary>
+    public bool IsVersionSkew { get; }
 
     public AppIdCollisionException(
         Guid appId,
@@ -49,16 +64,38 @@ public sealed class AppIdCollisionException : Exception
         AppId = appId;
         ExistingSourcePath = existingSourcePath;
         NewSourcePath = newSourcePath;
+        IsVersionSkew = IsSameAppDifferentVersion(
+            existingName, existingPublisher, existingVersion, newName, newPublisher, newVersion);
     }
+
+    private static bool IsSameAppDifferentVersion(
+        string existingName, string existingPublisher, string existingVersion,
+        string newName, string newPublisher, string newVersion)
+        => string.Equals(existingName, newName, StringComparison.OrdinalIgnoreCase)
+        && string.Equals(existingPublisher, newPublisher, StringComparison.OrdinalIgnoreCase)
+        && !string.Equals(existingVersion, newVersion, StringComparison.Ordinal);
 
     private static string BuildMessage(
         Guid appId,
         string existingName, string existingPublisher, string existingVersion, string existingSourcePath,
         string newName, string newPublisher, string newVersion, string newSourcePath)
-        => $"duplicate app id {appId}: two different apps declare the same app.json \"id\" — " +
-           $"\"{existingPublisher}_{existingName}\" v{existingVersion} ({existingSourcePath}) was " +
-           $"already loaded in this process, and \"{newPublisher}_{newName}\" v{newVersion} " +
-           $"({newSourcePath}) declares the SAME id but is a different app. Regenerate the " +
-           $"\"id\" in one of these two app.json files — reusing one app's compiled module for " +
-           $"the other's tests would silently drop the second app's tests (see issue #1850).";
+    {
+        if (IsSameAppDifferentVersion(
+                existingName, existingPublisher, existingVersion, newName, newPublisher, newVersion))
+        {
+            return $"duplicate app id {appId}: \"{existingPublisher}_{existingName}\" is loaded at two " +
+                   $"different versions in this process under the SAME id — v{existingVersion} " +
+                   $"({existingSourcePath}) and v{newVersion} ({newSourcePath}). This is the same app, " +
+                   $"not a different one — one of these is a stale build. Rebuild it or clear the " +
+                   $"package/AL-output cache rather than regenerating the id: reusing one version's " +
+                   $"compiled module for the other's tests would silently run the wrong version's " +
+                   $"tests (see issue #1850).";
+        }
+        return $"duplicate app id {appId}: two different apps declare the same app.json \"id\" — " +
+               $"\"{existingPublisher}_{existingName}\" v{existingVersion} ({existingSourcePath}) was " +
+               $"already loaded in this process, and \"{newPublisher}_{newName}\" v{newVersion} " +
+               $"({newSourcePath}) declares the SAME id but is a different app. Regenerate the " +
+               $"\"id\" in one of these two app.json files — reusing one app's compiled module for " +
+               $"the other's tests would silently drop the second app's tests (see issue #1850).";
+    }
 }

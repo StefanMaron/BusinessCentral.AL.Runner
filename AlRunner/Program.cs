@@ -1245,10 +1245,18 @@ foreach (var bundle in bundles)
         Assembly? reusedAsm;
         try
         {
+            // Publisher/Version are non-null whenever AppId is: BuildAppGroups only ever
+            // constructs an AppGroup with all three set together (from InProcessAppPackager.
+            // ReadIdentity, which defaults an absent app.json field rather than leaving it
+            // null) or all three null (the orphan/no-app.json group, which never reaches
+            // here — this whole branch is gated on appGroup.AppId being non-null). The `!`
+            // asserts that invariant instead of silently masking a violation of it behind a
+            // fallback that would disagree with AppLoader's own default (see IdentityMatches'
+            // doc comment) — PR #1862 review.
             reusedAsm = (!watchMode && appGroup.AppId is { } reuseCheckId)
                 ? DependencyLoader.TryGetByAppId(
-                    reuseCheckId, appGroup.ModuleName, appGroup.Publisher ?? "Unknown",
-                    (appGroup.Version ?? new Version(1, 0, 0, 0)).ToString(), appGroup.SuiteDir)
+                    reuseCheckId, appGroup.ModuleName, appGroup.Publisher!,
+                    appGroup.Version!.ToString(), appGroup.SuiteDir)
                 : null;
         }
         catch (AlRunner.Infrastructure.AppIdCollisionException ex)
@@ -1621,9 +1629,14 @@ foreach (var bundle in bundles)
                 {
                     try
                     {
+                        // Publisher/Version are non-null whenever AppId is — see the
+                        // BuildAppGroups invariant note above the reusedAsm check (PR #1862
+                        // review); the `!` asserts it rather than silently masking a
+                        // violation behind a fallback that would disagree with AppLoader's
+                        // own default (see IdentityMatches' doc comment).
                         DependencyLoader.RegisterLoaded(
-                            newlyLoadedId, asm, appGroup.ModuleName, appGroup.Publisher ?? "Unknown",
-                            (appGroup.Version ?? new Version(1, 0, 0, 0)).ToString(), appGroup.SuiteDir);
+                            newlyLoadedId, asm, appGroup.ModuleName, appGroup.Publisher!,
+                            appGroup.Version!.ToString(), appGroup.SuiteDir);
                     }
                     catch (AlRunner.Infrastructure.AppIdCollisionException ex)
                     {
@@ -1662,11 +1675,14 @@ foreach (var bundle in bundles)
             // per-assembly module registry behind NavApp.GetCurrentModuleInfo and the AL
             // call-stack frame decoration.
             if (appGroup.AppId is { } gid)
+                // Publisher/Version are non-null whenever AppId is — same BuildAppGroups
+                // invariant as the reusedAsm/RegisterLoaded call sites above (PR #1862
+                // review).
                 BcRuntime.SetCurrentBundleInfo(
                     gid,
                     appGroup.ModuleName,
-                    appGroup.Publisher ?? "Unknown",
-                    (appGroup.Version ?? new Version(1, 0, 0, 0)).ToString());
+                    appGroup.Publisher!,
+                    appGroup.Version!.ToString());
             BcRuntime.RegisterTestAssemblyInfo(asm);
             registerSw.Stop();
             AlRunner.PerfTrace.Log($"RegisterTestAssemblyInfo {rel}/{moduleName} {registerSw.ElapsedMilliseconds}ms");
