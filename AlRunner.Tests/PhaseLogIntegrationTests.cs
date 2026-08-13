@@ -231,8 +231,9 @@ public sealed class PhaseLogIntegrationTests : IDisposable
 
         // One app row per emitted module. Each fixture is a single app, so there is one
         // app row per bundle here — but the row must still carry the finer coordinates,
-        // because the CI runner-extras step packs 38 app groups into ONE bundle and this
-        // is the only level at which those 38 are separately visible.
+        // because the CI runner-extras step packs many app groups (23 as of #1847's
+        // consolidation, was 38 before it) into ONE bundle and this is the only level
+        // at which those app groups are separately visible.
         var appRows = ReadRecords(_logPath, "app");
         Assert.Equal(2, appRows.Count);
         // Named by the emitted module, which in bundled mode is the app.json name —
