@@ -5,7 +5,8 @@ name: Test Matrix
 # actions/cache persistence for compiled-deps+workspace-deps (control / cold /
 # warm), driven entirely by YAML-only edits between pushes so the
 # compiled-deps cache key (which hashes al-runner.dll's content) never moves.
-# This commit is the CONTROL run: no cache step, matches main's behaviour.
+# This commit is the COLD run: cache step present, first use of this key —
+# nothing to restore, save-only at the end of the job.
 # See #1877 for the full write-up. Not a proposal to merge as-is.
 
 on:
@@ -105,6 +106,17 @@ jobs:
             -p:_BCVersion=${{ matrix.target.bc-version }} \
             -p:AllowBcArtifactDownload=true \
             -c Release
+
+      - name: "MEASUREMENT (#1877): Restore/save compiled-deps + workspace-deps"
+        # hashFiles() reads the just-built binary, so this step must run after Build.
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/al-runner/compiled-deps
+            ~/.cache/al-runner/workspace-deps
+          key: al-runner-cache-1877-${{ matrix.target.bc-version }}-${{ hashFiles('AlRunner/bin/Release/net8.0/al-runner.dll') }}
+          restore-keys: |
+            al-runner-cache-1877-${{ matrix.target.bc-version }}-
 
       - name: Download R2R platform apps (Base/System Application, …)
         run: |
