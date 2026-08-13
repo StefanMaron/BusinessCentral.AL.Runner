@@ -73,9 +73,13 @@ Tests must PROVE the feature: assert specific values, cover positive + negative 
 
   **Commit and push before you start anything long.** A push is the only thing that makes your work survive a turn ending unexpectedly, and it gets CI working in parallel with you instead of after you.
 
-  **The "don't poll, wait for the notification" guidance does not apply to you here.** That guidance is written for an *orchestrator* waiting on subagents it dispatched with the `Agent` tool — those genuinely do notify. A background `Bash` task you started inside your own turn is a different thing entirely: it is your child, it dies with your turn, and **no notification will ever arrive**. Three separate agents have now stopped mid-issue reasoning "I'll stop polling and resume when the notification comes," and all three lost their work. If you catch yourself about to end a turn while something you launched is still running, that is the bug — not patience.
+  **The "don't poll, wait for the notification" guidance does not apply to you here.** That guidance is written for an *orchestrator* waiting on subagents it dispatched with the `Agent` tool — those genuinely do notify. A background `Bash` task you started inside your own turn is a different thing entirely: it is your child, it dies with your turn, and **no notification will ever arrive**. Five separate agents have now stopped mid-issue reasoning "I'll stop polling and resume when the notification comes." If you catch yourself about to end a turn while something you launched is still running, that is the bug — not patience.
+
+  **`run_in_background: true` on a `Bash` call does not change this, and it is the specific thing agents talk themselves into.** The most recent stall ended with the words *"This background monitor was launched explicitly with `run_in_background: true`, so I will get a genuine notification when it completes."* It will not. That flag is what makes the process a detached child of **your** turn; it is not a subscription to anything. The notifying kind of background work is the `Agent` tool, and you do not have it. There is no flag, no wrapper, and no phrasing of a `Bash` call that earns you a wake-up — if the thought "but I launched this one *properly*" appears, it is this failure mode wearing a new hat.
 
   The correct shapes, in order of preference: run it in the foreground; or push first so the loss is survivable and let CI be the verdict; or genuinely abandon it and say so. "End the turn and wait" is not on the list.
+
+  This is also why **push-before-long-work is the rule that actually saves you**: of the five stalls, the ones that cost real work were the ones with an unpushed worktree. An agent that had pushed lost a turn; an agent that had not lost the change.
 
 ### What to run before you push — targeted, not everything
 
