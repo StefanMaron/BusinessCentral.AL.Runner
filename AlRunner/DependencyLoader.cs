@@ -22,10 +22,33 @@ namespace AlRunner;
 
 public sealed class DependencyLoader
 {
-    private static readonly ConcurrentDictionary<Guid, Assembly> _cache = new();
+    // Identity carried alongside each cached module so a later lookup for the SAME
+    // AppId can tell "the same app resolved a second time" (#1683 — legitimate,
+    // reuse) apart from "two different apps that happen to share a GUID" (#1850 —
+    // must fail loudly, never silently pick one). Name/Publisher/Version are
+    // already read off app.json / the dependency manifest for every app that
+    // reaches this cache, so the comparison costs nothing extra — no content hash,
+    // no re-reading source.
+    private readonly record struct LoadedAppEntry(
+        Assembly Asm, string Name, string Publisher, string Version, string SourcePath);
+
+    private static readonly ConcurrentDictionary<Guid, LoadedAppEntry> _cache = new();
     private static readonly ConcurrentDictionary<string, Assembly> _byName =
         new(StringComparer.OrdinalIgnoreCase);
     private static int _resolverInstalled;
+
+    /// <summary>
+    /// True when <paramref name="name"/>/<paramref name="publisher"/>/<paramref name="version"/>
+    /// match the identity already cached for an AppId — i.e. this is the SAME app being
+    /// resolved a second time (own-bundle + dependency, or two sibling bundles that both
+    /// carry it), not a different app that happens to share the GUID. Ordinal for Version
+    /// (already a normalized ToString()), case-insensitive for Name/Publisher (app.json
+    /// casing is not semantically significant to BC's own identity resolution).
+    /// </summary>
+    private static bool IdentityMatches(LoadedAppEntry entry, string name, string publisher, string version)
+        => string.Equals(entry.Name, name, StringComparison.OrdinalIgnoreCase)
+        && string.Equals(entry.Publisher, publisher, StringComparison.OrdinalIgnoreCase)
+        && string.Equals(entry.Version, version, StringComparison.Ordinal);
 
     private readonly BcCompiler _compiler;
     private readonly BcAssembler _assembler;
@@ -52,7 +75,13 @@ public sealed class DependencyLoader
             using var depStage = AlRunner.Infrastructure.PhaseLog.Stage($"dep-load:{m.Name}");
             if (_cache.TryGetValue(m.AppId, out var existing))
             {
-                list.Add(existing);
+                var newVersion = m.Version.ToString();
+                if (!IdentityMatches(existing, m.Name, m.Publisher, newVersion))
+                    throw new AlRunner.Infrastructure.AppIdCollisionException(
+                        m.AppId,
+                        existing.Name, existing.Publisher, existing.Version, existing.SourcePath,
+                        m.Name, m.Publisher, newVersion, path);
+                list.Add(existing.Asm);
                 continue;
             }
             // A source-only Microsoft app carries compile-time symbols, not a runtime DLL.
@@ -124,7 +153,7 @@ public sealed class DependencyLoader
             }
             if (asm != null)
             {
-                _cache[m.AppId] = asm;
+                _cache[m.AppId] = new LoadedAppEntry(asm, m.Name, m.Publisher, m.Version.ToString(), path);
                 _byName[asm.GetName().Name ?? ""] = asm;
                 // Register app metadata so AlCallStackCapture can decorate frames.
                 AlCallStackCapture.RegisterAssemblyInfo(asm, m.Name, m.Publisher, m.Version.ToString());
@@ -606,11 +635,26 @@ public sealed class DependencyLoader
     }
 
     /// <summary>
-    /// Lookup helper for callers that want to access a loaded dep by name
-    /// (e.g. when verifying that a compile-time symbol matches a runtime one).
+    /// Lookup helper for the bundle loop's own-AppGroup dedup check (Program.cs,
+    /// issue #1683): "was this AppId already compiled/loaded earlier in this
+    /// process?" Returns the cached Assembly when <paramref name="name"/>/
+    /// <paramref name="publisher"/>/<paramref name="version"/> match the identity
+    /// already cached for <paramref name="appId"/> — the legitimate same-app-twice
+    /// case, safe to reuse. Returns null when nothing is cached yet for this AppId.
+    /// Throws <see cref="AlRunner.Infrastructure.AppIdCollisionException"/> when an
+    /// entry IS cached but its identity does NOT match — two different apps
+    /// declaring the same app.json id (issue #1850): silently reusing the earlier
+    /// module here would drop every test in <paramref name="sourcePath"/>'s app,
+    /// exactly as it did before this check existed.
     /// </summary>
-    public static Assembly? TryGetByAppId(Guid appId)
-        => _cache.TryGetValue(appId, out var asm) ? asm : null;
+    public static Assembly? TryGetByAppId(Guid appId, string name, string publisher, string version, string sourcePath)
+    {
+        if (!_cache.TryGetValue(appId, out var entry)) return null;
+        if (IdentityMatches(entry, name, publisher, version)) return entry.Asm;
+        throw new AlRunner.Infrastructure.AppIdCollisionException(
+            appId, entry.Name, entry.Publisher, entry.Version, entry.SourcePath,
+            name, publisher, version, sourcePath);
+    }
 
     /// <summary>
     /// Record that <paramref name="asm"/> is the loaded module for AL app identity
@@ -622,9 +666,20 @@ public sealed class DependencyLoader
     /// issue #1683 (event-subscriber dispatch pairs a MethodInfo from one module's
     /// Type with a subscriberInstance from the other module's Type, throwing
     /// TargetException at ValidateInvokeTarget). First registration for a given AppId
-    /// wins; a duplicate call for an AppId already present is a no-op (the earlier
-    /// module is the one every other bundle should keep resolving to).
+    /// wins when the identity matches (the earlier module is the one every other
+    /// bundle should keep resolving to). When it does NOT match — a genuine GUID
+    /// collision between two different apps (#1850) that the caller's own
+    /// <see cref="TryGetByAppId"/> check raced past — this throws instead of
+    /// silently keeping the wrong module registered.
     /// </summary>
-    public static void RegisterLoaded(Guid appId, Assembly asm)
-        => _cache.TryAdd(appId, asm);
+    public static void RegisterLoaded(Guid appId, Assembly asm, string name, string publisher, string version, string sourcePath)
+    {
+        var newEntry = new LoadedAppEntry(asm, name, publisher, version, sourcePath);
+        if (_cache.TryAdd(appId, newEntry)) return;
+        var existing = _cache[appId];
+        if (!IdentityMatches(existing, name, publisher, version))
+            throw new AlRunner.Infrastructure.AppIdCollisionException(
+                appId, existing.Name, existing.Publisher, existing.Version, existing.SourcePath,
+                name, publisher, version, sourcePath);
+    }
 }
