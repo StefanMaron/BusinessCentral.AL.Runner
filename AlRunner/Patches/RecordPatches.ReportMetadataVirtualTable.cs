@@ -510,13 +510,27 @@ public static partial class RecordPatches
     }
 
     /// <summary>
+    /// The one gate both discovery paths apply to a TypeDef name: a <c>Report{id}</c> name
+    /// (numeric suffix, no leading-zero requirement beyond <c>int.TryParse</c>, id must be
+    /// positive) yields its id; anything else — including a name that merely starts with
+    /// "Report" but has a non-numeric suffix — yields nothing. Actually SHARED code (not just
+    /// parallel implementations of the same rule), called from both
+    /// <see cref="ExtractReportIds"/> (the <c>GetTypes()</c> path) and
+    /// <see cref="ScanReportIdsFromPeBytes"/> (the <c>MetadataReader</c> path, which only ever
+    /// has a name string, never a <c>Type</c>), so the two discovery mechanisms can only ever
+    /// agree or disagree on WHICH ids exist, never on what counts as one.
+    /// </summary>
+    private static bool TryParseReportId(ReadOnlySpan<char> typeName, out int id)
+    {
+        id = 0;
+        if (!typeName.StartsWith("Report", StringComparison.Ordinal)) return false;
+        return int.TryParse(typeName[6..], out id) && id > 0;
+    }
+
+    /// <summary>
     /// Shared by both discovery paths (<see cref="CompiledReportIds"/>'s <c>GetTypes()</c>
-    /// scan and <see cref="ScanReportIdsFromPeBytes"/>'s <c>MetadataReader</c> scan): a
-    /// <c>Report{id}</c> type name (numeric suffix, no leading zero requirement beyond
-    /// <c>int.TryParse</c>, id must be positive) contributes its id; anything else — including
-    /// a name that merely starts with "Report" but has a non-numeric suffix — contributes
-    /// nothing. Both callers apply this exact same gate so the two discovery mechanisms can
-    /// only ever agree or disagree on WHICH ids exist, never on what counts as one.
+    /// scan and <see cref="ScanReportIdsFromPeBytes"/>'s <c>MetadataReader</c> scan) via
+    /// <see cref="TryParseReportId"/> — see that method's remarks for the shared gate.
     /// </summary>
     private static int[] ExtractReportIds(IEnumerable<Type?> types)
     {
@@ -524,8 +538,7 @@ public static partial class RecordPatches
         foreach (var t in types)
         {
             if (t is null) continue; // ReflectionTypeLoadException.Types can contain nulls for the types that failed to load
-            if (!t.Name.StartsWith("Report", StringComparison.Ordinal)) continue;
-            if (!int.TryParse(t.Name.AsSpan(6), out var id) || id <= 0) continue;
+            if (!TryParseReportId(t.Name, out var id)) continue;
             (ids ??= new List<int>()).Add(id);
         }
         return ids?.ToArray() ?? Array.Empty<int>();
@@ -561,8 +574,7 @@ public static partial class RecordPatches
             foreach (var th in mr.TypeDefinitions)
             {
                 var name = mr.GetString(mr.GetTypeDefinition(th).Name);
-                if (!name.StartsWith("Report", StringComparison.Ordinal)) continue;
-                if (!int.TryParse(name.AsSpan(6), out var id) || id <= 0) continue;
+                if (!TryParseReportId(name, out var id)) continue;
                 (ids ??= new List<int>()).Add(id);
             }
             return ids?.ToArray() ?? Array.Empty<int>();
