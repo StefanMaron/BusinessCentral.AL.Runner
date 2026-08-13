@@ -42,7 +42,16 @@ public sealed class CliServer : IAsyncDisposable
     }
 
     /// <param name="extraArgs">Extra CLI args after --server (e.g. --cache, --package-cache).</param>
-    public static async Task<CliServer> StartAsync(IEnumerable<string>? extraArgs = null, TimeSpan? readyTimeout = null)
+    /// <param name="extraEnv">
+    /// Extra environment variables set on THIS child process only (via
+    /// <see cref="ProcessStartInfo.EnvironmentVariables"/>, never via
+    /// <see cref="Environment.SetEnvironmentVariable"/> on the current xUnit
+    /// worker process) — so a test-only knob like
+    /// AL_RUNNER_TEST_BARRIER_DIR (#1845) cannot leak into any OTHER test's
+    /// server subprocess started concurrently on a shared xUnit worker.
+    /// </param>
+    public static async Task<CliServer> StartAsync(IEnumerable<string>? extraArgs = null, TimeSpan? readyTimeout = null,
+        IReadOnlyDictionary<string, string>? extraEnv = null)
     {
         var argList = new StringBuilder(
             TestBuildConfig.RunArgs(ProjectPath) + TestBuildConfig.BcVersionArg + " --server");
@@ -61,6 +70,9 @@ public sealed class CliServer : IAsyncDisposable
             CreateNoWindow = true,
             WorkingDirectory = RepoRoot,
         };
+        if (extraEnv != null)
+            foreach (var kv in extraEnv)
+                psi.EnvironmentVariables[kv.Key] = kv.Value;
 
         var proc = Process.Start(psi)!;
 
@@ -165,8 +177,16 @@ public sealed class CliServer : IAsyncDisposable
     /// server's stdin-reader thread is willing to read and answer another request line
     /// while `runtests` is still streaming on the main dispatch thread.
     /// </summary>
+    /// <param name="onAckReceived">
+    /// Invoked synchronously exactly once, right after the cancel's ack line is
+    /// observed, before this method reads any further stdout lines. #1845:
+    /// ServerCancelTests uses this to release its test-only barrier (see
+    /// AlRunner.Infrastructure.TestBarrier) only once the ack is confirmed —
+    /// i.e. only once "cancel arrived while a run was active" is already proven,
+    /// not merely "cancel was sent".
+    /// </param>
     public async Task<(List<string> Lines, string? AckLine)> SendRequestAndCancelAfterFirstTestAsync(
-        string jsonRequest, TimeSpan? timeout = null)
+        string jsonRequest, TimeSpan? timeout = null, Action? onAckReceived = null)
     {
         await _process.StandardInput.WriteLineAsync(jsonRequest);
         await _process.StandardInput.FlushAsync();
@@ -210,7 +230,10 @@ public sealed class CliServer : IAsyncDisposable
                 await _process.StandardInput.FlushAsync();
             }
             if (type == "ack" && cancelSent && ackLine == null)
+            {
                 ackLine = line;
+                onAckReceived?.Invoke();
+            }
             if (type == "summary")
                 return (lines, ackLine);
         }

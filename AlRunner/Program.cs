@@ -2228,6 +2228,11 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                     output.WriteLine(AlRunner.ServerProtocol.TestEvent(t));
                     output.Flush();
                 }
+                // #1845: test-only barrier, no-op unless AL_RUNNER_TEST_BARRIER_DIR is
+                // set on THIS process — see AlRunner.Infrastructure.TestBarrier's doc
+                // comment. Called AFTER the write+flush above so a client observing the
+                // `test` line is guaranteed the server has not yet started the next test.
+                AlRunner.Infrastructure.TestBarrier.WaitForRelease();
             }
 
             var runs = RunAllBundlesForServer(req.SourcePaths, req.PackagePaths,
