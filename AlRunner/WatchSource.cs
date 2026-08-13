@@ -104,13 +104,17 @@ internal static class WatchSource
         }
     }
 
-    // Copy of Program.cs's FindBucketRoot (walk up until an app.json is found). Kept
-    // local so this class has no dependency on Program.cs's top-level-statement local
-    // functions, which — being nested inside the synthesized <Main>$ method — cannot be
-    // referenced from another file/class regardless of accessibility modifiers.
-    // NOTE: Program.cs's FindBucketRoot is the same walk-up with 8 live call sites
-    // there; the two copies must stay in sync until they're de-duplicated — see #1824.
-    private static string? FindBucketRoot(string bundlePath)
+    // The bucket-root walk-up (climb parent directories until an app.json is found).
+    // #1824: this is now the SINGLE shared implementation — Program.cs's own copy of
+    // this exact loop (8 live call sites there) has been replaced with a delegating
+    // call to this method, rather than the two staying in sync by hand. `internal` (not
+    // `private`) so Program.cs's top-level-statement code — which lives in this same
+    // assembly and namespace but, being a local function nested inside the synthesized
+    // <Main>$ method, cannot itself be called INTO from elsewhere — can call OUT to this
+    // one. AlRunner.Tests also reaches it directly (AlRunner.csproj's
+    // InternalsVisibleTo) — see FindBucketRootDedupeTests.cs for the walk-up's own
+    // pinned behavior.
+    internal static string? FindBucketRoot(string bundlePath)
     {
         var cur = Directory.Exists(bundlePath) ? bundlePath : Path.GetDirectoryName(bundlePath);
         while (!string.IsNullOrEmpty(cur))

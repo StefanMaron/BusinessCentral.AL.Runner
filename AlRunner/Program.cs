@@ -4350,22 +4350,15 @@ static List<DependencyRef> ReadBundleDependencyRoots(IReadOnlyList<string> manif
     return byKey.Values.ToList();
 }
 
-// NOTE: AlRunner/WatchSource.cs has its own private copy of this exact walk-up
-// (it can't call this one — top-level-statement local functions aren't
-// reachable from another file/class). The two must stay in sync; see #1824
-// for the follow-up to de-duplicate them.
-static string? FindBucketRoot(string bundlePath)
-{
-    var cur = Directory.Exists(bundlePath) ? bundlePath : Path.GetDirectoryName(bundlePath);
-    while (!string.IsNullOrEmpty(cur))
-    {
-        if (File.Exists(Path.Combine(cur, "app.json"))) return cur;
-        var parent = Path.GetDirectoryName(cur);
-        if (parent == cur) return null;
-        cur = parent;
-    }
-    return null;
-}
+// #1824: de-duplicated. This used to be its own copy of the walk-up loop, kept in sync
+// by hand with WatchSource.FindBucketRoot's byte-identical copy (WatchSource couldn't
+// call this one — top-level-statement local functions, being nested inside the
+// synthesized <Main>$ method, aren't reachable from another file/class regardless of
+// accessibility modifiers). WatchSource.FindBucketRoot was promoted to `internal` (see
+// its own doc comment) and is now the single shared implementation; this delegates
+// rather than reimplementing, so the two can no longer silently drift out of sync. All
+// 8 call sites below are unchanged — only this function's body moved.
+static string? FindBucketRoot(string bundlePath) => WatchSource.FindBucketRoot(bundlePath);
 
 // Scan the given dirs for Microsoft PLATFORM apps (Application/System/Base Application/
 // System Application/Business Foundation) and return one sidecar DepEntry per distinct
