@@ -41,7 +41,12 @@ public class WatchTests
         var tablePath = Path.Combine(bundle, "XRecProbe.Table.al");
         var cacheDir = Path.Combine(bundle, ".cache");
 
-        var lines = new List<string>();
+        // Merges stdout and stderr into ONE list via two independent fire-and-forget pumps
+        // below — list order is pump-scheduling order, not cross-stream write order. Each
+        // entry therefore records which stream it came from (CapturedLine), so cycle
+        // slicing can tell "written late" apart from "written out of order" — see
+        // WatchOutputSlicing.cs's header (#1843) for the full mechanism.
+        var lines = new List<CapturedLine>();
         var psi = new ProcessStartInfo
         {
             FileName = "dotnet",
@@ -52,13 +57,13 @@ public class WatchTests
         };
         psi.Environment["BCCOMPILER_TIMING"] = "1"; // emit GetSharedReferences timing lines
         using var p = Process.Start(psi)!;
-        void Pump(StreamReader r) => Task.Run(async () =>
+        void Pump(StreamReader r, OutputStream stream) => Task.Run(async () =>
         {
             string? l;
-            while ((l = await r.ReadLineAsync()) != null) lock (lines) lines.Add(l);
+            while ((l = await r.ReadLineAsync()) != null) lock (lines) lines.Add(new CapturedLine(stream, l));
         });
-        Pump(p.StandardOutput);
-        Pump(p.StandardError);
+        Pump(p.StandardOutput, OutputStream.Stdout);
+        Pump(p.StandardError, OutputStream.Stderr);
 
         // A marker that never shows up is ambiguous on its own: it's byte-identical
         // whether the watcher armed-but-never-fired OR the subprocess quietly died while
@@ -71,6 +76,8 @@ public class WatchTests
         string ProcessLiveness() =>
             p.HasExited ? $"process alive=false exit={p.ExitCode}" : "process alive=true";
 
+        string DumpTail() => string.Join("\n", lines.TakeLast(40).Select(l => $"[{l.Stream}] {l.Text}"));
+
         async Task<int> WaitForMarkerAfter(int fromIndex, TimeSpan timeout)
         {
             var deadline = DateTime.UtcNow + timeout;
@@ -78,7 +85,9 @@ public class WatchTests
             {
                 lock (lines)
                     for (int i = fromIndex; i < lines.Count; i++)
-                        if (lines[i].Contains("[watch] waiting for AL source")) return i;
+                        if (lines[i].Stream == OutputStream.Stdout
+                            && lines[i].Text.Contains(WatchOutputSlicing.WaitingForSourceMarker))
+                            return i;
                 if (p.HasExited)
                 {
                     // Pump is fire-and-forget (Task.Run, result discarded): pipe output
@@ -88,7 +97,7 @@ public class WatchTests
                     // tasks a moment to drain before dumping — this diagnostic exists
                     // so a real occurrence is self-explanatory, not half-explanatory.
                     await Task.Delay(500);
-                    string exitedDump; lock (lines) exitedDump = string.Join("\n", lines.TakeLast(40));
+                    string exitedDump; lock (lines) exitedDump = DumpTail();
                     throw new TimeoutException(
                         $"watch marker not seen — subprocess exited early ({ProcessLiveness()}).\n" +
                         $"--- last output ---\n{exitedDump}");
@@ -96,14 +105,17 @@ public class WatchTests
                 await Task.Delay(200);
             }
             if (p.HasExited) await Task.Delay(500); // same drain guard for the deadline path below
-            string dump; lock (lines) dump = string.Join("\n", lines.TakeLast(40));
+            string dump; lock (lines) dump = DumpTail();
             throw new TimeoutException(
                 $"watch marker not seen. {ProcessLiveness()}\n--- last output ---\n{dump}");
         }
 
+        // Bounded [from, to) window, both streams merged — still correct for the
+        // PASS/FAIL/fixture-name assertions below, which only ever look for stdout content
+        // whose relative order is unaffected by the cross-stream race (see WatchOutputSlicing.cs).
         string Segment(int from, int to)
         {
-            lock (lines) return string.Join("\n", lines.GetRange(from, Math.Max(0, to - from)));
+            lock (lines) return WatchOutputSlicing.MergedJoin(lines, from, to);
         }
 
         try
@@ -145,13 +157,24 @@ public class WatchTests
             // and the test failed despite the warm path working perfectly. The real
             // claim is warm (milliseconds) vs cold (tens of seconds), so a generous
             // ceiling still fails loudly if the loader ever goes cold here.
-            Assert.Contains("GetSharedReferences", cycle2);
+            //
+            // Deliberately NOT scoped to `cycle2` (the stdout-marker-bounded window) — this
+            // diagnostic is on STDERR (BcCompiler.cs's `_mark`), merged into `lines` via a
+            // pump independent from the stdout pump that positions m1/m2. List order is
+            // pump-scheduling order, not cross-stream write order, so a starved stderr pump
+            // continuation can append this line at an index >= m2 even though, in program
+            // order, GetSharedReferences finished (and was timed) well inside cycle 2. See
+            // WatchOutputSlicing.cs's header — #1843 — for the full mechanism and the
+            // deterministic synthetic-sequence proof in WatchOutputSlicingTests.
+            string timingSearchText;
+            lock (lines) timingSearchText = WatchOutputSlicing.CycleTimingSearchText(lines, m1 + 1, m2);
+            Assert.Contains("GetSharedReferences", timingSearchText);
             // The label carries a parenthetical, e.g.
             //   [emit-timing] GetSharedReferences (5 specs): 787ms
             var timing = System.Text.RegularExpressions.Regex.Match(
-                cycle2, @"GetSharedReferences[^:]*:\s*(\d+)ms");
+                timingSearchText, @"GetSharedReferences[^:]*:\s*(\d+)ms");
             Assert.True(timing.Success,
-                $"expected an '[emit-timing] GetSharedReferences: <n>ms' line in cycle 2, got:\n{cycle2}");
+                $"expected an '[emit-timing] GetSharedReferences: <n>ms' line in cycle 2, got:\n{timingSearchText}");
             var elapsedMs = int.Parse(timing.Groups[1].Value);
             Assert.True(elapsedMs < 5_000,
                 $"warm in-process symbol load took {elapsedMs}ms — a warm re-emit must not pay " +
