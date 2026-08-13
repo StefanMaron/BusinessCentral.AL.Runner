@@ -186,4 +186,48 @@ public sealed class WatchOutputSlicingTests
         Assert.Contains("Insert_OnInsertReadsXRec_BuildsConcreteBeforeImage", cycle2);
         Assert.DoesNotContain(TimingNeedle, cycle2); // the starved stderr line is out of this window
     }
+
+    /// <summary>
+    /// THE MODE-2 PROOF (review round 3). The stdout m2 marker having appeared says nothing
+    /// about whether the stderr pump's continuation for cycle 2's timing line has actually
+    /// run yet — that line can simply not be in `lines` at all when the assertion samples it.
+    /// Builds a list where cycle 1's line arrived normally (no starvation — this is NOT the
+    /// #1843 shape), m2 has appeared, but cycle 2's own timing line has not been appended at
+    /// all yet: only one GetSharedReferences match exists. The predicate WatchTests' waiter
+    /// polls on must say "not yet" here — accepting this snapshot is exactly the "Sub-string
+    /// not found" failure with a different root cause than the one #1843 fixed.
+    /// </summary>
+    [Fact]
+    public void HasAtLeastWarmTimingMatches_ReturnsFalse_WhenOnlyCycle1sLineHasArrivedSoFar()
+    {
+        var lines = new List<CapturedLine>
+        {
+            new(OutputStream.Stdout, "PASS  Codeunit 60001 Insert_OnInsertReadsXRec_BuildsConcreteBeforeImage"),
+            new(OutputStream.Stderr, "[emit-timing] GetSharedReferences (5 specs): 41000ms"),
+            new(OutputStream.Stdout, WatchOutputSlicing.WaitingForSourceMarker + "… (Ctrl+C to quit)"), // m1
+            new(OutputStream.Stdout, "[watch] change detected — re-running…"),
+            new(OutputStream.Stdout, "FAIL  Codeunit 60001 Insert_OnInsertReadsXRec_BuildsConcreteBeforeImage"),
+            new(OutputStream.Stdout, WatchOutputSlicing.WaitingForSourceMarker + "… (Ctrl+C to quit)"), // m2
+            // Cycle 2's own GetSharedReferences line has NOT been written to `lines` at all
+            // yet at this snapshot — the stderr pump's continuation simply hasn't run.
+        };
+
+        Assert.False(WatchOutputSlicing.HasAtLeastWarmTimingMatches(lines, 2));
+        Assert.Equal(1, WatchOutputSlicing.CountWarmTimingMatches(lines));
+    }
+
+    /// <summary>
+    /// Once both cycles' timing lines have actually been appended — however they got there,
+    /// including the starved-past-both-markers shape from
+    /// LastWarmTimingMs_FindsCycle2sTiming_EvenWhenCycle1sColdLineIsAlsoStarvedPastM1 — the
+    /// predicate must say "yes", or the waiter would never terminate before its timeout.
+    /// </summary>
+    [Fact]
+    public void HasAtLeastWarmTimingMatches_ReturnsTrue_OnceBothCyclesLinesHaveArrived()
+    {
+        var (lines, _, _) = StarvedPastM1AndM2Scenario();
+
+        Assert.True(WatchOutputSlicing.HasAtLeastWarmTimingMatches(lines, 2));
+        Assert.Equal(2, WatchOutputSlicing.CountWarmTimingMatches(lines));
+    }
 }

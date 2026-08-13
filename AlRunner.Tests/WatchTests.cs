@@ -118,6 +118,47 @@ public class WatchTests
             lock (lines) return WatchOutputSlicing.MergedJoin(lines, from, to);
         }
 
+        // Reaching the stdout m2 marker proves cycle 2 finished; it proves nothing about
+        // whether the STDERR pump's continuation for cycle 2's GetSharedReferences line has
+        // run yet — that is a second, independent race from the one WatchOutputSlicing's
+        // last-match logic closes (see its file header, "mode 2"). Poll for the evidence
+        // instead of reading a snapshot the instant m2 shows up: wait for an ABSOLUTE count
+        // of `minCount` stderr matches, not a delta, so a cycle-1 line that is itself starved
+        // past m1 cannot be mistaken for cycle 2's arrival.
+        async Task WaitForWarmTimingCount(int minCount, TimeSpan timeout)
+        {
+            var deadline = DateTime.UtcNow + timeout;
+            while (DateTime.UtcNow < deadline)
+            {
+                bool have;
+                lock (lines) have = WatchOutputSlicing.HasAtLeastWarmTimingMatches(lines, minCount);
+                if (have) return;
+                if (p.HasExited)
+                {
+                    await Task.Delay(500); // same drain guard as WaitForMarkerAfter
+                    int exitedCount; string exitedDump;
+                    lock (lines)
+                    {
+                        exitedCount = WatchOutputSlicing.CountWarmTimingMatches(lines);
+                        exitedDump = WatchOutputSlicing.StderrText(lines);
+                    }
+                    throw new TimeoutException(
+                        $"only {exitedCount} GetSharedReferences line(s) captured — subprocess exited early " +
+                        $"({ProcessLiveness()}).\n--- stderr ---\n{exitedDump}");
+                }
+                await Task.Delay(200);
+            }
+            int finalCount; string dump;
+            lock (lines)
+            {
+                finalCount = WatchOutputSlicing.CountWarmTimingMatches(lines);
+                dump = WatchOutputSlicing.StderrText(lines);
+            }
+            throw new TimeoutException(
+                $"only {finalCount} GetSharedReferences line(s) captured after {timeout.TotalSeconds}s " +
+                $"(need {minCount}). {ProcessLiveness()}\n--- stderr ---\n{dump}");
+        }
+
         try
         {
             // Cycle 1 (cold): the fixture test passes (Counter 0 -> 1, asserts '1').
@@ -173,6 +214,13 @@ public class WatchTests
             // unbounded stderr stream — no index window, in either direction. See
             // WatchOutputSlicing.cs's header — #1843 — for the full mechanism and the
             // deterministic synthetic-sequence proof in WatchOutputSlicingTests.
+            //
+            // But reaching m2 only proves the STDOUT pump saw cycle 2 finish — it says
+            // nothing about whether the STDERR pump's continuation for cycle 2's timing line
+            // has run at all yet. Wait for that evidence explicitly (10s is generous: the
+            // line is written seconds before m2 in program order) before reading `lines`,
+            // instead of sampling it the instant m2 appears.
+            await WaitForWarmTimingCount(2, TimeSpan.FromSeconds(10));
             string stderrText;
             lock (lines) stderrText = WatchOutputSlicing.StderrText(lines);
             Assert.Contains("GetSharedReferences", stderrText);

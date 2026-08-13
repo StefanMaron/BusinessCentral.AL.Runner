@@ -38,6 +38,28 @@
 // GetSharedReferences match in the (entirely unbounded) stderr stream — no index window at
 // all, in either direction. A cycle-1 line starved past m1 is still not the last match; a
 // cycle-2 line starved past m2 is still found, because nothing bounds the scan above.
+//
+// A second, distinct failure mode (review round 3)
+// --------------------------------------------------
+// LastWarmTimingMs answers "what does `lines` say right now" — it is a pure function over a
+// snapshot. Nothing about reading that snapshot guarantees cycle 2's stderr line has been
+// APPENDED yet by the time the caller reads it. WatchTests' cycle-2 assertions used to run
+// the instant the stdout m2 marker appeared, with no synchronization between the stdout pump
+// (which just posted m2) and the stderr pump (which may not have run its next continuation
+// at all). That is a second race, not a variant of the first: the line isn't misfiled, it
+// simply isn't in `lines` yet. Both modes produce the BYTE-IDENTICAL
+// "Assert.Contains() Failure ... Not found: GetSharedReferences" transcript, so a failure log
+// alone cannot tell you which one fired — "the fix" only closes mode 1.
+//
+// The fix for mode 2 is to wait for the evidence instead of sampling for it: poll `lines`
+// until the stderr stream contains AT LEAST TWO GetSharedReferences matches (one per cycle),
+// THEN take the last. Waiting for an absolute count, not a delta from a snapshot taken at m1,
+// matters: a delta-from-m1 approach reads 0 at m1 if cycle 1's own line is *also* starved
+// past m1, and then accepts cycle 1's own late arrival as "the count increased" — reintroducing
+// the exact bug LastWarmTimingMs was written to close. HasAtLeastWarmTimingMatches below is
+// that predicate; the polling loop that uses it lives in WatchTests.cs (WaitForWarmTimingCount)
+// since it needs the live process's cancellation/timeout plumbing, but the predicate itself is
+// unit-tested here.
 using System.Text;
 using System.Text.RegularExpressions;
 
@@ -123,4 +145,27 @@ public static class WatchOutputSlicing
         var matches = Regex.Matches(StderrText(lines), WarmTimingPattern);
         return matches.Count > 0 ? int.Parse(matches[^1].Groups[1].Value) : null;
     }
+
+    /// <summary>
+    /// How many GetSharedReferences lines have been captured on stderr so far, across the
+    /// whole (unbounded) stream. Cycle 1 writes exactly one (the cold reload), cycle 2
+    /// writes exactly one (the warm re-emit) — so this reaches 2 once, and only once, both
+    /// cycles' diagnostics have actually been appended to `lines`.
+    /// </summary>
+    public static int CountWarmTimingMatches(IReadOnlyList<CapturedLine> lines) =>
+        Regex.Matches(StderrText(lines), WarmTimingPattern).Count;
+
+    /// <summary>
+    /// The predicate WatchTests polls on before trusting <see cref="LastWarmTimingMs"/>:
+    /// has cycle 2's timing line actually arrived yet? Reading `lines` the instant the
+    /// stdout m2 marker appears answers "what does the snapshot say right now", not "has the
+    /// stderr pump's continuation for cycle 2's line run yet" — those are different
+    /// questions, and conflating them is the second failure mode described in the file
+    /// header (mode 2: line absent, not misfiled). Checking an ABSOLUTE count rather than a
+    /// delta from a count snapshotted at m1 matters: a delta check reads 0 at m1 whenever
+    /// cycle 1's own line is starved past m1 too, and then wrongly accepts cycle 1's late
+    /// arrival as "cycle 2's line showed up".
+    /// </summary>
+    public static bool HasAtLeastWarmTimingMatches(IReadOnlyList<CapturedLine> lines, int minCount) =>
+        CountWarmTimingMatches(lines) >= minCount;
 }
