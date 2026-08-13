@@ -1107,6 +1107,43 @@ internal static class TestPageOptionValue
             StringComparison.OrdinalIgnoreCase);
 }
 
+/// <summary>
+/// Boolean values as a TestPage sees them, on a page-variable-bound control
+/// (<c>field(Flag; ShowFlag)</c> where <c>ShowFlag: Boolean</c>).
+///
+/// <c>NavTestField.ALSetValue</c> — the real, precompiled BC method the AL compiler emits for
+/// every <c>TestPage.&lt;field&gt;.SetValue(&lt;Boolean&gt;)</c> call — never hands a NavValue
+/// straight to <see cref="ITestField"/>. For anything that is not itself already a
+/// <c>NavStringValue</c> it round-trips through <see cref="ITestField.FieldType"/> (to pick a
+/// <c>NavValueMetadata</c>) and then <see cref="ITestField.ValueToString"/> (both OUR OWN mock
+/// methods) to turn the boolean back into a string before ever reaching <see cref="ITestField.Value"/>'s
+/// setter — see the doc comment on <see cref="PageVariableTestField.FieldType"/> for why that
+/// matters here.
+///
+/// Because both ends of that round trip are code THIS runner owns (<see cref="ITestField.ValueToString"/>
+/// always answers with <c>Convert.ToString(boolValue)</c>, i.e. exactly "True" or "False"), accepting
+/// only that spelling here is not a narrowing of what <c>SetValue(&lt;Boolean&gt;)</c> can express —
+/// it is the ONLY spelling that overload ever produces. Anything else (a literal
+/// <c>SetValue('Yes')</c>, locale spellings, ...) is a genuinely separate, upstream-unvalidated
+/// question about what real BC's own text-to-Boolean evaluate accepts on this surface, so it stays
+/// out of scope here and throws loudly rather than guessing.
+/// </summary>
+internal static class TestPageBooleanValue
+{
+    internal static NavValue Resolve(string value, string context)
+    {
+        if (string.Equals(value, "True", StringComparison.OrdinalIgnoreCase)) return NavBoolean.Create(true);
+        if (string.Equals(value, "False", StringComparison.OrdinalIgnoreCase)) return NavBoolean.Create(false);
+
+        throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+            context,
+            $"testpage-boolean-value — '{value}' is neither 'True' nor 'False'. Only the exact "
+            + "round-trip spelling TestPage SetValue(Boolean) itself produces is supported here; "
+            + "arbitrary text-to-Boolean spellings ('Yes'/'No', locale forms, ...) are a separate, "
+            + "not-yet-implemented surface. See docs/scope.md");
+    }
+}
+
 internal sealed class LiveNavTestField : ITestField
 {
     private readonly NavRecord _record;
@@ -1322,20 +1359,41 @@ internal sealed class PageVariableTestField : ITestField
     /// come from the binding, not from the caller — writing a NavText into an Option
     /// binding throws deep inside the page's own generated setter
     /// ("Unable to cast object of type 'NavText' to type 'NavOption'"), which says nothing
-    /// about the value that was wrong.
+    /// about the value that was wrong. A Boolean binding has the same shape of problem
+    /// (#1837): a NavText written into it throws "The input string '...' was not in a
+    /// correct format" instead of setting the field, so Boolean gets the same NavOption-style
+    /// special case — see <see cref="TestPageBooleanValue"/>.
     /// </summary>
     private NavValue ToBoundValue(string value)
-        => RunnerPageInstance.GetValue(_expression) is NavOption option
-            ? TestPageOptionValue.Resolve(option, value, _page.TryGetOptionCaptions(_controlId),
-                $"TestPage SetValue (control {_controlId})")
-            : ALCompiler.ToNavValue(value);
+        => RunnerPageInstance.GetValue(_expression) switch
+        {
+            NavOption option => TestPageOptionValue.Resolve(option, value, _page.TryGetOptionCaptions(_controlId),
+                $"TestPage SetValue (control {_controlId})"),
+            NavBoolean => TestPageBooleanValue.Resolve(value, $"TestPage SetValue (control {_controlId})"),
+            _ => ALCompiler.ToNavValue(value),
+        };
 
     public string Name => Caption;
     public string Caption => _expression.GetType()
         .GetProperty("Name", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
         ?.GetValue(_expression) as string ?? string.Empty;
 
-    public NavType FieldType => NavType.Text;
+    // The real underlying NavType, not a constant. NavTestField.ALSetValue — the precompiled BC
+    // method the AL compiler emits for every SetValue(<Boolean>) call on this control — asks
+    // THIS property to pick a NavValueMetadata before converting the incoming value to a string
+    // via ITestField.ValueToString (see TestPageBooleanValue's doc comment for the full chain).
+    // A hardcoded NavType.Text made BC's own dispatch treat every page-variable control as text,
+    // so a Boolean write got coerced through Text metadata into BC's "Yes"/"No" textual spelling
+    // (NOT the "True"/"False" ValueToString itself would have produced) before ever reaching our
+    // Value setter — which is why the var-bound and Rec-bound halves of #1837 threw two DIFFERENT
+    // exceptions for the same SetValue(true) call: they disagreed about what string this control
+    // even claimed to receive.
+    public NavType FieldType => RunnerPageInstance.GetValue(_expression) switch
+    {
+        NavOption => NavType.Option,
+        NavBoolean => NavType.Boolean,
+        _ => NavType.Text,
+    };
     public int ValidationErrorCount => 0;
     public long LastUsedValidationErrorId => 0;
     public long MaxValidationErrorId => 0;
