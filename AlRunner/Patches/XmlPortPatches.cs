@@ -239,135 +239,42 @@ public static partial class BcRuntime
         return default;
     }
 
-    /// <summary>Export(DataError) — loud failure; in-memory XmlPort not yet implemented.</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    public static bool NavXmlPort_Export(object self, int errorLevel)
-    {
-        RunnerScope.ThrowNotYetImplemented(
-            "NavXmlPort.Export",
-            "in-memory XmlPort serialization not yet implemented — see HANDOFF.md and SCOPE-AUDIT.md");
-        return default;
-    }
-
-    /// <summary>Import(DataError) — loud failure; in-memory XmlPort not yet implemented.</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    public static bool NavXmlPort_Import(object self, int errorLevel)
-    {
-        RunnerScope.ThrowNotYetImplemented(
-            "NavXmlPort.Import",
-            "in-memory XmlPort serialization not yet implemented — see HANDOFF.md and SCOPE-AUDIT.md");
-        return default;
-    }
-
-    /// <summary>Run() — loud failure; in-memory XmlPort not yet implemented.</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    public static void NavXmlPort_Run(object self)
-    {
-        RunnerScope.ThrowNotYetImplemented(
-            "NavXmlPort.Run",
-            "in-memory XmlPort serialization not yet implemented — see HANDOFF.md and SCOPE-AUDIT.md");
-    }
-
-    /// <summary>RunXmlPort() (private) — loud failure; in-memory XmlPort not yet implemented.</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    public static void NavXmlPort_RunXmlPort(object self)
-    {
-        RunnerScope.ThrowNotYetImplemented(
-            "NavXmlPort.RunXmlPort",
-            "in-memory XmlPort serialization not yet implemented — see HANDOFF.md and SCOPE-AUDIT.md");
-    }
-
-    /// <summary>SetTableView(NavRecord) — loud failure; in-memory XmlPort not yet implemented.</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    public static void NavXmlPort_SetTableView(object self, object record)
-    {
-        RunnerScope.ThrowNotYetImplemented(
-            "NavXmlPort.SetTableView",
-            "in-memory XmlPort serialization not yet implemented — see HANDOFF.md and SCOPE-AUDIT.md");
-    }
-
-    /// <summary>BeginInitialization() — called from the BC-generated XmlPort{ID} ctor.
-    /// Skeleton ctor-time scaffolding — required so XmlPort{ID} construction succeeds;
-    /// no observable AL-test behavior to fake.
-    /// The real body dereferences Session.MetadataProvider (null on skeleton) → NRE, so
-    /// it stays a no-op for that part. But making it a TOTAL no-op reopened a second,
-    /// separate NRE one step later: BC-emitted XmlPort{ID}.InitializeComponent() always
-    /// tail-calls `RequestOptionsPage = new RequestPage(this, Metadata.RequestFormMetadata)`
-    /// — real, unpatched NavXmlPort code, not ours to touch (precompiled-dll-respect.md).
-    /// `NavXmlPort.metadata` (backing `get_Metadata()`) is never set by the ctor; only the
-    /// real BeginInitialization body would have set it. Left null, `Metadata` is null and
-    /// `.RequestFormMetadata` NREs on the null receiver — the exact failure mode discovered
-    /// once BeginInitialization/EndInitialization/Add stopped being orphaned JmpHook
-    /// registrations (#1800) and started actually running.
-    /// Fix, mirroring the established NavReport.BeginInitialization stub-metadata pattern
-    /// (NavReportSync.StubInitializeMetadata / BuildEmptyMasterPage): install an
-    /// uninitialized MetaXmlPort whose `requestFormMetadata` field points at an empty
-    /// MasterPage, so `Metadata.RequestFormMetadata` returns a non-null (if inert) value
-    /// instead of NREing. This is ctor-time plumbing, not xmlport business logic — no
-    /// AL-observable behavior is being faked; Export/Import/Run/SetTableView are the loud
-    /// not-yet-implemented guards that still fire once construction completes.</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    public static void NavXmlPort_BeginInitialization(object self)
-    {
-        try
-        {
-            EnsureNavXmlPortMetadataField(self.GetType());
-            if (_fNavXmlPortMetadata == null) return;
-            if (_fNavXmlPortMetadata.GetValue(self) != null) return; // idempotent
-
-            var typesAsm = AppDomain.CurrentDomain.GetAssemblies()
-                .FirstOrDefault(a => a.GetName().Name == "Microsoft.Dynamics.Nav.Types");
-            if (typesAsm == null) return;
-            var metaXmlPortType = typesAsm.GetType("Microsoft.Dynamics.Nav.Types.Metadata.MetaXmlPort");
-            var masterPageType = typesAsm.GetType("Microsoft.Dynamics.Nav.Types.Metadata.MasterPage");
-            if (metaXmlPortType == null || masterPageType == null) return;
-
-            var fRequestFormMetadata = metaXmlPortType.GetField("requestFormMetadata",
-                BindingFlags.Instance | BindingFlags.NonPublic);
-            if (fRequestFormMetadata == null) return;
-
-            var masterPage = AlRunner.NavReportSync.BuildEmptyMasterPage(typesAsm, masterPageType);
-            var metaXmlPort = RuntimeHelpers.GetUninitializedObject(metaXmlPortType);
-            fRequestFormMetadata.SetValue(metaXmlPort, masterPage);
-            _fNavXmlPortMetadata.SetValue(self, metaXmlPort);
-        }
-        catch (Exception ex)
-        {
-            Console.Error.WriteLine($"[BcRuntime] NavXmlPort_BeginInitialization stub-metadata install failed: {ex.Message}");
-        }
-    }
-
-    private static System.Reflection.FieldInfo? _fNavXmlPortMetadata;
-
-    private static void EnsureNavXmlPortMetadataField(Type derivedType)
-    {
-        if (_fNavXmlPortMetadata != null) return;
-        var t = derivedType;
-        while (t != null)
-        {
-            var f = t.GetField("metadata", BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly);
-            if (f != null)
-            {
-                System.Threading.Interlocked.CompareExchange(ref _fNavXmlPortMetadata, f, null);
-                return;
-            }
-            t = t.BaseType;
-        }
-    }
-
-    /// <summary>EndInitialization() — called from the BC-generated XmlPort{ID} ctor after
-    /// the node-building code. Skeleton ctor-time scaffolding — required so XmlPort{ID}
-    /// construction succeeds; no observable AL-test behavior to fake.
-    /// Accesses metadata.UseRequestForm and requestOptionsPage — the latter is null-safe
-    /// only because NavXmlPort_BeginInitialization now installs a stub Metadata object
-    /// (above); requestOptionsPage itself is set by BC's own real, unpatched
-    /// set_RequestOptionsPage before EndInitialization is even called (see
-    /// XmlPort{ID}.InitializeComponent), so no-op is still the correct replacement here —
-    /// EndInitialization has nothing left to legitimately do against the skeleton.</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    public static void NavXmlPort_EndInitialization(object self)
-    {
-    }
+    // Export(DataError) / Import(DataError) / Run() / RunXmlPort() (private) /
+    // SetTableView(NavRecord) / BeginInitialization() / EndInitialization() /
+    // Add(TableNode|FieldNode|TextNode) used to live here as JmpHook.Hook(...) targets in
+    // BcRuntime.cs — Export/Import/Run/RunXmlPort/SetTableView as loud "not-yet-implemented"
+    // throw stubs, BeginInitialization/EndInitialization/Add as no-op ctor scaffolding. ALL of
+    // them were dead: JmpHook is disabled by default, so none of these hooks ever fired and
+    // BC's real, unpatched bodies ran instead.
+    //
+    // Investigated as part of #1800 (orphaned-hook audit). An earlier revision of this fix
+    // Cecil-owned BeginInitialization to install stub metadata, on the belief that
+    // Session.MetadataProvider is null on the skeleton and NREs the ctor — that turned out to
+    // be a misdiagnosis, and an active regression: it broke 14 previously-passing al-language
+    // corpus tests (Codeunit60206/60207). Root cause: Session.MetadataProvider is NOT null on
+    // the skeleton — AlRunner/Patches/MetadataPatches.cs's InjectSkeletonSystemTenant already
+    // seeds session.tenant/systemTenant for exactly this call path (its own comment names
+    // NavXmlPort.BeginInitialization as the motivating case), so BC's real, unpatched
+    // BeginInitialization/EndInitialization/Add bodies already construct correctly — proven
+    // empirically against a pristine, unpatched build. And once construction succeeds, BC's
+    // real Export/Import/Run/SetTableView bodies already handle well-formed AL usage correctly
+    // too (nested-table export/import, text-variable triggers, auto-update/auto-replace,
+    // SetTableView row filtering — all passing against the corpus). So none of these eight
+    // methods need a runner replacement at all; their throw stubs / no-ops and the matching
+    // (already-orphaned) Hook(...) call sites were deleted outright rather than left dead —
+    // there is nothing correct to redirect them to, BC's real body already is the right
+    // answer. See tests/runner-extras/standalone-suites/xmlport-cluster-hooks-1800 for the
+    // proving tests and the #1800 PR body for the full orphan-hook inventory and the
+    // misdiagnosis-and-correction record.
+    //
+    // NavXmlPort.Run(int[, bool[, bool[, NavRecord]]]) — the 4 static overloads — are the one
+    // genuine bug in this cluster (see NavXmlPort_StaticRun1..4 below and the matching Cecil
+    // ownership in NclCecilRewrite.cs): BC's real, unpatched bodies for those DO throw
+    // standalone, so they need an actual no-op replacement, not deletion.
+    //
+    // XmlPort{ID}.InitializeComponent() (below) and NavXmlPortTableNode..ctor (further down)
+    // are a separate mechanism — JmpHook.Apply against methods on the test assembly's own
+    // BC-generated types, not NCL — and were not part of this investigation; left unchanged.
 
     /// <summary>
     /// XmlPort{ID}.InitializeComponent() — the BC-generated override that calls
@@ -384,21 +291,6 @@ public static partial class BcRuntime
     public static void NavXmlPort_InitializeComponent(object self)
     {
     }
-
-    // Skeleton ctor-time scaffolding — required so XmlPort{ID} construction succeeds;
-    // no observable AL-test behavior to fake.
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    public static void NavXmlPort_AddTableNode(object self, object node) { }
-
-    // Skeleton ctor-time scaffolding — required so XmlPort{ID} construction succeeds;
-    // no observable AL-test behavior to fake.
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    public static void NavXmlPort_AddFieldNode(object self, object node) { }
-
-    // Skeleton ctor-time scaffolding — required so XmlPort{ID} construction succeeds;
-    // no observable AL-test behavior to fake.
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    public static void NavXmlPort_AddTextNode(object self, object node) { }
 
     // Skeleton ctor-time scaffolding — required so XmlPort{ID} construction succeeds;
     // no observable AL-test behavior to fake. Initializes the attribute/element child

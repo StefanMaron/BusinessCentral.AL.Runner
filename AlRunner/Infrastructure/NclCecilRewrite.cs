@@ -137,18 +137,33 @@ public static class NclCecilRewrite
         "Microsoft.Dynamics.Nav.Runtime.NavReport::RunModal/2",
         "Microsoft.Dynamics.Nav.Runtime.NavReport::RunModal/3",
         "Microsoft.Dynamics.Nav.Runtime.NavReport::RunModal/4",
-        // NavXmlPort ctor-scaffolding + Export/Import/Run/SetTableView cluster — #1800.
-        // Same orphaned-JmpHook story as the NavReport block above (this HashSet's Key()
-        // encodes param count only, not types, so "Add/1" here covers all three
-        // Add(TableNode|FieldNode|TextNode) overloads with one entry — see NclCecilRewrite.RewriteNcl).
-        "Microsoft.Dynamics.Nav.Runtime.NavXmlPort::Export/1",
-        "Microsoft.Dynamics.Nav.Runtime.NavXmlPort::Import/1",
-        "Microsoft.Dynamics.Nav.Runtime.NavXmlPort::Run/0",
-        "Microsoft.Dynamics.Nav.Runtime.NavXmlPort::RunXmlPort/0",
-        "Microsoft.Dynamics.Nav.Runtime.NavXmlPort::SetTableView/1",
-        "Microsoft.Dynamics.Nav.Runtime.NavXmlPort::BeginInitialization/0",
-        "Microsoft.Dynamics.Nav.Runtime.NavXmlPort::EndInitialization/0",
-        "Microsoft.Dynamics.Nav.Runtime.NavXmlPort::Add/1",
+        // NavXmlPort static Run(id[, requestWindow[, import[, record]]]) — #1800. These four
+        // overloads were orphaned JmpHook.Hook(...) registrations in BcRuntime.cs (JmpHook is
+        // disabled by default, so they never fired) and BC's real, unpatched bodies genuinely
+        // throw standalone — proven empirically: XmlPort.Run(<unresolvable id>) throws
+        // NavALException ("object with that ID does not exist"), and XmlPort.Run(<a real id>)
+        // throws NavNCLCallbackNotAllowedException ("Callback functions are not allowed"),
+        // both against a pristine, unpatched build. Cecil-own them to a no-op instead of a
+        // JmpHook registration that can silently fail to bind. See
+        // tests/runner-extras/standalone-suites/xmlport-cluster-hooks-1800 for the RED→GREEN
+        // proof and the #1800 PR body for the rest of the orphan-hook inventory.
+        //
+        // BeginInitialization/EndInitialization/Add(TableNode|FieldNode|TextNode) and the
+        // instance Export/Import/Run/RunXmlPort/SetTableView were ALSO orphaned JmpHook
+        // registrations here, and were investigated as part of the same #1800 pass — but they
+        // are NOT listed below, deliberately. An earlier version of this fix Cecil-owned
+        // BeginInitialization to install stub metadata (believing Session.MetadataProvider was
+        // null on the skeleton and NREd the ctor), which then regressed 14 previously-passing
+        // al-language corpus tests (Codeunit60206/60207). Root cause: Session.MetadataProvider
+        // is NOT null — AlRunner/Patches/MetadataPatches.cs's InjectSkeletonSystemTenant already
+        // seeds session.tenant/systemTenant for exactly this call path (its own comment names
+        // NavXmlPort.BeginInitialization as the motivating case), so BC's real, unpatched
+        // BeginInitialization/EndInitialization/Add bodies already construct correctly, and its
+        // real Export/Import/Run/SetTableView bodies already handle well-formed AL usage
+        // correctly once construction succeeds. All of that cluster's Hook(...) call sites in
+        // BcRuntime.cs were deleted outright (not left dead): there is nothing to redirect to,
+        // BC's own body is already correct. See the removal there and the PR discussion on
+        // #1800 for the full misdiagnosis-and-correction record.
         "Microsoft.Dynamics.Nav.Runtime.NavXmlPort::Run/1",
         "Microsoft.Dynamics.Nav.Runtime.NavXmlPort::Run/2",
         "Microsoft.Dynamics.Nav.Runtime.NavXmlPort::Run/3",
@@ -5014,104 +5029,43 @@ public static class NclCecilRewrite
             Console.Error.WriteLine($"[Cecil] Rewrote {reportRewrites} NavReport/DataItemIterator method(s) (Run/RunModal→SyncRun; Add→ReportAdd; RunRequestPage→OOS-throw)");
         }
 
-        // NavXmlPort ctor-scaffolding + Export/Import/Run/SetTableView cluster — #1800.
+        // NavXmlPort static Run(id[, requestWindow[, import[, record]]]) — #1800.
         //
-        // Every one of these was a JmpHook.Apply(...) call site in BcRuntime.cs/XmlPortPatches.cs,
-        // and NONE of them ever fired under the default Cecil-only runtime (JmpHook.Apply
-        // silently skips any target it doesn't own unless AL_RUNNER_ENABLE_JMPHOOK=1). BC's real,
-        // unpatched bodies ran instead — confirmed empirically (see
-        // tests/runner-extras/standalone-suites/xmlport-cluster-hooks-1800): constructing an AL
-        // XmlPort variable at all, then calling Run()/Export()/Import()/SetTableView() on it,
-        // raised a grab-bag of unrelated exceptions (NavNCLCallbackNotAllowedException,
-        // ArgumentNullException("parent")/("Source")) — and SetTableView's real body ran to
-        // completion with NO exception at all, the single most dangerous case this issue names:
-        // a guard that is supposed to throw RunnerOutOfScopeException("not-yet-implemented") but
-        // instead silently succeeds.
+        // These four overloads were orphaned JmpHook.Hook(...) registrations in BcRuntime.cs
+        // (JmpHook is disabled by default, so they never fired), and BC's real, unpatched
+        // bodies genuinely throw standalone — proven empirically: XmlPort.Run(<unresolvable
+        // id>) throws NavALException ("object with that ID does not exist"), and
+        // XmlPort.Run(<a real id>) throws NavNCLCallbackNotAllowedException ("Callback
+        // functions are not allowed"), both against a pristine, unpatched build. Cecil-own
+        // them to a no-op instead of a JmpHook registration that can silently fail to bind.
+        // See tests/runner-extras/standalone-suites/xmlport-cluster-hooks-1800 for the
+        // RED→GREEN proof.
         //
-        // Same fix shape as the NavReport block above: Cecil-own the bodies directly (a real IL
-        // call, not a hook that can silently fail to bind) so the redirect to the already-correct
-        // replacement in AlRunner/Patches/XmlPortPatches.cs actually takes effect. The replacement
-        // bodies are unchanged — only how they get installed changes.
+        // BeginInitialization/EndInitialization/Add(TableNode|FieldNode|TextNode) and the
+        // instance Export/Import/Run/RunXmlPort/SetTableView were ALSO orphaned JmpHook
+        // registrations in the same NavXmlPort cluster, investigated as part of the same
+        // #1800 pass — but they are deliberately NOT Cecil-owned. An earlier version of this
+        // fix Cecil-owned BeginInitialization to install stub metadata, on the belief that
+        // Session.MetadataProvider is null on the skeleton and NREs the ctor. That turned out
+        // to be a misdiagnosis (and an active regression: it broke 14 previously-passing
+        // al-language corpus tests, Codeunit60206/60207). Root cause: Session.MetadataProvider
+        // is NOT null on the skeleton — AlRunner/Patches/MetadataPatches.cs's
+        // InjectSkeletonSystemTenant already seeds session.tenant/systemTenant for exactly
+        // this call path (its own comment names NavXmlPort.BeginInitialization as the
+        // motivating case). So BC's real, unpatched BeginInitialization/EndInitialization/Add
+        // bodies already construct correctly, and its real Export/Import/Run/SetTableView
+        // bodies already handle well-formed AL usage correctly once construction succeeds —
+        // proven by the full al-language corpus run (Codeunit60206/60207: nested-table
+        // export/import, text-variable triggers, auto-update/auto-replace, SetTableView row
+        // filtering, all passing against the unpatched precompiled body). All of that
+        // cluster's Hook(...) call sites in BcRuntime.cs were deleted outright (not left
+        // dead): there is nothing to redirect to, BC's own body is already correct. See the
+        // removal there and the #1800 PR body for the full misdiagnosis-and-correction record.
         {
             var navXmlPortT = asm.MainModule.Types
                 .FirstOrDefault(t => t.FullName == "Microsoft.Dynamics.Nav.Runtime.NavXmlPort");
-            var navXmlPortTableNodeT = asm.MainModule.Types
-                .FirstOrDefault(t => t.FullName == "Microsoft.Dynamics.Nav.Runtime.NavXmlPortTableNode");
             int xmlPortRewrites = 0;
-
-            // Redirect an instance method's body to `call BcRuntime.<replName>(this[, args...])`.
-            // `replParamTypes` must match the replacement's actual CLR parameter types exactly
-            // (all `object` here — the replacements accept the NCL argument by its base type,
-            // see XmlPortPatches.cs) so GetMethod resolves the right overload.
-            //
-            // `sigNames` matches by FullName STRING, not by a resolved TypeReference — matters
-            // for parameter types like Microsoft.Dynamics.Nav.Types.DataError, which live in a
-            // DIFFERENT assembly (Microsoft.Dynamics.Nav.Types.dll) than the one being rewritten
-            // here. `asm.MainModule.Types` only enumerates types DEFINED in this module, so a
-            // "resolve DataError via MainModule.Types, null-guard the call if not found" approach
-            // silently no-ops on every such parameter (found empirically: Export/Import(DataError)
-            // both fell through to BC's real body — 12 rewrites logged where 14 were expected —
-            // because the null-guard around them made the whole redirect a quiet skip, exactly
-            // the orphaned-hook failure mode #1800 exists to eliminate). String-name matching
-            // needs no cross-assembly TypeReference resolution at all for the *match*; the method
-            // parameter's own ParameterType (already a valid reference, since it's a live member of
-            // the method we found) is reused directly for anything that must be a TypeReference.
-            void RedirectInstance(string methodName, string[] sigNames, string replName, int explicitArgCount)
-            {
-                if (navXmlPortT == null) return;
-                var m = navXmlPortT.Methods.FirstOrDefault(mm =>
-                    mm.Name == methodName && !mm.IsStatic
-                    && mm.Parameters.Count == sigNames.Length
-                    && mm.Parameters.Select(p => p.ParameterType.FullName).SequenceEqual(sigNames));
-                if (m == null || !m.HasBody) return;
-
-                // Look up by name + arity only, not by exact parameter TYPES: most of these
-                // replacements take `object` for every explicit arg, but NOT all of them —
-                // NavXmlPort_Export/Import take `int errorLevel` (the NCL side's DataError
-                // argument is an int32-backed enum, binary-compatible with int on the IL
-                // stack; CoreCLR does not re-verify `call` operand types at JIT time the way
-                // PEVerify would). A blanket `object×N` GetMethod overload lookup silently
-                // returns null for those two and used to throw here — replName is unique
-                // among BcRuntime's public statics for every caller of RedirectInstance, so
-                // arity alone disambiguates safely.
-                var replInfo = typeof(AlRunner.BcRuntime)
-                    .GetMethods(BindingFlags.Static | BindingFlags.Public)
-                    .FirstOrDefault(mi => mi.Name == replName && mi.GetParameters().Length == explicitArgCount + 1)
-                    ?? throw new InvalidOperationException($"BcRuntime.{replName} not found via reflection — do not commit");
-                var replRef = asm.MainModule.ImportReference(replInfo);
-
-                var body = m.Body;
-                body.Instructions.Clear();
-                body.ExceptionHandlers.Clear();
-                body.Variables.Clear();
-                var il = body.GetILProcessor();
-                il.Append(il.Create(OpCodes.Ldarg_0)); // this
-                for (int i = 0; i < explicitArgCount; i++)
-                    il.Append(il.Create(OpCodes.Ldarg, i + 1));
-                il.Append(il.Create(OpCodes.Call, replRef));
-                if (m.ReturnType.FullName == "System.Void" && replInfo.ReturnType != typeof(void))
-                    il.Append(il.Create(OpCodes.Pop));
-                il.Append(il.Create(OpCodes.Ret));
-                body.MaxStackSize = explicitArgCount + 1;
-                xmlPortRewrites++;
-            }
-
-            const string DataErrorName = "Microsoft.Dynamics.Nav.Types.DataError";
             const string NavRecordName = "Microsoft.Dynamics.Nav.Runtime.NavRecord";
-            const string TableNodeName = "Microsoft.Dynamics.Nav.Runtime.NavXmlPortTableNode";
-            const string FieldNodeName = "Microsoft.Dynamics.Nav.Runtime.NavXmlPortFieldNode";
-            const string TextNodeName = "Microsoft.Dynamics.Nav.Runtime.NavXmlPortTextNode";
-
-            RedirectInstance("Export", new[] { DataErrorName }, nameof(AlRunner.BcRuntime.NavXmlPort_Export), 1);
-            RedirectInstance("Import", new[] { DataErrorName }, nameof(AlRunner.BcRuntime.NavXmlPort_Import), 1);
-            RedirectInstance("Run", Array.Empty<string>(), nameof(AlRunner.BcRuntime.NavXmlPort_Run), 0);
-            RedirectInstance("RunXmlPort", Array.Empty<string>(), nameof(AlRunner.BcRuntime.NavXmlPort_RunXmlPort), 0);
-            RedirectInstance("SetTableView", new[] { NavRecordName }, nameof(AlRunner.BcRuntime.NavXmlPort_SetTableView), 1);
-            RedirectInstance("BeginInitialization", Array.Empty<string>(), nameof(AlRunner.BcRuntime.NavXmlPort_BeginInitialization), 0);
-            RedirectInstance("EndInitialization", Array.Empty<string>(), nameof(AlRunner.BcRuntime.NavXmlPort_EndInitialization), 0);
-            RedirectInstance("Add", new[] { TableNodeName }, nameof(AlRunner.BcRuntime.NavXmlPort_AddTableNode), 1);
-            RedirectInstance("Add", new[] { FieldNodeName }, nameof(AlRunner.BcRuntime.NavXmlPort_AddFieldNode), 1);
-            RedirectInstance("Add", new[] { TextNodeName }, nameof(AlRunner.BcRuntime.NavXmlPort_AddTextNode), 1);
 
             // Static XMLPORT.RUN(id[, requestWindow[, import[, record]]]) — 4 overloads, all
             // safe no-ops in standalone mode (no request page, no interactive I/O target).
@@ -5163,7 +5117,7 @@ public static class NclCecilRewrite
                     RedirectStaticRun(new[] { tInt32, tBool, tBool, refNavRecordForStatic }, nameof(AlRunner.BcRuntime.NavXmlPort_StaticRun4));
             }
 
-            Console.Error.WriteLine($"[Cecil] Rewrote {xmlPortRewrites} NavXmlPort method(s) (ctor-scaffolding no-op; Export/Import/Run/SetTableView→OOS-throw; static Run→no-op)");
+            Console.Error.WriteLine($"[Cecil] Rewrote {xmlPortRewrites} NavXmlPort static Run overload(s) to no-op (ctor-scaffolding and instance Export/Import/Run/SetTableView left to BC's real, unpatched body)");
         }
 
         // §report-processor-factory — the TRUE out-of-scope boundary for report

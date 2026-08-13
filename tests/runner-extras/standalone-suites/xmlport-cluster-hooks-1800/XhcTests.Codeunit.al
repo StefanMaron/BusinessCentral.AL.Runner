@@ -17,12 +17,33 @@ table 62180 "XHC Row"
 }
 
 /// Minimal xmlport bound to XHC Row — the target of the #1800 orphaned-JmpHook cluster.
-/// NavXmlPort.BeginInitialization/EndInitialization/Add(*Node)/ctor are ctor-time
-/// scaffolding whose ONLY job is to let this object construct without NREing on the
-/// null skeleton Session.MetadataProvider (see AlRunner/Patches/XmlPortPatches.cs).
-/// NavXmlPort.Export/Import/Run(0-arg instance)/SetTableView are the loud-failure guards:
-/// in-memory xmlport serialization is genuinely not implemented, so they must raise
-/// RunnerOutOfScopeException("not-yet-implemented") — never silently succeed or NRE.
+///
+/// The #1800 audit found EIGHT orphaned JmpHook registrations on NavXmlPort
+/// (BeginInitialization/EndInitialization/Add(TableNode|FieldNode|TextNode)/Export/
+/// Import/Run(0-arg instance)/SetTableView/RunXmlPort) — JmpHook is disabled by
+/// default, so none of them ever fired, and BC's real, unpatched bodies ran instead.
+/// An earlier revision of this fix Cecil-owned BeginInitialization to install stub
+/// metadata, believing Session.MetadataProvider is null on the skeleton and NREs the
+/// ctor — that was a misdiagnosis (AlRunner/Patches/MetadataPatches.cs's
+/// InjectSkeletonSystemTenant already seeds session.tenant/systemTenant for exactly
+/// this call path) and an active regression: it broke 14 previously-passing
+/// al-language corpus tests (Codeunit60206/60207). Once reverted, the pristine,
+/// unpatched behaviour was confirmed empirically: construction succeeds and a full
+/// SetTableView → Export → Import round trip completes with no throw at all, with
+/// ZERO runner intervention on any of those eight methods. So the runner-mechanism
+/// claim these tests below (InstanceConstruction_DoesNotThrow,
+/// InstanceExportImportRoundTrip_RealBcBody_NoThrow) exist to prove is a REGRESSION
+/// GUARD, not a fix: the runner must never again install a redirect on this cluster.
+/// Full round-trip correctness (actual XML shape, row filtering, field values) is
+/// plain BC behaviour and is proven upstream in the corpus, not re-proven here (see
+/// bc-behavior-tests-go-upstream.md).
+///
+/// The ONE genuine bug in this cluster, and the actual #1800 fix landed by this PR,
+/// is the four static XmlPort.Run(int[, bool[, bool[, NavRecord]]]) overloads (see
+/// StaticRun_UnresolvableId_DoesNotThrow / StaticRun_KnownId_DoesNotThrow below):
+/// BC's real, unpatched bodies for those genuinely throw standalone
+/// (NavALException / NavNCLCallbackNotAllowedException), so they needed an actual
+/// no-op Cecil redirect, not deletion.
 xmlport 62181 "XHC Port"
 {
     Direction = Both;
@@ -83,60 +104,55 @@ codeunit 62182 "XHC Tests"
         XmlPort.Run(62181);
     end;
 
-    // ── Instance Export/Import/Run()/SetTableView — the loud not-yet-implemented guards.
-    // Positive claim: each raises RunnerOutOfScopeException naming the surface and the
-    // not-yet-implemented reason — not a generic NullReferenceException from BC's own
-    // unpatched body reaching into the null skeleton session, and not a silent success.
+    // ── Instance Export/SetTableView/Import — real BC body, reached end-to-end. ──
+    // Earlier revisions of this suite asserted these four calls must throw
+    // RunnerOutOfScopeException("not-yet-implemented"), and a still-earlier revision of
+    // the runner fix believed construction itself needed a stub-metadata Cecil redirect.
+    // Both premises turned out to be wrong: BC's own real, UNPATCHED bodies for
+    // construction and for Export/SetTableView/Import all handle well-formed usage
+    // correctly on the skeleton (proven both empirically against a pristine build and by
+    // the full al-language corpus — Codeunit60206/60207: nested-table export/import,
+    // SetTableView row filtering, auto-update/auto-replace, all passing against the
+    // unpatched precompiled body). Re-asserting that same correctness here would just be
+    // a runner-local restatement of a BC-behaviour claim the corpus already owns (see
+    // bc-behavior-tests-go-upstream.md). This test's actual claim is narrower and purely
+    // a regression guard: a correctly-set-up instance completes a real
+    // SetTableView → Export → Import round trip without throwing anything at all, with
+    // no runner redirect installed anywhere on this cluster.
     [Test]
-    procedure InstanceRun_ThrowsOutOfScope_NotSilentNoOp_NotRawNRE()
+    procedure InstanceExportImportRoundTrip_RealBcBody_NoThrow()
     var
-        Xhc: XmlPort "XHC Port";
-    begin
-        asserterror Xhc.Run();
-
-        if StrPos(GetLastErrorText(), 'not-yet-implemented') = 0 then
-            Error('Expected the not-yet-implemented reason, got: %1', GetLastErrorText());
-        if StrPos(GetLastErrorText(), 'NavXmlPort.Run') = 0 then
-            Error('Expected the error to name NavXmlPort.Run, got: %1', GetLastErrorText());
-    end;
-
-    [Test]
-    procedure InstanceExport_ThrowsOutOfScope_NotSilentNoOp_NotRawNRE()
-    var
-        Xhc: XmlPort "XHC Port";
-    begin
-        asserterror Xhc.Export();
-
-        if StrPos(GetLastErrorText(), 'not-yet-implemented') = 0 then
-            Error('Expected the not-yet-implemented reason, got: %1', GetLastErrorText());
-        if StrPos(GetLastErrorText(), 'NavXmlPort.Export') = 0 then
-            Error('Expected the error to name NavXmlPort.Export, got: %1', GetLastErrorText());
-    end;
-
-    [Test]
-    procedure InstanceImport_ThrowsOutOfScope_NotSilentNoOp_NotRawNRE()
-    var
-        Xhc: XmlPort "XHC Port";
-    begin
-        asserterror Xhc.Import();
-
-        if StrPos(GetLastErrorText(), 'not-yet-implemented') = 0 then
-            Error('Expected the not-yet-implemented reason, got: %1', GetLastErrorText());
-        if StrPos(GetLastErrorText(), 'NavXmlPort.Import') = 0 then
-            Error('Expected the error to name NavXmlPort.Import, got: %1', GetLastErrorText());
-    end;
-
-    [Test]
-    procedure InstanceSetTableView_ThrowsOutOfScope_NotSilentNoOp_NotRawNRE()
-    var
-        Xhc: XmlPort "XHC Port";
         Row_: Record "XHC Row";
+        RowFilter: Record "XHC Row";
+        TempBlob: Codeunit "Temp Blob";
+        XhcOut: XmlPort "XHC Port";
+        XhcIn: XmlPort "XHC Port";
+        DocumentOutStream: OutStream;
+        DocumentInStream: InStream;
+        Ok: Boolean;
     begin
-        asserterror Xhc.SetTableView(Row_);
+        Row_.Init();
+        Row_."Entry No." := 1;
+        Row_.Name := 'First';
+        Row_.Insert();
 
-        if StrPos(GetLastErrorText(), 'not-yet-implemented') = 0 then
-            Error('Expected the not-yet-implemented reason, got: %1', GetLastErrorText());
-        if StrPos(GetLastErrorText(), 'NavXmlPort.SetTableView') = 0 then
-            Error('Expected the error to name NavXmlPort.SetTableView, got: %1', GetLastErrorText());
+        TempBlob.CreateOutStream(DocumentOutStream);
+        RowFilter.SetRange("Entry No.", 1);
+        XhcOut.SetTableView(RowFilter);
+        XhcOut.SetDestination(DocumentOutStream);
+        Ok := XhcOut.Export();
+        if not Ok then
+            Error('XHC Port.Export() reported failure against a correctly-set-up OutStream destination.');
+
+        // Delete the source row before import — the exported XML would otherwise re-import
+        // a row whose primary key already exists, which is a legitimate duplicate-key
+        // failure, not evidence about the orphaned-hook fix this test exists to prove.
+        Row_.Delete();
+
+        TempBlob.CreateInStream(DocumentInStream);
+        XhcIn.SetSource(DocumentInStream);
+        Ok := XhcIn.Import();
+        if not Ok then
+            Error('XHC Port.Import() reported failure against a correctly-set-up InStream source.');
     end;
 }
