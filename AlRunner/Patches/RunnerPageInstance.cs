@@ -234,6 +234,72 @@ internal sealed class RunnerPageInstance
     internal bool ControlVisible(int controlId)
         => EvaluateProperty(ControlDefinition(controlId)?.Visible, "Visible", controlId);
 
+    /// <summary>
+    /// Whether this control is compile-time eliminated from the runtime page — its own
+    /// <c>Visible</c>, or that of ANY group enclosing it, is the compile-time LITERAL
+    /// <c>false</c> (never an expression, even one that currently evaluates false). Real BC
+    /// dead-code-eliminates such a control at compile time: it never exists on the runtime
+    /// page object at all. That's a DIFFERENT claim from <see cref="ControlVisible"/>, which
+    /// answers "is this (present) control currently visible" — a control that answers false
+    /// here is not merely invisible, it is unreachable, and callers must not resolve it into
+    /// an <c>ITestField</c>/<c>ITestAction</c> at all (see <c>LiveNavTestPage.GetField</c>,
+    /// which turns this into BC's own "field ... is not found on the page" by returning null
+    /// and letting <c>NavTestPageBase.GetField(int,bool)</c> — the precompiled method the AL
+    /// compiler emits for every <c>TestPage.&lt;field&gt;</c> access — throw its own
+    /// <c>NavTestFieldNotFoundException</c>, rather than the runner inventing its own message).
+    ///
+    /// Walks the SAME ancestor chain #1778's live evaluation needs, but asks a narrower
+    /// question at each level: not "what does Visible currently evaluate to" but "is Visible
+    /// spelled as the literal false in the page's own metadata". <see cref="IsLiteralFalse"/>
+    /// deliberately does NOT resolve expression names the way <see cref="EvaluateProperty"/>
+    /// does — an expression that happens to be false right now must stay reachable (that's
+    /// #1778's live-evaluation territory), only a property the AL compiler itself folded to
+    /// the literal false triggers elimination here.
+    /// </summary>
+    internal bool ControlIsCompileTimeEliminated(int controlId)
+    {
+        if (_form is not NavForm form) return false;
+
+        if (IsLiteralFalse(ControlDefinition(controlId)?.Visible)) return true;
+
+        var helper = form.MetadataHelper;
+        var currentId = controlId;
+        while (true)
+        {
+            Microsoft.Dynamics.Nav.Types.Metadata.ElementDefinition parent;
+            try
+            {
+                parent = helper.FindParentByControlId(currentId);
+            }
+            catch (Microsoft.Dynamics.Nav.Types.Exceptions.NavNCLControlMetadataNotFoundException)
+            {
+                // Ran off the top of the hierarchy walking up from currentId — nothing further
+                // to check.
+                return false;
+            }
+
+            // Only a group carries its own Visible; the content area (or anything else the
+            // walk can land on) does not participate in elimination, so reaching one ends the
+            // walk with "not eliminated at this level".
+            if (parent is not Microsoft.Dynamics.Nav.Types.Metadata.ControlGroupDefinition group)
+                return false;
+
+            if (IsLiteralFalse(group.Visible)) return true;
+
+            currentId = group.ID;
+        }
+    }
+
+    /// <summary>
+    /// True only for the compile-time literal spelling ("false"/"0", case-insensitive on the
+    /// word form) — the same literal recognition <see cref="EvaluateProperty"/> uses, minus the
+    /// expression-name fallback, because an expression must never be treated as eliminating.
+    /// Internal (not private) so <c>AlRunner.Tests</c> can pin this literal-vs-expression
+    /// distinction directly, without needing a live NavForm/MetadataHelper to exercise it.
+    /// </summary>
+    internal static bool IsLiteralFalse(string? raw)
+        => raw != null && (string.Equals(raw, "false", StringComparison.OrdinalIgnoreCase) || raw == "0");
+
     internal bool ActionEnabled(int actionId)
         => EvaluateProperty(ActionDefinition(actionId)?.Enabled, "Enabled", actionId);
 

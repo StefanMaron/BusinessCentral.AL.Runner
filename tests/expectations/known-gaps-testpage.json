@@ -14,21 +14,5 @@
     "Mode": "expect-fail-known-gap",
     "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/1778",
     "Note": "Same missing ancestor walk as the sibling entry above, two groups deep: InnerGroup declares no Visible, OuterGroup's Visible = ShowOuter is false, and the field still reads visible. This is the case that tells apart 'consults the immediate parent' from 'walks the whole chain'."
-  },
-  {
-    "codeunitId": 60961,
-    "CodeunitName": "Test Page Field Visible Tests",
-    "Method": "FieldInGroupWithLiteralFalseVisible_IsNotOnThePage",
-    "Mode": "expect-fail-known-gap",
-    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/1838",
-    "Note": "Not #1778 either: real BC dead-code-eliminates a control enclosed by a group whose Visible is the compile-time literal false, so the TestPage reference raises 'The field with ID = ... is not found on the page'. The runner keeps the control on the page and answers Visible() = false, so the asserterror gets no error at all ('An error was expected inside an ASSERTERROR statement')."
-  },
-  {
-    "codeunitId": 60961,
-    "CodeunitName": "Test Page Field Visible Tests",
-    "Method": "FieldWithOwnLiteralFalseVisible_IsNotOnThePageEvenInsideAVisibleGroup",
-    "Mode": "expect-fail-known-gap",
-    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/1838",
-    "Note": "Re-pointed from #1837: the Boolean-SetValue gap that used to fail this test's first statement (Card.ToggleDynamic.SetValue(true)) is fixed for page-variable-bound controls. It now fails one line later, on OwnHiddenFieldInVisibleGroup, the same literal-Visible-false compile-time elimination gap as the sibling entry above (here declared on the control itself rather than on an enclosing group) — 'An error was expected inside an ASSERTERROR statement', because the runner keeps the control on the page instead of eliminating it."
   }
 ]

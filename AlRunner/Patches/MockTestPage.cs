@@ -791,6 +791,18 @@ internal class LiveNavTestPage : MockITestPage
 
     public override ITestField GetField(int id)
     {
+        // A control whose OWN Visible, or that of any group enclosing it, is the compile-time
+        // LITERAL false is dead-code-eliminated on real BC — it never exists on the runtime
+        // page at all. Returning null here is what makes that faithful: the caller is
+        // NavTestPageBase.GetField(int,bool) (a precompiled BC method, not ours), and when
+        // ITestPage.GetField answers null it raises BC's own NavTestFieldNotFoundException
+        // ("The field with ID = ... is not found on the page.") itself — so this control gets
+        // the EXACT exception real BC raises, not a runner-invented one. A Visible bound to a
+        // variable/expression is never eliminated this way, even while it is currently false;
+        // see RunnerPageInstance.ControlIsCompileTimeEliminated for the literal-vs-expression
+        // distinction and the ancestor walk.
+        if (_page?.ControlIsCompileTimeEliminated(id) == true) return null!;
+
         // A control bound to a Rec field resolves against the record, as before.
         if (_controlIdToFieldNo.TryGetValue(id, out var tableFieldNo))
         {
