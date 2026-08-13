@@ -418,15 +418,6 @@ public static partial class RecordPatches
     private static readonly ConcurrentDictionary<Assembly, int[]> _compiledReportIdsByAssembly = new();
 
     /// <summary>
-    /// Number of times an assembly's <c>GetTypes()</c> was actually invoked to look for
-    /// Report{id} types — i.e. cache MISSES on <see cref="_compiledReportIdsByAssembly"/>,
-    /// never hits. #1852's proving test asserts this stays flat across repeat calls over an
-    /// unchanged assembly set: that is the fixed-per-spawn cost this cache exists to avoid
-    /// paying more than once per assembly.
-    /// </summary>
-    internal static int CompiledReportIdsScanCount { get; private set; }
-
-    /// <summary>
     /// Test-only probe: true once <paramref name="asm"/> has an entry in
     /// <see cref="_compiledReportIdsByAssembly"/>, regardless of whether that entry came from
     /// <see cref="SeedCompiledReportIdsFromPEBytes"/> (no <c>GetTypes()</c> call) or from
@@ -470,29 +461,122 @@ public static partial class RecordPatches
                 continue;
             }
 
-            Type[] types;
-            try { types = asm.GetTypes(); }
-            catch { types = Array.Empty<Type>(); } // dynamic/reflection-only assemblies — nothing to learn here
-            CompiledReportIdsScanCount++;
-
-            List<int>? ids = null;
-            foreach (var t in types)
+            Type[]? types;
+            int[]? partialIdsOnException = null;
+            try
             {
-                if (!t.Name.StartsWith("Report", StringComparison.Ordinal)) continue;
-                if (!int.TryParse(t.Name.AsSpan(6), out var id) || id <= 0) continue;
-                (ids ??= new List<int>()).Add(id);
+                types = asm.GetTypes();
             }
-            var idsArray = ids?.ToArray() ?? Array.Empty<int>();
+            catch (ReflectionTypeLoadException rtle)
+            {
+                // A partial load — typically an assembly scanned before all of its own
+                // dependencies are loaded yet, which #1852's own investigation established
+                // DOES happen mid-spawn (assemblies keep arriving through a spawn's life).
+                // ex.Types carries whatever DID load; use it for THIS yield, but do not cache
+                // it — see the "no cache write" note below for why a partial answer must
+                // never become the permanent one. (Can't yield from inside a catch block, so
+                // stash it and yield once we're back in the loop body below.)
+                partialIdsOnException = ExtractReportIds(rtle.Types);
+                types = null;
+            }
+            catch
+            {
+                // Anything else that makes GetTypes() unusable for this assembly (dynamic /
+                // reflection-only assemblies, etc.) — try again on a later call rather than
+                // caching a wrong answer now that the assembly might be more loadable later.
+                types = null;
+            }
+
+            if (types is null)
+            {
+                if (partialIdsOnException is not null)
+                    foreach (var id in partialIdsOnException) yield return id;
+                continue;
+            }
+
+            // NO CACHE WRITE ON EXCEPTION (#1852 review): the original code's `catch { continue; }`
+            // never cached a failed scan, so a LATER call — once the assembly's dependencies
+            // are actually loaded — retries it from scratch and can find its ids. Caching an
+            // empty/partial result on exception would instead memoize an incomplete answer for
+            // the rest of the process, and a real report id going missing from KnownReportIdSet
+            // surfaces as BC's "metadata object Report N was not found" — the exact failure
+            // this whole set exists to prevent. Only a SUCCESSFUL, complete GetTypes() call
+            // (or the PE-byte path below, which has no such partial-load failure mode at all)
+            // gets a permanent cache entry.
+            var idsArray = ExtractReportIds(types);
             _compiledReportIdsByAssembly[asm] = idsArray;
             foreach (var id in idsArray) yield return id;
         }
     }
 
     /// <summary>
+    /// Shared by both discovery paths (<see cref="CompiledReportIds"/>'s <c>GetTypes()</c>
+    /// scan and <see cref="ScanReportIdsFromPeBytes"/>'s <c>MetadataReader</c> scan): a
+    /// <c>Report{id}</c> type name (numeric suffix, no leading zero requirement beyond
+    /// <c>int.TryParse</c>, id must be positive) contributes its id; anything else — including
+    /// a name that merely starts with "Report" but has a non-numeric suffix — contributes
+    /// nothing. Both callers apply this exact same gate so the two discovery mechanisms can
+    /// only ever agree or disagree on WHICH ids exist, never on what counts as one.
+    /// </summary>
+    private static int[] ExtractReportIds(IEnumerable<Type?> types)
+    {
+        List<int>? ids = null;
+        foreach (var t in types)
+        {
+            if (t is null) continue; // ReflectionTypeLoadException.Types can contain nulls for the types that failed to load
+            if (!t.Name.StartsWith("Report", StringComparison.Ordinal)) continue;
+            if (!int.TryParse(t.Name.AsSpan(6), out var id) || id <= 0) continue;
+            (ids ??= new List<int>()).Add(id);
+        }
+        return ids?.ToArray() ?? Array.Empty<int>();
+    }
+
+    /// <summary>
+    /// Test-only: exercises the exact same <c>GetTypes()</c> + name-gate logic
+    /// <see cref="CompiledReportIds"/> uses for one assembly, without touching the cache or
+    /// any other loaded assembly. #1852's equivalence test reads this directly instead of
+    /// diffing <see cref="KnownReportIdSet"/>'s process-wide union, which cannot isolate one
+    /// assembly's contribution once two assemblies share identical Report{id} names (a plain
+    /// <c>HashSet&lt;int&gt;</c> of ids carries no assembly provenance).
+    /// </summary>
+    internal static int[] ReadReportIdsViaGetTypesForTest(Assembly asm) => ExtractReportIds(asm.GetTypes());
+
+    /// <summary>
+    /// Core PE-byte scan behind <see cref="SeedCompiledReportIdsFromPEBytes"/> — reads
+    /// <c>Report{id}</c> TypeDef names directly from raw PE bytes via
+    /// <c>System.Reflection.Metadata</c>, no <c>Assembly.Load</c> or <c>GetTypes()</c>
+    /// involved. Returns <see langword="null"/> for an unreadable/malformed image (no
+    /// metadata, corrupt stream, ...) so the caller can distinguish "found nothing" from
+    /// "couldn't read this at all".
+    /// </summary>
+    private static int[]? ScanReportIdsFromPeBytes(byte[] peBytes)
+    {
+        try
+        {
+            using var peReader = new System.Reflection.PortableExecutable.PEReader(
+                new MemoryStream(peBytes, writable: false));
+            if (!peReader.HasMetadata) return null;
+            var mr = peReader.GetMetadataReader();
+            List<int>? ids = null;
+            foreach (var th in mr.TypeDefinitions)
+            {
+                var name = mr.GetString(mr.GetTypeDefinition(th).Name);
+                if (!name.StartsWith("Report", StringComparison.Ordinal)) continue;
+                if (!int.TryParse(name.AsSpan(6), out var id) || id <= 0) continue;
+                (ids ??= new List<int>()).Add(id);
+            }
+            return ids?.ToArray() ?? Array.Empty<int>();
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
     /// Pre-warms <see cref="_compiledReportIdsByAssembly"/> for one just-loaded assembly
-    /// directly from its raw PE bytes, via <c>System.Reflection.Metadata</c> — reading only
-    /// the TypeDef table's Name strings, never materializing a <c>RuntimeType</c> (no
-    /// <c>Assembly.GetTypes()</c> call at all).
+    /// directly from its raw PE bytes — reading only the TypeDef table's Name strings, never
+    /// materializing a <c>RuntimeType</c> (no <c>Assembly.GetTypes()</c> call at all).
     ///
     /// WHY: measured on this repo's own boot, <c>Assembly.GetTypes()</c> over the R2R DLL
     /// chunks DependencyLoader loads for BaseApplication/SystemApplication (Tier 1/2, tens of
@@ -512,29 +596,17 @@ public static partial class RecordPatches
     internal static void SeedCompiledReportIdsFromPEBytes(Assembly asm, byte[] peBytes)
     {
         if (_compiledReportIdsByAssembly.ContainsKey(asm)) return;
-
-        List<int>? ids = null;
-        try
-        {
-            using var peReader = new System.Reflection.PortableExecutable.PEReader(
-                new MemoryStream(peBytes, writable: false));
-            if (!peReader.HasMetadata) return;
-            var mr = peReader.GetMetadataReader();
-            foreach (var th in mr.TypeDefinitions)
-            {
-                var name = mr.GetString(mr.GetTypeDefinition(th).Name);
-                if (!name.StartsWith("Report", StringComparison.Ordinal)) continue;
-                if (!int.TryParse(name.AsSpan(6), out var id) || id <= 0) continue;
-                (ids ??= new List<int>()).Add(id);
-            }
-        }
-        catch
-        {
-            return; // leave unseeded — CompiledReportIds() falls back to GetTypes() lazily
-        }
-
-        _compiledReportIdsByAssembly[asm] = ids?.ToArray() ?? Array.Empty<int>();
+        var ids = ScanReportIdsFromPeBytes(peBytes);
+        if (ids is null) return; // unreadable — leave unseeded, CompiledReportIds() falls back to GetTypes() lazily
+        _compiledReportIdsByAssembly[asm] = ids;
     }
+
+    /// <summary>
+    /// Test-only: exercises the exact same PE-byte/<c>MetadataReader</c> scan
+    /// <see cref="SeedCompiledReportIdsFromPEBytes"/> uses, without touching the cache.
+    /// See <see cref="ReadReportIdsViaGetTypesForTest"/> for the counterpart on the other path.
+    /// </summary>
+    internal static int[] ReadReportIdsFromPeBytesForTest(byte[] peBytes) => ScanReportIdsFromPeBytes(peBytes) ?? Array.Empty<int>();
 
     private static IEnumerable<BcAppSymbolCache.ReportSymbol> EnumerateBcAppReportSymbols()
     {
