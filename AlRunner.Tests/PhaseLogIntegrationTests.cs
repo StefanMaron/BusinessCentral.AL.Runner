@@ -447,7 +447,15 @@ public sealed class PhaseLogIntegrationTests : IDisposable
             // moving its time back into the unattributed remainder.
             foreach (var required in new[]
                      {
-                         "set-test-assembly", "type-discovery", "install-seed", "codeunit-scan",
+                         "set-test-assembly", "type-discovery",
+                         // The #1861 follow-up review split the single opaque "install-seed"
+                         // mark (85.1% of run_ms in the original PR's own measurement) into
+                         // one mark per call, so a follow-up fix knows which of the six to
+                         // chase instead of re-running this whole attribution exercise.
+                         "install-seed-reset-per-test", "install-seed-reset-for-new-bundle",
+                         "install-seed-set-test-assembly", "install-seed-run-install-triggers",
+                         "install-seed-ensure-company-initialized", "install-seed-capture-baseline",
+                         "codeunit-scan",
                          "event-subscriber-inject", "codeunit-reset", "codeunit-instantiate",
                          "resolve-display-name", "run-test-methods", "codeunit-dispose",
                      })

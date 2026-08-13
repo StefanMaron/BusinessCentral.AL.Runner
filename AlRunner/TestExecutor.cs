@@ -181,22 +181,30 @@ public sealed class TestExecutor
         var seedSw = System.Diagnostics.Stopwatch.StartNew();
         // A TestExecutor instance is reused across bundles. Discard the preceding bundle's
         // final test mutations before creating this bundle's committed installation baseline.
-        AlRunner.Patches.RecordPatches.ResetPerTestState();
-        CompanyInitializer.ResetForNewBundle();
-        InstallTriggerRunner.SetTestAssembly(assembly);
-        InstallTriggerRunner.RunAll();
+        //
+        // #1861 follow-up review: the original single "install-seed" mark wrapped all six
+        // calls below and carried 85.1% of run_ms in the PR's own measurement — an opaque
+        // span relabelled one level in, not a breakdown. Each call now gets its own
+        // AppStage mark (exclusive of the others; no parent mark is emitted alongside them,
+        // so nothing here double-counts) so a follow-up fix knows which of the six to chase
+        // instead of re-running this whole attribution exercise.
+        using (AlRunner.Infrastructure.PhaseLog.AppStage("install-seed-reset-per-test"))
+            AlRunner.Patches.RecordPatches.ResetPerTestState();
+        using (AlRunner.Infrastructure.PhaseLog.AppStage("install-seed-reset-for-new-bundle"))
+            CompanyInitializer.ResetForNewBundle();
+        using (AlRunner.Infrastructure.PhaseLog.AppStage("install-seed-set-test-assembly"))
+            InstallTriggerRunner.SetTestAssembly(assembly);
+        using (AlRunner.Infrastructure.PhaseLog.AppStage("install-seed-run-install-triggers"))
+            InstallTriggerRunner.RunAll();
         // Install triggers do not create a company's baseline rows — company CREATION does,
         // via codeunit 2 "Company-Initialize". Run it before the baseline snapshot so its rows
         // (Company Information, Source Code Setup, …) are part of what every test is restored to.
-        CompanyInitializer.EnsureCompanyInitialized();
-        AlRunner.Patches.RecordPatches.CaptureInstallBaseline();
+        using (AlRunner.Infrastructure.PhaseLog.AppStage("install-seed-ensure-company-initialized"))
+            CompanyInitializer.EnsureCompanyInitialized();
+        using (AlRunner.Infrastructure.PhaseLog.AppStage("install-seed-capture-baseline"))
+            AlRunner.Patches.RecordPatches.CaptureInstallBaseline();
         seedSw.Stop();
         PerfTrace.Log($"TestExecutor.InitialInstallSeed {seedSw.ElapsedMilliseconds}ms");
-        // #1861: "session, company, permission-set setup per app group" — this seed runs
-        // once per app group (see the comment above), so its cost is exactly the shape
-        // the issue is hunting: paid per group regardless of how much test content the
-        // group holds.
-        AlRunner.Infrastructure.PhaseLog.AddAppStage("install-seed", seedSw.Elapsed);
 
         long scanMs = 0, instMs = 0, dispMs = 0, methodsMs = 0, disposeMs = 0, methodLoopMs = 0;   // PERF attribution accumulators
         long injectMs = 0, resetMs = 0;   // #1861 app-stage accumulators, same shape as the above
