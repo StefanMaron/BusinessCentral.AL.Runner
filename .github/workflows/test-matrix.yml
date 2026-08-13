@@ -329,17 +329,17 @@ jobs:
               --out runner-extras-results.json
 
       - name: Phase-log report (runner-extras)
-        # The step with the most to say: 23 app groups in ONE process (down from 38 —
+        # The step with the most to say: 25 app groups in ONE process (down from 38 —
         # see #1847, which folded 16 standalone-with-no-hazard suites into
         # tests/runner-extras/standalone-suites/ and left the 2 install-trigger suites
-        # plus the 20 structurally-dependent dep/main and Microsoft-dependency pairs
+        # plus the 22 structurally-dependent dep/main and Microsoft-dependency pairs
         # isolated), so engine boot is amortised away and the per-app-group tax is
         # visible on its own.
         if: always()
         continue-on-error: true
         run: |
           python3 scripts/phase-log-report.py phase-log-runner-extras.jsonl \
-              --label "runner-extras — BC ${{ matrix.target.bc-version }} (single process, 23 app groups)"
+              --label "runner-extras — BC ${{ matrix.target.bc-version }} (single process, 25 app groups)"
 
       - name: Server-mode integration (multi-bundle contract)
         # always() for the same reason as runner-extras: an independent gate.
@@ -351,6 +351,22 @@ jobs:
         if: ${{ always() && hashFiles('scripts/tests/server-mode-test.sh') != '' }}
         run: |
           scripts/tests/server-mode-test.sh \
+              --package-cache "$HOME/.al-runner/platform-apps" \
+              --package-cache "$HOME/.al-runner/test-apps"
+
+      - name: Server-mode reload integration (issue #1860)
+        # Regression coverage for #1860's claimed cross-request wiring bug:
+        # a --server RELOAD that introduces a NEW tableextension on a table
+        # already recorded wired by an earlier request in the SAME session.
+        # Investigation found the claim does NOT reproduce on this codebase —
+        # RunAllBundlesForServer calls BcRuntime.ResetForNewBundleReload()
+        # unconditionally once per runTests request, which clears
+        # _fieldTriggersWiredTables (and every other per-bundle cache) before
+        # each request, so the claimed interleaving cannot occur. This step
+        # pins that down as a permanent regression guard.
+        if: ${{ always() && hashFiles('scripts/tests/server-reload-test.sh') != '' }}
+        run: |
+          scripts/tests/server-reload-test.sh \
               --package-cache "$HOME/.al-runner/platform-apps" \
               --package-cache "$HOME/.al-runner/test-apps"
 

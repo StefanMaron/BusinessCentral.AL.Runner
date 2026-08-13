@@ -1,0 +1,25 @@
+{
+  "id": "0ea9cecd-36c4-4fa6-a622-093e82196bba",
+  "name": "Server Reload Main",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Extends SRW Item with a validated field, arriving only on a --server bundle reload.",
+  "description": "Cross-request half of server-reload (issue #1860). Adds a tableextension with an OnValidate field trigger to a table already loaded (base-only, no extension) by an earlier --server runTests request in the same session. Proves the trigger fires despite the wired-tables guard having recorded the table as done before this extension existed.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [
+    {
+      "id": "70ab2e33-ee99-46a1-9c5d-e9f103fc3e1d",
+      "name": "Server Reload Dep",
+      "publisher": "AL Runner",
+      "version": "1.0.0.0"
+    }
+  ],
+  "screenshots": [],
+  "idRanges": [ { "from": 64450, "to": 64499 } ],
+  "runtime": "14.0",
+  "features": []
+}

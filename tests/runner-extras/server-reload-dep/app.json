@@ -1,0 +1,18 @@
+{
+  "id": "70ab2e33-ee99-46a1-9c5d-e9f103fc3e1d",
+  "name": "Server Reload Dep",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Dependency app: defines the table a later bundle reload extends.",
+  "description": "Cross-request half of server-reload (issue #1860). Defines a plain table with no tableextension of its own. A --server session's FIRST runTests request loads only this app, resolving the table's base Record CLR type and recording it in _fieldTriggersWiredTables before any tableextension for it exists. A SECOND runTests request in the SAME session then loads this app again alongside server-reload-main, which adds a tableextension with a field OnValidate trigger — the exact interleaving the wired-tables guard does not account for.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "idRanges": [ { "from": 64400, "to": 64449 } ],
+  "runtime": "14.0",
+  "features": []
+}
