@@ -452,9 +452,17 @@ public sealed class PhaseLogIntegrationTests : IDisposable
                          // mark (85.1% of run_ms in the original PR's own measurement) into
                          // one mark per call, so a follow-up fix knows which of the six to
                          // chase instead of re-running this whole attribution exercise.
+                         // #1867 replaced "install-seed-run-install-triggers" +
+                         // "install-seed-ensure-company-initialized" (together ~82.5% of
+                         // run_ms, the #1861 breakdown's own finding) with a single
+                         // "install-seed-dep-company-baseline" mark that is either a cache
+                         // restore or a fresh compute-and-cache — see TestExecutor.Run and
+                         // AlRunner.Tests.InstallSeedDepCompanyCacheTests — plus a distinct
+                         // "install-seed-run-own-install-triggers" mark for the bundle's own
+                         // (always fresh, never cached) Install triggers.
                          "install-seed-reset-per-test", "install-seed-reset-for-new-bundle",
-                         "install-seed-set-test-assembly", "install-seed-run-install-triggers",
-                         "install-seed-ensure-company-initialized", "install-seed-capture-baseline",
+                         "install-seed-set-test-assembly", "install-seed-dep-company-baseline",
+                         "install-seed-run-own-install-triggers", "install-seed-capture-baseline",
                          "codeunit-scan",
                          "event-subscriber-inject", "codeunit-reset", "codeunit-instantiate",
                          "resolve-display-name", "run-test-methods", "codeunit-dispose",

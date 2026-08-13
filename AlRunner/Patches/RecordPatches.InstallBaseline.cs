@@ -33,8 +33,24 @@ namespace AlRunner.Patches;
 
 public static partial class RecordPatches
 {
-    private sealed record BaselineTable(int TableId, object MetaTable, NavValue[][] Rows);
-    private sealed record BaselineSource(object Source, IReadOnlyList<BaselineTable> Tables);
+    internal sealed record BaselineTable(int TableId, object MetaTable, NavValue[][] Rows);
+    internal sealed record BaselineSource(object Source, IReadOnlyList<BaselineTable> Tables);
+
+    /// <summary>An independent, self-contained snapshot of committed install state — the
+    /// object-returning counterpart of the CaptureInstallBaseline()/RestoreInstallBaseline()
+    /// singleton pair below. #1867: TestExecutor.Run uses this (not the singleton) to keep a
+    /// process-lifetime cache of the dependency+company-initialize baseline keyed by
+    /// dependency-assembly-set, independent of the per-app-group singleton these two hold
+    /// (which is overwritten every app group once that group's OWN install triggers have
+    /// also fired). Rows are deep-copied on both capture and restore, exactly like the
+    /// singleton path, so two snapshots (or a snapshot and the live store) never alias.
+    /// Internal, not public: BaselineSource (a private table snapshot shape) is one of its
+    /// fields, and the only cross-file consumer is TestExecutor.cs in this same assembly.</summary>
+    internal sealed record InstallBaselineSnapshot(
+        IReadOnlyList<BaselineSource> Sources,
+        object? IsolatedStorage,
+        object? RecordLinks,
+        IReadOnlyDictionary<int, long>? AutoIncrement);
 
     private static IReadOnlyList<BaselineSource>? _installBaseline;
     private static object? _isolatedStorageBaseline;
@@ -43,6 +59,30 @@ public static partial class RecordPatches
     private static ConstructorInfo? _ibMutableBufferCtor;
 
     public static void CaptureInstallBaseline()
+    {
+        var snapshot = CaptureInstallBaselineSnapshot();
+        _installBaseline = snapshot.Sources;
+        _isolatedStorageBaseline = snapshot.IsolatedStorage;
+        _recordLinkBaseline = snapshot.RecordLinks;
+        _autoIncrementBaseline = snapshot.AutoIncrement;
+    }
+
+    public static void RestoreInstallBaseline()
+    {
+        ResetPerTestState();
+        if (_installBaseline == null)
+            return;
+        RestoreInstallBaselineSnapshot(new InstallBaselineSnapshot(
+            _installBaseline, _isolatedStorageBaseline, _recordLinkBaseline, _autoIncrementBaseline),
+            resetFirst: false);
+    }
+
+    /// <summary>Capture the current committed state as an independent snapshot object,
+    /// without touching the CaptureInstallBaseline()/RestoreInstallBaseline() singleton
+    /// fields above. Same capture logic as CaptureInstallBaseline(); the only difference is
+    /// where the result is stored (returned, not assigned to statics), so a caller can hold
+    /// several snapshots at once (e.g. one per distinct dependency-assembly set).</summary>
+    internal static InstallBaselineSnapshot CaptureInstallBaselineSnapshot()
     {
         var sources = new List<BaselineSource>();
         foreach (var (source, perTable) in _dataAccessByTable)
@@ -87,22 +127,74 @@ public static partial class RecordPatches
             sources.Add(new BaselineSource(source, tables));
         }
 
-        _installBaseline = sources;
-        _isolatedStorageBaseline = TenantStoragePatches.CaptureInstallBaseline();
-        _recordLinkBaseline = RecordLinkPatches.CaptureInstallBaseline();
-        _autoIncrementBaseline = BcRuntime.CaptureAutoIncrementBaseline();
+        var snapshot = new InstallBaselineSnapshot(
+            sources,
+            TenantStoragePatches.CaptureInstallBaseline(),
+            RecordLinkPatches.CaptureInstallBaseline(),
+            BcRuntime.CaptureAutoIncrementBaseline());
         PerfTrace.Log($"InstallBaseline.Capture {sources.Sum(s => s.Tables.Count)} table(s), " +
-                      $"{sources.Sum(s => s.Tables.Sum(t => t.Rows.Length))} row(s)");
+                      $"{sources.Sum(s => s.Tables.Sum(t => t.Rows.Length))} row(s)" +
+                      // #1867: a content digest, not just counts — lets a diagnostic run compare
+                      // "the dep+company baseline this app group got via a cache HIT" against
+                      // "what a fresh, uncached capture for that same app group would have
+                      // produced" byte-for-byte, which is the actual claim the cache makes.
+                      // Gated the same way as the rest of this line (PerfTrace.Enabled short-
+                      // circuits Log(), but ComputeContentDigest itself is not free, so check
+                      // explicitly rather than rely on that alone).
+                      (PerfTrace.Enabled ? $" digest={ComputeContentDigest(sources)}" : ""));
+        return snapshot;
     }
 
-    public static void RestoreInstallBaseline()
+    /// <summary>Order-independent content digest over every captured table's rows —
+    /// diagnostic only (see the PerfTrace.Log call above), never used for cache-key or
+    /// correctness decisions. Table and row order already vary between an app group's own
+    /// dictionary enumeration order and are not semantically meaningful, so both are sorted
+    /// before hashing; only the actual (tableId, row values) content should affect the
+    /// result.
+    ///
+    /// #1867 root-cause note: two DIFFERENT digests for the same conceptual dependency
+    /// closure are EXPECTED and do not indicate drift. Two known, faithful sources of
+    /// non-determinism guarantee it:
+    ///   1. System/virtual metadata tables (id >= 2,000,000,000, e.g. Field 2000000041)
+    ///      are process-wide caches of loaded-assembly schema by design (see the
+    ///      Field-virtual-table comment above GetDataAccessForTableCore) — they grow
+    ///      monotonically as more test assemblies load into the process, independent of
+    ///      install-trigger/company-init business logic.
+    ///   2. Business rows carry BC-native SystemId (a GUID) and SystemCreatedAt/
+    ///      SystemModifiedAt (wall-clock) fields assigned by the unmodified BC Insert path
+    ///      at insert time (precompiled-dll-respect.md — we don't touch that). A fresh
+    ///      re-run of the exact same AL Install trigger body legitimately gets a NEW
+    ///      SystemId/timestamp every time, on real BC as much as here. Comparing digests
+    ///      across two independently-fresh computations (as opposed to a cache HIT, which
+    ///      reuses the same captured objects and is trivially identical) will therefore
+    ///      differ even when every business-meaningful field is unchanged. Verified via a
+    ///      per-table row-COUNT breakdown during the #1867 investigation: counts for real
+    ///      business tables were stable across app groups; only the two known-volatile
+    ///      sources above accounted for the digest churn.</summary>
+    private static string ComputeContentDigest(IReadOnlyList<BaselineSource> sources)
     {
-        ResetPerTestState();
-        if (_installBaseline == null)
-            return;
+        var lines = new List<string>();
+        foreach (var source in sources)
+            foreach (var table in source.Tables)
+                foreach (var row in table.Rows)
+                    lines.Add($"{table.TableId}|{string.Join(",", row.Select(v => v?.ToString() ?? "<null>"))}");
+        lines.Sort(StringComparer.Ordinal);
+        using var sha = System.Security.Cryptography.SHA256.Create();
+        var bytes = sha.ComputeHash(System.Text.Encoding.UTF8.GetBytes(string.Join("\n", lines)));
+        return Convert.ToHexString(bytes)[..16];
+    }
+
+    /// <summary>Restore a previously captured snapshot object (see
+    /// CaptureInstallBaselineSnapshot) into the live store. Wipes the store first
+    /// (ResetPerTestState) unless <paramref name="resetFirst"/> is false — callers who just
+    /// did their own equivalent reset (RestoreInstallBaseline() above) skip the duplicate.</summary>
+    internal static void RestoreInstallBaselineSnapshot(InstallBaselineSnapshot snapshot, bool resetFirst = true)
+    {
+        if (resetFirst)
+            ResetPerTestState();
 
         var restoredRows = 0;
-        foreach (var source in _installBaseline)
+        foreach (var source in snapshot.Sources)
         {
             var perTable = _dataAccessByTable.GetValue(source.Source,
                 static _ => new ConcurrentDictionary<int, object>());
@@ -139,9 +231,9 @@ public static partial class RecordPatches
             }
         }
 
-        TenantStoragePatches.RestoreInstallBaseline(_isolatedStorageBaseline);
-        RecordLinkPatches.RestoreInstallBaseline(_recordLinkBaseline);
-        BcRuntime.RestoreAutoIncrementBaseline(_autoIncrementBaseline);
+        TenantStoragePatches.RestoreInstallBaseline(snapshot.IsolatedStorage);
+        RecordLinkPatches.RestoreInstallBaseline(snapshot.RecordLinks);
+        BcRuntime.RestoreAutoIncrementBaseline(snapshot.AutoIncrement);
         PerfTrace.Log($"InstallBaseline.Restore {restoredRows} row(s)");
     }
 
