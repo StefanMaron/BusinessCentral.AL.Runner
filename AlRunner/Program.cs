@@ -1101,16 +1101,25 @@ foreach (var bundle in bundles)
     if (suites.Count == 0) { Console.WriteLine($"[{i2}/{bundles.Count}] {rel} ... SKIP (no suites)"); continue; }
     Console.WriteLine($"[{i2}/{bundles.Count}] {rel} — {suites.Count} suites");
 
-    // Pre-register every src dir for RecordPatches at the bundle level.
+    // Pre-register every src dir for RecordPatches at the bundle level. Batched via
+    // AddSourceDirs (#1833) so the NCLMetadata cache pass runs ONCE for the whole suite
+    // set instead of once per suite — AddSourceDir's per-call populate is O(total ids
+    // known so far), so calling it once per suite in this loop was O(N) calls each doing
+    // O(total) work: quadratic in suite count (measured 16.33s on the 38-suite
+    // tests/runner-extras bundle).
     using (AlRunner.Infrastructure.PhaseLog.Stage("register-source-dirs"))
-    foreach (var suite in suites)
     {
-        var s = Path.Combine(suite, "src");
-        if (Directory.Exists(s))
-            AlRunner.Patches.RecordPatches.AddSourceDir(s);
-        else if (!Directory.Exists(Path.Combine(suite, "test")))
-            // Flat bundle: register the suite root so table parsers can find .al files.
-            AlRunner.Patches.RecordPatches.AddSourceDir(suite);
+        var dirsToRegister = new List<string>();
+        foreach (var suite in suites)
+        {
+            var s = Path.Combine(suite, "src");
+            if (Directory.Exists(s))
+                dirsToRegister.Add(s);
+            else if (!Directory.Exists(Path.Combine(suite, "test")))
+                // Flat bundle: register the suite root so table parsers can find .al files.
+                dirsToRegister.Add(suite);
+        }
+        AlRunner.Patches.RecordPatches.AddSourceDirs(dirsToRegister);
     }
 
     var bundleEmit = TimeSpan.Zero;
@@ -2412,14 +2421,18 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
 
         var suites = EnumerateSuites(bundleAbs).ToList();
         var allPaths = new List<string>();
+        // Batched via AddSourceDirs (#1833) — see the register-source-dirs comment in the
+        // non-server run loop above for why per-suite AddSourceDir calls were quadratic.
+        var dirsToRegister = new List<string>();
         foreach (var suite in suites)
         {
             var s = Path.Combine(suite, "src");
-            if (Directory.Exists(s)) AlRunner.Patches.RecordPatches.AddSourceDir(s);
+            if (Directory.Exists(s)) dirsToRegister.Add(s);
             else if (!Directory.Exists(Path.Combine(suite, "test")))
-                AlRunner.Patches.RecordPatches.AddSourceDir(suite);
+                dirsToRegister.Add(suite);
             allPaths.AddRange(CollectSuitePaths(suite, bucketRoot));
         }
+        AlRunner.Patches.RecordPatches.AddSourceDirs(dirsToRegister);
         allPaths = allPaths.Distinct().ToList();
         var fileHashes = ComputeServerFileHashes(allPaths);
 

@@ -145,38 +145,71 @@ public static partial class RecordPatches
         _dataAccessByTable.Clear();
     }
 
-    public static void AddSourceDir(string dir)
+    public static void AddSourceDir(string dir) => AddSourceDirs(new[] { dir });
+
+    /// <summary>
+    /// Register N source dirs and populate the NCLMetadata cache ONCE for the whole
+    /// batch, instead of once per dir (#1833). <see cref="AddSourceDir"/> delegates
+    /// here with a single-element array so its per-call-populate semantics are
+    /// unchanged for callers that add one dir at a time outside a loop (e.g. the
+    /// sibling-dependency emit loop in Program.cs, which calls AddSourceDir for one
+    /// dir at a time interleaved with other per-dep work and needs each dir's tables
+    /// visible before the next dep's symbols.json is written).
+    /// <para>
+    /// <see cref="PopulateNclMetadataCache"/>'s own cost is driven by the TOTAL number
+    /// of ids known so far (it rebuilds <c>_parsedTables.Keys.ToArray()</c> etc. and
+    /// walks the whole set with an idempotent skip-if-cached check) — not by what a
+    /// single dir contributed. Calling it once per dir in a loop of N dirs is
+    /// therefore O(N) calls each doing O(total-ids-so-far) work: quadratic in N. This
+    /// entry point parses every dir first, THEN calls it exactly once over the
+    /// complete set — same total ids processed, but the "once per dir" work is
+    /// eliminated (N calls -&gt; 1 call). Every AL source dir is still parsed exactly
+    /// once (per the existing <see cref="_sourceDirs"/> de-dup below) and the cache is
+    /// still guaranteed fully populated before this method returns, so any caller
+    /// that reads the cache immediately afterward (as the register-source-dirs stage's
+    /// caller does, before build-app-groups/emit/compile ever runs) sees every dir's
+    /// metadata — new dirs are never silently dropped from the merge.
+    /// </para>
+    /// </summary>
+    public static void AddSourceDirs(IEnumerable<string> dirs)
     {
-        if (!Directory.Exists(dir)) return;
-        // De-dup: BuildSiblingSourceDeps (Program.cs) can legitimately call this for the
-        // SAME dependency source dir twice — once while matching declared deps to sibling
-        // source apps, once while emitting the synthetic workspace .app for a dep that
-        // needs a fresh build. Without this guard the same dir lands twice in _sourceDirs,
-        // so ParseAllSources() parses its .al files twice on the next Register()/rebuild.
-        // For a dependency that declares a `tableextension` on a table whose base metadata
-        // comes from elsewhere (e.g. a platform-app table), that duplicated every extension
-        // field id in _parsedExtensionFields — see #1686. The dedup here is defense in depth
-        // alongside the field-id dedup in TryParseTableExtensionFile.
-        if (_sourceDirs.Contains(dir, StringComparer.OrdinalIgnoreCase)) return;
-        _sourceDirs.Add(dir);
-        // If Register() already ran (it runs before the bucket loop), parse immediately
-        // and feed the freshly-parsed tables into the NCLMetadata cache.
-        if (_registered)
+        var parsedAny = false;
+        foreach (var dir in dirs)
         {
-            foreach (var file in Directory.GetFiles(dir, "*.al", SearchOption.AllDirectories))
+            if (!Directory.Exists(dir)) continue;
+            // De-dup: BuildSiblingSourceDeps (Program.cs) can legitimately call this for the
+            // SAME dependency source dir twice — once while matching declared deps to sibling
+            // source apps, once while emitting the synthetic workspace .app for a dep that
+            // needs a fresh build. Without this guard the same dir lands twice in _sourceDirs,
+            // so ParseAllSources() parses its .al files twice on the next Register()/rebuild.
+            // For a dependency that declares a `tableextension` on a table whose base metadata
+            // comes from elsewhere (e.g. a platform-app table), that duplicated every extension
+            // field id in _parsedExtensionFields — see #1686. The dedup here is defense in depth
+            // alongside the field-id dedup in TryParseTableExtensionFile.
+            if (_sourceDirs.Contains(dir, StringComparer.OrdinalIgnoreCase)) continue;
+            _sourceDirs.Add(dir);
+            // If Register() already ran (it runs before the bucket loop), parse immediately.
+            // The NCLMetadata cache is populated once below, after every dir in this batch
+            // has been parsed — see the batching rationale on the doc comment above.
+            if (_registered)
             {
-                var text = File.ReadAllText(file);
-                TryParseTableFile(text);
-                TryParseTableExtensionFile(text);
-                TryParsePageFile(text);
-                TryParseReportFile(text);
-                TryParseQueryFile(text);
-                TryParseXmlPortFile(text);
-                TryParseObjectDeclFile(text);
-                TryParseObjectCaptionFile(text);
+                foreach (var file in Directory.GetFiles(dir, "*.al", SearchOption.AllDirectories))
+                {
+                    var text = File.ReadAllText(file);
+                    TryParseTableFile(text);
+                    TryParseTableExtensionFile(text);
+                    TryParsePageFile(text);
+                    TryParseReportFile(text);
+                    TryParseQueryFile(text);
+                    TryParseXmlPortFile(text);
+                    TryParseObjectDeclFile(text);
+                    TryParseObjectCaptionFile(text);
+                }
+                parsedAny = true;
             }
-            PopulateNclMetadataCache();
         }
+        if (parsedAny)
+            PopulateNclMetadataCache();
     }
 
     /// <summary>

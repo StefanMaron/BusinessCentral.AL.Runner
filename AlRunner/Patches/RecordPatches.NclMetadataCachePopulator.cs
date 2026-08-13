@@ -36,6 +36,15 @@ public static partial class RecordPatches
     private static FieldInfo? _fNCLMetaAppObjMetadataLoaded; // NCLMetaApplicationObject.metadataLoaded
 
     /// <summary>
+    /// Number of times <see cref="PopulateNclMetadataCache"/> has actually done a pass over
+    /// the skeleton cache (i.e. NOT counting the early no-op returns for "no skeleton" /
+    /// "reflection unavailable"). #1833's proving test asserts THIS — a count, never a
+    /// duration — to pin that batching N <see cref="AddSourceDirs"/> dirs costs one pass,
+    /// not N.
+    /// </summary>
+    internal static int PopulateNclMetadataCacheCallCount { get; private set; }
+
+    /// <summary>
     /// Populate the skeleton NCLMetadata's cache with one entry per parsed AL table.
     /// Idempotent — duplicates are skipped via TryAdd.
     /// </summary>
@@ -56,6 +65,8 @@ public static partial class RecordPatches
         //   Table=1, Report=3, Page=8.
         var arr = _fNCLMetadataCacheEntries.GetValue(skeleton) as Array;
         if (arr == null) return;
+
+        PopulateNclMetadataCacheCallCount++;
 
         const int objectTypeTable = 1;
         const int objectTypeReport = 3;
