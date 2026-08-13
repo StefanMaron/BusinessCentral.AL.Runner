@@ -974,9 +974,9 @@ internal static partial class BcAppSymbolCache
     private static string CachePath(string key)
     {
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(key))).ToLowerInvariant();
-        return Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-            ".cache", "al-runner", "bc-symbols", hash + ".json");
+        // #1821: was hardcoded to ~/.cache/al-runner/bc-symbols regardless of --cache;
+        // now follows the same isolation root al-out already honoured.
+        return Path.Combine(CacheRoots.Resolve("bc-symbols"), hash + ".json");
     }
 
 }

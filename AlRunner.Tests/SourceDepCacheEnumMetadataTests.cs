@@ -18,20 +18,25 @@ namespace AlRunner.Tests;
 /// Root cause: unlike the bundle's own AL-output cache (`.dll` + `.enum-registry.json`
 /// sidecar, replayed on HIT — see Program.cs `SaveEnumRegistrySidecar`/
 /// `LoadEnumRegistrySidecar`), the dependency-loader's source-dep cache
-/// (`~/.cache/al-runner/compiled-deps/<key>.dll`) persisted only report/page/xmlport
+/// (`<cache-root>/compiled-deps/<key>.dll`) persisted only report/page/xmlport
 /// metadata sidecars — no enum-registry sidecar — so a cache HIT for the dep replayed
 /// everything except its enums.
 ///
 /// Reproduces the exact two-process sequence from the issue: two SEPARATE runner
-/// invocations sharing the real `~/.cache/al-runner` (matching `rm -rf
-/// ~/.cache/al-runner; al-runner ... tests` twice in the issue). Uses a fresh random
-/// AppId + a fresh scratch dir per test run, so the dep's Tier-3 cache key has never
-/// been seen before — run 1 is guaranteed a dep MISS (in-process compile, so the bug
-/// cannot manifest there: this is exactly why the issue itself observed "fresh cache
-/// -> PASS" every time). Touching a `tests`-bundle source file between the two runs
-/// forces the BUNDLE's own cache key to change (content hash) while the DEP's
-/// synthetic `.app` bytes (and therefore its Tier-3 cache key) stay byte-identical —
-/// producing the exact "dep HIT + bundle MISS" condition the bug requires.
+/// invocations sharing the same `--cache` dir (matching `rm -rf ~/.cache/al-runner;
+/// al-runner ... tests` twice in the issue — before #1821, `compiled-deps` ignored
+/// `--cache` entirely and always used the real `~/.cache/al-runner/compiled-deps`;
+/// since #1821 it follows `--cache` like every other cache, so this test now pins an
+/// isolated scratch dir instead of the real shared one — the two-invocations-share-a-
+/// cache setup below is unaffected either way, since both calls pass the identical
+/// `alCacheDir` value). Uses a fresh random AppId + a fresh scratch dir per test run,
+/// so the dep's Tier-3 cache key has never been seen before — run 1 is guaranteed a
+/// dep MISS (in-process compile, so the bug cannot manifest there: this is exactly why
+/// the issue itself observed "fresh cache -> PASS" every time). Touching a `tests`-
+/// bundle source file between the two runs forces the BUNDLE's own cache key to change
+/// (content hash) while the DEP's synthetic `.app` bytes (and therefore its Tier-3
+/// cache key) stay byte-identical — producing the exact "dep HIT + bundle MISS"
+/// condition the bug requires.
 ///
 /// RED (pre-fix): run 2 fails with "Unable to cast enum '' value '0' to interface".
 /// GREEN (post-fix): both runs pass identically.

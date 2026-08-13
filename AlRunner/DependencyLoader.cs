@@ -311,9 +311,9 @@ public sealed class DependencyLoader
         }
 
         var cacheKey = ComputeSourceDependencyCacheKey(m, appPath);
-        var cacheDir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-            ".cache", "al-runner", "compiled-deps");
+        // #1821: was hardcoded to ~/.cache/al-runner/compiled-deps regardless of --cache;
+        // now follows the same isolation root al-out already honoured.
+        var cacheDir = AlRunner.Infrastructure.CacheRoots.Resolve("compiled-deps");
         var cachedDll = Path.Combine(cacheDir, cacheKey + ".dll");
         var reportSidecar = Path.Combine(cacheDir, cacheKey + ".report-metadata.json");
         // Sibling sidecar for the dep's `rendering { layout(...) }` declarations —

@@ -28,6 +28,10 @@ using Xunit;
 
 namespace AlRunner.Tests;
 
+// #1821: BcAppSymbolCache.Get() now resolves its on-disk path through the process-global
+// CacheRoots override, so this joins CacheRootsSerialCollection to avoid racing
+// CacheRootsTests's SetOverride calls — see that collection's header for why.
+[Collection(CacheRootsSerialCollection.Name)]
 public class BcAppSymbolCacheReportTests
 {
     private static string WriteApp(string dir, string symbolReferenceJson)

@@ -7929,9 +7929,10 @@ public static class NclCecilRewrite
         var cacheKey = ComputeCacheKey(nclSrc);
         var shortKey = cacheKey[..8];
 
-        var cacheDir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-            ".cache", "al-runner", "ncl-cecil");
+        // #1821: was hardcoded to ~/.cache/al-runner/ncl-cecil regardless of --cache;
+        // now follows the same isolation root al-out already honoured. Default (no
+        // --cache) is unchanged, so CI's `smoke` job rm -rf still targets the right dir.
+        var cacheDir = CacheRoots.Resolve("ncl-cecil");
         Directory.CreateDirectory(cacheDir);
         var cachePath = Path.Combine(cacheDir, $"{cacheKey}.dll");
 

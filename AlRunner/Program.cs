@@ -210,6 +210,10 @@ bool bundledMode = true;
 string? alCacheDir = Path.Combine(
     Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
     ".cache", "al-runner", "al-out");
+// #1821: mirrors alCacheDir, but only ever set by an explicit --cache flag (never by
+// the default init above, never by --no-cache) — see the --cache parsing branch below
+// and AlRunner.Infrastructure.CacheRoots for what this drives.
+string? cacheRootOverride = null;
 // --print-cache-key (issue #1851): a diagnostic/test-support mode. Reaches the SAME
 // ComputeAlCacheKey call, with the SAME arguments, that a real run would use for the
 // first app group it processes — then prints it and exits, before Emit+Compile even
@@ -278,7 +282,12 @@ for (int i = 0; i < args.Length; i++)
     if (args[i] == "--per-suite") { bundledMode = false; continue; }
     if (args[i] == "--bundled") { bundledMode = true; continue; }
     if (args[i] == "--expectations" && i + 1 < args.Length) { expectationsDirArg = args[++i]; continue; }
-    if (args[i] == "--cache" && i + 1 < args.Length) { alCacheDir = args[++i]; continue; }
+    // #1821: the SAME --cache value also becomes the isolation root for the four
+    // caches (compiled-deps/workspace-deps/ncl-cecil/bc-symbols) that used to ignore
+    // it — see AlRunner.Infrastructure.CacheRoots for why al-out itself is unaffected.
+    // --no-cache intentionally does NOT touch cacheRootOverride: it has only ever
+    // disabled the AL-output cache, and this issue doesn't expand that scope.
+    if (args[i] == "--cache" && i + 1 < args.Length) { alCacheDir = args[++i]; cacheRootOverride = alCacheDir; continue; }
     if (args[i] == "--no-cache") { alCacheDir = null; continue; }
     if (args[i] == "--print-cache-key") { printCacheKeyOnly = true; continue; }
     if (args[i] == "--watch") { watchMode = true; continue; }
@@ -530,6 +539,10 @@ catch (InvalidOperationException ex)
 }
 
 if (alCacheDir != null) Directory.CreateDirectory(alCacheDir);
+// #1821: must run before the Cecil rewrite below (first ncl-cecil consumer) and well
+// before any DependencyLoader/BcAppSymbolCache/workspace-deps call — all four read
+// CacheRoots.Resolve for their cache directory.
+AlRunner.Infrastructure.CacheRoots.SetOverride(cacheRootOverride);
 Console.WriteLine(serverMode
     ? "al-runner — server mode (JSON-RPC over stdin/stdout)"
     : watchMode
@@ -3501,9 +3514,9 @@ static List<string> RunLayeredPrePass(List<string> bundles, List<string> package
     // its own dir — the unchanged siblings keep cache-HITting. (A single shared
     // combined-key dir, the previous design, orphaned every sibling's cache
     // whenever any one impl changed → a full layered rebuild on each edit.)
-    var workspaceRoot = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-        ".cache", "al-runner", "workspace-deps");
+    // #1821: was hardcoded to ~/.cache/al-runner/workspace-deps regardless of --cache;
+    // now follows the same isolation root al-out already honoured.
+    var workspaceRoot = AlRunner.Infrastructure.CacheRoots.Resolve("workspace-deps");
 
     // Each impl dir is recorded as a synthetic-workspace dir (kept out of the
     // compile-time .app scanner — source-only .app, no SymbolReference.json →
@@ -3788,9 +3801,9 @@ static List<string> BuildSiblingSourceDeps(List<string> bundles, List<string> pa
     // unchanged sibling source deps keep cache-HITting. (A single shared
     // combined-key dir orphaned every sibling whenever any one changed.)
     var sorted = TopologicalSort(toBuild.ToList(), sourceApps);
-    var workspaceRoot = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-        ".cache", "al-runner", "workspace-deps");
+    // #1821: was hardcoded to ~/.cache/al-runner/workspace-deps regardless of --cache;
+    // now follows the same isolation root al-out already honoured.
+    var workspaceRoot = AlRunner.Infrastructure.CacheRoots.Resolve("workspace-deps");
     // Synthetic-workspace dirs (per dep): source-only .apps (no SymbolReference.json)
     // + symbols.json sidecars. Kept out of the compile-time .app scanner (AL1023)
     // but used for runtime resolution + symbols.json handoff. See Main.
