@@ -80,10 +80,32 @@ public sealed class BcCompiler
     // Sharing this one object across every compile is what makes the (per-instance,
     // 8–10 s) symbol warm a once-per-process cost instead of once-per-dependency (#1831).
     private static NavCA.ISymbolReferenceLoader? _refPackageLoader;
-    // Content signature of the inputs _refLoader was built from (package dirs + extra
-    // symbol dirs + resolved dep set). GetSharedReferences rebuilds the loader only when
-    // this changes, so an unchanged dependency set keeps the warmed loader.
+    // Content signature of the DIRECTORY inputs _refLoader was built from: the package dirs
+    // it scans plus the extra symbol dirs. Paired with _loaderDepUniverse below — together
+    // they decide when the loader is rebuilt.
     private static string? _loaderSignature;
+    // The resolved-dep keys (`AppPath@Version`) the current _refLoader was BUILT FOR.
+    //
+    // #1832: the dep list used to be folded into _loaderSignature, i.e. compared for
+    // EQUALITY, so any change to it — including one that only REMOVED entries — rebuilt the
+    // loader. `ScopeSymbolBearingDepsOnly` removes entries (the synthetic source-only .apps)
+    // around every compile that inspects declaration diagnostics, so entering it cost a full
+    // rebuild + per-instance symbol warm: 14.3 s of the 35.8 s `sibling-symbols` stage on a
+    // cold tests/runner-extras bundle.
+    //
+    // The comparison is now SUBSET, not equality: the loader is reused when the current dep
+    // list is a subset of the one it was built for. Removal is provably free — a BC
+    // reference loader is constructed from a directory scan (CreateReferenceLoader never
+    // sees the dep list), the removed dep's files are still on disk in the same dirs, and
+    // the dep list's two real jobs are both redone per call anyway: the requested SPEC array
+    // is rebuilt at the bottom of GetSharedReferences (so it really does shrink), and
+    // WarmReferenceLoader is a read-only cache prefill (so a superset warm subsumes a subset
+    // one). Anything that ADDS or CHANGES a key still rebuilds, exactly as before — which
+    // matters: a source dependency recompiled from edited AL is republished under a NEW
+    // content-addressed path (`~/.cache/al-runner/workspace-deps/<hash>/…`), and that new
+    // key is what makes the next compile see the new symbols instead of the cached loader's
+    // stale ones (scripts/tests/server-mode-test.sh assertions 2+3).
+    private static HashSet<string>? _loaderDepUniverse;
     // How many times the expensive loader (filesystem scan + CreateReferenceLoader +
     // WarmReferenceLoader) has actually been built in this process, counting both the
     // shared superset loader and any physically-excluded fallback. The whole point of
@@ -92,11 +114,19 @@ public sealed class BcCompiler
     // would be flaky and would not distinguish "fast" from "correct").
     private static int _loaderBuildCount;
     internal static int ReferenceLoaderBuildCount { get { lock (_refSync) return _loaderBuildCount; } }
+    // How many distinct symbol specs WarmReferenceLoader has actually pushed through a
+    // loader in this process. The companion to _loaderBuildCount for #1832: reusing the
+    // loader object is only a win if the warm is not redone on top of it, and "warm work
+    // performed" is a count a test can assert exactly, unlike a duration.
+    private static int _warmSpecCount;
+    internal static int ReferenceLoaderWarmSpecCount { get { lock (_refSync) return _warmSpecCount; } }
     // Single-slot memo for the rare physically-reduced loader — see the fallback branch in
     // GetSharedReferences. Keyed exactly as the pre-#1831 memo was (reduced scan dirs +
     // excluded AppId), so a run that needs it behaves exactly as it did before.
     private static NavCA.ISymbolReferenceLoader? _exclPackageLoader;
     private static string? _exclSignature;
+    // _loaderDepUniverse's counterpart for the fallback loader instance.
+    private static HashSet<string>? _exclDepUniverse;
     private static NavCA.SymbolReferenceSpecification[]? _refSpecs;
     // Cached JSON symbol loaders — one per package dir that has *.symbols.json files.
     // Kept separately so specs can be recomputed with _currentAppId exclusion without
@@ -158,6 +188,14 @@ public sealed class BcCompiler
     /// package that has nothing to do with the AL it is compiling. Their symbols reach the
     /// compiler the intended way regardless — through *.symbols.json and the JSON loader,
     /// whose specs are contributed separately in GetSharedReferences.
+    ///
+    /// The "does this .app carry a SymbolReference.json" question goes through
+    /// <see cref="ReadAppMeta"/>, the same per-file (path + length + last-write-ticks) cache
+    /// DeduplicateAppPackageDirs uses. Calling <see cref="AppLoader.HasSymbolReference"/>
+    /// directly re-read and unzipped every resolved dep's WHOLE package on each scope entry,
+    /// and a bundled run enters this scope once per app group: measured 20.1 s across the 38
+    /// scope entries of a cold tests/runner-extras bundle (#1832). The cache invalidates on
+    /// an in-place rewrite, so a synthetic .app re-packaged mid-run is still re-read.
     /// </summary>
     public static IDisposable ScopeSymbolBearingDepsOnly()
     {
@@ -167,7 +205,7 @@ public sealed class BcCompiler
             saved = _resolvedDeps;
             if (saved != null)
             {
-                var filtered = saved.Where(d => AppLoader.HasSymbolReference(d.AppPath)).ToList();
+                var filtered = saved.Where(d => ReadAppMeta(new FileInfo(d.AppPath)).HasSymbolReference).ToList();
                 if (filtered.Count != saved.Count)
                 {
                     _resolvedDeps = filtered;
@@ -636,8 +674,11 @@ public sealed class BcCompiler
             _refLoader = null;
             _refPackageLoader = null;
             _loaderSignature = null;
+            _loaderDepUniverse = null;
+            _warmSpecCount = 0;
             _exclPackageLoader = null;
             _exclSignature = null;
+            _exclDepUniverse = null;
             _cachedJsonLoaders = null;
             _refSpecs = null;
             _siblingSymbols = null;
@@ -791,19 +832,25 @@ public sealed class BcCompiler
         }
     }
 
+    /// <summary>
+    /// The content signature of the inputs a BC reference loader is actually CONSTRUCTED
+    /// from: the dirs it scans, plus the extra <c>*.symbols.json</c> dirs chained ahead of
+    /// it (and, for the rare physically-reduced fallback, the excluded AppId).
+    ///
+    /// #1832: the resolved dep set used to be folded in here as <c>D:</c> lines, i.e.
+    /// compared for equality. It moved to <see cref="_loaderDepUniverse"/>, which compares
+    /// it as a SUBSET — see there for why removing a dep cannot change a loader's answers
+    /// and why adding or changing one still must.
+    /// </summary>
     private static string ComputeLoaderSignature(
         List<string> packageDirs,
         IReadOnlyList<string>? extraSymbolDirs,
-        IReadOnlyList<(AppManifest Manifest, string AppPath)>? deps,
         Guid? excludeAppId)
     {
         var parts = new List<string>();
         foreach (var d in packageDirs.OrderBy(x => x, StringComparer.Ordinal)) parts.Add("P:" + d);
         if (extraSymbolDirs != null)
             foreach (var d in extraSymbolDirs.OrderBy(x => x, StringComparer.Ordinal)) parts.Add("X:" + d);
-        if (deps != null)
-            foreach (var t in deps.OrderBy(x => x.AppPath, StringComparer.Ordinal))
-                parts.Add("D:" + t.AppPath + "@" + t.Manifest.Version);
         // NOTE: the excluded-self-app is deliberately NOT part of the signature. The
         // packageDirs passed here are already DeduplicateAppPackageDirs' OUTPUT, which
         // fully encodes the exclusion: when the excluded AppId is actually present in the
@@ -904,8 +951,10 @@ public sealed class BcCompiler
             var loaderScanDirs = DeduplicateAppPackageDirs(packageDirs, null, out var scanInventory);
             Mark($"dedup-scan ({scanInventory.Count} pkgs)");
 
-            var loaderSig = ComputeLoaderSignature(loaderScanDirs, _extraSymbolDirs, _resolvedDeps, null);
-            if (_refLoader == null || loaderSig != _loaderSignature)
+            var loaderSig = ComputeLoaderSignature(loaderScanDirs, _extraSymbolDirs, null);
+            var depKeys = DepUniverseKeys(_resolvedDeps);
+            if (_refLoader == null || loaderSig != _loaderSignature
+                || !depKeys.IsSubsetOf(_loaderDepUniverse ?? new HashSet<string>(StringComparer.Ordinal)))
             {
                 // Chain JSON-symbols loaders for any `*.symbols.json` in the package dirs
                 // (written by EmitDepSymbols for source dependencies we compiled ourselves).
@@ -979,6 +1028,9 @@ public sealed class BcCompiler
                 WarmReferenceLoader(_refLoader, _resolvedDeps);
                 Mark("warm");
                 _loaderSignature = loaderSig;
+                // This instance is warm for exactly these dep keys; a later call whose deps
+                // are a subset of them reuses it (#1832).
+                _loaderDepUniverse = depKeys;
             }
 
             // ── Specs (cheap) — recompute each call with _currentAppId exclusion ──
@@ -1168,14 +1220,35 @@ public sealed class BcCompiler
         List<string> packageDirs, Guid excludeAppId)
     {
         var reducedDirs = DeduplicateAppPackageDirs(packageDirs, excludeAppId);
-        var sig = ComputeLoaderSignature(reducedDirs, _extraSymbolDirs, _resolvedDeps, excludeAppId);
-        if (_exclPackageLoader != null && sig == _exclSignature) return _exclPackageLoader;
+        // Same #1832 rule as the shared loader: reducedDirs (which already encode the
+        // exclusion) are compared for equality, the dep set for subset.
+        var sig = ComputeLoaderSignature(reducedDirs, _extraSymbolDirs, excludeAppId);
+        var depKeys = DepUniverseKeys(_resolvedDeps);
+        if (_exclPackageLoader != null && sig == _exclSignature
+            && depKeys.IsSubsetOf(_exclDepUniverse ?? new HashSet<string>(StringComparer.Ordinal)))
+            return _exclPackageLoader;
 
         _exclPackageLoader = NavSymRef.ReferenceLoaderFactory.CreateReferenceLoader(reducedDirs);
         _exclSignature = sig;
         _loaderBuildCount++;
         WarmReferenceLoader(_exclPackageLoader, _resolvedDeps);
+        _exclDepUniverse = depKeys;
         return _exclPackageLoader;
+    }
+
+    /// <summary>
+    /// The identity of a resolved dep set as far as a reference loader is concerned:
+    /// <c>AppPath@Version</c> per dep — exactly the <c>D:</c> lines the pre-#1832 loader
+    /// signature carried, so "this key changed" means what it always meant. Compared as a
+    /// SUBSET rather than for equality; see <see cref="_loaderDepUniverse"/>.
+    /// </summary>
+    private static HashSet<string> DepUniverseKeys(
+        IReadOnlyList<(AppManifest Manifest, string AppPath)>? deps)
+    {
+        var keys = new HashSet<string>(StringComparer.Ordinal);
+        if (deps == null) return keys;
+        foreach (var d in deps) keys.Add(d.AppPath + "@" + d.Manifest.Version);
+        return keys;
     }
 
     /// <summary>
@@ -1192,7 +1265,7 @@ public sealed class BcCompiler
         if (loader == null || resolvedDeps == null || resolvedDeps.Count == 0) return;
         try
         {
-            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var alreadyWarmed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var queue = new Queue<NavCA.SymbolReferenceSpecification>();
             foreach (var d in resolvedDeps)
                 queue.Enqueue(new NavCA.SymbolReferenceSpecification(
@@ -1203,7 +1276,8 @@ public sealed class BcCompiler
             while (queue.Count > 0)
             {
                 var spec = queue.Dequeue();
-                if (!seen.Add($"{spec.Publisher}|{spec.Name}|{spec.Version}")) continue;
+                if (!alreadyWarmed.Add($"{spec.Publisher}|{spec.Name}|{spec.Version}")) continue;
+                _warmSpecCount++;
                 IEnumerable<NavCA.SymbolReferenceSpecification>? deps = null;
                 try { deps = loader.GetDependencies(spec, new List<NavCA.Diagnostics.Diagnostic>()); }
                 catch { /* best-effort warm */ }

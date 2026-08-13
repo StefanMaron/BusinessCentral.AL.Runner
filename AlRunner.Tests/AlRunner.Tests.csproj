@@ -21,7 +21,33 @@
          Xunit.SkipException into a real Skipped result. -->
     <PackageReference Include="Xunit.SkippableFact" Version="1.5.61" />
     <PackageReference Include="Spectre.Console.Testing" Version="0.49.1" />
-    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.0">
+    <!-- 3.1.4+ required, NOT just "latest": issue #1844. xunit.runner.visualstudio 3.1.0's
+         VsTestRunner unconditionally constructs a VisualStudioSourceInformationProvider
+         (-> DiaSessionWrapper -> DiaSession -> PortableSymbolReader) for every `dotnet test`
+         run, and its DiaSessionWrapper.Dispose()/VisualStudioSourceInformationProvider.
+         DisposeAsync() called session.Dispose() directly with no try/catch. When
+         PortableSymbolReader.Dispose() NREs during teardown (observed on CI reading the PDBs
+         of Cecil-rewritten/R2R BC assemblies our DOTNET_STARTUP_HOOKS chain pulls into the
+         host — see EngineStartupHook.cs), that exception propagated out of the test host as a
+         "Catastrophic failure", producing exit code 1 on a run that reported
+         "Failed: 0, Passed: <n>". Decompiling the shipped adapter DLL (nuget.org
+         xunit.runner.visualstudio 3.1.0 through 3.1.5, ilspycmd) confirms: (a)
+         <RunConfiguration><CollectSourceInformation>false</...> — the obvious first thing to
+         reach for — does NOT stop DiaSession construction on this code path in any of those
+         versions; that flag only gates a DIFFERENT, Cecil-based source-info provider used by
+         the xunit v3 in-process TestingPlatform launcher, which xunit v2 (what this project
+         uses) never reaches. (b) 3.1.3 added a disposal lock (throws on double-dispose,
+         doesn't touch the underlying NRE). (c) 3.1.4 is the exact version that wraps
+         DiaSessionWrapper.Dispose()'s and VisualStudioSourceInformationProvider.
+         DisposeAsync()'s calls into `session.Dispose()` in a try/catch-swallow helper
+         (`DisposableExtensions.SafeDispose`) AND makes disposal idempotent instead of
+         throwing — matching the exact call chain in the CI stack trace
+         (VisualStudioSourceInformationProvider.DisposeAsync -> DiaSessionWrapper.Dispose ->
+         DiaSession.Dispose(bool) -> PortableSymbolReader.Dispose). Pinned to 3.1.5 (latest
+         published at the time of the fix) rather than exactly 3.1.4 so future patch bumps
+         don't need to re-litigate this. See
+         AlRunner.Tests/XunitRunnerVisualStudioAdapterVersionTests.cs for the regression guard. -->
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.5">
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
