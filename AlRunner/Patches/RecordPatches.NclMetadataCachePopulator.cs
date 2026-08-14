@@ -9,7 +9,7 @@
 //      pre-allocates empty ConcurrentDictionary entries per ObjectType.
 //   2. RecordPatches.Register() parses every .al source dir registered so far
 //      via TryParseTableFile → _parsedTables.
-//   3. After ParseAllSources, this populator iterates _parsedTables, calls the
+//   3. After ParseAllRegisteredSourceFiles, this populator iterates _parsedTables, calls the
 //      existing BuildNCLMetaTable(int) factory (which uses NCLMetaTable's
 //      internal CreateFromMetaTable), wraps each result in
 //      NCLMetadataCacheEntry.CreateWithBase, and inserts it into the skeleton

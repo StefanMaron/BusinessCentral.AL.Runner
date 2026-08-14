@@ -63,12 +63,10 @@ public static partial class RecordPatches
     /// </summary>
     private static readonly Dictionary<(string Kind, int Id), string?> _parsedObjectCaptions = new();
 
-    private static void ParseAllObjectCaptionSources()
-    {
-        foreach (var dir in _sourceDirs)
-            foreach (var file in Directory.GetFiles(dir, "*.al", SearchOption.AllDirectories))
-                TryParseObjectCaptionFile(File.ReadAllText(file));
-    }
+    // Register()-time sweep folded into RecordPatches.ParseAllRegisteredSourceFiles (#1903)
+    // — that shared loop calls TryParseObjectCaptionFile alongside the other seven
+    // extractors, one file read per file, instead of this file doing its own separate
+    // directory walk.
 
     private static void TryParseObjectCaptionFile(string text)
     {
@@ -99,7 +97,11 @@ public static partial class RecordPatches
     /// report's Caption, off the same PropertyList it reads the report's ProcessingOnly and
     /// UseRequestPage from (#1714). Routing through here keeps ONE accessor for every
     /// AllObj/AllObjWithCaption kind while there is still only ONE read of the fact — and it
-    /// is ordering-safe, because ParseAllReportSources runs before this parser does.
+    /// is ordering-safe regardless of parse order, because this is a LAZY read of
+    /// _parsedReports at consumption time (some later virtual-table query), well after every
+    /// source dir has finished parsing (#1903 changed HOW parsing is batched — per-file
+    /// across all eight extractors, rather than one global pass per extractor kind — but
+    /// every report is still fully parsed before any caller reaches this accessor).
     /// </summary>
     private static string? SourceCaptionFor(string kind, int id)
         => string.Equals(kind, "Report", StringComparison.OrdinalIgnoreCase)

@@ -148,6 +148,55 @@ public static partial class RecordPatches
     public static void AddSourceDir(string dir) => AddSourceDirs(new[] { dir });
 
     /// <summary>
+    /// Runs all eight source extractors (table, tableextension, page, report, query,
+    /// xmlport, object-decl, object-caption) over ONE already-read file's text (#1903).
+    /// <para>
+    /// Before this, <see cref="AddSourceDirs"/>' per-file loop called all eight directly —
+    /// each extractor is a thin foreach over <c>ParseAlObjects(text)</c>, which built its
+    /// OWN full AL syntax tree from the same text. A source tree of N files therefore cost
+    /// 8N parses of eight IDENTICAL trees, measured on a 7,339-file real-world corpus as
+    /// ~59,000 parses / 29.7s per pass instead of 7,339 parses. <see cref="ParseAlObjects"/>
+    /// now memoizes its most-recently-built tree keyed on (text, active preprocessor
+    /// symbols) — see the comment there — so calling the eight extractors back-to-back on
+    /// the SAME text, as both callers below do, costs one real parse plus seven cache hits.
+    /// </para>
+    /// <para>
+    /// The (text, symbols) key is deliberate, not an oversight: #1900 was caused by a
+    /// parser that stopped seeing <c>--define</c> symbols because a field FROZE at
+    /// type-init before <c>BcCompiler.SetExtraPreprocessorSymbols</c> ran. A cache keyed on
+    /// text alone would reintroduce that bug silently — two calls for the same text under
+    /// different <c>--define</c> sets are a genuinely different parse, not a cache hit.
+    /// </para>
+    /// </summary>
+    private static void ParseSourceFileIntoAllExtractors(string text)
+    {
+        TryParseTableFile(text);
+        TryParseTableExtensionFile(text);
+        TryParsePageFile(text);
+        TryParseReportFile(text);
+        TryParseQueryFile(text);
+        TryParseXmlPortFile(text);
+        TryParseObjectDeclFile(text);
+        TryParseObjectCaptionFile(text);
+    }
+
+    /// <summary>
+    /// The Register()-time equivalent of <see cref="AddSourceDirs"/>' per-file loop: one
+    /// pass over every registered source dir, reading each file's text exactly once and
+    /// running all eight extractors on it via <see cref="ParseSourceFileIntoAllExtractors"/>
+    /// (#1903). This replaced seven independent sweeps (one per extractor kind), each of
+    /// which re-walked every source dir and re-read every file from disk on its own — 7
+    /// directory walks + 7 file reads + (with the old un-memoized parser) 8 tree builds per
+    /// file, instead of 1 of each.
+    /// </summary>
+    private static void ParseAllRegisteredSourceFiles()
+    {
+        foreach (var dir in _sourceDirs)
+            foreach (var file in Directory.GetFiles(dir, "*.al", SearchOption.AllDirectories))
+                ParseSourceFileIntoAllExtractors(File.ReadAllText(file));
+    }
+
+    /// <summary>
     /// Register N source dirs and populate the NCLMetadata cache ONCE for the whole
     /// batch, instead of once per dir (#1833). <see cref="AddSourceDir"/> delegates
     /// here with a single-element array so its per-call-populate semantics are
@@ -181,30 +230,23 @@ public static partial class RecordPatches
             // SAME dependency source dir twice — once while matching declared deps to sibling
             // source apps, once while emitting the synthetic workspace .app for a dep that
             // needs a fresh build. Without this guard the same dir lands twice in _sourceDirs,
-            // so ParseAllSources() parses its .al files twice on the next Register()/rebuild.
-            // For a dependency that declares a `tableextension` on a table whose base metadata
-            // comes from elsewhere (e.g. a platform-app table), that duplicated every extension
-            // field id in _parsedExtensionFields — see #1686. The dedup here is defense in depth
-            // alongside the field-id dedup in TryParseTableExtensionFile.
+            // so ParseAllRegisteredSourceFiles() parses its .al files twice on the next
+            // Register()/rebuild. For a dependency that declares a `tableextension` on a
+            // table whose base metadata comes from elsewhere (e.g. a platform-app table),
+            // that duplicated every extension field id in _parsedExtensionFields — see #1686.
+            // The dedup here is defense in depth alongside the field-id dedup in
+            // TryParseTableExtensionFile.
             if (_sourceDirs.Contains(dir, StringComparer.OrdinalIgnoreCase)) continue;
             _sourceDirs.Add(dir);
             // If Register() already ran (it runs before the bucket loop), parse immediately.
             // The NCLMetadata cache is populated once below, after every dir in this batch
-            // has been parsed — see the batching rationale on the doc comment above.
+            // has been parsed — see the batching rationale on the doc comment above. Every
+            // .al file's text is read ONCE and handed to all eight extractors together
+            // (#1903) — see ParseSourceFileIntoAllExtractors.
             if (_registered)
             {
                 foreach (var file in Directory.GetFiles(dir, "*.al", SearchOption.AllDirectories))
-                {
-                    var text = File.ReadAllText(file);
-                    TryParseTableFile(text);
-                    TryParseTableExtensionFile(text);
-                    TryParsePageFile(text);
-                    TryParseReportFile(text);
-                    TryParseQueryFile(text);
-                    TryParseXmlPortFile(text);
-                    TryParseObjectDeclFile(text);
-                    TryParseObjectCaptionFile(text);
-                }
+                    ParseSourceFileIntoAllExtractors(File.ReadAllText(file));
                 parsedAny = true;
             }
         }
@@ -396,18 +438,11 @@ public static partial class RecordPatches
         _collationComparer = BuildCollationAwareComparer();
         Console.Error.WriteLine($"[RecordPatches] Collation comparer built: {_collationComparer?.GetType().Name ?? "null"}");
 
-        // Parse AL source files (tables + pages + reports — same set of dirs).
-        ParseAllSources();
-        ParseAllPageSources();
-        ParseAllReportSources();
-        ParseAllQuerySources();
-        ParseAllXmlPortSources();
-        // Codeunits / enums / *extension objects — (id, name) only, for AllObj
-        // (2000000038). See RecordPatches.AlObjectDeclParser.cs.
-        ParseAllObjectDeclSources();
-        // Caption property of every source object of any kind, for AllObjWithCaption
-        // (2000000058). See RecordPatches.AlObjectCaptionParser.cs.
-        ParseAllObjectCaptionSources();
+        // Parse AL source files (tables + tableextensions + pages + reports + queries +
+        // xmlports + object decls (AllObj) + object captions (AllObjWithCaption)) — see
+        // ParseAllRegisteredSourceFiles for why this is ONE pass over _sourceDirs rather
+        // than seven (#1903).
+        ParseAllRegisteredSourceFiles();
 
         // NCL-internal system tables (RecordLink=2000000068, Field=2000000041, …)
         // live as AL source embedded in Microsoft.BusinessCentral.SystemApp.dll's

@@ -4011,8 +4011,8 @@ static List<string> BuildSiblingSourceDeps(List<string> bundles, List<string> pa
         // field to "Item Journal Batch") get merged into the base table's NCLMetaTable.
         // Without this, runtime field lookup throws "extension field N not found in
         // NCLMetaTable". This runs before RecordPatches.Register(), so the dir is parsed
-        // by ParseAllSources during Register (not immediately). Compile-time visibility is
-        // handled separately by the symbols.json emit below.
+        // during Register (not immediately) — see ParseAllRegisteredSourceFiles.
+        // Compile-time visibility is handled separately by the symbols.json emit below.
         AlRunner.Patches.RecordPatches.AddSourceDir(dir);
         var appFileName = $"{Sanitize(sid.Publisher)}_{Sanitize(sid.Name)}_{sid.Version.ToString().Replace('.', '_')}.app";
         var outPath = Path.Combine(wsDir, appFileName);

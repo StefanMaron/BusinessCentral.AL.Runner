@@ -19,15 +19,9 @@ namespace AlRunner.Patches;
 
 public static partial class RecordPatches
 {
-    private static void ParseAllReportSources()
-    {
-        foreach (var dir in _sourceDirs)
-        {
-            var files = Directory.GetFiles(dir, "*.al", SearchOption.AllDirectories);
-            foreach (var file in files)
-                TryParseReportFile(File.ReadAllText(file));
-        }
-    }
+    // Register()-time sweep folded into RecordPatches.ParseAllRegisteredSourceFiles (#1903)
+    // — that shared loop calls TryParseReportFile alongside the other seven extractors, one
+    // file read per file, instead of this file doing its own separate directory walk.
 
 
     private static void TryParseReportFile(string text)

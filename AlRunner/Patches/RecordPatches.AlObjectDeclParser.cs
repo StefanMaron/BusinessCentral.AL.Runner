@@ -40,15 +40,9 @@ public static partial class RecordPatches
     // per-object-type (codeunit 50100 and enum 50100 may coexist).
     private static readonly Dictionary<(string Kind, int Id), ParsedAlObjectDecl> _parsedObjectDecls = new();
 
-    private static void ParseAllObjectDeclSources()
-    {
-        foreach (var dir in _sourceDirs)
-        {
-            var files = Directory.GetFiles(dir, "*.al", SearchOption.AllDirectories);
-            foreach (var file in files)
-                TryParseObjectDeclFile(File.ReadAllText(file));
-        }
-    }
+    // Register()-time sweep folded into RecordPatches.ParseAllRegisteredSourceFiles (#1903)
+    // — that shared loop calls TryParseObjectDeclFile alongside the other seven extractors,
+    // one file read per file, instead of this file doing its own separate directory walk.
 
     private static void TryParseObjectDeclFile(string text)
     {

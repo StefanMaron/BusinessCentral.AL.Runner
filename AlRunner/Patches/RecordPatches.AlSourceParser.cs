@@ -183,19 +183,36 @@ public static partial class RecordPatches
         string.Equals(PropValue(list, name)?.ToString()?.Trim(), expected,
             StringComparison.OrdinalIgnoreCase);
 
-    private static void ParseAllSources()
-    {
-        foreach (var dir in _sourceDirs)
-        {
-            var files = Directory.GetFiles(dir, "*.al", SearchOption.AllDirectories);
-            foreach (var file in files)
-            {
-                var text = File.ReadAllText(file);
-                TryParseTableFile(text);
-                TryParseTableExtensionFile(text);
-            }
-        }
-    }
+    // Single-slot memo of the most recently built syntax tree's object list, keyed on the
+    // exact (text, active preprocessor symbols) pair that produced it. #1903: the eight
+    // TryParse*File extractors (table, tableextension, page, report, query, xmlport,
+    // object-decl, object-caption) each call ParseAlObjects on the SAME file text
+    // back-to-back — RecordPatches.ParseSourceFileIntoAllExtractors is the shared call
+    // site both AddSourceDirs and Register() route every file through — so remembering
+    // only the LAST parse turns 8 identical tree builds per file into 1 real build plus 7
+    // cache hits, with no change to AlParseOptions, to any TryParse*File signature, or to
+    // the eight extractors' own code.
+    //
+    // The key is (text, symbols), never text alone. #1900 was exactly a parser that
+    // silently stopped seeing --define symbols (a `static readonly` field froze the
+    // preprocessor set at type-init before BcCompiler.SetExtraPreprocessorSymbols ran). A
+    // memo keyed on text alone would reproduce that bug through a different door: two
+    // calls for the same text under two different --define sets would incorrectly share
+    // one cached tree. AlParseOptions (see above) is still recomputed on every miss:
+    // caching here changes WHEN a tree is (re)built, never what determines whether it
+    // must be.
+    private static string? _lastParsedText;
+    private static string[]? _lastParsedSymbols;
+    private static IReadOnlyList<NavCA.SyntaxNode> _lastParsedObjects = Array.Empty<NavCA.SyntaxNode>();
+
+    /// <summary>
+    /// Number of times <see cref="ParseAlObjects"/> has actually built a syntax tree (a real
+    /// <c>SyntaxTree.ParseObjectText</c> call), as opposed to serving the single-slot memo
+    /// above. #1903's proving test asserts THIS — a count, never a duration — to pin that N
+    /// files registered through the eight extractors costs N tree builds, not 8N. Mirrors
+    /// the discipline <see cref="PopulateNclMetadataCacheCallCount"/> established for #1833.
+    /// </summary>
+    internal static int ParseObjectTextCallCount { get; private set; }
 
     /// <summary>
     /// Parses every AL object in <paramref name="text"/> with BC's own parser and returns the
@@ -208,18 +225,41 @@ public static partial class RecordPatches
     private static IReadOnlyList<NavCA.SyntaxNode> ParseAlObjects(string? text)
     {
         if (string.IsNullOrWhiteSpace(text)) return [];
+
+        // GetExtraPreprocessorSymbols() is a lock plus a sorted copy of a handful of
+        // strings (see AlParseOptions above) — cheap enough to call on every ParseAlObjects
+        // invocation just to test the memo key, including on the 7-out-of-8 calls that end
+        // up being cache hits.
+        var symbols = AlRunner.BcCompiler.GetExtraPreprocessorSymbols().ToArray();
+        if (_lastParsedText == text && _lastParsedSymbols != null &&
+            symbols.AsSpan().SequenceEqual(_lastParsedSymbols))
+        {
+            return _lastParsedObjects;
+        }
+
         try
         {
+            ParseObjectTextCallCount++;
             var tree = NavSyntax.SyntaxTree.ParseObjectText(
                 text, path: "", encoding: null!, AlParseOptions, default);
-            if (tree.GetRoot() is not NavSyntax.CompilationUnitSyntax root) return [];
-            return root.ChildNodes().ToList();
+            IReadOnlyList<NavCA.SyntaxNode> objects = tree.GetRoot() is NavSyntax.CompilationUnitSyntax root
+                ? root.ChildNodes().ToList()
+                : Array.Empty<NavCA.SyntaxNode>();
+            _lastParsedText = text;
+            _lastParsedSymbols = symbols;
+            _lastParsedObjects = objects;
+            return objects;
         }
         catch
         {
             // A malformed input is not a runner gap — the AL simply is not parseable, and the
             // caller's contract is "extract what you can". Callers that need a table and do
-            // not get one already report that themselves ("AL source not parsed").
+            // not get one already report that themselves ("AL source not parsed"). Don't let
+            // a failed parse poison the memo as if it were this (text, symbols) pair's real
+            // answer — clear the slot so the NEXT call (for unrelated input) can't accidentally
+            // key-match leftover state from before the exception.
+            _lastParsedText = null;
+            _lastParsedSymbols = null;
             return [];
         }
     }
