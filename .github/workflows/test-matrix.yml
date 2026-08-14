@@ -228,6 +228,17 @@ jobs:
               --label "AlRunner.Tests — BC ${{ matrix.target.bc-version }}" \
               --threads 4
 
+      # Issue #1887: the occupancy report above is diagnostic-only (never fails the leg),
+      # which is exactly how a stale CollectionCostOrderer.MeasuredWeightSeconds table went
+      # unnoticed for two whole classes until someone happened to read it by hand. This step
+      # is deliberately NOT continue-on-error and only runs when the unit-test step actually
+      # produced a trx — a collection dispatched at UnmeasuredWeightSeconds because it is
+      # genuinely missing from the table is loud CI failure, per
+      # .claude/rules/loud-failures.md, not another quiet report.
+      - name: Collection weight table freshness (unit tests)
+        run: |
+          python3 scripts/check-collection-weights.py trx/unit-tests.trx
+
       - name: Phase-log report (unit tests)
         # always(): a red unit-test step is exactly when the timings are most worth
         # seeing, and this must never be the thing that fails the leg.
