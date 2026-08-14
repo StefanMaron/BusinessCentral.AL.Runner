@@ -15,9 +15,24 @@ namespace AlRunner.Tests;
 ///
 /// See DefineFlagIntegrationTests for why this used to be
 /// [Collection("server-serial")] and no longer is — #1809.
+///
+/// #1804: four of the five facts share ONE server process via SharedCliServer.
+/// <see cref="Shutdown_RespondsThenProcessExits"/> is the deliberate exception:
+/// it exists specifically to prove the shutdown protocol command tears the
+/// process down, so it cannot use the shared instance (doing so would kill the
+/// process the other facts in this class still need) and keeps its own
+/// dedicated <c>CliServer.StartAsync</c> call. It used to be the tail end of
+/// <see cref="RunTests_Then_EditTable_Then_RunAgain_PicksUpChange"/>, which
+/// combined a cache-behaviour claim and a process-lifecycle claim in one
+/// method; splitting them is what makes the cache-behaviour half safe to move
+/// onto a server other facts also use.
 /// </summary>
-public class ServerTests
+public class ServerTests : IClassFixture<SharedCliServer>
 {
+    private readonly SharedCliServer _fixture;
+
+    public ServerTests(SharedCliServer fixture) => _fixture = fixture;
+
     // The fixture bundle: a table whose OnInsert trigger reads xRec and a test
     // that asserts the resulting Counter value. Copied to a temp dir per test so
     // edits never touch the repo.
@@ -50,10 +65,9 @@ public class ServerTests
         TestArtifacts.SkipIfMissing();
 
         var bundle = MakeTempBundle();
-        var cacheDir = Path.Combine(Path.GetTempPath(), "al-runner-server-tests-cache", Guid.NewGuid().ToString("N"));
         var tablePath = Path.Combine(bundle, "XRecProbe.Table.al");
 
-        await using var server = await CliServer.StartAsync(new[] { "--cache", cacheDir });
+        var server = await _fixture.GetAsync();
 
         // ── Phase 1: first run — must PASS (Counter 0 -> 1), cache MISS ──────────
         var lines1 = await server.SendRequestStreamingAsync(Req("runTests", bundle));
@@ -88,8 +102,19 @@ public class ServerTests
         // The failure message proves the NEW trigger ran: Counter became 9, not 1.
         var failMsg = events3[0].GetProperty("message").GetString() ?? "";
         Assert.Contains("9", failMsg);
+    }
 
-        // ── Phase 4: shutdown — response then process exit ──────────────────────
+    // Split out of RunTests_Then_EditTable_Then_RunAgain_PicksUpChange (#1804):
+    // that test used to end with this same shutdown check, which meant it could
+    // never share a process with the class's other facts (shutting the server
+    // down would break whichever fact ran after it). This owns its own
+    // dedicated server precisely BECAUSE killing it is the point.
+    [SkippableFact]
+    public async Task Shutdown_RespondsThenProcessExits()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        await using var server = await CliServer.StartAsync();
         var rs = await server.SendAsync("{\"command\":\"shutdown\"}");
         var ds = JsonSerializer.Deserialize<JsonElement>(rs);
         Assert.Equal("shutting down", ds.GetProperty("status").GetString());
@@ -133,8 +158,7 @@ public class ServerTests
     {
         TestArtifacts.SkipIfMissing();
         var bundle = MakeExecuteBundle();
-        var cacheDir = Path.Combine(Path.GetTempPath(), "al-runner-server-exec-cache", Guid.NewGuid().ToString("N"));
-        await using var server = await CliServer.StartAsync(new[] { "--cache", cacheDir });
+        var server = await _fixture.GetAsync();
 
         var r = await server.SendAsync(Req("execute", bundle));
         var d = JsonSerializer.Deserialize<JsonElement>(r);
@@ -152,7 +176,7 @@ public class ServerTests
     public async Task Execute_InlineCode_NotSupported_ReturnsError()
     {
         TestArtifacts.SkipIfMissing();
-        await using var server = await CliServer.StartAsync();
+        var server = await _fixture.GetAsync();
         var r = await server.SendAsync("{\"command\":\"execute\",\"code\":\"Message('hi');\"}");
         var d = JsonSerializer.Deserialize<JsonElement>(r);
         Assert.True(d.TryGetProperty("error", out var err));
@@ -238,8 +262,7 @@ public class ServerTests
         TestArtifacts.SkipIfMissing();
 
         MakeAppTestPair(out var appDir, out var testDir);
-        var cacheDir = Path.Combine(Path.GetTempPath(), "al-runner-server-multi-cache", Guid.NewGuid().ToString("N"));
-        await using var server = await CliServer.StartAsync(new[] { "--cache", cacheDir });
+        var server = await _fixture.GetAsync();
 
         var req = JsonSerializer.Serialize(new
         {
@@ -265,7 +288,7 @@ public class ServerTests
     public async Task UnknownCommand_ReturnsError()
     {
         TestArtifacts.SkipIfMissing();
-        await using var server = await CliServer.StartAsync();
+        var server = await _fixture.GetAsync();
         var r = await server.SendAsync("{\"command\":\"bogus\"}");
         var d = JsonSerializer.Deserialize<JsonElement>(r);
         Assert.True(d.TryGetProperty("error", out var err));

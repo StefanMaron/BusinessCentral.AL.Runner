@@ -16,9 +16,18 @@ namespace AlRunner.Tests;
 ///
 /// See DefineFlagIntegrationTests for why this used to be
 /// [Collection("server-serial")] and no longer is — #1809.
+///
+/// #1804: all three facts share ONE server process via SharedCliServer instead
+/// of spawning their own — each uses a distinct fixed app ID, none needs a
+/// different --cache/startup flag from the others, and none tears the process
+/// down, so the three conditions SharedCliServer's doc comment requires all
+/// hold here.
 /// </summary>
-public class ServerStreamingTests
+public class ServerStreamingTests : IClassFixture<SharedCliServer>
 {
+    private readonly SharedCliServer _fixture;
+
+    public ServerStreamingTests(SharedCliServer fixture) => _fixture = fixture;
 
     // One passing test, one failing test (with a recognisable Error() message) —
     // exercises both status branches of the streamed `test` event shape.
@@ -73,8 +82,7 @@ public class ServerStreamingTests
         TestArtifacts.SkipIfMissing();
 
         var bundle = MakeMixedBundle();
-        var cacheDir = Path.Combine(Path.GetTempPath(), "al-runner-server-streaming-cache", Guid.NewGuid().ToString("N"));
-        await using var server = await CliServer.StartAsync(new[] { "--cache", cacheDir });
+        var server = await _fixture.GetAsync();
 
         var lines = await server.SendRequestStreamingAsync(RunTestsReq(bundle));
 
@@ -121,7 +129,7 @@ public class ServerStreamingTests
     {
         TestArtifacts.SkipIfMissing();
 
-        await using var server = await CliServer.StartAsync();
+        var server = await _fixture.GetAsync();
         var lines = await server.SendRequestStreamingAsync(
             JsonSerializer.Serialize(new { command = "runTests" }));
 
@@ -138,8 +146,7 @@ public class ServerStreamingTests
         TestArtifacts.SkipIfMissing();
 
         var bundle = MakeMixedBundle();
-        var cacheDir = Path.Combine(Path.GetTempPath(), "al-runner-server-streaming-exec-cache", Guid.NewGuid().ToString("N"));
-        await using var server = await CliServer.StartAsync(new[] { "--cache", cacheDir });
+        var server = await _fixture.GetAsync();
 
         // execute (run-mode) is unaffected by the streaming change — still one
         // v1-shaped response line, no "type" discriminator.

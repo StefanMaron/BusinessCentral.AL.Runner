@@ -12,9 +12,23 @@ namespace AlRunner.Tests;
 ///
 /// See DefineFlagIntegrationTests for why this used to be
 /// [Collection("server-serial")] and no longer is — #1809.
+///
+/// #1804: all four facts share ONE server process via SharedCliServer. The
+/// third fact (RunTests_TestIsolationDoesNotStickAcrossRequests) already
+/// proved same-process, multiple-request behaviour is correct before this
+/// change — this class extends that same proven pattern to all four facts,
+/// not a new risk. Every fact's bundle carries the same fixed app ID
+/// (MakeIsolationBundle), which is fine: the AL-output compile cache keys on
+/// content, testIsolation is a per-request runtime field never baked into the
+/// compiled cache entry, so repeat compiles of identical content across facts
+/// just mean later facts get compile-cache HITs — it does not change what any
+/// assertion observes.
 /// </summary>
-public class ServerTestIsolationTests
+public class ServerTestIsolationTests : IClassFixture<SharedCliServer>
 {
+    private readonly SharedCliServer _fixture;
+
+    public ServerTestIsolationTests(SharedCliServer fixture) => _fixture = fixture;
 
     // Two [Test] procs in the SAME codeunit both insert a row with the SAME primary
     // key. Under TestIsolation.Codeunit (the default — no reset between methods
@@ -92,8 +106,7 @@ public class ServerTestIsolationTests
         TestArtifacts.SkipIfMissing();
 
         var bundle = MakeIsolationBundle();
-        var cacheDir = Path.Combine(Path.GetTempPath(), "al-runner-server-isolation-cache", Guid.NewGuid().ToString("N"));
-        await using var server = await CliServer.StartAsync(new[] { "--cache", cacheDir });
+        var server = await _fixture.GetAsync();
 
         var lines = await server.SendRequestStreamingAsync(Req(bundle, testIsolation: null));
         var (_, d) = ProtocolV2Streaming.Split(lines);
@@ -109,8 +122,7 @@ public class ServerTestIsolationTests
         TestArtifacts.SkipIfMissing();
 
         var bundle = MakeIsolationBundle();
-        var cacheDir = Path.Combine(Path.GetTempPath(), "al-runner-server-isolation-cache2", Guid.NewGuid().ToString("N"));
-        await using var server = await CliServer.StartAsync(new[] { "--cache", cacheDir });
+        var server = await _fixture.GetAsync();
 
         var lines = await server.SendRequestStreamingAsync(Req(bundle, testIsolation: "method"));
         var (_, d) = ProtocolV2Streaming.Split(lines);
@@ -131,8 +143,7 @@ public class ServerTestIsolationTests
 
         var bundle1 = MakeIsolationBundle();
         var bundle2 = MakeIsolationBundle();
-        var cacheDir = Path.Combine(Path.GetTempPath(), "al-runner-server-isolation-cache3", Guid.NewGuid().ToString("N"));
-        await using var server = await CliServer.StartAsync(new[] { "--cache", cacheDir });
+        var server = await _fixture.GetAsync();
 
         var lines1 = await server.SendRequestStreamingAsync(Req(bundle1, testIsolation: "method"));
         var (_, d1) = ProtocolV2Streaming.Split(lines1);
@@ -150,8 +161,7 @@ public class ServerTestIsolationTests
         TestArtifacts.SkipIfMissing();
 
         var bundle = MakeIsolationBundle();
-        var cacheDir = Path.Combine(Path.GetTempPath(), "al-runner-server-isolation-cache4", Guid.NewGuid().ToString("N"));
-        await using var server = await CliServer.StartAsync(new[] { "--cache", cacheDir });
+        var server = await _fixture.GetAsync();
 
         var r = await server.SendAsync(Req(bundle, testIsolation: "bogus"));
         var d = JsonSerializer.Deserialize<JsonElement>(r);

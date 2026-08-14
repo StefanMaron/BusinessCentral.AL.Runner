@@ -25,6 +25,19 @@ public sealed class CliServer : IAsyncDisposable
     private readonly Process _process;
     private readonly StringBuilder _stderr = new();
 
+    /// <summary>
+    /// #1804: how many times <see cref="StartAsync"/> has actually called
+    /// <c>Process.Start</c> in this test-worker process, since assembly load.
+    /// Process-wide, so it is a diagnostic only — xUnit runs different test
+    /// classes' spawns concurrently with each other (different collections),
+    /// so a delta read around one test's own spawns can be inflated by another
+    /// class spawning at the same moment. The actual proving assertion in
+    /// SharedCliServerTests.cs uses <see cref="SharedCliServer.SpawnCount"/>
+    /// instead, which is scoped to one fixture instance and immune to that.
+    /// </summary>
+    public static int StartCount => _startCount;
+    private static int _startCount;
+
     private CliServer(Process process)
     {
         _process = process;
@@ -79,6 +92,7 @@ public sealed class CliServer : IAsyncDisposable
                 psi.EnvironmentVariables[kv.Key] = kv.Value;
 
         var proc = Process.Start(psi)!;
+        System.Threading.Interlocked.Increment(ref _startCount);
 
         var server = new CliServer(proc);
         // Drain stderr on a background task so its pipe buffer never fills and
