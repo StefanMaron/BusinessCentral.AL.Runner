@@ -1,26 +1,38 @@
 #!/usr/bin/env bash
-# Integration test for issue #1860: a --server bundle RELOAD that introduces
-# a NEW tableextension on a table already recorded wired by an earlier
-# request in the SAME session must still wire the extension's field
-# OnValidate trigger.
+# Regression guard for issue #1860, investigated and REFUTED against this
+# codebase (see PR #1886). #1860 described a --server bundle RELOAD that
+# introduces a NEW tableextension on a table already recorded wired by an
+# earlier request in the SAME session, and claimed the extension's field
+# OnValidate trigger never gets wired.
 #
 # _fieldTriggersWiredTables (AlRunner/Patches/RecordPatches.NclMetaTableBuilder.cs)
-# records a table as "done" the first time its BASE Record CLR type resolves,
-# regardless of whether every tableextension for it has loaded yet. Within a
-# single bundle load that's harmless (bundled mode only calls
-# WireFieldTriggerHandlersAll once, after every app has loaded). Across a
-# --server RELOAD it is not: a first runTests request that loads only the dep
-# app marks the table wired with zero known extensions; a second request in
-# the same process that adds a tableextension for that table never gets a
-# wiring pass, because the ContainsKey guard short-circuits before
-# WireExtensionValidateHandlers ever runs again.
+# does record a table as "done" the first time its BASE Record CLR type
+# resolves, regardless of whether every tableextension for it has loaded yet.
+# IF that cache survived across --server requests, a reload introducing a new
+# tableextension on an already-recorded table WOULD be skipped by the
+# ContainsKey guard before WireExtensionValidateHandlers could run again —
+# that is the shape #1860 described. But it does not survive: RunAllBundlesForServer
+# (AlRunner/Program.cs) calls BcRuntime.ResetForNewBundleReload() unconditionally
+# once per runTests request, which clears _fieldTriggersWiredTables (among ~20
+# other per-bundle caches) via RecordPatches.ResetForReload(). So the
+# interleaving #1860 describes cannot occur on this codebase today.
+#
+# This script therefore pins the reset in place rather than proving a live
+# bug: it goes RED if a future change makes the reload path conditional or
+# incremental (e.g. for performance) and skips that reset.
+#
+# RED-experiment recipe, to keep this claim checkable: comment out ONLY the
+# `_fieldTriggersWiredTables.Clear()` line inside RecordPatches.ResetForReload()
+# (AlRunner/Patches/RecordPatches.cs), rebuild Release, and re-run this
+# script. Request 2 must then fail with `Expected 'validated:payload' but got
+# ''` — that failure is the falsifiable proof this test is guarding against.
 #
 # Fixture: tests/runner-extras/server-reload-dep (table only, no extension) +
 # tests/runner-extras/server-reload-main (tableextension with a field
 # OnValidate trigger + the proving test). Request 1 sends ONLY the dep path;
-# request 2 sends [dep, main]. RED (bug present): request 2's test fails or
+# request 2 sends [dep, main]. RED (reset broken): request 2's test fails or
 # errors because Validate("Extra") never runs the trigger, so Log stays empty
-# and the assertion mismatches. GREEN (fixed): request 2 passes.
+# and the assertion mismatches. GREEN (reset intact): request 2 passes.
 #
 # Usage:
 #   scripts/tests/server-reload-test.sh [--runner "CMD"] [extra runner args...]
