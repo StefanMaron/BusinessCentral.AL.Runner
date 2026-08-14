@@ -149,9 +149,10 @@ jobs:
           # covering nothing. Pre-copy the ALREADY-rewritten copy from AlRunner's own bin dir
           # above so the bootstrap below sees a no-op instead of a cold rewrite. This is NOT
           # about the Cecil disk cache under ~/.cache/al-runner/ncl-cecil (that cache is keyed
-          # off the SERVICE-TIER Ncl's own bytes + the runner assembly's mtime via
-          # NclCecilRewrite.ComputeCacheKey — the bin copy's path/mtime never enters that key,
-          # so a plain `cp`, which does not preserve mtime, cannot affect it either way).
+          # off the SERVICE-TIER Ncl's own bytes + the runner assembly's own CONTENT hash
+          # (#1871 — previously its mtime, see NclCecilRewrite.ComputeCacheKey) — the bin
+          # copy's own path/mtime never enters that key, so a plain `cp` cannot affect it
+          # either way).
           # What actually makes this pre-copy work is BcEngineBootstrap's own
           # before/after SHA-256 CONTENT hash of the bin copy (see the `FileHash` calls around
           # `RewriteInPlace` in BcEngineCollection.cs): once the bin copy is already
