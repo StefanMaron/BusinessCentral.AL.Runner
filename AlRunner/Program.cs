@@ -784,13 +784,44 @@ var results = new List<BucketResult>();
 // (symbols.json-only scan) instead of _packageCacheDirs. See BcCompiler
 // GetSharedReferences for the _extraSymbolDirs contract.
 var layeredWorkspaceDirs = new List<string>();
+// #1898: RunLayeredPrePass/BuildSiblingSourceDeps run BEFORE a single object of ANY
+// bundle compiles or a single test runs — a genuine dependency-compile failure inside
+// either (e.g. an impl app whose app.json really omits a manifest property its AL
+// needs, so AL0543 legitimately fires) throws InvalidOperationException, and this call
+// site sat outside every try/catch in Main. That let the exception reach the CLR's
+// default unhandled-exception handler, which prints a raw .NET stack trace and aborts
+// the process with SIGABRT (exit 134) — no al-runner-formatted diagnostic, no
+// documented exit code, and EVERY bundle in the invocation lost, not just the one
+// whose dependency is broken. Catch here and report it the same way every other
+// compile-time failure in this file does: a "<layered-deps>: COMPILE-FAIL" line on
+// stderr and the documented exit code 3 (docs/server-mode.md's "3 compilation error"
+// ladder — same code EMIT-ZERO/COMPILE-FAIL already return elsewhere in Main).
 if (bundles.Count > 1)
-    packageCacheDirs = RunLayeredPrePass(bundles, packageCacheDirs, layeredWorkspaceDirs);
+{
+    try
+    {
+        packageCacheDirs = RunLayeredPrePass(bundles, packageCacheDirs, layeredWorkspaceDirs);
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"<layered-deps>: COMPILE-FAIL — {ex.Message}");
+        return 3;
+    }
+}
 // Discover + compile sibling source-only dependency apps. Some apps declare a
 // dependency that ships ONLY as AL source in a sibling directory (not a compiled
 // .app in any cache) — e.g. the corpus internalsVisibleTo fixture next to the
 // main test app. Inert when no declared dep matches a sibling source app.
-packageCacheDirs = BuildSiblingSourceDeps(bundles, packageCacheDirs, layeredWorkspaceDirs);
+// Same unhandled-exception exposure as RunLayeredPrePass above (#1898) — same fix.
+try
+{
+    packageCacheDirs = BuildSiblingSourceDeps(bundles, packageCacheDirs, layeredWorkspaceDirs);
+}
+catch (Exception ex)
+{
+    Console.Error.WriteLine($"<sibling-source-deps>: COMPILE-FAIL — {ex.Message}");
+    return 3;
+}
 
 // Dirs the COMPILE-time .app scanner may safely enumerate: everything except the
 // synthetic workspace dirs (whose source-only .apps would trip AL1023).

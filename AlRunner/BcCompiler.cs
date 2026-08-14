@@ -1879,17 +1879,36 @@ public sealed class BcCompiler
             var src = File.ReadAllText(alFiles[i]);
             trees[i] = NavSyntax.SyntaxTree.ParseObjectText(src, path: alFiles[i], encoding: null!, parseOpts, default);
         });
+        // Locate the dep's own app.json BEFORE building CompilationOptions — both
+        // internalsVisibleTo (below) and contextSensitiveHelpUrl (#1898) are read from
+        // it, and the latter has to be in hand for the CompilationOptions ctor itself.
+        var foundAppJson = dirs.Select(d => Path.Combine(d, "app.json")).FirstOrDefault(File.Exists);
         var compOpts = new NavCA.CompilationOptions(
             continueBuildOnError: true,
             target: NavCA.CompilationTarget.OnPrem,
             generateOptions:
-                NavCA.CompilationGenerationOptions.Code | NavCA.CompilationGenerationOptions.Navigation);
+                NavCA.CompilationGenerationOptions.Code | NavCA.CompilationGenerationOptions.Navigation,
+            // #1898: BC's AL0543 check ("The manifest property 'contextSensitiveHelpUrl'
+            // must be set in order to use the property 'ContextSensitiveHelpPage'") reads
+            // THIS CompilationOptions field directly — there is no separate "give the
+            // compiler the manifest" API on Compilation/Compilation.Create (confirmed via
+            // reflection over Compilation's public surface: no WithManifest, and
+            // CompilationOptions' ctor takes contextSensitiveHelpUrl as a plain string
+            // param, default ""). Leaving it unset here — as EmitDepSymbols always did
+            // before this fix — makes BC treat the property as unset even when the dep's
+            // own app.json genuinely sets it, so a dependency using
+            // ContextSensitiveHelpPage always failed AL0543 regardless of its manifest.
+            // Reading the real value here restores parity with what alc.exe does (and
+            // with what the primary bundle-compile path already tolerates via its own,
+            // separate leniency — see the Emit() docs above). A dep whose manifest
+            // genuinely omits the URL still gets "" here and AL0543 still fires,
+            // preserving the diagnostic for an actually-invalid manifest.
+            contextSensitiveHelpUrl: ReadContextSensitiveHelpUrl(foundAppJson));
         // Propagate the dep's own `internalsVisibleTo` (from its app.json) into the
         // Compilation. BC populates IModuleSymbol.InternalsVisibleToModules ONLY from
         // this dedicated Create parameter — not from the manifest — so without it a
         // dependent app hits AL0161 on the dep's Access=Internal members even when the
         // grant exists. (main:Program.cs BuildInternalsVisibleToRefs.)
-        var foundAppJson = dirs.Select(d => Path.Combine(d, "app.json")).FirstOrDefault(File.Exists);
         var ivtRefs = ReadInternalsVisibleToRefs(foundAppJson);
 
         var compilation = NavCA.Compilation.Create(
@@ -1984,6 +2003,28 @@ public sealed class BcCompiler
             return refs.Count > 0 ? refs : null;
         }
         catch { return null; }
+    }
+
+    /// <summary>
+    /// Read <c>contextSensitiveHelpUrl</c> from an app.json, for the dedicated
+    /// <c>contextSensitiveHelpUrl</c> parameter of <see cref="NavCA.CompilationOptions"/>
+    /// (see #1898). Empty string — BC's own default for the parameter — when the
+    /// manifest is missing, unreadable, or genuinely omits the property, so an
+    /// actually-unset manifest still trips AL0543 on a page/report/etc. using
+    /// <c>ContextSensitiveHelpPage</c>, exactly as real BC does.
+    /// </summary>
+    private static string ReadContextSensitiveHelpUrl(string? appJsonPath)
+    {
+        if (appJsonPath == null || !File.Exists(appJsonPath)) return "";
+        try
+        {
+            using var json = System.Text.Json.JsonDocument.Parse(File.ReadAllText(appJsonPath));
+            if (json.RootElement.TryGetProperty("contextSensitiveHelpUrl", out var v)
+                && v.ValueKind == System.Text.Json.JsonValueKind.String)
+                return v.GetString() ?? "";
+        }
+        catch { /* fall through to the "unset" default below */ }
+        return "";
     }
 
     /// <summary>
