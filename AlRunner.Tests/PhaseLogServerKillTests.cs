@@ -108,10 +108,22 @@ public sealed class PhaseLogServerKillTests : IDisposable
             : new List<JsonElement>();
 
     /// <summary>
-    /// Positive direction: a runTests round trip completes, the test harness then
-    /// SIGKILLs the server (CliServer.DisposeAsync, exactly what every ServerCancelTests
-    /// test does), and the bundle+app rows for that completed request are still on disk
-    /// afterwards — with identifying content, not merely a non-empty file.
+    /// Positive direction AND the honest complement, folded into one server spawn (#1888
+    /// review): a runTests round trip completes, the test harness then SIGKILLs the
+    /// server (CliServer.DisposeAsync, exactly what every ServerCancelTests test does),
+    /// and against that SAME log artifact:
+    ///   (a) the bundle+app rows for the completed request are still on disk — with
+    ///       identifying content, not merely a non-empty file;
+    ///   (b) the once-per-process "process" kind row (patches_ms, peak_rss_bytes,
+    ///       exit_code) is NOT there — it is written only from PhaseLog's
+    ///       AppDomain.ProcessExit hook (see WriteProcessRecord), which a SIGKILL never
+    ///       fires. Asserting this here rather than silently is the point: it is a real,
+    ///       currently-unfixed gap distinct from the bundle/app rows fixed above, and a
+    ///       future change to close it should start by making this assertion fail.
+    /// These two claims used to be separate tests, each starting its own server; they
+    /// were merged because they exercise the identical flow (same env, same runTests,
+    /// same SIGKILL, same log file) and the second one's only distinct assertion was the
+    /// Assert.Empty below — folding costs one server spawn (~18s) and no claim.
     /// </summary>
     [SkippableFact]
     public async Task KilledServerProcess_StillWritesBundleAndAppRowsForCompletedWork()
@@ -148,9 +160,8 @@ public sealed class PhaseLogServerKillTests : IDisposable
         }
 
         // The server process is now dead. If the bundle/app rows were only ever
-        // deferred to process exit (the way the process-level row is), this file
-        // would not exist at all — see KilledServerProcess_StillHasNoProcessLevelRow
-        // below for the row that DOES still require a graceful exit.
+        // deferred to process exit (the way the process-level row checked at (b) below
+        // is), this file would not exist at all.
         Assert.True(File.Exists(_logPath),
             $"no phase log written (server outer pid {pid}) — the killed server produced no rows at all");
 
@@ -176,37 +187,11 @@ public sealed class PhaseLogServerKillTests : IDisposable
         // compile — a stub returning cache_hits=0/cache_misses=0 would fail this.
         Assert.Equal(1, appRow.GetProperty("cache_misses").GetInt32());
         Assert.Equal(0, appRow.GetProperty("cache_hits").GetInt32());
-    }
 
-    /// <summary>
-    /// The honest complement to the test above: the once-per-process "process" kind
-    /// row (patches_ms, peak_rss_bytes, exit_code) is written only from PhaseLog's
-    /// AppDomain.ProcessExit hook — see WriteProcessRecord — which a SIGKILL never
-    /// fires. Documenting this here rather than silently is the point: it is a real,
-    /// currently-unfixed gap distinct from the bundle/app rows fixed above, and a
-    /// future change to close it should start by making this assertion fail.
-    /// </summary>
-    [SkippableFact]
-    public async Task KilledServerProcess_StillHasNoProcessLevelRow()
-    {
-        TestArtifacts.SkipIfMissing();
-
-        var bundle = MakeFixtureBundle(out _);
-        try
-        {
-            await using var server = await CliServer.StartAsync(ExtraServerArgs(),
-                extraEnv: new Dictionary<string, string> { ["AL_RUNNER_PHASE_LOG"] = _logPath });
-            var lines = await server.SendRequestStreamingAsync(RunTestsReq(bundle));
-            Assert.Equal("summary", JsonDocument.Parse(lines[^1]).RootElement.GetProperty("type").GetString());
-        }
-        finally
-        {
-            try { Directory.Delete(bundle, recursive: true); } catch { }
-        }
-
-        // _logPath is exclusive to this one CliServer session (fresh temp dir per test),
-        // so ANY "process" row here would have to come from this session's worker or
-        // its re-exec parent(s) — none of which reached a graceful exit.
+        // (b) the honest complement, against the same artifact: _logPath is exclusive to
+        // this one CliServer session (fresh temp dir per test), so ANY "process" row here
+        // would have to come from this session's worker or its re-exec parent(s) — none
+        // of which reached a graceful exit.
         Assert.Empty(ReadRecords(_logPath, "process"));
     }
 
