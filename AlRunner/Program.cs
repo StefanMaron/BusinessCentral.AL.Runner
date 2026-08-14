@@ -1975,7 +1975,7 @@ if (watchUi)
             watchScroll = PaintWatchViewport(lines, watchScroll);
         });
     if (armed == null) return 0;
-    var (signal, watchers) = armed.Value;
+    var (signal, watchers, watchActivity) = armed.Value;
     bool changed = false;
     // Console.KeyAvailable throws InvalidOperationException when stdin is redirected
     // (a pipe/file rather than a real terminal). We still want the dashboard + file
@@ -1985,7 +1985,10 @@ if (watchUi)
     {
         while (true)
         {
-            if (signal.IsSet) { System.Threading.Thread.Sleep(250); changed = true; break; }
+            // #1904: quiescence, not a fixed sleep after only the first event — a branch
+            // switch/bulk rewrite keeps this re-armed until the tree actually stops
+            // changing, instead of starting a cycle against a half-applied checkout.
+            if (signal.IsSet) { WatchSource.WaitForQuiescence(watchActivity); changed = true; break; }
 
             if (keyboard && SafeKeyAvailable())
             {
