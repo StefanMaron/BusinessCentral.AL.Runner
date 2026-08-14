@@ -57,7 +57,7 @@ public sealed class StartupJitModeTests : IDisposable
     /// absent. Asserting on the marker rather than a process count keeps it independent of
     /// the ncl-cecil cache state, which legitimately adds its own labelled re-exec when cold.
     /// </summary>
-    [Fact]
+    [SkippableFact]
     public void Runner_DoesNotReexecToDisableReadyToRun()
     {
         TestArtifacts.SkipIfMissing();
@@ -88,7 +88,7 @@ public sealed class StartupJitModeTests : IDisposable
     /// all, and the FullOpts ceiling catches a partial regression that still admitted some
     /// tier-0 code.
     /// </summary>
-    [Fact]
+    [SkippableFact]
     public void Runner_JitsAtTier0_NotFullOpts()
     {
         TestArtifacts.SkipIfMissing();
