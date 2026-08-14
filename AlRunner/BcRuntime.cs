@@ -301,19 +301,66 @@ public static partial class BcRuntime
     internal static Assembly? CurrentTestAssembly => _currentTestAssembly;
 
     /// <summary>
-    /// True when <paramref name="asm"/> is a previous bundle assembly that is still
-    /// loaded after a server reload — same simple name as the current bundle
-    /// assembly (we re-emit under the identical module name) but a different
-    /// instance. AL-output scans that enumerate every loaded assembly (e.g. the
-    /// event-subscriber registry) must skip these so stale triggers/subscribers
-    /// don't double-register. Returns false in normal one-shot mode (no reload).
+    /// For every bundle-emitted assembly's simple name, the assembly instance from the
+    /// MOST RECENT compile of that app within this process — populated by
+    /// <see cref="SetTestAssembly"/> for every app it loads, not only the one currently
+    /// executing. .NET cannot unload assemblies, so a warm process that re-runs the same
+    /// bundle SET more than once (server mode / <c>--watch</c>) leaves every earlier
+    /// generation of EVERY app resident under its identical simple name (we re-emit under
+    /// the same module name each cycle).
+    ///
+    /// This is what makes <see cref="IsStaleBundleAssembly"/> correct for a cross-app
+    /// call: comparing only against <see cref="CurrentTestAssembly"/> (the old
+    /// implementation) can identify a stale generation of the app that is CURRENTLY
+    /// executing, but is blind to a stale generation of a SIBLING/dependency app that is
+    /// not the one currently executing — e.g. app B's tests running while app A (a
+    /// dependency B just called into) was edited and recompiled since the last cycle.
+    /// That gap is issue #1901: a call from B's test code into A's just-edited codeunit
+    /// resolved whichever generation of A's assembly <c>AppDomain.CurrentDomain
+    /// .GetAssemblies()</c> happened to enumerate first — unspecified order, and in
+    /// practice the OLDEST (first-loaded) generation — so the test kept passing against
+    /// A's pre-edit behaviour.
+    /// </summary>
+    private static readonly ConcurrentDictionary<string, Assembly> _latestGenerationByAssemblyName =
+        new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Records <paramref name="asm"/> as the current generation for its own simple name,
+    /// superseding whatever this process previously registered under that name. Called
+    /// from <see cref="SetTestAssembly"/> for every app it loads (own bundle AND every
+    /// sibling in a multi-bundle invocation), so the registry stays accurate for apps
+    /// that are not currently executing too — see <see cref="_latestGenerationByAssemblyName"/>.
+    /// </summary>
+    private static void RegisterAssemblyGeneration(Assembly asm)
+    {
+        var name = asm.GetName().Name;
+        if (name != null) _latestGenerationByAssemblyName[name] = asm;
+    }
+
+    /// <summary>
+    /// True when <paramref name="asm"/> is a previous-cycle generation of a bundle
+    /// assembly that is still resident after a server/watch reload — same simple name as
+    /// SOME app's current generation (we re-emit under the identical module name) but a
+    /// different instance. AL-output scans that enumerate every loaded assembly (the
+    /// event-subscriber registry, the Record/Codeunit/Page/… type finders) must skip
+    /// these so a stale generation can never answer for an AL object name — whether that
+    /// object still exists in the new generation or was deleted between cycles (the
+    /// "tombstone" case from #1901: skipping every type in a stale assembly means a
+    /// removed object can never be found there either).
+    ///
+    /// Backed by <see cref="_latestGenerationByAssemblyName"/> so this is accurate for
+    /// EVERY app registered via <see cref="SetTestAssembly"/>, not only whichever one is
+    /// <see cref="CurrentTestAssembly"/> right now (see that field's registration comment
+    /// for why the old current-assembly-only check missed cross-app calls). Returns false
+    /// for an assembly whose simple name was never registered (e.g. a genuine
+    /// service-tier/dependency DLL, or normal one-shot mode with no reload).
     /// </summary>
     internal static bool IsStaleBundleAssembly(Assembly asm)
     {
-        var cur = _currentTestAssembly;
-        return cur != null
-            && !ReferenceEquals(asm, cur)
-            && asm.GetName().Name == cur.GetName().Name;
+        var name = asm.GetName().Name;
+        return name != null
+            && _latestGenerationByAssemblyName.TryGetValue(name, out var latest)
+            && !ReferenceEquals(asm, latest);
     }
 
     /// <param name="wireFieldTriggers">
@@ -339,6 +386,11 @@ public static partial class BcRuntime
             return;
         }
         _currentTestAssembly = asm;
+        // Superseding registration for asm's OWN simple name — see
+        // _latestGenerationByAssemblyName's doc comment (#1901). Unconditional: this must
+        // happen for every app SetTestAssembly loads, not only whichever one ends up being
+        // CurrentTestAssembly when a cross-app call actually needs to resolve it.
+        RegisterAssemblyGeneration(asm);
         _codeunitTypeCache.Clear();
         // NavApp.GetResource: bind this emitted assembly to the current bundle dir
         // (its app.json resourceFolders are where the app's resource bytes live).

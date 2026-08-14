@@ -421,7 +421,10 @@ public static class EventSubscriberPatches
     // serves all four object kinds.
     private static Type? FindObjectEventClrType(string publisherKind, int publisherId)
     {
-        if (_objectEventTypeCache.TryGetValue((publisherKind, publisherId), out var cached)) return cached;
+        // See FindClrType's matching comment — same self-healing requirement (#1901).
+        if (_objectEventTypeCache.TryGetValue((publisherKind, publisherId), out var cached)
+            && (cached == null || !BcRuntime.IsStaleBundleAssembly(cached.Assembly)))
+            return cached;
         var found = ResolveBusinessApplicationType(publisherKind + publisherId);
         _objectEventTypeCache[(publisherKind, publisherId)] = found;
         return found;
@@ -429,7 +432,15 @@ public static class EventSubscriberPatches
 
     private static Type? FindClrType(Dictionary<int, Type?> cache, string namePrefix, int objectId)
     {
-        if (cache.TryGetValue(objectId, out var cached)) return cached;
+        // A cached hit is only trustworthy while its assembly is still the CURRENT
+        // generation. A lookup that ran early in a cycle (before every app had
+        // (re)compiled — see PruneStaleSubscribers' doc comment) can cache the
+        // PREVIOUS cycle's Type; that entry never expires on its own, so without this
+        // check it would keep answering with a stale Type for the rest of the
+        // process even after the fresh generation registers (issue #1901).
+        if (cache.TryGetValue(objectId, out var cached)
+            && (cached == null || !BcRuntime.IsStaleBundleAssembly(cached.Assembly)))
+            return cached;
         var found = ResolveBusinessApplicationType(namePrefix + objectId);
         cache[objectId] = found;
         return found;
@@ -713,6 +724,26 @@ public static class EventSubscriberPatches
     }
 
     /// <summary>
+    /// Remove every subscriber entry whose declaring type's assembly is currently a stale
+    /// bundle generation (<see cref="BcRuntime.IsStaleBundleAssembly"/>) from every
+    /// discovery dictionary. Must be called with <see cref="_lock"/> already held. See the
+    /// call site in <see cref="EnsureRegistryFresh"/> for why this needs to run on every
+    /// re-scan, not just be relied on to never happen in the first place.
+    /// </summary>
+    private static void PruneStaleSubscribers()
+    {
+        foreach (var kv in _byKey)
+            kv.Value.RemoveAll(h => BcRuntime.IsStaleBundleAssembly(h.Method.DeclaringType!.Assembly));
+        foreach (var kv in _byCodeunitKey)
+            kv.Value.RemoveAll(m => BcRuntime.IsStaleBundleAssembly(m.DeclaringType!.Assembly));
+        foreach (var kv in _byTableEventKey)
+            kv.Value.RemoveAll(m => BcRuntime.IsStaleBundleAssembly(m.DeclaringType!.Assembly));
+        foreach (var kv in _byObjectEventKey)
+            kv.Value.RemoveAll(m => BcRuntime.IsStaleBundleAssembly(m.DeclaringType!.Assembly));
+        _validateSubs.RemoveAll(v => BcRuntime.IsStaleBundleAssembly(v.Handle.Method.DeclaringType!.Assembly));
+    }
+
+    /// <summary>
     /// Discovery: walk loaded assemblies for [NavEventSubscriberAttribute] methods, index
     /// by (publisher id, NavTriggerEventType ordinal). Incremental — only re-scans when the
     /// assembly count grows.
@@ -725,6 +756,22 @@ public static class EventSubscriberPatches
         {
             asms = AppDomain.CurrentDomain.GetAssemblies();
             if (asms.Length == _lastScannedCount) return;
+
+            // A discovery scan can run BEFORE every app in the current cycle has
+            // (re)compiled — e.g. PopulateNclMetadataCache's own InjectAll call fires
+            // during a dependency app's source-registration pass, ahead of that same
+            // app's own SetTestAssembly for THIS cycle. At that instant the previous
+            // cycle's generation is still the only (and therefore "latest") one
+            // BcRuntime knows about, so it is correctly, but only TEMPORARILY, not
+            // stale — the scan below adds its [EventSubscriber] methods faithfully.
+            // Once the dependency's fresh generation registers moments later, that
+            // earlier entry becomes stale but nothing before this line ever revisits
+            // it: dictionaries only ever grow. Prune every entry whose declaring
+            // assembly IS stale RIGHT NOW, before adding anything new, so a
+            // superseded generation's subscriber can never coexist with (and
+            // double-fire alongside) the fresh one, or survive alone if the fresh
+            // scan hasn't found its replacement yet (issue #1901).
+            PruneStaleSubscribers();
 
             int added = 0;
             int scannedAttrs = 0;
