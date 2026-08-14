@@ -19,10 +19,23 @@
     <AssemblyName>al-runner</AssemblyName>
     <RootNamespace>AlRunner</RootNamespace>
 
-    <!-- v2 stability constraint: JMP-hook patches written at tier-0 addresses are
-         overwritten when .NET promotes hot methods to tier-1. Tiered compilation
-         must stay off until every JmpHook has been migrated to Cecil IL rewriting. -->
-    <TieredCompilation>false</TieredCompilation>
+    <!-- Tiered compilation is ON (the .NET default — deliberately not restated here).
+         It used to be disabled: "JMP-hook patches written at tier-0 addresses are
+         overwritten when .NET promotes hot methods to tier-1. Tiered compilation must
+         stay off until every JmpHook has been migrated to Cecil IL rewriting."
+
+         That migration is done — JmpHook.ComputeDisabled() hard-returns true and a real
+         run reports "STARTUP-READY: 0 hooks applied" — and the premise no longer applies
+         either way: Cecil patches live in the IL, so tier-0 and tier-1 both compile the
+         already-patched body and promotion cannot undo them.
+
+         Leaving it off cost real time. With tiering disabled, 8662 of the 9264 methods a
+         single cached test compiles went through the JIT at FULL optimisation (93.5%);
+         with it on, 15082 compile at tier-0 and only 142 at FullOpts. Measured on 4 vCPU:
+         9.50s -> 8.29s warm on its own, 6.97s combined with the removal of the
+         DOTNET_ReadyToRun=0 re-exec (see Program.cs), and the 2076-test corpus run also
+         improved (156.0s -> 133.7s) with an unchanged fail-set.
+         Regression cover: AlRunner.Tests/StartupJitModeTests. -->
 
     <!-- dotnet tool packaging -->
     <PackAsTool>true</PackAsTool>

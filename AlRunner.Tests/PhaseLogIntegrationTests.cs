@@ -285,26 +285,30 @@ public sealed class PhaseLogIntegrationTests : IDisposable
         Assert.All(bundleRows, r =>
             Assert.Equal(proc.GetProperty("pid").GetInt32(), r.GetProperty("pid").GetInt32()));
 
-        // One "runner spawn" is not one OS process. The runner re-execs itself with
-        // DOTNET_ReadyToRun=0 on every invocation that does not already have it set
-        // (the [r2r] branch), and again after a fresh Cecil rewrite of Ncl.dll — so a
-        // cold spawn is up to THREE processes, each waiting on the next. Every outer
-        // process's wall clock contains its child's, so summing them all under
-        // kind=="process" would multiply every total the aggregate reports. They are
-        // kept, under a distinct kind, because outer − inner is the real cost of an
-        // extra process start — a per-spawn tax worth sizing, not worth hiding.
+        // One "runner spawn" is not necessarily one OS process. The runner re-execs itself
+        // after a fresh Cecil rewrite of Ncl.dll, so a COLD spawn is two processes, each
+        // waiting on the next. Every outer process's wall clock contains its child's, so
+        // summing them all under kind=="process" would multiply every total the aggregate
+        // reports. They are kept, under a distinct kind, because outer − inner is the real
+        // cost of an extra process start — a per-spawn tax worth sizing, not worth hiding.
         //
         // Asserted against the re-exec markers the runner prints rather than a fixed
         // count: EVERY re-exec path must be labelled, and this fails if a new one is
         // added without labelling it, or an existing label is dropped.
+        //
+        // There used to be a second, unconditional re-exec here (the [r2r] branch, which
+        // restarted the process with DOTNET_ReadyToRun=0). It is gone, so on a warm
+        // ncl-cecil cache a spawn is legitimately ONE process and both sides of this
+        // equality are 0. That is why the old `expectedParents >= 1` guard — which existed
+        // to stop the equality being vacuous, and relied on the [r2r] branch firing every
+        // time — could not be kept. The labelled-re-exec invariant it protected is now
+        // covered directly by StartupJitModeTests, which asserts the [r2r] marker is absent
+        // AND the run still passes, so a silently-reintroduced unlabelled re-exec fails
+        // there rather than passing quietly here.
         var expectedParents =
             CountOccurrences(output, "[r2r] re-execing")
             + CountOccurrences(output, "[Cecil] Fresh rewrite done");
         var parents = ReadRecords(_logPath, "process-reexec-parent");
-        // Not vacuous: the DOTNET_ReadyToRun=0 re-exec fires on every invocation that
-        // does not already have it preset, so there is always at least one.
-        Assert.True(expectedParents >= 1,
-            $"no re-exec marker in the runner output — the assertion below would be vacuous:\n{output}");
         Assert.Equal(expectedParents, parents.Count);
         Assert.All(parents, parent =>
         {

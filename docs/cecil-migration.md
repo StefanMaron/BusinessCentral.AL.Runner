@@ -83,7 +83,22 @@ Each migration: ~5-30 lines of Cecil + delete the corresponding JmpHook code. Pe
 ### Phase 5 — Remove JmpHook infrastructure
 Once no callers remain:
 - Delete JmpHook implementation
-- Re-enable tiered JIT (`<TieredCompilation>true</TieredCompilation>`)
+- [x] Re-enable tiered JIT — done by *removing* `<TieredCompilation>false</TieredCompilation>`
+  from `AlRunner.csproj` rather than restating the .NET default. `JmpHook.ComputeDisabled()`
+  hard-returns true and a real run reports `STARTUP-READY: 0 hooks applied`, so the
+  tier-promotion hazard has no target; Cecil patches live in the IL and every tier compiles
+  the already-patched body.
+- [x] Removed the companion `DOTNET_ReadyToRun=0` re-exec in `Program.cs`. Same root cause,
+  and additionally moot: BC ships its service-tier DLLs IL-only (`Ncl.dll`/`Types.dll` read
+  `machine=0x14c` with a zero-size `CorHeader.ManagedNativeHeader`), so there was never any
+  precompiled BC code for the JIT to inline past. The flag only suppressed the .NET
+  framework's own R2R images, costing ~3,300 extra JIT compilations plus one OS process
+  per spawn.
+
+Measured together on 4 vCPU, one cached test: **9.50s → 6.97s warm (−26.7%)**, 14.4s → 10.8s
+cold, and the 2076-test corpus run 156.0s → 133.7s — with the fail-set unchanged at 2076/2076
+in every configuration. Of the 9,264 methods that run compiled, 93.5% were at `FullOpts`
+before and 0.7% after. Regression cover: `AlRunner.Tests/StartupJitModeTests`.
 
 ## Cross-cutting rules that still apply
 

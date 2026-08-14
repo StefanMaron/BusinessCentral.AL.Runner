@@ -123,10 +123,12 @@ internal static class RunnerFingerprint
     /// <item><description><b>Environment variables</b>: audited every
     /// <c>Environment.GetEnvironmentVariable</c> read reachable from the emit/compile path
     /// (<c>AL_RUNNER_EMIT_TIMEOUT_SEC</c>, <c>BCCOMPILER_TIMING</c>/<c>_DIAG</c>/
-    /// <c>_TRACE</c>/<c>_DUMP_CS</c>, <c>AL_RUNNER_ENABLE_R2R</c>/<c>_R2R_REEXECED</c>).
-    /// All are diagnostics, timing output, a debug dump-to-disk side effect, or control
-    /// the runner PROCESS's own R2R execution mode — none alter what bytes
-    /// <c>compilation.Emit</c> produces. None found that qualify.</description></item>
+    /// <c>_TRACE</c>/<c>_DUMP_CS</c>). All are diagnostics, timing output or a debug
+    /// dump-to-disk side effect — none alter what bytes <c>compilation.Emit</c> produces.
+    /// None found that qualify. (This list also covered <c>AL_RUNNER_ENABLE_R2R</c> and
+    /// <c>AL_RUNNER_R2R_REEXECED</c>, which controlled the runner PROCESS's own R2R
+    /// execution mode and likewise did not qualify; both were removed with the
+    /// DOTNET_ReadyToRun=0 re-exec — see Program.cs.)</description></item>
     /// <item><description><b>BC artifact content vs. the version string</b> — this is the
     /// one real gap, narrow and CI-safe. <see cref="BcArtifacts.SelectedVersion"/> is
     /// always the FULL four-part version (<c>System.Version.Parse</c> of the matched
