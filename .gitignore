@@ -78,3 +78,11 @@ AlRunner/Win32Stubs/*.so
 # leave one behind — ignore it so a stray copy never shows up as untracked or gets
 # swept into a `git add -A`.
 /.build-determinism-probe-*/
+
+# The DOTNET_STARTUP_HOOKS runsettings for the in-process BC engine tests is GENERATED,
+# never authored: test-matrix.yml writes it fresh per leg (see its "Generate .runsettings"
+# step) and anyone running the suite locally writes their own. It embeds ABSOLUTE paths to
+# AlRunner.Tests' bin dir, so a committed copy would be wrong on every machine but the one
+# that produced it — and CI would silently overwrite it anyway. Same rationale as #1881
+# above: keep a stray copy from showing up as untracked or being swept into `git add -A`.
+/engine.runsettings
