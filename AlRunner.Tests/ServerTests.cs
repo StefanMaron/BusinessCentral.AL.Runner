@@ -26,6 +26,18 @@ namespace AlRunner.Tests;
 /// combined a cache-behaviour claim and a process-lifecycle claim in one
 /// method; splitting them is what makes the cache-behaviour half safe to move
 /// onto a server other facts also use.
+///
+/// Condition (c) of SharedCliServer's doc comment (distinct AppId per call
+/// site sharing this process — see its comment for why a shared AppId is
+/// unsafe via <c>DependencyLoader.TryGetByAppId</c>'s cross-request reuse):
+/// verified, not just assumed. Each bundle generator's AppId here
+/// (<c>MakeTempBundle</c>'s fixture, <c>MakeExecuteBundle</c>,
+/// <c>MakeAppTestPair</c>'s two apps) is used by exactly ONE fact in this
+/// class, so no two facts sharing this server ever present the same AppId at
+/// two different SourcePaths. <c>RunTests_Then_EditTable_Then_RunAgain_PicksUpChange</c>'s
+/// three requests reuse the SAME bundle/SourcePath repeatedly on purpose —
+/// TryGetByAppId's own same-SourcePath carve-out means that is never treated
+/// as a reuse, it is the edit-and-rerun contract the test exists to prove.
 /// </summary>
 public class ServerTests : IClassFixture<SharedCliServer>
 {

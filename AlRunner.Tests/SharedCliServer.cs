@@ -38,11 +38,26 @@ namespace AlRunner.Tests;
 ///  (b) don't tear the process down (shutdown/kill) as part of what they're
 ///      proving — a fact that shuts the shared server down would break every
 ///      fact that runs after it in the same class;
-///  (c) use bundle content unique enough (distinct app IDs / distinct
-///      table+codeunit bodies) that one fact's compiled-and-cached AL output
-///      cannot masquerade as another fact's expected-fresh compile — each
-///      converted class in this repo satisfies this today because every
-///      fixture bundle already carries its own fixed, distinct app ID.
+///  (c) give each bundle-generating call site its OWN app ID, distinct from
+///      every other call site sharing this server — not merely "distinct
+///      content". <c>DependencyLoader.TryGetByAppId</c> (see
+///      DependencyLoader.cs) caches a compiled module by AppId for the
+///      lifetime of the SERVER PROCESS and returns that cached module for
+///      ANY later request whose bundle reports a MATCHING AppId at a
+///      DIFFERENT SourcePath, regardless of whether the bundle's actual
+///      source content differs — it is not the AL-output content cache, and
+///      content equality does not make a shared AppId safe, only
+///      coincidentally harmless until someone edits one call site's AL
+///      without also editing the others. (The one exception:
+///      <c>TryGetByAppId</c> deliberately does NOT reuse when the cached
+///      entry's SourcePath equals the one being asked about — that is one
+///      fact re-running the SAME bundle path more than once, e.g.
+///      ServerTests' edit-and-rerun test, which is fine.) Every converted
+///      class's bundle generator in this repo now takes a variant/index
+///      parameter for exactly this reason — see ServerTestIsolationTests and
+///      ServerStreamingTests. SharedCliServerTests deliberately does the
+///      opposite on purpose, reusing one fixed AppId across two calls, to
+///      prove isolation holds even when this cross-request reuse fires.
 ///
 /// ServerTests' shutdown-lifecycle fact and all of ServerCancelTests (each
 /// fact independently exercises a fresh `cancel`/`runTests` race that #1809

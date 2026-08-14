@@ -19,13 +19,22 @@ namespace AlRunner.Tests;
 ///     a noisy CI runner and, worse, would not fail if the saving regressed on
 ///     a fast box (see the issue's own noise-floor measurements: a 25% swing
 ///     between two runs of the SAME commit is normal here).
-///  2. Sharing does not leak state — running the SAME bundle identity twice
-///     through the SAME shared server must give the SECOND run the SAME fresh
-///     company/database state the FIRST run got, not the first run's leftover
-///     rows. If TestExecutor's per-bundle company reset only ran once per OS
-///     process (rather than once per request) — the exact regression a naive
-///     "just don't restart the process" change could introduce — this test
-///     fails, not passes.
+///  2. Sharing does not leak state — running the SAME bundle identity (same
+///     AppId) twice through the SAME shared server must give the SECOND run
+///     the SAME fresh company/database state the FIRST run got, not the
+///     first run's leftover rows. This deliberately keeps ONE fixed AppId
+///     across both calls (unlike ServerTestIsolationTests/ServerStreamingTests,
+///     which now give every call site its own AppId — see SharedCliServer's
+///     class doc comment on condition (c)) specifically to exercise
+///     <c>DependencyLoader.TryGetByAppId</c>'s real cross-request reuse path:
+///     the second call's bundle sits at a different SourcePath but the same
+///     AppId, so the server reuses run 1's ALREADY-COMPILED module for run 2
+///     (asserted below via the response's own <c>cached</c> field) rather than
+///     compiling a second, distinct one. If TestExecutor's per-request company
+///     reset only ran once per OS process (rather than once per request) — the
+///     exact regression a naive "just don't restart the process" change could
+///     introduce, and the exact shape the review that hardened this test was
+///     about — this test fails, not passes.
 /// </summary>
 public class SharedCliServerTests
 {
@@ -33,6 +42,11 @@ public class SharedCliServerTests
     // bundle must report the SAME shape (table starts empty, ends with 3 rows).
     // If a prior run's rows leaked forward, the "table must start EMPTY" guard
     // inside the AL test itself fires and the run FAILS instead of PASSING.
+    //
+    // Fixed AppId on every call — see the class doc comment on why that is
+    // deliberate here (this test exists specifically to prove isolation holds
+    // THROUGH DependencyLoader.TryGetByAppId's cross-request module reuse, not
+    // to avoid it).
     private static string MakeIsolationProbeBundle()
     {
         var dir = Path.Combine(Path.GetTempPath(), "al-runner-shared-server-isolation", Guid.NewGuid().ToString("N"));
@@ -176,6 +190,16 @@ public class SharedCliServerTests
             var (_, d2) = ProtocolV2Streaming.Split(lines2);
             Assert.Equal(1, d2.GetProperty("passed").GetInt32());
             Assert.Equal(0, d2.GetProperty("failed").GetInt32());
+            // Confirms this test actually exercised the risky path rather than
+            // incidentally getting a fresh compile: run 2's SourcePath differs
+            // from run 1's, so a `cached:true` here can only come from
+            // DependencyLoader.TryGetByAppId serving run 1's already-compiled
+            // module (see RunBundleForServer's `cached = reusedAsm != null`) —
+            // the exact mechanism named in the class doc comment above.
+            Assert.True(d2.GetProperty("cached").GetBoolean(),
+                "expected run 2 to be served via AppId-based module reuse (same AppId, " +
+                "different SourcePath) — if this is false the test is no longer proving " +
+                "isolation survives that specific reuse path.");
             Assert.Equal(1, shared.SpawnCount); // still one process — the isolation is per-REQUEST, not per-process.
         }
         finally

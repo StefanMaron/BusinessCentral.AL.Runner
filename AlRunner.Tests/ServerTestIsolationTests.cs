@@ -13,16 +13,26 @@ namespace AlRunner.Tests;
 /// See DefineFlagIntegrationTests for why this used to be
 /// [Collection("server-serial")] and no longer is — #1809.
 ///
-/// #1804: all four facts share ONE server process via SharedCliServer. The
-/// third fact (RunTests_TestIsolationDoesNotStickAcrossRequests) already
-/// proved same-process, multiple-request behaviour is correct before this
-/// change — this class extends that same proven pattern to all four facts,
-/// not a new risk. Every fact's bundle carries the same fixed app ID
-/// (MakeIsolationBundle), which is fine: the AL-output compile cache keys on
-/// content, testIsolation is a per-request runtime field never baked into the
-/// compiled cache entry, so repeat compiles of identical content across facts
-/// just mean later facts get compile-cache HITs — it does not change what any
-/// assertion observes.
+/// #1804: all four facts share ONE server process via SharedCliServer.
+///
+/// #1804 review follow-up: this class's bundle generator now takes a
+/// <c>variant</c> so each of the five call sites (four facts, one of them —
+/// RunTests_TestIsolationDoesNotStickAcrossRequests — calling it twice)
+/// produces a DISTINCT app ID and object-ID range, not the one originally
+/// hardcoded id shared by all of them. That is not cosmetic:
+/// <c>DependencyLoader.TryGetByAppId</c> (see DependencyLoader.cs) caches a
+/// compiled module by AppId for the lifetime of the SERVER PROCESS, and
+/// returns the cached module for any LATER request whose bundle reports a
+/// matching AppId at a DIFFERENT SourcePath — regardless of whether that
+/// bundle's actual source content differs. Sharing one server process across
+/// facts (this class's whole point) means every fact's request now runs
+/// through that same process-lifetime cache, so a shared AppId across facts
+/// would mean fact 2+ silently gets fact 1's compiled module back instead of
+/// its own — harmless today only because every call site happened to produce
+/// byte-identical content, and a live bug the moment anyone edits one call
+/// site's table/codeunit body without also touching the others. Distinct
+/// AppIds per call site route every fact through a genuine fresh compile
+/// instead of resting on that coincidence.
 /// </summary>
 public class ServerTestIsolationTests : IClassFixture<SharedCliServer>
 {
@@ -35,25 +45,31 @@ public class ServerTestIsolationTests : IClassFixture<SharedCliServer>
     // inside one codeunit), the second Insert must fail with a duplicate-key error.
     // Under TestIsolation.Test ("test"/"method"), state resets before every [Test]
     // proc, so both Insert calls succeed independently.
-    private static string MakeIsolationBundle()
+    //
+    // `variant` gives each call site its own AppId (last hex digit) and its own
+    // object-ID range (offset by variant*10 from the base 60170) — see the class
+    // doc comment for why a shared AppId across call sites is unsafe once facts
+    // share a server process.
+    private static string MakeIsolationBundle(int variant)
     {
         var dir = Path.Combine(Path.GetTempPath(), "al-runner-server-isolation", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(dir);
-        File.WriteAllText(Path.Combine(dir, "app.json"), """
+        var baseId = 60170 + variant * 10;
+        File.WriteAllText(Path.Combine(dir, "app.json"), $$"""
         {
-          "id": "f3a4b5c6-d7e8-4f90-a1b2-c3d4e5f60718",
-          "name": "Runner Extras - Server Isolation Probe",
+          "id": "f3a4b5c6-d7e8-4f90-a1b2-c3d4e5f6071{{variant:x1}}",
+          "name": "Runner Extras - Server Isolation Probe {{variant}}",
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [],
           "platform": "1.0.0.0",
           "application": "1.0.0.0",
-          "idRanges": [ { "from": 60170, "to": 60179 } ],
+          "idRanges": [ { "from": {{baseId}}, "to": {{baseId + 9}} } ],
           "runtime": "14.0"
         }
         """);
-        File.WriteAllText(Path.Combine(dir, "IsoTable.Table.al"), """
-        table 60170 "Server Isolation Probe Tbl"
+        File.WriteAllText(Path.Combine(dir, "IsoTable.Table.al"), $$"""
+        table {{baseId}} "Server Isolation Probe Tbl {{variant}}"
         {
             fields
             {
@@ -62,15 +78,15 @@ public class ServerTestIsolationTests : IClassFixture<SharedCliServer>
             keys { key(PK; "Code") { Clustered = true; } }
         }
         """);
-        File.WriteAllText(Path.Combine(dir, "IsoTest.Codeunit.al"), """
-        codeunit 60170 "Server Isolation Probe SX"
+        File.WriteAllText(Path.Combine(dir, "IsoTest.Codeunit.al"), $$"""
+        codeunit {{baseId}} "Server Isolation Probe SX {{variant}}"
         {
             Subtype = Test;
 
             [Test]
             procedure InsertsFixedKey_First()
             var
-                Rec: Record "Server Isolation Probe Tbl";
+                Rec: Record "Server Isolation Probe Tbl {{variant}}";
             begin
                 Rec.Init();
                 Rec."Code" := 'FIXED';
@@ -80,7 +96,7 @@ public class ServerTestIsolationTests : IClassFixture<SharedCliServer>
             [Test]
             procedure InsertsFixedKey_Second()
             var
-                Rec: Record "Server Isolation Probe Tbl";
+                Rec: Record "Server Isolation Probe Tbl {{variant}}";
             begin
                 Rec.Init();
                 Rec."Code" := 'FIXED';
@@ -105,7 +121,7 @@ public class ServerTestIsolationTests : IClassFixture<SharedCliServer>
     {
         TestArtifacts.SkipIfMissing();
 
-        var bundle = MakeIsolationBundle();
+        var bundle = MakeIsolationBundle(variant: 0);
         var server = await _fixture.GetAsync();
 
         var lines = await server.SendRequestStreamingAsync(Req(bundle, testIsolation: null));
@@ -121,7 +137,7 @@ public class ServerTestIsolationTests : IClassFixture<SharedCliServer>
     {
         TestArtifacts.SkipIfMissing();
 
-        var bundle = MakeIsolationBundle();
+        var bundle = MakeIsolationBundle(variant: 1);
         var server = await _fixture.GetAsync();
 
         var lines = await server.SendRequestStreamingAsync(Req(bundle, testIsolation: "method"));
@@ -141,8 +157,8 @@ public class ServerTestIsolationTests : IClassFixture<SharedCliServer>
         // request 1.
         TestArtifacts.SkipIfMissing();
 
-        var bundle1 = MakeIsolationBundle();
-        var bundle2 = MakeIsolationBundle();
+        var bundle1 = MakeIsolationBundle(variant: 2);
+        var bundle2 = MakeIsolationBundle(variant: 3);
         var server = await _fixture.GetAsync();
 
         var lines1 = await server.SendRequestStreamingAsync(Req(bundle1, testIsolation: "method"));
@@ -160,7 +176,7 @@ public class ServerTestIsolationTests : IClassFixture<SharedCliServer>
     {
         TestArtifacts.SkipIfMissing();
 
-        var bundle = MakeIsolationBundle();
+        var bundle = MakeIsolationBundle(variant: 4);
         var server = await _fixture.GetAsync();
 
         var r = await server.SendAsync(Req(bundle, testIsolation: "bogus"));
