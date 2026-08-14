@@ -46,17 +46,30 @@
 // ------------------------------------------------
 // ITestCollectionOrderer is handed collection identities only — no durations, no test
 // counts, nothing that correlates (TestFilterFlagTests has 8 tests and 99 s;
-// CacheKeyDependencyClosureTests has 2 and 292 s). The only honest input is measurement,
+// CacheKeyDependencyClosureTests has 2 and 196 s). The only honest input is measurement,
 // so the numbers below are seconds observed in a real 4-way run, and
 // MeasuredWeights_NameOnlyTestClassesThatStillExist fails the build if one of them stops
 // naming a real class.
 //
-// Staleness is bounded by design rather than by discipline: a collection missing from the
-// table is treated as UnmeasuredWeightSeconds (30 s), which ranks it above every measured
-// collection below that and below the fifteen that are above it. A newly added slow class
-// therefore starts in the first half of the run — never last — while the ~66 collections
-// that genuinely cost milliseconds contribute 2.8 s in total and cannot displace anything
-// that matters. Re-measure with scripts/trx-occupancy.py when the shape changes.
+// #1887 corrected an over-optimistic claim that used to live in this paragraph: staleness
+// is NOT bounded to "never last". A collection missing from the table is weighted
+// UnmeasuredWeightSeconds (30 s), which ranks it below every measured collection above
+// that — and by the time the suite has ~20 measured entries above 30 s, "below all of
+// them" can land past the two-thirds mark of the run, not "the first half". That is
+// exactly what happened: InstallSeedDepCompanyCacheTests (196 s, added by #1867) and
+// CountBaselineIntegrationTests (84 s, added by #1882) both went unmeasured and were
+// dispatched at t=383 s and t=400 s of a 581 s run — a tail on every leg, silently, until
+// someone read a TRX occupancy report by hand.
+//
+// scripts/check-collection-weights.py is the loud guard that replaces "someone reads it by
+// hand": run against the same trx/unit-tests.trx the occupancy report already parses, it
+// fails CI when a collection above 2x UnmeasuredWeightSeconds is absent from this table —
+// the exact shape of both misses above. It deliberately does NOT flag drift on entries
+// that already exist (see its own header for why: the same class's summed duration varies
+// materially by BC leg, and a percentage-drift check on top of that would be a noisy gate
+// nobody trusts). Re-measure existing entries with scripts/trx-occupancy.py by hand when
+// the shape changes; the guard's job is only to stop a class from going unmeasured
+// forever.
 using Xunit;
 using Xunit.Abstractions;
 
@@ -86,10 +99,24 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
     public static readonly IReadOnlyDictionary<string, int> MeasuredWeightSeconds =
         new Dictionary<string, int>(StringComparer.Ordinal)
         {
-            ["CacheKeyDependencyClosureTests"] = 292,
             ["ServerCancelTests"] = 285,
+            // #1851/#1857 cut this from 292s to 196s (--print-cache-key skips the four cold
+            // AL compiles the class used to pay for). #1887 caught the table still saying
+            // 292 — harmless for ordering (it already ranked at the top either way), but it
+            // is the same silent-drift failure mode as the two entries below, just in the
+            // direction that costs nothing instead of the direction that costs a tail.
+            ["CacheKeyDependencyClosureTests"] = 196,
+            // #1887: added by #1867, absent from this table since — fell back to
+            // UnmeasuredWeightSeconds (30s) and got dispatched at t=383s of a 581s run,
+            // producing a 73s single-threaded tail (it is 3rd-heaviest at ~196s of serial
+            // work; see the file header and issue #1887 for the measured timeline).
+            ["InstallSeedDepCompanyCacheTests"] = 196,
             ["TestFilterFlagTests"] = 99,
             ["PhaseLogIntegrationTests"] = 85,
+            // #1887: added by #1882 (--count-baseline), absent from this table since — same
+            // fallback-to-30 failure as InstallSeedDepCompanyCacheTests above, dispatched at
+            // t=400s.
+            ["CountBaselineIntegrationTests"] = 84,
             ["ServerTests"] = 81,
             ["TestPageDrillDownDispatchTests"] = 75,
             ["ServerTestIsolationTests"] = 69,
