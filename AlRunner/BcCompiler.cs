@@ -1288,7 +1288,19 @@ public sealed class BcCompiler
         catch { /* best-effort warm — never block compilation */ }
     }
 
-    public BcEmitOutput Emit(IEnumerable<string> alFolders, string moduleName)
+    /// <param name="appRootDir">
+    /// The directory containing this app's own app.json — NOT <paramref name="alFolders"/>
+    /// (which is typically the src/ subdirectory). BC's compiler needs an <c>IFileSystem</c>
+    /// to resolve ControlAddIn resource paths (<c>Scripts</c>, <c>StartupScript</c>,
+    /// <c>StyleSheets</c>, <c>Images</c>) — those are declared relative to the app root, e.g.
+    /// <c>src/addin/startup.js</c>, not relative to the src/ folder itself. Without a file
+    /// system, BC cannot resolve ANY such path and raises AL0327 "Missing file" for every
+    /// declaration, even when the file is present at the declared path — see issue #1899.
+    /// Null is accepted (skips WithFileSystem entirely) for callers that don't have a known
+    /// app root, e.g. dependency compiles staging synthetic AL into a temp dir with no
+    /// resource files anyway.
+    /// </param>
+    public BcEmitOutput Emit(IEnumerable<string> alFolders, string moduleName, string? appRootDir = null)
     {
         var dirs = alFolders.Where(Directory.Exists).Distinct().ToList();
         if (dirs.Count == 0)
@@ -1345,6 +1357,15 @@ public sealed class BcCompiler
             appId: appId,
             syntaxTrees: trees,
             options: compOpts);
+
+        // #1899: give the compiler a file-access abstraction anchored at the APP ROOT
+        // (where app.json lives), not `dirs` (the src/ subdirectory this method receives
+        // as alFolders). Without an IFileSystem, BC's compiler cannot resolve ANY
+        // ControlAddIn resource path (Scripts/StartupScript/StyleSheets/Images) and raises
+        // AL0327 "Missing file" for every declaration, even when the file exists exactly
+        // where declared. RelativeFileSystem is a public BC API — no new dependency.
+        if (appRootDir != null && Directory.Exists(appRootDir))
+            compilation = compilation.WithFileSystem(new NavCA.RelativeFileSystem(appRootDir));
 
         // Suite-local .alpackages (rare in v2's corpus today, but cheap to honour).
         var bundleAlpackages = dirs
@@ -1526,6 +1547,11 @@ public sealed class BcCompiler
                     appId: appId,
                     syntaxTrees: retryTrees,
                     options: compOpts);
+                // #1899: same file system as the primary compile above — without it, a
+                // retry after excluding an unrelated broken object would still raise AL0327
+                // for a perfectly-resolvable ControlAddIn resource and could exclude it too.
+                if (appRootDir != null && Directory.Exists(appRootDir))
+                    retryCompilation = retryCompilation.WithFileSystem(new NavCA.RelativeFileSystem(appRootDir));
                 if (refLoader != null)
                 {
                     retryCompilation = retryCompilation.WithReferenceLoader(refLoader);
@@ -1822,9 +1848,17 @@ public sealed class BcCompiler
     /// only shipped a symbol-less synthetic .app before, hence AL0185). The
     /// Compilation is created with the dep's REAL identity so the loader indexes it.
     /// </summary>
+    /// <param name="appRootDir">
+    /// The directory containing this dep's own app.json — see the identically-named
+    /// parameter on <see cref="Emit"/> for why (#1899). When omitted, falls back to
+    /// whichever of <paramref name="alFolders"/> already carries an app.json — the same
+    /// directory <c>ivtRefs</c> below is read from — since every current caller of this
+    /// overload passes a single flat directory that already IS the app root.
+    /// </param>
     public void EmitDepSymbols(
         IEnumerable<string> alFolders, string moduleName,
-        Guid appId, string publisher, Version version, string symbolsJsonPath)
+        Guid appId, string publisher, Version version, string symbolsJsonPath,
+        string? appRootDir = null)
     {
         var dirs = alFolders.Where(Directory.Exists).Distinct().ToList();
         var alFiles = dirs
@@ -1855,12 +1889,20 @@ public sealed class BcCompiler
         // this dedicated Create parameter — not from the manifest — so without it a
         // dependent app hits AL0161 on the dep's Access=Internal members even when the
         // grant exists. (main:Program.cs BuildInternalsVisibleToRefs.)
-        var ivtRefs = ReadInternalsVisibleToRefs(
-            dirs.Select(d => Path.Combine(d, "app.json")).FirstOrDefault(File.Exists));
+        var foundAppJson = dirs.Select(d => Path.Combine(d, "app.json")).FirstOrDefault(File.Exists);
+        var ivtRefs = ReadInternalsVisibleToRefs(foundAppJson);
 
         var compilation = NavCA.Compilation.Create(
             moduleName: moduleName, publisher: publisher, version: version,
             appId: appId, internalsVisibleTo: ivtRefs, syntaxTrees: trees, options: compOpts);
+
+        // #1899: same rationale as Emit's appRootDir — without an IFileSystem, a
+        // ControlAddIn inside a source dependency raises AL0327 for every resource path.
+        // Falls back to the directory the manifest was already found in (foundAppJson)
+        // when the caller didn't pass one explicitly.
+        var effectiveAppRoot = appRootDir ?? (foundAppJson != null ? Path.GetDirectoryName(foundAppJson) : null);
+        if (effectiveAppRoot != null && Directory.Exists(effectiveAppRoot))
+            compilation = compilation.WithFileSystem(new NavCA.RelativeFileSystem(effectiveAppRoot));
 
         var bundleAlpackages = dirs
             .SelectMany(d => Directory.EnumerateDirectories(d, ".alpackages", SearchOption.AllDirectories))

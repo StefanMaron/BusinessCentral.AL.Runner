@@ -406,7 +406,7 @@ public sealed class DependencyLoader
         // the PARENT bundle) would be both in the reference list AND in the primary AL
         // source → AL0275 "ambiguous reference". The scope is restored on dispose.
         try { using (BcCompiler.ScopeCurrentAppIdentity(m.AppId, m.Publisher, m.Version))
-                  emitted = _compiler.Emit(new[] { tempDir }, m.Name).Sources; }
+                  emitted = _compiler.Emit(new[] { tempDir }, m.Name, tempDir).Sources; }
         catch (Exception ex)
         {
             // EMIT-FAIL: the BC Compilation.Emit() call threw (e.g. "Unexpected value 'None'

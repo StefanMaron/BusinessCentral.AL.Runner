@@ -1430,7 +1430,7 @@ foreach (var bundle in bundles)
             // .deps-bin path, neither of which this scope touches. Same filter EmitDepSymbols
             // already applies — see BcCompiler.ScopeSymbolBearingDepsOnly.
             using var bundleDepScope = BcCompiler.ScopeSymbolBearingDepsOnly();
-            var emitTask = Task.Run(() => emitter.Emit(allPaths, moduleName));
+            var emitTask = Task.Run(() => emitter.Emit(allPaths, moduleName, appGroup.SuiteDir));
             try
             {
                 if (!emitTask.Wait(TimeSpan.FromSeconds(emitTimeoutSec)))
@@ -1810,7 +1810,7 @@ foreach (var bundle in bundles)
             IReadOnlyList<string> suiteAlDiagnostics = Array.Empty<string>();
             try
             {
-                var emitOutput = emitter.Emit(suitePaths, $"V2_{Path.GetFileName(suite)}");
+                var emitOutput = emitter.Emit(suitePaths, $"V2_{Path.GetFileName(suite)}", suite);
                 sources = emitOutput.Sources;
                 suiteAlDiagnostics = emitOutput.Diagnostics;
             }
@@ -2803,7 +2803,7 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                 var et = System.Diagnostics.Stopwatch.StartNew();
                 try
                 {
-                    var emitOutput = emitter.Emit(allPaths, moduleName);
+                    var emitOutput = emitter.Emit(allPaths, moduleName, bucketRoot);
                     sources = emitOutput.Sources;
                     alDiagnostics = emitOutput.Diagnostics;
                     excludedObjects = emitOutput.ExcludedObjects;
@@ -3562,7 +3562,7 @@ static int RunPrecompile(string[] subArgs)
     BcEmitOutput emitOut;
     try
     {
-        emitOut = compiler.Emit(new[] { tempDir }, manifest.Name);
+        emitOut = compiler.Emit(new[] { tempDir }, manifest.Name, tempDir);
     }
     catch (Exception ex)
     {
@@ -3880,7 +3880,7 @@ static List<string> RunLayeredPrePass(List<string> bundles, List<string> package
                 var implDeps = implResolver.Resolve(implId.Dependencies);
                 BcCompiler.SetResolvedDeps(implDeps, implSymbolDirs);
                 using (BcCompiler.ScopeCurrentAppIdentity(implId.AppId, implId.Publisher, implId.Version))
-                    new BcCompiler().EmitDepSymbols(new[] { implPath }, implId.Name, implId.AppId, implId.Publisher, implId.Version, symbolsPath);
+                    new BcCompiler().EmitDepSymbols(new[] { implPath }, implId.Name, implId.AppId, implId.Publisher, implId.Version, symbolsPath, implPath);
                 // Declare the FULL compile closure — the resolved deps (real AppIds/versions)
                 // UNIONed with the Microsoft platform apps vendored in the impl's own
                 // .alpackages. Filtering to non-Optional declared deps drops the implicit
@@ -4143,7 +4143,7 @@ static List<string> BuildSiblingSourceDeps(List<string> bundles, List<string> pa
             try
             {
                 using (BcCompiler.ScopeCurrentAppIdentity(sid.AppId, sid.Publisher, sid.Version))
-                    new BcCompiler().EmitDepSymbols(new[] { dir }, sid.Name, sid.AppId, sid.Publisher, sid.Version, symbolsPath);
+                    new BcCompiler().EmitDepSymbols(new[] { dir }, sid.Name, sid.AppId, sid.Publisher, sid.Version, symbolsPath, dir);
                 // Full compile closure (resolved deps ∪ vendored platform apps) — see the
                 // impl-bundle site above and #1546. Filtering to non-Optional declared deps
                 // would drop the implicit platform roots whose types appear in this dep's
@@ -4492,7 +4492,7 @@ static void EmitSiblingSymbols(
                 new BcCompiler().EmitDepSymbols(
                     group.Paths, group.ModuleName, group.AppId.Value,
                     group.Publisher ?? "AlRunner", group.Version ?? new Version(1, 0, 0, 0),
-                    symbolsPath);
+                    symbolsPath, group.SuiteDir);
             // The dependency closure this app compiled against, so BC's ReferenceManager can
             // link types from it that appear in the sibling's public surface — same reason as
             // the source-dep sidecar (#1546); without it those types are __MissingTypeSymbol__.
