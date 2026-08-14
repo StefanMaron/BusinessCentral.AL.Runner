@@ -11,6 +11,7 @@ using System.Reflection;
 using System.Reflection.Metadata.Ecma335;
 using System.Reflection.PortableExecutable;
 using System.Security.Cryptography;
+using System.Text;
 using Mono.Cecil;
 using Mono.Cecil.Cil;
 
@@ -7916,7 +7917,10 @@ public static class NclCecilRewrite
     /// bin path (overwriting the build-time copy). Runs BEFORE the CLR's TPA probe
     /// resolves Ncl, so when CLR loads Ncl by name it gets our rewritten bytes.
     /// Results are cached in $HOME/.cache/al-runner/ncl-cecil/ keyed by a SHA256 of
-    /// the source Ncl bytes, runner assembly mtime, and CACHE_VERSION. Set
+    /// the source Ncl bytes, the runner assembly's own CONTENT hash (issue #1871 —
+    /// previously the runner assembly's mtime, which changes on every CI rebuild even
+    /// when the runner's bytes, and therefore the rewrite it produces, are unchanged;
+    /// see RunnerFingerprint.ComputeContentHash), and CACHE_VERSION. Set
     /// AL_RUNNER_NCL_CACHE=0 to force a fresh rewrite without reading or writing cache.
     /// </summary>
     /// <summary>
@@ -8063,13 +8067,39 @@ public static class NclCecilRewrite
         return true;
     }
 
+    /// <summary>
+    /// #1871: the runner-identity component of this key used to be
+    /// <c>File.GetLastWriteTimeUtc(typeof(NclCecilRewrite).Assembly.Location).Ticks</c> —
+    /// the RUNNER assembly's own build-output mtime, which changes on every fresh
+    /// `dotnet build`/`dotnet publish` (including every CI run) even when the runner's
+    /// bytes, and therefore the Cecil rewrite it produces, are byte-for-byte identical to
+    /// a prior run. A `ncl-cecil` entry persisted across CI runs would therefore MISS
+    /// unconditionally — same defect family as #1815 (al-out) / #1820 (bc-symbols).
+    /// Replaced with <see cref="RunnerFingerprint.ContentHash"/>: stable across rebuilds
+    /// of unchanged source, still sensitive to any change in the runner's own
+    /// Cecil-rewrite logic. No `bc:` line is needed here (unlike RunnerFingerprint's
+    /// WriteKeyLines) — the rewrite only depends on the source Ncl bytes (already hashed
+    /// below) and the runner's own rewrite logic, neither of which vary by BC version
+    /// within one build.
+    /// </summary>
     private static string ComputeCacheKey(string nclPath)
     {
         var nclBytes = File.ReadAllBytes(nclPath);
-        var runnerMtimeTicks = File.GetLastWriteTimeUtc(typeof(NclCecilRewrite).Assembly.Location).Ticks;
+        return ComputeCacheKeyCore(nclBytes, RunnerFingerprint.ContentHash);
+    }
+
+    /// <summary>
+    /// Testable core of <see cref="ComputeCacheKey(string)"/>: takes the Ncl bytes and
+    /// runner content hash explicitly so a test can vary either independently without
+    /// needing to swap out the actual running assembly on disk (mirrors
+    /// <c>RunnerFingerprint.WriteKeyLines(Action{string}, string, Version)</c>'s
+    /// explicit-parameter testable-core pattern).
+    /// </summary>
+    internal static string ComputeCacheKeyCore(byte[] nclBytes, string runnerContentHash)
+    {
         using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         hash.AppendData(nclBytes);
-        hash.AppendData(BitConverter.GetBytes(runnerMtimeTicks));
+        hash.AppendData(Encoding.UTF8.GetBytes(runnerContentHash));
         hash.AppendData(BitConverter.GetBytes(CACHE_VERSION));
         return Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant();
     }
