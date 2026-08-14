@@ -2632,6 +2632,12 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
         IReadOnlyList<(AlRunner.AppManifest Manifest, string AppPath)> ordered =
             Array.Empty<(AlRunner.AppManifest, string)>();
         var appJsonPath = Path.Combine(bucketRoot, "app.json");
+        // Hoisted out of the `if (File.Exists(appJsonPath))` block below so the
+        // cross-bundle module identity dedup (#1892) can read it after this block:
+        // this bundle's OWN identity, used both to check whether an earlier bundle
+        // in this request/session already loaded the same AppId, and to register
+        // THIS bundle's freshly-compiled module under its AppId once loaded.
+        AlRunner.Infrastructure.BundleIdentity? bundleId = null;
         if (File.Exists(appJsonPath))
         {
             try
@@ -2656,7 +2662,7 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                     AlRunner.Patches.RecordPatches.AddBcAppPath(appPath);
                 AlRunner.Patches.RecordPatches.RegisterBundleSymbolApps(bucketRoot);
                 SetBundleInfoFromAppJson(appJsonPath);
-                var bundleId = AlRunner.Infrastructure.InProcessAppPackager.ReadIdentity(appJsonPath);
+                bundleId = AlRunner.Infrastructure.InProcessAppPackager.ReadIdentity(appJsonPath);
                 if (bundleId != null)
                     BcCompiler.SetCurrentAppIdentity(bundleId.AppId, bundleId.Publisher, bundleId.Version);
                 else
@@ -2694,6 +2700,45 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
 
         var moduleName = $"V2_{Path.GetFileName(bundleAbs)}";
 
+        // ── cross-bundle module identity dedup (#1892, mirrors the CLI bundle
+        // loop's own #1683 fix) ──────────────────────────────────────────────
+        // RunAllBundlesForServer runs every sourcePaths entry through THIS method
+        // in order, in the SAME process, sharing the SAME DependencyLoader. If an
+        // earlier bundle in this request already compiled+loaded this bundle's
+        // AppId — either as ITS OWN bundle (this same method, an earlier
+        // iteration) or as a resolved dependency (DependencyLoader.LoadAll) —
+        // reuse that exact Assembly instead of emitting+compiling a second,
+        // distinct module for the same AL app identity. Without this, a sibling
+        // bundle that declares a dependency on THIS bundle's app resolves it via
+        // DependencyLoader's Tier-3 source-compile (a "Dep_..." module) BEFORE
+        // this bundle's own iteration ever runs, or vice versa — either order
+        // ends with two live modules for one AL identity, which is exactly the
+        // TargetException at NavEventSubscription's ValidateInvokeTarget #1683
+        // fixed for the CLI loop: a subscriber MethodInfo discovered from one
+        // module's Type paired with a subscriberInstance BC's dispatcher
+        // materialized from the OTHER module's Type.
+        Assembly? reusedAsm = null;
+        if (bundleId != null)
+        {
+            try
+            {
+                reusedAsm = DependencyLoader.TryGetByAppId(
+                    bundleId.AppId, bundleId.Name, bundleId.Publisher,
+                    bundleId.Version.ToString(), bundleAbs);
+            }
+            catch (AlRunner.Infrastructure.AppIdCollisionException ex)
+            {
+                // Two different apps declare the same app.json id (#1850) — never
+                // silently reuse one app's module for the other's tests.
+                return ServerRunResult.Failure(3, moduleName, $"FATAL: {ex.Message}", fileHashes);
+            }
+            if (reusedAsm != null)
+                Console.Error.WriteLine(
+                    $"  [server] {moduleName}: AppId {bundleId.AppId} already loaded earlier in " +
+                    "this request/session — reusing that module instead of recompiling " +
+                    "(see issue #1683/#1892).");
+        }
+
         // #1888: one app row per server-mode module (this mode never groups several
         // AL apps into one bundled compile the way the CLI's bundled mode does, so
         // "1 of 1" is always correct here). EndApp in the finally below closes it on
@@ -2703,12 +2748,17 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
         try
         {
             // AL-output cache: HIT short-circuits Emit+Compile, like the normal loop.
+            // Skipped entirely when reusedAsm is already set (see the cross-bundle
+            // dedup check above) — nothing to cache-check, emit, or compile.
             byte[]? assemblyBytes = null;
-            bool cached = false;
+            // A cross-bundle reuse (reusedAsm != null) is "cached" in the sense the
+            // caller cares about — nothing changed for THIS bundle's contribution to
+            // the request, exactly like an AL-output cache hit.
+            bool cached = reusedAsm != null;
             string? cacheKey = null, cachePath = null, sidecarPath = null, querySidecarPath = null;
             // See AlCacheSidecars: a query bundle without its query-symbols sidecar must MISS.
             bool bundleDeclaresQuery = BcCompiler.BundleDeclaresQuery(allPaths);
-            if (alCacheDir != null)
+            if (reusedAsm == null && alCacheDir != null)
             {
                 cacheKey = ComputeAlCacheKey(allPaths, moduleName,
                     ordered: GetOrderedDepIds(bucketRoot, effectivePkgDirs));
@@ -2743,7 +2793,7 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
             }
 
             var compileErrors = new List<string>();
-            if (assemblyBytes == null)
+            if (reusedAsm == null && assemblyBytes == null)
             {
                 if (alCacheDir != null)
                     AlRunner.Infrastructure.PhaseLog.NoteCacheMiss();
@@ -2826,14 +2876,48 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                 }
             }
 
-            if (assemblyBytes == null)
-                return ServerRunResult.Failure(2, moduleName, "no assembly produced", fileHashes);
+            Assembly asm;
+            if (reusedAsm != null)
+            {
+                // See the cross-bundle module identity dedup comment above: this
+                // bundle's AppId was already loaded earlier in this request/session,
+                // so run with that exact Assembly instead of Assembly.Load-ing a
+                // second, distinct module for the same AL identity.
+                asm = reusedAsm;
+            }
+            else
+            {
+                if (assemblyBytes == null)
+                    return ServerRunResult.Failure(2, moduleName, "no assembly produced", fileHashes);
+                asm = Assembly.Load(assemblyBytes);
+                // Register this freshly-loaded module under its AppId so a LATER
+                // bundle in this request/session that resolves the same AppId —
+                // either as its own bundle (this same method, a later iteration) or
+                // as a dependency (DependencyLoader.LoadAll) — reuses this exact
+                // Assembly instead of re-emitting/re-compiling a second module for
+                // the same AL identity (#1892, mirrors the CLI loop's #1683 fix).
+                if (bundleId != null)
+                {
+                    try
+                    {
+                        DependencyLoader.RegisterLoaded(
+                            bundleId.AppId, asm, bundleId.Name, bundleId.Publisher,
+                            bundleId.Version.ToString(), bundleAbs);
+                    }
+                    catch (AlRunner.Infrastructure.AppIdCollisionException ex)
+                    {
+                        // Same defence as the TryGetByAppId check above, for the (in
+                        // this process, one request at a time) race window between
+                        // that check and this registration — see loud-failures.md.
+                        return ServerRunResult.Failure(3, moduleName, $"FATAL: {ex.Message}", fileHashes);
+                    }
+                }
+            }
 
             IReadOnlyList<TestResult> tests;
             var rt = System.Diagnostics.Stopwatch.StartNew();
             try
             {
-                var asm = Assembly.Load(assemblyBytes);
                 BcRuntime.SetTestAssembly(asm);
                 BcRuntime.RegisterTestAssemblyInfo(asm);
                 BcRuntime.OosHooksActive = true;

@@ -659,24 +659,39 @@ public sealed class DependencyLoader
 
     /// <summary>
     /// Lookup helper for the bundle loop's own-AppGroup dedup check (Program.cs,
-    /// issue #1683): "was this AppId already compiled/loaded earlier in this
-    /// process?" Returns the cached Assembly when <paramref name="name"/>/
-    /// <paramref name="publisher"/>/<paramref name="version"/> match the identity
-    /// already cached for <paramref name="appId"/> — the legitimate same-app-twice
-    /// case, safe to reuse. Returns null when nothing is cached yet for this AppId.
+    /// issue #1683 for the CLI loop, #1892 for --server's per-request bundle loop):
+    /// "was this AppId already compiled/loaded earlier in this process?" Returns
+    /// the cached Assembly when <paramref name="name"/>/<paramref name="publisher"/>/
+    /// <paramref name="version"/> match the identity already cached for
+    /// <paramref name="appId"/> — the legitimate same-app-twice case, safe to reuse.
+    /// Returns null when nothing is cached yet for this AppId.
     /// Throws <see cref="AlRunner.Infrastructure.AppIdCollisionException"/> when an
     /// entry IS cached but its identity does NOT match — two different apps
     /// declaring the same app.json id (issue #1850): silently reusing the earlier
     /// module here would drop every test in <paramref name="sourcePath"/>'s app,
     /// exactly as it did before this check existed.
+    ///
+    /// Also returns null — deliberately NOT a reuse — when the cached entry's own
+    /// <c>SourcePath</c> equals <paramref name="sourcePath"/> (#1892 follow-up,
+    /// caught by ServerTests.RunTests_Then_EditTable_Then_RunAgain_PicksUpChange):
+    /// that is not a genuinely different sibling bundle providing this AppId, it is
+    /// THIS SAME bundle directory being asked about again — server mode's core
+    /// edit-and-rerun contract, where the SAME sourcePath is compiled repeatedly in
+    /// one warm session and each rerun must see any source edit since the last one.
+    /// The CLI loop never hits this branch (a single non-watch invocation visits
+    /// each SuiteDir at most once), so this only narrows the check for the
+    /// caller that genuinely needs it.
     /// </summary>
     public static Assembly? TryGetByAppId(Guid appId, string name, string publisher, string version, string sourcePath)
     {
         if (!_cache.TryGetValue(appId, out var entry)) return null;
-        if (IdentityMatches(entry, name, publisher, version)) return entry.Asm;
-        throw new AlRunner.Infrastructure.AppIdCollisionException(
-            appId, entry.Name, entry.Publisher, entry.Version, entry.SourcePath,
-            name, publisher, version, sourcePath);
+        if (!IdentityMatches(entry, name, publisher, version))
+            throw new AlRunner.Infrastructure.AppIdCollisionException(
+                appId, entry.Name, entry.Publisher, entry.Version, entry.SourcePath,
+                name, publisher, version, sourcePath);
+        if (string.Equals(entry.SourcePath, sourcePath, StringComparison.OrdinalIgnoreCase))
+            return null;
+        return entry.Asm;
     }
 
     /// <summary>
@@ -689,11 +704,21 @@ public sealed class DependencyLoader
     /// issue #1683 (event-subscriber dispatch pairs a MethodInfo from one module's
     /// Type with a subscriberInstance from the other module's Type, throwing
     /// TargetException at ValidateInvokeTarget). First registration for a given AppId
-    /// wins when the identity matches (the earlier module is the one every other
-    /// bundle should keep resolving to). When it does NOT match — a genuine GUID
-    /// collision between two different apps (#1850) that the caller's own
-    /// <see cref="TryGetByAppId"/> check raced past — this throws instead of
-    /// silently keeping the wrong module registered.
+    /// wins when the identity matches AND the registration is for a DIFFERENT
+    /// <paramref name="sourcePath"/> than the one already cached (the earlier module
+    /// is the one every other bundle should keep resolving to). When it does NOT
+    /// match — a genuine GUID collision between two different apps (#1850) that the
+    /// caller's own <see cref="TryGetByAppId"/> check raced past — this throws instead
+    /// of silently keeping the wrong module registered.
+    ///
+    /// When the identity matches AND <paramref name="sourcePath"/> equals the cached
+    /// entry's own SourcePath, this OVERWRITES the entry instead (#1892 follow-up):
+    /// that is not two different bundles racing to register the same AppId, it is the
+    /// SAME bundle re-registering itself after a fresh compile — server mode's
+    /// edit-and-rerun contract, where <see cref="TryGetByAppId"/> deliberately never
+    /// serves a stale reuse for a same-sourcePath lookup (see its own doc comment), so
+    /// each rerun's freshly-compiled module must become the one a LATER sibling
+    /// bundle in a subsequent request resolves to, not whatever compiled first.
     /// </summary>
     public static void RegisterLoaded(Guid appId, Assembly asm, string name, string publisher, string version, string sourcePath)
     {
@@ -704,5 +729,7 @@ public sealed class DependencyLoader
             throw new AlRunner.Infrastructure.AppIdCollisionException(
                 appId, existing.Name, existing.Publisher, existing.Version, existing.SourcePath,
                 name, publisher, version, sourcePath);
+        if (string.Equals(existing.SourcePath, sourcePath, StringComparison.OrdinalIgnoreCase))
+            _cache[appId] = newEntry;
     }
 }
