@@ -2590,10 +2590,33 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
         }
 
         var results = new List<ServerRunResult>(sourcePaths.Length);
+        // #1888: open/close a phase-log bundle+app row per request bundle, mirroring
+        // the CLI loop's BeginBundle/EndBundle. Before this the server path never
+        // called into PhaseLog at all, so a --server process produced ZERO bundle/app
+        // rows regardless of whether it exited cleanly — the Stage()/AppStage() marks
+        // sprinkled through DependencyLoader/TestExecutor were silently no-ops the
+        // whole time (AddStageTo/AddApp bail out when _bundle/_app is null). Unlike
+        // the once-per-process row (written only from PhaseLog's ProcessExit hook,
+        // see WriteProcessRecord), EndBundle appends its row IMMEDIATELY on return —
+        // so as long as a request's bundle finishes before the process is later
+        // killed (true for every server test: CliServer.DisposeAsync always Kill()s
+        // AFTER the runTests round trip completes), this row survives the kill even
+        // though the process-level row still does not. bundle_index restarts at 1 per
+        // REQUEST (not per process lifetime) — server sessions have no single
+        // "argument order" the way a CLI invocation does, and nothing downstream reads
+        // it across requests.
+        var bundleIndex = 0;
         foreach (var bundleDir in sourcePaths)
         {
             if (cancellationToken.IsCancellationRequested) break;
-            results.Add(RunBundleForServer(bundleDir, requestPackagePaths, runStep));
+            bundleIndex++;
+            var relBundle = Path.GetRelativePath(
+                Environment.CurrentDirectory, Path.GetFullPath(bundleDir));
+            AlRunner.Infrastructure.PhaseLog.BeginBundle(relBundle, bundleIndex);
+            var result = RunBundleForServer(bundleDir, requestPackagePaths, runStep,
+                out var emitElapsed, out var compileElapsed, out var runElapsed);
+            AlRunner.Infrastructure.PhaseLog.EndBundle(emitElapsed, compileElapsed, runElapsed);
+            results.Add(result);
         }
         return results;
     }
@@ -2603,8 +2626,17 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
     // bundled-mode path of the normal run loop for a single bundle. The run step
     // (executor.Run for runTests, OnRun dispatch for execute) is supplied by the caller.
     ServerRunResult RunBundleForServer(string bundleDir, string[]? requestPackagePaths,
-        Func<Assembly, IReadOnlyList<TestResult>> runStep)
+        Func<Assembly, IReadOnlyList<TestResult>> runStep,
+        out TimeSpan emitElapsed, out TimeSpan compileElapsed, out TimeSpan runElapsed)
     {
+        // #1888: defaulted here so every early-return path below (dep-resolve
+        // failure, empty bundle, …) satisfies definite assignment without needing
+        // its own assignment — those paths never opened an app row, so zero is the
+        // honest answer for them, not a stand-in for a real measurement.
+        emitElapsed = TimeSpan.Zero;
+        compileElapsed = TimeSpan.Zero;
+        runElapsed = TimeSpan.Zero;
+
         // Cache reset happens once per request in RunAllBundlesForServer, not here —
         // see the comment there for why per-bundle resetting breaks sibling bundles.
 
@@ -2632,8 +2664,10 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                 var resolverDirs = bundlePkgDirs.Concat(effectivePkgDirs).Distinct().ToList();
                 var resolver = new DependencyResolver(resolverDirs);
                 ordered = resolver.Resolve(roots);
+                AlRunner.Infrastructure.PhaseLog.NoteDepsResolved(ordered.Count);
                 BcCompiler.SetResolvedDeps(ordered, resolverDirs);
                 var loaded = depLoader.LoadAll(ordered, bucketRoot);
+                AlRunner.Infrastructure.PhaseLog.NoteDepAssembliesLoaded(loaded.Count);
                 // New bundle in the server session: replace (not inherit) the
                 // install-trigger registrations, then register this bundle's deps.
                 AlRunner.InstallTriggerRunner.ResetForNewBundle();
@@ -2681,140 +2715,171 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
 
         var moduleName = $"V2_{Path.GetFileName(bundleAbs)}";
 
-        // AL-output cache: HIT short-circuits Emit+Compile, like the normal loop.
-        byte[]? assemblyBytes = null;
-        bool cached = false;
-        string? cacheKey = null, cachePath = null, sidecarPath = null, querySidecarPath = null;
-        // See AlCacheSidecars: a query bundle without its query-symbols sidecar must MISS.
-        bool bundleDeclaresQuery = BcCompiler.BundleDeclaresQuery(allPaths);
-        if (alCacheDir != null)
+        // #1888: one app row per server-mode module (this mode never groups several
+        // AL apps into one bundled compile the way the CLI's bundled mode does, so
+        // "1 of 1" is always correct here). EndApp in the finally below closes it on
+        // EVERY exit path, including the many early `return`s below — matching
+        // TestExecutor.EndApp's own idempotent-close contract.
+        AlRunner.Infrastructure.PhaseLog.BeginApp(moduleName, 1, 1);
+        try
         {
-            cacheKey = ComputeAlCacheKey(allPaths, moduleName,
-                ordered: GetOrderedDepIds(bucketRoot, effectivePkgDirs));
-            cachePath = Path.Combine(alCacheDir, cacheKey + ".dll");
-            sidecarPath = Path.Combine(alCacheDir, cacheKey + AlRunner.Infrastructure.AlCacheSidecars.EnumRegistrySuffix);
-            querySidecarPath = Path.Combine(alCacheDir, cacheKey + AlRunner.Infrastructure.AlCacheSidecars.QuerySymbolsSuffix);
-            if (AlRunner.Infrastructure.AlCacheSidecars.IsCompleteEntry(
-                    File.Exists(cachePath), File.Exists(sidecarPath),
-                    bundleDeclaresQuery, File.Exists(querySidecarPath)))
+            // AL-output cache: HIT short-circuits Emit+Compile, like the normal loop.
+            byte[]? assemblyBytes = null;
+            bool cached = false;
+            string? cacheKey = null, cachePath = null, sidecarPath = null, querySidecarPath = null;
+            // See AlCacheSidecars: a query bundle without its query-symbols sidecar must MISS.
+            bool bundleDeclaresQuery = BcCompiler.BundleDeclaresQuery(allPaths);
+            if (alCacheDir != null)
             {
+                cacheKey = ComputeAlCacheKey(allPaths, moduleName,
+                    ordered: GetOrderedDepIds(bucketRoot, effectivePkgDirs));
+                cachePath = Path.Combine(alCacheDir, cacheKey + ".dll");
+                sidecarPath = Path.Combine(alCacheDir, cacheKey + AlRunner.Infrastructure.AlCacheSidecars.EnumRegistrySuffix);
+                querySidecarPath = Path.Combine(alCacheDir, cacheKey + AlRunner.Infrastructure.AlCacheSidecars.QuerySymbolsSuffix);
+                if (AlRunner.Infrastructure.AlCacheSidecars.IsCompleteEntry(
+                        File.Exists(cachePath), File.Exists(sidecarPath),
+                        bundleDeclaresQuery, File.Exists(querySidecarPath)))
+                {
+                    try
+                    {
+                        var bytes = File.ReadAllBytes(cachePath);
+                        // Same short-read defence as the CLI path above (issue #1810): a torn
+                        // DLL is not a read error, so validate the PE image explicitly before
+                        // trusting it.
+                        AlRunner.Infrastructure.AlCacheSidecars.ValidateCachedAssemblyBytes(bytes, cachePath);
+                        LoadEnumRegistrySidecar(sidecarPath);
+                        if (bundleDeclaresQuery)
+                            AlRunner.Patches.RecordPatches.RegisterBundleQuerySymbolsJson(querySidecarPath);
+                        assemblyBytes = bytes;
+                        cached = true;
+                        AlRunner.Infrastructure.PhaseLog.NoteCacheHit();
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.Error.WriteLine($"  [cache] hit replay failed: {ex.Message} — rebuilding");
+                        assemblyBytes = null;
+                        cached = false;
+                    }
+                }
+            }
+
+            var compileErrors = new List<string>();
+            if (assemblyBytes == null)
+            {
+                if (alCacheDir != null)
+                    AlRunner.Infrastructure.PhaseLog.NoteCacheMiss();
+                IReadOnlyList<EmittedSource> sources;
+                IReadOnlyList<string> alDiagnostics;
+                IReadOnlyList<string> excludedObjects;
+                var et = System.Diagnostics.Stopwatch.StartNew();
                 try
                 {
-                    var bytes = File.ReadAllBytes(cachePath);
-                    // Same short-read defence as the CLI path above (issue #1810): a torn
-                    // DLL is not a read error, so validate the PE image explicitly before
-                    // trusting it.
-                    AlRunner.Infrastructure.AlCacheSidecars.ValidateCachedAssemblyBytes(bytes, cachePath);
-                    LoadEnumRegistrySidecar(sidecarPath);
-                    if (bundleDeclaresQuery)
-                        AlRunner.Patches.RecordPatches.RegisterBundleQuerySymbolsJson(querySidecarPath);
-                    assemblyBytes = bytes;
-                    cached = true;
+                    var emitOutput = emitter.Emit(allPaths, moduleName);
+                    sources = emitOutput.Sources;
+                    alDiagnostics = emitOutput.Diagnostics;
+                    excludedObjects = emitOutput.ExcludedObjects;
                 }
                 catch (Exception ex)
                 {
-                    Console.Error.WriteLine($"  [cache] hit replay failed: {ex.Message} — rebuilding");
-                    assemblyBytes = null;
-                    cached = false;
+                    return ServerRunResult.Failure(3, moduleName, $"EMIT-FAIL: {ex.Message.Split('\n')[0]}", fileHashes);
+                }
+                finally
+                {
+                    et.Stop();
+                    emitElapsed = et.Elapsed;
+                    AlRunner.Infrastructure.PhaseLog.AddAppEmit(et.Elapsed);
+                }
+                // An emit-retry exclusion means one or more AL objects are NOT in the
+                // compiled module, so any tests they declare silently vanish and the
+                // request looks green. Fail loudly with the same classification the CLI's
+                // bundled-mode EMIT-EXCLUDED guard uses (.claude/rules/loud-failures.md);
+                // without this the server path ran the surviving objects and reported
+                // exitCode 0 while e.g. a whole test codeunit was missing from the run.
+                if (excludedObjects.Count > 0)
+                {
+                    var names = string.Join(", ", excludedObjects);
+                    compileErrors.Add(
+                        $"EMIT-EXCLUDED: {excludedObjects.Count} object(s) dropped from the module — " +
+                        $"tests they declare are missing: [{names}]." +
+                        (alDiagnostics.Count > 0
+                            ? " The AL diagnostics that identified them follow."
+                            : " Re-run with --verbose for the AL diagnostics that identified them."));
+                    foreach (var d in alDiagnostics) compileErrors.Add(d);
+                    return new ServerRunResult(Array.Empty<TestResult>(), 3, false,
+                        new List<CompilationErrorGroup> { new(moduleName, compileErrors) }, fileHashes);
+                }
+                if (sources.Count == 0)
+                {
+                    foreach (var d in alDiagnostics) compileErrors.Add(d);
+                    if (compileErrors.Count == 0) compileErrors.Add("EMIT-ZERO: 0 sources emitted");
+                    return new ServerRunResult(Array.Empty<TestResult>(), 3, false,
+                        new List<CompilationErrorGroup> { new(moduleName, compileErrors) }, fileHashes);
+                }
+                var ct = System.Diagnostics.Stopwatch.StartNew();
+                var compile = assembler.Compile(moduleName, sources);
+                ct.Stop();
+                compileElapsed = ct.Elapsed;
+                AlRunner.Infrastructure.PhaseLog.AddAppCompile(ct.Elapsed);
+                if (!compile.Success)
+                {
+                    compileErrors.AddRange(compile.Errors);
+                    compileErrors.AddRange(alDiagnostics);
+                    return new ServerRunResult(Array.Empty<TestResult>(), 3, false,
+                        new List<CompilationErrorGroup> { new(moduleName, compileErrors) }, fileHashes);
+                }
+                assemblyBytes = compile.AssemblyBytes;
+                if (cachePath != null && assemblyBytes != null)
+                {
+                    try
+                    {
+                        // Same atomic, sidecars-first-DLL-last publish as the CLI path above
+                        // (issue #1810) — see the comment there for why the ordering matters.
+                        AlRunner.Infrastructure.AlCacheWriter.AtomicPublish(
+                            sidecarPath!, tmp => SaveEnumRegistrySidecar(tmp));
+                        var qsrc = BcCompiler.LastBundleQuerySymbolsPath;
+                        if (qsrc != null && File.Exists(qsrc))
+                            AlRunner.Infrastructure.AlCacheWriter.AtomicPublish(
+                                querySidecarPath!, tmp => File.Copy(qsrc, tmp, overwrite: true));
+                        AlRunner.Infrastructure.AlCacheWriter.AtomicPublish(
+                            cachePath, tmp => File.WriteAllBytes(tmp, assemblyBytes));
+                    }
+                    catch (Exception ex) { Console.Error.WriteLine($"  [cache] write failed: {ex.Message}"); }
                 }
             }
-        }
 
-        var compileErrors = new List<string>();
-        if (assemblyBytes == null)
-        {
-            IReadOnlyList<EmittedSource> sources;
-            IReadOnlyList<string> alDiagnostics;
-            IReadOnlyList<string> excludedObjects;
+            if (assemblyBytes == null)
+                return ServerRunResult.Failure(2, moduleName, "no assembly produced", fileHashes);
+
+            IReadOnlyList<TestResult> tests;
+            var rt = System.Diagnostics.Stopwatch.StartNew();
             try
             {
-                var emitOutput = emitter.Emit(allPaths, moduleName);
-                sources = emitOutput.Sources;
-                alDiagnostics = emitOutput.Diagnostics;
-                excludedObjects = emitOutput.ExcludedObjects;
+                var asm = Assembly.Load(assemblyBytes);
+                BcRuntime.SetTestAssembly(asm);
+                BcRuntime.RegisterTestAssemblyInfo(asm);
+                BcRuntime.OosHooksActive = true;
+                tests = runStep(asm);
             }
             catch (Exception ex)
             {
-                return ServerRunResult.Failure(3, moduleName, $"EMIT-FAIL: {ex.Message.Split('\n')[0]}", fileHashes);
+                return ServerRunResult.Failure(2, moduleName, $"EXEC-FAIL: {ex.Message.Split('\n')[0]}", fileHashes);
             }
-            // An emit-retry exclusion means one or more AL objects are NOT in the
-            // compiled module, so any tests they declare silently vanish and the
-            // request looks green. Fail loudly with the same classification the CLI's
-            // bundled-mode EMIT-EXCLUDED guard uses (.claude/rules/loud-failures.md);
-            // without this the server path ran the surviving objects and reported
-            // exitCode 0 while e.g. a whole test codeunit was missing from the run.
-            if (excludedObjects.Count > 0)
+            finally
             {
-                var names = string.Join(", ", excludedObjects);
-                compileErrors.Add(
-                    $"EMIT-EXCLUDED: {excludedObjects.Count} object(s) dropped from the module — " +
-                    $"tests they declare are missing: [{names}]." +
-                    (alDiagnostics.Count > 0
-                        ? " The AL diagnostics that identified them follow."
-                        : " Re-run with --verbose for the AL diagnostics that identified them."));
-                foreach (var d in alDiagnostics) compileErrors.Add(d);
-                return new ServerRunResult(Array.Empty<TestResult>(), 3, false,
-                    new List<CompilationErrorGroup> { new(moduleName, compileErrors) }, fileHashes);
+                BcRuntime.OosHooksActive = false;
+                rt.Stop();
+                runElapsed = rt.Elapsed;
+                AlRunner.Infrastructure.PhaseLog.AddAppRun(rt.Elapsed);
             }
-            if (sources.Count == 0)
-            {
-                foreach (var d in alDiagnostics) compileErrors.Add(d);
-                if (compileErrors.Count == 0) compileErrors.Add("EMIT-ZERO: 0 sources emitted");
-                return new ServerRunResult(Array.Empty<TestResult>(), 3, false,
-                    new List<CompilationErrorGroup> { new(moduleName, compileErrors) }, fileHashes);
-            }
-            var compile = assembler.Compile(moduleName, sources);
-            if (!compile.Success)
-            {
-                compileErrors.AddRange(compile.Errors);
-                compileErrors.AddRange(alDiagnostics);
-                return new ServerRunResult(Array.Empty<TestResult>(), 3, false,
-                    new List<CompilationErrorGroup> { new(moduleName, compileErrors) }, fileHashes);
-            }
-            assemblyBytes = compile.AssemblyBytes;
-            if (cachePath != null && assemblyBytes != null)
-            {
-                try
-                {
-                    // Same atomic, sidecars-first-DLL-last publish as the CLI path above
-                    // (issue #1810) — see the comment there for why the ordering matters.
-                    AlRunner.Infrastructure.AlCacheWriter.AtomicPublish(
-                        sidecarPath!, tmp => SaveEnumRegistrySidecar(tmp));
-                    var qsrc = BcCompiler.LastBundleQuerySymbolsPath;
-                    if (qsrc != null && File.Exists(qsrc))
-                        AlRunner.Infrastructure.AlCacheWriter.AtomicPublish(
-                            querySidecarPath!, tmp => File.Copy(qsrc, tmp, overwrite: true));
-                    AlRunner.Infrastructure.AlCacheWriter.AtomicPublish(
-                        cachePath, tmp => File.WriteAllBytes(tmp, assemblyBytes));
-                }
-                catch (Exception ex) { Console.Error.WriteLine($"  [cache] write failed: {ex.Message}"); }
-            }
-        }
 
-        if (assemblyBytes == null)
-            return ServerRunResult.Failure(2, moduleName, "no assembly produced", fileHashes);
-
-        IReadOnlyList<TestResult> tests;
-        try
-        {
-            var asm = Assembly.Load(assemblyBytes);
-            BcRuntime.SetTestAssembly(asm);
-            BcRuntime.RegisterTestAssemblyInfo(asm);
-            BcRuntime.OosHooksActive = true;
-            tests = runStep(asm);
-        }
-        catch (Exception ex)
-        {
-            return ServerRunResult.Failure(2, moduleName, $"EXEC-FAIL: {ex.Message.Split('\n')[0]}", fileHashes);
+            int exit = 0;
+            if (tests.Any(t => t.Outcome == TestOutcome.Fail || t.Outcome == TestOutcome.Error)) exit = 1;
+            return new ServerRunResult(tests, exit, cached, null, fileHashes);
         }
         finally
         {
-            BcRuntime.OosHooksActive = false;
+            AlRunner.Infrastructure.PhaseLog.EndApp();
         }
-
-        int exit = 0;
-        if (tests.Any(t => t.Outcome == TestOutcome.Fail || t.Outcome == TestOutcome.Error)) exit = 1;
-        return new ServerRunResult(tests, exit, cached, null, fileHashes);
     }
 
     // Run the bundle's OnRun-bearing codeunit (run-mode), mirroring CodeunitPatches'

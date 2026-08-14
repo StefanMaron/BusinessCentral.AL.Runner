@@ -32,6 +32,10 @@ public sealed class CliServer : IAsyncDisposable
 
     public int ExitCode => _process.ExitCode;
 
+    /// <summary>OS process id of the server subprocess. #1888: lets a caller correlate
+    /// phase-log rows (which carry "pid") with the exact process this handle wraps.</summary>
+    public int Pid => _process.Id;
+
     /// <summary>Captured stderr so far — surfaced in assertion messages when the protocol stalls.</summary>
     public string StdErr { get { lock (_stderr) return _stderr.ToString(); } }
 

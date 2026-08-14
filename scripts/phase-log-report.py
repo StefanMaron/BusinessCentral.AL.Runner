@@ -14,7 +14,23 @@ AlRunner/Infrastructure/PhaseLog.cs) at three granularities:
 The question this exists to answer is which of two things dominates:
 a fixed per-process/per-unit tax (→ the fix is process reuse via a warm --server
 instance) or dependency-closure loading (→ the fix is making specific suites stop
-pulling the Microsoft closure). Hence the cohort split is printed first.
+pulling the Microsoft closure).
+
+#1888: that question is answered by the DEP-LOAD VERDICT section, which gates on
+the dep-load bundle-stage total (the runner's own direct measurement of time
+spent loading dependency assemblies) as a share of total subprocess wall clock.
+It is printed AFTER the cohort split, not instead of it — the cohort split (spawns
+grouped by whether they touched any dependencies at all) is still genuinely useful
+as a description of spawn SIZE, but it compares whole-process wall clock, which
+also contains engine boot, host startup, full-opt JIT, register-source-dirs, emit,
+compile and run — none of which is dependency loading. Treating that ratio as the
+answer to "does the closure explain the cost" was a false positive: on run
+31753389980 (main @ 8bc39224, BC 28.1) it read "median ratio deps/no-deps = 3.33x
+→ dependency loading dominates" while the dep-load stage itself was 34.98s of
+1292.7s of subprocess wall clock — 2.7%, and just 6.50s (0.50%) once narrowed to
+the actual Microsoft closure (Base Application, System Application, Business
+Foundation, Application, System) rather than the runner's own fixture apps that
+also load through the same code path.
 
 Usage:
   scripts/phase-log-report.py <phase-log.jsonl> [--label NAME] [--step-seconds N]
@@ -48,7 +64,17 @@ def phases(row):
 
 
 def cohort_report(rows, unit, dep_field):
-    """The decisive output: does the Microsoft dependency closure explain the cost?"""
+    """Descriptive only — NOT a dependency-loading verdict (#1888).
+
+    Splits spawns by whether they touched any dependencies at all and compares
+    their WHOLE-PROCESS/WHOLE-APP wall clock. That whole-process number also
+    contains engine boot, host startup, full-opt JIT, register-source-dirs,
+    emit, compile and run — none of which is dependency loading — so a large
+    ratio here says only "spawns that loaded deps were also bigger spawns",
+    not "dependency loading is the cost". See print_dep_load_verdict() for the
+    actual verdict, which gates on the runner's own direct measurement of time
+    spent loading dependency assemblies (the dep-load bundle stage).
+    """
     zero = [r["wall_ms"] for r in rows if r.get(dep_field, 0) == 0]
     some = [r["wall_ms"] for r in rows if r.get(dep_field, 0) > 0]
     print(f"  cohort split by {dep_field} ({unit} wall clock)")
@@ -56,14 +82,59 @@ def cohort_report(rows, unit, dep_field):
     print(stats_line(f"  {dep_field} >  0", some))
     if zero and some:
         ratio = statistics.median(some) / max(1.0, statistics.median(zero))
-        verdict = (
-            "dependency loading dominates — target the closure"
-            if ratio >= 2.0
-            else "flat tax — the cost is NOT the dependency closure"
-        )
-        print(f"    median ratio deps/no-deps = {ratio:.2f}x  →  {verdict}")
+        print(f"    median ratio deps/no-deps = {ratio:.2f}x  "
+              f"(descriptive only — see DEP-LOAD VERDICT below for causation)")
     else:
         print("    only one cohort present — no comparison possible")
+
+
+# #1888: the threshold the dep-load verdict gates on. The dep-load bundle stage
+# is the runner's own direct measurement (see AlRunner/Infrastructure/PhaseLog.cs
+# NoteDepAssembliesLoaded / the "dep-load:<Name>" stage marks in DependencyLoader)
+# of wall clock spent loading dependency assemblies. 25% is a deliberately blunt
+# bar: on the run that motivated this fix (31753389980, main @ 8bc39224, BC 28.1)
+# the real share was 2.7% overall / 0.50% for the Microsoft closure alone, so
+# anything remotely close to "dominates" should clear 25% by a wide margin —
+# the bar exists to stop a single noisy leg from tripping the verdict, not to
+# split hairs near a boundary.
+DEP_LOAD_DOMINATES_THRESHOLD = 0.25
+
+
+def dep_load_totals(rows):
+    """Sum every 'dep-load' / 'dep-load:<name>' bundle-stage entry across ALL
+    bundle rows. This is the number #1888 exists to gate the verdict on instead
+    of the cohort ratio — see cohort_report()'s docstring for why the ratio is
+    not a valid stand-in for it.
+    """
+    return sum(
+        ms
+        for r in rows
+        if r.get("kind") == "bundle"
+        for name, ms in r.get("stages", {}).items()
+        if name == "dep-load" or name.startswith("dep-load:")
+    )
+
+
+def print_dep_load_verdict(bundle_rows, proc_rows):
+    """#1888: THE decisive output for "does the Microsoft dependency closure
+    explain the cost", replacing cohort_report()'s former (false-positive-prone)
+    verdict line. Gates on the dep-load bundle-stage total as a share of total
+    subprocess wall clock, not on the cohort's whole-process ratio.
+    """
+    dep_load_ms = dep_load_totals(bundle_rows)
+    total_wall_ms = sum(r["wall_ms"] for r in proc_rows)
+    if total_wall_ms <= 0:
+        print("  no process wall clock recorded — no verdict possible")
+        return
+    share = dep_load_ms / total_wall_ms
+    verdict = (
+        "dependency loading dominates — target the closure"
+        if share >= DEP_LOAD_DOMINATES_THRESHOLD
+        else "flat tax — the cost is NOT the dependency closure"
+    )
+    print(f"  dep-load stage total = {dep_load_ms / 1000:.2f}s of "
+          f"{total_wall_ms / 1000:.2f}s subprocess wall clock "
+          f"({100 * share:.1f}%)  →  {verdict}")
 
 
 def occupancy_report(rows, step_seconds=None, buckets=48):
@@ -161,12 +232,22 @@ def main():
     print()
 
     # ── the decisive question ────────────────────────────────────────────────
-    print("── COHORT SPLIT (the question #1825 was opened to answer) " + "─" * 20)
+    # #1888: cohort split is descriptive-only (spawn size), never a dep-loading
+    # verdict — see cohort_report()'s docstring. The actual verdict is printed
+    # separately, below, gated on the dep-load stage's share of wall clock.
+    print("── COHORT SPLIT (descriptive — spawn size, NOT a dependency-loading verdict) " + "─" * 2)
     if procs:
         cohort_report(procs, "process", "dep_assemblies_loaded")
     if apps:
         print()
         cohort_report(apps, "app", "dep_assemblies_loaded")
+    print()
+
+    print("── DEP-LOAD VERDICT (the question #1825 was opened to answer) " + "─" * 16)
+    if bundles and procs:
+        print_dep_load_verdict(bundles, procs)
+    else:
+        print("  need both bundle and process rows for a verdict — none available")
     print()
 
     # ── per-process ──────────────────────────────────────────────────────────
