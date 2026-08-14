@@ -30,10 +30,22 @@ public static partial class RecordPatches
 {
     // Matches BcCompiler.Emit's options so this parse sees the same source the emit does —
     // notably the CLEANSCHEMA1..25 preprocessor symbols, which gate real field declarations
-    // in the BaseApp. DocumentationMode.None: doc comments are trivia we never read.
-    private static readonly NavCA.ParseOptions AlParseOptions = new(
+    // in the BaseApp, PLUS whatever the caller passed via --define / --preprocessor-symbols.
+    // DocumentationMode.None: doc comments are trivia we never read.
+    //
+    // This MUST be a property recomputed on every call, not a `static readonly` field.
+    // BcCompiler.SetExtraPreprocessorSymbols(...) runs at Program.cs:727, after this type
+    // may already have been touched elsewhere in the same process — a `static readonly`
+    // field would freeze at type-init with the empty symbol set, and a `.Concat(...)`
+    // bolted onto that frozen field would look like a fix while changing nothing (#1900:
+    // the compiler's two ParseOptions sites already merge `_extraPreprocessorSymbols` per
+    // call; this parser was the one site that didn't). GetExtraPreprocessorSymbols() is
+    // cheap (a lock plus a sorted copy of a handful of strings), so recomputing it per
+    // parse call costs nothing worth caching.
+    private static NavCA.ParseOptions AlParseOptions => new(
         runtimeVersion: null!,
-        preprocessorSymbols: Enumerable.Range(1, 25).Select(n => $"CLEANSCHEMA{n}"),
+        preprocessorSymbols: Enumerable.Range(1, 25).Select(n => $"CLEANSCHEMA{n}")
+            .Concat(AlRunner.BcCompiler.GetExtraPreprocessorSymbols()),
         documentationMode: NavCA.DocumentationMode.None);
 
     // Field type text still yields its length by pattern (`Code[10]` → 10). The type is one
