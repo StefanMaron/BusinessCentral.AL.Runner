@@ -231,8 +231,55 @@ internal sealed class RunnerPageInstance
     internal bool ControlEnabled(int controlId)
         => EvaluateProperty(ControlDefinition(controlId)?.Enabled, "Enabled", controlId);
 
+    /// <summary>
+    /// A control's effective visibility is its own <c>Visible</c> combined with EVERY
+    /// group that encloses it, all the way up to the content area — not just its own
+    /// declared value and not just its immediate parent's (issue #1778). A field inside
+    /// <c>group(DynamicGroup) { Visible = ShowDynamic; }</c> must read hidden while
+    /// <c>ShowDynamic</c> is false even though the field itself declares no <c>Visible</c>
+    /// at all, and a field two groups deep must follow the OUTER group's Visible even when
+    /// the immediate parent group declares none of its own.
+    ///
+    /// Walks the same ancestor chain as <see cref="ControlIsCompileTimeEliminated"/>, but
+    /// asks the LIVE question at each level via <see cref="EvaluateProperty"/> (resolving
+    /// expression names, not just literals) rather than
+    /// <see cref="IsLiteralFalse"/>'s narrower "was this folded to the literal false at
+    /// compile time" — a group whose Visible expression currently evaluates false must
+    /// still hide its descendants even though it was not compile-time eliminated.
+    /// </summary>
     internal bool ControlVisible(int controlId)
-        => EvaluateProperty(ControlDefinition(controlId)?.Visible, "Visible", controlId);
+    {
+        if (!EvaluateProperty(ControlDefinition(controlId)?.Visible, "Visible", controlId))
+            return false;
+
+        if (_form is not NavForm form) return true;
+
+        var helper = form.MetadataHelper;
+        var currentId = controlId;
+        while (true)
+        {
+            Microsoft.Dynamics.Nav.Types.Metadata.ElementDefinition parent;
+            try
+            {
+                parent = helper.FindParentByControlId(currentId);
+            }
+            catch (Microsoft.Dynamics.Nav.Types.Exceptions.NavNCLControlMetadataNotFoundException)
+            {
+                // Ran off the top of the hierarchy — nothing further encloses this control.
+                return true;
+            }
+
+            // Only a group carries its own Visible; the content area (or anything else the
+            // walk can land on) does not participate, so reaching one ends the walk visible.
+            if (parent is not Microsoft.Dynamics.Nav.Types.Metadata.ControlGroupDefinition group)
+                return true;
+
+            if (!EvaluateProperty(group.Visible, "Visible", group.ID))
+                return false;
+
+            currentId = group.ID;
+        }
+    }
 
     /// <summary>
     /// Whether this control is compile-time eliminated from the runtime page — its own

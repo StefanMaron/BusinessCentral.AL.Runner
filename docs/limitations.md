@@ -73,7 +73,10 @@ Pages are not rendered. There is no layout engine, no field visibility evaluatio
 no report dataset. `TestPage` provides expanded field access, navigation, and handler
 dispatch, and report/request-page variables support a limited standalone surface, but:
 
-- Field `Visible`, `Enabled`, and `Editable` are not evaluated against real page metadata.
+- Field `Visible`, `Enabled`, and `Editable` ARE evaluated against real page metadata,
+  live, including a control's `Visible` combined with every enclosing `group`'s `Visible`
+  up to the content area — but nothing renders, so this only affects what `TestPage`
+  reports back, not any actual layout.
 - `TestPage` methods like `GoToRecord`, `Next`, `New`, `GetPart`, and filter reads are
   mock-backed rather than UI-backed.
 - `TestPage` action `Invoke()` saves the row the page is on and then dispatches the
