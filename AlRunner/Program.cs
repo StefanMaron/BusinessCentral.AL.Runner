@@ -173,6 +173,11 @@ bool printClassification = false;
 // --output-junit PATH: additionally write a JUnit XML report — independent of --output-json.
 bool outputJson = false;
 string? outputJunitPath = null;
+// --coverage: statement-level coverage via BC's own StmtHit instrumentation (issue
+// #1922, first slice of #1640). Writes Cobertura XML to --coverage-out (default
+// cobertura.xml in the working directory) after the run, plus a console table.
+bool coverageEnabled = false;
+string coverageOutputPath = "cobertura.xml";
 var bundles = new List<string>();
 var packageCacheArgs = new List<string>();
 // Bundled mode is the canonical fast path (5-7× faster, parity-verified across
@@ -264,6 +269,13 @@ for (int i = 0; i < args.Length; i++)
     if (args[i] == "--classify") { printClassification = true; continue; }
     if (args[i] == "--output-json") { outputJson = true; continue; }
     if (args[i] == "--output-junit" && i + 1 < args.Length) { outputJunitPath = args[++i]; continue; }
+    if (args[i] == "--coverage")
+    {
+        coverageEnabled = true;
+        AlRunner.Infrastructure.AlCoverageTracker.Enabled = true;
+        continue;
+    }
+    if (args[i] == "--coverage-out" && i + 1 < args.Length) { coverageOutputPath = args[++i]; continue; }
     if (args[i] == "--package-cache" && i + 1 < args.Length) { packageCacheArgs.Add(args[++i]); continue; }
     if (args[i] == "--per-suite") { bundledMode = false; continue; }
     if (args[i] == "--bundled") { bundledMode = true; continue; }
@@ -2194,6 +2206,22 @@ if (outputJunitPath != null)
     JUnitReport.WriteJUnit(outputJunitPath, results);
     if (!outputJson) Console.WriteLine($"JUnit XML → {outputJunitPath}");
 }
+if (coverageEnabled)
+{
+    // Source map keyed by (AL object label, object id) → file path, scanned from the
+    // same bundle roots the run compiled — see AlCoverageSourceMap. relativeTo the
+    // working directory so cobertura's <source> (".") lines up with the filename
+    // attributes, matching v1's convention.
+    var coverageSourceMap = AlRunner.Infrastructure.AlCoverageSourceMap.Build(
+        bundles, relativeTo: Directory.GetCurrentDirectory());
+    var coverageStatements = AlRunner.Infrastructure.AlCoverageTracker.Collect(coverageSourceMap);
+    var coverageFiles = AlRunner.Infrastructure.AlCoverageReport.WriteCobertura(
+        coverageOutputPath, coverageStatements);
+    var coverageOut = outputJson ? Console.Error : Console.Out;
+    coverageOut.WriteLine();
+    coverageOut.WriteLine(AlRunner.Infrastructure.AlCoverageReport.FormatConsoleTable(coverageFiles));
+    coverageOut.WriteLine($"Cobertura → {coverageOutputPath}");
+}
 
 // Exit non-zero if anything failed — the default since the v2 cut, matching main/v1.
 // --no-strict-exit restores the old always-0 behaviour for JSON-only consumers.
@@ -3407,6 +3435,12 @@ static void PrintHelp(TextWriter w)
     w.WriteLine("                          classification JSON.");
     w.WriteLine("  --output-junit PATH     Write a JUnit XML report to PATH, grouped by codeunit.");
     w.WriteLine("                          Independent of --output-json — works with either mode.");
+    w.WriteLine("  --coverage              Statement-level coverage via BC's own StmtHit");
+    w.WriteLine("                          instrumentation (no rewrite of emitted AL output —");
+    w.WriteLine("                          the hook lives in Ncl.dll). Writes Cobertura XML");
+    w.WriteLine("                          (default ./cobertura.xml) plus a console table after");
+    w.WriteLine("                          the run. Off by default; --coverage-out PATH overrides");
+    w.WriteLine("                          the Cobertura output path.");
     w.WriteLine("  --failures-only, --quiet");
     w.WriteLine("                          Print only FAIL/ERROR per-test lines. Default prints both");
     w.WriteLine("                          PASS and FAIL with stack traces (matches v1).");
@@ -3512,9 +3546,6 @@ static void PrintHelp(TextWriter w)
     w.WriteLine("                          source map the compile pipeline does not currently");
     w.WriteLine("                          expose; tracked as a separate workstream. Distinct from");
     w.WriteLine("                          the JSON-RPC daemon in EXECUTION above, which IS supported.");
-    w.WriteLine("  --coverage              Cobertura coverage output. There is currently no rewrite");
-    w.WriteLine("                          pass over emitted AL output to instrument; a Cecil-based");
-    w.WriteLine("                          implementation is feasible (2-4 d) but not yet built.");
     w.WriteLine("  --stubs DIR             v1's stub-merge path. Real MS DLLs load in-process so the");
     w.WriteLine("                          original use case mostly evaporated; still possible to");
     w.WriteLine("                          add as an extra source-root merge if needed.");

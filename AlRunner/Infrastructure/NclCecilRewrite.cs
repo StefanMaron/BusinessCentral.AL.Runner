@@ -19,7 +19,7 @@ namespace AlRunner.Infrastructure;
 
 public static class NclCecilRewrite
 {
-    private const int CACHE_VERSION = 125;
+    private const int CACHE_VERSION = 126;
 
     // ─────────────────────────────────────────────────────────────────────────
     // Cecil-owned skip registry (JmpHook→Cecil migration enabler).
@@ -68,6 +68,17 @@ public static class NclCecilRewrite
         "Microsoft.Dynamics.Nav.Runtime.NavMethodScope::ProcessException/1",
         "Microsoft.Dynamics.Nav.Runtime.ALMethodScope::AssignScopeId/0",
         "Microsoft.Dynamics.Nav.Runtime.NavMethodScope::ThrowStackOverflow/1",
+        // StmtHit/CStmtHit — --coverage hook (issue #1922). Not previously JmpHook'd
+        // (grep for StmtHit across AlRunner/ was empty before this), listed for symmetry
+        // with the rest of the NavMethodScope cluster and to guard against a future
+        // JmpHook targeting them by name. CStmtHit is the inline-expression form BC uses
+        // for if/while/repeat CONDITIONS (`if (CStmtHit(1) & (this.flag))`) — confirmed
+        // by decompiling generated C# for a scratch if/else fixture; without hooking it
+        // too, every conditional's own line would read permanently 0 regardless of
+        // whether it ran.
+        "Microsoft.Dynamics.Nav.Runtime.NavMethodScope::StmtHit/1",
+        "Microsoft.Dynamics.Nav.Runtime.NavMethodScope::CStmtHit/1",
+        "Microsoft.Dynamics.Nav.Runtime.NavMethodScope::CStmtHit/2",
         // ALFunctionTimingExecutionListener (Batch 2).
         "Microsoft.Dynamics.Nav.Runtime.ALFunctionTimingExecutionListener::EnsureRegistered/0",
         "Microsoft.Dynamics.Nav.Runtime.ALFunctionTimingExecutionListener::Start/1",
@@ -6311,6 +6322,70 @@ public static class NclCecilRewrite
                     throw new InvalidOperationException(
                         $"[Cecil] NavMethodScope.ThrowStackOverflow returns {tso.ReturnType.FullName}, expected void — Ncl shape changed; do not commit");
                 ReplaceBodyConst(tso, ConstResult.Void);
+            }
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
+        // NavMethodScope.StmtHit(int) / CStmtHit(int[, bool]) — --coverage hook (issue
+        // #1922, first slice of #1640).
+        //
+        // BC's own AL compiler already instruments every AL statement with a StmtHit(N)
+        // (plain statements) or CStmtHit(N) (if/while/repeat CONDITIONS, folded into the
+        // boolean expression: `if (CStmtHit(1) & (this.flag))`) call, where N indexes the
+        // scope class's [SourceSpans] attribute. Decompiling StmtHit confirmed it does
+        // exactly two things (CStmtHit's two overloads are the same shape, returning bool
+        // so they compose into an expression):
+        //
+        //   public void StmtHit(int currentStatementNumber)
+        //   {
+        //       statementNumber = currentStatementNumber;
+        //       ExecutionListener.Instance?.ProcessStatementHit(this);
+        //   }
+        //
+        // `statementNumber` backs NavMethodScope.StatementNumber, which
+        // AlCallStackCapture reads to produce "line L" in every AL stack trace — so this
+        // rewrite MUST NOT replace or reorder that assignment. It only PREPENDS a call to
+        // AlCoverageTracker.OnStmtHit(this, currentStatementNumber) before each method's
+        // existing first instruction, leaving the rest of the body — and therefore
+        // StatementNumber tracking — completely untouched. Regression-tested by
+        // AlCallStackLineRegressionTests (stack-trace lines identical with the rewrite
+        // active, --coverage on or off).
+        //
+        // (ExecutionListener.Instance is permanently null in this runtime — its cctor and
+        // AddListener/RemoveListener are already no-op'd elsewhere in this file/BcRuntime
+        // for R2R-stability reasons predating this issue — so that line was already inert
+        // before this rewrite and stays inert after it.)
+        //
+        // PrependStaticCall (used elsewhere in this file) can't be reused here: it only
+        // forwards reference-typed arg slots (to avoid boxing), and the second argument
+        // here is `int currentStatementNumber` — a value type that must reach
+        // OnStmtHit's `int` parameter unboxed. So this block emits its own
+        // `ldarg.0; ldarg.1; call` prologue instead.
+        {
+            var nclMod = asm.MainModule;
+            const string MsType = "Microsoft.Dynamics.Nav.Runtime.NavMethodScope";
+            var hookMi = typeof(AlRunner.Infrastructure.AlCoverageTracker).GetMethod(
+                nameof(AlRunner.Infrastructure.AlCoverageTracker.OnStmtHit), BindingFlags.Public | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "[Cecil] AlCoverageTracker.OnStmtHit not found — runner-side rename?");
+            var hookRef = nclMod.ImportReference(hookMi);
+
+            foreach (var (name, paramCount) in new[] { ("StmtHit", 1), ("CStmtHit", 1), ("CStmtHit", 2) })
+            {
+                var target = FindNclMethod(nclMod, MsType, name, paramCount);
+                if (target.Parameters[0].ParameterType.FullName != "System.Int32")
+                    throw new InvalidOperationException(
+                        $"[Cecil] NavMethodScope.{name}/{paramCount}'s first parameter is "
+                        + $"{target.Parameters[0].ParameterType.FullName}, expected System.Int32 — Ncl shape changed; do not commit");
+
+                var body = target.Body;
+                var il = body.GetILProcessor();
+                var first = body.Instructions[0];
+                il.InsertBefore(first, il.Create(OpCodes.Ldarg_0));
+                il.InsertBefore(first, il.Create(OpCodes.Ldarg_1));
+                il.InsertBefore(first, il.Create(OpCodes.Call, hookRef));
+                if (body.MaxStackSize < 2) body.MaxStackSize = 2;
+                Console.Error.WriteLine($"[Cecil] Prepended AlCoverageTracker.OnStmtHit to NavMethodScope.{name}/{paramCount}");
             }
         }
 

@@ -1,0 +1,62 @@
+name: Coverage Demo
+
+on:
+  workflow_dispatch:
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: true
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '8.0.x'
+
+      # --coverage (issue #1922) needs no dependency-app provisioning: it's a runtime
+      # hook on Microsoft.Dynamics.Nav.Ncl.dll, auto-downloaded by the build itself.
+      - name: Build (auto-downloads BC 28.1 DLLs)
+        run: |
+          dotnet build AlRunner.slnx \
+            -p:_BCVersion=28.1 \
+            -p:AllowBcArtifactDownload=true \
+            -c Release
+
+      - name: Run self-contained fixtures with --coverage
+        run: |
+          echo "## AL Runner Coverage" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+
+          for fixture in RecordTriggerXRec CoverageBranch; do
+            echo "::group::${fixture}"
+            OUTPUT=$(./AlRunner/bin/Release/net8.0/al-runner \
+              --coverage --coverage-out "cobertura-${fixture}.xml" \
+              "AlRunner.Tests/Fixtures/${fixture}" 2>&1) || true
+            echo "$OUTPUT"
+            echo "::endgroup::"
+
+            # Console coverage table + the test-run summary block (see Reporter.cs /
+            # AlCoverageReport.FormatConsoleTable — the table rows are `  <file>  n/m  pct%`,
+            # the summary block prints `pass:`/`fail:`).
+            COVERAGE_LINES=$(echo "$OUTPUT" | grep -E "^  (TOTAL|[A-Za-z])" | head -20)
+            RESULT_LINES=$(echo "$OUTPUT" | grep -E "^  (pass|fail|error):")
+
+            echo "### ${fixture}" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            echo "$RESULT_LINES" >> "$GITHUB_STEP_SUMMARY"
+            echo "$COVERAGE_LINES" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+          done
+
+      - name: Upload coverage artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-reports
+          path: cobertura-*.xml

@@ -43,6 +43,7 @@ allowed and forbidden.
 | `--test-timeout SECONDS` | ✓ (built the failure message `"Test exceeded {N}s timeout."`) | ✓ | Restored in v2 (previously hardcoded to 60s with no CLI override — see #1648). Also settable via the `AL_RUNNER_TEST_TIMEOUT_SEC` env var; the CLI flag takes precedence. Failure-message text is v1-compatible (`"Test exceeded {N}s timeout."`), so external tooling matching on that text (e.g. LethAL) keeps working unchanged. |
 | `--output-json` | ✓ | ✓ | v1-shaped per-test `status: pass/fail/error` JSON to stdout, distinct from `--out`'s failure-classification JSON. `capturedValues`/`iterations` fields omitted — those need a shared Cecil-instrumentation prerequisite, tracked separately. |
 | `--output-junit PATH` | ✓ | ✓ | JUnit XML report, grouped by codeunit as `<testsuite>`. |
+| `--coverage` | ✓ (Roslyn-rewriter hit-counters) | ✓ | Different mechanism, same Cobertura XML output. v2 does not rewrite emitted AL output at all — BC's own compiler already calls `NavMethodScope.StmtHit(N)` once per AL statement; v2 Cecil-rewrites that one method in `Ncl.dll` (the runtime engine, not AL business logic) to record hits. `--coverage-out PATH` overrides the default `./cobertura.xml`. See #1922. |
 | `--dump-csharp DIR` | ✓ | ✓ | v2 dumps BC `Compilation.Emit`'s intermediate C# per AL object. |
 | `--precompile <in> --out <out>` | ✓ | ✓ | Same. |
 | `--bundled` / `--per-suite` | (n/a) | ✓ | v2's pipeline mode toggle. Default `--bundled`. |
@@ -58,7 +59,6 @@ typical "compile and run AL tests" workflow.
 | Flag / feature | Why deferred | Estimated lift |
 |---|---|---|
 | DAP debug adapter | v1's `DapServer.cs`. Needs an AL→C# source map BC's `Compilation.Emit` does not currently expose — without that, breakpoints would land on C# lines, not AL. Distinct from `--server`, the JSON-RPC daemon, which IS implemented (see below). | 1-2 wk (research-heavy) |
-| `--coverage` (cobertura XML) | v1 hooked the Roslyn rewriter to inject hit-counters. v2 has no rewrite pass on AL output. A Cecil post-pass over the emitted DLL is feasible. | 2-4 d |
 | `--stubs DIR` | v1's stub-merge path. v2 loads real MS DLLs in-process so the original use case mostly evaporates, but the "extra source roots" capability still has value for partial extensions. | <1 d |
 | Telemetry / crash reporter | v1's `TelemetryReporter.cs` phoned home to App Insights. `tools/telemetry-triage/` still exists. Needs a secret-handling decision before re-enabling. | 1 d |
 
@@ -73,7 +73,6 @@ unless a concrete user need surfaces.
 | In-tree stubs (`AlRunner/stubs/*.al`, `AlRunner/Runtime/MockX.cs`) | v1 needed stubs because the rewriter couldn't satisfy MS DLL signatures otherwise. v2 satisfies them by loading the MS DLLs as-is. |
 | Roslyn rewriter / type-rename pass | The premise — that BC types could be safely renamed — was incompatible with linking against MS R2R DLLs. v2's only rewriter is `Rewriters/CallSiteArgWrap.cs` (121 LOC, IL-byte-equivalent to BC's own emit). |
 | `docs/coverage.yaml` / `docs/coverage.md` | v1 tracked AL-language coverage in a hand-curated YAML; the orchestrator blocked merges if the YAML wasn't updated. v2's spec is the `tests/al-language/` corpus itself — every AL surface that needs coverage has a test there. Both files are archived under `docs/archive/`. |
-| `coverage-demo.yml` GitHub workflow | Demonstrated v1's `--coverage` flag. Re-enable when v2 implements coverage. |
 | .NET 9 / .NET 10 target frameworks | v1 multi-targeted; v2 targets `net8.0` only, to run on BC's own real .NET 8 runtime rather than reimplementing its runtime-dependent behavior on a newer BCL. net10's BCL drift breaks BC's `UnsafeAccessor`/precode assumptions; net9 can't satisfy BC's `System.Text.Json` 10 bind. Breaking change for any consumer targeting net9/net10 exclusively. |
 
 ## Layout change

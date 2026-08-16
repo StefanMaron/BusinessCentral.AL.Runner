@@ -260,7 +260,9 @@ public static class AlCallStackCapture
     /// <see cref="Type.DeclaringType"/> when needed.
     /// Returns ("CodeUnit"|"Page"|…, number) or ("?", 0) if unknown.
     /// </summary>
-    private static (string, int) ParseObjectTypeAndId(Type type)
+    /// <summary>Internal (not private): also used by AlCoverageTracker to resolve a
+    /// scope's declaring AL object identity for the cobertura file mapping.</summary>
+    internal static (string, int) ParseObjectTypeAndId(Type type)
     {
         // Walk up to the outermost non-nested type (scope classes are nested).
         var t = type;
@@ -275,6 +277,14 @@ public static class AlCallStackCapture
             ("NavTestCodeunit","CodeUnit"),
             ("Codeunit",      "CodeUnit"),
             ("Table",         "Table"),
+            // Table TRIGGER scopes (OnInsert/OnModify/…) are nested inside the table's
+            // generated record wrapper class, named Record<N> — NOT Table<N> (confirmed
+            // via DUMP_CS=1 on AlRunner.Tests/Fixtures/RecordTriggerXRec: `public sealed
+            // class Record60100 : NavRecord { ... class OnInsert_Scope : ... }`). Without
+            // this, every table trigger's scope resolved to ("?", 0) — id==0 — so
+            // AlCoverageTracker silently dropped ALL table-trigger coverage, and any AL
+            // stack trace originating inside a table trigger printed no object identity.
+            ("Record",        "Table"),
             ("Page",          "Page"),
             ("Report",        "Report"),
             ("Query",         "Query"),
@@ -341,13 +351,8 @@ public static class AlCallStackCapture
             var encodedSpan    = encodedSpans[idx];
             var encodedSigSpan = (long)(_piSigEncodedSpan?.GetValue(sigAttr) ?? 0L);
 
-            // SourceSpan layout (StructLayout.Explicit, little-endian):
-            //   [0..1] = to.column, [2..3] = to.line, [4..5] = from.column, [6..7] = from.line
-            // As a long: from.line occupies bits 48-63.
-            ushort absLine = (ushort)((ulong)encodedSpan >> 48);
-            ushort sigLine = (ushort)((ulong)encodedSigSpan >> 48);
-
-            return (ushort)(absLine - sigLine);
+            // Bit layout is shared with AlCoverageTracker — see AlSourceSpanCodec.
+            return AlSourceSpanCodec.RelativeLine(encodedSpan, encodedSigSpan);
         }
         catch { return -1; }
     }
