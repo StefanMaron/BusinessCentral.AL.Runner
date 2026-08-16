@@ -52,6 +52,7 @@ public static class NavReportSync
     private static FieldInfo? _dataItemsField;     // DataItemIterator.dataItems : List<DataItem>
     private static MethodInfo? _onPreReport;       // NavReport.OnPreReport()  (protected virtual)
     private static MethodInfo? _onPostReport;      // NavReport.OnPostReport() (protected virtual)
+    private static MethodInfo? _applySetTableViewForAllDataItems; // DataItemIterator.ApplySetTableViewForAllDataItems()
     private static MethodInfo? _onInitReport;      // NavReport.OnInitReport() (protected virtual)
     private static PropertyInfo? _objectIdProp;    // NavApplicationObjectBase.ObjectId : ApplicationObjectId
     private static PropertyInfo? _objectNumberProp;// ApplicationObjectId.ObjectNumber : int
@@ -615,6 +616,12 @@ public static class NavReportSync
             _onPostReport = navReportBase.GetMethod("OnPostReport",
                 BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public,
                 null, Type.EmptyTypes, null);
+        if (dataItemIteratorBase != null && _applySetTableViewForAllDataItems == null)
+        {
+            _applySetTableViewForAllDataItems = dataItemIteratorBase.GetMethod("ApplySetTableViewForAllDataItems",
+                BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public,
+                null, Type.EmptyTypes, null);
+        }
 
         TryRunOrControlFlow(navReport, navReportBase);
     }
@@ -627,6 +634,7 @@ public static class NavReportSync
         try
         {
             InvokeVirtual(_onInitReport, navReport);
+            ApplyCallerTableViewBeforePreReport(navReport);
             InvokeVirtual(_onPreReport, navReport);
             InvokeDataItems(navReport);
             InvokeVirtual(_onPostReport, navReport);
@@ -655,6 +663,32 @@ public static class NavReportSync
                 Console.Error.WriteLine($"[NavReportSync] SyncRun: report terminated by {ex.GetType().Name} (control-flow)");
             return true;
         }
+    }
+
+    /// <summary>
+    /// Copy the caller-applied table view (<c>Report.SetTableView(Rec)</c> on the instance,
+    /// or the record parameter of the static <c>Report.Run/RunModal(id, ..., Rec)</c>
+    /// overloads — both land the view on <c>DataItem.TableViewRecord</c> via BC's own
+    /// unmodified <c>DataItemIterator.SetTableView</c>) onto each data item's actual
+    /// <c>Record</c> — the object AL's data-item variable is bound to and
+    /// <c>GetFilter()</c>/<c>GetFilters()</c> read from.
+    ///
+    /// This is what BC's real <c>RunReportInternalCoreAsync</c> calls
+    /// (<c>ApplySetTableViewForAllDataItems()</c>) immediately after applying the record
+    /// parameter and BEFORE any trigger runs. Skipping it left <c>DataItem.Record</c>
+    /// unfiltered through <c>OnPreReport</c> — <c>SetTableView</c> itself only populates
+    /// <c>TableViewRecord</c>, a separate scratch record; the copy onto the record AL code
+    /// actually sees is a distinct step that only otherwise happens inside
+    /// <c>ExecuteDataItemLoopAsync</c>, i.e. once the data-item loop for that item starts —
+    /// too late for a report-level <c>OnPreReport</c> guard, and (since real BC also does
+    /// this same copy first) not something later code should skip either. Calling BC's own
+    /// method here — rather than re-copying filters ourselves — keeps this faithful to
+    /// whatever DataItemLink/DataItemTableView reconciliation that method does today.
+    /// </summary>
+    private static void ApplyCallerTableViewBeforePreReport(object navReport)
+    {
+        if (_applySetTableViewForAllDataItems == null) return;
+        Invoke(_applySetTableViewForAllDataItems, navReport, Array.Empty<object?>());
     }
 
     // NavControlException lives in Microsoft.Dynamics.Nav.Types and is
