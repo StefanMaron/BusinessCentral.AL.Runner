@@ -15,6 +15,8 @@
 //   Runner --precompile <input.app> --out <output.dll>
 using System.Reflection;
 using AlRunner;
+using NavCA = Microsoft.Dynamics.Nav.CodeAnalysis;
+using NavSyntax = Microsoft.Dynamics.Nav.CodeAnalysis.Syntax;
 
 // Diagnostic: AL_RUNNER_DIAG_FIRSTCHANCE=<substring> prints the FULL stack of
 // every first-chance exception whose type name contains the substring (use e.g.
@@ -2614,16 +2616,19 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
     // string so `execute`'s "code" field can go through the same compile
     // pipeline as a sourcePaths-based execute, instead of a separate inline-AL
     // execution path. v1 parity (see git history for e1a22f84, "fixes #12"):
-    // `code` that already looks like a full AL object definition (starts with
-    // `codeunit` or `table`, case-insensitive) is used verbatim; anything else
-    // is treated as a bare statement list and wrapped in a scratch codeunit's
-    // OnRun trigger body, matching v1's CLI `-e` shape.
+    // `code` that already looks like a full AL object definition is used
+    // verbatim; anything else is treated as a bare statement list and wrapped
+    // in a scratch codeunit's OnRun trigger body, matching v1's CLI `-e` shape.
+    //
+    // #1931: "already looks like a full AL object" used to be
+    // `trimmed.StartsWith("codeunit"/"table")` — a two-keyword allowlist that
+    // misclassified every other object type (page/enum/report/query/xmlport/
+    // interface/...) AND any codeunit behind a leading `//` comment (TrimStart
+    // leaves the `//` in place, so it never matched). See IsFullAlObjectDeclaration
+    // for the fix: ask BC's own parser instead of maintaining a keyword list.
     static string SynthesizeInlineCodeBundle(string code)
     {
-        var trimmed = code.TrimStart();
-        var isFullObject =
-            trimmed.StartsWith("codeunit", StringComparison.OrdinalIgnoreCase) ||
-            trimmed.StartsWith("table", StringComparison.OrdinalIgnoreCase);
+        var isFullObject = IsFullAlObjectDeclaration(code);
         var source = isFullObject
             ? code
             : $"codeunit 50100 \"AL Runner Inline Execute\" {{ trigger OnRun() begin {code} end; }}";
@@ -2632,6 +2637,76 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
         Directory.CreateDirectory(dir);
         File.WriteAllText(Path.Combine(dir, "Scratch.al"), source);
         return dir;
+    }
+
+    // #1931: is `code` already a full AL object declaration (should be used
+    // verbatim), or a bare statement list (needs wrapping in a scratch OnRun
+    // body)? Answered by asking BC's OWN parser rather than maintaining a
+    // keyword allowlist that drifts as AL gains object types — the same
+    // approach RecordPatches.AlSourceParser.ParseAlObjects already uses for
+    // table/tableextension extraction (#1696). SyntaxTree.ParseObjectText needs
+    // only a ParseOptions, no Compilation and no reference closure, so this is
+    // cheap and side-effect-free.
+    //
+    // Every top-level AL object syntax type shares one common base,
+    // Microsoft.Dynamics.Nav.CodeAnalysis.Syntax.ObjectSyntax — verified via
+    // reflection over the shipped CodeAnalysis DLL: table/codeunit/page/report/
+    // query/xmlport/enum/(+ extension variants) all derive from
+    // ApplicationObjectSyntax : ObjectSyntax, while interface/controladdin/
+    // profile/dotnet/entitlement derive from ObjectSyntax directly (they have no
+    // object id, so they don't go through ApplicationObjectSyntax) — so "did the
+    // compilation-unit root produce at least one ObjectSyntax child" answers
+    // "is this a full object declaration" for the whole AL object-keyword set at
+    // once, with no list to keep in sync.
+    //
+    // Leading trivia (a `//` comment, a blank line, a `#pragma`) needs no manual
+    // skipping: comments/blank lines are trivia the parser already attaches to
+    // the first real token when it scans for the object keyword, so a
+    // `//`-prefixed codeunit still yields a CodeunitSyntax child.
+    //
+    // A malformed-but-recognisable object (e.g. `codeunit 50100 "X" { trigger
+    // OnRun() begin Error(` with an unclosed paren) still parses to exactly one
+    // ObjectSyntax child — BC's parser recovers past the syntax error and still
+    // recognises the object shape — so it is STILL used verbatim. That is
+    // deliberate: the caller's real compile error then names the caller's real
+    // code (via the normal `compilationErrors` channel `execute` already
+    // returns), not a wrapper the caller never wrote. A genuine bare statement
+    // list, or text that isn't AL at all, produces zero children (BC's parser
+    // reports AL0198 "expected one of the application object keywords" and
+    // recovers to an empty compilation unit) and falls through to wrapping.
+    //
+    // Never throws: this is fed arbitrary text a human may have typed by hand,
+    // and a parse ParseObjectText itself cannot make sense of must fall back to
+    // "not a full object" (wrap it) rather than blow up the request — the same
+    // never-throw contract RecordPatches.AlSourceParser.ParseAlObjects documents
+    // for the identical call.
+    //
+    // Classification is deterministic (yes/no), never ambiguous, so there is no
+    // third "couldn't tell" state to surface as a request-level protocol error:
+    // whichever branch is chosen, a real problem in the caller's AL still comes
+    // back through the existing `compilationErrors` channel that
+    // Execute_InlineCode_CompileError_ReturnsCompilationErrors already proves —
+    // exactly where every other AL-content problem in this protocol surfaces.
+    // The top-level `error` field stays reserved for request-shape problems
+    // (unknown command, missing sourcePaths, mutually exclusive fields) that
+    // have nothing to do with what the AL says.
+    static bool IsFullAlObjectDeclaration(string code)
+    {
+        try
+        {
+            var parseOpts = new NavCA.ParseOptions(
+                runtimeVersion: null!,
+                preprocessorSymbols: Enumerable.Range(1, 25).Select(n => $"CLEANSCHEMA{n}")
+                    .Concat(AlRunner.BcCompiler.GetExtraPreprocessorSymbols()),
+                documentationMode: NavCA.DocumentationMode.None);
+            var tree = NavSyntax.SyntaxTree.ParseObjectText(code, path: "", encoding: null!, parseOpts, default);
+            return tree.GetRoot() is NavSyntax.CompilationUnitSyntax root &&
+                   root.ChildNodes().Any(n => n is NavSyntax.ObjectSyntax);
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     // Runs every bundle in sourcePaths in order and returns one ServerRunResult per

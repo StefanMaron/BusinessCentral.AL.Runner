@@ -148,10 +148,14 @@ this is **not** streamed — one v1-shaped response line, no `type` discriminato
 v1's `execute` also accepted an inline `code` string and a `captureValues` flag.
 v2 now supports `code` too (#1917): a temp single-file bundle is synthesised
 from it and run through the same compile pipeline `sourcePaths` uses. `code`
-that already starts with `codeunit` or `table` (case-insensitive) is used
-verbatim as a full AL object definition; anything else is treated as a bare
-statement list and wrapped in a scratch codeunit's `OnRun` trigger body —
-matching v1's CLI `-e` shape:
+that already parses as a full AL object declaration — any object keyword
+(`table`, `codeunit`, `page`, `enum`, `report`, `query`, `xmlport`,
+`interface`, ... the whole AL object-keyword set, including behind a leading
+`//` comment) — is used verbatim; anything else is treated as a bare statement
+list and wrapped in a scratch codeunit's `OnRun` trigger body — matching v1's
+CLI `-e` shape. Classification asks BC's own parser
+(`SyntaxTree.ParseObjectText`) rather than matching a keyword prefix, so it
+covers every object type BC supports, not just `codeunit`/`table` (#1931):
 
 ```json
 {"command":"execute","code":"Message('hi');"}
