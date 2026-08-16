@@ -19,7 +19,7 @@ namespace AlRunner.Infrastructure;
 
 public static class NclCecilRewrite
 {
-    private const int CACHE_VERSION = 124;
+    private const int CACHE_VERSION = 125;
 
     // ─────────────────────────────────────────────────────────────────────────
     // Cecil-owned skip registry (JmpHook→Cecil migration enabler).
@@ -88,6 +88,12 @@ public static class NclCecilRewrite
         // NCLMetaQuery.CreateObjectInstance — same null-ApplicationObjectConstructor story,
         // for the STATIC Query.SaveAsXml/Csv/Json(id, …) forms.
         "Microsoft.Dynamics.Nav.Runtime.NCLMetaQuery::CreateObjectInstance/2",
+        // NCLMetaForm.CreateObjectInstance(NavRecord) — #1897, the form/page twin of the
+        // XmlPort/Query pair above. Static Page.RunModal(id[, Record]) (and, transitively,
+        // Base App Codeunit 700 "Page Management".PageRunModal/PageRun) reach this instead
+        // of NavFormHandle.CreateTarget (the AL-variable path, which already had its own
+        // construction) and NRE on the null ApplicationObjectConstructor delegate.
+        "Microsoft.Dynamics.Nav.Runtime.NCLMetaForm::CreateObjectInstance/1",
         // ALSystemOperatingSystem.get_ALGuiAllowed — AL's GuiAllowed(). True, because the
         // runner registers a client callback and dispatches UI to test handlers.
         "Microsoft.Dynamics.Nav.Runtime.ALSystemOperatingSystem::get_ALGuiAllowed/0",
@@ -1380,6 +1386,45 @@ public static class NclCecilRewrite
 
             ReplaceBodyWithHelper(asm.MainModule, qCreate, qHelper);
             Console.Error.WriteLine("[Cecil] Rewrote NCLMetaQuery.CreateObjectInstance → BcRuntime.NCLMetaQuery_CreateObjectInstance");
+        }
+
+        // 8b2. NCLMetaForm.CreateObjectInstance(NavRecord) — #1897, the form/page twin of
+        //      the XmlPort/Query pair above. The AL-variable page form
+        //      (`P: Page "X"; P.SetRecord(Rec); P.RunModal();`) already has its own working
+        //      construction path (NavFormHandle.CreateTarget); the STATIC forms
+        //      (Page.RunModal(id[, Record]), and transitively Base App Codeunit 700
+        //      "Page Management".PageRunModal/PageRun) reach NavForm.RunModalAsync
+        //      (static) → NCLMetadata.GetMetaFormById(id).CreateObjectInstance(record)
+        //      instead, and NRE on the null ApplicationObjectConstructor delegate.
+        //      NCLMetaForm declares THREE CreateObjectInstance overloads — (), (NavRecord),
+        //      (string personalizationId) — only the (NavRecord) one is rewritten here; the
+        //      0-arg overload chains to it (`CreateObjectInstance((NavRecord)null)`, covered
+        //      automatically) and the personalizationId overload is unrelated.
+        {
+            var metaFormType = asm.MainModule.Types
+                .FirstOrDefault(t => t.FullName == "Microsoft.Dynamics.Nav.Runtime.NCLMetaForm")
+                ?? throw new InvalidOperationException(
+                    "[Cecil] NCLMetaForm type not found — Ncl shape changed; do not commit");
+
+            var fCreate = metaFormType.Methods
+                .FirstOrDefault(m => m.Name == "CreateObjectInstance" && m.HasBody
+                    && m.Parameters.Count == 1
+                    && m.Parameters[0].ParameterType.FullName == "Microsoft.Dynamics.Nav.Runtime.NavRecord")
+                ?? throw new InvalidOperationException(
+                    "[Cecil] NCLMetaForm.CreateObjectInstance(NavRecord) not found — Ncl shape changed; do not commit");
+
+            var fHelper = typeof(AlRunner.BcRuntime).GetMethod(
+                nameof(AlRunner.BcRuntime.NCLMetaForm_CreateObjectInstance),
+                BindingFlags.Public | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "[Cecil] BcRuntime.NCLMetaForm_CreateObjectInstance not found");
+
+            if (fCreate.ReturnType.FullName != fHelper.ReturnType.FullName)
+                throw new InvalidOperationException(
+                    "[Cecil] NCLMetaForm.CreateObjectInstance/helper return type mismatch — do not commit");
+
+            ReplaceBodyWithHelper(asm.MainModule, fCreate, fHelper);
+            Console.Error.WriteLine("[Cecil] Rewrote NCLMetaForm.CreateObjectInstance(NavRecord) → BcRuntime.NCLMetaForm_CreateObjectInstance");
         }
 
         // 8c. ALSystemOperatingSystem.get_ALGuiAllowed → true. This is AL's GuiAllowed().
