@@ -1028,9 +1028,24 @@ internal static class TestPageOptionValue
                 if (OptionNamesEqual(captions[i], value))
                     return NavOption.Create(metadata, OrdinalAt(ordinals, i));
 
-        for (var i = 0; i < options.Length; i++)
-            if (OptionNamesEqual(options[i], value))
-                return NavOption.Create(metadata, OrdinalAt(ordinals, i));
+        // Issue #1928, decided against real-BC evidence (StefanMaron/BusinessCentral.AL.
+        // Language.Tests#50, run against a real BC service tier on two BC versions): an
+        // Enum-typed control's TestPage.SetValue resolves ONLY by the declared Caption and
+        // REFUSES the member name — SetValue('Block') against `value(1; Block) { Caption =
+        // 'Blocks'; }` throws "Your entry of 'Block' is not an acceptable value for
+        // 'Kind'.", not a successful set. So for an Enum-backed metadata (IsEnum), the
+        // member-name fallback below must NOT run — accepting a spelling real BC rejects is
+        // exactly the silent divergence loud-failures.md forbids, and it is what shipped as
+        // a ghost test in tests/runner-extras/page-enum-control-modal before this fix.
+        //
+        // The plain `Option` primitive is a SEPARATE, unverified question — no real-BC
+        // evidence either way distinguishes caption-vs-member resolution for it, so its
+        // historical member-name fallback stays as-is; only Enum's is removed here.
+        var isEnumBacked = metadata.IsEnum;
+        if (!isEnumBacked)
+            for (var i = 0; i < options.Length; i++)
+                if (OptionNamesEqual(options[i], value))
+                    return NavOption.Create(metadata, OrdinalAt(ordinals, i));
 
         // A bare number is a legal way to set an option, and unambiguous.
         if (int.TryParse(value, System.Globalization.NumberStyles.Integer,
@@ -1040,12 +1055,22 @@ internal static class TestPageOptionValue
 
         throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
             context,
-            $"testpage-option-value — '{value}' is not one of the option's values "
-            + $"[{string.Join(", ", options)}]"
-            + (captions != null
-                ? $" nor one of its captions [{string.Join(", ", captions)}]"
-                : " (the control declares no OptionCaption)")
-            + ". See docs/scope.md");
+            isEnumBacked
+                ? $"testpage-option-value — '{value}' is not an acceptable value. An "
+                  + "Enum-typed control resolves TestPage.SetValue by its declared Caption "
+                  + "only, never by the member name (real BC's own behavior — see issue "
+                  + "#1928) — "
+                  + (captions != null
+                      ? $"acceptable captions are [{string.Join(", ", captions)}]"
+                      : "the enum declares no captions")
+                  + $". Member names ([{string.Join(", ", options)}]) are NOT accepted. "
+                  + "See docs/scope.md"
+                : $"testpage-option-value — '{value}' is not one of the option's values "
+                  + $"[{string.Join(", ", options)}]"
+                  + (captions != null
+                      ? $" nor one of its captions [{string.Join(", ", captions)}]"
+                      : " (the control declares no OptionCaption)")
+                  + ". See docs/scope.md");
     }
 
     /// <summary>
@@ -1065,6 +1090,49 @@ internal static class TestPageOptionValue
         if (captions != null && index < captions.Length) return captions[index];
         var options = Members(metadata);
         return index < options.Length ? options[index] : null;
+    }
+
+    /// <summary>
+    /// An Enum-typed control's per-value captions, sourced from the enum's OWN metadata.
+    ///
+    /// Unlike the <c>Option</c> primitive, an AL <c>Enum</c> has no page-level
+    /// <c>OptionCaption</c> property to declare, so
+    /// <see cref="AlRunner.Patches.RunnerPageInstance.TryGetOptionCaptions"/>'s
+    /// <c>ControlDefinition.OptionCaptionML</c> lookup is always empty for it (verified via
+    /// <c>AL_RUNNER_TRACE_PAGE_METADATA=2</c> against an Enum-bound page-variable control:
+    /// <c>OptionCaption='' OptionCaptionML=''</c>). Real BC computes an Enum's captions
+    /// from its own metadata instead — see issue #1928's real-BC evidence: a real service
+    /// tier's <c>TestPage.SetValue</c> on an Enum control resolves by the declared
+    /// <c>Caption</c> and REFUSES the member name (the exact opposite of what this runner
+    /// did before this fix).
+    ///
+    /// <c>IsEnum</c>/<c>GetOrdinals()</c>/<c>GetCaptionFromIndex(int)</c> are public virtuals
+    /// on <c>NCLOptionMetadata</c> (decompiled: <c>Microsoft.Dynamics.Nav.Ncl.dll</c>), which
+    /// <c>AlEnumOptionMetadata</c> (EnumMetadataPatches.cs) overrides from the SAME
+    /// emit-captured <c>(name, options[], indexes[], captions[])</c> tuple already used, and
+    /// already accepted as faithful, for <c>Enum::"X".Ordinals()/.Names()</c> via
+    /// <c>NCLEnumMetadata_CreateByIdAlAware</c>. The result is built in
+    /// <c>GetOrdinals()</c> order, which is the SAME order <see cref="Ordinals"/>'s reflection
+    /// (over a different, private accessor) already returns for the same metadata instance —
+    /// both walk the one <c>(options[], indexes[])</c> pair the AL emit captured — so a
+    /// caption at index i here lines up with the member at index i in <see cref="Members"/>,
+    /// which is what <see cref="Resolve"/> and <see cref="Display"/> index into.
+    ///
+    /// Returns null for a plain <c>Option</c> value (<c>IsEnum</c> is false there) or when
+    /// no bound value is available — the caller falls back to member-name display/resolution,
+    /// same as when a control declares no <c>OptionCaption</c> at all.
+    /// </summary>
+    internal static string[]? EnumCaptions(NavOption? option)
+    {
+        if (option?.NavOptionMetadata is not { IsEnum: true } metadata) return null;
+
+        var ordinals = new System.Collections.Generic.List<int>();
+        foreach (var ordinal in metadata.GetOrdinals()) ordinals.Add(ordinal);
+
+        var captions = new string[ordinals.Count];
+        for (var i = 0; i < ordinals.Count; i++)
+            captions[i] = metadata.GetCaptionFromIndex(ordinals[i]);
+        return captions;
     }
 
     /// <summary>The number of members, for AL that walks an option set rather than naming one.</summary>
@@ -1220,8 +1288,10 @@ internal sealed class LiveNavTestField : ITestField
     private NavOption? CurrentOption() => _record.GetFieldValue(_fieldNo) as NavOption;
 
     // Record-only mode has no control to carry an OptionCaption, so members are all there is.
+    // CurrentOption() is passed through so an Enum-typed field can fall back to the enum's
+    // own captions when the control declares no OptionCaption — see TryGetOptionCaptions.
     private string[]? OptionCaptions()
-        => _page != null && _controlId != 0 ? _page.TryGetOptionCaptions(_controlId) : null;
+        => _page != null && _controlId != 0 ? _page.TryGetOptionCaptions(_controlId, CurrentOption()) : null;
 
     public string Name => Caption;
 
@@ -1379,7 +1449,7 @@ internal sealed class PageVariableTestField : ITestField
     private NavValue ToBoundValue(string value)
         => RunnerPageInstance.GetValue(_expression) switch
         {
-            NavOption option => TestPageOptionValue.Resolve(option, value, _page.TryGetOptionCaptions(_controlId),
+            NavOption option => TestPageOptionValue.Resolve(option, value, _page.TryGetOptionCaptions(_controlId, option),
                 $"TestPage SetValue (control {_controlId})"),
             NavBoolean => TestPageBooleanValue.Resolve(value, $"TestPage SetValue (control {_controlId})"),
             _ => ALCompiler.ToNavValue(value),

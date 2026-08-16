@@ -32,6 +32,7 @@
 //   (see AlPageMetadataRegistry). For anything else TryCreate returns null and the caller
 //   keeps its record-only behaviour, which is exactly what it had before.
 using System.Reflection;
+using AlRunner;
 using Microsoft.Dynamics.Nav.Runtime;
 
 namespace AlRunner.Patches;
@@ -411,15 +412,30 @@ internal sealed class RunnerPageInstance
     /// runner does not reimplement BC's language selection. BC's own indexed lookup does
     /// the control search — ControlDefinitions is a flat FindAll over the master page, so
     /// nesting (a control inside a repeater) needs no special handling here.
+    ///
+    /// <paramref name="boundOption"/> is the control's CURRENT bound value, when the caller
+    /// already has one in hand (both call sites do: <c>LiveNavTestField.CurrentOption()</c>
+    /// for a Rec-bound field, <c>PageVariableTestField</c>'s switch in <c>ToBoundValue</c> for
+    /// a page-variable one). An Enum-typed control has no AL-level <c>OptionCaption</c>
+    /// property to declare — only the <c>Option</c> primitive can — so
+    /// <c>OptionCaptionML</c> is always empty for it (verified via
+    /// AL_RUNNER_TRACE_PAGE_METADATA=2: an Enum-bound "KindSelector" control reports
+    /// <c>OptionCaption='' OptionCaptionML=''</c>). Real BC computes an Enum's per-value
+    /// captions from the enum's OWN metadata instead (see issue #1928's real-BC evidence:
+    /// <c>TestPage.SetValue</c> on an Enum control resolves by the declared Caption and
+    /// refuses the member name), so when the control declares no OptionCaption this falls
+    /// back to <see cref="TestPageOptionValue.EnumCaptions"/>, sourced from the SAME
+    /// emit-captured enum metadata already used (and already accepted as faithful) for
+    /// <c>Enum::"X".Ordinals()/.Names()</c>.
     /// </summary>
-    internal string[]? TryGetOptionCaptions(int controlId)
+    internal string[]? TryGetOptionCaptions(int controlId, NavOption? boundOption = null)
     {
         var trace = Environment.GetEnvironmentVariable("AL_RUNNER_TRACE_PAGE_METADATA") == "2";
         var helper = _form is NavForm form ? form.MetadataHelper : null;
         if (helper == null)
         {
             if (trace) Console.Out.WriteLine($"[option-captions] control {controlId}: no MetadataHelper ({_form.GetType().Name})");
-            return null;
+            return TestPageOptionValue.EnumCaptions(boundOption);
         }
         if (!helper.TryGetControlDefinitionById(controlId, out var definition) || definition == null)
         {
@@ -438,7 +454,7 @@ internal sealed class RunnerPageInstance
                 foreach (var d in defs as System.Collections.IEnumerable ?? Array.Empty<object>())
                     Console.Out.WriteLine($"[option-captions]   have {d?.GetType().Name} ID={ReadProperty(d!, "ID")} Name={ReadProperty(d!, "Name")}");
             }
-            return null;
+            return TestPageOptionValue.EnumCaptions(boundOption);
         }
         if (trace)
             Console.Out.WriteLine(
@@ -451,8 +467,11 @@ internal sealed class RunnerPageInstance
         // same 1033 or throw. GetText also treats 1033 as its own fallback, so a page that
         // somehow carried only a non-ENU caption set would still resolve.
         var captions = definition.OptionCaptionML?.GetText(1033);
-        if (string.IsNullOrEmpty(captions)) return null;
-        return captions.Split(',');
+        if (!string.IsNullOrEmpty(captions)) return captions.Split(',');
+
+        // Option's OptionCaptionML is empty for an Enum-typed control by construction (see
+        // the doc comment above) — fall back to the enum's own metadata.
+        return TestPageOptionValue.EnumCaptions(boundOption);
     }
 
     /// <summary>
