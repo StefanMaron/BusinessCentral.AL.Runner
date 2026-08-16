@@ -245,11 +245,38 @@ public static partial class BcRuntime
         try { body(); }
         catch (Exception ex)
         {
-            // Store the caught exception in skeleton session.lastException so that
-            // ALSystemErrorHandling.get_ALGetLastErrorText (and the patched override
+            // Real BC's own AssertError body (decompiled) is:
+            //
+            //     try { body(); }
+            //     catch (Exception ex) when (RemapToALExceptionAndThrow(ex, out mapped)) { throw mapped; }
+            //     ...
+            //     catch (NavBaseException) { session.Rollback(); return; }
+            //
+            // i.e. it ALWAYS passes the caught exception through the real, unmodified
+            // NavMethodScope.RemapToALExceptionAndThrow(Exception, out NavALException) before
+            // deciding pass/fail. For most exception types that only rewraps the same
+            // `.Message` text (DivideByZeroException, IndexOutOfRangeException,
+            // FormatException, OverflowException) so skipping it was harmless. But for
+            // NavMetadataNotFoundException it produces a DIFFERENT message — "You tried to
+            // invoke the {type} object with the ID {id} from the object {caller}. ..."
+            // (Lang.ObjectNotFoundError) — naming the calling AL object, instead of the raw
+            // "The metadata object {type} {id} was not found" NavMetadataNotFoundException
+            // carries. A static Page.RunModal(0, Record) on a table with no LookupPageId hits
+            // exactly this: real BC's error names the page id and caller, ours (without this
+            // remap) leaked the generic metadata-lookup message instead.
+            //
+            // RemapToALExceptionAndThrow is real BC's own method body (not Cecil-rewritten,
+            // not a runner reimplementation) — call it via reflection on the real `self` so we
+            // reuse it exactly rather than re-deriving the message text ourselves. Best-effort:
+            // if invoking it throws (e.g. some scope-internal state the skeleton never
+            // populates), fall back to the original exception unchanged, matching this
+            // method's prior behaviour.
+            var effectiveEx = TryRemapToALException(self, ex) ?? ex;
+            // Store the (possibly remapped) exception in skeleton session.lastException so
+            // that ALSystemErrorHandling.get_ALGetLastErrorText (and the patched override
             // in MiscPatches) can return its message — Assert.ExpectedError / Library
             // Assert depend on this round-trip.
-            StoreLastExceptionOnSkeletonSession(ex);
+            StoreLastExceptionOnSkeletonSession(effectiveEx);
             // BC's own AssertError ends its catch with session.Rollback(): an AL error
             // unwinds the database to the last COMMIT. This replacement exists because the
             // real body's rollback path NREs on the skeleton session, not because the
@@ -258,6 +285,36 @@ public static partial class BcRuntime
             return; /* asserterror passed: body threw something */
         }
         throw new Microsoft.Dynamics.Nav.Types.Exceptions.NavNCLAssertErrorException();
+    }
+
+    private static System.Reflection.MethodInfo? _mRemapToALExceptionAndThrow;
+
+    /// <summary>
+    /// Best-effort invocation of the real, unmodified NavMethodScope.RemapToALExceptionAndThrow
+    /// (internal bool RemapToALExceptionAndThrow(Exception, out NavALException)) on the actual
+    /// scope instance. Returns the mapped exception real BC would have thrown, or null if the
+    /// method declined to remap (returned false) or the reflective call itself failed.
+    /// </summary>
+    private static Exception? TryRemapToALException(object self, Exception ex)
+    {
+        try
+        {
+            _mRemapToALExceptionAndThrow ??= self.GetType().GetMethod(
+                "RemapToALExceptionAndThrow",
+                BindingFlags.NonPublic | BindingFlags.Instance);
+            if (_mRemapToALExceptionAndThrow == null) return null;
+
+            var args = new object?[] { ex, null };
+            var remapped = (bool)_mRemapToALExceptionAndThrow.Invoke(self, args)!;
+            return remapped ? args[1] as Exception : null;
+        }
+        catch
+        {
+            // Reflective call failed (e.g. some scope-internal state the skeleton doesn't
+            // populate for this scope type) — fall back to the original exception, exactly
+            // this method's behaviour before this fix existed.
+            return null;
+        }
     }
 
     private static System.Reflection.FieldInfo? _fSessLastException;
