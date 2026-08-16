@@ -1,0 +1,19 @@
+{
+  "id": "9ab65fe4-bb26-4c49-99f9-bb16bde9bb77",
+  "name": "Runner Extras - Page Enum Control Modal",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Regression for issue #1896: Page.RunModal() on a page with a page-global control bound to an Enum-typed variable throws NavALException (\"You tried to invoke the Enum object with the ID N ... does not exist in the current application\") at form materialisation.",
+  "description": "The general BC-language contract this exercises — a page with a page-global Enum-typed variable control can be RunModal'd, its [ModalPageHandler] runs, and the control's real value round-trips — is a plain BC-behaviour claim and belongs upstream in the al-language corpus (see the runner repo's bc-behavior-tests-go-upstream.md); a corpus test/PR (tests/al-language/tests/al-language/handlers/TestPageEnumVariableControl_*.al) was prepared alongside this fix. This suite is the runner-repo-local stopgap: it pins the runner-INTERNAL defect directly (NCLMetaForm.ApplyAppGroupAwareEnumMetadataToPageExpressions calling NCLMetadata.TryGetMetaApplicationObject(ObjectType.Enum, ...), which the runner never populates for Enum objects — see AlRunner/Patches/PageEnumFieldMetadataPatches.cs), so this repo's own CI gates the fix now, without waiting on the corpus PR to merge and the submodule pin to bump. Once that upstream test lands and the pin moves, this suite's claim is fully covered there too and it may be retired.",
+  "dependencies": [],
+  "idRanges": [
+    {
+      "from": 64510,
+      "to": 64519
+    }
+  ],
+  "platform": "1.0.0.0",
+  "application": "27.0.0.0",
+  "runtime": "14.0",
+  "features": []
+}

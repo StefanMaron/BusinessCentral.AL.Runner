@@ -19,7 +19,7 @@ namespace AlRunner.Infrastructure;
 
 public static class NclCecilRewrite
 {
-    private const int CACHE_VERSION = 126;
+    private const int CACHE_VERSION = 127;
 
     // ─────────────────────────────────────────────────────────────────────────
     // Cecil-owned skip registry (JmpHook→Cecil migration enabler).
@@ -105,6 +105,13 @@ public static class NclCecilRewrite
         // of NavFormHandle.CreateTarget (the AL-variable path, which already had its own
         // construction) and NRE on the null ApplicationObjectConstructor delegate.
         "Microsoft.Dynamics.Nav.Runtime.NCLMetaForm::CreateObjectInstance/1",
+        // NCLMetaForm.ApplyAppGroupAwareEnumMetadataToPageExpressions — #1896. Real BC
+        // resolves each Enum-typed page control's OptionString/OptionCaption/OptionValues via
+        // NCLMetadata.TryGetMetaApplicationObject(ObjectType.Enum, ...), which the runner
+        // never populates (AL enums are served through the separate NCLEnumMetadata.Create(int)
+        // hook, a different codepath page materialisation never calls). Both overloads
+        // (MetaPageDefinition and PageDefinition) share this Name+paramCount key.
+        "Microsoft.Dynamics.Nav.Runtime.NCLMetaForm::ApplyAppGroupAwareEnumMetadataToPageExpressions/1",
         // ALSystemOperatingSystem.get_ALGuiAllowed — AL's GuiAllowed(). True, because the
         // runner registers a client callback and dispatches UI to test handlers.
         "Microsoft.Dynamics.Nav.Runtime.ALSystemOperatingSystem::get_ALGuiAllowed/0",
@@ -1436,6 +1443,67 @@ public static class NclCecilRewrite
 
             ReplaceBodyWithHelper(asm.MainModule, fCreate, fHelper);
             Console.Error.WriteLine("[Cecil] Rewrote NCLMetaForm.CreateObjectInstance(NavRecord) → BcRuntime.NCLMetaForm_CreateObjectInstance");
+        }
+
+        // 8b3. NCLMetaForm.ApplyAppGroupAwareEnumMetadataToPageExpressions — #1896. Real BC
+        //      resolves each Enum-typed page control's OptionString/OptionCaption/OptionValues
+        //      through NCLMetadata.TryGetMetaApplicationObject(ObjectType.Enum, ...), which the
+        //      runner never populates for Enum objects (see PageEnumFieldMetadataPatches.cs for
+        //      the full root-cause writeup). Two overloads share the name — MetaPageDefinition
+        //      (the frozen/cached path NavForm.GetMasterPage reaches) and PageDefinition (the
+        //      thawed/mutable sibling) — both rewritten here.
+        {
+            var metaFormType2 = asm.MainModule.Types
+                .FirstOrDefault(t => t.FullName == "Microsoft.Dynamics.Nav.Runtime.NCLMetaForm")
+                ?? throw new InvalidOperationException(
+                    "[Cecil] NCLMetaForm type not found — Ncl shape changed; do not commit");
+
+            var enumMetaCandidates = metaFormType2.Methods
+                .Where(m => m.Name == "ApplyAppGroupAwareEnumMetadataToPageExpressions" && m.HasBody
+                    && m.Parameters.Count == 1)
+                .ToList();
+            if (enumMetaCandidates.Count != 2)
+                throw new InvalidOperationException(
+                    $"[Cecil] NCLMetaForm.ApplyAppGroupAwareEnumMetadataToPageExpressions: expected "
+                    + $"exactly 2 overloads (MetaPageDefinition, PageDefinition), found "
+                    + $"{enumMetaCandidates.Count} — Ncl shape changed; do not commit");
+
+            var metaOverload = enumMetaCandidates.FirstOrDefault(m =>
+                m.Parameters[0].ParameterType.FullName == "Microsoft.Dynamics.Nav.Types.Metadata.MetaPageDefinition")
+                ?? throw new InvalidOperationException(
+                    "[Cecil] NCLMetaForm.ApplyAppGroupAwareEnumMetadataToPageExpressions(MetaPageDefinition) "
+                    + "not found — Ncl shape changed; do not commit");
+            var pageOverload = enumMetaCandidates.FirstOrDefault(m =>
+                m.Parameters[0].ParameterType.FullName == "Microsoft.Dynamics.Nav.Types.Metadata.PageDefinition")
+                ?? throw new InvalidOperationException(
+                    "[Cecil] NCLMetaForm.ApplyAppGroupAwareEnumMetadataToPageExpressions(PageDefinition) "
+                    + "not found — Ncl shape changed; do not commit");
+
+            var metaHelper = typeof(AlRunner.BcRuntime).GetMethod(
+                nameof(AlRunner.BcRuntime.NCLMetaForm_ApplyEnumMetadataToMetaPageExpressions),
+                BindingFlags.Public | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "[Cecil] BcRuntime.NCLMetaForm_ApplyEnumMetadataToMetaPageExpressions not found");
+            var pageHelper = typeof(AlRunner.BcRuntime).GetMethod(
+                nameof(AlRunner.BcRuntime.NCLMetaForm_ApplyEnumMetadataToPageExpressions),
+                BindingFlags.Public | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "[Cecil] BcRuntime.NCLMetaForm_ApplyEnumMetadataToPageExpressions not found");
+
+            if (metaOverload.ReturnType.FullName != NormalizeTypeName(metaHelper.ReturnType.FullName ?? ""))
+                throw new InvalidOperationException(
+                    "[Cecil] NCLMetaForm.ApplyAppGroupAwareEnumMetadataToPageExpressions(MetaPageDefinition)"
+                    + "/helper return type mismatch — do not commit");
+            if (pageOverload.ReturnType.FullName != NormalizeTypeName(pageHelper.ReturnType.FullName ?? ""))
+                throw new InvalidOperationException(
+                    "[Cecil] NCLMetaForm.ApplyAppGroupAwareEnumMetadataToPageExpressions(PageDefinition)"
+                    + "/helper return type mismatch — do not commit");
+
+            ReplaceBodyWithHelper(asm.MainModule, metaOverload, metaHelper);
+            ReplaceBodyWithHelper(asm.MainModule, pageOverload, pageHelper);
+            Console.Error.WriteLine(
+                "[Cecil] Rewrote NCLMetaForm.ApplyAppGroupAwareEnumMetadataToPageExpressions"
+                + "(MetaPageDefinition|PageDefinition) → BcRuntime.NCLMetaForm_ApplyEnumMetadataTo*Expressions");
         }
 
         // 8c. ALSystemOperatingSystem.get_ALGuiAllowed → true. This is AL's GuiAllowed().
