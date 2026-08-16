@@ -1188,8 +1188,10 @@ internal static class TestPageOptionValue
 }
 
 /// <summary>
-/// Boolean values as a TestPage sees them, on a page-variable-bound control
-/// (<c>field(Flag; ShowFlag)</c> where <c>ShowFlag: Boolean</c>).
+/// Boolean values as a TestPage sees them, on either shape of control: a page-variable-bound
+/// one (<c>field(Flag; ShowFlag)</c> where <c>ShowFlag: Boolean</c>) or a Rec-bound one
+/// (<c>field(Flag; Rec.Flag)</c> where the source table field is <c>Boolean</c>) — see issue
+/// #1870, the Rec-bound half of #1837 that #1869 (the page-variable half) left open.
 ///
 /// <c>NavTestField.ALSetValue</c> — the real, precompiled BC method the AL compiler emits for
 /// every <c>TestPage.&lt;field&gt;.SetValue(&lt;Boolean&gt;)</c> call — never hands a NavValue
@@ -1198,7 +1200,9 @@ internal static class TestPageOptionValue
 /// <c>NavValueMetadata</c>) and then <see cref="ITestField.ValueToString"/> (both OUR OWN mock
 /// methods) to turn the boolean back into a string before ever reaching <see cref="ITestField.Value"/>'s
 /// setter — see the doc comment on <see cref="PageVariableTestField.FieldType"/> for why that
-/// matters here.
+/// matters here. <see cref="LiveNavTestField.FieldType"/> is sourced from the source table
+/// field's own declared type instead, but reaches the same <c>NavType.Boolean</c> answer for a
+/// <c>Boolean</c> field, so the round trip is identical on both sides.
 ///
 /// Because both ends of that round trip are code THIS runner owns (<see cref="ITestField.ValueToString"/>
 /// always answers with <c>Convert.ToString(boolValue)</c>, i.e. exactly "True" or "False"), accepting
@@ -1263,10 +1267,20 @@ internal sealed class LiveNavTestField : ITestField
                ?? string.Empty;
         set
         {
+            // Issue #1870 — the Rec-bound half of #1837 that #1869 (the page-variable half)
+            // left open. FieldType (sourced from the source table field's own declared type,
+            // see TryGetMetaFieldType) answers Boolean for a `field(Flag; Rec.Flag)` control
+            // over a `Boolean` table field; falling through to ALCompiler.ToNavValue(value)
+            // there always produced a NavText, which NavTestField.ALSetValue's own Boolean
+            // ALValidateAsync then rejected with "The value 'True' can't be evaluated into
+            // type Boolean" — the same shape of bug TestPageBooleanValue already fixed for
+            // PageVariableTestField.
             var navValue = CurrentOption() is { } option
                 ? TestPageOptionValue.Resolve(option, value, OptionCaptions(),
                     $"TestPage SetValue (field {_fieldNo})")
-                : ALCompiler.ToNavValue(value);
+                : FieldType == NavType.Boolean
+                    ? TestPageBooleanValue.Resolve(value, $"TestPage SetValue (field {_fieldNo})")
+                    : ALCompiler.ToNavValue(value);
 
             // Setting a field on a page is a VALIDATE, not an assignment. That is what fills in
             // the caption when a user picks an id, and what lets a field refuse a value outright.
