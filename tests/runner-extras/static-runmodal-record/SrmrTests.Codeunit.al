@@ -23,8 +23,10 @@ codeunit 64502 "Srmr Tests"
     local procedure Initialize()
     var
         Row: Record "Srmr Row";
+        LookupRow: Record "Srmr Lookup Row";
     begin
         Row.DeleteAll();
+        LookupRow.DeleteAll();
     end;
 
     // Positive: the static Page.RunModal(id, Record) form reaches the [ModalPageHandler]
@@ -95,6 +97,84 @@ codeunit 64502 "Srmr Tests"
 
         if not Row.Get('HANDLER') then
             Error('the [ModalPageHandler] must have run for the AL-page-variable RunModal form');
+    end;
+
+    // Regression for issue #1918 (split out of #1897): real BC's static
+    // NavForm.RunModalAsync(bool, bool, int formId, NavRecord record, int) resolves
+    // formId==0 from the record's LookupFormId:
+    //
+    //   if (formId == 0 && record != null) { formId = record.LookupFormId; }
+    //
+    // and NavRecord.LookupFormId reads MetaTable.LookupFormId, which real BC populates
+    // from the table's LookupPageId property. Before the fix the runner's synthesized
+    // NCLMetaTable never populated LookupFormId (always 0), so Page.RunModal(0, Row)
+    // threw "You tried to invoke the Page object with the ID 0 ..." instead of
+    // resolving Page::"Srmr Lookup List" from "Srmr Lookup Row".LookupPageId. This is
+    // separate from #1897/#1919's NCLMetaForm.CreateObjectInstance NRE: it fails BEFORE
+    // that method is ever reached, while formId is still (wrongly) 0.
+    [Test]
+    [HandlerFunctions('LookupListHandler')]
+    procedure StaticRunModal_ById0_ResolvesPageFromTableLookupPageId()
+    var
+        Row: Record "Srmr Row";
+        LookupRow: Record "Srmr Lookup Row";
+        Result: Action;
+    begin
+        Initialize();
+        LookupRow.Init();
+        LookupRow."No." := 'A';
+        LookupRow.Insert();
+
+        Result := Page.RunModal(0, LookupRow);
+
+        if not Row.Get('HANDLER') then
+            Error('the [ModalPageHandler] for the table''s LookupPageId-resolved page must have run for Page.RunModal(0, Record)');
+        if Format(Result) <> Format(Action::LookupOK) then
+            Error('Page.RunModal(0, Record) must resolve the page via LookupPageId and return LookupOK, got %1', Format(Result));
+    end;
+
+    // Negative: a table declaring NO LookupPageId must still fail loudly on
+    // Page.RunModal(0, Row) rather than silently resolving to some other page (e.g. the
+    // first page the runner happens to find, or the last one built). Without this, a fix
+    // that made every id-0 static RunModal succeed regardless of the record's own table
+    // metadata would pass the positive test above and hide the same bug in reverse.
+    // Real BC surfaces this failure as one of two distinct texts depending on internal
+    // dispatch state — "You tried to invoke the Page object with the ID 0 ..." (the same
+    // text the issue reported) or "The metadata object Page 0 was not found. ..." — both
+    // NavMetadataNotFoundException-rooted "no such Page 0" diagnoses, just phrased
+    // differently by whichever BC code path unwinds the failure. Either is accepted; what
+    // must NOT happen is the call succeeding.
+    [Test]
+    procedure StaticRunModal_ById0_NoLookupPageId_FailsLoudly()
+    var
+        Row: Record "Srmr Row";
+        ErrorText: Text;
+    begin
+        Initialize();
+        Row.Init();
+        Row."No." := 'D';
+        Row.Descr := 'Delta';
+        Row.Insert();
+
+        asserterror Page.RunModal(0, Row);
+
+        ErrorText := GetLastErrorText();
+        if (StrPos(ErrorText, 'ID 0') = 0) and (StrPos(ErrorText, 'Page 0') = 0) then
+            Error('Page.RunModal(0, Record) on a table declaring no LookupPageId must still fail ' +
+                  'as "no such Page 0" rather than silently resolving to a page, got: %1', ErrorText);
+    end;
+
+    [ModalPageHandler]
+    procedure LookupListHandler(var Modal: TestPage "Srmr Lookup List")
+    var
+        Stamp: Record "Srmr Row";
+    begin
+        Stamp.Init();
+        Stamp."No." := 'HANDLER';
+        Stamp.Descr := 'ran';
+        if not Stamp.Insert() then
+            Stamp.Modify();
+        Modal.OK().Invoke();
     end;
 
     [ModalPageHandler]

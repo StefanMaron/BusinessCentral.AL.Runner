@@ -149,10 +149,27 @@ public static partial class RecordPatches
                 }
             }
 
+            // Issue #1918: real BC's NavForm.RunModalAsync resolves a static
+            // Page.RunModal(0, Record) from the record's table metadata —
+            // `if (formId == 0 && record != null) formId = record.LookupFormId;` — and
+            // NavRecord.LookupFormId reads NCLMetaTable.LookupFormId, which BC's own
+            // AssignFromMetaTable copies straight from the MetaTable it was built from
+            // (`LookupFormId = metaTable.LookupFormId;`, decompiled). Resolve the table's
+            // declared LookupPageId to a page id here — the SAME name→id resolution
+            // TableMetadataVirtualTable.cs's Table Metadata (2000000136) row-builder
+            // already performs for the identical property — and feed it into the
+            // MetaTable ctor's own `lookupFormId` parameter so CreateFromMetaTable's
+            // AssignFromMetaTable carries it onto the NCLMetaTable this run serves. Left
+            // unset (the ctor's own default is 0), every runner-built table answered "no
+            // lookup page" regardless of what LookupPageId declared, and
+            // Page.RunModal(0, Row) threw "You tried to invoke the Page object with the
+            // ID 0" instead of resolving the declared page.
+            var lookupFormId = ResolvePageReference(parsed.LookupPageName);
+
             // Build MetaTable via named-parameter ctor.  The public ctor takes many
             // named params with defaults; we resolve by name and fall back to defaults.
             var defaultMetaTable = CallMetaTableCtor(tableId, parsed.TableName, fields, allKeys.ToArray(),
-                parsed.IsTableTypeTemporary, parsed.DataPerCompany);
+                parsed.IsTableTypeTemporary, parsed.DataPerCompany, lookupFormId);
             if (defaultMetaTable == null) return null;
 
             // NavAppGroup.BaseGroup
@@ -249,7 +266,7 @@ public static partial class RecordPatches
     }
 
     private static object? CallMetaTableCtor(int id, string name, object[] fields, object[] allKeys,
-        bool isTableTypeTemporary, bool isDataPerCompany)
+        bool isTableTypeTemporary, bool isDataPerCompany, int lookupFormId = 0)
     {
         if (_tMetaTable == null) return null;
         var ctor = _tMetaTable.GetConstructors()
@@ -280,6 +297,10 @@ public static partial class RecordPatches
             // not-per-company, and BC's RecordImplementation.ChangeCompany returns true
             // without ever looking at the company name.
             if (p.Name == "isDataPerCompany") { args[i] = isDataPerCompany; continue; }
+            // #1918 — see the call site's comment. 0 (the ctor's own default) is what
+            // MetaTable.LookupFormId already means for "declares no LookupPageId", so a
+            // resolved id of 0 here is not a special case to skip.
+            if (p.Name == "lookupFormId") { args[i] = lookupFormId; continue; }
             if (p.Name == "tableType" && p.ParameterType.IsEnum)
             {
                 var enumName = isTableTypeTemporary ? "Temporary" : "Normal";

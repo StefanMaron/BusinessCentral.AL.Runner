@@ -161,11 +161,18 @@ public static partial class RecordPatches
             generation = (_bcAppPaths.Count, _parsedTables.Count, _parsedPages.Count);
             if (_tableMetadataRows != null && _tableMetadataRowsBuiltFrom == generation) return _tableMetadataRows;
 
+            // Built once and closed over below rather than through ResolvePageReference's own
+            // (also-correct, but per-call) lookup — this loop calls into page resolution twice
+            // per table (LookupPageId + DrillDownPageId), and re-running BuildObjectIndexes'
+            // full object-inventory scan that often would undo the whole-run caching this
+            // method exists for.
             var (pageIdsByName, tableCaptionsById) = BuildObjectIndexes();
             var unresolvedPages = new List<string>();
 
             // A page reference as written: a bare id stays that id, otherwise the run's own
-            // page inventory answers. An unresolvable NAME is reported, never quietly 0.
+            // page inventory answers. An unresolvable NAME is reported, never quietly 0 — see
+            // ResolvePageReference's doc comment for why 0 is otherwise a meaningful, truthful
+            // answer and not something to distinguish here.
             int ResolvePage(string? reference, int tableId, string propertyName)
             {
                 if (string.IsNullOrWhiteSpace(reference)) return 0;   // declares none — truthful 0
@@ -254,6 +261,29 @@ public static partial class RecordPatches
             }
         }
         return (pages, captions);
+    }
+
+    /// <summary>
+    /// Resolves a page reference as WRITTEN in an AL table property (<c>LookupPageId</c> /
+    /// <c>DrillDownPageId</c>) — either a bare id in text form or a page NAME — to a page
+    /// object id, against this run's own page inventory (<see cref="BuildObjectIndexes"/>).
+    /// Shared by the Table Metadata (2000000136) virtual-table row builder above and by
+    /// <c>RecordPatches.NclMetaTableBuilder.cs</c>'s <c>NCLMetaTable.LookupFormId</c>
+    /// population (#1918) — both read the identical AL-declared property and must agree on
+    /// what it resolves to.
+    /// <para>Returns 0 when <paramref name="reference"/> is null/blank (the table declares
+    /// none — a meaningful, truthful 0, not a failure) or when a named reference cannot be
+    /// resolved against the known page inventory. Callers that need to distinguish "declares
+    /// none" from "declares an unresolvable name" — as the Table Metadata row builder does,
+    /// to report the gap — must do that check themselves before calling in, exactly as its
+    /// local <c>ResolvePage</c> does.</para>
+    /// </summary>
+    internal static int ResolvePageReference(string? reference)
+    {
+        if (string.IsNullOrWhiteSpace(reference)) return 0;
+        if (int.TryParse(reference, out var literal) && literal > 0) return literal;
+        var (pageIdsByName, _) = BuildObjectIndexes();
+        return pageIdsByName.TryGetValue(reference, out var id) ? id : 0;
     }
 
     private static IEnumerable<ParsedTable> EnumerateBcAppTableSymbols()
