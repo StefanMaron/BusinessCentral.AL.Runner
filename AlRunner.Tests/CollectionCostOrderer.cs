@@ -113,6 +113,9 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             ["InstallSeedDepCompanyCacheTests"] = 196,
             ["TestFilterFlagTests"] = 99,
             ["PhaseLogIntegrationTests"] = 85,
+            // #1922: 6 tests, each spawning a real runner subprocess against an AL fixture
+            // (--coverage twice, --output-junit twice, table-trigger fixture once).
+            ["CoverageTests"] = 85,
             // #1887: added by #1882 (--count-baseline), absent from this table since — same
             // fallback-to-30 failure as InstallSeedDepCompanyCacheTests above, dispatched at
             // t=400s.
