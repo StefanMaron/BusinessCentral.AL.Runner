@@ -118,78 +118,90 @@ public sealed class WatchSourceTests
     // file events spread over seconds, so the old debounce started a cycle mid-checkout,
     // against a tree that was still part-old / part-new.
     //
-    // This test reproduces that shape deterministically WITHOUT a real BC compile: a burst
-    // of 12 file writes with a 120ms gap between each (below the 250ms quiet window, so
-    // each one re-arms it — exactly what a bulk git operation looks like from inotify's
-    // side) spread over ~1.3s. Under the OLD fixed-sleep debounce, WaitForSourceChange
-    // would return ~250ms after the FIRST write — i.e. around write #2 of 12, with 10 more
-    // writes still to come. Under quiescence it must not return until `QuietMs` has passed
-    // with NO further write, i.e. strictly after the LAST write of the burst.
+    // #1920: this test USED to reproduce that shape with real `Task.Delay(120)` writes
+    // against a real FileSystemWatcher, asserting on real `Stopwatch` timings. That is what
+    // flaked red on the 27.3/28.3/28.4 CI legs — not a quiescence-logic regression. Root
+    // cause: a nominal 120ms gap between two writes is only "below the 250ms quiet window"
+    // if the CI machine keeps `Task.Delay(120)` honest; under load a single gap can stretch
+    // past 250ms, at which point a CORRECT quiescence implementation legitimately concludes
+    // "quiet" and releases early relative to the test's real-time assumption — this is
+    // indistinguishable, from a bare "returned at 250ms" symptom, from the actual #1904
+    // fixed-debounce bug the test exists to catch. A real-clock test cannot tell those two
+    // causes apart, which is exactly why it must not be trusted to prove or disprove either.
+    //
+    // The fix is to stop depending on real time entirely: drive WaitForQuiescence with an
+    // injected virtual clock (WatchActivity(nowTicks:) / WaitForQuiescence(nowTicks:,
+    // sleep:)) so the burst's timing is scripted exactly, not subject to scheduler jitter.
+    // `sleep` fast-forwards the virtual clock by the requested amount and, along the way,
+    // delivers any scheduled event whose virtual timestamp falls inside that interval —
+    // modeling the real algorithm's periodic poll-and-check without any wall-clock wait, so
+    // this test runs in microseconds and cannot flake regardless of machine load.
     [Fact]
-    public async Task WaitForSourceChange_BurstBelowQuietWindow_ReleasesOnlyAfterBurstSettles()
+    public void WaitForQuiescence_BurstBelowQuietWindow_ReleasesOnlyAfterBurstSettles_Deterministic()
     {
-        var dir = NewTempDir();
         const int fileCount = 12;
         const int gapMs = 120;
-        Assert.True(gapMs < AlRunner.WatchSource.QuietMs,
-            "the reproduction depends on each write re-arming quiescence — the gap must be " +
+        const int quietMs = 250;
+        Assert.True(gapMs < quietMs,
+            "the reproduction depends on each event re-arming quiescence — the gap must be " +
             "smaller than the quiet window.");
 
-        var sw = new System.Diagnostics.Stopwatch();
-        long lastWriteMs = -1;
-        var burstDone = new System.Threading.ManualResetEventSlim(false);
+        // The burst: 12 events, gapMs apart, at virtual times 0, 120, 240, ..., 1320.
+        var eventTimes = new List<long>();
+        for (int i = 0; i < fileCount; i++) eventTimes.Add(i * (long)gapMs);
+        var lastEventTime = eventTimes[^1];
 
-        var task = Task.Run(() => AlRunner.WatchSource.WaitForSourceChange(
-            new List<string> { dir },
-            onArmed: () =>
+        long fakeNow = 0;
+        Func<long> nowTicks = () => fakeNow;
+        var activity = new AlRunner.WatchSource.WatchActivity(nowTicks);
+
+        // Event #0 is delivered synchronously up front — this models `signal.Wait()`
+        // returning after the first real watcher event, which is what the production
+        // caller (WaitForSourceChange) does immediately before calling WaitForQuiescence.
+        activity.Touch();
+        var nextEventIndex = 1;
+
+        void FakeSleep(int ms)
+        {
+            var target = fakeNow + ms;
+            while (nextEventIndex < eventTimes.Count && eventTimes[nextEventIndex] <= target)
             {
-                sw.Start();
-                _ = Task.Run(async () =>
-                {
-                    for (int i = 0; i < fileCount; i++)
-                    {
-                        File.WriteAllText(Path.Combine(dir, $"F{i}.Table.al"), $"table {60000 + i} F{i} {{ }}");
-                        lastWriteMs = sw.ElapsedMilliseconds;
-                        if (i < fileCount - 1) await Task.Delay(gapMs);
-                    }
-                    burstDone.Set();
-                });
-            }));
+                fakeNow = eventTimes[nextEventIndex]; // land exactly on the event's own virtual time
+                activity.Touch();
+                nextEventIndex++;
+            }
+            fakeNow = target;
+        }
 
-        var winner = await Task.WhenAny(task, Task.Delay(TimeSpan.FromSeconds(20)));
-        Assert.True(ReferenceEquals(task, winner),
-            "WaitForSourceChange did not return within 20s of the burst starting.");
-        Assert.True(await task, "WaitForSourceChange must report a change was detected.");
-        var returnedAtMs = sw.ElapsedMilliseconds;
+        AlRunner.WatchSource.WaitForQuiescence(
+            activity, quietMs: quietMs, maxWaitMs: 10_000, nowTicks: nowTicks, sleep: FakeSleep);
 
-        // The writer keeps running independently of WaitForSourceChange/the watchers (it
-        // just writes files on its own timer) — wait for it to finish on its OWN terms
-        // before reading lastWriteMs, rather than requiring it to already be done by the
-        // time `task` returns. Requiring that here would conflate two different claims:
-        // this wait proves the burst genuinely ran to completion (test-setup sanity); the
-        // timing assertions below prove WHEN WaitForSourceChange released relative to it —
-        // which, under the bug, is BEFORE the burst finishes. That is the defect, not a
-        // reason to fail this wait.
-        Assert.True(burstDone.Wait(TimeSpan.FromSeconds(5)),
-            "the writer burst did not complete within 5s of WaitForSourceChange returning — " +
-            "test setup is broken (unrelated to the #1904 timing claim below).");
-        Assert.True(lastWriteMs >= 0, "the writer never wrote a file — the test setup is broken.");
-
-        // The phantom-failure assertion: must not release before the burst's LAST write —
+        // The phantom-failure assertion: must not release before the burst's LAST event —
         // that is precisely "started a cycle mid-checkout". Fails under the old fixed
-        // Thread.Sleep(250), which returns ~250ms after the FIRST write (~1070ms early here).
-        Assert.True(returnedAtMs >= lastWriteMs,
-            $"WaitForSourceChange returned at {returnedAtMs}ms, BEFORE the burst's last write " +
-            $"at {lastWriteMs}ms — released mid-burst against a half-applied tree (the #1904 " +
+        // Thread.Sleep(250), which (simulated the same way — see the RED-check note below)
+        // returns ~250ms after the FIRST event, ~1070ms before the last one here.
+        Assert.True(fakeNow >= lastEventTime,
+            $"WaitForQuiescence returned at virtual {fakeNow}ms, BEFORE the burst's last event " +
+            $"at {lastEventTime}ms — released mid-burst against a half-applied tree (the #1904 " +
             "phantom-failure bug: a fixed post-first-event debounce cannot distinguish a " +
             "settling save from an in-progress bulk rewrite).");
 
         // And it must not stall indefinitely either — a single quiet window plus generous
-        // scheduling slack after the last write, not the 10s cap.
-        Assert.True(returnedAtMs <= lastWriteMs + 3_000,
-            $"WaitForSourceChange returned {returnedAtMs - lastWriteMs}ms after the burst's " +
-            "last write — quiescence should release promptly once the burst settles, not " +
-            "stall toward the cap.");
+        // slack after the last event, not the 10s cap.
+        Assert.True(fakeNow <= lastEventTime + quietMs + 500,
+            $"WaitForQuiescence returned {fakeNow - lastEventTime}ms after the burst's last " +
+            "event — quiescence should release promptly once the burst settles, not stall " +
+            "toward the cap.");
+
+        // RED-check (acceptance criterion for #1920): reverting WaitForQuiescence to a fixed
+        // post-first-event debounce must make the first assertion above fail. Verified by
+        // hand — not asserted here as executable code, since there is no non-hacky way to
+        // swap the algorithm at runtime without reintroducing the very bug this proves
+        // against — by temporarily replacing the method body with
+        // `doSleep((int)quiet); return;` and re-running this test: it fails with
+        // "returned at virtual 250ms, BEFORE the burst's last event at 1320ms", confirming
+        // the test actually discriminates the two implementations. See the PR description
+        // for the transcript.
     }
 
     // The companion negative-latency check: a SINGLE save (no burst) must still release

@@ -66,10 +66,25 @@ internal static class WatchSource
     /// </summary>
     internal sealed class WatchActivity
     {
-        private long _lastEventTicks = Environment.TickCount64;
+        // #1920: the clock is injectable so a test can drive this activity's notion of "now"
+        // deterministically (a virtual clock, advanced only when the test's own fake `sleep`
+        // callback runs) instead of depending on Environment.TickCount64 + real Task.Delay /
+        // FileSystemWatcher timing, which is exactly what flaked on 27.3/28.3/28.4: a CI
+        // runner under load can stretch a nominal 120ms gap between two writes past the
+        // 250ms quiet window, and a real-time test has no way to tell that apart from a
+        // genuine quiescence-logic regression. Production code never passes this — it always
+        // defaults to Environment.TickCount64, so real behavior is unchanged.
+        private readonly Func<long> _now;
+        private long _lastEventTicks;
         private int _overflowed;
 
-        /// <summary><see cref="Environment.TickCount64"/> of the most recent watcher event.</summary>
+        internal WatchActivity(Func<long>? nowTicks = null)
+        {
+            _now = nowTicks ?? (() => Environment.TickCount64);
+            _lastEventTicks = _now();
+        }
+
+        /// <summary>Clock ticks (see <see cref="_now"/>) of the most recent watcher event.</summary>
         internal long LastEventTicks => System.Threading.Volatile.Read(ref _lastEventTicks);
 
         /// <summary>
@@ -82,7 +97,7 @@ internal static class WatchSource
         /// </summary>
         internal bool Overflowed => System.Threading.Volatile.Read(ref _overflowed) != 0;
 
-        internal void Touch() => System.Threading.Volatile.Write(ref _lastEventTicks, Environment.TickCount64);
+        internal void Touch() => System.Threading.Volatile.Write(ref _lastEventTicks, _now());
 
         internal void MarkOverflow()
         {
@@ -189,20 +204,32 @@ internal static class WatchSource
     /// after only the first event means a burst of events (a branch switch, a bulk
     /// rewrite) keeps re-arming the wait until the tree actually stops changing, instead of
     /// letting a cycle start against a half-applied checkout.
+    ///
+    /// <paramref name="nowTicks"/> and <paramref name="sleep"/> are injectable (#1920) so a
+    /// test can prove this algorithm's quiescence behavior with a virtual clock instead of
+    /// real <see cref="System.Threading.Thread.Sleep(int)"/> + <see
+    /// cref="Environment.TickCount64"/>, which is real wall-clock time and therefore at the
+    /// mercy of CI machine load — see <c>WatchSourceTests.WaitForQuiescence_*</c>. Production
+    /// code never passes either — both default to the real clock/sleep, so behavior here is
+    /// unchanged from before #1920.
     /// </summary>
-    internal static void WaitForQuiescence(WatchActivity activity, int? quietMs = null, int? maxWaitMs = null)
+    internal static void WaitForQuiescence(
+        WatchActivity activity, int? quietMs = null, int? maxWaitMs = null,
+        Func<long>? nowTicks = null, Action<int>? sleep = null)
     {
         var quiet = quietMs ?? QuietMs;
         var maxWait = maxWaitMs ?? MaxWaitMs;
-        var deadline = Environment.TickCount64 + maxWait;
+        var now = nowTicks ?? (() => Environment.TickCount64);
+        var doSleep = sleep ?? (ms => System.Threading.Thread.Sleep(ms));
+        var deadline = now() + maxWait;
         while (true)
         {
-            var now = Environment.TickCount64;
-            var sinceLastEvent = now - activity.LastEventTicks;
+            var current = now();
+            var sinceLastEvent = current - activity.LastEventTicks;
             if (sinceLastEvent >= quiet) return;      // settled: no event for a full quiet window
-            if (now >= deadline) return;               // cap hit: force a cycle regardless
+            if (current >= deadline) return;          // cap hit: force a cycle regardless
             var sleepFor = Math.Min(quiet - sinceLastEvent, PollIntervalMs);
-            System.Threading.Thread.Sleep((int)Math.Max(1, sleepFor));
+            doSleep((int)Math.Max(1, sleepFor));
         }
     }
 
