@@ -39,7 +39,7 @@ al-runner --server [--package-cache PATH ...] [--cache DIR]
                                  // the CLI (inter-bundle deps get wired first)
   "packagePaths": ["/extra"],   // optional: extra .app caches, augment server defaults
   "stubPaths": [],              // v1 field, ignored in v2 (no stubs layer)
-  "code": "...",                // execute only (inline AL) — not yet supported
+  "code": "...",                // execute only (inline AL); mutually exclusive with sourcePaths
   "captureValues": false,       // execute only — not yet supported
   "testIsolation": "codeunit"   // optional: "codeunit" (default) | "test"/"method" | "disabled"
                                  // — see #1616. Applies to this request only; a later
@@ -146,12 +146,28 @@ this is **not** streamed — one v1-shaped response line, no `type` discriminato
 ```
 
 v1's `execute` also accepted an inline `code` string and a `captureValues` flag.
-v2 has no inline-AL compile path and no value capture (the latter needs the
-Cecil instrumentation pass on #1640), so both fail loudly with a structured
-error rather than a silent fake, per `.claude/rules/loud-failures.md`:
+v2 now supports `code` too (#1917): a temp single-file bundle is synthesised
+from it and run through the same compile pipeline `sourcePaths` uses. `code`
+that already starts with `codeunit` or `table` (case-insensitive) is used
+verbatim as a full AL object definition; anything else is treated as a bare
+statement list and wrapped in a scratch codeunit's `OnRun` trigger body —
+matching v1's CLI `-e` shape:
 
 ```json
-{"error":"execute: inline AL 'code' is not yet supported in v2 — pass 'sourcePaths' to run the bundle's OnRun codeunit. See docs/server-mode.md."}
+{"command":"execute","code":"Message('hi');"}
+```
+
+```json
+{"exitCode":0,"tests":[{"name":"AL Runner Inline Execute.OnRun","status":"pass","durationMs":4}]}
+```
+
+`code` and `sourcePaths` are mutually exclusive — sending both is a
+request-level error. Value capture (`captureValues`) still needs the Cecil
+instrumentation pass on #1640, so that flag alone still fails loudly with a
+structured error rather than a silent fake, per `.claude/rules/loud-failures.md`:
+
+```json
+{"error":"execute: 'captureValues' is not yet supported in v2. See docs/server-mode.md."}
 ```
 
 ### `shutdown`

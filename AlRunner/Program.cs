@@ -2541,41 +2541,97 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
     }
 
     // ── execute: run every requested bundle's first OnRun-bearing codeunit
-    // (run-mode), aggregating the results. v1 also accepted an inline `code`
-    // string; v2 has no inline-AL compile path yet, so that case fails LOUD
-    // (never a silent fake) per .claude/rules/loud-failures.md.
+    // (run-mode), aggregating the results. #1917: v1 also accepted an inline
+    // `code` string — a temp single-file bundle is synthesised from it (see
+    // SynthesizeInlineCodeBundle) and run through the SAME compile pipeline a
+    // sourcePaths-based execute already uses (RunAllBundlesForServer →
+    // RunBundleForServer → RunFirstCodeunitOnRun), rather than inventing a
+    // second execution path. `captureValues` stays out of scope — it needs the
+    // Cecil instrumentation pass tracked on #1640 — so that case still fails
+    // LOUD (never a silent fake) per .claude/rules/loud-failures.md.
     string HandleServerExecute(AlRunner.ServerRequest req)
     {
-        if (!string.IsNullOrWhiteSpace(req.Code))
-            return AlRunner.ServerProtocol.Error(
-                "execute: inline AL 'code' is not yet supported in v2 — pass 'sourcePaths' "
-                + "to run the bundle's OnRun codeunit. See docs/server-mode.md.");
         if (req.CaptureValues == true)
             return AlRunner.ServerProtocol.Error(
                 "execute: 'captureValues' is not yet supported in v2. See docs/server-mode.md.");
-        if (req.SourcePaths == null || req.SourcePaths.Length == 0)
-            return AlRunner.ServerProtocol.Error("sourcePaths is required");
-        foreach (var p in req.SourcePaths)
-            if (!Directory.Exists(p))
-                return AlRunner.ServerProtocol.Error($"bundle directory not found: {p}");
+
+        string? scratchDir = null;
+        string[] sourcePaths;
+        if (!string.IsNullOrWhiteSpace(req.Code))
+        {
+            if (req.SourcePaths != null && req.SourcePaths.Length > 0)
+                return AlRunner.ServerProtocol.Error(
+                    "execute: 'code' and 'sourcePaths' are mutually exclusive — pass one or the other.");
+            scratchDir = SynthesizeInlineCodeBundle(req.Code!);
+            sourcePaths = new[] { scratchDir };
+        }
+        else
+        {
+            if (req.SourcePaths == null || req.SourcePaths.Length == 0)
+                return AlRunner.ServerProtocol.Error("sourcePaths is required");
+            foreach (var p in req.SourcePaths)
+                if (!Directory.Exists(p))
+                    return AlRunner.ServerProtocol.Error($"bundle directory not found: {p}");
+            sourcePaths = req.SourcePaths;
+        }
 
         var isolationError = ApplyRequestIsolation(req);
         if (isolationError != null) return isolationError;
 
-        var runs = RunAllBundlesForServer(req.SourcePaths, req.PackagePaths, RunFirstCodeunitOnRun);
+        try
+        {
+            var runs = RunAllBundlesForServer(sourcePaths, req.PackagePaths, RunFirstCodeunitOnRun);
 
-        var allTests = runs.SelectMany(r => r.Tests).ToList();
-        var allCompileErrors = runs.SelectMany(r => r.CompileErrors ?? Array.Empty<CompilationErrorGroup>()).ToList();
-        var exitCode = runs.Count > 0 ? runs.Max(r => r.ExitCode) : 0;
+            var allTests = runs.SelectMany(r => r.Tests).ToList();
+            var allCompileErrors = runs.SelectMany(r => r.CompileErrors ?? Array.Empty<CompilationErrorGroup>()).ToList();
+            var exitCode = runs.Count > 0 ? runs.Max(r => r.ExitCode) : 0;
 
-        var combinedHashes = new Dictionary<string, string>();
-        foreach (var r in runs)
-            foreach (var kv in r.FileHashes)
-                combinedHashes[kv.Key] = kv.Value;
-        lastFileHashes = combinedHashes;
+            var combinedHashes = new Dictionary<string, string>();
+            foreach (var r in runs)
+                foreach (var kv in r.FileHashes)
+                    combinedHashes[kv.Key] = kv.Value;
+            lastFileHashes = combinedHashes;
 
-        return AlRunner.ServerProtocol.Execute(allTests, exitCode, null,
-            allCompileErrors.Count > 0 ? allCompileErrors : null);
+            return AlRunner.ServerProtocol.Execute(allTests, exitCode, null,
+                allCompileErrors.Count > 0 ? allCompileErrors : null);
+        }
+        finally
+        {
+            // Best-effort cleanup: the scratch dir's contents are fully consumed
+            // once RunBundleForServer has emitted+compiled them into an in-memory
+            // assembly (or failed trying) — nothing downstream needs the files on
+            // disk after this call returns, and a leaked temp dir per `execute`
+            // call would otherwise accumulate for the life of the server process.
+            if (scratchDir != null)
+            {
+                try { Directory.Delete(scratchDir, recursive: true); }
+                catch { /* not fatal — OS temp cleanup will catch it eventually */ }
+            }
+        }
+    }
+
+    // #1917: synthesise a temp single-file AL bundle from an inline `code`
+    // string so `execute`'s "code" field can go through the same compile
+    // pipeline as a sourcePaths-based execute, instead of a separate inline-AL
+    // execution path. v1 parity (see git history for e1a22f84, "fixes #12"):
+    // `code` that already looks like a full AL object definition (starts with
+    // `codeunit` or `table`, case-insensitive) is used verbatim; anything else
+    // is treated as a bare statement list and wrapped in a scratch codeunit's
+    // OnRun trigger body, matching v1's CLI `-e` shape.
+    static string SynthesizeInlineCodeBundle(string code)
+    {
+        var trimmed = code.TrimStart();
+        var isFullObject =
+            trimmed.StartsWith("codeunit", StringComparison.OrdinalIgnoreCase) ||
+            trimmed.StartsWith("table", StringComparison.OrdinalIgnoreCase);
+        var source = isFullObject
+            ? code
+            : $"codeunit 50100 \"AL Runner Inline Execute\" {{ trigger OnRun() begin {code} end; }}";
+
+        var dir = Path.Combine(Path.GetTempPath(), "al-runner-server-inline", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Combine(dir, "Scratch.al"), source);
+        return dir;
     }
 
     // Runs every bundle in sourcePaths in order and returns one ServerRunResult per
