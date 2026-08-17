@@ -99,7 +99,15 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
     public static readonly IReadOnlyDictionary<string, int> MeasuredWeightSeconds =
         new Dictionary<string, int>(StringComparer.Ordinal)
         {
+            // perf/boot-overhead: added with the on-disk install-baseline tier. Measured
+            // 125.6s on the first CI run of that branch (BC 28.4 leg), where it was absent
+            // from this table, fell back to UnmeasuredWeightSeconds and was dispatched at
+            // t=181s of a 309s run — a 77s single-threaded tail, the #1887 pattern again.
+            ["InstallBaselineDiskCacheTests"] = 125,
             ["ServerCancelTests"] = 285,
+            // perf/boot-overhead: 37.8s measured on the same run; below the 60s freshness
+            // threshold, listed so it is dispatched by measured cost, not by the fallback.
+            ["EventSubscriberScanEquivalenceTests"] = 37,
             // #1851/#1857 cut this from 292s to 196s (--print-cache-key skips the four cold
             // AL compiles the class used to pay for). #1887 caught the table still saying
             // 292 — harmless for ordering (it already ranked at the top either way), but it
