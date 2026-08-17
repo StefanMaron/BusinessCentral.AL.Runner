@@ -26,9 +26,35 @@ namespace AlRunner.Tests;
 /// could observe the summary and fire `cancel` — is fixed at the source (see the
 /// #1809 comment in Program.cs's HandleServerRunTests) rather than papered over
 /// by serializing the tests that happened to be likely to notice it.
+///
+/// #1936: seven facts here each independently paid a cold `--server` boot
+/// (~30-40s under CI contention; a warm request is ~1.6s), for 287s total in
+/// CI. #1913/#1804 explicitly declined to share a server across THIS class's
+/// facts ("they tear the process down or race it as part of what they
+/// prove") — true for exactly one of the seven, not all: only
+/// <see cref="RunTests_CancelDuringRun_StopsEarly_AckNoopFalse_SummaryCancelledTrue"/>
+/// starts its server with a fact-specific env var
+/// (<c>AL_RUNNER_TEST_BARRIER_DIR</c>) to deliberately block it mid-run — a
+/// DIFFERENT startup flag per SharedCliServer rule (a), so it cannot share and
+/// keeps its own dedicated <c>CliServer.StartAsync</c> call, unmodified. Every
+/// other fact here neither blocks nor kills the server and wants the exact
+/// same (optional) startup flags every time (<see cref="ExtraServerArgs"/>
+/// always resolves to the same value), so they now share ONE server via
+/// <see cref="SharedCliServer"/> — facts within a class already run
+/// sequentially by default (see that fixture's own doc comment), so this
+/// changes nothing about ordering, only about how many times BC cold-boots.
+/// Each shared-server bundle generator call site got its own AppId/variant
+/// (SharedCliServer doc condition (c)) even though the bundle CONTENT is
+/// identical across variants, to route every call through a genuine fresh
+/// compile rather than <c>DependencyLoader.TryGetByAppId</c>'s cross-path
+/// module-identity cache.
 /// </summary>
-public class ServerCancelTests
+public class ServerCancelTests : IClassFixture<SharedCliServer>
 {
+    private readonly SharedCliServer _shared;
+
+    public ServerCancelTests(SharedCliServer shared) => _shared = shared;
+
     private static string[] ExtraServerArgs()
     {
         var platformApps = TestArtifacts.PlatformAppsDir();
@@ -40,26 +66,34 @@ public class ServerCancelTests
     /// <summary>
     /// One trivial passing test — enough to prove "a run happened and finished",
     /// nothing more. Used by the tests that don't care about run duration.
+    ///
+    /// <paramref name="variant"/> (#1936): three call sites now share ONE server
+    /// process (see class doc comment) — each gets its own AppId (last hex
+    /// digit) and object-ID range (offset by variant*10 from the base 60310),
+    /// same convention as ServerTestIsolationTests' MakeIsolationBundle, so
+    /// every call routes through a genuine fresh compile instead of
+    /// DependencyLoader.TryGetByAppId's cross-path module-identity cache.
     /// </summary>
-    private static string MakeFastBundle()
+    private static string MakeFastBundle(int variant)
     {
         var dir = Path.Combine(Path.GetTempPath(), "al-runner-server-cancel-fast", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(dir);
-        File.WriteAllText(Path.Combine(dir, "app.json"), """
+        var baseId = 60310 + variant * 10;
+        File.WriteAllText(Path.Combine(dir, "app.json"), $$"""
         {
-          "id": "d1b2c3d4-e5f6-4708-a9ba-cbdcedfe0f33",
-          "name": "Runner Extras - Server Cancel Fast Probe",
+          "id": "d1b2c3d4-e5f6-4708-a9ba-cbdcedfe0f3{{variant:x1}}",
+          "name": "Runner Extras - Server Cancel Fast Probe {{variant}}",
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [],
           "platform": "1.0.0.0",
           "application": "1.0.0.0",
-          "idRanges": [ { "from": 60310, "to": 60319 } ],
+          "idRanges": [ { "from": {{baseId}}, "to": {{baseId + 9}} } ],
           "runtime": "14.0"
         }
         """);
-        File.WriteAllText(Path.Combine(dir, "FastProbe.Codeunit.al"), """
-        codeunit 60310 "Server Cancel Fast Probe SX"
+        File.WriteAllText(Path.Combine(dir, "FastProbe.Codeunit.al"), $$"""
+        codeunit {{baseId}} "Server Cancel Fast Probe SX {{variant}}"
         {
             Subtype = Test;
 
@@ -148,7 +182,7 @@ public class ServerCancelTests
     [Fact]
     public async Task Cancel_NoActiveRequest_AcksAsNoop()
     {
-        await using var server = await CliServer.StartAsync(ExtraServerArgs());
+        var server = await _shared.GetAsync(ExtraServerArgs());
         var response = await server.SendAsync("{\"command\":\"cancel\"}");
         var doc = JsonDocument.Parse(response).RootElement;
         Assert.Equal("ack", doc.GetProperty("type").GetString());
@@ -159,7 +193,7 @@ public class ServerCancelTests
     [Fact]
     public async Task Cancel_TwiceWithoutActiveRequest_BothNoop()
     {
-        await using var server = await CliServer.StartAsync(ExtraServerArgs());
+        var server = await _shared.GetAsync(ExtraServerArgs());
         var r1 = JsonDocument.Parse(await server.SendAsync("{\"command\":\"cancel\"}")).RootElement;
         var r2 = JsonDocument.Parse(await server.SendAsync("{\"command\":\"cancel\"}")).RootElement;
         Assert.True(r1.GetProperty("noop").GetBoolean());
@@ -171,7 +205,7 @@ public class ServerCancelTests
     {
         // Forward-compat: a future protocol addition may put more fields on the
         // cancel request; the server must tolerate and still answer with the ack shape.
-        await using var server = await CliServer.StartAsync(ExtraServerArgs());
+        var server = await _shared.GetAsync(ExtraServerArgs());
         var response = await server.SendAsync(
             "{\"command\":\"cancel\",\"reason\":\"user clicked stop\",\"requestId\":42}");
         var doc = JsonDocument.Parse(response).RootElement;
@@ -185,8 +219,8 @@ public class ServerCancelTests
     {
         TestArtifacts.SkipIfMissing();
 
-        var bundle = MakeFastBundle();
-        await using var server = await CliServer.StartAsync(ExtraServerArgs());
+        var bundle = MakeFastBundle(variant: 0);
+        var server = await _shared.GetAsync(ExtraServerArgs());
 
         // The single-test bundle finishes and returns its summary before we ever
         // send cancel — by construction (SendRequestStreamingAsync only returns
@@ -237,8 +271,8 @@ public class ServerCancelTests
         TestArtifacts.SkipIfMissing();
 
         const int iterationCount = 5; // see this test's own doc comment for why 5, not 20.
-        var bundle = MakeFastBundle();
-        await using var server = await CliServer.StartAsync(ExtraServerArgs());
+        var bundle = MakeFastBundle(variant: 1);
+        var server = await _shared.GetAsync(ExtraServerArgs());
         var failures = new List<string>();
 
         for (var i = 0; i < iterationCount; i++)
@@ -355,8 +389,8 @@ public class ServerCancelTests
         // all (never a literal false — see ServerProtocol.Summary's doc comment).
         TestArtifacts.SkipIfMissing();
 
-        var bundle = MakeFastBundle();
-        await using var server = await CliServer.StartAsync(ExtraServerArgs());
+        var bundle = MakeFastBundle(variant: 2);
+        var server = await _shared.GetAsync(ExtraServerArgs());
 
         var lines = await server.SendRequestStreamingAsync(RunTestsReq(bundle));
         var summary = JsonDocument.Parse(lines[^1]).RootElement;

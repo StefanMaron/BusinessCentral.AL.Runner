@@ -2427,6 +2427,13 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
     // ─────────────────────────────────────────────────────────────────────────
     void HandleServerRunTests(AlRunner.ServerRequest req, System.IO.TextWriter output)
     {
+        // #1936: real wall-clock duration of THIS request (received → summary
+        // written), for the `wallSeconds` field on the terminal summary line. Not
+        // the process's total uptime — a warm server serves many requests, so
+        // "since process start" is only meaningful for the very first one. Started
+        // here (before the sourcePaths/isolation validation below) so it also
+        // captures those cheap up-front checks, not just the run itself.
+        var reqSw = System.Diagnostics.Stopwatch.StartNew();
         if (req.SourcePaths == null || req.SourcePaths.Length == 0)
         {
             lock (outputLock)
@@ -2526,7 +2533,7 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                 output.WriteLine(AlRunner.ServerProtocol.Summary(
                     allTests, exitCode, cached, changed,
                     allCompileErrors.Count > 0 ? allCompileErrors : null,
-                    cancelled: cancelled));
+                    cancelled: cancelled, wallSeconds: reqSw.Elapsed.TotalSeconds));
                 output.Flush();
             }
         }
