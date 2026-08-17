@@ -248,20 +248,29 @@ public sealed class DependencyLoader
         // the Resolving handler can serve cross-chunk references.
         if (AppLoader.IsR2R(appPath))
         {
-            var dlls = AppLoader.ExtractAllDlls(appPath);
-            if (dlls.Count > 0)
+            // #perf-B: extract each chunk once into a content-addressed on-disk cache
+            // (AppLoader.ExtractAllDllPaths) and load from PATH via
+            // AssemblyLoadContext.LoadFromAssemblyPath rather than re-inflating the zip and
+            // Assembly.Load(byte[])-ing every chunk on every single invocation. Base
+            // Application alone is ~210MB across 5 chunks; LoadFromAssemblyPath memory-maps
+            // the file instead of duplicating it on the GC heap, and a warm r2r-chunks cache
+            // skips the zip inflate entirely on repeat runs (including across processes —
+            // the 4 that run in parallel in CI share the same cache root).
+            var dllPaths = AppLoader.ExtractAllDllPaths(appPath);
+            if (dllPaths.Count > 0)
             {
                 Assembly? primary = null;
                 int loaded = 0;
-                foreach (var dll in dlls)
+                foreach (var dllPath in dllPaths)
                 {
                     try
                     {
-                        var asm = Assembly.Load(dll);
-                        // #1852: same pre-warm as Tier 1 — these R2R chunks are exactly the
-                        // multi-thousand-type BaseApplication/SystemApplication assemblies
-                        // whose GetTypes() cost was measured at 0.7s-4.3s EACH.
-                        AlRunner.Patches.RecordPatches.SeedCompiledReportIdsFromPEBytes(asm, dll);
+                        var asm = AssemblyLoadContext.Default.LoadFromAssemblyPath(dllPath);
+                        // #1852 (path variant, #perf-B): same pre-warm as Tier 1, but reads
+                        // the TypeDef table straight off disk — the bytes are no longer held
+                        // in memory after a path-based load, so re-reading them as byte[]
+                        // just for this would reintroduce the cost #1852 removed.
+                        AlRunner.Patches.RecordPatches.SeedCompiledReportIdsFromPeFile(asm, dllPath);
                         var n = asm.GetName().Name ?? "";
                         _byName[n] = asm;
                         primary ??= asm;
