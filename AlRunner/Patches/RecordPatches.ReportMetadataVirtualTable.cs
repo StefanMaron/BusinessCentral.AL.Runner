@@ -654,11 +654,57 @@ public static partial class RecordPatches
     }
 
     /// <summary>
+    /// Path-based sibling of <see cref="SeedCompiledReportIdsFromPEBytes"/> (issue #perf-B):
+    /// DependencyLoader's R2R chunk path now loads each chunk via
+    /// <c>AssemblyLoadContext.LoadFromAssemblyPath</c> (memory-mapped, on-disk cache) rather
+    /// than <c>Assembly.Load(byte[])</c>, so it no longer holds the chunk's bytes in memory
+    /// after the load — reading them back out just to pre-warm this cache would reintroduce
+    /// the exact per-invocation cost #1852 removed. <see cref="System.Reflection.PortableExecutable.PEReader"/>
+    /// accepts a <see cref="Stream"/> directly and reads metadata lazily off it, so this scans
+    /// the SAME TypeDef table straight from the file on disk, never materializing the whole
+    /// DLL as a byte[].
+    /// </summary>
+    internal static void SeedCompiledReportIdsFromPeFile(Assembly asm, string dllPath)
+    {
+        if (_compiledReportIdsByAssembly.ContainsKey(asm)) return;
+        var ids = ScanReportIdsFromPeFile(dllPath);
+        if (ids is null) return; // unreadable — leave unseeded, CompiledReportIds() falls back to GetTypes() lazily
+        _compiledReportIdsByAssembly[asm] = ids;
+    }
+
+    private static int[]? ScanReportIdsFromPeFile(string path)
+    {
+        try
+        {
+            using var fs = File.OpenRead(path);
+            using var peReader = new System.Reflection.PortableExecutable.PEReader(fs);
+            if (!peReader.HasMetadata) return null;
+            var mr = peReader.GetMetadataReader();
+            List<int>? ids = null;
+            foreach (var th in mr.TypeDefinitions)
+            {
+                var name = mr.GetString(mr.GetTypeDefinition(th).Name);
+                if (!TryParseReportId(name, out var id)) continue;
+                (ids ??= new List<int>()).Add(id);
+            }
+            return ids?.ToArray() ?? Array.Empty<int>();
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
     /// Test-only: exercises the exact same PE-byte/<c>MetadataReader</c> scan
     /// <see cref="SeedCompiledReportIdsFromPEBytes"/> uses, without touching the cache.
     /// See <see cref="ReadReportIdsViaGetTypesForTest"/> for the counterpart on the other path.
     /// </summary>
     internal static int[] ReadReportIdsFromPeBytesForTest(byte[] peBytes) => ScanReportIdsFromPeBytes(peBytes) ?? Array.Empty<int>();
+
+    /// <summary>Test-only: the file-based counterpart of <see cref="ReadReportIdsFromPeBytesForTest"/>,
+    /// exercising <see cref="ScanReportIdsFromPeFile"/> directly.</summary>
+    internal static int[] ReadReportIdsFromPeFileForTest(string path) => ScanReportIdsFromPeFile(path) ?? Array.Empty<int>();
 
     private static IEnumerable<BcAppSymbolCache.ReportSymbol> EnumerateBcAppReportSymbols()
     {
