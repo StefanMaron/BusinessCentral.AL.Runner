@@ -78,6 +78,18 @@ public static class Reporter
         w.WriteLine($"  C# compile:  {comp.TotalSeconds:F1}s");
         w.WriteLine($"  test run:    {run.TotalSeconds:F1}s");
         w.WriteLine($"  total:       {(emit + comp + run).TotalSeconds:F1}s");
+        // #1936: `total:` above is only emit+compile+run — it does NOT include the
+        // per-process fixed costs paid before any of those phases start (BC runtime
+        // patch application, dependency/package-cache indexing, install-seed-dep
+        // company baseline, etc. — see COMMON.md's boot-overhead profile). A warm run
+        // of a single-test fixture can report "total: 6.3s" while the process actually
+        // took ~23s wall clock, which reads as a lie to anyone timing the CLI from the
+        // outside. `wall:` is the real process wall-clock — OS process start time to
+        // this print — so the two numbers together show both "how long the phases we
+        // measure took" and "how long the process actually took", instead of only the
+        // former pretending to be the latter.
+        var wall = DateTime.Now - System.Diagnostics.Process.GetCurrentProcess().StartTime;
+        w.WriteLine($"  wall:        {wall.TotalSeconds:F1}s");
         w.WriteLine("=================================================================");
     }
 
@@ -255,6 +267,10 @@ public static class Reporter
             total = tests.Count,
             exitCode,
             compilationErrors = compileErrors.Count > 0 ? compileErrors : null,
+            // #1936: same "real wall clock, not just the measured phases" gap as the
+            // `wall:` line in PrintSummary — see that comment. Additive field, so
+            // existing consumers reading this JSON are unaffected.
+            wallSeconds = (DateTime.Now - System.Diagnostics.Process.GetCurrentProcess().StartTime).TotalSeconds,
         };
 
         return JsonSerializer.Serialize(output, new JsonSerializerOptions

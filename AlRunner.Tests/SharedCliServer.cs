@@ -59,10 +59,15 @@ namespace AlRunner.Tests;
 ///      opposite on purpose, reusing one fixed AppId across two calls, to
 ///      prove isolation holds even when this cross-request reuse fires.
 ///
-/// ServerTests' shutdown-lifecycle fact and all of ServerCancelTests (each
-/// fact independently exercises a fresh `cancel`/`runTests` race that #1809
-/// deliberately de-serialized) are NOT converted — see #1804's PR description
-/// for why.
+/// ServerTests' shutdown-lifecycle fact is NOT converted (it tears the process
+/// down as part of what it proves). #1804/#1913 originally also excluded ALL of
+/// ServerCancelTests on the same blanket rationale, but #1936 found that only
+/// one of its seven facts — the one that starts its server with a fact-specific
+/// <c>AL_RUNNER_TEST_BARRIER_DIR</c> env var to deliberately block it mid-run —
+/// actually needs a dedicated process; the other six neither block nor kill the
+/// server and now share one via this fixture. See ServerCancelTests' own class
+/// doc comment for the per-fact breakdown, and PhaseLogServerKillTests (SIGKILLs
+/// its server) for another class that genuinely cannot share.
 /// </summary>
 public sealed class SharedCliServer : IAsyncLifetime
 {
@@ -82,8 +87,17 @@ public sealed class SharedCliServer : IAsyncLifetime
 
     public Task InitializeAsync() => Task.CompletedTask;
 
-    /// <summary>Returns the shared server, starting it on the first call only.</summary>
-    public async Task<CliServer> GetAsync()
+    /// <summary>
+    /// Returns the shared server, starting it on the first call only.
+    /// <paramref name="extraArgs"/> is only consulted on that first (spawning)
+    /// call — per rule (a) above, every fact sharing this fixture must want the
+    /// SAME startup flags, so a caller passes a fixed, non-per-test value here
+    /// (e.g. ServerCancelTests' <c>ExtraServerArgs()</c>, which always resolves
+    /// to the same optional <c>--package-cache</c> pointer regardless of which
+    /// fact calls it) — never one that varies by test, which would silently be
+    /// ignored on every call after the first.
+    /// </summary>
+    public async Task<CliServer> GetAsync(IEnumerable<string>? extraArgs = null)
     {
         if (_server != null) return _server;
         await _gate.WaitAsync();
@@ -91,7 +105,7 @@ public sealed class SharedCliServer : IAsyncLifetime
         {
             if (_server == null)
             {
-                _server = await CliServer.StartAsync();
+                _server = await CliServer.StartAsync(extraArgs);
                 _spawnCount++;
             }
             return _server;

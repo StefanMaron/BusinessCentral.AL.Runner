@@ -117,6 +117,7 @@
           "type": "array",
           "items": { "$ref": "#/definitions/FileCoverage" }
         },
+        "wallSeconds": { "type": "number", "minimum": 0 },
         "protocolVersion": { "const": 2 }
       }
     },

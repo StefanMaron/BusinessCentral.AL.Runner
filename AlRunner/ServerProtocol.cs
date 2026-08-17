@@ -15,7 +15,8 @@ namespace AlRunner;
 ///             finishes, followed by exactly one terminal
 ///             {"type":"summary", exitCode, passed, failed, errors,
 ///             total, cached, cancelled|omitted, changedFiles|omitted,
-///             compilationErrors|omitted, protocolVersion:2} line.
+///             compilationErrors|omitted, wallSeconds|omitted,
+///             protocolVersion:2} line.
 ///             `cancelled` (true) is present only when a concurrent `cancel`
 ///             command actually stopped the run before every test ran; omitted
 ///             (never `false`) otherwise — see the `cancel` command below.
@@ -154,6 +155,12 @@ public static class ServerProtocol
     /// emitted as a literal <c>false</c>, matching every other optional field on
     /// this line (WhenWritingNull serialization; "not cancelled" and "cancellation
     /// wasn't asked for" both read as "absent").
+    /// <paramref name="wallSeconds"/> (#1936) is the real wall-clock duration of
+    /// THIS request — set by the caller from a <c>Stopwatch</c> started when
+    /// <c>runtests</c> was received — not the process's total uptime (a warm server
+    /// serves many requests, so "since process start" would be meaningless past the
+    /// first one). Omitted (never 0) when the caller does not supply it, same
+    /// null-omission convention as every other optional field here.
     /// </summary>
     public static string Summary(
         IReadOnlyList<TestResult> tests,
@@ -161,7 +168,8 @@ public static class ServerProtocol
         bool cached,
         IReadOnlyList<string>? changedFiles = null,
         IReadOnlyList<CompilationErrorGroup>? compilationErrors = null,
-        bool cancelled = false)
+        bool cancelled = false,
+        double? wallSeconds = null)
     {
         var payload = new
         {
@@ -177,6 +185,7 @@ public static class ServerProtocol
             compilationErrors = compilationErrors is { Count: > 0 }
                 ? compilationErrors.Select(g => new { file = g.File, errors = g.Errors })
                 : null,
+            wallSeconds,
             protocolVersion = 2,
         };
         return JsonSerializer.Serialize(payload, Opts);
