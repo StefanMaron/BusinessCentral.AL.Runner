@@ -151,8 +151,8 @@ public static partial class BcRuntime
         {
             try
             {
-                var t = Array.Find(_currentTestAssembly.GetTypes(),
-                    x => x.Name == name && (xmlPortBase == null || xmlPortBase.IsAssignableFrom(x)));
+                var t = AlRunner.Infrastructure.AssemblyTypeIndex.For(_currentTestAssembly)
+                    .FindFirst(name, x => xmlPortBase == null || xmlPortBase.IsAssignableFrom(x));
                 if (t != null) return t;
             }
             catch { }
@@ -162,8 +162,8 @@ public static partial class BcRuntime
             if (asm == _currentTestAssembly) continue;
             try
             {
-                var t = Array.Find(asm.GetTypes(),
-                    x => x.Name == name && (xmlPortBase == null || xmlPortBase.IsAssignableFrom(x)));
+                var t = AlRunner.Infrastructure.AssemblyTypeIndex.For(asm)
+                    .FindFirst(name, x => xmlPortBase == null || xmlPortBase.IsAssignableFrom(x));
                 if (t != null) return t;
             }
             catch { }

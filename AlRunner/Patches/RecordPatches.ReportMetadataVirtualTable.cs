@@ -461,6 +461,29 @@ public static partial class RecordPatches
                 continue;
             }
 
+            // Metadata-first: the question this method asks — "does a type called
+            // Report{id} exist in this assembly" — is answerable from the TypeDef table's Name
+            // column alone, which is EXACTLY what SeedCompiledReportIdsFromPEBytes already does
+            // for DependencyLoader-loaded assemblies (and what #1852's equivalence test proved
+            // agrees with the GetTypes() path on the identical TypeDef set). Doing the same for
+            // every OTHER loaded assembly removes the last Assembly.GetTypes() call on this
+            // path: measured at 2.0s of a 16.4s warm invocation, all of it type-loading the
+            // Base App chunks that nothing else in the run ever needed loaded.
+            //
+            // It also has no partial-load failure mode at all — there is no
+            // ReflectionTypeLoadException to half-answer — so the result is always complete
+            // and always safe to cache.
+            var index = AlRunner.Infrastructure.AssemblyTypeIndex.For(asm);
+            if (index.IsMetadataBacked)
+            {
+                var mdIds = ExtractReportIdsFromNames(index.TypeNamesWithPrefix("Report"));
+                _compiledReportIdsByAssembly[asm] = mdIds;
+                foreach (var id in mdIds) yield return id;
+                continue;
+            }
+
+            // Dynamic assemblies have no metadata to read; they keep the original reflection
+            // path (and its deliberate no-cache-on-exception semantics) unchanged.
             Type[]? types;
             int[]? partialIdsOnException = null;
             try
@@ -532,6 +555,23 @@ public static partial class RecordPatches
     /// scan and <see cref="ScanReportIdsFromPeBytes"/>'s <c>MetadataReader</c> scan) via
     /// <see cref="TryParseReportId"/> — see that method's remarks for the shared gate.
     /// </summary>
+    /// <summary>
+    /// Name-only sibling of <see cref="ExtractReportIds"/>, applying the identical
+    /// <see cref="TryParseReportId"/> gate to raw TypeDef names — used by the metadata path in
+    /// <see cref="CompiledReportIds"/> and equivalent by construction to
+    /// <see cref="ScanReportIdsFromPeBytes"/>.
+    /// </summary>
+    private static int[] ExtractReportIdsFromNames(IEnumerable<string> typeNames)
+    {
+        List<int>? ids = null;
+        foreach (var name in typeNames)
+        {
+            if (!TryParseReportId(name, out var id)) continue;
+            (ids ??= new List<int>()).Add(id);
+        }
+        return ids?.ToArray() ?? Array.Empty<int>();
+    }
+
     private static int[] ExtractReportIds(IEnumerable<Type?> types)
     {
         List<int>? ids = null;

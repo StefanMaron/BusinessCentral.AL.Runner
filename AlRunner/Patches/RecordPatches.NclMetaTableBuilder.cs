@@ -47,12 +47,16 @@ public static partial class RecordPatches
         return null;
     }
 
+    // Metadata-backed lookup (AssemblyTypeIndex) rather than Array.Find(asm.GetTypes(), ...):
+    // identical match and identical "first TypeDef row wins" ordering, without materialising a
+    // RuntimeType for every type in the assembly just to compare its Name. See
+    // AlRunner/Infrastructure/AssemblyTypeIndex.cs for the measurement that motivated it.
     private static Type? FindRecordTypeIn(System.Reflection.Assembly asm, string name)
     {
         try
         {
-            return Array.Find(asm.GetTypes(),
-                x => x.Name == name && typeof(NavRecord).IsAssignableFrom(x));
+            return AlRunner.Infrastructure.AssemblyTypeIndex.For(asm)
+                .FindFirst(name, x => typeof(NavRecord).IsAssignableFrom(x));
         }
         catch { return null; }
     }
@@ -1066,13 +1070,16 @@ public static partial class RecordPatches
             : (IEnumerable<System.Reflection.Assembly>)loaded;
         foreach (var asm in ordered)
         {
-            Type[] types;
-            try { types = asm.GetTypes(); }
+            IEnumerable<Type> candidates;
+            try { candidates = AlRunner.Infrastructure.AssemblyTypeIndex.For(asm).EnumerateWithPrefix("Record"); }
             catch { continue; }
-            foreach (var t in types)
+            // EnumerateWithPrefix resolves ONLY the Record* names out of the TypeDef table, so
+            // the prewarm no longer forces the whole assembly's types to load (the Base App
+            // chunks alone are 132k types); the id/base-type gates below are unchanged.
+            foreach (var t in candidates)
             {
                 var name = t.Name;
-                if (name.Length < 7 || !name.StartsWith("Record", StringComparison.Ordinal)) continue;
+                if (name.Length < 7) continue;
                 if (!int.TryParse(name.AsSpan(6), out var id)) continue;
                 if (!typeof(NavRecord).IsAssignableFrom(t)) continue;
                 _recordTypeCache.TryAdd(id, t);

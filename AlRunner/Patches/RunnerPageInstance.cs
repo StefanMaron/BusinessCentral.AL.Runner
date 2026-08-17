@@ -907,15 +907,16 @@ internal sealed class RunnerPageInstance
     private static Type? FindPageType(int pageId)
     {
         var name = "Page" + pageId;
+        // Metadata-backed lookup — see AlRunner/Infrastructure/AssemblyTypeIndex.cs.
         foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
         {
-            Type?[] types;
-            try { types = asm.GetTypes(); }
-            catch (ReflectionTypeLoadException ex) { types = ex.Types; }
-            catch { continue; }
-            foreach (var t in types)
-                if (t != null && t.Name == name && typeof(NavForm).IsAssignableFrom(t))
-                    return t;
+            try
+            {
+                var t = AlRunner.Infrastructure.AssemblyTypeIndex.For(asm)
+                    .FindFirst(name, typeof(NavForm).IsAssignableFrom);
+                if (t != null) return t;
+            }
+            catch { }
         }
         return null;
     }

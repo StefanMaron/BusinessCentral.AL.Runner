@@ -59,7 +59,8 @@ public static class ServiceTierDllIndex
         if (!Available) return null;
         var asm = _loadedByType.GetOrAdd(objectTypeName, LoadOwningAssembly);
         if (asm == null) return null;
-        try { return Array.Find(asm.GetTypes(), t => t.Name == objectTypeName); }
+        // Metadata-backed lookup — see AlRunner/Infrastructure/AssemblyTypeIndex.cs.
+        try { return AssemblyTypeIndex.For(asm).FindFirst(objectTypeName); }
         catch { return null; }
     }
 

@@ -1507,13 +1507,14 @@ public static partial class RecordPatches
         };
     }
 
+    // Metadata-backed lookup — see FindRecordTypeIn in RecordPatches.NclMetaTableBuilder.cs.
     private static Type? FindClrTypeByName(string name)
     {
         foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
         {
             try
             {
-                var t = Array.Find(asm.GetTypes(), x => x.Name == name);
+                var t = AlRunner.Infrastructure.AssemblyTypeIndex.For(asm).FindFirst(name);
                 if (t != null) return t;
             }
             catch { }

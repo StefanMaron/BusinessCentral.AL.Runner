@@ -532,9 +532,10 @@ public static partial class BcRuntime
             BindingFlags.Public | BindingFlags.Static)!;
         try
         {
-            foreach (var t in asm.GetTypes())
+            // Only XmlPort* types are candidates, and AssemblyTypeIndex resolves exactly those
+            // out of the TypeDef table — no whole-assembly type load just to reject the rest.
+            foreach (var t in AlRunner.Infrastructure.AssemblyTypeIndex.For(asm).EnumerateWithPrefix("XmlPort"))
             {
-                if (!t.Name.StartsWith("XmlPort")) continue;
                 var m = t.GetMethod("InitializeComponent",
                     BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly,
                     null, Type.EmptyTypes, null);

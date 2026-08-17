@@ -125,6 +125,17 @@ public static class EventSubscriberPatches
     }
     private static readonly HashSet<MethodInfo> _injectedSubscriberMethods = new();
     private static int _lastScannedCount = 0;
+
+    /// <summary>
+    /// Assemblies whose [NavEventSubscriberAttribute] methods have already been discovered.
+    /// The <c>_lastScannedCount</c> gate only tells us that SOMETHING new loaded; without this
+    /// set every re-scan re-walked every assembly, so the Base Application chunks were rescanned
+    /// each time the AppDomain grew. Reference identity, deliberately: a reloaded bundle
+    /// generation is a DIFFERENT Assembly object, so it is not in this set and IS scanned, while
+    /// the superseded generation it replaces is pruned by <see cref="PruneStaleSubscribers"/>
+    /// (issue #1901) — neither behaviour depends on this set forgetting anything.
+    /// </summary>
+    private static readonly HashSet<Assembly> _scannedAssemblies = new(ReferenceEqualityComparer.Instance);
     private static bool _registered = false;
     private static bool _reflectionFailed = false;
 
@@ -349,8 +360,11 @@ public static class EventSubscriberPatches
             {
                 var clrType = resolveClrType(publisherId);
                 if (clrType == null) { missing++; if (!diagLogged) { diagLogged = true; Console.Error.WriteLine($"[Subscribers] seed-miss: {publisherKindLabel}{publisherId} type not found"); } continue; }
-                var scopeType = clrType.GetNestedTypes(BindingFlags.Public | BindingFlags.NonPublic)
-                    .FirstOrDefault(t => t.Name == eventMethodName + "_Scope");
+                // Metadata-backed nested-type lookup: same answer as
+                // GetNestedTypes().FirstOrDefault(name), without resolving every OTHER nested
+                // type on the publisher (see AssemblyTypeIndex.FindNestedType).
+                var scopeType = AssemblyTypeIndex.For(clrType.Assembly)
+                    .FindNestedType(clrType, eventMethodName + "_Scope");
                 if (scopeType == null)
                 {
                     missing++;
@@ -399,6 +413,7 @@ public static class EventSubscriberPatches
             _objectEventTypeCache.Clear();
             _injectedSubscriberMethods.Clear();
             _seededScopeTypes.Clear();
+            _scannedAssemblies.Clear();
             _lastScannedCount = 0;
         }
         AlRunner.BcRuntime.ResetManualBindingCacheForReload();
@@ -743,10 +758,102 @@ public static class EventSubscriberPatches
         _validateSubs.RemoveAll(v => BcRuntime.IsStaleBundleAssembly(v.Handle.Method.DeclaringType!.Assembly));
     }
 
+    // ------------------------------------------------------------------
+    // Discovery-scan equivalence audit (AL_RUNNER_SUBSCRIBER_SCAN_AUDIT=1)
+    // ------------------------------------------------------------------
+    //
+    // The metadata scan replaced an Assembly.GetTypes()-based walk that had been the sole
+    // discovery mechanism since this class was written. "Same registry contents" is the whole
+    // correctness claim of that swap, and it can only be proven against the assemblies that
+    // actually matter — the real Base Application / System Application R2R chunks with their
+    // ~3,400 subscribers — not against a synthetic fixture.
+    //
+    // So the old walk is kept, verbatim, as LegacyReflectionScan and can be run alongside the
+    // new one: with AL_RUNNER_SUBSCRIBER_SCAN_AUDIT=1 every scanned assembly emits
+    //   [Subscribers] scan-audit <asm>: metadata=N reflection=M identical=true|false
+    // and any difference is listed. AlRunner.Tests/AssemblyTypeIndexTests's EventSubscriberScanEquivalenceTests drives
+    // a real runner invocation with that variable set and asserts identical=true everywhere
+    // plus a >3000 Base App count, which is the proving test for this change. Off by default
+    // it costs nothing (the GetTypes() call is exactly what the change exists to avoid).
+
+    private static bool? _scanAuditEnabled;
+
+    internal static bool ScanAuditEnabled =>
+        _scanAuditEnabled ??= Environment.GetEnvironmentVariable("AL_RUNNER_SUBSCRIBER_SCAN_AUDIT") == "1";
+
+    /// <summary>
+    /// The pre-metadata-scan discovery walk, kept verbatim so the metadata scan can be diffed against
+    /// it on real assemblies. Not used in production: <see cref="EnsureRegistryFresh"/> calls
+    /// it only under <see cref="ScanAuditEnabled"/>.
+    /// </summary>
+    internal static List<MethodInfo> LegacyReflectionScan(Assembly asm)
+    {
+        var found = new List<MethodInfo>();
+        Type?[] types;
+        try { types = asm.GetTypes(); }
+        catch (ReflectionTypeLoadException ex) { types = ex.Types; }
+        catch { return found; }
+        foreach (var t in types)
+        {
+            if (t == null) continue;
+            if (!t.Name.StartsWith("Codeunit", StringComparison.Ordinal)) continue;
+            MethodInfo[] methods;
+            try { methods = t.GetMethods(BindingFlags.Public | BindingFlags.NonPublic
+                                          | BindingFlags.Instance | BindingFlags.Static); }
+            catch { continue; }
+            foreach (var m in methods)
+            {
+                object? attr;
+                try
+                {
+                    attr = m.GetCustomAttributes(inherit: false)
+                        .FirstOrDefault(a => a.GetType().Name == "NavEventSubscriberAttribute");
+                }
+                catch { continue; }
+                if (attr != null) found.Add(m);
+            }
+        }
+        return found;
+    }
+
+    /// <summary>Stable identity of a discovered subscriber: declaring type full name, method
+    /// name and arity — the tuple that decides what lands in the registries.</summary>
+    internal static string DescribeSubscriberMethod(MethodInfo m)
+        => $"{m.DeclaringType?.FullName ?? "<null>"}.{m.Name}/{m.GetParameters().Length}";
+
+    private static void AuditAssemblyScan(Assembly asm, string asmName, List<MethodInfo> viaMetadata)
+    {
+        var viaReflection = LegacyReflectionScan(asm);
+        var mdSet = new HashSet<string>(viaMetadata.Select(DescribeSubscriberMethod), StringComparer.Ordinal);
+        var rfSet = new HashSet<string>(viaReflection.Select(DescribeSubscriberMethod), StringComparer.Ordinal);
+        bool identical = mdSet.SetEquals(rfSet);
+        Console.Error.WriteLine(
+            $"[Subscribers] scan-audit {asmName}: metadata={mdSet.Count} reflection={rfSet.Count} " +
+            $"identical={identical.ToString().ToLowerInvariant()}");
+        if (identical) return;
+        foreach (var only in mdSet.Except(rfSet).OrderBy(x => x, StringComparer.Ordinal).Take(20))
+            Console.Error.WriteLine($"[Subscribers] scan-audit {asmName}: metadata-only {only}");
+        foreach (var only in rfSet.Except(mdSet).OrderBy(x => x, StringComparer.Ordinal).Take(20))
+            Console.Error.WriteLine($"[Subscribers] scan-audit {asmName}: reflection-only {only}");
+    }
+
     /// <summary>
     /// Discovery: walk loaded assemblies for [NavEventSubscriberAttribute] methods, index
-    /// by (publisher id, NavTriggerEventType ordinal). Incremental — only re-scans when the
-    /// assembly count grows.
+    /// by (publisher id, NavTriggerEventType ordinal).
+    ///
+    /// Incremental in two layers: the cheap <c>_lastScannedCount</c> gate skips the whole
+    /// pass while no assembly has loaded since the last one, and <c>_scannedAssemblies</c>
+    /// then makes each individual assembly's scan happen exactly ONCE for its lifetime.
+    /// Before the boot-overhead perf pass this re-walked EVERY loaded assembly from scratch on every
+    /// count change — including the five Base Application R2R chunks — so the dominant cost
+    /// was paid several times per invocation.
+    ///
+    /// Discovery itself reads the assembly's ECMA-335 metadata
+    /// (<see cref="AssemblyTypeIndex.FindAttributedMethods"/>) instead of calling
+    /// <c>Assembly.GetTypes()</c>: same methods, same order, without materialising a
+    /// RuntimeType for all 132,541 types in the Base App chunks (measured 6.5s → 60ms).
+    /// The attribute VALUES are still read off the real attribute instance through ordinary
+    /// reflection below — metadata only decides which methods to look at.
     /// </summary>
     private static void EnsureRegistryFresh()
     {
@@ -777,6 +884,7 @@ public static class EventSubscriberPatches
             int scannedAttrs = 0;
             foreach (var asm in asms)
             {
+                if (_scannedAssemblies.Contains(asm)) continue;
                 var name = asm.GetName().Name ?? "";
                 if (name.StartsWith("System.") || name.StartsWith("Microsoft.Extensions.")
                     || name.StartsWith("Microsoft.Dynamics.Nav.") || name == "netstandard"
@@ -786,110 +894,133 @@ public static class EventSubscriberPatches
                 // Skip a previous bundle assembly still loaded after a server reload —
                 // otherwise its [EventSubscriber] codeunits re-register alongside the
                 // new ones and events fire twice. No-op in normal one-shot mode.
+                //
+                // Deliberately NOT marked as scanned: staleness is decided by BcRuntime's
+                // current generation bookkeeping, and this pass must keep re-asking rather
+                // than freezing today's answer into the once-only set.
                 if (BcRuntime.IsStaleBundleAssembly(asm)) continue;
-                Type[] types;
-                try { types = asm.GetTypes(); }
-                catch (ReflectionTypeLoadException ex) { types = ex.Types.Where(t => t != null).ToArray()!; }
-                catch { continue; }
-                foreach (var t in types)
+
+                // Only AL codeunits can host [NavEventSubscriberAttribute] methods, so the
+                // scan is scoped to types whose simple name starts with "Codeunit" — exactly
+                // the gate the previous GetTypes()-based walk applied, now applied against
+                // the TypeDef table so the thousands of Record<N>/Table<N>/Page<N>/Enum<N>
+                // types in an emitted assembly are never loaded to be rejected.
+                List<MethodInfo> subscriberMethods;
+                try
                 {
-                    if (t == null) continue;
-                    // Only AL codeunits can host [NavEventSubscriberAttribute] methods. The emitted
-                    // test assembly contains thousands of generated types (Record<N>, Table<N>,
-                    // Page<N>, Enum<N>, ...) that are guaranteed to have no subscribers — walking
-                    // their methods + reading custom attributes on each was the bulk of the cost
-                    // (this scan was ~35% inclusive in the bucket-1 bundled profile).
-                    if (!t.Name.StartsWith("Codeunit", StringComparison.Ordinal)) continue;
-                    MethodInfo[] methods;
-                    try { methods = t.GetMethods(BindingFlags.Public | BindingFlags.NonPublic
-                                                  | BindingFlags.Instance | BindingFlags.Static); }
-                    catch { continue; }
-                    int codeunitId = -1; // lazy: only read when first subscriber found
-                    foreach (var m in methods)
+                    subscriberMethods = AssemblyTypeIndex.For(asm)
+                        .FindAttributedMethods("Codeunit", "NavEventSubscriberAttribute");
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine(
+                        $"[Subscribers] discovery scan failed for {name}: {ex.GetType().Name}: {ex.Message}");
+                    continue;
+                }
+                if (ScanAuditEnabled) AuditAssemblyScan(asm, name, subscriberMethods);
+
+                // Codeunit id is read once per declaring type, not once per subscriber —
+                // the same laziness the per-type loop had before.
+                var codeunitIdByType = new Dictionary<Type, int>();
+                // Metadata says these methods carry the attribute; materialising the attribute
+                // INSTANCE can still fail transiently (an assembly can be loaded before every
+                // assembly its attributes reference is). The old scan re-walked everything on
+                // every pass and so retried by accident; the once-per-assembly set would turn
+                // that transient into a permanent drop, so an assembly with any unreadable hit
+                // is deliberately left unmarked and re-scanned next time.
+                int unreadable = 0;
+                foreach (var m in subscriberMethods)
+                {
+                    var t = m.DeclaringType;
+                    if (t == null) { unreadable++; continue; }
+                    object? attr;
+                    try
                     {
-                        object? attr;
-                        try
+                        attr = m.GetCustomAttributes(inherit: false)
+                            .FirstOrDefault(a => a.GetType().Name == "NavEventSubscriberAttribute");
+                    }
+                    catch { unreadable++; continue; }
+                    if (attr == null) { unreadable++; continue; }
+                    if (!codeunitIdByType.TryGetValue(t, out int codeunitId))
+                        codeunitIdByType[t] = codeunitId = TryReadCodeunitId(t);
+                    scannedAttrs++;
+                    if (!TryReadAttribute(attr, out int publisherObjType,
+                                          out int publisherId, out string methodName))
+                    { Console.Error.WriteLine($"[Subscribers] could not read attr on {t.Name}.{m.Name}"); continue; }
+                    if (publisherObjType == 1) // Table → existing trigger path
+                    {
+                        int ord = ResolveEventOrdinalFromName(methodName);
+                        if (ord == 9 || ord == 10) // OnBefore/OnAfterValidateEvent — field-scoped
                         {
-                            attr = m.GetCustomAttributes(inherit: false)
-                                .FirstOrDefault(a => a.GetType().Name == "NavEventSubscriberAttribute");
+                            if (_validateSubs.Any(v => v.Handle.Method == m)) continue;
+                            ReadFieldTarget(attr, out int vFieldId, out string vFieldName);
+                            var vHandle = new SubscriberHandle(t, codeunitId, m, publisherId, ord,
+                                $"{t.Name}.{m.Name} → Table {publisherId}/{methodName}('{vFieldName}')");
+                            _validateSubs.Add(new ValidateSub(vHandle, vFieldId, vFieldName));
+                            added++;
+                            continue;
                         }
-                        catch { continue; }
-                        if (attr == null) continue;
-                        if (codeunitId < 0) codeunitId = TryReadCodeunitId(t);
-                        scannedAttrs++;
-                        if (!TryReadAttribute(attr, out int publisherObjType,
-                                              out int publisherId, out string methodName))
-                        { Console.Error.WriteLine($"[Subscribers] could not read attr on {t.Name}.{m.Name}"); continue; }
-                        if (publisherObjType == 1) // Table → existing trigger path
+                        if (ord == 0)
                         {
-                            int ord = ResolveEventOrdinalFromName(methodName);
-                            if (ord == 9 || ord == 10) // OnBefore/OnAfterValidateEvent — field-scoped
+                            // Not one of BC's 8 implicit trigger-event names — a manually-
+                            // declared [IntegrationEvent]/[BusinessEvent] raised from inside
+                            // the table's own code (issue #1770). It cannot go through
+                            // NavTableTriggerEventHandler (ordinal-keyed, fixed set); dispatch
+                            // it via the same universal <EventName>_Scope path codeunit
+                            // publishers use — see GetTableEventSubscribers.
+                            var tkey = new TableEventKey(publisherId, methodName);
+                            if (!_byTableEventKey.TryGetValue(tkey, out var tlst))
+                                _byTableEventKey[tkey] = tlst = new List<MethodInfo>();
+                            if (!tlst.Contains(m))
                             {
-                                if (_validateSubs.Any(v => v.Handle.Method == m)) continue;
-                                ReadFieldTarget(attr, out int vFieldId, out string vFieldName);
-                                var vHandle = new SubscriberHandle(t, codeunitId, m, publisherId, ord,
-                                    $"{t.Name}.{m.Name} → Table {publisherId}/{methodName}('{vFieldName}')");
-                                _validateSubs.Add(new ValidateSub(vHandle, vFieldId, vFieldName));
+                                tlst.Add(m);
                                 added++;
-                                continue;
                             }
-                            if (ord == 0)
-                            {
-                                // Not one of BC's 8 implicit trigger-event names — a manually-
-                                // declared [IntegrationEvent]/[BusinessEvent] raised from inside
-                                // the table's own code (issue #1770). It cannot go through
-                                // NavTableTriggerEventHandler (ordinal-keyed, fixed set); dispatch
-                                // it via the same universal <EventName>_Scope path codeunit
-                                // publishers use — see GetTableEventSubscribers.
-                                var tkey = new TableEventKey(publisherId, methodName);
-                                if (!_byTableEventKey.TryGetValue(tkey, out var tlst))
-                                    _byTableEventKey[tkey] = tlst = new List<MethodInfo>();
-                                if (!tlst.Contains(m))
-                                {
-                                    tlst.Add(m);
-                                    added++;
-                                }
-                                continue;
-                            }
-                            var key = new Key(publisherId, ord);
-                            if (!_byKey.TryGetValue(key, out var lst))
-                                _byKey[key] = lst = new List<SubscriberHandle>();
-                            if (lst.Any(h => h.Method == m)) continue;
-                            lst.Add(new SubscriberHandle(t, codeunitId, m, publisherId, ord,
-                                $"{t.Name}.{m.Name} → Table {publisherId}/{methodName}"));
-                            added++;
+                            continue;
                         }
-                        else if (publisherObjType == 5) // Codeunit → new universal dispatch path
-                        {
-                            var ckey = new CodeunitEventKey(publisherId, methodName);
-                            if (!_byCodeunitKey.TryGetValue(ckey, out var clst))
-                                _byCodeunitKey[ckey] = clst = new List<MethodInfo>();
-                            if (clst.Contains(m)) continue;
-                            clst.Add(m);
-                            added++;
-                        }
-                        else if (ObjectTypeToEventPublisherKind(publisherObjType) is string okind)
-                        {
-                            // Page(8)/Report(3)/Query(9)/XmlPort(6): a manually-declared
-                            // [IntegrationEvent]/[BusinessEvent] on one of these object kinds
-                            // (issue #1794 — the gap #1770's table fix deliberately left open).
-                            // None of them has BC's fixed NavTriggerEventType ordinal set (that's
-                            // table-trigger-only), so unlike the Table branch above there is no
-                            // ordinal check to fall through first — every event from these kinds
-                            // is dispatched via the same universal <EventName>_Scope path codeunit
-                            // publishers use. Before this branch existed, subscribers to these
-                            // events were read off the assembly (scannedAttrs still counted them)
-                            // and then silently discarded — never added to any registry, the
-                            // silent-drop shape loud-failures.md warns about.
-                            var okey = new ObjectEventKey(okind, publisherId, methodName);
-                            if (!_byObjectEventKey.TryGetValue(okey, out var olst))
-                                _byObjectEventKey[okey] = olst = new List<MethodInfo>();
-                            if (olst.Contains(m)) continue;
-                            olst.Add(m);
-                            added++;
-                        }
+                        var key = new Key(publisherId, ord);
+                        if (!_byKey.TryGetValue(key, out var lst))
+                            _byKey[key] = lst = new List<SubscriberHandle>();
+                        if (lst.Any(h => h.Method == m)) continue;
+                        lst.Add(new SubscriberHandle(t, codeunitId, m, publisherId, ord,
+                            $"{t.Name}.{m.Name} → Table {publisherId}/{methodName}"));
+                        added++;
+                    }
+                    else if (publisherObjType == 5) // Codeunit → new universal dispatch path
+                    {
+                        var ckey = new CodeunitEventKey(publisherId, methodName);
+                        if (!_byCodeunitKey.TryGetValue(ckey, out var clst))
+                            _byCodeunitKey[ckey] = clst = new List<MethodInfo>();
+                        if (clst.Contains(m)) continue;
+                        clst.Add(m);
+                        added++;
+                    }
+                    else if (ObjectTypeToEventPublisherKind(publisherObjType) is string okind)
+                    {
+                        // Page(8)/Report(3)/Query(9)/XmlPort(6): a manually-declared
+                        // [IntegrationEvent]/[BusinessEvent] on one of these object kinds
+                        // (issue #1794 — the gap #1770's table fix deliberately left open).
+                        // None of them has BC's fixed NavTriggerEventType ordinal set (that's
+                        // table-trigger-only), so unlike the Table branch above there is no
+                        // ordinal check to fall through first — every event from these kinds
+                        // is dispatched via the same universal <EventName>_Scope path codeunit
+                        // publishers use. Before this branch existed, subscribers to these
+                        // events were read off the assembly (scannedAttrs still counted them)
+                        // and then silently discarded — never added to any registry, the
+                        // silent-drop shape loud-failures.md warns about.
+                        var okey = new ObjectEventKey(okind, publisherId, methodName);
+                        if (!_byObjectEventKey.TryGetValue(okey, out var olst))
+                            _byObjectEventKey[okey] = olst = new List<MethodInfo>();
+                        if (olst.Contains(m)) continue;
+                        olst.Add(m);
+                        added++;
                     }
                 }
+                if (unreadable == 0) _scannedAssemblies.Add(asm);
+                else
+                    Console.Error.WriteLine(
+                        $"[Subscribers] {name}: {unreadable} of {subscriberMethods.Count} " +
+                        "[NavEventSubscriber] attribute instance(s) could not be read — will re-scan.");
             }
             _lastScannedCount = asms.Length;
             int total = _byKey.Values.Sum(v => v.Count);

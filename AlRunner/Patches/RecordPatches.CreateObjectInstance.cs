@@ -255,12 +255,13 @@ public static partial class RecordPatches
         return null;
     }
 
+    // Metadata-backed lookup — see FindRecordTypeIn in RecordPatches.NclMetaTableBuilder.cs.
     private static Type? FindTableExtensionTypeIn(Assembly asm, string name)
     {
         try
         {
-            return Array.Find(asm.GetTypes(),
-                x => x.Name == name && typeof(NavRecordExtension).IsAssignableFrom(x));
+            return AlRunner.Infrastructure.AssemblyTypeIndex.For(asm)
+                .FindFirst(name, x => typeof(NavRecordExtension).IsAssignableFrom(x));
         }
         catch { return null; }
     }

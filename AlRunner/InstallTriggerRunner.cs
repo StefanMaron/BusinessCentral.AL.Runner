@@ -194,14 +194,18 @@ public static class InstallTriggerRunner
             if (_scanCache.TryGetValue(asm, out var cached)) return cached;
         }
 
-        Type?[] types;
-        try { types = asm.GetTypes(); }
-        catch (ReflectionTypeLoadException ex) { types = ex.Types; }
+        // Only Codeunit* types can carry an install trigger, and AssemblyTypeIndex resolves
+        // exactly those out of the TypeDef table — so scanning a Base Application chunk no
+        // longer forces all 132k of its types to load just to reject them. See
+        // AlRunner/Infrastructure/AssemblyTypeIndex.cs.
+        IEnumerable<Type> types;
+        try { types = AlRunner.Infrastructure.AssemblyTypeIndex.For(asm).EnumerateWithPrefix("Codeunit"); }
+        catch { types = Array.Empty<Type>(); }
 
         var found = new List<InstallCodeunit>();
         foreach (var t in types)
         {
-            if (t == null || !t.Name.StartsWith("Codeunit", StringComparison.Ordinal)) continue;
+            if (t == null) continue;
             var perCompany = InstallTriggerMethod(t, "OnInstallAppPerCompany");
             var perDatabase = InstallTriggerMethod(t, "OnInstallAppPerDatabase");
             if (perCompany == null && perDatabase == null) continue;
