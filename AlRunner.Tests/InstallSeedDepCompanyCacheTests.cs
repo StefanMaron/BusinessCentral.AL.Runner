@@ -131,14 +131,22 @@ public class InstallSeedDepCompanyCacheTests
             Assert.True(passLines >= 2,
                 $"expected both app groups to report 1P/0F/0E, got:\n{output}");
 
-            // [THEN] Exactly one fresh computation (MISS) and at least one reuse (HIT) for
-            // the shared MS-platform-only dependency closure — proving the SECOND app group
-            // genuinely reused the first's result instead of re-running dependency Install
-            // triggers + Company-Initialize from scratch.
+            // [THEN] The shared MS-platform-only dependency closure was resolved exactly ONCE
+            // in this process — and the second app group reused that result rather than
+            // re-running dependency Install triggers + Company-Initialize from scratch.
+            //
+            // "Resolved once" is MISS + DISK-HIT, not MISS alone: since the cross-process
+            // on-disk tier landed (InstallBaselineDiskCacheTests), the first app group's
+            // lookup answers from disk whenever an earlier invocation on this machine already
+            // computed the same closure, and from a fresh computation otherwise. Which of the
+            // two it is depends on the state of ~/.cache/al-runner/install-baseline and is not
+            // what THIS test is about; that exactly one of them happened, and that the second
+            // app group took neither, is.
             var missCount = CountOccurrences(output, "InstallBaseline.DepCompanyCache MISS");
+            var diskHitCount = CountOccurrences(output, "InstallBaseline.DepCompanyCache DISK-HIT");
             var hitCount = CountOccurrences(output, "InstallBaseline.DepCompanyCache HIT");
-            Assert.Equal(1, missCount);
-            Assert.True(hitCount >= 1, $"expected at least one cache HIT, got:\n{output}");
+            Assert.Equal(1, missCount + diskHitCount);
+            Assert.True(hitCount >= 1, $"expected at least one in-memory cache HIT, got:\n{output}");
         }
         finally
         {
@@ -178,13 +186,18 @@ public class InstallSeedDepCompanyCacheTests
             Assert.True(passLines >= 2,
                 $"expected both app groups to report 1P/0F/0E, got:\n{output}");
 
-            // [THEN] Exactly two fresh computations (MISS) and zero reuse (HIT) — with the
-            // kill switch set, the SAME dependency closure that produced 1 MISS + >=1 HIT in
-            // the positive test above must now produce 2 MISSes and 0 HITs.
+            // [THEN] Exactly two fresh computations (MISS) and zero reuse of any kind — with
+            // the kill switch set, the SAME dependency closure that produced 1 resolution +
+            // >=1 HIT in the positive test above must now produce 2 MISSes, 0 in-memory HITs
+            // and 0 DISK-HITs. The last of those is the switch's cross-process half: it must
+            // bypass the on-disk tier too, or a run set up to re-measure the uncached path
+            // would silently keep reading yesterday's answer.
             var missCount = CountOccurrences(output, "InstallBaseline.DepCompanyCache MISS");
             var hitCount = CountOccurrences(output, "InstallBaseline.DepCompanyCache HIT");
+            var diskHitCount = CountOccurrences(output, "InstallBaseline.DepCompanyCache DISK-HIT");
             Assert.Equal(2, missCount);
             Assert.Equal(0, hitCount);
+            Assert.Equal(0, diskHitCount);
         }
         finally
         {
@@ -271,12 +284,18 @@ public class InstallSeedDepCompanyCacheTests
 
         // [THEN] Two DIFFERENT dependency closures (AppA's MS-platform-only closure vs.
         // the extra-dep app's closure, which includes one more dependency assembly) each
-        // get their OWN fresh computation — never a cross-key HIT. A cache keyed
-        // incorrectly (e.g. ignoring the dependency set entirely) would show only one
-        // MISS total; this must show at least two.
+        // get their OWN resolution — never a cross-key in-memory HIT. A cache keyed
+        // incorrectly (e.g. ignoring the dependency set entirely) would show one resolution
+        // and one HIT; this must show at least two resolutions.
+        //
+        // As above, a resolution is MISS or DISK-HIT: the on-disk tier may answer AppA's
+        // MS-platform closure from an earlier invocation. The claim is that the two closures
+        // are resolved SEPARATELY, not which tier answered either of them.
         var missCount = CountOccurrences(output, "InstallBaseline.DepCompanyCache MISS");
-        Assert.True(missCount >= 2,
-            $"expected at least 2 distinct-dependency-closure MISSes, got {missCount}:\n{output}");
+        var diskHitCount = CountOccurrences(output, "InstallBaseline.DepCompanyCache DISK-HIT");
+        Assert.True(missCount + diskHitCount >= 2,
+            $"expected at least 2 distinct-dependency-closure resolutions, got "
+            + $"{missCount} MISS + {diskHitCount} DISK-HIT:\n{output}");
         }
         finally
         {
