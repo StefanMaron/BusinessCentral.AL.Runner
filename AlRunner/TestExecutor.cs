@@ -168,10 +168,44 @@ public sealed class TestExecutor
     // the cache-or-compute call site below). Exists for diagnostic blast radius — this cache
     // is process-lifetime and shared across every app group in the process, so it is
     // hypothesis #1 for any future "passes alone, fails in the suite" report, and without a
-    // switch the only way to test that hypothesis is a patched rebuild.
+    // switch the only way to test that hypothesis is a patched rebuild. The same switch also
+    // disables the on-disk tier below, in BOTH directions (no read AND no write) — a switch
+    // that only skipped the read would leave the run writing entries derived from the state
+    // it was set to isolate.
     private static readonly Dictionary<string, AlRunner.Patches.RecordPatches.InstallBaselineSnapshot>
         _depCompanyBaselineCache = new();
     private static readonly object _depCompanyBaselineCacheLock = new();
+
+    // ── Second tier: the same snapshot, persisted across PROCESSES ──────────────────────
+    // The dictionary above dies with the process, and the cost it removes is per-process:
+    // 5.9s of a 23.3s warm single-fixture run, ~177s of the CI unit-test step, 8-10s on each
+    // corpus / runner-extras invocation. Nothing about the computation is process-specific —
+    // it is a pure function of (dependency assembly set, runner build, BC version) — so
+    // InstallBaselineDiskCache stores it under exactly that key and
+    // RecordPatches.InstallBaselineDisk encodes/decodes it through BC's own NavValue byte
+    // codec (see those two files for the encoding, the refusal rules and why the
+    // self-populating virtual system tables are deliberately left out).
+    //
+    // Ordering is in-memory first, disk second: within one process the dictionary is both
+    // faster and strictly more faithful (it hands back the very objects that were captured),
+    // so disk is consulted only on an in-memory miss. A disk hit is promoted into the
+    // dictionary so later app groups in the same process take the in-memory path.
+    private static AlRunner.Patches.RecordPatches.InstallBaselineSnapshot? TryLoadDepCompanyBaselineFromDisk(
+        string keyText)
+    {
+        var bytes = AlRunner.Infrastructure.InstallBaselineDiskCache.TryRead(keyText);
+        if (bytes == null) return null;
+        var snapshot = AlRunner.Patches.RecordPatches.TryDeserializeInstallBaselineSnapshot(bytes, keyText);
+        if (snapshot == null)
+        {
+            // Present but unusable (truncated, written by an older codec, a table whose shape
+            // moved). Drop it so the write below replaces it instead of every future run
+            // paying the same failed decode.
+            AlRunner.Infrastructure.InstallBaselineDiskCache.Delete(keyText);
+            return null;
+        }
+        return snapshot;
+    }
 
     /// <summary>
     /// Runs every [Test] method in <paramref name="assembly"/>. When
@@ -281,22 +315,68 @@ public sealed class TestExecutor
             else
                 lock (_depCompanyBaselineCacheLock)
                     _depCompanyBaselineCache.TryGetValue(depKey, out cached);
+            var shortKey = depKey[..Math.Min(8, depKey.Length)];
             if (cached != null)
             {
                 AlRunner.Patches.RecordPatches.RestoreInstallBaselineSnapshot(cached);
                 // #1867 proving-test hook: a stable, directly-assertable signal that this app
                 // group reused a prior computation instead of re-running dependency Install
                 // triggers + Company-Initialize. See InstallSeedDepCompanyCacheTests.
-                PerfTrace.Log($"InstallBaseline.DepCompanyCache HIT {depKey[..Math.Min(8, depKey.Length)]}");
+                PerfTrace.Log($"InstallBaseline.DepCompanyCache HIT {shortKey}");
             }
             else
             {
-                InstallTriggerRunner.RunDependenciesOnly();
-                CompanyInitializer.EnsureCompanyInitialized();
-                var snapshot = AlRunner.Patches.RecordPatches.CaptureInstallBaselineSnapshot();
-                lock (_depCompanyBaselineCacheLock)
-                    _depCompanyBaselineCache[depKey] = snapshot;
-                PerfTrace.Log($"InstallBaseline.DepCompanyCache MISS {depKey[..Math.Min(8, depKey.Length)]}");
+                // In-memory miss. Before paying for the dependency Install triggers +
+                // Company-Initialize, look for the same snapshot on disk — a previous PROCESS
+                // with the same dependency set, runner build and BC version already computed
+                // it. Distinct marker (DISK-HIT, not HIT) so a run's log says which tier
+                // answered, and so a test can assert the cross-process path specifically.
+                // Key built only when the disk tier is actually in play: under the kill
+                // switch nothing should read, write, or even resolve a path.
+                var diskEnabled = !AlRunner.Infrastructure.InstallBaselineDiskCache.Disabled;
+                var diskKey = diskEnabled
+                    ? AlRunner.Infrastructure.InstallBaselineDiskCache.BuildKeyText(
+                        depKey, AlRunner.Patches.RecordPatches.InstallBaselineDiskSchemaVersion)
+                    : null;
+                var fromDisk = diskKey == null ? null : TryLoadDepCompanyBaselineFromDisk(diskKey);
+                if (fromDisk != null)
+                {
+                    AlRunner.Patches.RecordPatches.RestoreInstallBaselineSnapshot(fromDisk);
+                    lock (_depCompanyBaselineCacheLock)
+                        _depCompanyBaselineCache[depKey] = fromDisk;
+                    // digest= is the round-trip PROOF, not decoration: the writing process
+                    // logs the same digest for the snapshot it captured, so a test comparing
+                    // the two strings across processes is asserting that every value in every
+                    // row came back with the same type, length, NULL flag and bytes. Computed
+                    // only under AL_RUNNER_PERF (it walks the whole snapshot).
+                    PerfTrace.Log($"InstallBaseline.DepCompanyCache DISK-HIT {shortKey}"
+                        + (PerfTrace.Enabled
+                            ? $" digest={AlRunner.Patches.RecordPatches.ComputeRoundTripDigest(fromDisk)}"
+                            : ""));
+                }
+                else
+                {
+                    InstallTriggerRunner.RunDependenciesOnly();
+                    CompanyInitializer.EnsureCompanyInitialized();
+                    var snapshot = AlRunner.Patches.RecordPatches.CaptureInstallBaselineSnapshot();
+                    lock (_depCompanyBaselineCacheLock)
+                        _depCompanyBaselineCache[depKey] = snapshot;
+                    PerfTrace.Log($"InstallBaseline.DepCompanyCache MISS {shortKey}");
+
+                    // Persist for the next process. Refusals are logged by the codec and cost
+                    // only the persistence — this run already has its snapshot either way.
+                    if (diskKey != null)
+                    {
+                        var payload = AlRunner.Patches.RecordPatches.TrySerializeInstallBaselineSnapshot(
+                            snapshot, diskKey);
+                        if (payload != null
+                            && AlRunner.Infrastructure.InstallBaselineDiskCache.TryWrite(diskKey, payload))
+                            PerfTrace.Log($"InstallBaseline.DepCompanyCache DISK-WRITE {shortKey} {payload.Length}B"
+                                + (PerfTrace.Enabled
+                                    ? $" digest={AlRunner.Patches.RecordPatches.ComputeRoundTripDigest(snapshot)}"
+                                    : ""));
+                    }
+                }
             }
         }
         // Genuinely per-app-group — the bundle's own Install codeunits (if any) are never

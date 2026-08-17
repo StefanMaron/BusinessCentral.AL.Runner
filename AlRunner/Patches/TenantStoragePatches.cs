@@ -65,6 +65,55 @@ public static class TenantStoragePatches
             _store[entry.Key] = entry.Value;
     }
 
+    /// <summary>Write the isolated-storage half of an install baseline to the on-disk
+    /// baseline cache (see RecordPatches.InstallBaselineDisk). Lives here, not in the codec,
+    /// because <see cref="Entry"/> is private to this store — the codec should not have to
+    /// know its shape, and this way a field added to Entry cannot be silently dropped from
+    /// the persisted form.</summary>
+    internal static void SerializeInstallBaseline(BinaryWriter w, object? snapshot)
+    {
+        var entries = snapshot as KeyValuePair<string, Entry>[] ?? Array.Empty<KeyValuePair<string, Entry>>();
+        w.Write(entries.Length);
+        foreach (var (key, entry) in entries)
+        {
+            w.Write(key);
+            w.Write(entry.Ciphertext);
+            w.Write((int)entry.Status);
+            w.Write(entry.IsSecret);
+        }
+    }
+
+    /// <summary>Sorted, fully-expanded text form of the isolated-storage half of an install
+    /// baseline — the input to the round-trip digest the on-disk cache logs, so a restored
+    /// snapshot can be compared against the captured one field by field rather than by count.
+    /// Sorted because the underlying store is a ConcurrentDictionary and its enumeration order
+    /// is not meaningful.</summary>
+    internal static IEnumerable<string> DescribeInstallBaseline(object? snapshot)
+    {
+        var entries = snapshot as KeyValuePair<string, Entry>[] ?? Array.Empty<KeyValuePair<string, Entry>>();
+        return entries
+            .Select(e => $"iso|{e.Key}|{e.Value.Ciphertext}|{(int)e.Value.Status}|{e.Value.IsSecret}")
+            .OrderBy(x => x, StringComparer.Ordinal);
+    }
+
+    /// <summary>Counterpart of <see cref="SerializeInstallBaseline"/>. Returns a value shaped
+    /// exactly like <see cref="CaptureInstallBaseline"/>'s, so
+    /// <see cref="RestoreInstallBaseline"/> cannot tell the two apart.</summary>
+    internal static object DeserializeInstallBaseline(BinaryReader r)
+    {
+        var count = r.ReadInt32();
+        var entries = new KeyValuePair<string, Entry>[count];
+        for (var i = 0; i < count; i++)
+        {
+            var key = r.ReadString();
+            var ciphertext = r.ReadString();
+            var status = (Encryption)r.ReadInt32();
+            var isSecret = r.ReadBoolean();
+            entries[i] = new KeyValuePair<string, Entry>(key, new Entry(ciphertext, status, isSecret));
+        }
+        return entries;
+    }
+
     // TEMPORARY (memory-census diagnostic) — total stored entries. See MemoryCensus.cs.
     internal static int CensusEntryCount() => _store.Count;
 

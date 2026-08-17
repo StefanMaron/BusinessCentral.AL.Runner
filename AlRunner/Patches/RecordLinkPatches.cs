@@ -72,6 +72,69 @@ public static class RecordLinkPatches
         }
     }
 
+    /// <summary>Write the record-link half of an install baseline to the on-disk baseline
+    /// cache (see RecordPatches.InstallBaselineDisk). Lives here because <see cref="Entry"/>
+    /// and the id counter are private to this store. NavRecordId keys go through BC's own
+    /// GetBytes/CreateFromBytes pair, the same encoding the service tier uses for a RecordId
+    /// field value.</summary>
+    internal static void SerializeInstallBaseline(BinaryWriter w, object? snapshot)
+    {
+        if (snapshot is not ValueTuple<Dictionary<NavRecordId, List<Entry>>, int> state)
+        {
+            w.Write(-1);
+            return;
+        }
+        w.Write(state.Item1.Count);
+        foreach (var (recordId, entries) in state.Item1)
+        {
+            var idBytes = recordId.GetBytes();
+            w.Write(idBytes.Length);
+            w.Write(idBytes);
+            w.Write(entries.Count);
+            foreach (var e in entries)
+            {
+                w.Write(e.Id);
+                w.Write(e.Url);
+                w.Write(e.Description);
+            }
+        }
+        w.Write(state.Item2);
+    }
+
+    /// <summary>Sorted, fully-expanded text form of the record-link half of an install
+    /// baseline — see TenantStoragePatches.DescribeInstallBaseline for why this exists.</summary>
+    internal static IEnumerable<string> DescribeInstallBaseline(object? snapshot)
+    {
+        if (snapshot is not ValueTuple<Dictionary<NavRecordId, List<Entry>>, int> state)
+            return new[] { "link|<none>" };
+        return state.Item1
+            .SelectMany(pair => pair.Value.Select(e =>
+                $"link|{Convert.ToHexString(pair.Key.GetBytes())}|{e.Id}|{e.Url}|{e.Description}"))
+            .Append($"link-next-id|{state.Item2}")
+            .OrderBy(x => x, StringComparer.Ordinal);
+    }
+
+    /// <summary>Counterpart of <see cref="SerializeInstallBaseline"/>, producing exactly the
+    /// tuple shape <see cref="CaptureInstallBaseline"/> produces.</summary>
+    internal static object? DeserializeInstallBaseline(BinaryReader r)
+    {
+        var count = r.ReadInt32();
+        if (count < 0) return null;
+        var links = new Dictionary<NavRecordId, List<Entry>>(EqualityComparer<NavRecordId>.Default);
+        for (var i = 0; i < count; i++)
+        {
+            var idBytes = r.ReadBytes(r.ReadInt32());
+            var recordId = NavRecordId.CreateFromBytes(idBytes, 0, idBytes.Length);
+            var entryCount = r.ReadInt32();
+            var entries = new List<Entry>(entryCount);
+            for (var j = 0; j < entryCount; j++)
+                entries.Add(new Entry(r.ReadInt32(), r.ReadString(), r.ReadString()));
+            links[recordId] = entries;
+        }
+        var nextId = r.ReadInt32();
+        return (links, nextId);
+    }
+
     // TEMPORARY (memory-census diagnostic) — total link entries across all records.
     // See MemoryCensus.cs.
     internal static int CensusEntryCount()
