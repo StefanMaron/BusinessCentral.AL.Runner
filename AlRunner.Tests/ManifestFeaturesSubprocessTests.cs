@@ -55,24 +55,21 @@ public sealed class ManifestFeaturesSubprocessTests : IDisposable
             : Array.Empty<string>();
     }
 
-    /// <summary>
-    /// This fixture's whole point — whether the implicit-with binder lets a SourceTable
-    /// record's own members shadow a page's own local var/procedure of the same bare name —
-    /// is genuine, version-dependent BC COMPILER behaviour, not something the runner
-    /// controls (the precompiled CodeAnalysis.dll's binder is out of scope for us to patch —
-    /// see .claude/rules/precompiled-dll-respect.md). Measured across the full CI matrix:
-    /// the exact fixture below produces AL0129/AL0135 on BC 27.0/27.3/27.5/28.0 but NOT on
-    /// BC 28.1/28.2/28.3/28.4 — the shadowing hazard NoImplicitWith exists to guard against
-    /// stopped reproducing somewhere in that range, on BC's side, independent of this fix.
-    /// Skip below that floor rather than assert a BC behaviour this fixture cannot exercise
-    /// there.
-    /// </summary>
-    private static bool MeetsNoImplicitWithBcFloor()
-    {
-        var built = AlRunner.Infrastructure.BcArtifacts.EngineBuiltVersion();
-        if (built == null) return false;
-        return built.Major > 28 || (built.Major == 28 && built.Minor >= 1);
-    }
+    // NOTE (do not re-add a BC-version floor here without re-measuring): an earlier
+    // revision of this class carried a MeetsNoImplicitWithBcFloor() skip gate, added
+    // because the fixture's app.json used to declare platform 28.0.0.0 / application
+    // 28.1.0.0 — a hardcoded BC-28.1-specific pair, copied from #1941's own repro —
+    // while the CI matrix compiles each leg against a DIFFERENT-major BC artifact. That
+    // mismatch, not any real difference in BC's implicit-with binder, was what made
+    // AL0129/AL0135 stop reproducing on BC 27.0/27.3/27.5/28.0: the compiler was being
+    // asked to honour a manifest for a platform it wasn't. Once platform/application were
+    // fixed to the version-agnostic 1.0.0.0 (see WriteNoImplicitWithFixture below), the
+    // hazard was confirmed to reproduce identically on BC 27.0 and BC 28.1 (rebuilt the
+    // runner with -p:_BCVersion=27.0.38460.53260 and ran both directions directly — same
+    // AL0129/AL0135-on-omit, same clean compile-with-NoImplicitWith-declared, on both).
+    // The gate was built on the pre-fix, confounded evidence and never re-validated
+    // against the corrected fixture before being added — it was measuring the mismatch
+    // bug, not a genuine version split.
 
     private static (string output, int exit) RunRunner(params string[] bundles)
     {
@@ -188,10 +185,6 @@ public sealed class ManifestFeaturesSubprocessTests : IDisposable
     public void TopLevel_ManifestDeclaresNoImplicitWith_CompilesCleanly()
     {
         TestArtifacts.SkipIfMissing();
-        TestArtifacts.SkipIf(!MeetsNoImplicitWithBcFloor(),
-            "NoImplicitWith's implicit-with shadowing hazard is BC-version-dependent " +
-            "compiler behaviour (measured: reproduces on BC 27.0-28.0, not on 28.1+) " +
-            "and this leg is built below the floor — see MeetsNoImplicitWithBcFloor.");
         WriteNoImplicitWithFixture(_root, 61060, 61061, ",\n  \"features\": [ \"NoImplicitWith\" ]");
 
         var (output, exit) = RunRunner(_root);
@@ -206,10 +199,6 @@ public sealed class ManifestFeaturesSubprocessTests : IDisposable
     public void TopLevel_ManifestOmitsFeatures_SameAlStillFailsAL0129AL0135()
     {
         TestArtifacts.SkipIfMissing();
-        TestArtifacts.SkipIf(!MeetsNoImplicitWithBcFloor(),
-            "NoImplicitWith's implicit-with shadowing hazard is BC-version-dependent " +
-            "compiler behaviour (measured: reproduces on BC 27.0-28.0, not on 28.1+) " +
-            "and this leg is built below the floor — see MeetsNoImplicitWithBcFloor.");
         WriteNoImplicitWithFixture(_root, 61070, 61071, "");
 
         var (output, exit) = RunRunner(_root);
@@ -259,10 +248,6 @@ public sealed class ManifestFeaturesSubprocessTests : IDisposable
     public void SourceDependency_ManifestDeclaresNoImplicitWith_CompilesCleanly_BothBundlesRun()
     {
         TestArtifacts.SkipIfMissing();
-        TestArtifacts.SkipIf(!MeetsNoImplicitWithBcFloor(),
-            "NoImplicitWith's implicit-with shadowing hazard is BC-version-dependent " +
-            "compiler behaviour (measured: reproduces on BC 27.0-28.0, not on 28.1+) " +
-            "and this leg is built below the floor — see MeetsNoImplicitWithBcFloor.");
 
         var depDir = Path.Combine(_root, "dep");
         var mainDir = Path.Combine(_root, "main");
@@ -284,10 +269,6 @@ public sealed class ManifestFeaturesSubprocessTests : IDisposable
     public void SourceDependency_ManifestOmitsFeatures_StillFailsAL0129AL0135_AsFormattedCompileFail()
     {
         TestArtifacts.SkipIfMissing();
-        TestArtifacts.SkipIf(!MeetsNoImplicitWithBcFloor(),
-            "NoImplicitWith's implicit-with shadowing hazard is BC-version-dependent " +
-            "compiler behaviour (measured: reproduces on BC 27.0-28.0, not on 28.1+) " +
-            "and this leg is built below the floor — see MeetsNoImplicitWithBcFloor.");
 
         var depDir = Path.Combine(_root, "dep");
         var mainDir = Path.Combine(_root, "main");
