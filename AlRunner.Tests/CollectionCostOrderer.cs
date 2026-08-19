@@ -129,6 +129,12 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             // t=400s.
             ["CountBaselineIntegrationTests"] = 84,
             ["ServerTests"] = 81,
+            // #1940/#1941/#1943: 4 tests, each spawning a real runner subprocess (two
+            // single-bundle, two layered two-bundle dep compiles) — needed because
+            // NoImplicitWith's binder-shadowing effect isn't observable via a bare
+            // BcCompiler.Emit() call with no package cache wired (see the file header).
+            // Measured 81.7s in CI.
+            ["ManifestFeaturesSubprocessTests"] = 81,
             ["TestPageDrillDownDispatchTests"] = 75,
             // #1870: one test, spawning a real runner subprocess against an AL fixture
             // (BC engine cold-start + AL emit/compile once). Measured 63.9s in CI.
