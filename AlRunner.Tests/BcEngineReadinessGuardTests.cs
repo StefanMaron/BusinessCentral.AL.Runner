@@ -21,7 +21,7 @@
 // wire a DOTNET_STARTUP_HOOKS chain (the earliest hookable point in a .NET process — it runs
 // strictly before the host's own Main()) that forces AlRunner.Tests.dll's module, and
 // therefore its [ModuleInitializer], to run before VSTest's DiaSession gets the chance.
-// .github/workflows/test-matrix.yml wires it via a generated .runsettings, scoped to the
+// .github/workflows/bc-tests.yml wires it via a generated .runsettings, scoped to the
 // testhost child process.
 //
 // This file is the acceptance check the issue itself names: on a CI leg, artifacts are

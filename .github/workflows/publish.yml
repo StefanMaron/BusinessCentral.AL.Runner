@@ -79,119 +79,24 @@ jobs:
             echo "EOF_NOTES"
           } >> "$GITHUB_OUTPUT"
 
-  resolve-versions:
-    needs: prepare
-    runs-on: ubuntu-latest
-    outputs:
-      matrix: ${{ steps.resolve.outputs.matrix }}
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-dotnet@v5
-        with:
-          dotnet-version: '8.0.x'
-      - name: Resolve BC versions
-        id: resolve
-        run: |
-          BC_PREFIXES=$(cat .github/bc-versions.txt | grep -v '^#' | tr '\n' ' ')
-          VERSIONS="[]"
-          for prefix in $BC_PREFIXES; do
-            FULL=$(dotnet run --project tools/DownloadArtifacts -- resolve-version "$prefix" dummy 2>/dev/null || true)
-            if [ -n "$FULL" ]; then
-              VERSIONS=$(echo "$VERSIONS" | python3 -c "import json,sys; v=json.load(sys.stdin); v.append('$FULL'); print(json.dumps(v))")
-            fi
-          done
-          echo "matrix={\"bc-version\":$VERSIONS}" >> "$GITHUB_OUTPUT"
-
   test:
-    needs: resolve-versions
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: true
-      matrix: ${{ fromJson(needs.resolve-versions.outputs.matrix) }}
-    name: Test BC ${{ matrix.bc-version }}
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          ref: v${{ inputs.version }}
-          submodules: true
-      # BC 28.1 runs on .NET 8; the runner targets net8.0 (BC's System.Text.Json 10
-      # bind is satisfied app-local via deps.json — see AlRunner.csproj).
-      - uses: actions/setup-dotnet@v5
-        with:
-          dotnet-version: '8.0.x'
-
-      - name: Build (auto-downloads BC ${{ matrix.bc-version }} DLLs)
-        run: |
-          # AllowBcArtifactDownload=true permits the in-build fetch; without it
-          # AlRunner.csproj's FailIfBCServiceTierDllsMissing hard-errors. Same defect
-          # as test-matrix.yml had.
-          dotnet build AlRunner.slnx \
-            -p:_BCVersion=${{ matrix.bc-version }} \
-            -p:AllowBcArtifactDownload=true \
-            -c Release
-
-      - name: Download R2R platform apps (Base/System Application, …)
-        run: |
-          # See test-matrix.yml's identical step: the corpus ships a SYMBOL-ONLY Base
-          # Application in its .alpackages (compiles, no runtime DLL), so cross-app
-          # tableextension/report/xmlport tests fail at runtime without the real R2R
-          # platform apps in a package cache. This job was missing this step entirely —
-          # 17 corpus tests failed on BC 27.3 without it (2026-08-05 release attempts),
-          # despite the identical commit passing clean in test-matrix.yml.
-          dotnet run --project tools/DownloadArtifacts -- \
-            platform-apps ${{ matrix.bc-version }} "$HOME/.al-runner/platform-apps"
-
-      - name: Download the Microsoft test toolkit (Any, Library Assert, Test Runner, …)
-        run: |
-          dotnet run --project tools/DownloadArtifacts -- \
-            test-apps ${{ matrix.bc-version }} "$HOME/.al-runner/test-apps"
-
-      - name: Generate .runsettings for the in-process BC engine tests
-        run: |
-          # Mirrors test-matrix.yml's identical step. Without the DOTNET_STARTUP_HOOKS
-          # chain the in-process BC engine tests (BcEngineCollection) SKIP instead of
-          # running, and a release would ship a version whose engine tests never
-          # executed. BcEngineReadinessGuardTests exists to fail loudly when that
-          # happens; it caught this on the v2.3.0 attempt (47 skipped, guard red).
-          # Set inside <EnvironmentVariables> and deliberately NOT as an ambient env
-          # var on the step: an ambient var also runs the bootstrap inside the outer
-          # `dotnet test` CLI driver process, where AppContext.BaseDirectory resolves
-          # to the SDK's install directory and the Ncl rewrite lands there.
-          cp AlRunner/bin/Release/net8.0/Microsoft.Dynamics.Nav.Ncl.dll \
-             AlRunner.Tests/bin/Release/net8.0/Microsoft.Dynamics.Nav.Ncl.dll
-          cat > engine.runsettings <<EOF
-          <?xml version="1.0" encoding="utf-8"?>
-          <RunSettings>
-            <RunConfiguration>
-              <EnvironmentVariables>
-                <DOTNET_STARTUP_HOOKS>$(pwd)/AlRunner.Tests/bin/Release/net8.0/al-runner.dll:$(pwd)/AlRunner.Tests/bin/Release/net8.0/AlRunner.Tests.dll</DOTNET_STARTUP_HOOKS>
-              </EnvironmentVariables>
-            </RunConfiguration>
-          </RunSettings>
-          EOF
-
-      - name: Run unit tests (AlRunner.Tests)
-        run: |
-          dotnet test AlRunner.Tests/AlRunner.Tests.csproj -c Release --no-build \
-              --settings engine.runsettings
-
-      - name: Run al-language corpus
-        run: |
-          dotnet run --no-build --project AlRunner -c Release --framework net8.0 -- \
-            tests/al-language/tests/al-language \
-            --package-cache "$HOME/.al-runner/platform-apps" \
-            --strict \
-            --out al-language-results.json
-
-      - name: Run runner-extras (if present)
-        if: ${{ hashFiles('tests/runner-extras/**/*.al') != '' }}
-        run: |
-          dotnet run --no-build --project AlRunner -c Release --framework net8.0 -- \
-            tests/runner-extras \
-            --package-cache "$HOME/.al-runner/platform-apps" \
-            --package-cache "$HOME/.al-runner/test-apps" \
-            --strict \
-            --out runner-extras-results.json
+    needs: prepare
+    # The SAME matrix the push / pull-request path runs — resolve-versions, every
+    # BC version, and the cold-cache smoke job — checked out at the release tag.
+    #
+    # This used to be a hand-maintained copy of those steps living in this file.
+    # It drifted from the original four times, and the last two divergences failed
+    # a release each (v2.3.0 and v2.3.1, both on BcEngineReadinessGuardTests with
+    # 47 engine tests skipped). Calling the definition instead of restating it is
+    # the fix — issue #1976.
+    #
+    # It also closes a gap that was never a "drift" so much as a permanent
+    # shortfall: the old copy ran neither --count-baseline, nor the xmlport
+    # order-independence guard, nor the server-mode integration tests, nor the
+    # smoke job. A release was gated on strictly less than a pull request.
+    uses: ./.github/workflows/bc-tests.yml
+    with:
+      ref: v${{ inputs.version }}
 
   publish:
     needs: [prepare, test]

@@ -18,7 +18,7 @@
 // assembly the moment it references AlRunner.Infrastructure.BcArtifacts.
 //
 // DOTNET_STARTUP_HOOKS runs every configured hook assembly's Initialize() IN THE ORDER
-// LISTED (':'-separated on Linux). test-matrix.yml lists THIS assembly's bin-deployed
+// LISTED (':'-separated on Linux). bc-tests.yml lists THIS assembly's bin-deployed
 // copy inside AlRunner.Tests' own output directory FIRST, then AlRunner.Tests.dll SECOND
 // — so this hook's Resolving handler is already installed by the time AlRunner.Tests.dll
 // is entered and its module initializer runs.
@@ -27,7 +27,7 @@
 // -----------------------------------------------------------------------------
 // Measured regression: environment variables set on the testhost process (this is set via
 // VSTest's RunConfiguration.EnvironmentVariables, scoped to the testhost child process —
-// see test-matrix.yml / engine.runsettings) are, by default, INHERITED by every subprocess
+// see bc-tests.yml / engine.runsettings) are, by default, INHERITED by every subprocess
 // the test suite itself spawns with Process.Start — and roughly two dozen AlRunner.Tests
 // classes (CliServer, WatchTests, OutputFormatTests, …) spawn `dotnet run --project
 // AlRunner …` to test the CLI/server's own behaviour. Left set, those child `al-runner`

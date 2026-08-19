@@ -133,7 +133,7 @@ internal static class RunnerFingerprint
     /// one real gap, narrow and CI-safe. <see cref="BcArtifacts.SelectedVersion"/> is
     /// always the FULL four-part version (<c>System.Version.Parse</c> of the matched
     /// artifact directory's name) for the standard <c>--bc-version</c> path, which this
-    /// repo's CI always uses (<c>test-matrix.yml</c>) — official artifacts are immutable
+    /// repo's CI always uses (<c>bc-tests.yml</c>) — official artifacts are immutable
     /// per that exact four-part number in practice, so <c>bc:&lt;version&gt;</c> is
     /// sufficient there. But <c>--artifact-path</c> (an explicit dev-workflow override that
     /// bypasses the standard cache and any hash verification — see

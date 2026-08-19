@@ -2,7 +2,7 @@
 // The download logic itself lives in the BC-free AlRunner.Provisioning library so the
 // runner can call it in-process (auto-provision) and this CLI + the AlRunner MSBuild
 // pre-build target can call it standalone. Keep the argument interface stable — CI
-// (test-matrix.yml, publish.yml) and AlRunner.csproj invoke it as
+// (bc-tests.yml, called by test-matrix.yml and publish.yml) and AlRunner.csproj invoke it as
 //   dotnet run --project tools/DownloadArtifacts -- <mode> <version> <output-dir>
 //
 // Modes:

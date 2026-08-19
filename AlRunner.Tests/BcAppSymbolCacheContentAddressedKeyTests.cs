@@ -7,7 +7,7 @@
 //     {fullPath}|{FileInfo.Length}|{FileInfo.LastWriteTimeUtc.Ticks}|v{CacheVersion}
 // and TryRead re-validated Length/LastWriteUtcTicks against the stored payload before
 // serving a HIT — mtime-sensitive twice over. CI re-downloads every platform/test-toolkit
-// .app on every run (test-matrix.yml's "Download R2R platform apps" / "Download the
+// .app on every run (bc-tests.yml's "Download R2R platform apps" / "Download the
 // Microsoft test toolkit" steps), stamping a fresh mtime even when the bytes are
 // byte-for-byte identical to what a persisted cache holds — so a bc-symbols entry
 // persisted across CI runs would MISS unconditionally, regardless of content.

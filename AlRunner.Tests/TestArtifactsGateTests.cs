@@ -37,7 +37,7 @@ public class TestArtifactsGateTests
     // ---- 1. detection semantics -------------------------------------------------
 
     /// <summary>
-    /// The layout `.github/workflows/test-matrix.yml` actually provisions:
+    /// The layout `.github/workflows/bc-tests.yml` actually provisions:
     /// `$HOME/.local/share/al-runner/artifacts/&lt;bc-version&gt;/`. This is the case
     /// the old six-class gate answered `false` for on every CI run.
     /// </summary>

@@ -10,7 +10,7 @@
 //   b) `~/.local/share/al-runner/artifacts/<ver>` only — 15 classes
 //   c) (a) with a fallback to (b)                      — 2 classes
 //
-// Nothing in this repo ever creates (a). `.github/workflows/test-matrix.yml` provisions
+// Nothing in this repo ever creates (a). `.github/workflows/bc-tests.yml` provisions
 // `~/.local/share/al-runner/artifacts/<version>` (service tier), `~/.al-runner/platform-apps`,
 // `~/.al-runner/test-apps` and `~/.cache/al-runner/ncl-cecil` — no `.bcartifacts.cache`
 // anywhere. So on CI the six classes in group (a) always took the "environment unavailable"
@@ -48,7 +48,7 @@ namespace AlRunner.Tests;
 internal static class TestArtifacts
 {
     /// <summary>
-    /// The BC service-tier artifacts directory `.github/workflows/test-matrix.yml`
+    /// The BC service-tier artifacts directory `.github/workflows/bc-tests.yml`
     /// provisions (AlRunner.csproj's EnsureBCServiceTierDlls writes here too), relative
     /// to the home directory. Holds one subdirectory per BC version.
     /// </summary>
@@ -110,7 +110,7 @@ internal static class TestArtifacts
         return $"BC artifacts not provisioned: no version directory under '{StandardCacheDir(home)}' "
              + $"and no '{LegacyCacheDir(home)}'. Provision with "
              + "`dotnet build AlRunner.slnx -p:AllowBcArtifactDownload=true` "
-             + "(see .github/workflows/test-matrix.yml).";
+             + "(see .github/workflows/bc-tests.yml).";
     }
 
     /// <summary>
@@ -145,7 +145,7 @@ internal static class TestArtifacts
     /// file exists to kill, and the drift guards in TestArtifactsGateTests would all still
     /// pass, because nothing about the per-class gates changed.
     ///
-    /// On a CI leg the artifacts are provisioned by construction (test-matrix.yml builds
+    /// On a CI leg the artifacts are provisioned by construction (bc-tests.yml builds
     /// with AllowBcArtifactDownload=true and downloads platform/test apps before
     /// `dotnet test`). So "artifacts missing" there is never a legitimate skip; it is a
     /// provisioning defect, and the leg must go red naming both layouts it searched.

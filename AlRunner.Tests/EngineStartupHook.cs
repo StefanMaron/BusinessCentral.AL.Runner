@@ -42,7 +42,7 @@
 // is enough: entering this (empty) method forces BcEngineBootstrap.Initialize() to run to
 // completion strictly before DiaSession gets a chance to touch Nav types.
 //
-// Wiring: .github/workflows/test-matrix.yml sets
+// Wiring: .github/workflows/bc-tests.yml sets
 //   DOTNET_STARTUP_HOOKS=<AlRunner.Tests-bin copy of al-runner.dll>:<AlRunner.Tests.dll>
 // on the `dotnet test` invocation — TWO hooks, in that order. The first
 // (AlRunner/EngineTestBinResolverStartupHook.cs) installs a same-directory dependency

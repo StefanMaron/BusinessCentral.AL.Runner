@@ -34,7 +34,7 @@ A suite runs with the same command as the corpus:
 dotnet run --project AlRunner -c Release -- tests/runner-extras/<suite>
 ```
 
-CI runs every suite under `tests/runner-extras/`. See `.github/workflows/test-matrix.yml`.
+CI runs every suite under `tests/runner-extras/`. See `.github/workflows/bc-tests.yml`.
 
 ## Authoring rules
 

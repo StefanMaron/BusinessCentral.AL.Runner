@@ -200,7 +200,7 @@ public sealed class BcEngineCollection : ICollectionFixture<BcEngineFixture>
 
 /// <summary>
 /// The acceptance check issue #1813 names: on a CI leg — where BC artifacts are
-/// provisioned and the Cecil cache is warmed by construction (test-matrix.yml) —
+/// provisioned and the Cecil cache is warmed by construction (bc-tests.yml) —
 /// <see cref="BcEngineBootstrap.Ready"/> being false is a regression, not a legitimate
 /// skip. Fifteen tests in the bc-engine-serial collection skipped silently on every CI
 /// run for months because VSTest's own DiaSession loaded Microsoft.Dynamics.Nav.Ncl
@@ -227,7 +227,7 @@ internal static class BcEngineReadinessGuard
             "BcEngineBootstrap.Ready is false on a CI leg where BC artifacts are provisioned and " +
             "the Cecil cache is pre-warmed before `dotnet test` runs (see the 'Warm the Ncl Cecil " +
             "rewrite cache' and 'Generate .runsettings for in-process BC engine tests' steps in " +
-            ".github/workflows/test-matrix.yml). That combination means the DOTNET_STARTUP_HOOKS " +
+            ".github/workflows/bc-tests.yml). That combination means the DOTNET_STARTUP_HOOKS " +
             "wiring that makes BcEngineBootstrap's [ModuleInitializer] run before VSTest's own " +
             "DiaSession (see AlRunner.Tests/EngineStartupHook.cs) has silently stopped taking " +
             "effect — issue #1813 all over again — and every test in the bc-engine-serial " +
