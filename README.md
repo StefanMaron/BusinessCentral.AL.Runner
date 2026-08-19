@@ -207,21 +207,27 @@ Out of scope by design: SMTP, HTTP egress to external services, file I/O against
 
 ## Knowledge graph (optional)
 
-`AlRunner/` can be indexed into a queryable knowledge graph — communities, most-connected
-types, import cycles — with [graphify](https://github.com/safishamsi/graphify).
+This repo — the C# runner and AL sources alike — can be indexed into a queryable knowledge
+graph: communities, most-connected types, import cycles. Built with
+[graphify](https://github.com/safishamsi/graphify).
 
-Install the AL-aware fork rather than the upstream package. It adds `.al` to the file detector
-and an AL extractor, so it can index the AL corpus and AL bundles; upstream handles the C# under
-`AlRunner/` but skips every `.al` file:
+**Install the AL-aware fork**, not the upstream package:
 
 ```bash
 uv tool install --upgrade "git+https://github.com/ChristianHovenbitzer/graphify-al.git@al-support"
 ```
 
+The fork adds `.al` to the file detector and an AL extractor. Upstream graphify has no AL
+support, and it does not fail on `.al` files — it skips them silently, so a graph built with it
+looks complete while containing none of the AL in this repo. Upstream is enough if you only ever
+index the C# under `AlRunner/`, but anyone working on this project reaches AL sooner or later.
+Install the fork once and the question does not come up.
+
 Then, from the repo root:
 
 ```bash
-graphify AlRunner              # build the graph
+graphify AlRunner              # index the C# runner
+graphify tests/runner-extras   # or an AL tree (needs the fork)
 graphify query "<question>"    # ask it something
 graphify AlRunner --update     # refresh after changes
 ```
