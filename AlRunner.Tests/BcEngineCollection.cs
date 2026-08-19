@@ -23,7 +23,8 @@
 // once at collection start — so the file is fully written before any member test loads it,
 // and nothing rewrites it again afterwards.
 //
-// Members: BcCompilerEmitRetryTests, SkeletonSharedObjectContainerLeakTests.
+// Members: BcCompilerEmitRetryTests, SkeletonSharedObjectContainerLeakTests,
+// RecordBulkWriteNotesTransactionTests.
 // Any NEW test that loads Microsoft.Dynamics.Nav.* types in-process belongs here too.
 
 using System.Runtime.CompilerServices;

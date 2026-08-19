@@ -4174,10 +4174,35 @@ public static class NclCecilRewrite
             // rollback snapshot hangs off this same note, so leaving them out meant a
             // DeleteAll before the first single-row write was never captured and therefore
             // never rolled back.
+            //
+            // DeleteAllAsync/ModifyAllAsync (no "AL" prefix) — NOT ALDeleteAllAsync/
+            // ALModifyAllAsync — deliberately (AlRunner#1791). The single-row forms
+            // (ALInsert/ALModify/ALDelete/ALRename) all fire their prepend correctly via
+            // either overload because BC's own sync entry point (e.g. `ALInsert(bool)`)
+            // itself calls the "AL"-prefixed async sibling (`ALInsertAsync(...)`), so
+            // hooking the async name catches both call surfaces. The bulk forms break that
+            // pattern: decompiling the shipped Ncl.dll shows `ALDeleteAll(bool)` — what AL's
+            // compiler actually binds `Record.DeleteAll(RunTrigger)` to, confirmed by
+            // decompiling this project's own AL-compiled test output — calls the PROTECTED
+            // `DeleteAllAsync(bool)` directly, bypassing `ALDeleteAllAsync` entirely (same
+            // for `ALModifyAll` → `ModifyAllAsync`). Hooking `ALDeleteAllAsync` therefore
+            // never fired for any DeleteAll()/ModifyAll() statement the AL compiler emits —
+            // confirmed by decompiling this project's OWN compiled test corpus: zero
+            // `.ALDeleteAllAsync(`/`.ALModifyAllAsync(` call sites anywhere in it, only
+            // `.ALDeleteAll(` (125 occurrences). Most visibly this left
+            // IsInWriteTransaction() silently reading false after a DeleteAll() that matched
+            // zero rows (AlRunner#1791's reproduction), but the miss is unconditional — the
+            // hooked method is simply never reached, whether or not the call matches any
+            // rows. `DeleteAllAsync`/`ModifyAllAsync` are each a single, non-overloaded,
+            // protected `virtual` method that every entry surface (0-arg/1-arg, sync/async)
+            // funnels through exactly once, so hooking them fires exactly once per AL
+            // DeleteAll()/ModifyAll() statement regardless of which surface form the AL
+            // compiler chose — no double-count risk from a forwarding overload also being
+            // in this list.
             var writeEntries = new[]
             {
                 "ALInsertAsync", "ALModifyAsync", "ALDeleteAsync", "ALRenameAsync",
-                "ALDeleteAllAsync", "ALModifyAllAsync",
+                "DeleteAllAsync", "ModifyAllAsync",
             };
             int bumped = 0;
             foreach (var m in navRecord.Methods.Where(
