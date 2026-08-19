@@ -132,6 +132,12 @@ public static partial class RecordPatches
         _parsedObjectDecls.Clear();
         _parsedObjectCaptions.Clear();
         _metaFormCache.Clear();
+        // #1957: the "already (successfully|un-)loaded" bookkeeping is a statement about
+        // the NCLMetaForm instances _metaFormCache.Clear() just discarded — it must go
+        // with them, or the next lookup short-circuits a brand-new skeleton as
+        // "already loaded" and silently serves a control-less page. See
+        // ResetPageMetadataForReload's doc comment for the full reasoning.
+        ResetPageMetadataForReload();
         _metaReportCache.Clear();
         _metaQueryCache.Clear();
         _metaXmlPortCache.Clear();

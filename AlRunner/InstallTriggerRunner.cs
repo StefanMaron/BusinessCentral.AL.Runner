@@ -178,7 +178,11 @@ public static class InstallTriggerRunner
             Console.Error.WriteLine(
                 $"[install-trigger] {cu.Type.Name}.{name} ({cu.Type.Assembly.GetName().Name}) threw: " +
                 $"{tex.InnerException.GetType().Name}: {tex.InnerException.Message}");
-            var alStack = AlRunner.Infrastructure.AlCallStackCapture.GetCaptured(tex.InnerException);
+            // Install triggers run outside a test, so GetCaptured's "fall back to the most
+            // recent capture" is wrong here — under --watch that capture can belong to an
+            // unrelated test from a previous cycle (#1958). GetCapturedFor has no such
+            // fallback: it answers only for THIS exception instance, or not at all.
+            var alStack = AlRunner.Infrastructure.AlCallStackCapture.GetCapturedFor(tex.InnerException);
             if (!string.IsNullOrEmpty(alStack))
                 Console.Error.WriteLine($"[install-trigger] AL stack:\n{alStack}");
             else

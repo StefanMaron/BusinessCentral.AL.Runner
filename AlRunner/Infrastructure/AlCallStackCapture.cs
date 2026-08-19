@@ -77,6 +77,17 @@ public static class AlCallStackCapture
     /// The AL stack captured for <paramref name="exception"/> at its original throw point.
     /// Falls back to the most-recent capture if this exact instance wasn't recorded
     /// (e.g. it was wrapped/re-created on the way out).
+    /// <para>
+    /// ONLY correct for a caller reporting a FAILING TEST. The fallback assumes
+    /// <c>_captured</c> still holds that same test's own stack (possibly re-wrapped on the
+    /// way out) — true within a single test's teardown, because <see cref="Clear"/> arms a
+    /// fresh capture per test. It is NOT true for anything that runs outside a test (an
+    /// install trigger, company initialisation, a bundle-level hook): in a resident
+    /// <c>--watch</c> process <c>_captured</c> there can be leftover from an arbitrarily
+    /// old, unrelated PREVIOUS cycle's test, and the fallback would silently attribute
+    /// that stack to the wrong failure (#1958). Callers outside a test must use
+    /// <see cref="GetCapturedFor"/> instead, which has no such fallback.
+    /// </para>
     /// </summary>
     public static string? GetCaptured(Exception? exception)
     {
@@ -84,6 +95,19 @@ public static class AlCallStackCapture
             return s;
         return _captured;
     }
+
+    /// <summary>
+    /// The AL stack captured for <paramref name="exception"/> at its original throw point,
+    /// or null. Unlike <see cref="GetCaptured(Exception?)"/> this has NO fallback to the
+    /// most-recent capture — use this for anything that can fail outside a test (install
+    /// triggers, company/tenant initialisation, bundle-level hooks), where the most-recent
+    /// capture may belong to an unrelated earlier test, possibly from a previous
+    /// <c>--watch</c> cycle (#1958). A null return means "no AL stack for this specific
+    /// exception" — the caller should fall back to the real .NET stack, never to another
+    /// exception's AL stack.
+    /// </summary>
+    public static string? GetCapturedFor(Exception? exception)
+        => exception != null && _byException.TryGetValue(exception, out var s) ? s : null;
 
     public static string? CaptureCurrent()
     {

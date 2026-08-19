@@ -42,11 +42,51 @@ public static partial class RecordPatches
     private static readonly object _realPageMetadataLock = new();
 
     /// <summary>
+    /// Clear the "already loaded" / "already failed" bookkeeping alongside
+    /// <c>_metaFormCache</c> on a <c>--watch</c> reload (#1957).
+    /// <para>
+    /// Both sets are statements about ONE specific <c>NCLMetaForm</c> instance — "this
+    /// object's <c>metadataLoaded</c> flag has been cleared and <c>LoadMetadata()</c> has
+    /// run on it" (or "was attempted and threw"). <see cref="ResetForReload"/> discards
+    /// exactly those instances via <c>_metaFormCache.Clear()</c>; leaving either set
+    /// populated makes <see cref="EnsureRealPageMetadata"/> answer questions about a
+    /// generation of <c>NCLMetaForm</c> objects that no longer exist.
+    /// </para>
+    /// <para>
+    /// The success set surviving meant the NEXT lookup short-circuited past a brand-new,
+    /// never-loaded skeleton as "already loaded" — BC then dereferenced a page definition
+    /// that was never parsed (NRE out of
+    /// <c>GetFrozenPageDefinitionWithExtensionWithoutMergedMultiLanguage</c>), and
+    /// <c>TestPage</c>'s catch-and-fall-back silently downgraded to record-only access, so
+    /// <c>OnOpenPage</c> quietly stopped running from the second cycle onward.
+    /// </para>
+    /// <para>
+    /// The failure set is cleared for the mirror reason, not merely for symmetry: a page
+    /// that could not load against the previous generation must get a fresh attempt
+    /// against this one, or an edit that fixes the underlying cause could never be
+    /// observed to have fixed it. This runs once per <c>--watch</c> cycle, so a page whose
+    /// metadata load genuinely, repeatedly fails pays for one retry per cycle — not a
+    /// retry storm — and still logs loudly on every failed attempt
+    /// (<see cref="EnsureRealPageMetadata"/>'s catch block), so a real gap stays visible
+    /// rather than being silently swallowed by either generation's cache.
+    /// </para>
+    /// </summary>
+    internal static void ResetPageMetadataForReload()
+    {
+        lock (_realPageMetadataLock)
+        {
+            _pagesWithRealMetadata.Clear();
+            _pagesRealMetadataFailed.Clear();
+        }
+    }
+
+    /// <summary>
     /// Ensure <paramref name="pageId"/>'s NCLMetaForm carries its real, parsed page
     /// definition, and return it. Returns null when the runner has no emit-captured
     /// metadata XML for the page (a precompiled dependency's page) or when the load
     /// failed — in both cases the caller must not pretend it has a control tree.
-    /// Idempotent: the load runs at most once per page per run.
+    /// Idempotent: the load runs at most once per page per run (per --watch cycle — see
+    /// <see cref="ResetForReload"/>).
     /// </summary>
     internal static object? EnsureRealPageMetadata(int pageId)
     {

@@ -1,0 +1,32 @@
+{
+  "id": "a3000000-0000-4000-8000-000000000013",
+  "name": "Runner Tests Fixture - Watch Page Metadata Reload Driver",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Regression fixture (#1957) — see the sibling R3Pages app.",
+  "description": "The app WatchPageMetadataReloadTests edits between --watch cycles. Depends on R3Pages so the reload-invalidation bug (an edit to THIS app alone regresses the OTHER app's page) reproduces exactly as reported.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [
+    {
+      "id": "a3000000-0000-4000-8000-000000000003",
+      "name": "Runner Tests Fixture - Watch Page Metadata Reload Pages",
+      "publisher": "AL Runner",
+      "version": "1.0.0.0"
+    }
+  ],
+  "screenshots": [],
+  "platform": "1.0.0.0",
+  "application": "1.0.0.0",
+  "idRanges": [
+    {
+      "from": 70025,
+      "to": 70029
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}
