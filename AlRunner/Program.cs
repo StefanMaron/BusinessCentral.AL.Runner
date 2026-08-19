@@ -1475,7 +1475,25 @@ foreach (var bundle in bundles)
             // .deps-bin path, neither of which this scope touches. Same filter EmitDepSymbols
             // already applies — see BcCompiler.ScopeSymbolBearingDepsOnly.
             using var bundleDepScope = BcCompiler.ScopeSymbolBearingDepsOnly();
-            var emitTask = Task.Run(() => emitter.Emit(allPaths, moduleName, appGroup.SuiteDir));
+
+            // #1902: in --watch, try the incremental (RAD) path first — a content edit to one
+            // already-tracked, id-bearing object recompiles just that object instead of the
+            // whole module. Falls back to the ordinary full Emit() (still tracking a baseline
+            // for the NEXT cycle) for anything it cannot prove safe: the first cycle for this
+            // bundle, an added/removed/renamed file, an app.json/dependency change, an id-less
+            // object kind, or any diagnostic the delta compile itself raises. Every other mode
+            // (one-shot, --server) is untouched — normal-mode Emit() never tracks a baseline and
+            // never calls TryEmitIncremental, so its cost profile is unchanged.
+            BcEmitOutput? incrementalOutput = null;
+            if (watchMode)
+            {
+                incrementalOutput = emitter.TryEmitIncremental(allPaths, moduleName, appGroup.SuiteDir, out var incrementalFallbackReason);
+                if (incrementalOutput == null && AlRunner.Log.Verbose)
+                    Console.Error.WriteLine($"[watch] {moduleName}: full rebuild this cycle — {incrementalFallbackReason}");
+            }
+            var emitTask = incrementalOutput != null
+                ? Task.FromResult(incrementalOutput)
+                : Task.Run(() => emitter.Emit(allPaths, moduleName, appGroup.SuiteDir, trackIncrementalBaseline: watchMode));
             try
             {
                 if (!emitTask.Wait(TimeSpan.FromSeconds(emitTimeoutSec)))

@@ -55,7 +55,7 @@ public sealed record BcEmitOutput(
     IReadOnlyList<string> Diagnostics,
     IReadOnlyList<string> ExcludedObjects);
 
-public sealed class BcCompiler
+public sealed partial class BcCompiler
 {
     /// <summary>
     /// Compile every .al file under <paramref name="alFolders"/> into a single
@@ -1300,7 +1300,17 @@ public sealed class BcCompiler
     /// app root, e.g. dependency compiles staging synthetic AL into a temp dir with no
     /// resource files anyway.
     /// </param>
-    public BcEmitOutput Emit(IEnumerable<string> alFolders, string moduleName, string? appRootDir = null)
+    /// <param name="trackIncrementalBaseline">
+    /// When true and this Emit succeeds cleanly (no excluded objects), record a RAD baseline
+    /// for <paramref name="moduleName"/> so a LATER call to <see cref="TryEmitIncremental"/> can
+    /// recompile a single changed file's worth of work instead of the whole module (issue
+    /// #1902). Only <c>--watch</c> passes true — every other caller keeps Emit's existing cost
+    /// profile unchanged (the extra ModuleDefinition conversion + file hashing this does is
+    /// wasted work for a one-shot run that will never call TryEmitIncremental).
+    /// </param>
+    public BcEmitOutput Emit(
+        IEnumerable<string> alFolders, string moduleName, string? appRootDir = null,
+        bool trackIncrementalBaseline = false)
     {
         var dirs = alFolders.Where(Directory.Exists).Distinct().ToList();
         if (dirs.Count == 0)
@@ -1753,7 +1763,33 @@ public sealed class BcCompiler
             }
         }
 
-        return new BcEmitOutput(outputter.Captured, alDiags, excludedObjects);
+        var emitOutput = new BcEmitOutput(outputter.Captured, alDiags, excludedObjects);
+
+        // #1902: only a CLEAN success (nothing excluded, every source captured) is trustworthy
+        // as a RAD baseline — a module that only compiled after dropping broken objects must
+        // not let a later incremental cycle silently treat those objects as "still there".
+        if (trackIncrementalBaseline && caught == null && excludedObjects.Count == 0 && outputter.Captured.Count > 0)
+        {
+            try
+            {
+                RecordIncrementalBaseline(
+                    moduleName, compilation, alFiles, outputter.Captured, specs,
+                    manifestInputs, manifestAppJsonPath, appId, _currentPublisher ?? "AlRunner", _currentVersion ?? new Version(1, 0, 0, 0),
+                    emitOutput);
+            }
+            catch (Exception ex)
+            {
+                // Never fail the run for this — losing the baseline just means the NEXT --watch
+                // cycle falls back to a full rebuild instead of going incremental. Say so; a
+                // developer staring at an unexpectedly slow warm cycle needs the reason.
+                Console.Error.WriteLine(
+                    $"[BcCompiler] {moduleName}: failed to record an incremental (RAD) baseline — " +
+                    $"the next --watch cycle will do a full rebuild: {ex.GetType().Name}: {ex.Message}");
+                _radBaselines.Remove(moduleName);
+            }
+        }
+
+        return emitOutput;
     }
 
     // Cheap text probe: does any source file declare an AL `query` object? Avoids

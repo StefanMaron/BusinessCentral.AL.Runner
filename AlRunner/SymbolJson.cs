@@ -24,13 +24,35 @@ public static class SymbolJsonWriter
         if (comp is null) throw new ArgumentNullException(nameof(comp));
         if (output is null) throw new ArgumentNullException(nameof(output));
 
+        var module = GetModuleDefinition(comp);
+        SymbolReferenceJsonWriter.WriteModule(output, module);
+    }
+
+    /// <summary>
+    /// Converts a <see cref="Compilation"/> into the same in-memory <see cref="ModuleDefinition"/>
+    /// shape <see cref="WriteSymbolJson"/> serializes, without a disk round-trip. Used both by
+    /// the SymbolReference.json writer above and by <c>BcCompiler</c>'s incremental (RAD) compile
+    /// path (issue #1902), which needs a <see cref="ModuleDefinition"/> to hand
+    /// <c>Compilation.CreateForRad</c> as the packaged baseline for the NEXT cycle.
+    ///
+    /// IMPORTANT for callers building a multi-cycle baseline: this only reflects objects that
+    /// were actually SOURCE-DECLARED in <paramref name="comp"/>'s own syntax trees — objects
+    /// resolved from a <c>packagedModuleDefinition</c>/<c>ISymbolReferenceLoader</c> (i.e. a RAD
+    /// compilation's UNCHANGED baseline objects) do NOT come back here. Converting a RAD
+    /// <see cref="Compilation"/> therefore yields ONLY that cycle's delta, not the full merged
+    /// module — confirmed empirically (see BcCompiler.Incremental.cs's MergeModuleDefinition).
+    /// </summary>
+    public static ModuleDefinition GetModuleDefinition(Compilation comp)
+    {
+        if (comp is null) throw new ArgumentNullException(nameof(comp));
+
         // Force binding so the SerializableSymbolModelConverter sees fully-resolved
         // symbols. Without this the converter returns a skeleton ModuleDefinition with
         // empty Codeunits/Tables/Pages/etc. arrays.
         _ = comp.GetDeclarationDiagnostics();
         var declaredObjects = comp.GetDeclaredApplicationObjectSymbols();
         if (Environment.GetEnvironmentVariable("ALRUNNER_DUMP_SYMBOLS") == "1")
-            Console.Error.WriteLine($"  DEBUG WriteSymbolJson: comp has {declaredObjects.Length} declared application object symbol(s)");
+            Console.Error.WriteLine($"  DEBUG GetModuleDefinition: comp has {declaredObjects.Length} declared application object symbol(s)");
 
         var module = TryConvertCompilation(comp)
             ?? TryConvertCompilationByScan(comp)
@@ -44,10 +66,10 @@ public static class SymbolJsonWriter
                 var p = typeof(ModuleDefinition).GetProperty(prop);
                 if (p?.GetValue(module) is Array arr) count += arr.Length;
             }
-            Console.Error.WriteLine($"  DEBUG WriteSymbolJson: ModuleDefinition has {count} object(s) populated");
+            Console.Error.WriteLine($"  DEBUG GetModuleDefinition: ModuleDefinition has {count} object(s) populated");
         }
 
-        SymbolReferenceJsonWriter.WriteModule(output, module);
+        return module;
     }
 
     private static ModuleDefinition? TryConvertCompilation(Compilation comp)
