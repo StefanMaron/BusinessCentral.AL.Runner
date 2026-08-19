@@ -180,7 +180,15 @@ public sealed partial class BcCompiler
         }
 
         var bundleAlpackages = dirs.SelectMany(d => Directory.EnumerateDirectories(d, ".alpackages", SearchOption.AllDirectories)).Distinct();
+        // Same BCCOMPILER_TIMING=1 diagnostic convention Emit() uses (see its own
+        // GetSharedReferences _mark call) — WatchTests' warm-vs-cold regression guard scrapes
+        // this exact "[emit-timing] GetSharedReferences (...): <n>ms" shape on stderr, and this
+        // path calls GetSharedReferences too, so it must keep emitting it or that guard goes
+        // blind the moment a cycle takes the fast path instead of Emit().
+        bool timing = Environment.GetEnvironmentVariable("BCCOMPILER_TIMING") == "1";
+        var refsSw = timing ? System.Diagnostics.Stopwatch.StartNew() : null;
         var (refLoader, specs) = GetSharedReferences(bundleAlpackages);
+        if (timing) Console.Error.WriteLine($"[emit-timing] GetSharedReferences ({specs.Length} specs): {refsSw!.ElapsedMilliseconds}ms");
         var sharedRefsFingerprint = string.Join(",", specs.Select(s => $"{s.AppId}:{s.Version}").OrderBy(s => s, StringComparer.Ordinal));
         if (sharedRefsFingerprint != baseline.SharedRefsFingerprint)
         {
