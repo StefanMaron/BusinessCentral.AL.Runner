@@ -72,6 +72,15 @@ public sealed class RunnerXmlMetadataLoader : INCLObjectXmlMetadataLoader
             && AlPageMetadataRegistry.TryGet(objectId.ObjectNumber, out var pageXml))
             return Wrap(pageXml, $"runner-page-{objectId.ObjectNumber}");
 
+        // Pages living in a PRECOMPILED dependency .app: never source-compiled, so the
+        // emit registry above never holds them. Reconstruct a minimal, honest metadata
+        // document (PageType + SourceObject only) from the .app's own SymbolReference.json
+        // rather than refuse — see DependencyPageMetadataXml.cs for exactly what is read
+        // and what is deliberately left unstated.
+        if (objectId.ObjectType == ObjectType.Page
+            && RecordPatches.TryBuildDependencyPageMetadata(objectId.ObjectNumber) is { } depPageXml)
+            return Wrap(depPageXml, $"runner-dep-page-{objectId.ObjectNumber}");
+
         // XmlPorts: same emit-captured metadata XML, feeding NCLMetaXmlPort.LoadMetadata()
         // so BC's own XmlPort engine imports/exports against the port's real node schema
         // instead of NREing on an empty skeleton.

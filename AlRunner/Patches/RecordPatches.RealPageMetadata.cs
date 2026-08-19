@@ -8,11 +8,15 @@
 //   "already loaded", so LoadMetadata() never runs.
 //
 //   Flipping it for every page at build time is not possible (the metadata does not exist
-//   yet) and flipping it for every page later is not desirable: pages living in a
-//   precompiled dependency have no captured XML, and forcing a load for them would turn a
-//   currently-harmless skeleton into a hard RunnerOutOfScopeException from the loader.
-//   So the load is requested by the one caller that actually needs a control tree — the
-//   TestPage path — and only for pages the runner compiled itself.
+//   yet) and flipping it for every page unconditionally is not desirable: a page neither
+//   the runner nor any loaded dependency describes still has no XML to load, and forcing an
+//   attempt for it would turn a currently-harmless skeleton into a hard
+//   RunnerOutOfScopeException from the loader. So the load is requested by callers that
+//   actually need real PageProperties — the TestPage path, and (#1939)
+//   RunnerFormInit.ShouldResolveMasterPage on AL's own `Page.RunModal()` — gated on the
+//   page having SOME source of real metadata: the runner's own emit-captured XML
+//   (AlPageMetadataRegistry) or a loaded dependency .app's SymbolReference.json
+//   (HasDependencyPageMetadata — see DependencyPageMetadataXml.cs).
 //
 // WHAT A REAL LOAD BUYS
 //   NCLMetaForm.LoadMetadata() -> LoadPageMetadata() -> CreatePageDefinitionWithExtensions()
@@ -46,7 +50,7 @@ public static partial class RecordPatches
     /// </summary>
     internal static object? EnsureRealPageMetadata(int pageId)
     {
-        if (!AlPageMetadataRegistry.TryGet(pageId, out _)) return null;
+        if (!AlPageMetadataRegistry.TryGet(pageId, out _) && !HasDependencyPageMetadata(pageId)) return null;
 
         var meta = _metaFormCache.GetOrAdd(pageId, BuildNCLMetaForm);
         if (meta == null) return null;

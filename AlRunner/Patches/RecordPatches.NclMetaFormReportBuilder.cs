@@ -110,8 +110,13 @@ public static partial class RecordPatches
         // Existence check only — nothing below reads the parsed object. Pageextension ids are
         // accepted too, because they used to live in _parsedPages and therefore used to get a
         // skeleton; #1710's split decides which object WINS a shared id, it does not withdraw
-        // the skeleton from ids only a pageextension claims.
-        if (!_parsedPages.ContainsKey(pageId) && !_parsedPageExtensions.ContainsKey(pageId))
+        // the skeleton from ids only a pageextension claims. A page living in a precompiled
+        // dependency (Base Application "Error Messages", say) needs this skeleton just as
+        // much as one we compiled — see #1939: without it, NavForm.GetMasterPage's own
+        // NCLMetadata.GetMetaApplicationObject lookup throws not-found for a page whose
+        // metadata HasDependencyPageMetadata can otherwise supply.
+        if (!_parsedPages.ContainsKey(pageId) && !_parsedPageExtensions.ContainsKey(pageId)
+            && !HasDependencyPageMetadata(pageId))
             return null;
         EnsureFormReportReflection();
         if (_mCreateEmptyNCLMetaForm == null) return null;

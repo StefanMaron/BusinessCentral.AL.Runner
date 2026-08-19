@@ -76,9 +76,19 @@ public static class RunnerFormInit
     /// looks up a handler, so every modal page raised a NullReferenceException instead of
     /// reaching its [ModalPageHandler]. Thirty Pageworks tests declare HandlerFunctions.
     ///
-    /// The condition is "the runner compiled this page, so it HAS metadata to build a real
-    /// MasterPage from" — which is exactly when the lookup can succeed. A page with no
-    /// captured XML still returns null, as before, rather than throwing from the loader.
+    /// The condition is "the runner has SOME real metadata to build a MasterPage from" —
+    /// which is exactly when the lookup can succeed. That covers two sources: a page the
+    /// runner itself source-compiled (AlPageMetadataRegistry, emit-captured XML), and
+    /// (#1939) a page living in a precompiled dependency .app (Base Application "Error
+    /// Messages", "No. Series", ...) — reconstructed from that .app's own
+    /// SymbolReference.json, see DependencyPageMetadataXml.cs. Without the latter, EVERY
+    /// modal page opened by `SomePage.RunModal()` against a Base App/System App/ISV page
+    /// (never a page the runner compiled) got GetMasterPage() short-circuited to null, and
+    /// NavTestExecution.FindPageType NRE'd on the null MasterPage before its
+    /// [ModalPageHandler] handler dispatch ever ran — the identical shape with a
+    /// source-compiled page passed, because only source-compiled pages had an
+    /// AlPageMetadataRegistry entry. A page neither source knows about still returns null,
+    /// as before, rather than throwing from the loader.
     ///
     /// Request pages stay excluded: that is the path the original blanket no-op existed to
     /// protect, it is keyed by report rather than page id, and nothing here needs it.
@@ -91,7 +101,8 @@ public static class RunnerFormInit
             if (ShouldRunRealFormInit(form)) return true;
             if (form is not Microsoft.Dynamics.Nav.Runtime.NavForm navForm) return false;
             if (navForm.IsRequestPage) return false;
-            return AlPageMetadataRegistry.TryGet(navForm.FormId, out _);
+            return AlPageMetadataRegistry.TryGet(navForm.FormId, out _)
+                   || RecordPatches.HasDependencyPageMetadata(navForm.FormId);
         }
         catch { return false; }
     }
