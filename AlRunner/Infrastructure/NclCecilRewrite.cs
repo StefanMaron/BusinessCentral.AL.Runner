@@ -6667,6 +6667,18 @@ public static class NclCecilRewrite
                 ByParams(Rt + "NCLMetaTable", "GetFieldByNo", "Int32", "Int32"),
                 H(recordPatches, "NCLMetaTable_GetFieldByNoExt"));
 
+            // ── NavRecord TestField navigation-action guards (#1938) ──────────────
+            // See NavRecordTestFieldNavigationPatches.cs for the full mechanism. Both
+            // GetPageToOpen and TryAddTestFieldAction can independently throw
+            // NavMetadataNotFoundException for a Base App page the runner never loaded,
+            // hijacking the real TestField error the caller was about to throw — guard both.
+            ReplaceBodyWithHelper(nclMod,
+                ByParams(Rt + "NavRecord", "GetPageToOpen", "NCLMetaTable"),
+                H(recordPatches, "NavRecord_GetPageToOpen"));
+            ReplaceBodyWithHelper(nclMod,
+                ByParams(Rt + "NavRecord", "TryAddTestFieldAction", "NCLMetaField"),
+                H(recordPatches, "NavRecord_TryAddTestFieldAction"));
+
             // ── NavSession getters / DataAccessSource (RecordWritePatches.cs:84-104,482) ──
             ReplaceBodyWithHelper(nclMod,
                 FindNclMethod(nclMod, Rt + "NavSession", "get_DataAccessSource", 0),
