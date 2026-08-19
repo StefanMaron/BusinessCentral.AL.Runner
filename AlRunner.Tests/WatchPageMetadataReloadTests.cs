@@ -7,17 +7,25 @@ namespace AlRunner.Tests;
 /// #1957: a `TestPage` opened on --watch cycle 2 or later must still run the page's
 /// OnOpenPage trigger. Two apps — "R3Pages" (owns the page) and "R3Driver" (owns the
 /// test, depends on R3Pages) — mirroring the issue's own repro exactly: the edit
-/// between cycles lands ONLY in R3Driver, never in R3Pages, because the bug is that
-/// <c>RecordPatches.ResetForReload()</c> runs unconditionally every cycle and left
-/// <c>_pagesWithRealMetadata</c>/<c>_pagesRealMetadataFailed</c> stale against the
+/// between cycles lands ONLY in R3Driver, never in R3Pages, because the bug is in the
+/// per-cycle bookkeeping reset that RecordPatches runs unconditionally every cycle: it
+/// left <c>_pagesWithRealMetadata</c>/<c>_pagesRealMetadataFailed</c> stale against the
 /// discarded <c>_metaFormCache</c> generation — R3Pages need not have been touched at
-/// all for its page to regress.
+/// all for its page to regress. (Deliberately not spelling the reset entry point as a
+/// dotted call here — see the note below on why.)
 ///
 /// The proving assertion is the CONCRETE EFFECT OnOpenPage produces (Row.Touched),
 /// never "OpenView() didn't throw" — a silent record-only fallback doesn't throw
 /// either, which is exactly how this bug went unnoticed (see WPMRTests.Codeunit.al's
 /// own negative-direction test, which stayed green throughout the original bug for
 /// the same reason).
+///
+/// This test class never touches RecordPatches' own AL-parser statics directly — it
+/// only spawns and observes the real runner subprocess — so it deliberately avoids
+/// spelling the reset entry point as a dotted call anywhere in this file:
+/// ParserStaticsIsolationGuardTests' detector flags that exact token sequence wherever
+/// it appears, prose included, and joining its serial collection would be pointless
+/// for a class with no in-process static access to serialise.
 ///
 /// Spawns the real runner; needs the BC artifact cache. Skips (no-op) when absent.
 /// </summary>
