@@ -98,15 +98,27 @@ public static partial class BcRuntime
             if (Environment.GetEnvironmentVariable("ALRUNNER_DISPATCH_TRACE") == "1")
                 Console.Error.WriteLine(
                     $"[DispatchRethrow] {inner.GetType().Name}: {inner.Message}\nCALLER CHAIN:\n{Environment.StackTrace}");
-            // Capture().Throw(), not `throw inner` — a bare rethrow RESETS the exception's
-            // stack trace to this line, so every failure raised inside a subscriber (or
-            // inside DispatchCore itself) surfaced as "NullReferenceException at
-            // CodeunitEventDispatch_OnRunEventAsync line 40" and named nothing that could be
-            // acted on. The original frames are what identify the actual defect.
-            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(inner).Throw();
-            throw; // unreachable
+            RethrowPreservingStack(inner);
         }
         return default;
+    }
+
+    /// <summary>
+    /// Rethrow <paramref name="ex"/> preserving its ORIGINAL stack trace — the one place both
+    /// dispatch rethrow sites (this entry point's catch above, and <see cref="DispatchCore"/>'s
+    /// per-subscriber catch below) funnel through, so the fix can't regress independently in
+    /// either. `throw ex;` (a bare rethrow of a caught-and-referenced exception) RESETS the
+    /// exception's stack trace to the rethrow site, discarding every frame that identifies WHICH
+    /// subscriber threw and where inside it — see #1955. Pinned directly by
+    /// RethrowPreservingStackTests.
+    /// </summary>
+    [System.Diagnostics.CodeAnalysis.DoesNotReturn]
+    internal static void RethrowPreservingStack(Exception ex)
+    {
+        System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(ex).Throw();
+        throw ex; // unreachable — DoesNotReturn tells the compiler .Throw() never returns, but a
+                  // catch block invoking a void helper still needs a terminating statement of its
+                  // own for callers that fall through it (e.g. DispatchCore's catch, below).
     }
 
     private static bool _firstDispatchLogged;
@@ -199,7 +211,7 @@ public static partial class BcRuntime
                     Console.Error.WriteLine(
                         $"[DispatchThrow] {declName}.{eventMethodName} subscriber threw: "
                         + $"{(tie.InnerException ?? tie).GetType().Name}: {(tie.InnerException ?? tie).Message}");
-                throw tie.InnerException ?? tie;
+                RethrowPreservingStack(tie.InnerException ?? tie);
             }
         }
     }
@@ -318,21 +330,30 @@ public static partial class BcRuntime
     }
 
     /// <summary>
-    /// Is this parameter the "Sender" param of an IncludeSender=true event subscriber? AL emits
-    /// it as a positional first parameter whose type is <c>NavCodeunitHandle</c> (or a typed
-    /// codeunit-handle subclass) and whose name is "Sender" (case-insensitive).
+    /// Is this parameter (positionally) capable of being the "Sender" param of an
+    /// IncludeSender=true event subscriber? AL emits it as a positional first parameter whose
+    /// name is "Sender" (case-insensitive) and whose type is either <c>NavCodeunitHandle</c> (or
+    /// a typed codeunit-handle subclass, for a codeunit publisher) or <c>INavRecordHandle</c> (an
+    /// interface, or a concrete <c>Record&lt;N&gt;</c> implementing it, for a TABLE publisher —
+    /// #1956). This only answers the TYPE-SHAPE question; the call site additionally requires
+    /// no scope field matched this parameter's name before treating it as sender (see
+    /// InvokeOneSubscriber) — that's what distinguishes an actual sender from a coincidentally
+    /// leading, genuinely-declared record/codeunit-typed event argument.
     /// </summary>
-    private static bool IsSenderParameter(ParameterInfo p, int paramIndex)
+    internal static bool IsSenderParameter(ParameterInfo p, int paramIndex)
     {
         if (paramIndex != 0) return false;
-        // AL emits sender as Codeunit50047 (the publisher CLR type) — the bundle's typed handle.
-        // The runtime type ancestry traces back to NavCodeunitHandle.
+        // Codeunit publisher: AL emits sender as Codeunit50047 (the publisher CLR type) — the
+        // bundle's typed handle. The runtime type ancestry traces back to NavCodeunitHandle.
         var t = p.ParameterType;
         while (t != null && t != typeof(object))
         {
             if (t.Name == "NavCodeunitHandle" || t.Name.StartsWith("Codeunit", StringComparison.Ordinal)) return true;
             t = t.BaseType;
         }
+        // Table publisher: AL emits sender as INavRecordHandle, an INTERFACE — the CLR BaseType
+        // walk above can never reach an interface, so it needs its own assignability check.
+        if (typeof(Microsoft.Dynamics.Nav.Runtime.INavRecordHandle).IsAssignableFrom(p.ParameterType)) return true;
         return false;
     }
 
@@ -388,26 +409,45 @@ public static partial class BcRuntime
 
         // Match subscriber parameters by name to publisher-scope instance fields.
         // Case-insensitive — AL emit lowercases C# fields, but ParameterInfo.Name preserves AL casing.
-        // Special case: leading "Sender" parameter on IncludeSender=true subscriber receives a
-        // NavCodeunitHandle wrapping the publisher (not the raw codeunit instance).
+        // Special case: leading "Sender" parameter on IncludeSender=true subscriber receives the
+        // publisher itself (wrapped in a NavCodeunitHandle for a codeunit publisher, or passed
+        // straight through for a table publisher — see IsSenderParameter/#1956).
+        //
+        // Field lookup runs FIRST and wins: an IncludeSender=true event declares no parameters
+        // at all, so AL never emits a scope field for its "Sender" — the field-vs-sender
+        // branches can never both match the SAME parameter. A leading parameter that DOES have
+        // a matching scope field is a genuinely declared, record-typed (or codeunit-typed)
+        // event ARGUMENT, not a sender, and must keep taking its value from the scope.
         int publisherCodeunitId = ExtractCodeunitIdFromTypeName(treeObj.GetType());
         var parms = subscriberMethod.GetParameters();
         var args = new object?[parms.Length];
         for (int i = 0; i < parms.Length; i++)
         {
             var p = parms[i];
-            if (IsSenderParameter(p, i))
-            {
-                // Use the (ITreeObject, NavCodeunit) ctor to wrap the EXISTING publisher
-                // instance — the (ITreeObject, int) ctor would create a fresh instance via
-                // the codeunit registry, losing any publisher-side state the subscriber needs.
-                args[i] = _ciNavCodeunitHandleByInstance != null
-                    ? _ciNavCodeunitHandleByInstance.Invoke(new object?[] { treeObj, treeObj })
-                    : _ciNavCodeunitHandleByIdInt!.Invoke(new object?[] { treeObj, publisherCodeunitId });
-                continue;
-            }
             var fld = scopeType.GetField(p.Name!,
                 BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase);
+            if (fld == null && IsSenderParameter(p, i))
+            {
+                if (typeof(Microsoft.Dynamics.Nav.Runtime.INavRecordHandle).IsAssignableFrom(p.ParameterType))
+                {
+                    // Table publisher: AL emits the sender parameter as INavRecordHandle (or a
+                    // concrete Record<N> implementing it). `treeObj` (NavMethodScope's
+                    // ApplicationObject) IS that record instance already — pass it straight
+                    // through instead of wrapping it in a codeunit handle (#1956).
+                    args[i] = CoerceArg(treeObj, p.ParameterType);
+                }
+                else
+                {
+                    // Codeunit publisher: use the (ITreeObject, NavCodeunit) ctor to wrap the
+                    // EXISTING publisher instance — the (ITreeObject, int) ctor would create a
+                    // fresh instance via the codeunit registry, losing any publisher-side state
+                    // the subscriber needs.
+                    args[i] = _ciNavCodeunitHandleByInstance != null
+                        ? _ciNavCodeunitHandleByInstance.Invoke(new object?[] { treeObj, treeObj })
+                        : _ciNavCodeunitHandleByIdInt!.Invoke(new object?[] { treeObj, publisherCodeunitId });
+                }
+                continue;
+            }
             args[i] = CoerceArg(fld?.GetValue(publisherScope), p.ParameterType);
             if (Environment.GetEnvironmentVariable("ALRUNNER_DISPATCH_TRACE") == "1"
                 && subscriberMethod.Name.Contains("CustomDocumentMerger", StringComparison.OrdinalIgnoreCase))
