@@ -1936,39 +1936,19 @@ public static partial class BcRuntime
         var navXmlPortType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NavXmlPort");
         if (navXmlPortType != null)
         {
-            var tDataError = navNcl.GetType("Microsoft.Dynamics.Nav.Types.DataError")
-                ?? AppDomain.CurrentDomain.GetAssemblies()
-                    .SelectMany(a => { try { return a.GetTypes(); } catch { return Array.Empty<Type>(); } })
-                    .FirstOrDefault(t => t.Name == "DataError");
             var xmlPortNavRecordType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NavRecord");
 
-            // Static XMLPORT.EXPORT(id, stream) / XMLPORT.IMPORT(id, stream) overloads — NOT
-            // covered by the #1800 investigation above (that was scoped to the four instance
-            // methods; no corpus test was found exercising this static surface either way), so
-            // left as-is pending a dedicated follow-up. See tests/runner-extras/standalone-suites
-            // /xmlport-cluster-hooks-1800 and the #1800 PR body for the full orphan inventory.
-            if (tDataError != null)
-            {
-                var tNavOutStream = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NavOutStream");
-                var tNavInStream  = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NavInStream");
-                var tNavRecord    = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NavRecord");
-                if (tNavOutStream != null && tNavRecord != null)
-                {
-                    var staticExport = navXmlPortType.GetMethod("Export",
-                        BindingFlags.Public | BindingFlags.Static, null,
-                        new[] { tDataError, typeof(int), tNavOutStream, tNavRecord }, null);
-                    if (staticExport != null)
-                        Hook(staticExport, nameof(NavXmlPort_StaticExport), "NavXmlPort.Export(DataError,int,NavOutStream,NavRecord)");
-                }
-                if (tNavInStream != null && tNavRecord != null)
-                {
-                    var staticImport = navXmlPortType.GetMethod("Import",
-                        BindingFlags.Public | BindingFlags.Static, null,
-                        new[] { tDataError, typeof(int), tNavInStream, tNavRecord }, null);
-                    if (staticImport != null)
-                        Hook(staticImport, nameof(NavXmlPort_StaticImport), "NavXmlPort.Import(DataError,int,NavInStream,NavRecord)");
-                }
-            }
+            // #1883: static XMLPORT.EXPORT(id, stream[, record]) / XMLPORT.IMPORT(id, stream[,
+            // record]) overloads — NOT covered by the #1800 investigation above (that was scoped
+            // to the four instance methods). Investigated separately: BC's real, unpatched
+            // static Export(DataError,int,NavOutStream,NavRecord) is exercised end-to-end by the
+            // al-language corpus (xmlport/TestXmlPortObject.al —
+            // XmlPort_Export_StaticWithRecord_RespectsFilters) and passes; the matching static
+            // Import(DataError,int,NavInStream,NavRecord) overload was verified empirically the
+            // same way (tests/runner-extras/standalone-suites/xmlport-static-import-with-record —
+            // #1883) and also just works. So — same conclusion as the #1800 cluster above — there
+            // is nothing to redirect to; the Hook(...) call sites and their throw-stub bodies
+            // (NavXmlPort_StaticExport/StaticImport) were deleted outright rather than left dead.
 
             // DISABLED: NavXmlPort.RunXmlPort() is R2R-compiled/inlined; RuntimeHelpers.PrepareMethod
             // SIGSEGVs the process during patch installation. Cecil migration pending.
@@ -2028,25 +2008,16 @@ public static partial class BcRuntime
             // 14 corpus tests before being reverted) lives once, canonically, in the big comment
             // block above NavXmlPort_StaticRun1..4 in AlRunner/Patches/XmlPortPatches.cs — see
             // there, not here.
-            var nclAssembly = navXmlPortType.Assembly;
-            var tableNodeType = nclAssembly.GetType("Microsoft.Dynamics.Nav.Runtime.NavXmlPortTableNode");
 
-            // NavXmlPortTableNode(NavRecordHandle) constructor — called from the generated
-            // XmlPort{ID}.InitializeComponent() for each tableelement. Calls record.Target which
-            // triggers NavRecordHandle.CreateTarget → NCLMetaTable.CreateObjectInstance → the
-            // generated Table{ID} ctor → record initialization that NREs before reaching Add().
-            // Since Add is already a no-op and we never use the node list, stub ctor as no-op.
-            if (tableNodeType != null)
-            {
-                var xmlPortHandleNavRecordType = nclAssembly.GetType("Microsoft.Dynamics.Nav.Runtime.NavRecordHandle");
-                if (xmlPortHandleNavRecordType != null)
-                {
-                    var tableNodeCtor = tableNodeType.GetConstructor(
-                        BindingFlags.Public | BindingFlags.Instance, null, new[] { xmlPortHandleNavRecordType }, null);
-                    if (tableNodeCtor != null)
-                        Hook(tableNodeCtor, nameof(NavXmlPortTableNode_Ctor), "NavXmlPortTableNode.ctor(NavRecordHandle)");
-                }
-            }
+            // #1883: NavXmlPortTableNode(NavRecordHandle) constructor — called from the generated
+            // XmlPort{ID}.InitializeComponent() for each tableelement — used to be a Hook(...)
+            // call site right here too, on the belief that record.Target NREs before reaching
+            // Add(). Also orphaned (JmpHook disabled by default), and also a misdiagnosis of the
+            // same shape as BeginInitialization above: every al-language corpus xmlport test uses
+            // a tableelement-bound fixture (xmlport/_fixtures/xmlports/ALTUniversalXmlPort.al) and
+            // all of them pass, so BC's real, unpatched ctor already constructs correctly on the
+            // skeleton. Deleted outright along with NavXmlPortTableNode_Ctor/EnsureXmlPortNodeFields
+            // in XmlPortPatches.cs — there is nothing to redirect to.
         }
 
         // NavFile.ALUpload / ALDownload — browser round-trip (§3.4 file-storage OOS).

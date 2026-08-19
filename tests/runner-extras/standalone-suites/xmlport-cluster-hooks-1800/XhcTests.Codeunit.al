@@ -205,4 +205,91 @@ codeunit 62182 "XHC Tests"
         if not Ok then
             Error('XHC Port.Import() reported failure against a correctly-set-up InStream source.');
     end;
+
+    // ── #1883 follow-up: static XMLPORT.EXPORT(id, stream, record) / XMLPORT.IMPORT(id,
+    // stream, record) — NOT covered by the #1800 investigation above (that was scoped to the
+    // instance methods). Also found orphaned (JmpHook disabled by default, hook never fired)
+    // with a "not-yet-implemented" throw stub that would have fired had the hook worked. BC's
+    // real, unpatched static Export/Import bodies were verified empirically to handle
+    // well-formed usage correctly, same conclusion and same shape as the #1800 cluster: there
+    // is nothing to redirect to, so the orphaned Hook(...) call sites and throw stubs
+    // (NavXmlPort_StaticExport/StaticImport in AlRunner/Patches/XmlPortPatches.cs) were
+    // deleted outright. The actual BC-behaviour claim ("does the static overload populate /
+    // export the given record correctly") is proven upstream in the corpus, not here — see
+    // bc-behavior-tests-go-upstream.md and xmlport/TestXmlPortObject.al's
+    // XmlPort_Export_StaticWithRecord_RespectsFilters /
+    // XmlPort_Import_StaticWithRecord_InsertsIntoGivenRecordVariable. These two tests are
+    // narrower regression guards, same framing as InstanceExportImportRoundTrip_RealBcBody_NoThrow
+    // above: a correctly-set-up static call completes without throwing, with no runner redirect
+    // installed on this surface. (NavXmlPortTableNode.ctor, the third #1883 orphan in this
+    // cluster, needs no separate test here — every XmlPort construction in this file, including
+    // InstanceConstruction_DoesNotThrow above, already goes through it since "XHC Port" is
+    // tableelement-bound.)
+    // Entry Nos 101/102 are deliberately disjoint from the other tests in this codeunit
+    // (which use Entry No. 1): "XHC Row" persists across test procedures in this suite (see
+    // the "legitimate duplicate-key failure" comment above InstanceExportImportRoundTrip_
+    // RealBcBody_NoThrow), so reusing 1 here would collide with whatever an earlier test in
+    // the same run left behind. Each test below deletes its own row at the end so it does
+    // not leak into whichever test runs after it.
+    [Test]
+    procedure StaticExport_WithRecordArg_RealBcBody_NoThrow()
+    var
+        Row_: Record "XHC Row";
+        TempBlob: Codeunit "Temp Blob";
+        DocumentOutStream: OutStream;
+        Ok: Boolean;
+    begin
+        if Row_.Get(101) then
+            Row_.Delete();
+        Row_.Init();
+        Row_."Entry No." := 101;
+        Row_.Name := 'First';
+        Row_.Insert();
+
+        TempBlob.CreateOutStream(DocumentOutStream);
+        Ok := XmlPort.Export(62181, DocumentOutStream, Row_);
+        if not Ok then
+            Error('Static XmlPort.Export(Integer, OutStream, Record) reported failure against a correctly-set-up OutStream destination.');
+
+        Row_.Delete();
+    end;
+
+    // Entry No. 103 is deliberately disjoint from every other Entry No. used elsewhere in
+    // this codeunit (1, 101) — "XHC Row" persists across test procedures in this suite (see
+    // the "legitimate duplicate-key failure" comment above InstanceExportImportRoundTrip_
+    // RealBcBody_NoThrow), so reusing an already-used key here would collide with whatever an
+    // earlier test in the same run left behind.
+    [Test]
+    procedure StaticImport_WithRecordArg_RealBcBody_NoThrow()
+    var
+        TargetRow: Record "XHC Row";
+        TempBlob: Codeunit "Temp Blob";
+        DocumentOutStream: OutStream;
+        DocumentInStream: InStream;
+        Ok: Boolean;
+    begin
+        // Hand-written payload matching "XHC Port"'s schema (root/Row/EntryNo/RowName) —
+        // sidesteps any uncertainty about what XmlPort.Export's own output shape is, since
+        // that is already covered by StaticExport_WithRecordArg_RealBcBody_NoThrow above.
+        TempBlob.CreateOutStream(DocumentOutStream);
+        DocumentOutStream.WriteText('<?xml version="1.0" encoding="utf-8"?><root><Row><EntryNo>103</EntryNo><RowName>First</RowName></Row></root>');
+        TempBlob.CreateInStream(DocumentInStream);
+
+        ClearLastError();
+        Ok := XmlPort.Import(62181, DocumentInStream, TargetRow);
+        if not Ok then
+            Error('Static XmlPort.Import(Integer, InStream, Record) reported failure. LastError=%1', GetLastErrorText());
+
+        // Verify via a fresh Get() rather than deleting TargetRow directly — see
+        // AL Runner#1946 (filed while writing this test): whether this call succeeds was
+        // observed to depend on an unrelated LATER statement's shape in the same procedure
+        // (Get()-then-read vs a bare Delete() on the same variable), which is a separate,
+        // pre-existing runner gap unrelated to the #1883 fix this test guards. Get()-then-read
+        // is the confirmed-reliable shape.
+        if not TargetRow.Get(103) then
+            Error('Static XmlPort.Import(Integer, InStream, Record) reported success but Entry No. 103 was not actually inserted.');
+        if TargetRow.Name <> 'First' then
+            Error('Static XmlPort.Import(Integer, InStream, Record) inserted the wrong Name: %1', TargetRow.Name);
+        TargetRow.Delete();
+    end;
 }

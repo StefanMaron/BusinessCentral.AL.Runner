@@ -25,10 +25,6 @@ public static partial class BcRuntime
 {
     private static readonly ConcurrentDictionary<int, Type?> _xmlPortTypeCache = new();
 
-    // Lazily resolved reflection handles for NavXmlPortNode base-class private list fields.
-    private static System.Reflection.FieldInfo? _fXmlPortNodeAttrChildren;
-    private static System.Reflection.FieldInfo? _fXmlPortNodeElemChildren;
-
     // ──────────────────────────────────────────────────────────────────
     // NavXmlPortHandle.CreateTarget — bypass GetMetaXmlPortById +
     // CreateObjectInstance (which NREs on null delegate). Construct
@@ -263,31 +259,11 @@ public static partial class BcRuntime
         RunnerScope.ThrowOutOfScope("NavXmlPort.Run", "browser-roundtrip", "file-storage");
     }
 
-    // ──────────────────────────────────────────────────────────────────
-    // NavXmlPort static Export/Import — XMLPORT.EXPORT(id, stream) and
-    // XMLPORT.IMPORT(id, stream) in AL compile to these static overloads.
-    // In-memory XmlPort serialization is in scope eventually (scope.md §4
-    // TODO) but not yet implemented; throw loud failure so tests cannot
-    // silently pass without real serialization.
-    // ──────────────────────────────────────────────────────────────────
-
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    public static bool NavXmlPort_StaticExport(int errorLevel, int xmlPortId, object outStream, object record)
-    {
-        RunnerScope.ThrowNotYetImplemented(
-            "NavXmlPort.StaticExport",
-            "in-memory XmlPort serialization not yet implemented — see HANDOFF.md and SCOPE-AUDIT.md");
-        return default;
-    }
-
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    public static bool NavXmlPort_StaticImport(int errorLevel, int xmlPortId, object inStream, object record)
-    {
-        RunnerScope.ThrowNotYetImplemented(
-            "NavXmlPort.StaticImport",
-            "in-memory XmlPort serialization not yet implemented — see HANDOFF.md and SCOPE-AUDIT.md");
-        return default;
-    }
+    // NavXmlPort static Export/Import — XMLPORT.EXPORT(id, stream[, record]) and
+    // XMLPORT.IMPORT(id, stream[, record]) in AL compile to static overloads on NavXmlPort.
+    // #1883: no runner replacement here (or anywhere) — see the big comment block below,
+    // same conclusion as the #1800 instance-method cluster: BC's real, unpatched static
+    // Export/Import bodies already handle well-formed AL usage correctly.
 
     // Export(DataError) / Import(DataError) / Run() / RunXmlPort() (private) /
     // SetTableView(NavRecord) / BeginInitialization() / EndInitialization() /
@@ -323,9 +299,17 @@ public static partial class BcRuntime
     // (NavXmlPort_StaticRun1..4) and the matching Cecil ownership in NclCecilRewrite.cs for the
     // decompiled-source evidence and the docs/scope.md#file-storage classification.
     //
-    // XmlPort{ID}.InitializeComponent() (below) and NavXmlPortTableNode..ctor (further down)
-    // are a separate mechanism — JmpHook.Apply against methods on the test assembly's own
-    // BC-generated types, not NCL — and were not part of this investigation; left unchanged.
+    // XmlPort{ID}.InitializeComponent() (below) is a separate mechanism — JmpHook.Apply
+    // against a method on the test assembly's own BC-generated type, not NCL — and was not
+    // part of this investigation; left unchanged.
+    //
+    // #1883: NavXmlPortTableNode(NavRecordHandle)'s ctor used to be hooked here too
+    // (NavXmlPortTableNode_Ctor, further down), on the belief that BC's real ctor NREs before
+    // reaching Add(). Also orphaned, also a misdiagnosis of the same shape: every al-language
+    // corpus xmlport test constructs a tableelement-bound XmlPort (see BcRuntime.cs's
+    // NavXmlPortTableNode note near the Run-overload hook block) and all of them pass, so BC's
+    // real, unpatched ctor already constructs correctly. Deleted outright along with
+    // EnsureXmlPortNodeFields — there is nothing to redirect to.
 
     /// <summary>
     /// XmlPort{ID}.InitializeComponent() — the BC-generated override that calls
@@ -341,43 +325,5 @@ public static partial class BcRuntime
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static void NavXmlPort_InitializeComponent(object self)
     {
-    }
-
-    // Skeleton ctor-time scaffolding — required so XmlPort{ID} construction succeeds;
-    // no observable AL-test behavior to fake. Initializes the attribute/element child
-    // lists so node-traversal code does not NRE on an uninitialized collection.
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    public static void NavXmlPortTableNode_Ctor(object self, object record)
-    {
-        EnsureXmlPortNodeFields(self.GetType());
-        if (_fXmlPortNodeAttrChildren != null)
-        {
-            _fXmlPortNodeAttrChildren.SetValue(self, Activator.CreateInstance(_xmlPortNodeListType!));
-            _fXmlPortNodeElemChildren!.SetValue(self, Activator.CreateInstance(_xmlPortNodeListType!));
-        }
-    }
-
-    private static System.Type? _xmlPortNodeListType;
-
-    private static void EnsureXmlPortNodeFields(Type derivedType)
-    {
-        if (_fXmlPortNodeAttrChildren != null) return;
-        var t = derivedType;
-        while (t != null)
-        {
-            var attr = t.GetField("attributeChildren",
-                BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly);
-            var elem = t.GetField("elementChildren",
-                BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly);
-            if (attr != null && elem != null)
-            {
-                var listType = typeof(System.Collections.Generic.List<>).MakeGenericType(attr.FieldType.GetGenericArguments()[0]);
-                System.Threading.Interlocked.CompareExchange(ref _xmlPortNodeListType, listType, null);
-                System.Threading.Interlocked.CompareExchange(ref _fXmlPortNodeAttrChildren, attr, null);
-                System.Threading.Interlocked.CompareExchange(ref _fXmlPortNodeElemChildren, elem, null);
-                return;
-            }
-            t = t.BaseType;
-        }
     }
 }
