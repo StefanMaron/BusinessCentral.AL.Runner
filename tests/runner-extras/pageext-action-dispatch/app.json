@@ -1,0 +1,19 @@
+{
+  "id": "7c9e3a1f-2b4d-4e6a-8f0c-1d3b5a7c9e21",
+  "name": "Runner Extras - PageExtension Action Dispatch",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Regression for issue #1923: TestPage Invoke() of a pageextension-contributed action never dispatched its OnAction trigger.",
+  "description": "The general BC-language claim this exercises — invoking a TestPage action that was CONTRIBUTED BY A PAGEEXTENSION runs that extension's own OnAction trigger, exactly like an action declared directly on the page — is plain BC behaviour and belongs upstream in the al-language corpus (see the runner repo's bc-behavior-tests-go-upstream.md); a corpus test (tests/al-language/tests/al-language/handlers/TestPageExtensionActionInvoke*.al) was prepared alongside this fix. This suite is the runner-repo-local stopgap that pins the runner-INTERNAL defect directly, so this repo's own CI gates the fix now without waiting on the corpus PR to merge and the submodule pin to bump: RunnerPageInstance.FindTrigger (AlRunner/Patches/RunnerPageInstance.cs) resolved an action's OnAction trigger method (a) only against the base page's OWN compiled .NET type, and (b) by re-deriving the member id with IdSpace.GetMemberId(pageId, name) using the BASE PAGE's id — never the pageextension's. A pageextension's action body is compiled onto the EXTENSION's own type and its member id is hashed from the EXTENSION's id (GetPageControlFieldMap in RecordPatches.AlPageParser.cs already documents and relies on this same id-space rule for field controls), so the old code could never find it: on a SOURCE-COMPILED base page it threw RunnerOutOfScopeException misclassifying a real, dispatchable action as unsupported RunObject; on a PRECOMPILED base page (e.g. Base App 'Item Attributes') Invoke() found nothing to throw against and silently did nothing, in violation of loud-failures.md. Three tests below cover: an action declared directly on the page (control, must already have worked), an action a pageextension adds to a page compiled in THIS bundle, and an action a pageextension adds to a page that ships PRECOMPILED in Base Application. Once the upstream test lands and the pin moves, this suite's claim is fully covered there too and it may be retired.",
+  "dependencies": [],
+  "idRanges": [
+    {
+      "from": 64520,
+      "to": 64529
+    }
+  ],
+  "platform": "27.0.0.0",
+  "application": "27.0.0.0",
+  "runtime": "15.0",
+  "target": "Cloud"
+}

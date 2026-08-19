@@ -137,6 +137,42 @@ public static partial class RecordPatches
     }
 
     /// <summary>
+    /// Every AL-source-parsed <c>pageextension</c> that extends <paramref name="pageId"/>, by
+    /// its OWN object id — the id space a control/action it declares is hashed in (see the
+    /// remarks on <see cref="GetPageControlFieldMap"/>). <paramref name="pageId"/> is resolved
+    /// to a NAME via the runner's own AL-source-parsed pages first, then (issue #1923) a loaded
+    /// dependency .app's SymbolReference.json (<see cref="RecordPatches.TryGetAnyPageName"/>) —
+    /// a pageextension over a page that ships PRECOMPILED (e.g. Base Application "Item
+    /// Attributes") is exactly as much a real extension as one over a page compiled in this
+    /// bundle, and the trigger-dispatch gap that motivated this method (#1923) hit that arm
+    /// hardest: nothing threw at all, so a test only caught the miss on the effect the missing
+    /// action was supposed to have.
+    /// </summary>
+    internal static List<int> GetPageExtensionIdsForPage(int pageId)
+    {
+        var baseName = TryGetAnyPageName(pageId);
+        if (string.IsNullOrEmpty(baseName)) return new List<int>();
+
+        var result = new List<int>();
+        foreach (var ext in _parsedPageExtensions.Values)
+            if (NamesEqual(ext.BaseName, baseName))
+                result.Add(ext.Id);
+        result.Sort();
+        return result;
+    }
+
+    /// <summary>
+    /// <paramref name="pageId"/>'s declared NAME — the runner's own AL-source-parsed pages
+    /// first, then (for a page that ships precompiled in a dependency .app, never AL-source-
+    /// parsed here) the dependency's SymbolReference.json. Null when neither knows the page.
+    /// </summary>
+    internal static string? TryGetAnyPageName(int pageId)
+    {
+        if (_parsedPages.TryGetValue(pageId, out var page)) return page.Name;
+        return TryGetDependencyPageSymbol(pageId)?.Name;
+    }
+
+    /// <summary>
     /// Control id → source-table field number for every field control on the page, INCLUDING
     /// the ones contributed by pageextensions that extend it.
     /// <para>An extension's controls are keyed in the EXTENSION's own id space, because BC's

@@ -40,12 +40,21 @@ namespace AlRunner.Patches;
 internal sealed class RunnerPageInstance
 {
     private readonly object _form;
+    private readonly object _owner;
+    private readonly NavRecord? _record;
     private readonly int _pageId;
     private readonly System.Collections.IDictionary _sourceExpressions;
 
-    private RunnerPageInstance(object form, int pageId, System.Collections.IDictionary sourceExpressions)
+    // Lazily-constructed NavFormExtension instances for the pageextensions that extend
+    // this page (issue #1923) — one per extension id, built on first trigger lookup and
+    // reused after that. See FindTrigger/GetOrCreateExtensionInstance.
+    private readonly Dictionary<int, object?> _extensionInstances = new();
+
+    private RunnerPageInstance(object form, object owner, NavRecord? record, int pageId, System.Collections.IDictionary sourceExpressions)
     {
         _form = form;
+        _owner = owner;
+        _record = record;
         _pageId = pageId;
         _sourceExpressions = sourceExpressions;
     }
@@ -157,7 +166,7 @@ internal sealed class RunnerPageInstance
                 Console.Out.WriteLine(
                     $"[RunnerPageInstance] page {pageId}: built, {expressions.Count} source expression(s): "
                     + string.Join(", ", expressions.Keys.Cast<object>().Select(k => k?.ToString())));
-            return new RunnerPageInstance(form, pageId, expressions);
+            return new RunnerPageInstance(form, parent, record, pageId, expressions);
         }
         catch (Exception ex)
         {
@@ -192,7 +201,14 @@ internal sealed class RunnerPageInstance
     {
         var expressions = ReadProperty(form, "SourceExpressions") as System.Collections.IDictionary
                           ?? new System.Collections.Hashtable();
-        return new RunnerPageInstance(form, pageId, expressions);
+        // No caller-supplied owner/record for an already-live form — the form is itself a
+        // real NavForm, which implements ITreeObject, and its own bound record (BC's
+        // "SourceTable" property, same one SetSourceTable populates in TryCreate) is the
+        // best available substitute for constructing a pageextension instance later
+        // (issue #1923's extension-trigger dispatch). A form with neither yet (unbound) is
+        // the pre-existing "no page object" case FindTrigger already tolerates.
+        var record = ReadProperty(form, "SourceTable") as NavRecord;
+        return new RunnerPageInstance(form, form, record, pageId, expressions);
     }
 
     /// <summary>
@@ -524,7 +540,7 @@ internal sealed class RunnerPageInstance
     {
         var trigger = FindTrigger(controlId, "_OnValidate", "OnValidate");
         // A control with no OnValidate simply has no such method, which is not an error.
-        if (trigger != null) Invoke(trigger);
+        if (trigger != null) Invoke(trigger.Value);
     }
 
     /// <summary>
@@ -535,6 +551,16 @@ internal sealed class RunnerPageInstance
     /// another page/report), which the runner cannot perform, so it refuses by name rather
     /// than doing nothing — silently doing nothing is what made an unrun action surface one
     /// step later as an assertion about its missing effect.
+    ///
+    /// Issue #1923: an action a PAGEEXTENSION contributes is compiled onto the extension's
+    /// OWN type (<c>PageExtension{extId}</c>), not the base page's, and its member id hashes
+    /// from the extension's OWN object id — never the page's. FindTrigger now also searches
+    /// every pageextension that extends this page (own-bundle-source-compiled or a real
+    /// PRECOMPILED dependency page, e.g. Base App "Item Attributes") before giving up. Before
+    /// this fix a source-compiled base page's extension action was misclassified as this very
+    /// RunnerOutOfScopeException (a real, dispatchable action reported as unsupported
+    /// RunObject); a precompiled base page's extension action reached nowhere to throw
+    /// against at all — Invoke() silently did nothing, in violation of loud-failures.md.
     /// </summary>
     internal void RaiseOnAction(int actionId)
     {
@@ -585,7 +611,7 @@ internal sealed class RunnerPageInstance
         var byRef = new ByRef<NavText>(() => value, v => value = v);
 
         object? result;
-        try { result = trigger.Invoke(_form, new object?[] { byRef }); }
+        try { result = trigger.Method.Invoke(trigger.Target, new object?[] { byRef }); }
         catch (TargetInvocationException tie) when (tie.InnerException != null)
         {
             System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw();
@@ -613,7 +639,7 @@ internal sealed class RunnerPageInstance
         var trigger = FindTrigger(controlId, "_OnDrillDown", "OnDrillDown");
         if (trigger == null)
             throw AlRunner.BcRuntime.MakeNavDrilldownActionNotSupportedException();
-        Invoke(trigger);
+        Invoke(trigger.Value);
     }
 
     /// <summary>
@@ -825,19 +851,63 @@ internal sealed class RunnerPageInstance
     }
 
     /// <summary>
-    /// The page method carrying the trigger for <paramref name="memberId"/>.
-    ///
-    /// The AL compiler emits triggers as <c>{MemberName}_a{n}{suffix}</c> on the page class,
-    /// carrying the NAME but not the id. The member is identified by RE-DERIVING BC's own id
-    /// from each candidate's name — <c>IdSpace.GetMemberId(pageId, name)</c>, i.e. abs(FNV-1a
-    /// over the UTF-16 bytes of pageId + name) — and comparing it to the id being driven.
-    /// Matching a control on its source expression's Name does not work: that is the bound
-    /// VARIABLE's name (SelectedMode), not the control's (Mode), and they routinely differ.
+    /// A resolved trigger method plus the OBJECT to invoke it on. Before issue #1923 every
+    /// trigger lived on the base page's own <c>_form</c>, so a bare MethodInfo was enough; a
+    /// pageextension's trigger lives on that extension's own compiled instance instead (see
+    /// FindTrigger), so the target has to travel with the method from here on.
     /// </summary>
-    private MethodInfo? FindTrigger(int memberId, string suffix, string surface, int arity = 0)
+    private readonly struct TriggerMatch
+    {
+        internal readonly object Target;
+        internal readonly MethodInfo Method;
+        internal TriggerMatch(object target, MethodInfo method) { Target = target; Method = method; }
+    }
+
+    /// <summary>
+    /// The method (and the object to invoke it on) carrying the trigger for
+    /// <paramref name="memberId"/>.
+    ///
+    /// The AL compiler emits triggers as <c>{MemberName}_a{n}{suffix}</c> on the DECLARING
+    /// object's class, carrying the NAME but not the id. The member is identified by
+    /// RE-DERIVING BC's own id from each candidate's name —
+    /// <c>IdSpace.GetMemberId(declaringObjectId, name)</c>, i.e. abs(FNV-1a over the UTF-16
+    /// bytes of declaringObjectId + name) — and comparing it to the id being driven. Matching
+    /// a control on its source expression's Name does not work: that is the bound VARIABLE's
+    /// name (SelectedMode), not the control's (Mode), and they routinely differ.
+    ///
+    /// Issue #1923: a control/action a PAGEEXTENSION declares is compiled onto the extension's
+    /// OWN type (<c>PageExtension{extId}</c>, a <c>NavFormExtension</c> subclass), not the base
+    /// page's — and its id hashes from the EXTENSION's own object id, never the page's (see
+    /// RecordPatches.GetPageControlFieldMap, which already documents and relies on this same
+    /// id-space rule for field controls: <c>GetMemberId(64301, "NoteField")</c> is the id BC
+    /// actually asks for, <c>GetMemberId(64300, "NoteField")</c> — the base page's id — never
+    /// appears). So after the base page's own type comes up empty, this now also searches
+    /// every pageextension that extends this page, in each one's own id space.
+    /// </summary>
+    private TriggerMatch? FindTrigger(int memberId, string suffix, string surface, int arity = 0)
+    {
+        var own = FindTriggerOnTarget(_form, _pageId, memberId, suffix, surface, arity);
+        if (own != null) return own;
+
+        foreach (var extensionId in RecordPatches.GetPageExtensionIdsForPage(_pageId))
+        {
+            var extInstance = GetOrCreateExtensionInstance(extensionId);
+            if (extInstance == null) continue;
+            var extMatch = FindTriggerOnTarget(extInstance, extensionId, memberId, suffix, surface, arity);
+            if (extMatch != null) return extMatch;
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// FindTrigger's inner scan, over ONE declaring object (the base page or one
+    /// pageextension instance) and its own id space (<paramref name="declaringObjectId"/>).
+    /// </summary>
+    private static TriggerMatch? FindTriggerOnTarget(
+        object target, int declaringObjectId, int memberId, string suffix, string surface, int arity)
     {
         MethodInfo? match = null;
-        foreach (var m in _form.GetType()
+        foreach (var m in target.GetType()
             .GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance))
         {
             if (m.GetParameters().Length != arity) continue;
@@ -845,22 +915,154 @@ internal sealed class RunnerPageInstance
 
             var memberName = MemberNameFromTriggerMethod(m.Name, suffix);
             if (memberName == null) continue;
-            if (MemberId(_pageId, memberName) != memberId) continue;
+            if (MemberId(declaringObjectId, memberName) != memberId) continue;
 
             if (match != null)
                 throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
                     $"TestPage {surface} (member {memberId})",
                     $"testpage-{surface.ToLowerInvariant()} — both '{match.Name}' and '{m.Name}' on "
-                    + $"{_form.GetType().Name} resolve to member {memberId}; the runner cannot "
+                    + $"{target.GetType().Name} resolve to member {memberId}; the runner cannot "
                     + "tell which trigger belongs to it. See docs/scope.md");
             match = m;
         }
-        return match;
+        return match == null ? null : new TriggerMatch(target, match);
     }
 
-    private void Invoke(MethodInfo trigger)
+    /// <summary>
+    /// The live instance of a pageextension's compiled <c>PageExtension{extensionId}</c>
+    /// class, constructed once per RunnerPageInstance and cached — never rebuilt per trigger
+    /// lookup, so an extension whose type could not be found or built stays a fast negative
+    /// on every later call instead of retrying (and re-logging) the same failure.
+    ///
+    /// Constructed the same way <see cref="TryCreate"/> constructs the base page itself: the
+    /// AL-compiler-emitted <c>(ITreeObject, NavRecord)</c> ctor (verified via IL: it just
+    /// forwards to <c>NavFormExtension(ITreeObject, int extId, NavRecord, NCLStaticMetadata)</c>
+    /// with the extension's own object id baked in) — then <c>ParentObject</c> is set to this
+    /// page's own <c>_form</c>, because the extension's OWN <c>get_Rec</c>/<c>get_CurrPage</c>
+    /// overrides route through <c>ParentObject</c> (also verified via IL), not through the
+    /// record the ctor was handed. Real BC wires this by adding the extension to the page's
+    /// own <c>PageExtensions</c> list during metadata load; the runner's skeleton always keeps
+    /// that list empty (see NclCecilRewrite.cs's <c>get_PageExtensions</c> rewrite), so this
+    /// is the runner-owned substitute for that step — the trigger DISPATCH here has always
+    /// been the runner's own reflection scheme (see FindTrigger's remarks), never BC's real
+    /// action-invoke machinery, so this is consistent with the existing architecture, not a
+    /// new shortcut.
+    /// </summary>
+    private object? GetOrCreateExtensionInstance(int extensionId)
     {
-        try { trigger.Invoke(_form, null); }
+        if (_extensionInstances.TryGetValue(extensionId, out var cached)) return cached;
+
+        object? instance = null;
+        if (_record != null)
+        {
+            var extType = FindPageExtensionType(extensionId);
+            var ctor = extType?.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+                .FirstOrDefault(c => c.GetParameters().Length == 2
+                                  && typeof(NavRecord).IsAssignableFrom(c.GetParameters()[1].ParameterType));
+            if (ctor != null)
+            {
+                try
+                {
+                    instance = ctor.Invoke(new object?[] { _owner, _record });
+                    var parentObjectProp = instance.GetType().GetProperty("ParentObject",
+                        BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                    parentObjectProp?.SetValue(instance, _form);
+                }
+                catch (Exception ex)
+                {
+                    var inner = ex is TargetInvocationException tie ? tie.InnerException ?? ex : ex;
+                    // Loud, but not fatal: FindTrigger treats a null instance exactly like "this
+                    // extension declares no matching trigger", which for OnAction/OnLookup still
+                    // surfaces as a refusal (never a silent no-op) once every extension has been
+                    // tried. stdout on purpose — see TryCreate's identical reasoning above.
+                    Console.Out.WriteLine(
+                        $"[RunnerPageInstance] pageextension {extensionId} on page {_pageId}: could not "
+                        + $"construct the AL page extension object ({inner.GetType().Name}: "
+                        + $"{inner.Message}); its triggers stay unreachable");
+                }
+            }
+        }
+
+        _extensionInstances[extensionId] = instance;
+        return instance;
+    }
+
+    private static Type? FindPageExtensionType(int extensionId)
+    {
+        var name = "PageExtension" + extensionId;
+        foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+        {
+            try
+            {
+                var t = AlRunner.Infrastructure.AssemblyTypeIndex.For(asm)
+                    .FindFirst(name, typeof(Microsoft.Dynamics.Nav.Runtime.Extensions.NavFormExtension).IsAssignableFrom);
+                if (t != null) return t;
+            }
+            catch { }
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Dispatch <paramref name="actionId"/> against a pageextension's own OnAction trigger
+    /// with NO live RunnerPageInstance for the base page to route through — issue #1923's
+    /// most dangerous arm: a pageextension over a page that ships PRECOMPILED (e.g. Base App
+    /// "Item Attributes") extends a page with no compiled <c>Page{id}</c> .NET type and no
+    /// emit-captured metadata XML, so <see cref="TryCreate"/> returns null (see its SCOPE
+    /// remarks) and the caller (MockTestPage.cs's LiveNavTestPage) had nowhere to route
+    /// Invoke() except a permanently no-op MockITestAction — a real, dispatchable action
+    /// silently doing nothing.
+    ///
+    /// Returns false when no compiled pageextension owns <paramref name="actionId"/> — an id
+    /// that genuinely belongs to the (unbuildable) precompiled base page itself, which the
+    /// caller is expected to keep treating exactly as it did before this method existed
+    /// (that half of the gap is pre-existing and out of #1923's scope: dispatching an action
+    /// on a page the runner never compiled needs a control tree the runner has no way to
+    /// build at all, unlike a pageextension's own trigger, which needs nothing from the base
+    /// page besides its record).
+    /// </summary>
+    internal static bool TryRaiseExtensionOnlyAction(object owner, NavRecord record, int pageId, int actionId)
+    {
+        foreach (var extensionId in RecordPatches.GetPageExtensionIdsForPage(pageId))
+        {
+            var extType = FindPageExtensionType(extensionId);
+            var ctor = extType?.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+                .FirstOrDefault(c => c.GetParameters().Length == 2
+                                  && typeof(NavRecord).IsAssignableFrom(c.GetParameters()[1].ParameterType));
+            if (ctor == null) continue;
+
+            object instance;
+            try { instance = ctor.Invoke(new object?[] { owner, record }); }
+            catch (Exception ex)
+            {
+                var inner = ex is TargetInvocationException tie ? tie.InnerException ?? ex : ex;
+                Console.Out.WriteLine(
+                    $"[RunnerPageInstance] pageextension {extensionId} on page {pageId} (no live base page "
+                    + $"object): could not construct the AL page extension object "
+                    + $"({inner.GetType().Name}: {inner.Message})");
+                continue;
+            }
+
+            // No base NavForm exists to set ParentObject to (that is exactly why we are on
+            // this path) — an OnAction trigger that only touches its own locals still runs
+            // faithfully; one that reads Rec/CurrPage NREs, which surfaces as a genuine
+            // runner-internal error rather than a silently wrong answer.
+            var match = FindTriggerOnTarget(instance, extensionId, actionId, "_OnAction", "OnAction", arity: 0);
+            if (match == null) continue;
+
+            try { match.Value.Method.Invoke(match.Value.Target, null); }
+            catch (TargetInvocationException tie) when (tie.InnerException != null)
+            {
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw();
+            }
+            return true;
+        }
+        return false;
+    }
+
+    private void Invoke(TriggerMatch trigger)
+    {
+        try { trigger.Method.Invoke(trigger.Target, null); }
         catch (TargetInvocationException tie) when (tie.InnerException != null)
         {
             // An Error() inside the AL trigger is the trigger's own outcome, not a runner

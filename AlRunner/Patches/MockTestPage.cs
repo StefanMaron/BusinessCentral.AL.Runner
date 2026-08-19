@@ -286,10 +286,22 @@ internal class LiveNavTestPage : MockITestPage
     /// trigger. The base mock returns a MockITestAction whose Invoke() is a literal no-op,
     /// so an invoked action silently did nothing and the test failed a step later
     /// complaining about the missing effect rather than about the action.
+    ///
+    /// Issue #1923: <c>_page</c> is null whenever the base page has no compiled type/captured
+    /// metadata for the runner to build a RunnerPageInstance from — the case for a page that
+    /// ships PRECOMPILED (e.g. Base App "Item Attributes"). A pageextension THIS bundle
+    /// compiled can still own <paramref name="actionId"/>'s OnAction even though the base page
+    /// itself is unreachable, so that case gets one more chance (ExtensionOnlyTestAction)
+    /// before falling all the way back to the no-op mock.
     /// </summary>
     public override ITestAction GetAction(int actionId)
     {
-        if (_page == null) return base.GetAction(actionId);
+        if (_page == null)
+        {
+            if (_owner != null && RecordPatches.GetPageExtensionIdsForPage(_pageId).Count > 0)
+                return new ExtensionOnlyTestAction(this, _owner, _record, _pageId, actionId);
+            return base.GetAction(actionId);
+        }
         if (!_liveActions.TryGetValue(actionId, out var action))
             _liveActions[actionId] = action = new LiveNavTestAction(this, _page, actionId);
         return action;
@@ -1558,6 +1570,42 @@ internal sealed class MockITestAction : ITestAction
     public void Invoke()         { }
     public bool Visible          => true;
     public bool Enabled          => true;
+}
+
+/// <summary>
+/// Dispatches an action against a pageextension's own OnAction trigger when there is no
+/// live RunnerPageInstance for the base page to route LiveNavTestAction through (issue
+/// #1923 — see RunnerPageInstance.TryRaiseExtensionOnlyAction's remarks for why that
+/// happens and what it can and cannot faithfully do). Falls back to a silent no-op, exactly
+/// matching MockITestAction, when no compiled pageextension actually owns this action id —
+/// an id belonging to the (unbuildable) precompiled base page itself, the pre-existing,
+/// narrower gap this deliberately leaves alone rather than expanding scope.
+/// </summary>
+internal sealed class ExtensionOnlyTestAction : ITestAction
+{
+    private readonly LiveNavTestPage _testPage;
+    private readonly object _owner;
+    private readonly NavRecord _record;
+    private readonly int _pageId;
+    private readonly int _actionId;
+
+    public ExtensionOnlyTestAction(LiveNavTestPage testPage, object owner, NavRecord record, int pageId, int actionId)
+    {
+        _testPage = testPage;
+        _owner = owner;
+        _record = record;
+        _pageId = pageId;
+        _actionId = actionId;
+    }
+
+    public void Invoke()
+    {
+        _testPage.SaveCurrentRow();
+        RunnerPageInstance.TryRaiseExtensionOnlyAction(_owner, _record, _pageId, _actionId);
+    }
+
+    public bool Visible => true;
+    public bool Enabled => true;
 }
 
 /// <summary>
