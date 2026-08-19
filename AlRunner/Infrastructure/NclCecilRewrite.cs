@@ -244,6 +244,19 @@ public static class NclCecilRewrite
         // body runs (rename propagation to validated TableRelation fields, issue #1730).
         // RecordLink / management
         "Microsoft.Dynamics.Nav.Runtime.RecordLink::MoveLinksAsync/2",
+        // RecordLink::HasLinks/1 is ALSO Cecil-rewritten (ReplaceWithStaticHelper below, "RecordLink
+        // — rewrite all link-management methods") but was missing from this list (#1883 follow-up).
+        // RecordLinkPatches.cs separately JmpHook's the same static with its own replacement
+        // (RecordLink_HasLinks) — kept as defense-in-depth (same precedent as NavXmlPort::Run
+        // below), but the missing key here meant the audit misclassified it as "orphaned" instead
+        // of "redundant", and — more importantly — meant JmpHook.Apply would have actually
+        // installed the native patch on top of the Cecil-rewritten body if AL_RUNNER_ENABLE_JMPHOOK=1
+        // ever re-enabled the JmpHook layer: the exact JmpHook+Cecil COEXISTENCE double-dispatch
+        // spin this registry exists to prevent (see NCLEnumMetadata::Create/1 above). Registering
+        // the key here makes JmpHook.Apply skip installing the native patch entirely (see
+        // JmpHook.Apply's CecilOwned check) — the redundant registration becomes provably inert
+        // under BOTH JmpHook-enabled and JmpHook-disabled configurations, not just the default.
+        "Microsoft.Dynamics.Nav.Runtime.RecordLink::HasLinks/1",
         "Microsoft.Dynamics.Nav.Runtime.NavManagementTasks::CopyCompany/2",
         // NCLMetaApplicationObject
         "Microsoft.Dynamics.Nav.Runtime.NCLMetaApplicationObject::CheckApplicationObjectIsValid/1",
@@ -295,6 +308,17 @@ public static class NclCecilRewrite
         "Microsoft.Dynamics.Nav.Runtime.NavSession::get_ExecutionContext/0",
         "Microsoft.Dynamics.Nav.Runtime.RecordImplementation::GetActiveCompany/0",
         "Microsoft.Dynamics.Nav.Runtime.NavStream::get_Target/0",
+        // NavHttpClient/NavHttpResponseMessageBase/NavHttpRequestMessage.get_Target — same
+        // skeleton-parented delegation shape as NavRecordRef/NavStream.get_Target above (see
+        // RewriteNcl, "NavHttpClient egress" block). NavHttpClient and NavHttpResponseMessageBase
+        // were already Cecil-rewritten there but missing from this list (#1883 follow-up) — their
+        // BcRuntime.cs JmpHook registrations were kept as defense-in-depth (same precedent as
+        // NavXmlPort::Run below) but the audit misclassified them as "orphaned" instead of
+        // "redundant" for want of this key. NavHttpRequestMessage.get_Target was a genuine gap
+        // (no Cecil rewrite existed at all) — added alongside this key in the same commit.
+        "Microsoft.Dynamics.Nav.Runtime.NavHttpClient::get_Target/0",
+        "Microsoft.Dynamics.Nav.Runtime.NavHttpResponseMessageBase::get_Target/0",
+        "Microsoft.Dynamics.Nav.Runtime.NavHttpRequestMessage::get_Target/0",
         // FlowField CalcFieldsAsync — body already Cecil-rewritten upstream; register
         // keys so FlowFieldPatches.Register's JmpHook.Apply fallback becomes a no-op.
         "Microsoft.Dynamics.Nav.Runtime.RecordImplementation::CalcFieldsAsync/2",
@@ -2311,6 +2335,45 @@ public static class NclCecilRewrite
                     il.Append(il.Create(OpCodes.Ret));
                     body.MaxStackSize = 1;
                     Console.Error.WriteLine("[Cecil] Rewrote NavHttpResponseMessageBase.get_Target → BcRuntime helper (skeleton-parented)");
+                }
+            }
+
+            // NavHttpRequestMessage.get_Target — same skeleton-parented delegation as
+            // NavHttpClient.get_Target / NavHttpResponseMessageBase.get_Target above, but this
+            // one was MISSING here (#1883 follow-up): its BcRuntime.cs JmpHook registration
+            // (BcRuntime.NavHttpRequestMessage_get_Target, unchanged, already correct) never
+            // fires under Cecil-only mode, so BC's real body ran instead and genuinely NREs —
+            // confirmed empirically: `var Req: HttpRequestMessage;` alone throws
+            // ArgumentNullException(parent) out of TreeObject..ctor, because
+            // NavHttpRequestMessage's own ctor eagerly calls Target.SetMessage(...) during
+            // scope-ctor field setup, and the real get_Target body constructs
+            // `new SharedNavHttpRequestMessage(base.Tree.Session.Company.SharedObjects)` with a
+            // null container on the headless skeleton. Unlike the sibling two, this is not a
+            // "same shape, already safe" case — it is the one-in-eight genuine bug #1883 asks
+            // each cluster to check for. Delegate to the existing BcRuntime helper (identical
+            // shape to the sibling two, just never wired into Cecil).
+            var httpReqType = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.NavHttpRequestMessage");
+            if (httpReqType != null)
+            {
+                var getTarget = httpReqType.Methods.FirstOrDefault(mm => mm.Name == "get_Target");
+                var sharedReqType = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.SharedNavHttpRequestMessage");
+                var helperMI = typeof(AlRunner.BcRuntime).GetMethod(
+                    nameof(AlRunner.BcRuntime.NavHttpRequestMessage_get_Target),
+                    BindingFlags.Public | BindingFlags.Static);
+                if (getTarget != null && getTarget.HasBody && sharedReqType != null && helperMI != null)
+                {
+                    var helperRef = asm.MainModule.ImportReference(helperMI);
+                    var body = getTarget.Body;
+                    body.Instructions.Clear();
+                    body.Variables.Clear();
+                    body.ExceptionHandlers.Clear();
+                    var il = body.GetILProcessor();
+                    il.Append(il.Create(OpCodes.Ldarg_0));
+                    il.Append(il.Create(OpCodes.Call, helperRef));
+                    il.Append(il.Create(OpCodes.Castclass, sharedReqType));
+                    il.Append(il.Create(OpCodes.Ret));
+                    body.MaxStackSize = 1;
+                    Console.Error.WriteLine("[Cecil] Rewrote NavHttpRequestMessage.get_Target → BcRuntime helper (skeleton-parented)");
                 }
             }
         }

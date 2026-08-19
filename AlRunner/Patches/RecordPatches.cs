@@ -1796,20 +1796,4 @@ public static partial class RecordPatches
         throw (Exception)CreateNavTestFieldException_MustBeEqualTo(metaField, shouldBeValue ?? string.Empty, current);
     }
 
-    // NCLMetaField.get_FieldCaption — original computes via captionStrings →
-    // NavCurrentThread.ResolveAppGroup(Session) → MetaField.GetMergedCaptionMultiLanguage,
-    // which dereferences LanguageProvider.Provider / NavCurrentThread.Session state that
-    // the skeleton runtime hasn't populated. Per HANDOFF §5.2 this is the sync underbelly
-    // the async ALFieldCaptionAsync wrapper falls through to — populating a stable value
-    // here lights up Rec.TestField error formatting (~40+ tests) without touching the
-    // async surface. AL doesn't ship per-language captions to v2 anyway, so FieldName
-    // is the same string the real getter produces under FieldIsNotFromMetadata.
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    public static string NCLMetaField_get_FieldCaption(object self)
-    {
-        if (self == null) return string.Empty;
-        var fieldNameProp = self.GetType().GetProperty("FieldName",
-            BindingFlags.Public | BindingFlags.Instance);
-        return (string?)fieldNameProp?.GetValue(self) ?? string.Empty;
-    }
 }

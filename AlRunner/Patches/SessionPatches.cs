@@ -12,6 +12,9 @@ namespace AlRunner;
 
 public static partial class BcRuntime
 {
+    // NOTE: still consumed by NclCecilRewrite.cs to Cecil-rewrite NavSystemCodeunit.get_Session
+    // (a different type from NavApplicationObjectBase.get_Session — its own JmpHook.Apply call
+    // site was deleted as an orphan, #1883 follow-up, but this shared helper is not dead).
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static object? GetSessionReplacement(object self) => _skeletonSession;
 
@@ -310,38 +313,6 @@ public static partial class BcRuntime
         // Fallback: empty FormatSettings (still NRE-prone for date/datetime/time
         // standard-format paths, but harmless for anything that doesn't index those arrays).
         return new Microsoft.Dynamics.Nav.Runtime.FormatSettings();
-    }
-
-    /// <summary>
-    /// Replacement for NavIntegerFormatter.FormatWithFormatNumber.
-    /// Real body calls value.ToInt32().ToString("d", session.WindowsCulture); on the
-    /// skeleton runtime the NavValue passed in can be null (NavValue[] entries
-    /// uninitialized in the AL emit's varargs-build), which NREs. Bypass: format
-    /// any non-null int value with InvariantCulture; null becomes empty string.
-    /// </summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    public static string NavIntegerFormatter_FormatWithFormatNumber(
-        object self,
-        object? session,
-        object? value,
-        int length,
-        int formatNumber,
-        object formatsetting)
-    {
-        if (value == null) return string.Empty;
-        try
-        {
-            // NavValue.ToInt32() — call via reflection to avoid hard reference.
-            var toInt32 = value.GetType().GetMethod("ToInt32",
-                BindingFlags.Public | BindingFlags.Instance, null, Type.EmptyTypes, null);
-            if (toInt32 != null)
-            {
-                var i = (int)toInt32.Invoke(value, null)!;
-                return i.ToString("d", CultureInfo.InvariantCulture);
-            }
-        }
-        catch { }
-        return value.ToString() ?? string.Empty;
     }
 
     /// <summary>

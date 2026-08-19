@@ -26,20 +26,6 @@ public static partial class BcRuntime
     { }
 
     /// <summary>
-    /// Replacement for CallStackElement.TryGetSourceInfo(out ObjectSourceInfo sourceInfo).
-    /// The real implementation chains through NavGlobal.NCLMetadata which NREs on a skeleton session.
-    /// Returns false (no source info) and zeros the out-param so callers see a null/default sourceInfo.
-    /// The out-param is passed as an IntPtr to the raw managed pointer location.
-    /// </summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    public static unsafe bool CallStackElement_TryGetSourceInfo(object? self, IntPtr sourceInfoOutPtr)
-    {
-        if (sourceInfoOutPtr != IntPtr.Zero)
-            *(IntPtr*)sourceInfoOutPtr.ToPointer() = IntPtr.Zero;
-        return false;
-    }
-
-    /// <summary>
     /// Replacement for NavDialog.ALError(Guid automationId, NavALErrorInfo errorInfo).
     /// On Linux x86-64, Guid (16 bytes) occupies two register slots, so the actual
     /// parameters received are: a = Guid-lo64, b = Guid-hi64, errorInfo = NavALErrorInfo.

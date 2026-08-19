@@ -279,16 +279,6 @@ public static partial class BcRuntime
     [MethodImpl(MethodImplOptions.NoInlining)] public static object? GetSkeletonCompanyReplacement(object self) => _skeletonCompany;
 
     /// <summary>
-    /// Replacement for the static NCL <c>ALCompanyProperty.ALDisplayName()</c>. The real body
-    /// reads from a NavRecord on table 2000000006 which the skeleton runtime can't serve
-    /// (system-table DataAccess gap). Returns the stub display name "My Company" — observably
-    /// equivalent to BC running with a Company row whose Display Name field is empty (the
-    /// `GetCompanyDisplayNameDefaulted` fallback path). Faithful per docs/scope.md §2.
-    /// </summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    public static string ALCompanyProperty_ALDisplayName() => "My Company";
-
-    /// <summary>
     /// Replacement for <c>NavSession.get_GlobalLanguage()</c>. Real body reads
     /// <c>cultureSettings.LCID</c>, but that struct field is zero-initialized on the
     /// GetUninitializedObject-built skeleton session. With IsOpen now seeded true, callers

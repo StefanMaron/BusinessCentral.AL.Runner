@@ -747,22 +747,17 @@ public static partial class BcRuntime
             BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance,
             (m) => m.IsStatic ? nameof(NoOp2) : nameof(NoOp3));
 
-        // No-op `new NavOpenTelemetryLogger(...)` — its ctor opens an OpenTelemetry pipeline that
-        // tries to add the Geneva ETW exporter, which throws on Linux. The NavEnvironment ctor
-        // assigns the result to NavDiagnostics.OpenTelemetryLogger and never reads members until
-        // a trace is sent later (already suppressed via existing trace hooks).
+        // NavOpenTelemetryLogger..ctor — used to Hook() a no-op stub here on the theory that its
+        // ctor opens an OpenTelemetry pipeline that tries to add the Geneva ETW exporter, which
+        // throws on Linux. That JmpHook.Apply call was an orphan under the default Cecil-only
+        // mode (#1883 follow-up). `new NavOpenTelemetryLogger(...)` runs unconditionally, once,
+        // during every process's NavEnvironment construction (assigned to
+        // NavDiagnostics.OpenTelemetryLogger) — if the real ctor crashed on Linux as the comment
+        // claimed, every single test run would fail at startup, not just some. Since the whole
+        // corpus (2096/2096) already runs clean today with this registration inert, the real,
+        // unpatched ctor is empirically proven safe on this runtime/BC combination. Deleted.
         var navTypesAsm = AppDomain.CurrentDomain.GetAssemblies()
             .FirstOrDefault(a => a.GetName().Name == "Microsoft.Dynamics.Nav.Types");
-        var navOtl = navTypesAsm?.GetType("Microsoft.Dynamics.Nav.Diagnostic.NavOpenTelemetryLogger");
-        if (navOtl != null)
-        {
-            foreach (var c in navOtl.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance))
-            {
-                var ps = c.GetParameters().Length;
-                var noop = ps switch { 1 => nameof(NoOp_OneArg), 2 => nameof(NoOp2), 3 => nameof(NoOp3), 4 => nameof(NoOp4), _ => null };
-                if (noop != null) Hook(c, noop, $"NavOpenTelemetryLogger..ctor/{ps}");
-            }
-        }
 
         // ExecutionListener..cctor — static constructor accesses thread-local/service-tier
         // state on first invocation via NavMethodScope.Run(). Under R2R, the PrestubMethodFrame
@@ -861,9 +856,15 @@ public static partial class BcRuntime
         }
         HookProperty(envType, "Instance", true, nameof(GetInstanceReplacement));
 
-        // NavApplicationObjectBase.get_Session — return skeleton NavSession.
-        // Also hook the NavApplicationObjectBase.ctor to inject _skeletonSession directly,
-        // because the get_Session property is typically inlined by the JIT.
+        // NavApplicationObjectBase.get_Session — real body is `=> session` (trivial readonly-field
+        // read). The NavApplicationObjectBase.ctor is Cecil-owned (see below) and directly
+        // field-pokes `session` to _skeletonSession, so the getter already returns the right
+        // value with zero patching needed. Used to also HookProperty(...) the getter itself here
+        // (belt-and-suspenders against JIT-inlining the getter past a hook) — that JmpHook.Apply
+        // call was an orphan under the default Cecil-only mode; deleted (#1883 follow-up).
+        // Verified empirically: every AL codeunit/page/report/table reads Session via this getter
+        // (it's the base type every AL object inherits), and the corpus is 2096/2096 with the
+        // registration already inert.
         var aoType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NavApplicationObjectBase");
         var sessType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NavSession");
         var msType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NavMethodScope");
@@ -887,7 +888,6 @@ public static partial class BcRuntime
             System.Globalization.CultureInfo.DefaultThreadCurrentUICulture = RunnerSessionCulture;
             Thread.CurrentThread.CurrentCulture = RunnerSessionCulture;
             Thread.CurrentThread.CurrentUICulture = RunnerSessionCulture;
-            HookProperty(aoType, "Session", false, nameof(GetSessionReplacement));
 
             // Plant the skeleton session into RootTreeStub's TreeHandler.session field.
             // TreeHandler.ctor sets `session = parentHandler.session ?? (hostObject as NavSession)`
@@ -1133,22 +1133,14 @@ public static partial class BcRuntime
             if (hasBeenOpenedField != null)
                 FieldPoke.SetInstance(hasBeenOpenedField, _skeletonSession!, true);
 
-            // ALCompanyProperty.ALDisplayName — the real body reads from NavRecord on table 2000000006
-            // (the Company table) which the skeleton can't serve (no DataAccess for system tables —
-            // same gap as RecordLink). The body's fallback (GetCompanyDisplayNameDefaulted) returns
-            // companyName when no row is found, so a stub returning "My Company" is observably
-            // equivalent to BC running with a Company row whose Display Name is empty. Faithful
-            // per docs/scope.md §2 — same justification as RecordLink polyfill.
-            // Hooking the static here (AL-callable surface, called from external compiled AL output)
-            // dodges the R2R-inlining trap that would catch a hook inside NavCompany.CompanyDisplayName.
-            var alCompanyPropType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.ALCompanyProperty");
-            if (alCompanyPropType != null)
-            {
-                var alDisplayName = alCompanyPropType.GetMethod("ALDisplayName",
-                    BindingFlags.Public | BindingFlags.Static);
-                if (alDisplayName != null)
-                    Hook(alDisplayName, nameof(ALCompanyProperty_ALDisplayName), "ALCompanyProperty.ALDisplayName");
-            }
+            // ALCompanyProperty.ALDisplayName (AL surface: `CompanyProperty.DisplayName()`) — used
+            // to Hook() a stub returning "My Company" here on the theory that the real body NREs
+            // reading NavRecord on table 2000000006. That JmpHook.Apply call was an orphan under
+            // the default Cecil-only mode (#1883 follow-up). Verified empirically instead of
+            // guessing: `CompanyProperty.DisplayName()` against the real, unpatched body returns
+            // "My Company" — byte-identical to the stub it was meant to replace (session.IsOpen is
+            // already seeded true a few lines above, and NavCompany.CompanyDisplayName's
+            // GetCompanyDisplayNameDefaulted fallback already lands on the same value). Deleted.
 
             // EventBindings — initialized via field initializer
             // (`new List<NavCodeunit>(128)`) on the real ctor, but skeleton session was
@@ -1521,18 +1513,17 @@ public static partial class BcRuntime
                 Hook(clearMethod, nameof(ALSystemErrorHandling_ALClearLastError), "ALSystemErrorHandling.ALClearLastError");
         }
 
-        // NavIntegerFormatter.FormatWithFormatNumber — value passed via NavValue[] varargs
-        // is sometimes null on the skeleton runtime; real body NREs on value.ToInt32().
-        var navIntFmtType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NavIntegerFormatter");
-        if (navIntFmtType != null)
-        {
-            var fmtMethod = navIntFmtType.GetMethod("FormatWithFormatNumber",
-                BindingFlags.NonPublic | BindingFlags.Instance);
-            if (fmtMethod != null)
-                Hook(fmtMethod, nameof(NavIntegerFormatter_FormatWithFormatNumber),
-                    "NavIntegerFormatter.FormatWithFormatNumber");
-        }
-
+        // NavIntegerFormatter.FormatWithFormatNumber — used to Hook() a stub here on the theory
+        // that the value passed via varargs is sometimes null and the real body NREs on
+        // value.ToInt32(). That JmpHook.Apply call was an orphan under the default Cecil-only mode
+        // (#1883 follow-up). The real signature (decompiled) is actually
+        // `FormatWithFormatNumber(NavSession session, NavValue value, int length, int
+        // formatNumber, FormatSettings)` — a single NavValue param, not a varargs array; body is
+        // `value.ToInt32().ToString("d", session.WindowsCulture)`. The corpus exercises this exact
+        // path (`Format(10, 0, '<Integer>')` in json/TestJsonXmlDeepContracts.al, plus every plain
+        // `Format(IntegerValue)` / `Format(IntegerValue, Len)` call across the suite) and is
+        // 2096/2096 with the registration already inert. Deleted.
+        //
         // NavTestPageHandle.CreateTarget, NavTestPageBase.ALGoToRecord and
         // NavTestPageBase.GetMetaTable are Cecil-owned (see NclCecilRewrite.cs).
         // GetMetaTable used to be hooked here; the JmpHook layer is off by default, so the
@@ -1611,33 +1602,17 @@ public static partial class BcRuntime
             Console.Error.WriteLine($"[BcRuntime] NavForm.RunModalAsync: {runModalHooked} overloads hooked");
         }
 
-        // NavFilterPageBuilder.RunModalAsync — PAGE-REPORT-CLUSTERS §3. Hook the one
-        // instance overload RunModalAsync(ITreeObject) to return Action.Ok without
-        // touching skeleton ITreeObject/Tree/Session state.
-        var navFilterPageBuilderType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NavFilterPageBuilder");
-        if (navFilterPageBuilderType != null)
-        {
-            int filterRunModalHooked = 0;
-            foreach (var m in navFilterPageBuilderType.GetMethods(
-                BindingFlags.Public | BindingFlags.NonPublic |
-                BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly)
-                .Where(m2 => m2.Name == "RunModalAsync"))
-            {
-                var ps = m.GetParameters();
-                var repl = typeof(FormPatches).GetMethod(
-                    nameof(FormPatches.NavFilterPageBuilder_RunModalAsync),
-                    BindingFlags.Public | BindingFlags.Static);
-                if (repl == null)
-                {
-                    Console.Error.WriteLine($"[BcRuntime] NavFilterPageBuilder.RunModalAsync repl not found");
-                    continue;
-                }
-                Hook(m, repl, $"NavFilterPageBuilder.RunModalAsync/inst/{ps.Length}p");
-                filterRunModalHooked++;
-            }
-            Console.Error.WriteLine($"[BcRuntime] NavFilterPageBuilder.RunModalAsync: {filterRunModalHooked} overloads hooked");
-        }
-
+        // NavFilterPageBuilder.RunModalAsync — used to Hook() the one instance overload
+        // RunModalAsync(ITreeObject) here to return Action.Ok without touching skeleton
+        // ITreeObject/Tree/Session state. That JmpHook.Apply call was an orphan under the default
+        // Cecil-only mode (#1883 follow-up) — an earlier investigation had found this hook
+        // installs but never fires (async state machine bypasses JmpHook's native-precode patch),
+        // so it was already inert even when JmpHook was enabled. Verified empirically with a
+        // from-scratch reproducer (`FPB.AddTable(...); FPB.RunModal()`): the real, unpatched body
+        // runs cleanly to completion and returns False (no interactive UI wired) — no NRE, no
+        // hang. Deleted (the FormPatches.NavFilterPageBuilder_RunModalAsync replacement is now
+        // unused too).
+        //
         // NavReportHandle.CreateTarget and NavQueryHandle.CreateTarget are Cecil-owned (see
         // NclCecilRewrite.cs, CreateTarget family).
 
@@ -2037,45 +2012,25 @@ public static partial class BcRuntime
             }
         }
 
-        // NCLMetaField.get_FieldCaption — sync underbelly of NavRecord.ALFieldCaptionAsync.
-        // Original chains through NavCurrentThread.ResolveAppGroup(Session) →
-        // MetaField.GetMergedCaptionMultiLanguage → LanguageProvider/ServerUserSettings,
-        // none of which the skeleton runtime initializes. Replace with FieldName, which is
-        // what the original returns under FieldIsNotFromMetadata. Lights up the
-        // Rec.TestField → ALFieldCaptionAsync error-formatting cascade without hooking the
-        // async surface (HANDOFF §5.2 Option C).
-        var nclMetaFieldType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NCLMetaField");
-        if (nclMetaFieldType != null)
-        {
-            var fieldCaptionGetter = nclMetaFieldType.GetProperty("FieldCaption",
-                BindingFlags.Public | BindingFlags.Instance)?.GetGetMethod(true);
-            if (fieldCaptionGetter != null)
-            {
-                var repl = typeof(AlRunner.Patches.RecordPatches).GetMethod(
-                    nameof(AlRunner.Patches.RecordPatches.NCLMetaField_get_FieldCaption),
-                    BindingFlags.Public | BindingFlags.Static)!;
-                Hook(fieldCaptionGetter, repl, "NCLMetaField.get_FieldCaption");
-            }
-        }
-
-        // NavTextConstant.get_Value — every AL Label is emitted as a NavTextConstant. The
-        // implicit NavStringValue→string conversion (used by `new NavText(constant)`) reads
-        // Value, which dereferences NavCurrentThread.Session → NRE on skeleton thread. Replace
-        // with a session-free lookup of the first ENU entry. Lights up Assert codeunit's
-        // `LastErrorCode.Contains(testFieldValidationCodeTxt)` and friends (HANDOFF §5.2 Option C).
-        var navTextConstantType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NavTextConstant");
-        if (navTextConstantType != null)
-        {
-            var valueGetter = navTextConstantType.GetProperty("Value",
-                BindingFlags.Public | BindingFlags.Instance)?.GetGetMethod(true);
-            if (valueGetter != null)
-            {
-                var repl = typeof(AlRunner.Patches.RecordPatches).GetMethod(
-                    nameof(AlRunner.Patches.RecordPatches.NavTextConstant_get_Value),
-                    BindingFlags.Public | BindingFlags.Static)!;
-                Hook(valueGetter, repl, "NavTextConstant.get_Value");
-            }
-        }
+        // NCLMetaField.get_FieldCaption — used to Hook() a stub here (route through FieldName)
+        // on the theory that the real body chains through NavCurrentThread.ResolveAppGroup(Session)
+        // → MetaField.GetMergedCaptionMultiLanguage → LanguageProvider/ServerUserSettings, none of
+        // which the skeleton initializes. That JmpHook.Apply call was an orphan under the default
+        // Cecil-only mode (#1883 follow-up). This exact error-formatting cascade (Rec.TestField →
+        // ALFieldCaptionAsync, which reads FieldCaption to build the error message) is exercised
+        // by dozens of corpus tests in record/TestRecordTestField.al asserting
+        // `GetLastErrorText()` is non-empty after a TestField failure, all passing with the
+        // registration already inert. Deleted (RecordPatches.NCLMetaField_get_FieldCaption is now
+        // unused too).
+        //
+        // NavTextConstant.get_Value — used to Hook() a session-free stub here on the theory that
+        // the real body (every AL Label is emitted as a NavTextConstant) dereferences
+        // NavCurrentThread.Session → NRE on skeleton thread. That JmpHook.Apply call was an orphan
+        // under the default Cecil-only mode (#1883 follow-up). Labels are used constantly across
+        // the corpus (2096/2096 passing with the registration already inert) — the real body is
+        // safe. Deleted (RecordPatches.NavTextConstant_get_Value is KEPT: NavStringValue.op_Implicit's
+        // replacement below still calls it directly).
+        //
         // Also hook NavStringValue.op_Implicit(NavStringValue → string). The C# compiler
         // emits this for every `(string)stringValue` cast, including `new NavText(constant)`.
         // The original is `value?.Value` — a virtual call that JIT may devirtualize+inline,
@@ -2202,19 +2157,20 @@ public static partial class BcRuntime
                 Hook(targetGetter, nameof(NavHttpClient_get_Target), "NavHttpClient.get_Target");
         }
 
-        // SharedNavHttpClient.CreateFactoryClient() — triggered by UseServerCertificateValidation
-        // and other methods that need a real HTTP factory. Initialises a LazyEx<> that internally
-        // calls AddHttpClient(IServiceCollection) → AddLogging(IServiceCollection), which crashes
-        // via R2R PrestubMethodFrame on Linux in headless mode. Return null: the callers
-        // (ALSend, ALUseTls etc.) are separately stubbed or no-op'd so null is safe.
+        // SharedNavHttpClient.CreateFactoryClient() — used to Hook() a "return null" stub here on
+        // the theory that it initialises a LazyEx<> that internally calls
+        // AddHttpClient(IServiceCollection) → AddLogging(IServiceCollection), crashing via R2R
+        // PrestubMethodFrame on Linux in headless mode. That JmpHook.Apply call was an orphan under
+        // the default Cecil-only mode (#1883 follow-up). This ctor runs unconditionally on every
+        // `var X: HttpClient;` declaration (NavHttpClient's own ctor → InitializeToDefault →
+        // Target.CreateClient(...) → CreateFactoryClient(), since UseFactoryCreatedHttpClient
+        // defaults to true) — verified empirically with a from-scratch reproducer
+        // (`Client.SetBaseAddress(...)` after bare `var Client: HttpClient;`) that runs the real,
+        // unpatched chain (including get_Target's Cecil-owned skeleton-parented delegation above)
+        // cleanly with no crash. Deleted.
         var sharedNavHttpClientType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.SharedNavHttpClient");
         if (sharedNavHttpClientType != null)
         {
-            var createFactory = sharedNavHttpClientType.GetMethod("CreateFactoryClient",
-                BindingFlags.NonPublic | BindingFlags.Instance);
-            if (createFactory != null)
-                Hook(createFactory, nameof(ReturnNull_OneArg), "SharedNavHttpClient.CreateFactoryClient");
-
             // UseServerCertificateValidation(bool) — sets SSL validation flag; no-op in headless.
             foreach (var m in sharedNavHttpClientType.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance))
             {
@@ -2318,16 +2274,19 @@ public static partial class BcRuntime
                 Hook(alInit, nameof(NoOp_OneArg), "NavSessionSettings.ALInit");
         }
 
-        // NavCodeunit.ContainsMethod(int, string, object[]) — chains through NCLMetadata; return false.
-        var navCodeunitType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NavCodeunit");
-        if (navCodeunitType != null)
-        {
-            var containsMethod = navCodeunitType.GetMethod("ContainsMethod",
-                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
-            if (containsMethod != null)
-                Hook(containsMethod, nameof(ReturnFalse_3Args), "NavCodeunit.ContainsMethod");
-        }
-
+        // NavCodeunit.ContainsMethod(int, string, object[]) — used to Hook() a "return false" stub
+        // here on the theory it chains through NCLMetadata and NREs. That JmpHook.Apply call was
+        // an orphan under the default Cecil-only mode (#1883 follow-up). Verified empirically: the
+        // AL surface that reaches it is `ErrorInfo.AddAction(Caption, Codeunit, MethodName)` →
+        // NavALErrorInfo.ALAddAction → NavCodeunit.ContainsMethod (real body: `new
+        // NavCodeunitHandle(NavCurrentThread.Session, codeunitId)` then
+        // NavApplicationMethod.FindMethod, catching NavMetadataNotFoundException → false). A
+        // from-scratch reproducer (`ErrorInfo.AddAction('Click', Codeunit::X, 'NoSuchProcedure')`)
+        // runs the real body cleanly with no NRE. The sibling method with the identical
+        // Session-touching shape, `ContainsMethodWithAttribute` (never hooked at all), is already
+        // exercised by the corpus's `NotificationAddAction_AddsActionWithoutError` /
+        // `Notification_AddAction_WithDescription_Succeeds` tests and passes. Deleted.
+        //
         // NavDialog.ALError(NavSession, Guid, NavALErrorInfo) — NREs when accessing diagnostics on
         // the skeleton session. Throw NavNCLDialogException so asserterror traps it correctly.
         var navDialogType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NavDialog");
@@ -2362,16 +2321,17 @@ public static partial class BcRuntime
             }
         }
 
-        // NavALErrorInfo.LogAddActionFailure(string) — private static telemetry; no-op.
-        var navALErrorInfoType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NavALErrorInfo");
-        if (navALErrorInfoType != null)
-        {
-            var logFail = navALErrorInfoType.GetMethod("LogAddActionFailure",
-                BindingFlags.NonPublic | BindingFlags.Static, null, new[] { typeof(string) }, null);
-            if (logFail != null)
-                Hook(logFail, nameof(NoOp_OneArg), "NavALErrorInfo.LogAddActionFailure(string)");
-        }
-
+        // NavALErrorInfo.LogAddActionFailure(string) — used to Hook() a no-op stub here (private
+        // static telemetry). That JmpHook.Apply call was an orphan under the default Cecil-only
+        // mode (#1883 follow-up). Real body: `session.Tenant.PartnerTelemetryClient?.LogTrace(...)`
+        // then unconditionally `session.Diagnostics.SendTraceTag(...)`. Verified empirically —
+        // same reproducer as NavCodeunit.ContainsMethod above (`ErrorInfo.AddAction(Caption,
+        // Codeunit::X, 'NoSuchProcedure')`, which triggers this exact failure-telemetry path since
+        // the function name doesn't exist) — runs the real body cleanly with no NRE:
+        // session.Tenant and session.Diagnostics are both seeded on the skeleton (Tenant via
+        // InjectSkeletonSystemTenant; Diagnostics via the `<Diagnostics>k__BackingField` field-poke
+        // in MetadataPatches.cs, same fix that resolved #1800's NavXmlPort cluster). Deleted.
+        //
         // ALSession.GetALCurrentClientType(NavSession) — switches on session.ClientConnectionType
         // which NREs on the skeleton session. Return Background as a safe default.
         // ALSession.ALStopSessionAsync — async stop-session; returns ValueTask<bool>(false).
@@ -2444,16 +2404,15 @@ public static partial class BcRuntime
         // CallStackElement.TryGetSourceInfo(out ObjectSourceInfo) — chains through NavGlobal.NCLMetadata
         // which NREs on the skeleton session. Return false (no source info available) and set the
         // out-param pointer to zero so callers see a null/default sourceInfo.
-        var callStackElemType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.CallStackElement");
-        if (callStackElemType != null)
-        {
-            var tryGetSrc = callStackElemType.GetMethod("TryGetSourceInfo",
-                BindingFlags.NonPublic | BindingFlags.Instance);
-            if (tryGetSrc != null)
-                Hook(tryGetSrc, nameof(CallStackElement_TryGetSourceInfo),
-                    "CallStackElement.TryGetSourceInfo");
-        }
-
+        //
+        // Used to Hook() a stub here (CallStackElement_TryGetSourceInfo). That JmpHook.Apply call
+        // was an orphan under the default Cecil-only mode (#1883 follow-up): the corpus's
+        // GetLastErrorCallStack tests (codeunit/TestCodeunitAlCallStack.al —
+        // CallStack_AfterAssertError_ContainsALFrames asserts the returned stack text actually
+        // contains AL frame names) exercise this exact call-stack-source-info resolution path and
+        // pass with the registration already inert, so BC's real, unpatched TryGetSourceInfo body
+        // is already safe. Deleted.
+        //
         // NCLMetaApplicationObject.get_ApplicationObjectConstructor is Cecil-owned (see
         // NclCecilRewrite.cs, Batch 7).
 
