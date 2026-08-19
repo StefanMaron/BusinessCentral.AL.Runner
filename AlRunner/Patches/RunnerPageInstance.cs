@@ -50,6 +50,20 @@ internal sealed class RunnerPageInstance
     // reused after that. See FindTrigger/GetOrCreateExtensionInstance.
     private readonly Dictionary<int, object?> _extensionInstances = new();
 
+    // NavFormExtension.ParentObject ("protected internal NavForm ParentObject { get;
+    // private set; }") — resolved from its DECLARING type, never from a derived
+    // PageExtension{id} instance's own Type. Issue #1966: PropertyInfo.SetValue against a
+    // PropertyInfo obtained via instance.GetType().GetProperty(...) throws "Property set
+    // method not found." for an inherited property whose SETTER is `private` — .NET
+    // reflection only exposes a private accessor through the type that actually declares
+    // it, even though the property's GETTER is `protected internal` and freely visible on
+    // the derived type. GetCallerRecordPatches.cs's _pFormExtensionParentObject already
+    // resolves this same property the correct way (via typeof(NavFormExtension)); this
+    // mirrors that, so both call sites use one working pattern instead of two, one broken.
+    private static readonly PropertyInfo? _pFormExtensionParentObject =
+        typeof(Microsoft.Dynamics.Nav.Runtime.Extensions.NavFormExtension).GetProperty(
+            "ParentObject", BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public);
+
     private RunnerPageInstance(object form, object owner, NavRecord? record, int pageId, System.Collections.IDictionary sourceExpressions)
     {
         _form = form;
@@ -964,9 +978,7 @@ internal sealed class RunnerPageInstance
                 try
                 {
                     instance = ctor.Invoke(new object?[] { _owner, _record });
-                    var parentObjectProp = instance.GetType().GetProperty("ParentObject",
-                        BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-                    parentObjectProp?.SetValue(instance, _form);
+                    _pFormExtensionParentObject?.SetValue(instance, _form);
                 }
                 catch (Exception ex)
                 {

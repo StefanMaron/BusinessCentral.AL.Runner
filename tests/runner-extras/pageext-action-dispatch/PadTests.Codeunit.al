@@ -28,6 +28,23 @@ codeunit 64524 "Pad Tests"
         Row.DeleteAll();
     end;
 
+    // Two distinct rows so a test can tell "the trigger read A CURRENT ROW" apart from
+    // "the trigger read THE row the page is actually positioned on" — a stub that always
+    // resolved to the first row, or to a blank record, could not pass both
+    // ExtActionReadsRecAgainstFirstRow and ExtActionReadsRecAgainstThePagesCurrentRow below.
+    local procedure SeedRows()
+    var
+        Row: Record "Pad Row";
+    begin
+        Row.Init();
+        Row."No." := 'A';
+        Row.Insert();
+
+        Row.Init();
+        Row."No." := 'B';
+        Row.Insert();
+    end;
+
     // Control: an action declared directly on the page dispatches. If this fails, the
     // other two tests' failures would be meaningless (broken plumbing, not #1923).
     [Test]
@@ -107,5 +124,55 @@ codeunit 64524 "Pad Tests"
 
         Assert.IsTrue(Row.Get('EXT-OWN-PAGE'), 'the invoked action must have run');
         Assert.IsFalse(Row.Get('DIRECT'), 'invoking the extension action must not run the page''s own action');
+    end;
+
+    // Issue #1966: RED before the fix — get_Rec() NREs inside the extension's own trigger
+    // body ("Object reference not set to an instance of an object", at
+    // PageExtension{extId}.get_Rec()) the instant it reads Rec, so Invoke() never returns.
+    // A stub implementation that swallowed the NRE and left Stamp.Descr blank would also
+    // fail this: the assert is against a SPECIFIC row value ('A'), not merely "no exception".
+    [Test]
+    procedure ExtActionReadsRecAgainstFirstRow()
+    var
+        Stamp: Record "Pad Row";
+        HostPage: TestPage "Pad Host Page";
+    begin
+        Initialize();
+        SeedRows();
+
+        HostPage.OpenEdit();
+        HostPage.First();
+        HostPage.ExtActionReadsRec.Invoke();
+        HostPage.Close();
+
+        Assert.IsTrue(Stamp.Get('REC-STAMP'),
+            'Invoke() must have run the pageextension''s OnAction trigger that reads Rec');
+        Assert.AreEqual('A', Stamp.Descr,
+            'the extension action''s OnAction must have read Rec as the page''s current (first) row');
+    end;
+
+    // Positive, the actual claim in #1966: moving the page's cursor changes what Rec reads
+    // inside the SAME extension trigger — proves Rec is wired to the page's LIVE cursor, not
+    // a snapshot frozen at extension-construction time. If the fix instead hard-wired Rec to
+    // whatever row was current when the runner lazily built the extension instance, this
+    // would still read 'A' here and the test would catch it.
+    [Test]
+    procedure ExtActionReadsRecAgainstThePagesCurrentRow()
+    var
+        Stamp: Record "Pad Row";
+        HostPage: TestPage "Pad Host Page";
+    begin
+        Initialize();
+        SeedRows();
+
+        HostPage.OpenEdit();
+        HostPage.First();
+        HostPage.Next();
+        HostPage.ExtActionReadsRec.Invoke();
+        HostPage.Close();
+
+        Assert.IsTrue(Stamp.Get('REC-STAMP'), 'the extension action must have run');
+        Assert.AreEqual('B', Stamp.Descr,
+            'the extension action''s OnAction must have seen the row the page is positioned on, via Rec');
     end;
 }

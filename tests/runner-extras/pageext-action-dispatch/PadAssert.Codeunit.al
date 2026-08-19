@@ -13,4 +13,10 @@ codeunit 64525 "Pad Assert"
         if Value then
             Error('Assert.IsFalse failed: %1', Msg);
     end;
+
+    procedure AreEqual(Expected: Text; Actual: Text; Msg: Text)
+    begin
+        if Expected <> Actual then
+            Error('Assert.AreEqual failed: %1 (expected ''%2'', got ''%3'')', Msg, Expected, Actual);
+    end;
 }
