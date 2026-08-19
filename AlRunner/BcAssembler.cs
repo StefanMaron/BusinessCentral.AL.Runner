@@ -581,7 +581,15 @@ namespace AlRunnerShim
         // so GetExecutingAssembly() here IS the module whose AL code made the call —
         // BcRuntime maps it to that app's identity (real BC's executing-module rule;
         // a dependency like SPBLIC must see its own name/version, not the bundle's).
-        public static void ALNavApp_GetCurrentModuleInfo(
+        // Returns bool (#1942): AL declares this Boolean-valued
+        // (`NavApp.GetCurrentModuleInfo(var ModuleInfo): Boolean`), and BC's own emitted
+        // C# treats the call as boolean-valued (`!ALNavApp.ALGetCurrentModuleInfo(...)`),
+        // so a void polyfill fails Roslyn compile with CS0023 the instant a caller uses
+        // the return value. The executing assembly is always registered and resolvable
+        // here, so `true` is the faithful answer every time this runs — mirrors the
+        // Cecil-side patch for the same BC method (NavAppModuleInfoPatches.cs) and the
+        // sibling source polyfill ALNavApp_GetCallerModuleInfo below.
+        public static bool ALNavApp_GetCurrentModuleInfo(
             Microsoft.Dynamics.Nav.Types.DataError errorLevel,
             Microsoft.Dynamics.Nav.Runtime.ByRef<Microsoft.Dynamics.Nav.Runtime.NavModuleInfo> info)
         {
@@ -591,6 +599,7 @@ namespace AlRunnerShim
             var emptyDeps = Microsoft.Dynamics.Nav.Runtime.NavList<Microsoft.Dynamics.Nav.Runtime.NavModuleDependencyInfo>.Default;
             info.Value = new Microsoft.Dynamics.Nav.Runtime.NavModuleInfo(
                 appId, name, publisher, navVersion, navVersion, emptyDeps, appId);
+            return true;
         }
 
         // NavApp.GetModuleInfo(errorLevel, moduleId, info) — resolves any REGISTERED

@@ -7,8 +7,8 @@
     },
     "runner-extras": {
       "tests": {
-        "default": 134,
-        "byBcVersion": { "27.0": 128, "27.3": 128, "27.5": 128 }
+        "default": 137,
+        "byBcVersion": { "27.0": 131, "27.3": 131, "27.5": 131 }
       },
       "appGroups": {
         "default": 27,
