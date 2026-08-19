@@ -243,7 +243,12 @@ public class WatchBurstSwitchTests
             // correct, fully-settled version B result — the FINAL cycle observed once the
             // watch goes quiet again, regardless of how many quiescence windows the burst
             // happened to split into on this machine.
-            var finalCycle = Segment(m1 + 1, markers[^1]);
+            // #1936 follow-up: the window must start after the SECOND-TO-LAST marker, not
+            // after m1 — otherwise it spans every cycle the burst produced and an earlier
+            // mid-burst cycle's phantom FAIL is read as the final cycle's, which is the
+            // load-dependent failure this relaxation exists to tolerate. See
+            // WatchOutputSlicing.FinalCycleStart and its deterministic tests.
+            var finalCycle = Segment(WatchOutputSlicing.FinalCycleStart(markers, m1), markers[^1]);
             Assert.Contains(TestName, finalCycle);
             Assert.DoesNotContain("FAIL", finalCycle);
             Assert.Contains("PASS", finalCycle);

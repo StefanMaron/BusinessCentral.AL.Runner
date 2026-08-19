@@ -1,6 +1,8 @@
 // WatchOutputSlicingTests — deterministic RED/GREEN proof for #1843, over a synthetic line
 // sequence instead of a live-process race. See WatchOutputSlicing.cs's header for the full
 // mechanism (stdout/stderr pumps racing into one merged list).
+using System;
+using System.Collections.Generic;
 using Xunit;
 
 namespace AlRunner.Tests;
@@ -229,5 +231,77 @@ public sealed class WatchOutputSlicingTests
 
         Assert.True(WatchOutputSlicing.HasAtLeastWarmTimingMatches(lines, 2));
         Assert.Equal(2, WatchOutputSlicing.CountWarmTimingMatches(lines));
+    }
+
+    // ── #1936 follow-up: the final-cycle window must exclude EARLIER burst cycles ──────
+    //
+    // A burst that CI load splits into two quiescence windows produces two markers. The
+    // FIRST of those cycles ran against a half-applied tree and reports FAIL; the SECOND
+    // ran against the settled tree and reports PASS. Slicing (afterIndex, lastMarker)
+    // spans BOTH, so the phantom FAIL is inside the text the final-cycle assertions read.
+    // FinalCycleStart must start the window after the second-to-last marker instead.
+
+    /// <summary>
+    /// Pre-burst cold cycle ends at m1. The burst then splits into two cycles: cycle A
+    /// (phantom, FAIL against a half-applied tree) ending at mA, and cycle B (settled,
+    /// PASS) ending at mB.
+    /// </summary>
+    private static (List<CapturedLine> lines, int m1, List<int> markers) SplitBurstScenario()
+    {
+        var lines = new List<CapturedLine>
+        {
+            new(OutputStream.Stdout, "PASS  Codeunit60210.Sum_OfAllValues_MatchesExpectedTotal"),
+        };
+        int m1 = lines.Count;
+        lines.Add(new(OutputStream.Stdout, WatchOutputSlicing.WaitingForSourceMarker + "… (Ctrl+C to quit)"));
+
+        lines.Add(new(OutputStream.Stdout, "[watch] change detected — re-running…"));
+        lines.Add(new(OutputStream.Stdout, "FAIL  Codeunit60210.Sum_OfAllValues_MatchesExpectedTotal"));
+        int mA = lines.Count;
+        lines.Add(new(OutputStream.Stdout, WatchOutputSlicing.WaitingForSourceMarker + "… (Ctrl+C to quit)"));
+
+        lines.Add(new(OutputStream.Stdout, "[watch] change detected — re-running…"));
+        lines.Add(new(OutputStream.Stdout, "PASS  Codeunit60210.Sum_OfAllValues_MatchesExpectedTotal"));
+        int mB = lines.Count;
+        lines.Add(new(OutputStream.Stdout, WatchOutputSlicing.WaitingForSourceMarker + "… (Ctrl+C to quit)"));
+
+        return (lines, m1, new List<int> { mA, mB });
+    }
+
+    [Fact]
+    public void FinalCycleStart_SplitBurst_WindowExcludesTheEarlierPhantomFailCycle()
+    {
+        var (lines, m1, markers) = SplitBurstScenario();
+
+        var start = WatchOutputSlicing.FinalCycleStart(markers, m1);
+        var finalCycle = WatchOutputSlicing.MergedJoin(lines, start, markers[^1]);
+
+        Assert.DoesNotContain("FAIL", finalCycle);
+        Assert.Contains("PASS", finalCycle);
+        Assert.Contains("Sum_OfAllValues_MatchesExpectedTotal", finalCycle);
+
+        // The window must begin after the SECOND-TO-LAST marker, not after the pre-burst one.
+        Assert.Equal(markers[^2] + 1, start);
+    }
+
+    [Fact]
+    public void FinalCycleStart_SingleCycleBurst_WindowStartsAfterThePreBurstMarker()
+    {
+        var (lines, m1, markers) = SplitBurstScenario();
+        var single = new List<int> { markers[^1] };
+
+        var start = WatchOutputSlicing.FinalCycleStart(single, m1);
+
+        // With one cycle there is no earlier burst cycle to exclude, so the window is the
+        // whole span after the pre-burst marker — the pre-#1936 behaviour, unchanged.
+        Assert.Equal(m1 + 1, start);
+        Assert.Contains("PASS", WatchOutputSlicing.MergedJoin(lines, start, single[^1]));
+    }
+
+    [Fact]
+    public void FinalCycleStart_NoMarkers_Throws()
+    {
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => WatchOutputSlicing.FinalCycleStart(new List<int>(), 0));
     }
 }

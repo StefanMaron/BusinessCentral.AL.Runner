@@ -60,6 +60,8 @@
 // that predicate; the polling loop that uses it lives in WatchTests.cs (WaitForWarmTimingCount)
 // since it needs the live process's cancellation/timeout plumbing, but the predicate itself is
 // unit-tested here.
+using System;
+using System.Collections.Generic;
 using System.Text;
 using System.Text.RegularExpressions;
 
@@ -92,6 +94,28 @@ public static class WatchOutputSlicing
             if (lines[i].Stream == OutputStream.Stdout && lines[i].Text.Contains(marker))
                 result.Add(i);
         return result;
+    }
+
+    /// <summary>
+    /// Start index (inclusive) of the LAST watch cycle among <paramref name="markers"/>.
+    /// Each marker ENDS a cycle, so the final cycle begins just after the SECOND-TO-LAST
+    /// marker. Only when the burst produced a single cycle does it begin just after
+    /// <paramref name="afterIndex"/> — the marker that ended the preceding, pre-burst cycle.
+    ///
+    /// #1936 dropped WatchBurstSwitchTests' `markers.Count == 1` assertion so that a burst
+    /// which CI load legitimately splits into several quiescence windows still passes. That
+    /// relaxation is defeated by slicing from <paramref name="afterIndex"/> to the LAST
+    /// marker: the window then spans EVERY cycle the burst produced, so an early mid-burst
+    /// cycle's phantom FAIL lands inside the text the final-cycle assertions read, and the
+    /// test fails for precisely the load-dependent reason the relaxation exists to tolerate.
+    /// Observed on the BC 27.5 leg of PR #1949: "Assert.DoesNotContain() Failure: Sub-string
+    /// found ... FAIL  Codeunit60210".
+    /// </summary>
+    public static int FinalCycleStart(IReadOnlyList<int> markers, int afterIndex)
+    {
+        if (markers.Count == 0)
+            throw new ArgumentOutOfRangeException(nameof(markers), "no cycle markers — cannot delimit a final cycle");
+        return markers.Count >= 2 ? markers[^2] + 1 : afterIndex + 1;
     }
 
     /// <summary>
