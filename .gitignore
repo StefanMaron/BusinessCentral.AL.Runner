@@ -86,3 +86,14 @@ AlRunner/Win32Stubs/*.so
 # that produced it — and CI would silently overwrite it anyway. Same rationale as #1881
 # above: keep a stray copy from showing up as untracked or being swept into `git add -A`.
 /engine.runsettings
+
+# graphify builds a knowledge graph of the codebase into graphify-out/ (graph.json,
+# graph.html, GRAPH_REPORT.md, a manifest and an extraction cache). It is entirely
+# DERIVED from the tree it was run against and is several MB, so committing it would
+# add a large binary-ish blob that goes stale on the next commit — AlRunner/ took 9
+# commits in a single day, and a stale graph is worse than no graph because it reads
+# as authoritative. Anyone who wants one regenerates it locally in seconds (the
+# AlRunner/ corpus is code-only, so extraction is deterministic AST work with no LLM
+# cost). Ignore it so a local build never shows up as untracked or gets swept into a
+# `git add -A`, the same rationale as /engine.runsettings above.
+/graphify-out/
