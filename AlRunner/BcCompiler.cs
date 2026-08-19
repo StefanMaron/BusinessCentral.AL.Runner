@@ -1314,13 +1314,27 @@ public sealed class BcCompiler
             throw new InvalidOperationException(
                 $"BcCompiler.Emit: no .al files under {string.Join(", ", dirs)}");
 
-        // Preprocessor symbols: CLEANSCHEMA1..25 merged with any caller-supplied symbols.
-        // v1 computes per-source max from any #pragma the AL files set (Program.cs:1454-1462);
-        // we use the static 1..25 set v2 was already shipping — sufficient for the tests/ corpus.
+        // #1940/#1941/#1943: read the owning app's own manifest for the properties that
+        // feed ParseOptions/CompilationOptions below. Prefer appRootDir (the documented
+        // "real" app root — see the doc comment above); fall back to scanning `dirs` the
+        // way EmitDepSymbols always has, for callers that don't have a separate app root
+        // (appRootDir is null but one of alFolders already IS the app root).
+        var manifestAppJsonPath = (appRootDir != null && File.Exists(Path.Combine(appRootDir, "app.json")))
+            ? Path.Combine(appRootDir, "app.json")
+            : dirs.Select(d => Path.Combine(d, "app.json")).FirstOrDefault(File.Exists);
+        var manifestInputs = ReadManifestCompilerInputs(manifestAppJsonPath);
+
+        // Preprocessor symbols: CLEANSCHEMA1..25 merged with any caller-supplied symbols
+        // (--define / --preprocessor-symbols) AND the app's own manifest `preprocessorSymbols`
+        // (#1943) — union, not override, so a manifest symbol never silently loses to a CLI
+        // one or vice versa. v1 computes per-source max from any #pragma the AL files set
+        // (Program.cs:1454-1462); we use the static 1..25 set v2 was already shipping —
+        // sufficient for the tests/ corpus.
         var parseOpts = new NavCA.ParseOptions(
             runtimeVersion: null!,
             preprocessorSymbols: Enumerable.Range(1, 25).Select(n => $"CLEANSCHEMA{n}")
-                .Concat(_extraPreprocessorSymbols ?? []),
+                .Concat(_extraPreprocessorSymbols ?? [])
+                .Concat(manifestInputs.PreprocessorSymbols),
             documentationMode: NavCA.DocumentationMode.None);
 
         bool _timing = Environment.GetEnvironmentVariable("BCCOMPILER_TIMING") == "1";
@@ -1336,13 +1350,18 @@ public sealed class BcCompiler
         });
         _mark($"parse {alFiles.Count} files");
 
-        // CompilationOptions: identical to v1 (Program.cs:1548-1555).
+        // CompilationOptions: v1 shape (Program.cs:1548-1555) plus the manifest-derived
+        // compilerFeatures (#1941) and contextSensitiveHelpUrl (#1940) — see
+        // ReadManifestCompilerInputs. Both used to be left at their "" / None defaults on
+        // this top-level path regardless of what the app's own app.json declared.
         var compOpts = new NavCA.CompilationOptions(
             continueBuildOnError: true,
             target: NavCA.CompilationTarget.OnPrem,
             generateOptions:
                 NavCA.CompilationGenerationOptions.Code |
-                NavCA.CompilationGenerationOptions.Navigation);
+                NavCA.CompilationGenerationOptions.Navigation,
+            compilerFeatures: manifestInputs.CompilerFeatures,
+            contextSensitiveHelpUrl: manifestInputs.ContextSensitiveHelpUrl);
 
         // Identity: use the bundle's REAL app.json identity when set, else a synthetic
         // one. The real identity matters when a dependency grants this app access via
@@ -1868,10 +1887,21 @@ public sealed class BcCompiler
             throw new InvalidOperationException(
                 $"BcCompiler.EmitDepSymbols: no .al files under {string.Join(", ", dirs)}");
 
+        // Locate the dep's own app.json BEFORE building ParseOptions/CompilationOptions —
+        // internalsVisibleTo, and the manifest-derived compiler inputs read below
+        // (preprocessorSymbols/features/contextSensitiveHelpUrl — #1898/#1940/#1941/#1943),
+        // all need it in hand for the ctors themselves.
+        var foundAppJson = dirs.Select(d => Path.Combine(d, "app.json")).FirstOrDefault(File.Exists);
+        var manifestInputs = ReadManifestCompilerInputs(foundAppJson);
+
+        // Preprocessor symbols: same union as Emit() — CLEANSCHEMA1..25, any caller-supplied
+        // (--define) symbols, AND this dep's OWN manifest symbols (#1943) — never the
+        // consuming bundle's, since foundAppJson is this dep's own app.json.
         var parseOpts = new NavCA.ParseOptions(
             runtimeVersion: null!,
             preprocessorSymbols: Enumerable.Range(1, 25).Select(n => $"CLEANSCHEMA{n}")
-                .Concat(_extraPreprocessorSymbols ?? []),
+                .Concat(_extraPreprocessorSymbols ?? [])
+                .Concat(manifestInputs.PreprocessorSymbols),
             documentationMode: NavCA.DocumentationMode.None);
         var trees = new NavSyntax.SyntaxTree[alFiles.Count];
         Parallel.For(0, alFiles.Count, i =>
@@ -1879,15 +1909,15 @@ public sealed class BcCompiler
             var src = File.ReadAllText(alFiles[i]);
             trees[i] = NavSyntax.SyntaxTree.ParseObjectText(src, path: alFiles[i], encoding: null!, parseOpts, default);
         });
-        // Locate the dep's own app.json BEFORE building CompilationOptions — both
-        // internalsVisibleTo (below) and contextSensitiveHelpUrl (#1898) are read from
-        // it, and the latter has to be in hand for the CompilationOptions ctor itself.
-        var foundAppJson = dirs.Select(d => Path.Combine(d, "app.json")).FirstOrDefault(File.Exists);
         var compOpts = new NavCA.CompilationOptions(
             continueBuildOnError: true,
             target: NavCA.CompilationTarget.OnPrem,
             generateOptions:
                 NavCA.CompilationGenerationOptions.Code | NavCA.CompilationGenerationOptions.Navigation,
+            // #1941: same manifest → CompilerFeatures mapping as Emit() — a dep declaring
+            // NoImplicitWith in its own app.json must compile under that feature too, not
+            // just when it happens to be the top-level bundle.
+            compilerFeatures: manifestInputs.CompilerFeatures,
             // #1898: BC's AL0543 check ("The manifest property 'contextSensitiveHelpUrl'
             // must be set in order to use the property 'ContextSensitiveHelpPage'") reads
             // THIS CompilationOptions field directly — there is no separate "give the
@@ -1903,7 +1933,7 @@ public sealed class BcCompiler
             // separate leniency — see the Emit() docs above). A dep whose manifest
             // genuinely omits the URL still gets "" here and AL0543 still fires,
             // preserving the diagnostic for an actually-invalid manifest.
-            contextSensitiveHelpUrl: ReadContextSensitiveHelpUrl(foundAppJson));
+            contextSensitiveHelpUrl: manifestInputs.ContextSensitiveHelpUrl);
         // Propagate the dep's own `internalsVisibleTo` (from its app.json) into the
         // Compilation. BC populates IModuleSymbol.InternalsVisibleToModules ONLY from
         // this dedicated Create parameter — not from the manifest — so without it a
@@ -2006,25 +2036,100 @@ public sealed class BcCompiler
     }
 
     /// <summary>
-    /// Read <c>contextSensitiveHelpUrl</c> from an app.json, for the dedicated
-    /// <c>contextSensitiveHelpUrl</c> parameter of <see cref="NavCA.CompilationOptions"/>
-    /// (see #1898). Empty string — BC's own default for the parameter — when the
-    /// manifest is missing, unreadable, or genuinely omits the property, so an
-    /// actually-unset manifest still trips AL0543 on a page/report/etc. using
-    /// <c>ContextSensitiveHelpPage</c>, exactly as real BC does.
+    /// The subset of an app.json's properties that feed BC's <see cref="NavCA.ParseOptions"/>
+    /// / <see cref="NavCA.CompilationOptions"/>, read in one pass and shared by both
+    /// <see cref="Emit"/> (top-level bundle compile) and <see cref="EmitDepSymbols"/> (source
+    /// dependency compile). See #1940/#1941/#1943: before this, each compile path built its
+    /// own ParseOptions/CompilationOptions by hand and each of these three manifest properties
+    /// independently went missing on at least one of the two paths — #1898 fixed
+    /// <c>contextSensitiveHelpUrl</c> only on <see cref="EmitDepSymbols"/>, and neither path
+    /// ever read <c>features</c> or <c>preprocessorSymbols</c> at all.
     /// </summary>
-    private static string ReadContextSensitiveHelpUrl(string? appJsonPath)
+    internal readonly record struct ManifestCompilerInputs(
+        IReadOnlyList<string> PreprocessorSymbols,
+        NavCA.CompilerFeatures CompilerFeatures,
+        string ContextSensitiveHelpUrl)
     {
-        if (appJsonPath == null || !File.Exists(appJsonPath)) return "";
+        public static readonly ManifestCompilerInputs Empty =
+            new(Array.Empty<string>(), NavCA.CompilerFeatures.None, "");
+
+        /// <summary>
+        /// Deterministic fragment that changes iff any manifest property this struct reads
+        /// changes — folded into the AL-output cache key (see <c>ComputeAlCacheKey</c> in
+        /// Program.cs) so editing app.json's <c>preprocessorSymbols</c>/<c>features</c>/
+        /// <c>contextSensitiveHelpUrl</c> invalidates a warm cache entry instead of silently
+        /// serving a DLL compiled under the OLD values (#1943's cache-key requirement).
+        /// </summary>
+        public string CacheKeyFragment =>
+            string.Join(",", PreprocessorSymbols.OrderBy(s => s, StringComparer.Ordinal)) +
+            "|" + (int)CompilerFeatures + "|" + ContextSensitiveHelpUrl;
+    }
+
+    /// <summary>
+    /// Read <c>preprocessorSymbols</c>, <c>features</c>, and <c>contextSensitiveHelpUrl</c>
+    /// from an app.json in one pass. Every field defaults to BC's own "unset" default (empty
+    /// list / <see cref="NavCA.CompilerFeatures.None"/> / <c>""</c>) when the manifest is
+    /// missing, unreadable, or genuinely omits the property — so a genuinely invalid/absent
+    /// manifest still produces the diagnostics real BC would (AL0543 for a missing
+    /// contextSensitiveHelpUrl, the wrong <c>#if</c> branch for an undeclared symbol, implicit
+    /// <c>with</c> for an app that never opted into NoImplicitWith).
+    /// </summary>
+    internal static ManifestCompilerInputs ReadManifestCompilerInputs(string? appJsonPath)
+    {
+        if (appJsonPath == null || !File.Exists(appJsonPath)) return ManifestCompilerInputs.Empty;
         try
         {
             using var json = System.Text.Json.JsonDocument.Parse(File.ReadAllText(appJsonPath));
-            if (json.RootElement.TryGetProperty("contextSensitiveHelpUrl", out var v)
-                && v.ValueKind == System.Text.Json.JsonValueKind.String)
-                return v.GetString() ?? "";
+            var root = json.RootElement;
+
+            var symbols = new List<string>();
+            if (root.TryGetProperty("preprocessorSymbols", out var symEl)
+                && symEl.ValueKind == System.Text.Json.JsonValueKind.Array)
+                foreach (var e in symEl.EnumerateArray())
+                    if (e.ValueKind == System.Text.Json.JsonValueKind.String
+                        && !string.IsNullOrEmpty(e.GetString()))
+                        symbols.Add(e.GetString()!);
+
+            // Manifest `features` strings are mapped onto NavCA.CompilerFeatures by NAME
+            // (case-insensitive) — e.g. "NoImplicitWith" matches CompilerFeatures.NoImplicitWith
+            // exactly. The app.json schema also allows feature strings that are NOT compiler
+            // switches at all (e.g. "TranslationFile", "GenerateCaptions" — those drive
+            // packaging/translation-file generation elsewhere, not parsing/binding).
+            // Enum.TryParse fails for those and they are silently skipped, matching alc's own
+            // tolerance for a manifest declaring features this compile path doesn't act on —
+            // never a hard failure for an unrecognised-but-legal feature string.
+            var features = NavCA.CompilerFeatures.None;
+            if (root.TryGetProperty("features", out var featEl)
+                && featEl.ValueKind == System.Text.Json.JsonValueKind.Array)
+                foreach (var e in featEl.EnumerateArray())
+                {
+                    if (e.ValueKind != System.Text.Json.JsonValueKind.String) continue;
+                    var name = e.GetString();
+                    if (!string.IsNullOrEmpty(name)
+                        && Enum.TryParse<NavCA.CompilerFeatures>(name, ignoreCase: true, out var f))
+                        features |= f;
+                }
+
+            var helpUrl = root.TryGetProperty("contextSensitiveHelpUrl", out var helpEl)
+                && helpEl.ValueKind == System.Text.Json.JsonValueKind.String
+                ? helpEl.GetString() ?? ""
+                : "";
+
+            return new ManifestCompilerInputs(symbols, features, helpUrl);
         }
-        catch { /* fall through to the "unset" default below */ }
-        return "";
+        catch { return ManifestCompilerInputs.Empty; }
+    }
+
+    /// <summary>
+    /// <see cref="ManifestCompilerInputs.CacheKeyFragment"/> for the app.json under
+    /// <paramref name="appRootDir"/>, for Program.cs's <c>ComputeAlCacheKey</c> — the only
+    /// caller outside this class that needs the manifest's compiler-input fingerprint without
+    /// needing the full <see cref="ManifestCompilerInputs"/> shape.
+    /// </summary>
+    public static string ReadManifestCacheKeyFragment(string? appRootDir)
+    {
+        var appJsonPath = appRootDir != null ? Path.Combine(appRootDir, "app.json") : null;
+        return ReadManifestCompilerInputs(appJsonPath).CacheKeyFragment;
     }
 
     /// <summary>

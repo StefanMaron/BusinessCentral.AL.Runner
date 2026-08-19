@@ -1362,7 +1362,7 @@ foreach (var bundle in bundles)
         bool bundleDeclaresQuery = BcCompiler.BundleDeclaresQuery(allPaths);
         if (needCompile && alCacheDir != null)
         {
-            cacheKey = ComputeAlCacheKey(allPaths, moduleName, ordered: GetOrderedDepIds(bucketRoot, packageCacheDirs, bundleAbs));
+            cacheKey = ComputeAlCacheKey(allPaths, moduleName, ordered: GetOrderedDepIds(bucketRoot, packageCacheDirs, bundleAbs), appRootDir: appGroup.SuiteDir);
             cachePath = Path.Combine(alCacheDir, cacheKey + ".dll");
             sidecarPath = Path.Combine(alCacheDir, cacheKey + AlRunner.Infrastructure.AlCacheSidecars.EnumRegistrySuffix);
             querySidecarPath = Path.Combine(alCacheDir, cacheKey + AlRunner.Infrastructure.AlCacheSidecars.QuerySymbolsSuffix);
@@ -2961,7 +2961,7 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
             if (reusedAsm == null && alCacheDir != null)
             {
                 cacheKey = ComputeAlCacheKey(allPaths, moduleName,
-                    ordered: GetOrderedDepIds(bucketRoot, effectivePkgDirs));
+                    ordered: GetOrderedDepIds(bucketRoot, effectivePkgDirs), appRootDir: bucketRoot);
                 cachePath = Path.Combine(alCacheDir, cacheKey + ".dll");
                 sidecarPath = Path.Combine(alCacheDir, cacheKey + AlRunner.Infrastructure.AlCacheSidecars.EnumRegistrySuffix);
                 querySidecarPath = Path.Combine(alCacheDir, cacheKey + AlRunner.Infrastructure.AlCacheSidecars.QuerySymbolsSuffix);
@@ -5245,7 +5245,8 @@ static List<string> CollectSuitePaths(string suite, string? bucketRoot = null)
 static string ComputeAlCacheKey(
     IReadOnlyList<string> alFolders,
     string moduleName,
-    IReadOnlyList<string> ordered)
+    IReadOnlyList<string> ordered,
+    string? appRootDir = null)
 {
     using var sha = System.Security.Cryptography.SHA256.Create();
     using var ms = new MemoryStream();
@@ -5289,7 +5290,15 @@ static string ComputeAlCacheKey(
     //        explicit version line all 8 legs would collide on one cache entry and a leg
     //        could load AL output compiled against another BC version's symbols). v9
     //        entries carried neither and must not be served under the new key shape.
-    WriteLine("schema:v10");
+    //    v11: added a manifest fragment (preprocessorSymbols/features/contextSensitiveHelpUrl
+    //        read from the app's own app.json — see BcCompiler.ReadManifestCompilerInputs).
+    //        #1943: before this, editing app.json changed neither the AL source bytes nor
+    //        the CLI --define set, so the key was IDENTICAL before and after — a cache HIT
+    //        would silently serve the DLL compiled under the OLD manifest values (wrong #if
+    //        branch, missing NoImplicitWith, stale contextSensitiveHelpUrl) forever, until
+    //        something else in the key happened to change. v10 entries never hashed the
+    //        manifest at all and must not be served under the new key shape.
+    WriteLine("schema:v11");
 
     // 1. Runner assembly fingerprint (content hash, not mtime — see v10 note above) +
     //    the selected BC version, so any rewriter/polyfill/patch change in the runner,
@@ -5305,6 +5314,13 @@ static string ComputeAlCacheKey(
     //    compiled first served the other. Written unconditionally so the line always frames
     //    the key (existing entries hash differently once and rebuild).
     WriteLine($"defines:{string.Join(",", AlRunner.BcCompiler.GetExtraPreprocessorSymbols())}");
+
+    // 3. The app's OWN manifest properties that feed ParseOptions/CompilationOptions —
+    //    preprocessorSymbols, features, contextSensitiveHelpUrl (#1943; see v11 note
+    //    above). appRootDir is the directory holding app.json — the same one Emit()
+    //    itself reads from (BcCompiler.ReadManifestCompilerInputs) — so an edit to any of
+    //    these three properties changes this line and forces a MISS.
+    WriteLine($"manifest:{AlRunner.BcCompiler.ReadManifestCacheKeyFragment(appRootDir)}");
 
     foreach (var d in ordered) WriteLine($"dep:{d}");
 
