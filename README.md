@@ -205,6 +205,36 @@ Out of scope by design: SMTP, HTTP egress to external services, file I/O against
 | `2` | Runner limitations only |
 | `3` | AL compilation error |
 
+## Knowledge graph (optional)
+
+`AlRunner/` can be indexed into a queryable knowledge graph — communities, most-connected
+types, import cycles — with [graphify](https://github.com/safishamsi/graphify).
+
+Install the AL-aware fork rather than the upstream package. It adds `.al` to the file detector
+and an AL extractor, so it can index the AL corpus and AL bundles; upstream handles the C# under
+`AlRunner/` but skips every `.al` file:
+
+```bash
+uv tool install --upgrade "git+https://github.com/ChristianHovenbitzer/graphify-al.git@al-support"
+```
+
+Then, from the repo root:
+
+```bash
+graphify AlRunner              # build the graph
+graphify query "<question>"    # ask it something
+graphify AlRunner --update     # refresh after changes
+```
+
+Output lands in `graphify-out/` (`graph.html`, `graph.json`, `GRAPH_REPORT.md`). It is gitignored
+— it is derived, several MB, and goes stale quickly.
+
+`AlRunner/` is code-only, so extraction is deterministic AST work and costs no LLM tokens.
+
+One limit worth knowing before trusting it: the graph is static. A `Hook(...)` registration that
+never fires and one that does look the same in it. For that question use `AL_RUNNER_HOOK_AUDIT=1`,
+which measures at runtime.
+
 ## Reporting Gaps
 
 If AL code fails to run and the reason is not in [`docs/limitations.md`](docs/limitations.md) or [`docs/scope.md`](docs/scope.md), that is a **runner gap**. Open an issue with `.github/ISSUE_TEMPLATE/runner-gap.md`. Silent workarounds are forbidden (`.claude/rules/file-issues-for-gaps.md`).

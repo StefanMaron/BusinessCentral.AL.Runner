@@ -31,3 +31,15 @@ Operating rules live in `.claude/rules/` and are auto-loaded. Task-specific refe
 - Triage new untriaged issues → sub-agent `triager` (Opus, runs once at the start of a cycle)
 - Act as orchestrator or implementation agent → sub-agents `orchestrator` / `impl-agent` in `.claude/agents/`
 - Drive a full work cycle (triage → parallel impls in worktrees → orchestrator merge pass, until the queue is empty) → slash command `/work-cycle`
+
+### Local knowledge graph (optional)
+
+If `graphify-out/graph.json` exists, this checkout has a locally built knowledge graph of
+`AlRunner/`. It is generated, gitignored, and never committed. Query it from the repo root with
+`graphify query "<question>"`, and rebuild it with `graphify AlRunner --update` — `AlRunner/`
+changes often and a stale graph still reads as authoritative.
+
+It maps **static** structure only: which types and files reference which. It cannot tell you
+whether a `Hook(...)` registration or a Cecil rewrite actually fires at runtime — an orphaned
+hook and a live one look identical in the graph. Use `AL_RUNNER_HOOK_AUDIT=1` for that question,
+and see the README's Knowledge graph section for which graphify build to install.
