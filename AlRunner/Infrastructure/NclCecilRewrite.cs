@@ -1688,6 +1688,56 @@ public static class NclCecilRewrite
             Console.Error.WriteLine("[Cecil] Rewrote SessionTransactionExtensions.Rollback → row-store rollback");
         }
 
+        // 8g. SessionTransactionExtensions.EndTransaction / EndTransactionWorldAndTransaction —
+        //     see RecordPatches.NoteTransactionEnd.
+        //
+        //     AL Runner#1946: BC's own APIs wrap their internal work in an explicit nested
+        //     transaction (decompiled, unmodified Ncl body of the static overload of
+        //     NavXmlPort.Import — the one the corpus proved this against:
+        //     Session.BeginTransaction(); ...; finally { Session.EndTransaction(commit); } for
+        //     DataError.ThrowError, or Session.BeginTransactionWorldAndTransaction(); ...;
+        //     finally { Session.EndTransactionWorldAndTransaction(commit); } for
+        //     DataError.TrapError — AL's compiler picks TrapError whenever the call's boolean
+        //     result is captured into a variable, e.g. `Ok := XmlPort.Import(...)`, which is
+        //     the common, idiomatic AL shape and the one that actually reaches this bug).
+        //     A real commit there is exactly as durable, from AL's point of view, as an
+        //     explicit Commit() statement — but only MarkCommitPoint's two existing call sites
+        //     (AL's own Commit() and the per-test isolation boundary) ever advanced the
+        //     rollback baseline, so a LATER, unrelated asserterror in the caller rolled all the
+        //     way back to test-method start, wiping out rows a nested BC API had already
+        //     committed. Reproducible with no XmlPort involved at all — see
+        //     RecordPatches.NoteTransactionEnd's doc comment.
+        //
+        //     Prepend, not replace: the original bodies (SessionTransactionManager.EndTransaction
+        //     / EndTransactionWorldAndTransaction) already run safely today (every passing
+        //     XmlPort Export/Import test goes through one of them), so this only adds the
+        //     missing commit-point bookkeeping alongside them.
+        {
+            var sessTxType2 = asm.MainModule.Types
+                .FirstOrDefault(t => t.FullName == "Microsoft.Dynamics.Nav.Runtime.SessionTransactionExtensions")
+                ?? throw new InvalidOperationException(
+                    "[Cecil] SessionTransactionExtensions type not found — Ncl shape changed; do not commit");
+
+            var noteTransactionEndHelper = typeof(AlRunner.Patches.RecordPatches).GetMethod(
+                nameof(AlRunner.Patches.RecordPatches.NoteTransactionEnd),
+                BindingFlags.Public | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "[Cecil] RecordPatches.NoteTransactionEnd not found");
+
+            foreach (var methodName in new[] { "EndTransaction", "EndTransactionWorldAndTransaction" })
+            {
+                var endTransactionMethod = sessTxType2.Methods
+                    .FirstOrDefault(m => m.Name == methodName && m.IsStatic
+                                         && m.Parameters.Count == 2 && m.HasBody
+                                         && m.Parameters[1].ParameterType.FullName == "System.Boolean")
+                    ?? throw new InvalidOperationException(
+                        $"[Cecil] SessionTransactionExtensions.{methodName}(NavSession, bool) not found — Ncl shape changed; do not commit");
+
+                PrependStaticCall(asm.MainModule, endTransactionMethod, noteTransactionEndHelper, argSlots: 2);
+            }
+        }
+
+
         // 9b. TreeHandler.get_Session — see BcRuntime.TreeHandler_get_Session.
         //     The real body is `=> session`, a readonly field set in the ctor from
         //     `parentHandler.session ?? (hostObject as NavSession)`. The runner's root tree
