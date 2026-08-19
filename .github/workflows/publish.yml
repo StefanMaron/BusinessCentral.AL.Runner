@@ -146,9 +146,34 @@ jobs:
           dotnet run --project tools/DownloadArtifacts -- \
             test-apps ${{ matrix.bc-version }} "$HOME/.al-runner/test-apps"
 
+      - name: Generate .runsettings for the in-process BC engine tests
+        run: |
+          # Mirrors test-matrix.yml's identical step. Without the DOTNET_STARTUP_HOOKS
+          # chain the in-process BC engine tests (BcEngineCollection) SKIP instead of
+          # running, and a release would ship a version whose engine tests never
+          # executed. BcEngineReadinessGuardTests exists to fail loudly when that
+          # happens; it caught this on the v2.3.0 attempt (47 skipped, guard red).
+          # Set inside <EnvironmentVariables> and deliberately NOT as an ambient env
+          # var on the step: an ambient var also runs the bootstrap inside the outer
+          # `dotnet test` CLI driver process, where AppContext.BaseDirectory resolves
+          # to the SDK's install directory and the Ncl rewrite lands there.
+          cp AlRunner/bin/Release/net8.0/Microsoft.Dynamics.Nav.Ncl.dll \
+             AlRunner.Tests/bin/Release/net8.0/Microsoft.Dynamics.Nav.Ncl.dll
+          cat > engine.runsettings <<EOF
+          <?xml version="1.0" encoding="utf-8"?>
+          <RunSettings>
+            <RunConfiguration>
+              <EnvironmentVariables>
+                <DOTNET_STARTUP_HOOKS>$(pwd)/AlRunner.Tests/bin/Release/net8.0/al-runner.dll:$(pwd)/AlRunner.Tests/bin/Release/net8.0/AlRunner.Tests.dll</DOTNET_STARTUP_HOOKS>
+              </EnvironmentVariables>
+            </RunConfiguration>
+          </RunSettings>
+          EOF
+
       - name: Run unit tests (AlRunner.Tests)
         run: |
-          dotnet test AlRunner.Tests/AlRunner.Tests.csproj -c Release --no-build
+          dotnet test AlRunner.Tests/AlRunner.Tests.csproj -c Release --no-build \
+              --settings engine.runsettings
 
       - name: Run al-language corpus
         run: |
