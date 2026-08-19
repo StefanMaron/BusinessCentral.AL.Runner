@@ -1,11 +1,22 @@
 name: Publish to NuGet
 
 # Triggered manually only — supply the version and the workflow does everything:
-# generates the CHANGELOG section, commits it to main, pushes the tag, runs
-# tests, packs, pushes to NuGet, and creates the GitHub Release.
+# runs the full BC test matrix, then generates the CHANGELOG section, commits it to
+# main, pushes the tag, packs, pushes to NuGet, and creates the GitHub Release.
 #
-# The checkout step uses RELEASE_DEPLOY_KEY (a write-access deploy key) so the
-# git push to main bypasses the branch ruleset ("Deploy keys" -> Always allow).
+# ORDER MATTERS, and it used to be backwards. Until #1978 the first job pushed the
+# release commit and the tag BEFORE a single test ran, so a red matrix left a
+# permanent tag on main with no release behind it. Not hypothetical: v2.3.0 and
+# v2.3.1 are both such tags. Tests now gate every write — a failed release attempt
+# leaves the repository exactly as it found it.
+#
+# That ordering had a second cost. CHANGELOG sections are generated from
+# `git describe --tags`, so a dead tag becomes the baseline for the NEXT release:
+# [2.3.1] lists two entries while the 21 real ones sit under [2.3.0], a heading with
+# no release behind it.
+#
+# The release job's checkout uses RELEASE_DEPLOY_KEY (a write-access deploy key) so
+# the git push to main bypasses the branch ruleset ("Deploy keys" -> Always allow).
 on:
   workflow_dispatch:
     inputs:
@@ -18,16 +29,71 @@ env:
   DOTNET_CLI_TELEMETRY_OPTOUT: true
 
 jobs:
-  prepare:
+  plan:
+    name: Resolve the commit to test and ship
     runs-on: ubuntu-latest
     outputs:
-      notes: ${{ steps.changelog.outputs.notes }}
+      ref: ${{ steps.plan.outputs.ref }}
+      tag-exists: ${{ steps.plan.outputs.tag-exists }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Decide which commit this release tests and ships
+        id: plan
+        run: |
+          TAG="v${{ inputs.version }}"
+
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            # A retry of an attempt that already tagged — which now means the release
+            # job itself failed after tagging (NuGet rejected the push, the Release API
+            # call failed), NOT that tests failed, because tests run first. Test and
+            # ship the tag as it stands and let the release job skip re-committing.
+            echo "Tag $TAG already exists on origin — testing and shipping that tag."
+            echo "ref=$TAG" >> "$GITHUB_OUTPUT"
+            echo "tag-exists=true" >> "$GITHUB_OUTPUT"
+          else
+            # github.sha is main's head at dispatch. Pinning it HERE, rather than letting
+            # the release job read origin/main once the matrix finishes, is what makes the
+            # tag point at the commit that was actually tested: main can move during a
+            # 40-minute run, and whatever gets merged meanwhile has not been through this
+            # matrix at this version.
+            echo "Releasing ${{ github.sha }} (main at dispatch)."
+            echo "ref=${{ github.sha }}" >> "$GITHUB_OUTPUT"
+            echo "tag-exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  test:
+    needs: plan
+    # The SAME matrix the push / pull-request path runs — resolve-versions, every
+    # BC version, and the cold-cache smoke job.
+    #
+    # This used to be a hand-maintained copy of those steps living in this file.
+    # It drifted from the original four times, and the last two divergences failed
+    # a release each (v2.3.0 and v2.3.1, both on BcEngineReadinessGuardTests with
+    # 47 engine tests skipped). Calling the definition instead of restating it is
+    # the fix — issue #1976.
+    #
+    # It also closes a gap that was never a "drift" so much as a permanent
+    # shortfall: the old copy ran neither --count-baseline, nor the xmlport
+    # order-independence guard, nor the server-mode integration tests, nor the
+    # smoke job. A release was gated on strictly less than a pull request.
+    uses: ./.github/workflows/bc-tests.yml
+    with:
+      ref: ${{ needs.plan.outputs.ref }}
+
+  release:
+    # Gated on `test`: this job holds every write this workflow performs — the
+    # CHANGELOG commit, the push to main, the tag, the NuGet push and the GitHub
+    # Release. Nothing above it touches the repository. See #1978.
+    needs: [plan, test]
+    runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          ref: ${{ needs.plan.outputs.ref }}
           ssh-key: ${{ secrets.RELEASE_DEPLOY_KEY }}
 
       - name: Configure git
@@ -35,21 +101,17 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Generate CHANGELOG and push release commit + tag
+      - name: Generate CHANGELOG and push the release commit + tag
         id: changelog
         run: |
           VERSION="${{ inputs.version }}"
           TAG="v${VERSION}"
 
-          # Idempotent retry: if a prior run for this version already got as far as
-          # pushing the release commit + tag (then failed later, e.g. in `test`), a
-          # naive re-run would generate and commit a SECOND [x.y.z] section — exactly
-          # what happened on 2026-08-05 (two duplicate v2.0.0 sections, cleaned up by
-          # hand). Detect the existing tag and reuse its CHANGELOG section instead of
-          # regenerating.
-          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
-            echo "Tag $TAG already exists on origin — reusing its release commit, not re-committing."
-            git fetch origin "refs/tags/$TAG:refs/tags/$TAG"
+          if [ "${{ needs.plan.outputs.tag-exists }}" = "true" ]; then
+            # The tag is already on origin and this checkout IS that tag. Reuse its
+            # CHANGELOG section rather than generating a second [x.y.z] heading — that
+            # happened on 2026-08-05 (two duplicate v2.0.0 sections, cleaned up by hand).
+            echo "Reusing the CHANGELOG section already committed at $TAG."
             SECTION=$(git show "$TAG:CHANGELOG.md" | awk -v ver="## [$VERSION]" '
               $0 == ver { found=1 }
               found && /^## \[/ && $0 != ver { exit }
@@ -68,7 +130,13 @@ jobs:
 
             git add CHANGELOG.md
             git commit -m "chore: release v${VERSION}"
-            git push origin main
+
+            # Push the release commit BEFORE creating the tag, and deliberately without
+            # --force. HEAD is the commit the matrix tested plus a CHANGELOG-only diff,
+            # so this is a fast-forward exactly when main is still where the matrix found
+            # it. If someone merged during the run it fails here — and NO tag is created,
+            # which is the whole point of #1978. Re-dispatch against the new main.
+            git push origin HEAD:main
             git tag "$TAG"
             git push origin "$TAG"
           fi
@@ -78,35 +146,6 @@ jobs:
             echo "$SECTION"
             echo "EOF_NOTES"
           } >> "$GITHUB_OUTPUT"
-
-  test:
-    needs: prepare
-    # The SAME matrix the push / pull-request path runs — resolve-versions, every
-    # BC version, and the cold-cache smoke job — checked out at the release tag.
-    #
-    # This used to be a hand-maintained copy of those steps living in this file.
-    # It drifted from the original four times, and the last two divergences failed
-    # a release each (v2.3.0 and v2.3.1, both on BcEngineReadinessGuardTests with
-    # 47 engine tests skipped). Calling the definition instead of restating it is
-    # the fix — issue #1976.
-    #
-    # It also closes a gap that was never a "drift" so much as a permanent
-    # shortfall: the old copy ran neither --count-baseline, nor the xmlport
-    # order-independence guard, nor the server-mode integration tests, nor the
-    # smoke job. A release was gated on strictly less than a pull request.
-    uses: ./.github/workflows/bc-tests.yml
-    with:
-      ref: v${{ inputs.version }}
-
-  publish:
-    needs: [prepare, test]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          ref: v${{ inputs.version }}
 
       - uses: actions/setup-dotnet@v5
         with:
@@ -155,7 +194,7 @@ jobs:
         with:
           tag_name: v${{ inputs.version }}
           name: v${{ inputs.version }}
-          body: ${{ needs.prepare.outputs.notes }}
+          body: ${{ steps.changelog.outputs.notes }}
           files: ./nupkg/*.nupkg
           draft: false
           prerelease: false
