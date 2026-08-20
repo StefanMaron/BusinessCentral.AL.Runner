@@ -124,6 +124,15 @@ public static class BlobStoreIsolationPatches
     }
 
     /// <summary>
+    /// Whether <paramref name="provider"/> was handed out for a NON-temporary table, i.e.
+    /// stands in for SQL. Shared with RowVersionPatches, which must stamp rowversions on
+    /// exactly the providers whose rows SQL would stamp — a `temporary` record's timestamp
+    /// stays zero on real BC, and its HasBeenInserted takes the ExistsAsync branch instead.
+    /// </summary>
+    internal static bool IsDatabaseBacked(object? provider)
+        => provider != null && _databaseBackedProviders.TryGetValue(provider, out _);
+
+    /// <summary>
     /// Cecil prepend on TempTableRecordBuffer.CloneBlobs. For a database-backed
     /// table, replaces every NavBLOB in the freshly stored row with a deep copy, so
     /// the row shares no BLOB object with the record variable that inserted it.

@@ -19,7 +19,7 @@ namespace AlRunner.Infrastructure;
 
 public static class NclCecilRewrite
 {
-    private const int CACHE_VERSION = 127;
+    private const int CACHE_VERSION = 128;
 
     // ─────────────────────────────────────────────────────────────────────────
     // Cecil-owned skip registry (JmpHook→Cecil migration enabler).
@@ -6889,6 +6889,28 @@ public static class NclCecilRewrite
                     ByParams(Rt + "TempTableRecordBuffer", "CloneBlobs", "MutableRecordBuffer"),
                     H(blobIsolation, "DetachStoredBlobs"),
                     argSlots: 1); // `this` — the freshly stored row
+
+                // ── Rowversion stamping (issue #1980) ────────────────────────────────
+                // SQL assigns a rowversion on every insert/update; the SQL stand-in never
+                // did, so NavRecord.HasBeenInserted (== "timestamp field is non-zero") was
+                // false for every stored row and NavForm.SaveRecordAsync always chose
+                // Insert — CurrPage.SaveRecord() in a field OnValidate dup-keyed on rows
+                // reached via GoToRecord. Stamp the record buffer before Insert/Modify run;
+                // the guard inside the helper keeps `temporary` records at timestamp 0,
+                // exactly like real BC. See Patches/RowVersionPatches.cs for the audit.
+                var rowVersion = typeof(AlRunner.Patches.RowVersionPatches);
+
+                PrependStaticCall(nclMod,
+                    ByParams(Rt + "TempTableDataProvider", "Insert",
+                        "Int32", "MutableRecordBuffer", "InsertOptions", "ReadOnlyRecordBuffer&"),
+                    H(rowVersion, "OnBeforeInsert"),
+                    argSlots: 3); // this, companyToken, recordBuffer
+
+                PrependStaticCall(nclMod,
+                    ByParams(Rt + "TempTableDataProvider", "Modify",
+                        "Int32", "MutableRecordBuffer", "Boolean", "ReadOnlyRecordBuffer&"),
+                    H(rowVersion, "OnBeforeModify"),
+                    argSlots: 3); // this, companyToken, recordBuffer
 
                 // ── Rename store-aliasing boundary for `temporary` records (issue #1765) ──
                 // A temporary record's BLOB committed with Modify() is LOST across a
