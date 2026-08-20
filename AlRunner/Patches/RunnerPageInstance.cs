@@ -900,14 +900,16 @@ internal sealed class RunnerPageInstance
     /// </summary>
     private TriggerMatch? FindTrigger(int memberId, string suffix, string surface, int arity = 0)
     {
-        var own = FindTriggerOnTarget(_form, _pageId, memberId, suffix, surface, arity);
+        var own = FindTriggerOnTarget(_form, _pageId, memberId, suffix, surface, arity,
+            RecordPatches.TryGetPageMemberName(_pageId, memberId, isExtension: false));
         if (own != null) return own;
 
         foreach (var extensionId in RecordPatches.GetPageExtensionIdsForPage(_pageId))
         {
             var extInstance = GetOrCreateExtensionInstance(extensionId);
             if (extInstance == null) continue;
-            var extMatch = FindTriggerOnTarget(extInstance, extensionId, memberId, suffix, surface, arity);
+            var extMatch = FindTriggerOnTarget(extInstance, extensionId, memberId, suffix, surface, arity,
+                RecordPatches.TryGetPageMemberName(extensionId, memberId, isExtension: true));
             if (extMatch != null) return extMatch;
         }
         return null;
@@ -916,10 +918,23 @@ internal sealed class RunnerPageInstance
     /// <summary>
     /// FindTrigger's inner scan, over ONE declaring object (the base page or one
     /// pageextension instance) and its own id space (<paramref name="declaringObjectId"/>).
+    ///
+    /// Issue #1968: matching used to work backwards only — un-mangle each candidate method's
+    /// name and re-derive its member id. The emitted method name is LOSSY for any member whose
+    /// AL name needed mangling: <c>action("Spaced Stamp")</c> emits
+    /// <c>Spaced_Stamp_a45_OnAction</c>, which un-mangles to <c>Spaced_Stamp</c> and hashes to
+    /// a different id than <c>Spaced Stamp</c> — so every spaced-name trigger read as
+    /// "declares no trigger". When the AL source parser knows the member's TRUE declared name
+    /// (<paramref name="declaredName"/>, from RecordPatches.TryGetPageMemberName), the match
+    /// now runs FORWARD instead: mangle the true name exactly the way BC's C# emitter does and
+    /// compare against the method-name skeleton. The backward scan remains the fallback for
+    /// declaring objects the parser never saw (a precompiled dependency page's own members).
     /// </summary>
     private static TriggerMatch? FindTriggerOnTarget(
-        object target, int declaringObjectId, int memberId, string suffix, string surface, int arity)
+        object target, int declaringObjectId, int memberId, string suffix, string surface, int arity,
+        string? declaredName = null)
     {
+        var mangled = declaredName == null ? null : EmittedIdentifier(declaredName);
         MethodInfo? match = null;
         foreach (var m in target.GetType()
             .GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance))
@@ -929,7 +944,11 @@ internal sealed class RunnerPageInstance
 
             var memberName = MemberNameFromTriggerMethod(m.Name, suffix);
             if (memberName == null) continue;
-            if (MemberId(declaringObjectId, memberName) != memberId) continue;
+            if (mangled != null)
+            {
+                if (!string.Equals(memberName, mangled, StringComparison.Ordinal)) continue;
+            }
+            else if (MemberId(declaringObjectId, memberName) != memberId) continue;
 
             if (match != null)
                 throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
@@ -1059,7 +1078,8 @@ internal sealed class RunnerPageInstance
             // this path) — an OnAction trigger that only touches its own locals still runs
             // faithfully; one that reads Rec/CurrPage NREs, which surfaces as a genuine
             // runner-internal error rather than a silently wrong answer.
-            var match = FindTriggerOnTarget(instance, extensionId, actionId, "_OnAction", "OnAction", arity: 0);
+            var match = FindTriggerOnTarget(instance, extensionId, actionId, "_OnAction", "OnAction", arity: 0,
+                RecordPatches.TryGetPageMemberName(extensionId, actionId, isExtension: true));
             if (match == null) continue;
 
             try { match.Value.Method.Invoke(match.Value.Target, null); }
@@ -1081,6 +1101,31 @@ internal sealed class RunnerPageInstance
             // failure — rethrow it unwrapped so the AL stack survives.
             System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw();
         }
+    }
+
+    /// <summary>
+    /// The identifier BC's C# emitter gives an AL member name — the FORWARD half of the
+    /// trigger-method naming scheme, empirically pinned against BC's own emit (probe page with
+    /// one action per character class, decompiled): a space becomes <c>_</c>
+    /// (<c>"Spaced Stamp"</c> → <c>Spaced_Stamp</c>, each space separately: <c>"A  C"</c> →
+    /// <c>A__C</c>); letters (Unicode included: <c>"Ærø Løb"</c> → <c>Ærø_Løb</c>), digits and
+    /// <c>_</c> pass through; any other character becomes <c>a</c> + its decimal code point
+    /// (<c>-</c>→<c>a45</c>, <c>.</c>→<c>a46</c>, <c>&amp;</c>→<c>a38</c>, <c>%</c>→<c>a37</c>,
+    /// <c>/</c>→<c>a47</c>); a leading digit gets a <c>_</c> prefix (<c>"2Start"</c> →
+    /// <c>_2Start</c>). This is deliberately NOT invertible — that irreversibility is exactly
+    /// why FindTriggerOnTarget mangles forward instead of un-mangling (#1968).
+    /// </summary>
+    internal static string EmittedIdentifier(string name)
+    {
+        var sb = new System.Text.StringBuilder(name.Length);
+        foreach (var c in name)
+        {
+            if (char.IsLetterOrDigit(c) || c == '_') sb.Append(c);
+            else if (c == ' ') sb.Append('_');
+            else sb.Append('a').Append(((int)c).ToString(System.Globalization.CultureInfo.InvariantCulture));
+        }
+        if (sb.Length > 0 && char.IsDigit(sb[0])) sb.Insert(0, '_');
+        return sb.ToString();
     }
 
     /// <summary>
