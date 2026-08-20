@@ -30,6 +30,8 @@
 //      below against constructed strings — it does not need the real files to be provable.
 //   2. The remaining tests wire that pure function to the REAL workflow files on disk.
 
+using System.Text;
+using System.Text.RegularExpressions;
 using Xunit;
 
 namespace AlRunner.Tests;
@@ -82,6 +84,63 @@ internal static class WorkflowParity
             .Select(s => s.Marker)
             .ToList();
     }
+
+    private static readonly Regex JobHeader = new(@"^  ([A-Za-z0-9_-]+):\s*$", RegexOptions.Compiled);
+
+    /// <summary>
+    /// Splits a workflow into its top-level jobs, keyed by job id. Only the region after the
+    /// `jobs:` key is considered — `on:` and `env:` also have two-space keys, and
+    /// `workflow_dispatch:` would otherwise read as a job.
+    /// </summary>
+    internal static IReadOnlyDictionary<string, string> SplitJobs(string workflowText)
+    {
+        var lines = workflowText.Replace("\r\n", "\n").Split('\n');
+        var jobs = new Dictionary<string, string>(StringComparer.Ordinal);
+
+        var i = Array.FindIndex(lines, l => l.StartsWith("jobs:", StringComparison.Ordinal));
+        if (i < 0) return jobs;
+
+        string? current = null;
+        var body = new StringBuilder();
+        for (i++; i < lines.Length; i++)
+        {
+            var header = JobHeader.Match(lines[i]);
+            if (header.Success)
+            {
+                if (current is not null) jobs[current] = body.ToString();
+                current = header.Groups[1].Value;
+                body.Clear();
+                continue;
+            }
+            body.Append(lines[i]).Append('\n');
+        }
+        if (current is not null) jobs[current] = body.ToString();
+        return jobs;
+    }
+
+    /// <summary>The job ids a job declares in <c>needs:</c>, in either the inline or list form.</summary>
+    internal static IReadOnlyList<string> NeedsOf(string jobBody)
+    {
+        foreach (var line in jobBody.Split('\n'))
+        {
+            var trimmed = line.Trim();
+            if (trimmed.StartsWith('#') || !trimmed.StartsWith("needs:", StringComparison.Ordinal)) continue;
+
+            return trimmed["needs:".Length..].Trim().Trim('[', ']')
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Select(s => s.Trim('"', '\''))
+                .ToList();
+        }
+        return Array.Empty<string>();
+    }
+
+    /// <summary>The ids of jobs whose body contains <paramref name="marker"/>, comments excluded.</summary>
+    internal static IReadOnlyList<string> JobsContaining(string workflowText, string marker) =>
+        SplitJobs(workflowText)
+            .Where(j => string.Join('\n', j.Value.Split('\n').Where(l => !l.TrimStart().StartsWith('#')))
+                              .Contains(marker, StringComparison.Ordinal))
+            .Select(j => j.Key)
+            .ToList();
 }
 
 public sealed class ReleaseTestParityTests
@@ -205,5 +264,115 @@ public sealed class ReleaseTestParityTests
 
         Assert.Contains("name: All BC versions passed", text, StringComparison.Ordinal);
         Assert.DoesNotContain("All BC versions passed", Read(WorkflowParity.SharedWorkflow), StringComparison.Ordinal);
+    }
+
+    // ---- release ordering: tests gate every write (#1978) ---------------------------
+
+    [Fact]
+    public void SplitJobs_DoesNotMistakeWorkflowDispatchForAJob()
+    {
+        // `on:` and `env:` carry two-space keys too. Splitting from the top of the file
+        // instead of from `jobs:` would report "workflow_dispatch" as a job and quietly
+        // break every ordering assertion below.
+        const string wf = """
+            on:
+              workflow_dispatch:
+                inputs:
+                  version:
+                    required: true
+            env:
+              DOTNET_NOLOGO: true
+            jobs:
+              plan:
+                runs-on: ubuntu-latest
+              release:
+                needs: [plan, test]
+            """;
+
+        Assert.Equal(new[] { "plan", "release" }, WorkflowParity.SplitJobs(wf).Keys.OrderBy(k => k, StringComparer.Ordinal));
+    }
+
+    [Fact]
+    public void NeedsOf_ReadsBothTheInlineAndTheSingleForm()
+    {
+        Assert.Equal(new[] { "plan", "test" }, WorkflowParity.NeedsOf("    needs: [plan, test]\n"));
+        Assert.Equal(new[] { "plan" }, WorkflowParity.NeedsOf("    needs: plan\n"));
+        Assert.Empty(WorkflowParity.NeedsOf("    runs-on: ubuntu-latest\n"));
+    }
+
+    [Fact]
+    public void JobsContaining_FindsThePreOrderingShapeThatLeftDeadTags()
+    {
+        // publish.yml as it stood before #1978: the tag was pushed by a job that needed
+        // nothing, so a red matrix still left the tag behind. v2.3.0 and v2.3.1 both.
+        const string oldShape = """
+            jobs:
+              prepare:
+                runs-on: ubuntu-latest
+                steps:
+                  - name: Generate CHANGELOG and push release commit + tag
+                    run: |
+                      git push origin main
+                      git tag "$TAG"
+                      git push origin "$TAG"
+              test:
+                needs: prepare
+                uses: ./.github/workflows/bc-tests.yml
+            """;
+
+        var tagging = WorkflowParity.JobsContaining(oldShape, "git push origin \"$TAG\"");
+
+        Assert.Equal(new[] { "prepare" }, tagging);
+        Assert.Empty(WorkflowParity.NeedsOf(WorkflowParity.SplitJobs(oldShape)["prepare"]));
+    }
+
+    [Fact]
+    public void EveryWriteInPublishYml_IsGatedOnTheTestMatrix()
+    {
+        // The property that matters: a red matrix must leave the repository untouched.
+        // Before #1978 the tag went up first, and v2.3.0 and v2.3.1 are both tags on main
+        // with no release behind them because of it.
+        var text = Read("publish.yml");
+        var jobs = WorkflowParity.SplitJobs(text);
+
+        var testJob = jobs.Keys.Single(j => jobs[j].Contains(WorkflowParity.DelegationMarker, StringComparison.Ordinal));
+
+        var writes = new (string Marker, string What)[]
+        {
+            ("git push origin \"$TAG\"", "the release tag"),
+            ("git push origin HEAD:main", "the CHANGELOG commit on main"),
+            ("dotnet nuget push", "the NuGet package"),
+            ("softprops/action-gh-release", "the GitHub Release"),
+        };
+
+        foreach (var (marker, what) in writes)
+        {
+            var owners = WorkflowParity.JobsContaining(text, marker);
+            Assert.True(owners.Count == 1,
+                $"expected exactly one job to write {what}; found {owners.Count} ({string.Join(", ", owners)})");
+
+            var needs = WorkflowParity.NeedsOf(jobs[owners[0]]);
+            Assert.True(needs.Contains(testJob),
+                $"publish.yml job '{owners[0]}' writes {what} without needing '{testJob}'. "
+                + "A failed matrix would leave it behind — that is how v2.3.0 and v2.3.1 became "
+                + "dead tags on main (#1978).");
+        }
+    }
+
+    [Fact]
+    public void PublishYml_TestsTheCommitItShips_NotWhateverMainBecomes()
+    {
+        // main can move during a 40-minute matrix run. The ref is pinned once, by the plan
+        // job, and both the matrix and the release checkout read that same pinned value —
+        // otherwise the tag could land on code this run never tested.
+        var text = Read("publish.yml");
+        var jobs = WorkflowParity.SplitJobs(text);
+
+        var testJob = jobs.Keys.Single(j => jobs[j].Contains(WorkflowParity.DelegationMarker, StringComparison.Ordinal));
+        var releaseJob = WorkflowParity.JobsContaining(text, "git push origin \"$TAG\"").Single();
+
+        const string pinnedRef = "ref: ${{ needs.plan.outputs.ref }}";
+        Assert.Contains(pinnedRef, jobs[testJob], StringComparison.Ordinal);
+        Assert.Contains(pinnedRef, jobs[releaseJob], StringComparison.Ordinal);
     }
 }
