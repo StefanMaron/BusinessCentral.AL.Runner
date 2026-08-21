@@ -1496,14 +1496,17 @@ foreach (var bundle in bundles)
             // already applies — see BcCompiler.ScopeSymbolBearingDepsOnly.
             using var bundleDepScope = BcCompiler.ScopeSymbolBearingDepsOnly();
 
-            // #1902: in --watch, try the incremental (RAD) path first — a content edit to one
-            // already-tracked, id-bearing object recompiles just that object instead of the
-            // whole module. Falls back to the ordinary full Emit() (still tracking a baseline
-            // for the NEXT cycle) for anything it cannot prove safe: the first cycle for this
-            // bundle, an added/removed/renamed file, an app.json/dependency change, an id-less
-            // object kind, or any diagnostic the delta compile itself raises. Every other mode
-            // (one-shot, --server) is untouched — normal-mode Emit() never tracks a baseline and
-            // never calls TryEmitIncremental, so its cost profile is unchanged.
+            // #1902: in --watch, try the incremental (RAD) path first — one edit costs work
+            // proportional to that edit, for every object kind (including the six with no
+            // numeric Id) and every file operation (add/edit/rename/delete/touch-with-
+            // identical-bytes), instead of the whole module. Falls back to the ordinary full
+            // Emit() (still tracking a baseline for the NEXT cycle) for anything it cannot prove
+            // safe: the first cycle for this bundle, an app.json/dependency change, more than
+            // one object declared in a touched file, a duplicate declaration only the compiler
+            // can adjudicate, or any diagnostic the delta compile itself raises — see
+            // BcCompiler.Incremental.cs's header comment for the full classification. Every
+            // other mode (one-shot, --server) is untouched — normal-mode Emit() never tracks a
+            // baseline and never calls TryEmitIncremental, so its cost profile is unchanged.
             BcEmitOutput? incrementalOutput = null;
             if (watchMode)
             {
