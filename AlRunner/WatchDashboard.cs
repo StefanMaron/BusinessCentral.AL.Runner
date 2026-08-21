@@ -31,25 +31,60 @@ public static class WatchDashboard
 {
     /// <summary>
     /// Builds the full dashboard renderable: header (bundle · status · last-run
-    /// timestamp+duration), a per-codeunit tree of test procedures, and a footer with
-    /// P/F/E counts. Pure — no console side effects — so it is repaintable and testable.
+    /// timestamp+duration), an optional full-rebuild-reason banner, a per-codeunit tree
+    /// of test procedures, and a footer with P/F/E counts. Pure — no console side
+    /// effects — so it is repaintable and testable.
     /// </summary>
+    /// <param name="fullRebuildReasons">
+    /// #1905 (defect 4): why the just-finished cycle recompiled the WHOLE module
+    /// instead of the proportional-cost incremental path, one entry per module that
+    /// fell back — e.g. ("MyApp", "app.json (identity/version/...) changed since the
+    /// last cycle"). A full rebuild costs whole minutes on a large app, so a developer
+    /// staring at "⟳ running…" for far longer than usual needs to know why, and the
+    /// interactive dashboard is exactly the surface that deliberately swallows
+    /// Console.Out/Error during the cycle body (see Program.cs's stdoutSilenced) — so
+    /// logging the reason there is not enough, it has to be a frame element. Null or
+    /// empty renders NOTHING (no row at all): present only on a full-rebuild cycle,
+    /// absent entirely on a proportional one, so it can't be trained into background
+    /// noise the way an always-present line would be.
+    /// </param>
     public static IRenderable Build(
         IReadOnlyList<BucketResult> results,
         string bundleName,
         WatchStatus status,
         DateTime lastRun,
-        TimeSpan lastDuration)
+        TimeSpan lastDuration,
+        IReadOnlyList<(string Module, string Reason)>? fullRebuildReasons = null)
     {
         var rows = new List<IRenderable>
         {
             Header(bundleName, status, lastRun, lastDuration),
             new Text(string.Empty),
-            BuildTree(results),
-            new Text(string.Empty),
-            Footer(results),
         };
+        var banner = FullRebuildBanner(fullRebuildReasons);
+        if (banner != null)
+        {
+            rows.Add(banner);
+            rows.Add(new Text(string.Empty));
+        }
+        rows.Add(BuildTree(results));
+        rows.Add(new Text(string.Empty));
+        rows.Add(Footer(results));
         return new Rows(rows);
+    }
+
+    /// <summary>
+    /// One line per module that fell back to a full rebuild this cycle, naming the
+    /// cause verbatim from BcCompiler.Incremental.cs — e.g. "app.json (identity/
+    /// version/...) changed since the last cycle". Null when nothing fell back, so
+    /// <see cref="Build"/> can omit the row entirely rather than render an empty panel.
+    /// </summary>
+    private static IRenderable? FullRebuildBanner(IReadOnlyList<(string Module, string Reason)>? reasons)
+    {
+        if (reasons == null || reasons.Count == 0) return null;
+        var lines = reasons.Select(r =>
+            $"[yellow]⚠ FULL REBUILD[/] [blue]{Markup.Escape(r.Module)}[/]: {Markup.Escape(r.Reason)}");
+        return new Markup(string.Join("\n", lines));
     }
 
     private static IRenderable Header(string bundleName, WatchStatus status,

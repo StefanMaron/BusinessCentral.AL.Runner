@@ -14,12 +14,13 @@ namespace AlRunner.Tests;
 public class WatchDashboardTests
 {
     private static string Render(IReadOnlyList<BucketResult> results, WatchStatus status,
-        DateTime ts, TimeSpan dur)
+        DateTime ts, TimeSpan dur, IReadOnlyList<(string Module, string Reason)>? fullRebuildReasons = null,
+        int width = 120)
     {
         var console = new TestConsole();
         // Wide enough that the table columns aren't truncated away in the test.
-        console.Profile.Width = 120;
-        console.Write(WatchDashboard.Build(results, "my-bundle", status, ts, dur));
+        console.Profile.Width = width;
+        console.Write(WatchDashboard.Build(results, "my-bundle", status, ts, dur, fullRebuildReasons));
         return console.Output;
     }
 
@@ -142,6 +143,61 @@ public class WatchDashboardTests
         Assert.Contains("running", output);
         // The cold first run must not look frozen — busy state is explicit.
         Assert.DoesNotContain("watching", output);
+    }
+
+    /// <summary>
+    /// #1905 (defect 4): when a cycle fell back to a full rebuild, the interactive
+    /// dashboard must show WHY as a distinct frame element — not just a log line,
+    /// because Program.cs's watch loop deliberately redirects Console.Out/Error to
+    /// TextWriter.Null for the duration of the cycle body while the dashboard is
+    /// active (see its "Clean loading (#5)" comment), so a log-line-only fix is
+    /// invisible in exactly the mode it exists for. Assert the module name AND the
+    /// specific cause both reach the rendered frame, not just a generic "rebuilt"
+    /// marker — a generic marker would pass even if the actual reason never made it
+    /// through.
+    /// </summary>
+    [Fact]
+    public void Render_FullRebuildReason_ShowsBannerNamingModuleAndCause()
+    {
+        var results = new List<BucketResult> { Bucket() };
+        var reasons = new List<(string Module, string Reason)>
+        {
+            ("MyTestApp", "app.json (identity/version/preprocessor symbols/features/help url) changed since the last cycle"),
+        };
+
+        // Wide enough that the reason line doesn't word-wrap mid-sentence — this test
+        // asserts on the reason text as a contiguous substring, and the real dashboard
+        // wraps at whatever the actual terminal width is, which this is standing in for.
+        var output = Render(results, WatchStatus.Idle, DateTime.Now, TimeSpan.FromSeconds(842.5), reasons, width: 400);
+
+        Assert.Contains("MyTestApp", output);
+        Assert.Contains("app.json", output);
+        Assert.Contains("changed since the last cycle", output);
+        // Distinct from an ordinary compile/test failure row — a developer scanning the
+        // frame must be able to tell "this cost minutes for a structural reason" apart
+        // from "a test failed".
+        Assert.Contains("FULL REBUILD", output);
+    }
+
+    /// <summary>
+    /// The converse of the above: a proportional (incremental) cycle must show NO
+    /// full-rebuild banner at all — not an empty one, not a "no reason" placeholder.
+    /// "Present on a full-rebuild cycle, absent entirely on a proportional one" is the
+    /// #1905 acceptance wording verbatim; a banner that's merely empty-but-rendered
+    /// would still occupy dashboard real estate every single cycle and get trained
+    /// into background noise exactly like the defect this fixes.
+    /// </summary>
+    [Fact]
+    public void Render_NoFullRebuildReason_OmitsBannerEntirely()
+    {
+        var results = new List<BucketResult> { Bucket() };
+
+        var withNull = Render(results, WatchStatus.Idle, DateTime.Now, TimeSpan.FromSeconds(2.1), fullRebuildReasons: null);
+        var withEmpty = Render(results, WatchStatus.Idle, DateTime.Now, TimeSpan.FromSeconds(2.1),
+            fullRebuildReasons: new List<(string Module, string Reason)>());
+
+        Assert.DoesNotContain("FULL REBUILD", withNull);
+        Assert.DoesNotContain("FULL REBUILD", withEmpty);
     }
 
     [Fact]

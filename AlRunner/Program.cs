@@ -800,6 +800,21 @@ var executor = new TestExecutor { Isolation = isolation, TestFilter = testFilter
 var depLoader = new DependencyLoader(emitter, assembler);
 var results = new List<BucketResult>();
 
+// #1905 (defect 4): the reason a --watch cycle fell back to a full rebuild (instead
+// of the proportional-cost incremental path), one entry per module that fell back
+// THIS cycle. Declared once, outside the loop, and cleared+repopulated at the top
+// of each cycle — same pattern as `results` above — so the local functions below
+// (closures declared once, before the loop) always see the current cycle's data
+// when they render. Left empty on a proportional cycle, so its emptiness alone is
+// "nothing to explain" for both the dashboard banner and the plain-line fallback.
+var watchFullRebuildReasons = new List<(string Module, string Reason)>();
+// The very first --watch cycle for a bundle ALWAYS falls back (there is no baseline
+// yet to diff against) — that is not a fallback in any meaningful sense, just the
+// starting state, so it is excluded from watchFullRebuildReasons below rather than
+// trained into looking like every other startup's alarm. See the incremental-path
+// call site for the full reasoning.
+int watchCycleIndex = 0;
+
 // ── Layered source build pre-pass ─────────────────────────────────────────
 // When multiple bundles are passed and one depends on another (by AppId or
 // Name+Publisher), emit each "impl" bundle (one that another depends on) as
@@ -907,7 +922,13 @@ List<string> RenderDashboardLines(WatchStatus status, DateTime ts, TimeSpan dur)
         Out = new Spectre.Console.AnsiConsoleOutput(sw),
     });
     rec.Profile.Width = width;
-    rec.Write(WatchDashboard.Build(results, watchBundleName, status, ts, dur));
+    // #1905 (defect 4): watchFullRebuildReasons reflects the cycle that JUST finished
+    // (populated during this iteration's bundle loop, cleared at the top of the NEXT
+    // one) — exactly what an idle/post-cycle repaint should explain. PaintWatchRunning
+    // below deliberately does NOT pass it: while "⟳ running…" is showing, the reason
+    // in this list (if any) is stale — it belongs to the PREVIOUS cycle, and the cycle
+    // in flight hasn't decided whether it needs a full rebuild yet.
+    rec.Write(WatchDashboard.Build(results, watchBundleName, status, ts, dur, watchFullRebuildReasons));
     return sw.ToString().Replace("\r\n", "\n").TrimEnd('\n').Split('\n').ToList();
 }
 
@@ -960,6 +981,7 @@ if (watchUi) PaintWatchRunning();
 while (true)
 {
 results.Clear();
+watchFullRebuildReasons.Clear();
 // Clean loading (#5): the interactive dashboard owns the whole screen, but the
 // run-cycle body emits diagnostic Console.WriteLine noise ("[bundle] resolved N
 // dep(s)", "loaded N assembl(ies)", "[i/N] … suites", …) that would scroll over
@@ -1511,8 +1533,33 @@ foreach (var bundle in bundles)
             if (watchMode)
             {
                 incrementalOutput = emitter.TryEmitIncremental(allPaths, moduleName, appGroup.SuiteDir, out var incrementalFallbackReason);
-                if (incrementalOutput == null && AlRunner.Log.Verbose)
-                    Console.Error.WriteLine($"[watch] {moduleName}: full rebuild this cycle — {incrementalFallbackReason}");
+                // #1905 (defect 4): a full rebuild costs whole MINUTES on a large app
+                // (761-862s measured on NP Retail, #1905's own numbers) against an
+                // incremental cycle's seconds, so which reason forced it is a RESULT
+                // the developer needs to see, not an internal diagnostic — it must NOT
+                // be gated behind --verbose. That gate was exactly the [bc]/[expectations]
+                // mistake Log.cs's header comment warns about: both were silently eaten
+                // by the component filter until their cost was measured after the fact.
+                // [watch] is already exempt from that filter (see Log.cs), so this reaches
+                // the console unconditionally at default verbosity.
+                //
+                // Cycle 0 is excluded: the very first --watch cycle for a bundle ALWAYS
+                // falls back ("no incremental baseline yet") because there is nothing to
+                // diff against yet — that is not a fallback in any meaningful sense, it is
+                // the starting state every single invocation hits. Printing a scary-sounding
+                // "full rebuild" line on every startup would train the reader to ignore it,
+                // which is the exact failure this line exists to prevent (see this file's
+                // header comment for the identical trap already hit twice with [bc] and
+                // [expectations]). From cycle 1 onward the same reason text (e.g. two
+                // fallbacks in a row because CreateForRad keeps throwing) IS interesting and
+                // is reported.
+                if (incrementalOutput == null && watchCycleIndex > 0)
+                {
+                    watchFullRebuildReasons.Add((moduleName, incrementalFallbackReason));
+                    Console.Error.WriteLine(
+                        $"[watch] {moduleName}: FULL REBUILD this cycle (whole module — expect the " +
+                        $"cold-cycle order of magnitude, not a proportional edit) — {incrementalFallbackReason}");
+                }
             }
             var emitTask = incrementalOutput != null
                 ? Task.FromResult(incrementalOutput)
@@ -2106,6 +2153,7 @@ else
     Console.WriteLine("[watch] change detected — re-running…");
     Console.Out.Flush();
 }
+watchCycleIndex++; // the cycle that just finished is no longer "the first cycle"
 } // end while(true) watch loop
 
 // ── Count-baseline check (issue #1880) ──────────────────────────────────────────────
