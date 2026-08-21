@@ -244,8 +244,9 @@ string? artifactPathArg = null;
 // Validated as AL identifiers and merged with CLEANSCHEMA1..25 in BcCompiler.
 var extraPreprocessorSymbols = new List<string>();
 // --expectations DIR: test-expectations manifest directory (issue #1734; schema in
-// docs/expectations.md). Null = probe the default ./tests/expectations below; only an
-// existing directory activates classification, so ordinary runs outside this repo are
+// docs/expectations.md). Null = auto-probe below (walk up from each bundle path,
+// then cwd, looking for a tests/expectations sibling — #1984); only an existing
+// directory activates classification, so ordinary runs outside this repo are
 // untouched.
 string? expectationsDirArg = null;
 // --count-baseline PATH: opt-in test/app-group expected-count manifest (issue #1880;
@@ -381,9 +382,11 @@ if (serverMode && watchMode)
 // ── Test-expectations manifest (issue #1734; docs/expectations.md) ────────────────
 // Loaded HERE — at parse time, before BC init — so a malformed manifest aborts the
 // invocation (exit 2, the "bad invocation" ladder entry) without running a single
-// test. An explicit --expectations dir must exist; without the flag, the documented
-// default ./tests/expectations activates only when present (this repo's corpus CI),
-// leaving every other invocation exactly as before.
+// test. An explicit --expectations dir must exist; without the flag, the auto-probe
+// walks up from each bundle path (and, secondarily, cwd) looking for a
+// `tests/expectations` sibling — see ExpectationsDirectoryResolution for why cwd
+// alone silently missed it (#1984) — activating classification only when found,
+// leaving every invocation with no reachable manifest exactly as before.
 AlRunner.Infrastructure.ExpectationManifest? expectations = null;
 {
     var expectationsDir = expectationsDirArg;
@@ -392,14 +395,31 @@ AlRunner.Infrastructure.ExpectationManifest? expectations = null;
         Console.Error.WriteLine($"--expectations: directory not found: {expectationsDir}");
         return 2;
     }
-    expectationsDir ??= Directory.Exists(Path.Combine(Environment.CurrentDirectory, "tests", "expectations"))
-        ? Path.Combine(Environment.CurrentDirectory, "tests", "expectations")
-        : null;
+    if (expectationsDir == null)
+    {
+        expectationsDir = AlRunner.Infrastructure.ExpectationsDirectoryResolution.Resolve(bundles, Environment.CurrentDirectory);
+        if (expectationsDir == null)
+        {
+            // #1984: this used to be silent — an explicit --expectations miss exits 2
+            // loudly, but the auto-probed default just left `expectations` null and
+            // every expect-oos/expect-divergence test in the run flipped to a plain
+            // FAIL with nothing in the output to say why. Diagnosable, not inferred.
+            var cwdCandidate = Path.Combine(Path.GetFullPath(Environment.CurrentDirectory), "tests", "expectations");
+            Console.Error.WriteLine(
+                $"[expectations] no tests/expectations manifest found (probed {cwdCandidate}" +
+                (bundles.Count > 0 ? $" and the ancestor tree of {bundles.Count} bundle path(s)" : "") +
+                ") — expect-oos / expect-fail-known-gap / expect-divergence classification is OFF " +
+                "this run. Pass --expectations DIR to set it explicitly.");
+        }
+    }
     if (expectationsDir != null)
     {
         try
         {
             expectations = AlRunner.Infrastructure.ExpectationManifest.LoadFromDirectory(expectationsDir);
+            Console.Error.WriteLine(
+                $"[expectations] loaded {expectations.Entries.Count} " +
+                (expectations.Entries.Count == 1 ? "entry" : "entries") + $" from {expectationsDir}");
         }
         catch (InvalidOperationException ex)
         {

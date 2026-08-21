@@ -19,6 +19,17 @@
 // `out-of-scope: <api> — <reason>` message convention, and #1741 added
 // expect-divergence. Both are covered here end-to-end; the negatives that keep the
 // widened matcher honest live in ManifestDrift_EveryDirection_FailsTheRunLoudly.
+//
+// #1984 added AutoProbe_ResolvesRelativeToBundlePath_EvenWhenCwdHasNoManifest and
+// AutoProbe_NoManifestAnywhere_EmitsLoudDiagnostic below: the auto-probe used to
+// check ONLY Environment.CurrentDirectory, so the SAME bundle silently lost its
+// out-of-scope/known-gap/divergence classification depending on which directory the
+// shell happened to be sitting in when al-runner was invoked. That also forced
+// NoManifest_UnchangedBehaviour_OosIsAPlainFail to move its fixture bundle OUTSIDE
+// this repo's working tree: this repo's own tests/expectations/ is a genuine
+// ancestor of AlRunner.Tests/Fixtures/ExpectationsBundle/suite, so once the
+// auto-probe walks up from the bundle path, that fixture is no longer a valid
+// "no manifest reachable at all" scenario in-place.
 
 using System.Diagnostics;
 using System.Text;
@@ -29,7 +40,7 @@ namespace AlRunner.Tests;
 
 // See DefineFlagIntegrationTests for why runner-subprocess tests used to be
 // [Collection("server-serial")] and no longer are — #1809.
-public sealed class ExpectationManifestWiringTests
+public sealed class ExpectationManifestWiringTests : IDisposable
 {
     private static readonly string RepoRoot = Path.GetFullPath(
         Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
@@ -40,6 +51,26 @@ public sealed class ExpectationManifestWiringTests
         RepoRoot, "AlRunner.Tests", "Fixtures", "ExpectationsManifest");
     private static readonly string MalformedManifestDir = Path.Combine(
         RepoRoot, "AlRunner.Tests", "Fixtures", "ExpectationsManifestMalformed");
+
+    // #1984: scratch root for tests that need fixture copies living OUTSIDE this
+    // repo's working tree, so no ancestor of the copy accidentally carries this
+    // repo's own tests/expectations/. Torn down in Dispose.
+    private readonly string _scratchRoot = Path.Combine(
+        Path.GetTempPath(), "al-runner-expectations-wiring", Guid.NewGuid().ToString("N"));
+
+    public void Dispose()
+    {
+        try { Directory.Delete(_scratchRoot, recursive: true); } catch { }
+    }
+
+    private static void CopyDirectory(string sourceDir, string destDir)
+    {
+        Directory.CreateDirectory(destDir);
+        foreach (var file in Directory.EnumerateFiles(sourceDir))
+            File.Copy(file, Path.Combine(destDir, Path.GetFileName(file)), overwrite: true);
+        foreach (var subDir in Directory.EnumerateDirectories(sourceDir))
+            CopyDirectory(subDir, Path.Combine(destDir, Path.GetFileName(subDir)));
+    }
 
     private static (string Output, int Exit) RunRunner(string runnerArgs, string? workingDir = null)
     {
@@ -175,23 +206,89 @@ public sealed class ExpectationManifestWiringTests
     }
 
     /// <summary>
-    /// Negative direction: with NO manifest (cwd without tests/expectations and no
-    /// --expectations flag), behaviour is unchanged — an uncaught OOS throw is a plain
-    /// FAIL without any drift diagnostic. Without this, the assertions above would
-    /// still hold if classification ran unconditionally and rewrote every user-facing
-    /// OOS failure into manifest advice.
+    /// Negative direction: with NO manifest reachable AT ALL (neither cwd nor any
+    /// ancestor of the bundle path has a tests/expectations directory, and no
+    /// --expectations flag), behaviour is unchanged — an uncaught OOS throw is a
+    /// plain FAIL without any drift diagnostic. Without this, the assertions above
+    /// would still hold if classification ran unconditionally and rewrote every
+    /// user-facing OOS failure into manifest advice.
+    ///
+    /// #1984: the fixture bundle is copied OUTSIDE this repo's working tree for this
+    /// test specifically — see the class-level #1984 comment for why the in-repo
+    /// SuitePath no longer proves "no manifest reachable" once the auto-probe walks
+    /// up from the bundle path (this repo's own tests/expectations/ IS an ancestor
+    /// of SuitePath).
     /// </summary>
     [SkippableFact]
     public void NoManifest_UnchangedBehaviour_OosIsAPlainFail()
     {
         TestArtifacts.SkipIfMissing();
 
+        var isolatedBundle = Path.Combine(_scratchRoot, "no-manifest", "suite");
+        CopyDirectory(SuitePath, isolatedBundle);
+        var isolatedCwd = Path.Combine(_scratchRoot, "no-manifest", "cwd");
+        Directory.CreateDirectory(isolatedCwd);
+
         var (output, exit) = RunRunner(
-            $"--test Drift_OosThrownButNoEntry \"{SuitePath}\"",
-            workingDir: Path.Combine(RepoRoot, "AlRunner.Tests", "Fixtures"));
+            $"--test Drift_OosThrownButNoEntry \"{isolatedBundle}\"",
+            workingDir: isolatedCwd);
 
         Assert.DoesNotContain("Add an expect-oos entry", output, StringComparison.Ordinal);
         AssertCount(output, "  fail:", 1);
         Assert.True(exit == 1, $"an uncaught OOS throw stays a failing test. exit={exit}\n{output}");
+    }
+
+    /// <summary>
+    /// The reported bug (#1984): a bundle whose enclosing checkout HAS a
+    /// tests/expectations manifest must have it applied regardless of cwd. Before
+    /// the fix, the auto-probe checked only Environment.CurrentDirectory, so this
+    /// SAME invocation — manifest and bundle both copied under one "fake-repo" tree,
+    /// cwd pointed at a totally unrelated directory — silently lost classification:
+    /// the declared expect-oos entry never reclassified the throw, and the run
+    /// reported a plain FAIL where it should report pass-oos.
+    /// </summary>
+    [SkippableFact]
+    public void AutoProbe_ResolvesRelativeToBundlePath_EvenWhenCwdHasNoManifest()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        var fakeRepo = Path.Combine(_scratchRoot, "fake-repo");
+        CopyDirectory(ManifestDir, Path.Combine(fakeRepo, "tests", "expectations"));
+        var bundleDir = Path.Combine(fakeRepo, "nested", "path", "to", "suite");
+        CopyDirectory(SuitePath, bundleDir);
+        var unrelatedCwd = Path.Combine(_scratchRoot, "unrelated-cwd");
+        Directory.CreateDirectory(unrelatedCwd);
+
+        var (output, exit) = RunRunner(
+            $"--test GreenPath_OosDeclared \"{bundleDir}\"",
+            workingDir: unrelatedCwd);
+
+        AssertCount(output, "pass-oos:", 1);
+        AssertCount(output, "  fail:", 0);
+        Assert.True(exit == 0,
+            $"the bundle-path-relative manifest must reclassify the OOS throw regardless of cwd. exit={exit}\n{output}");
+    }
+
+    /// <summary>
+    /// The loud-failures half of #1984: when NO manifest is reachable via either the
+    /// bundle path's ancestors or cwd, the run must say so on stderr — before the
+    /// fix there was no notice at any verbosity, so a corpus run from the wrong cwd
+    /// silently lost classification with nothing in the output pointing at why.
+    /// </summary>
+    [SkippableFact]
+    public void AutoProbe_NoManifestAnywhere_EmitsLoudDiagnostic()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        var isolatedBundle = Path.Combine(_scratchRoot, "loud-miss", "suite");
+        CopyDirectory(SuitePath, isolatedBundle);
+        var isolatedCwd = Path.Combine(_scratchRoot, "loud-miss", "cwd");
+        Directory.CreateDirectory(isolatedCwd);
+
+        var (output, _) = RunRunner(
+            $"--test GreenPath_OosDeclared \"{isolatedBundle}\"",
+            workingDir: isolatedCwd);
+
+        Assert.Contains("[expectations] no tests/expectations manifest found", output, StringComparison.Ordinal);
     }
 }
