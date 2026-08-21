@@ -45,6 +45,27 @@
 // runner's modify path (checked: TempTableDataProvider.Modify compares nothing, and
 // Ncl contains no record-changed check for this provider), so a record holding an
 // older stamp than the store never trips anything.
+//
+// ── Loud-failures audit (issue #1986) ─────────────────────────────────────────
+//
+// The five reflection lookups below (MetaTable, TimestampField, FieldIndex, the
+// buffer indexer, NavBigInteger.Create) are NOT allowed to fail quietly. Reverting
+// to "no stamp" on a resolution failure is exactly the pre-#1980 bug this patch
+// exists to close — HasBeenInserted going back to permanently false — so any lookup
+// that cannot resolve throws InvalidOperationException naming the missing member,
+// the same convention the rest of AlRunner/Patches uses for an internal invariant
+// breaking (see e.g. NavRecordRefPatches, RecordPatches.AllObjVirtualTable).
+// RunnerOutOfScopeException does not apply here: that type means "this AL surface
+// is intentionally unsupported" (SMTP, HTTP egress, printing — see docs/scope.md),
+// which a developer cannot fix by upgrading the runner. A BC build moving one of
+// these members is a genuine runner defect with a fix available, not a permanent
+// scope boundary, so a plain thrown exception carrying the member name is the
+// right signal — it stops the run instead of quietly reintroducing #1980.
+//
+// The ONE legitimate quiet path stays quiet: `tsField == null` after the
+// TimestampField property itself resolved and answered fine. That is a real BC
+// answer — "this table has no timestamp field" — not a reflection failure, and
+// must not be conflated with one (see the comment at that line).
 using System.Reflection;
 
 namespace AlRunner.Patches;
@@ -60,7 +81,6 @@ public static class RowVersionPatches
     private static PropertyInfo? _pFieldIndex;     // NCLMetaField.FieldIndex
     private static PropertyInfo? _pItem;           // MutableRecordBuffer.this[int]
     private static MethodInfo? _mCreate;           // NavBigInteger.Create(long)
-    private static bool _reflectionFailed;
 
     /// <summary>Cecil prepend on TempTableDataProvider.Insert — (this, companyToken, recordBuffer).</summary>
     public static void OnBeforeInsert(object? provider, int companyToken, object? recordBuffer)
@@ -73,50 +93,56 @@ public static class RowVersionPatches
     private static void Stamp(object? provider, object? recordBuffer)
     {
         if (recordBuffer == null || !BlobStoreIsolationPatches.IsDatabaseBacked(provider)) return;
-        if (_reflectionFailed) return;
 
-        try
-        {
-            var bufferType = recordBuffer.GetType();
-            _pMetaTable ??= bufferType.GetProperty("MetaTable",
-                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
-                ?? throw new MissingMemberException(bufferType.Name, "MetaTable");
-            var metaTable = _pMetaTable.GetValue(recordBuffer)
-                ?? throw new InvalidOperationException("record buffer has no MetaTable");
+        // No try/catch here — a failed lookup throws straight out of this method and
+        // out of the Cecil-prepended TempTableDataProvider.Insert/Modify call it runs
+        // ahead of, so the run stops with the failing member named instead of quietly
+        // reverting to the pre-#1980 behaviour. See the file header for why this is
+        // InvalidOperationException rather than RunnerOutOfScopeException.
+        var bufferType = recordBuffer.GetType();
+        _pMetaTable ??= bufferType.GetProperty("MetaTable",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+            ?? throw new InvalidOperationException(
+                $"[RowVersionPatches] {bufferType.Name}.MetaTable property not found — " +
+                "rowversion stamping cannot resolve its reflection target");
+        var metaTable = _pMetaTable.GetValue(recordBuffer)
+            ?? throw new InvalidOperationException(
+                "[RowVersionPatches] record buffer has no MetaTable");
 
-            _pTimestampField ??= metaTable.GetType().GetProperty("TimestampField",
-                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
-                ?? throw new MissingMemberException(metaTable.GetType().Name, "TimestampField");
-            var tsField = _pTimestampField.GetValue(metaTable);
-            // A table without a timestamp field (companion-table shapes) simply has
-            // nothing to stamp — same as SQL never returning a rowversion for it.
-            if (tsField == null) return;
+        _pTimestampField ??= metaTable.GetType().GetProperty("TimestampField",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+            ?? throw new InvalidOperationException(
+                $"[RowVersionPatches] {metaTable.GetType().Name}.TimestampField property not found — " +
+                "rowversion stamping cannot resolve its reflection target");
+        var tsField = _pTimestampField.GetValue(metaTable);
+        // A table without a timestamp field (companion-table shapes) simply has
+        // nothing to stamp — same as SQL never returning a rowversion for it. This
+        // is the ONE legitimate quiet return: the property above resolved and ran
+        // fine, and truthfully answered "no timestamp field" — it is a real BC
+        // answer, not a reflection failure, and must stay a quiet no-op.
+        if (tsField == null) return;
 
-            _pFieldIndex ??= tsField.GetType().GetProperty("FieldIndex",
-                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
-                ?? throw new MissingMemberException(tsField.GetType().Name, "FieldIndex");
-            var index = (int)_pFieldIndex.GetValue(tsField)!;
+        _pFieldIndex ??= tsField.GetType().GetProperty("FieldIndex",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+            ?? throw new InvalidOperationException(
+                $"[RowVersionPatches] {tsField.GetType().Name}.FieldIndex property not found — " +
+                "rowversion stamping cannot resolve its reflection target");
+        var index = (int)_pFieldIndex.GetValue(tsField)!;
 
-            _mCreate ??= typeof(Microsoft.Dynamics.Nav.Runtime.NavBigInteger).GetMethod(
-                "Create", BindingFlags.Public | BindingFlags.Static, binder: null,
-                new[] { typeof(long) }, modifiers: null)
-                ?? throw new MissingMemberException("NavBigInteger", "Create(long)");
-            _pItem ??= bufferType.GetProperty("Item",
-                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
-                ?? throw new MissingMemberException(bufferType.Name, "Item");
+        _mCreate ??= typeof(Microsoft.Dynamics.Nav.Runtime.NavBigInteger).GetMethod(
+            "Create", BindingFlags.Public | BindingFlags.Static, binder: null,
+            new[] { typeof(long) }, modifiers: null)
+            ?? throw new InvalidOperationException(
+                "[RowVersionPatches] NavBigInteger.Create(long) method not found — " +
+                "rowversion stamping cannot resolve its reflection target");
+        _pItem ??= bufferType.GetProperty("Item",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+            ?? throw new InvalidOperationException(
+                $"[RowVersionPatches] {bufferType.Name}.Item indexer not found — " +
+                "rowversion stamping cannot resolve its reflection target");
 
-            _pItem.SetValue(recordBuffer,
-                _mCreate.Invoke(null, new object[] { System.Threading.Interlocked.Increment(ref _rowVersion) }),
-                new object[] { index });
-        }
-        catch (Exception ex)
-        {
-            // Loud once, then permanently off for this process — a half-working stamp
-            // that throws on every write would take the whole store down, while a
-            // missing stamp only reverts to the pre-#1980 behaviour it replaces.
-            _reflectionFailed = true;
-            Console.Out.WriteLine(
-                $"[RowVersionPatches] rowversion stamping disabled — {ex.GetType().Name}: {ex.Message}");
-        }
+        _pItem.SetValue(recordBuffer,
+            _mCreate.Invoke(null, new object[] { System.Threading.Interlocked.Increment(ref _rowVersion) }),
+            new object[] { index });
     }
 }
