@@ -1775,7 +1775,7 @@ public sealed partial class BcCompiler
                 RecordIncrementalBaseline(
                     moduleName, compilation, alFiles, outputter.Captured, specs,
                     manifestInputs, manifestAppJsonPath, appId, _currentPublisher ?? "AlRunner", _currentVersion ?? new Version(1, 0, 0, 0),
-                    emitOutput);
+                    appRootDir, emitOutput);
             }
             catch (Exception ex)
             {

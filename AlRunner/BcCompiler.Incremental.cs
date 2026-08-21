@@ -12,18 +12,14 @@
 // cross-app dependency resolution), it binds and generates C# for ONLY the touched objects,
 // resolving everything else from the baseline instead of re-parsing/re-binding it.
 //
-// This file wires that in, restricted to the single case that can be proven safe without also
-// solving the much larger "hot-swap a live .NET module" problem BC's own service-tier RAD
-// solves at runtime (out of scope here — see the class doc below):
-//
-//   A file that already declared exactly one id-bearing object (Codeunit/Table/Page/Report/
-//   XmlPort/Query/Enum/TableExtension/PageExtension/ReportExtension/EnumExtension/
-//   PermissionSet/PermissionSetExtension) had its CONTENT edited — same (Kind,Id,Name) as
-//   before. Everything else (add/remove/rename any file, an id-less object kind such as
-//   interface/controladdin/profile/pagecustomization/profileextension/entitlement, an app.json
-//   or dependency-set change, more/fewer than one object in a touched file, ANY diagnostic or
-//   exception from the delta compile) falls back to the ordinary, already-correct, whole-module
-//   Emit() — never a stale or wrong result, just not accelerated for that cycle.
+// This file classifies every touched file into one of: content edit, add, remove, or rename
+// (of the file, of the object's own AL name, or both at once) — for every object kind,
+// including the six with no numeric Id (interface/controladdin/profile/pagecustomization/
+// profileextension/entitlement). It falls back to the ordinary, already-correct, whole-module
+// Emit() only for what genuinely cannot be proven safe: the first cycle for a bundle, an
+// app.json/dependency-set change, more than one object declared in a touched file, a duplicate
+// declaration only the compiler can adjudicate, or any diagnostic/exception the delta compile
+// itself raises — never a stale or wrong result, just not accelerated for that cycle.
 //
 // Why this is safe to reuse UNCHANGED cached C# for every object that was not touched
 // -----------------------------------------------------------------------------------
@@ -49,6 +45,10 @@
 //     C#-to-IL build and ONE ordinary module load — completely unchanged from today's full-
 //     rebuild path. There is no multi-generation-assembly runtime merge anywhere in this design;
 //     that is what keeps the correctness surface no larger than the existing full-rebuild path's.
+//   - A REMOVED object's cached C# is dropped from the union entirely, so its runtime type is
+//     simply absent from the freshly built assembly this cycle — every registry that discovers
+//     AL objects by reflecting the loaded assembly (AllObj, TestExecutor discovery, subscriber
+//     registries, …) naturally forgets it too, with no extra bookkeeping required here.
 //
 // What CreateForRad needs beyond `packagedModuleDefinition`
 // -----------------------------------------------------------
@@ -61,7 +61,7 @@
 // (same AppId/Publisher/Version as the module itself) exposing the SAME baseline objects, with
 // the objects actually being changed THIS cycle excluded from it (leaving them in would raise
 // "already declared" duplicate-object errors, since packagedModuleDefinition already carries
-// their OLD shape). See BuildSelfLoader below.
+// their OLD shape). See RadSelfBaselineLoader below.
 //
 // Why the next baseline is a MERGE, not just "convert the RAD compilation"
 // --------------------------------------------------------------------------
@@ -73,6 +73,68 @@
 // before. MergeModuleDefinition below is the fix: the next baseline is (old baseline minus the
 // objects just changed) UNION (freshly converted definitions for exactly those objects) — built by
 // this code, never assumed from a BC API.
+//
+// Renames are not a distinct BC-facing case
+// -------------------------------------------
+// BC's ObjectChangeElement carries no file path — its own equality (decompiled and confirmed:
+// ObjectChangeElement.NamespaceAgnosticEqualityComparer) is (Kind,Id) when Id is set, else
+// (Kind,Name). So from CreateForRad's point of view a file rename that preserves the object's
+// (Kind,Id-or-Name) IS a content edit (Modified) — only OUR OWN ObjectByPath bookkeeping needs
+// to move the path. What is genuinely new is: (a) a "vacated" set — identities no longer found
+// at their old path (a removed file, or a modified file whose declared identity itself changed,
+// e.g. the AL object was renamed in place), and (b) an "appeared" set — new identities found
+// this cycle (an added file, or a modified file whose identity changed). Any identity present in
+// BOTH sets is a rename/move (Modified, tree taken from wherever it now lives); what is left in
+// "appeared" is genuinely Added; what is left in "vacated" is genuinely Removed.
+//
+// The six id-less object kinds
+// -------------------------------
+// `Compilation.GetDeclaredApplicationObjectSymbols()` is typed to
+// `ImmutableArray<IApplicationObjectTypeSymbol>`, and `IApplicationObjectTypeSymbol : ISymbolWithId`
+// (decompiled and confirmed) — an id-less kind that does not satisfy this can never be found by
+// asking "does this file declare an interface/controladdin/…" through it. Confirmed EMPIRICALLY
+// (not just from the interface type hierarchy) that this API's actual behaviour splits the six
+// unevenly: interface and controladdin genuinely never come back from it; profile,
+// pagecustomization and profileextension DO (their symbol types implement ISymbolWithId after
+// all) — but the Id that comes back is BC's own internal SymbolMap bookkeeping value (same
+// pattern as InterfaceTypeSymbol.Id below), NOT stable across independently-constructed
+// Compilations of the identically-named object, so it is NEVER trusted here: every one of the
+// six is forced to a Name-keyed RadObjectIdentity (Id = null) regardless of which API found it or
+// what numeric value that API happened to report (see the IdlessSymbolKinds.Contains guards in
+// both ClassifyDeclaredObject and RecordIncrementalBaseline). Two different fallbacks for
+// actually FINDING them:
+//   - interface, controladdin, profile, pagecustomization, profileextension: BC's
+//     SymbolReference.ModuleDefinition DOES represent all five (Interfaces/ControlAddIns/
+//     Profiles/PageCustomizations/ProfileExtensions arrays — SerializableSymbolModelConverter
+//     walks ALL declared objects, not just IApplicationObjectTypeSymbol ones), so this is the
+//     fallback ClassifyDeclaredObject uses for interface/controladdin specifically (profile/
+//     pagecustomization/profileextension are already caught by the id-bearing branch above,
+//     Name-forced). Tracked across cycles via each element's own ReferenceSourceFileName — NOT
+//     always the same string as tree.FilePath (confirmed empirically): with a RelativeFileSystem
+//     attached (appRootDir != null, the normal --watch case — ControlAddIn/etc. resource paths
+//     need one, see ControlAddInFileSystemTests) it comes back APP-ROOT-RELATIVE and must be
+//     resolved against appRootDir; with none attached it is already absolute. LanguageElement.Id
+//     is `int?` on EVERY *Definition type, including id-bearing ones (they just always populate
+//     it) — so ExcludeObjects/MergeModuleDefinition below key by a generic "id:<n>" or "name:<x>"
+//     string derived from the KIND (never trusting the reflected value for these five — see
+//     ElementKey), and all five are merged into the baseline ModuleDefinition exactly like an
+//     id-bearing kind, keyed by name.
+//   - entitlement: the ONE kind with NO SymbolReference.ModuleDefinition representation AT ALL
+//     (ModuleDefinition has no Entitlements array — confirmed by decompiling its property list).
+//     It can never round-trip through packagedModuleDefinition, touched or not, so the ONLY way
+//     it is ever present in ANY cycle's RAD compilation is by being included in `syntaxTrees`
+//     THAT cycle. Every tracked entitlement file is therefore re-included in `syntaxTrees` on
+//     EVERY incremental cycle regardless of whether it changed — proportional to the (typically
+//     0-2) entitlement files in an app, not to the whole module — classified syntactically
+//     (there is no semantic/ModuleDefinition path to find it) via the same "exactly one
+//     ObjectSyntax child" technique Program.cs's IsFullAlObjectDeclaration already uses. It
+//     produces no runtime C# (EntitlementSymbol has no Emit path), so this never inflates the
+//     cached-C#-union.
+//
+// A `dotnet` package declaration is deliberately NOT in the recognised-kind set below (the
+// issue's own list of forced-fallback conditions names it) — a file that declares one falls
+// through ClassifyDeclaredObject's every branch and returns null, landing on the ordinary
+// "declares 0 classifiable object(s)" fallback with no special-casing needed.
 using System.Collections.Immutable;
 using System.Reflection;
 using System.Security.Cryptography;
@@ -84,12 +146,13 @@ using NavSymRef = Microsoft.Dynamics.Nav.CodeAnalysis.SymbolReference;
 namespace AlRunner;
 
 /// <summary>
-/// (Kind, Id) identity of an AL application object — the unit CreateForRad's
-/// ObjectChangeModelDefinition classifies changes by. Id-less kinds (interface, controladdin,
-/// profile, pagecustomization, profileextension, entitlement) are never represented here — see
-/// <see cref="BcCompiler.IdlessSymbolKinds"/>.
+/// (Kind, Id-or-Name) identity of an AL application object — the unit CreateForRad's
+/// ObjectChangeModelDefinition classifies changes by. <see cref="Id"/> is null for the six
+/// id-less kinds (interface, controladdin, profile, pagecustomization, profileextension,
+/// entitlement — see <see cref="BcCompiler.IdlessSymbolKinds"/>), in which case <see cref="Name"/>
+/// is the identity.
 /// </summary>
-internal readonly record struct RadObjectIdentity(NavCA.SymbolKind Kind, int Id, string Name);
+internal readonly record struct RadObjectIdentity(NavCA.SymbolKind Kind, int? Id, string Name);
 
 /// <summary>Per-module (--watch bundle) incremental compile state, kept warm on the BcCompiler instance.</summary>
 internal sealed class RadBaseline
@@ -111,8 +174,11 @@ public sealed partial class BcCompiler
     private readonly Dictionary<string, RadBaseline> _radBaselines = new();
 
     /// <summary>
-    /// Object kinds with no numeric Id — a (Kind,Id) pair can never identify them, so any file
-    /// declaring one always takes the full-rebuild path. Matches issue #1902's own enumeration.
+    /// Object kinds with no numeric Id. Matches issue #1902's own enumeration. Five of the six
+    /// (everything but entitlement) ARE represented in SymbolReference.ModuleDefinition and are
+    /// merged/excluded via <see cref="RadMergeablePropertiesByKind"/> like any id-bearing kind,
+    /// keyed by name; entitlement has no ModuleDefinition representation at all — see this
+    /// file's header comment.
     /// </summary>
     internal static readonly IReadOnlySet<NavCA.SymbolKind> IdlessSymbolKinds = new HashSet<NavCA.SymbolKind>
     {
@@ -121,6 +187,38 @@ public sealed partial class BcCompiler
     };
 
     private static string RadObjKey(NavCA.SymbolKind kind, int id) => $"{kind}:{id}";
+
+    /// <summary>Stable (Kind,Id-or-Name) key used to match a "vacated" identity against an "appeared" one across paths.</summary>
+    private static string IdentityKey(RadObjectIdentity id) => $"{id.Kind}|{(id.Id.HasValue ? "id:" + id.Id.Value : "name:" + id.Name)}";
+
+    private static NavCA.ObjectChangeElement ToChangeElement(RadObjectIdentity id) => new() { Id = id.Id, Kind = id.Kind, Name = id.Name };
+
+    /// <summary>
+    /// Same "id:&lt;n&gt;"/"name:&lt;x&gt;" key as <see cref="IdentityKey"/>, but for a reflected
+    /// ModuleDefinition array element. Deliberately does NOT trust the element's own reflected
+    /// <c>Id</c> property to decide which branch to take: BC assigns EVERY *Definition type
+    /// (including the 5 ModuleDefinition-backed id-less kinds) a non-null internal <c>int Id</c>
+    /// for its own SymbolMap bookkeeping (decompiled: e.g. InterfaceTypeSymbol.Id is a hash that
+    /// folds in the declaring compilation's OWN AppId) — NOT the AL-author-visible identity, and
+    /// NOT stable across two independently-constructed Compilations of the identically-named
+    /// object (a single-file classify Compilation has a different AppId/shape than the real
+    /// module). Keying by that value would silently fail to match (and therefore silently fail
+    /// to exclude) for every id-less kind. <paramref name="kind"/> is the caller's own already-
+    /// known SymbolKind (it is iterating one ModuleDefinition property at a time) — id-bearing
+    /// kinds key by that real Id, id-less kinds key by Name always, regardless of what the
+    /// reflected Id happens to hold.
+    /// </summary>
+    private static string ElementKey(object item, NavCA.SymbolKind kind)
+    {
+        var t = item.GetType();
+        if (!IdlessSymbolKinds.Contains(kind))
+        {
+            var idVal = t.GetProperty("Id")?.GetValue(item) as int?;
+            if (idVal.HasValue) return "id:" + idVal.Value;
+        }
+        var name = t.GetProperty("Name")?.GetValue(item) as string ?? "";
+        return "name:" + name;
+    }
 
     private static string HashFile(string path)
     {
@@ -142,6 +240,71 @@ public sealed partial class BcCompiler
         var appJsonHash = manifestAppJsonPath != null && File.Exists(manifestAppJsonPath)
             ? HashFile(manifestAppJsonPath) : "<none>";
         return $"{appId}|{publisher}|{version}|{manifestInputs.CacheKeyFragment}|{appJsonHash}";
+    }
+
+    /// <summary>
+    /// Classifies exactly what object (if any) a single already-parsed file declares. Tries the
+    /// semantic, id-bearing path first (proven, reuses the classification GetDeclaredApplicationObjectSymbols
+    /// gives for free), then the 5 ModuleDefinition-backed id-less kinds, then a syntax-only
+    /// check for entitlement — see this file's header comment for why each tier exists. Never
+    /// throws for AL content a human might plausibly have typed; a genuine internal fault still
+    /// surfaces as a (null, error) fallback rather than an unhandled exception.
+    /// </summary>
+    private static (RadObjectIdentity? Identity, string? Error) ClassifyDeclaredObject(NavSyntax.SyntaxTree tree, NavCA.CompilationOptions compOpts)
+    {
+        var classify = NavCA.Compilation.Create(moduleName: "__rad_classify", syntaxTrees: new[] { tree }, options: compOpts);
+
+        ImmutableArray<NavCA.IApplicationObjectTypeSymbol> declaredIdBearing;
+        try { declaredIdBearing = classify.GetDeclaredApplicationObjectSymbols(); }
+        catch (Exception ex) { return (null, $"classification threw: {ex.GetType().Name}: {ex.Message}"); }
+
+        if (declaredIdBearing.Length > 1)
+            return (null, $"declares {declaredIdBearing.Length} object(s) (fast path requires exactly 1 per file)");
+        if (declaredIdBearing.Length == 1)
+        {
+            var sym = declaredIdBearing[0];
+            // Some of the six id-less-per-issue kinds DO implement ISymbolWithId after all
+            // (confirmed empirically: profile/pagecustomization/profileextension do; interface/
+            // controladdin do not) — but that Id is BC's own internal SymbolMap bookkeeping
+            // value, not stable across independently-constructed Compilations of the identically
+            // named object (same instability as InterfaceTypeSymbol.Id — see this file's header
+            // comment). Force Name-keyed identity for ALL SIX regardless of what ISymbolWithId
+            // happens to report, so this stays consistent with the module-def-level merge/
+            // exclusion machinery below, which ALSO always keys these six by name.
+            if (IdlessSymbolKinds.Contains(sym.Kind))
+                return (new RadObjectIdentity(sym.Kind, null, sym.Name), null);
+            var id = (sym as NavCA.ISymbolWithId)?.Id;
+            return id == null
+                ? (null, $"'{sym.Name}' ({sym.Kind}) has no resolvable Id")
+                : (new RadObjectIdentity(sym.Kind, id.Value, sym.Name), null);
+        }
+
+        NavSymRef.ModuleDefinition module;
+        try { module = SymbolJsonWriter.GetModuleDefinition(classify); }
+        catch (Exception ex) { return (null, $"module-definition classification threw: {ex.GetType().Name}: {ex.Message}"); }
+
+        var idless = new List<(NavCA.SymbolKind Kind, string Name)>();
+        if (module.Interfaces != null) idless.AddRange(module.Interfaces.Select(e => (NavCA.SymbolKind.Interface, e.Name ?? "")));
+        if (module.ControlAddIns != null) idless.AddRange(module.ControlAddIns.Select(e => (NavCA.SymbolKind.ControlAddIn, e.Name ?? "")));
+        if (module.Profiles != null) idless.AddRange(module.Profiles.Select(e => (NavCA.SymbolKind.Profile, e.Name ?? "")));
+        if (module.PageCustomizations != null) idless.AddRange(module.PageCustomizations.Select(e => (NavCA.SymbolKind.PageCustomization, e.Name ?? "")));
+        if (module.ProfileExtensions != null) idless.AddRange(module.ProfileExtensions.Select(e => (NavCA.SymbolKind.ProfileExtension, e.Name ?? "")));
+
+        if (idless.Count > 1)
+            return (null, $"declares {idless.Count} object(s) (fast path requires exactly 1 per file)");
+        if (idless.Count == 1)
+            return (new RadObjectIdentity(idless[0].Kind, null, idless[0].Name), null);
+
+        if (tree.GetRoot() is NavSyntax.CompilationUnitSyntax root)
+        {
+            var objectNodes = root.ChildNodes().OfType<NavSyntax.ObjectSyntax>().ToList();
+            if (objectNodes.Count > 1)
+                return (null, $"declares {objectNodes.Count} object(s) (fast path requires exactly 1 per file)");
+            if (objectNodes.Count == 1 && objectNodes[0] is NavSyntax.EntitlementSyntax ent)
+                return (new RadObjectIdentity(NavCA.SymbolKind.Entitlement, null, ent.Name.Identifier.ValueText ?? ent.Name.ToString()), null);
+        }
+
+        return (null, "declares 0 objects the fast path can classify (empty file, a `dotnet` package declaration, or an object kind the fast path does not recognise)");
     }
 
     /// <summary>
@@ -196,27 +359,21 @@ public sealed partial class BcCompiler
             return null;
         }
 
-        var currentHashes = new Dictionary<string, string>();
+        var currentHashes = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var f in alFiles) currentHashes[f] = HashFile(f);
 
-        var addedOrRemoved = new List<string>();
+        var addedPaths = new List<string>();
+        var removedPaths = new List<string>();
         var modifiedPaths = new List<string>();
         foreach (var kv in currentHashes)
         {
-            if (!baseline.FileHashByPath.TryGetValue(kv.Key, out var oldHash)) { addedOrRemoved.Add(kv.Key); continue; }
-            if (!string.Equals(oldHash, kv.Value, StringComparison.Ordinal)) modifiedPaths.Add(kv.Key);
+            if (!baseline.FileHashByPath.TryGetValue(kv.Key, out var oldHash)) addedPaths.Add(kv.Key);
+            else if (!string.Equals(oldHash, kv.Value, StringComparison.Ordinal)) modifiedPaths.Add(kv.Key);
         }
         foreach (var oldPath in baseline.FileHashByPath.Keys)
-            if (!currentHashes.ContainsKey(oldPath)) addedOrRemoved.Add(oldPath);
+            if (!currentHashes.ContainsKey(oldPath)) removedPaths.Add(oldPath);
 
-        if (addedOrRemoved.Count > 0)
-        {
-            fallbackReason = $"{addedOrRemoved.Count} file(s) added/removed/renamed since the last cycle " +
-                $"(fast path only handles a content edit to an already-tracked object): {string.Join(", ", addedOrRemoved.Take(5))}";
-            return null;
-        }
-
-        if (modifiedPaths.Count == 0)
+        if (addedPaths.Count == 0 && removedPaths.Count == 0 && modifiedPaths.Count == 0)
         {
             // Every file hashes identical to the last cycle — including a touch-with-identical-
             // bytes. Genuinely zero work: replay the last cycle's result verbatim.
@@ -226,61 +383,143 @@ public sealed partial class BcCompiler
         var parseOpts = RadParseOptions(manifestInputs);
         var compOpts = RadCompilationOptions(manifestInputs);
 
-        var changeElements = new List<NavCA.ObjectChangeElement>();
-        var changedIdentities = new HashSet<RadObjectIdentity>();
-        var changedTrees = new List<NavSyntax.SyntaxTree>();
-        foreach (var path in modifiedPaths)
+        // --- classify every touched path ----------------------------------------------------
+        // See this file's header ("Renames are not a distinct BC-facing case") for the
+        // vacated/appeared design this is built on.
+        var vacated = new Dictionary<string, (string Path, RadObjectIdentity Identity)>(StringComparer.Ordinal);
+        var appeared = new Dictionary<string, (string Path, RadObjectIdentity Identity, NavSyntax.SyntaxTree Tree)>(StringComparer.Ordinal);
+        var contentEdits = new List<(string Path, RadObjectIdentity Identity, NavSyntax.SyntaxTree Tree)>();
+
+        foreach (var path in removedPaths)
         {
             if (!baseline.ObjectByPath.TryGetValue(path, out var oldIdentity))
             {
-                fallbackReason = $"'{path}' was not tracked as a single-object file by the previous baseline";
+                fallbackReason = $"'{path}' was removed but was not tracked as a single-object file by the previous baseline";
                 return null;
             }
-            if (IdlessSymbolKinds.Contains(oldIdentity.Kind))
+            vacated[IdentityKey(oldIdentity)] = (path, oldIdentity);
+        }
+
+        foreach (var path in addedPaths.Concat(modifiedPaths))
+        {
+            NavSyntax.SyntaxTree tree;
+            try
             {
-                fallbackReason = $"'{path}' declares a {oldIdentity.Kind} — id-less object kinds always take the full-rebuild path";
+                var src = File.ReadAllText(path);
+                tree = NavSyntax.SyntaxTree.ParseObjectText(src, path: path, encoding: null!, parseOpts, default);
+            }
+            catch (Exception ex)
+            {
+                fallbackReason = $"'{path}' could not be read/parsed: {ex.GetType().Name}: {ex.Message}";
                 return null;
             }
 
+            var (identity, error) = ClassifyDeclaredObject(tree, compOpts);
+            if (identity == null)
+            {
+                fallbackReason = $"'{path}': {error}";
+                return null;
+            }
+
+            var wasTracked = baseline.ObjectByPath.TryGetValue(path, out var oldIdentityAtSamePath);
+            if (wasTracked && IdentityKey(oldIdentityAtSamePath) == IdentityKey(identity.Value))
+            {
+                // Same file, same identity: an ordinary content edit.
+                contentEdits.Add((path, identity.Value, tree));
+                continue;
+            }
+            if (wasTracked)
+            {
+                // This path's declared identity itself changed (an in-place rename) — the OLD
+                // identity is vacated here, exactly like a removed file's identity would be.
+                var oldKey = IdentityKey(oldIdentityAtSamePath);
+                if (vacated.ContainsKey(oldKey))
+                {
+                    fallbackReason = $"'{path}': its previous identity was already vacated by another file this cycle";
+                    return null;
+                }
+                vacated[oldKey] = (path, oldIdentityAtSamePath);
+            }
+
+            var newKey = IdentityKey(identity.Value);
+            if (!appeared.TryAdd(newKey, (path, identity.Value, tree)))
+            {
+                fallbackReason = $"two files both now declare '{newKey}' — duplicate declaration, only the compiler can adjudicate that";
+                return null;
+            }
+        }
+
+        // Pair vacated <-> appeared identities (renames/moves): from BC's point of view these
+        // are Modified, not Removed+Added — see this file's header comment.
+        var renamePairs = new List<(RadObjectIdentity Identity, string OldPath, string NewPath, NavSyntax.SyntaxTree Tree)>();
+        foreach (var key in vacated.Keys.Where(appeared.ContainsKey).ToList())
+        {
+            var oldEntry = vacated[key];
+            var newEntry = appeared[key];
+            renamePairs.Add((newEntry.Identity, oldEntry.Path, newEntry.Path, newEntry.Tree));
+            vacated.Remove(key);
+            appeared.Remove(key);
+        }
+
+        // What is left in `appeared` is genuinely new. A genuinely new identity colliding with
+        // an EXISTING, untouched baseline object is a duplicate declaration only the compiler
+        // can adjudicate (the issue's own words) — not something to fast-path.
+        foreach (var (key, entry) in appeared)
+        {
+            if (baseline.ObjectByPath.Values.Any(v => IdentityKey(v) == key))
+            {
+                fallbackReason = $"'{entry.Path}' declares '{key}', which already exists elsewhere in the baseline — " +
+                    "duplicate declaration, only the compiler can adjudicate that";
+                return null;
+            }
+        }
+
+        // Entitlement: no ModuleDefinition representation at all, so every TRACKED entitlement
+        // file not already handled above is re-included this cycle regardless of whether it
+        // changed — see this file's header comment.
+        var touchedPaths = new HashSet<string>(addedPaths, StringComparer.Ordinal);
+        touchedPaths.UnionWith(removedPaths);
+        touchedPaths.UnionWith(modifiedPaths);
+        var alwaysIncluded = new List<(RadObjectIdentity Identity, NavSyntax.SyntaxTree Tree)>();
+        foreach (var (path, identity) in baseline.ObjectByPath)
+        {
+            if (identity.Kind != NavCA.SymbolKind.Entitlement || touchedPaths.Contains(path)) continue;
+            if (!File.Exists(path)) continue; // defensive — would already be in removedPaths otherwise
             var src = File.ReadAllText(path);
             var tree = NavSyntax.SyntaxTree.ParseObjectText(src, path: path, encoding: null!, parseOpts, default);
-            var classify = NavCA.Compilation.Create(moduleName: "__rad_classify", syntaxTrees: new[] { tree }, options: compOpts);
-            var declared = classify.GetDeclaredApplicationObjectSymbols();
-            if (declared.Length != 1)
-            {
-                fallbackReason = $"'{path}' now declares {declared.Length} object(s) (fast path requires exactly 1)";
-                return null;
-            }
-            var sym = declared[0];
-            var newId = (sym as NavCA.ISymbolWithId)?.Id;
-            if (newId == null || IdlessSymbolKinds.Contains(sym.Kind))
-            {
-                fallbackReason = $"'{path}' declares a {sym.Kind} — id-less object kinds always take the full-rebuild path";
-                return null;
-            }
-            if (sym.Kind != oldIdentity.Kind || newId.Value != oldIdentity.Id || !string.Equals(sym.Name, oldIdentity.Name, StringComparison.Ordinal))
-            {
-                fallbackReason = $"'{path}' object identity changed (was {oldIdentity.Kind} {oldIdentity.Id} \"{oldIdentity.Name}\", " +
-                    $"now {sym.Kind} {newId} \"{sym.Name}\") — that is an add+remove, not an edit";
-                return null;
-            }
-
-            changeElements.Add(new NavCA.ObjectChangeElement { Id = newId.Value, Kind = sym.Kind, Name = sym.Name });
-            changedIdentities.Add(new RadObjectIdentity(sym.Kind, newId.Value, sym.Name));
-            changedTrees.Add(tree);
+            alwaysIncluded.Add((identity, tree));
         }
+
+        var addedElements = appeared.Values.Select(a => ToChangeElement(a.Identity)).ToArray();
+        var modifiedElements = contentEdits.Select(c => ToChangeElement(c.Identity))
+            .Concat(renamePairs.Select(r => ToChangeElement(r.Identity)))
+            .Concat(alwaysIncluded.Select(a => ToChangeElement(a.Identity)))
+            .ToArray();
+        var removedElements = vacated.Values.Select(v => ToChangeElement(v.Identity)).ToArray();
 
         var changeModel = new NavCA.ObjectChangeModelDefinition
         {
-            Added = Array.Empty<NavCA.ObjectChangeElement>(),
-            Modified = changeElements.ToArray(),
-            Removed = Array.Empty<NavCA.ObjectChangeElement>(),
+            Added = addedElements,
+            Modified = modifiedElements,
+            Removed = removedElements,
         };
+
+        var changedTrees = contentEdits.Select(c => c.Tree)
+            .Concat(renamePairs.Select(r => r.Tree))
+            .Concat(appeared.Values.Select(a => a.Tree))
+            .Concat(alwaysIncluded.Select(a => a.Tree))
+            .ToList();
+
+        var allChangedIdentities = new HashSet<RadObjectIdentity>();
+        foreach (var a in appeared.Values) allChangedIdentities.Add(a.Identity);
+        foreach (var c in contentEdits) allChangedIdentities.Add(c.Identity);
+        foreach (var r in renamePairs) allChangedIdentities.Add(r.Identity);
+        foreach (var v in vacated.Values) allChangedIdentities.Add(v.Identity);
 
         var selfSpec = new NavCA.SymbolReferenceSpecification(
             publisher: publisher, name: moduleName, version: version,
             exact: false, appId: appId, isPropagated: false, alternateIds: ImmutableArray<Guid>.Empty);
-        var selfModule = ExcludeObjects(baseline.ModuleDef, changedIdentities);
+        var selfModule = ExcludeObjects(baseline.ModuleDef, allChangedIdentities);
         var selfLoader = new RadSelfBaselineLoader(appId, selfModule);
         var combinedLoader = refLoader != null
             ? new CompositeSymbolReferenceLoader(new NavCA.ISymbolReferenceLoader[] { selfLoader, refLoader })
@@ -293,7 +532,7 @@ public sealed partial class BcCompiler
             radComp = NavCA.Compilation.CreateForRad(
                 moduleName: moduleName,
                 objectChangeModelDefinition: changeModel,
-                packagedModuleDefinition: baseline.ModuleDef,
+                packagedModuleDefinition: selfModule,
                 symbolReferenceLoader: combinedLoader,
                 symbolReferences: combinedSpecs,
                 publisher: publisher, version: version, appId: appId,
@@ -323,10 +562,14 @@ public sealed partial class BcCompiler
             return null;
         }
 
+        // Only id-bearing objects ever produce runtime C# (id-less kinds — interface/
+        // controladdin/profile/pagecustomization/profileextension/entitlement — are pure
+        // metadata, no OnRun/OnInvoke to emit; see this file's header comment).
+        var idBearingChanged = addedElements.Concat(modifiedElements).Where(e => e.Id.HasValue).ToList();
         var newByKey = new Dictionary<string, EmittedSource>();
         foreach (var src in radOut.Captured)
         {
-            var match = changeElements.FirstOrDefault(e => string.Equals(e.Name, src.Name, StringComparison.Ordinal));
+            var match = idBearingChanged.FirstOrDefault(e => string.Equals(e.Name, src.Name, StringComparison.Ordinal));
             if (match == null)
             {
                 fallbackReason = $"RAD Emit produced an unexpected object '{src.Name}'";
@@ -334,29 +577,51 @@ public sealed partial class BcCompiler
             }
             newByKey[RadObjKey(match.Kind, match.Id!.Value)] = src;
         }
-        if (newByKey.Count != changeElements.Count)
+        if (newByKey.Count != idBearingChanged.Count)
         {
-            fallbackReason = $"RAD Emit produced {newByKey.Count} object(s), expected {changeElements.Count}";
+            fallbackReason = $"RAD Emit produced {newByKey.Count} object(s), expected {idBearingChanged.Count}";
             return null;
         }
 
+        // Removed id-bearing objects' cached C# is dropped from the union entirely — their
+        // runtime metadata goes with them (see this file's header comment).
+        var removedKeys = new HashSet<string>(
+            vacated.Values.Where(v => v.Identity.Id.HasValue).Select(v => RadObjKey(v.Identity.Kind, v.Identity.Id!.Value)));
+
         var unionedSources = new List<EmittedSource>(baseline.SourceByKey.Count);
         foreach (var kv in baseline.SourceByKey)
+        {
+            if (removedKeys.Contains(kv.Key)) continue;
             unionedSources.Add(newByKey.TryGetValue(kv.Key, out var fresh) ? fresh : kv.Value);
+        }
         foreach (var kv in newByKey)
             if (!baseline.SourceByKey.ContainsKey(kv.Key)) unionedSources.Add(kv.Value);
 
         var deltaModuleDef = SymbolJsonWriter.GetModuleDefinition(radComp);
-        var mergedModuleDef = MergeModuleDefinition(baseline.ModuleDef, changedIdentities, deltaModuleDef);
+        var mergedModuleDef = MergeModuleDefinition(baseline.ModuleDef, allChangedIdentities, deltaModuleDef);
 
         var newFileHashByPath = new Dictionary<string, string>(baseline.FileHashByPath, StringComparer.Ordinal);
-        foreach (var path in modifiedPaths) newFileHashByPath[path] = currentHashes[path];
-        // ObjectByPath and the set of (Kind,Id) keys are unchanged — the fast path only allows
-        // a CONTENT edit to an object whose (Kind,Id,Name,Path) are all unchanged.
+        foreach (var path in addedPaths.Concat(modifiedPaths)) newFileHashByPath[path] = currentHashes[path];
+        foreach (var path in removedPaths) newFileHashByPath.Remove(path);
+
+        // Rebuilt purely from the final classified buckets (vacated/renamePairs/appeared) —
+        // these already cover every path-level change: `vacated` holds both originally-removed
+        // files AND in-place-modified files whose old identity never found a rename partner,
+        // each with the correct OLD path to drop. `contentEdits` needs no action: path and
+        // identity are both unchanged from the baseline copy.
+        var newObjectByPath = new Dictionary<string, RadObjectIdentity>(baseline.ObjectByPath, StringComparer.Ordinal);
+        foreach (var v in vacated.Values) newObjectByPath.Remove(v.Path);
+        foreach (var r in renamePairs) { newObjectByPath.Remove(r.OldPath); newObjectByPath[r.NewPath] = r.Identity; }
+        foreach (var a in appeared.Values) newObjectByPath[a.Path] = a.Identity;
 
         var newSourceByKey = new Dictionary<string, EmittedSource>(baseline.SourceByKey.Count, StringComparer.Ordinal);
         foreach (var kv in baseline.SourceByKey)
+        {
+            if (removedKeys.Contains(kv.Key)) continue;
             newSourceByKey[kv.Key] = newByKey.TryGetValue(kv.Key, out var fresh) ? fresh : kv.Value;
+        }
+        foreach (var kv in newByKey)
+            if (!newSourceByKey.ContainsKey(kv.Key)) newSourceByKey[kv.Key] = kv.Value;
 
         var output = new BcEmitOutput(unionedSources, Array.Empty<string>(), Array.Empty<string>());
 
@@ -366,7 +631,7 @@ public sealed partial class BcCompiler
             ManifestFingerprint = manifestFingerprint, SharedRefsFingerprint = sharedRefsFingerprint,
             ModuleDef = mergedModuleDef,
             FileHashByPath = newFileHashByPath,
-            ObjectByPath = baseline.ObjectByPath,
+            ObjectByPath = newObjectByPath,
             SourceByKey = newSourceByKey,
             LastOutput = output,
         };
@@ -376,14 +641,15 @@ public sealed partial class BcCompiler
 
     /// <summary>
     /// Called by <see cref="Emit"/> after a clean success, when its caller passed
-    /// <c>trackIncrementalBaseline: true</c>. Builds the (Kind,Id)-keyed state
-    /// <see cref="TryEmitIncremental"/> needs for the NEXT cycle.
+    /// <c>trackIncrementalBaseline: true</c>. Builds the (Kind,Id-or-Name)-keyed state
+    /// <see cref="TryEmitIncremental"/> needs for the NEXT cycle, for every object kind (see
+    /// this file's header comment for how each of the six id-less kinds is recovered).
     /// </summary>
     private void RecordIncrementalBaseline(
         string moduleName, NavCA.Compilation compilation, IReadOnlyList<string> alFiles,
         IReadOnlyList<EmittedSource> captured, NavCA.SymbolReferenceSpecification[] specs,
         ManifestCompilerInputs manifestInputs, string? manifestAppJsonPath, Guid appId, string publisher, Version version,
-        BcEmitOutput fullOutput)
+        string? appRootDir, BcEmitOutput fullOutput)
     {
         var declared = compilation.GetDeclaredApplicationObjectSymbols();
         var byName = new Dictionary<string, List<(NavCA.SymbolKind Kind, int? Id, string? Path)>>(StringComparer.Ordinal);
@@ -395,18 +661,16 @@ public sealed partial class BcCompiler
             list.Add((sym.Kind, id, path));
         }
 
-        // ObjectByPath is built from EVERY declared object (including id-less kinds like
-        // interface/controladdin/…), not just the ones with captured C#: an id-less kind never
-        // reaches AddApplicationObject (no runtime type to emit), so if this only walked
-        // `captured` those files would never be tracked at all, and a later touch would report
-        // the vaguer "not tracked" fallback instead of the specific "id-less" one.
         var objectByPath = new Dictionary<string, RadObjectIdentity>(StringComparer.Ordinal);
         var claimedPaths = new HashSet<string>(StringComparer.Ordinal);
         foreach (var sym in declared)
         {
             var path = sym.Location?.SourceTree?.FilePath;
             if (path == null) continue;
-            var id = (sym as NavCA.ISymbolWithId)?.Id ?? 0; // sentinel for id-less kinds — never dispatched on, see IdlessSymbolKinds gate below.
+            // Force Name-keyed identity for the six id-less-per-issue kinds even when
+            // ISymbolWithId reports a value — see ClassifyDeclaredObject's identical guard for
+            // why that Id is not trustworthy across compilations.
+            var id = IdlessSymbolKinds.Contains(sym.Kind) ? null : (sym as NavCA.ISymbolWithId)?.Id;
             if (!claimedPaths.Add(path))
             {
                 // A second object claimed a path already seen this pass — that file declares
@@ -418,21 +682,69 @@ public sealed partial class BcCompiler
             objectByPath[path] = new RadObjectIdentity(sym.Kind, id, sym.Name);
         }
 
+        var moduleDef = SymbolJsonWriter.GetModuleDefinition(compilation);
+
+        // Of the six id-less kinds, only interface/controladdin genuinely never appear in
+        // `declared` above (confirmed empirically: profile/pagecustomization/profileextension DO
+        // implement ISymbolWithId and come back from GetDeclaredApplicationObjectSymbols() —
+        // the earlier "IApplicationObjectTypeSymbol : ISymbolWithId" decompile only proves an
+        // id-less kind CAN be excluded that way, not that every one of these six IS; see this
+        // file's header comment). This ModuleDefinition-array recovery is therefore a fallback
+        // for whichever of the five module-def-backed kinds `declared` did NOT already surface —
+        // `claimedPaths.Contains` (not `.Add`) is the check: a path `declared` already claimed
+        // must be LEFT ALONE (its identity from the richer, already-correct API), never
+        // overwritten OR treated as a same-file duplicate declaration.
+        //
+        // Confirmed empirically NOT the same string as tree.FilePath in every case: when a
+        // RelativeFileSystem is attached (appRootDir != null — the normal --watch case, since
+        // ControlAddIn/PageCustomization/etc. resource paths need one, see
+        // ControlAddInFileSystemTests), ReferenceSourceFileName comes back APP-ROOT-RELATIVE
+        // ("Addin.al"), not absolute — resolve it against appRootDir the same way
+        // alFiles/hash-diffing paths are absolute. With no FileSystem attached it is already
+        // absolute (matches tree.FilePath verbatim) — used as-is.
+        void TrackIdless(string? path, string? name, NavCA.SymbolKind kind)
+        {
+            if (string.IsNullOrEmpty(path) || name == null) return;
+            var resolved = appRootDir != null && !Path.IsPathFullyQualified(path)
+                ? Path.GetFullPath(Path.Combine(appRootDir, path))
+                : path;
+            if (objectByPath.ContainsKey(resolved)) return; // already tracked via `declared` — a DIFFERENT API surfacing the SAME object, not a real duplicate
+            if (!claimedPaths.Add(resolved)) { objectByPath.Remove(resolved); return; } // a genuine second id-less object in one file
+            objectByPath[resolved] = new RadObjectIdentity(kind, null, name);
+        }
+        if (moduleDef.Interfaces != null) foreach (var e in moduleDef.Interfaces) TrackIdless(e.ReferenceSourceFileName, e.Name, NavCA.SymbolKind.Interface);
+        if (moduleDef.ControlAddIns != null) foreach (var e in moduleDef.ControlAddIns) TrackIdless(e.ReferenceSourceFileName, e.Name, NavCA.SymbolKind.ControlAddIn);
+        if (moduleDef.Profiles != null) foreach (var e in moduleDef.Profiles) TrackIdless(e.ReferenceSourceFileName, e.Name, NavCA.SymbolKind.Profile);
+        if (moduleDef.PageCustomizations != null) foreach (var e in moduleDef.PageCustomizations) TrackIdless(e.ReferenceSourceFileName, e.Name, NavCA.SymbolKind.PageCustomization);
+        if (moduleDef.ProfileExtensions != null) foreach (var e in moduleDef.ProfileExtensions) TrackIdless(e.ReferenceSourceFileName, e.Name, NavCA.SymbolKind.ProfileExtension);
+
+        // Entitlement: no ModuleDefinition representation at all — recovered from the ALREADY-
+        // PARSED syntax trees this compilation holds (no extra parse).
+        foreach (var tree in compilation.SyntaxTrees)
+        {
+            var path = tree.FilePath;
+            if (string.IsNullOrEmpty(path)) continue;
+            if (tree.GetRoot() is not NavSyntax.CompilationUnitSyntax root) continue;
+            var objectNodes = root.ChildNodes().OfType<NavSyntax.ObjectSyntax>().ToList();
+            if (objectNodes.Count != 1 || objectNodes[0] is not NavSyntax.EntitlementSyntax ent) continue;
+            var name = ent.Name.Identifier.ValueText ?? ent.Name.ToString();
+            TrackIdless(path, name, NavCA.SymbolKind.Entitlement);
+        }
+
         var sourceByKey = new Dictionary<string, EmittedSource>(StringComparer.Ordinal);
         foreach (var src in captured)
         {
             if (!byName.TryGetValue(src.Name, out var candidates) || candidates.Count != 1)
                 continue; // ambiguous (name shared across kinds, or unresolved) — leave untracked, not fatal.
             var (kind, id, path) = candidates[0];
-            if (id == null || IdlessSymbolKinds.Contains(kind))
-                continue; // id-less kind, or unresolved — no (Kind,Id) key to cache under.
+            if (id == null)
+                continue; // id-less kind — never emits runtime C# anyway (see header comment).
             sourceByKey[RadObjKey(kind, id.Value)] = src;
         }
 
         var fileHashByPath = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var f in alFiles) fileHashByPath[f] = HashFile(f);
 
-        var moduleDef = SymbolJsonWriter.GetModuleDefinition(compilation);
         var manifestFingerprint = RadManifestFingerprint(appId, publisher, version, manifestInputs, manifestAppJsonPath);
         var sharedRefsFingerprint = string.Join(",", specs.Select(s => $"{s.AppId}:{s.Version}").OrderBy(s => s, StringComparer.Ordinal));
 
@@ -463,19 +775,18 @@ public sealed partial class BcCompiler
         compilerFeatures: manifestInputs.CompilerFeatures,
         contextSensitiveHelpUrl: manifestInputs.ContextSensitiveHelpUrl);
 
-    /// <summary>Shallow-clones a ModuleDefinition with the given (Kind,Id) objects removed from every id-bearing array property.</summary>
+    /// <summary>Shallow-clones a ModuleDefinition with the given objects removed from every mergeable array property, keyed by <see cref="ElementKey"/> (id when the kind has one, else name).</summary>
     private static NavSymRef.ModuleDefinition ExcludeObjects(NavSymRef.ModuleDefinition module, IReadOnlySet<RadObjectIdentity> exclude)
     {
         var clone = CloneModuleDefinition(module);
         foreach (var (propName, kind) in RadMergeablePropertiesByKind)
         {
-            var idsToExclude = new HashSet<int>(exclude.Where(e => e.Kind == kind).Select(e => e.Id));
-            if (idsToExclude.Count == 0) continue;
+            var keysToExclude = new HashSet<string>(exclude.Where(e => e.Kind == kind).Select(IdentityElementKeyOf));
+            if (keysToExclude.Count == 0) continue;
             var prop = typeof(NavSymRef.ModuleDefinition).GetProperty(propName)!;
             if (prop.GetValue(module) is not Array arr) continue;
             var elemType = prop.PropertyType.GetElementType()!;
-            var idProp = elemType.GetProperty("Id")!;
-            var kept = arr.Cast<object>().Where(item => !idsToExclude.Contains((int)idProp.GetValue(item)!)).ToList();
+            var kept = arr.Cast<object>().Where(item => !keysToExclude.Contains(ElementKey(item, kind))).ToList();
             var result = Array.CreateInstance(elemType, kept.Count);
             for (int i = 0; i < kept.Count; i++) result.SetValue(kept[i], i);
             prop.SetValue(clone, result);
@@ -494,18 +805,17 @@ public sealed partial class BcCompiler
         var merged = CloneModuleDefinition(oldModule);
         foreach (var (propName, kind) in RadMergeablePropertiesByKind)
         {
-            var changedIds = new HashSet<int>(changed.Where(c => c.Kind == kind).Select(c => c.Id));
+            var changedKeys = new HashSet<string>(changed.Where(c => c.Kind == kind).Select(IdentityElementKeyOf));
             var prop = typeof(NavSymRef.ModuleDefinition).GetProperty(propName)!;
             var elemType = prop.PropertyType.GetElementType()!;
-            var idProp = elemType.GetProperty("Id")!;
 
             var kept = new List<object>();
             if (prop.GetValue(oldModule) is Array oldArr)
                 foreach (var item in oldArr)
-                    if (!changedIds.Contains((int)idProp.GetValue(item)!)) kept.Add(item);
-            if (changedIds.Count > 0 && prop.GetValue(delta) is Array deltaArr)
+                    if (!changedKeys.Contains(ElementKey(item, kind))) kept.Add(item);
+            if (changedKeys.Count > 0 && prop.GetValue(delta) is Array deltaArr)
                 foreach (var item in deltaArr)
-                    if (changedIds.Contains((int)idProp.GetValue(item)!)) kept.Add(item);
+                    if (changedKeys.Contains(ElementKey(item, kind))) kept.Add(item);
 
             var result = Array.CreateInstance(elemType, kept.Count);
             for (int i = 0; i < kept.Count; i++) result.SetValue(kept[i], i);
@@ -514,15 +824,18 @@ public sealed partial class BcCompiler
         return merged;
     }
 
+    /// <summary>Same format as <see cref="ElementKey"/> ("id:&lt;n&gt;"/"name:&lt;x&gt;"), derived from a <see cref="RadObjectIdentity"/> instead of a reflected element.</summary>
+    private static string IdentityElementKeyOf(RadObjectIdentity id) => id.Id.HasValue ? "id:" + id.Id.Value : "name:" + id.Name;
+
     private static NavSymRef.ModuleDefinition CloneModuleDefinition(NavSymRef.ModuleDefinition module)
         => (NavSymRef.ModuleDefinition)typeof(NavSymRef.ModuleDefinition)
             .GetMethod("Clone", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(module, null)!;
 
     /// <summary>
-    /// ModuleDefinition array properties that carry an id-bearing object kind, and the
-    /// SymbolKind each corresponds to. Every kind NOT listed here is either id-less (see
-    /// <see cref="IdlessSymbolKinds"/>, always full-rebuild) or not something this fast path's
-    /// (Kind,Id) classification step can ever produce.
+    /// ModuleDefinition array properties this fast path merges/excludes objects from — every
+    /// id-bearing kind, plus the 5 id-less kinds ModuleDefinition DOES represent (see this
+    /// file's header comment). Entitlement is deliberately absent: ModuleDefinition has no
+    /// Entitlements array at all.
     /// </summary>
     private static readonly (string PropertyName, NavCA.SymbolKind Kind)[] RadMergeablePropertiesByKind =
     {
@@ -539,6 +852,11 @@ public sealed partial class BcCompiler
         ("EnumExtensionTypes", NavCA.SymbolKind.EnumExtension),
         ("PermissionSets", NavCA.SymbolKind.PermissionSet),
         ("PermissionSetExtensions", NavCA.SymbolKind.PermissionSetExtension),
+        ("Interfaces", NavCA.SymbolKind.Interface),
+        ("ControlAddIns", NavCA.SymbolKind.ControlAddIn),
+        ("Profiles", NavCA.SymbolKind.Profile),
+        ("PageCustomizations", NavCA.SymbolKind.PageCustomization),
+        ("ProfileExtensions", NavCA.SymbolKind.ProfileExtension),
     };
 
     /// <summary>
