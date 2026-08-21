@@ -695,6 +695,35 @@ public sealed partial class BcCompiler
         _appMetaCache.Clear();
     }
 
+    /// <summary>
+    /// Test seam: pin <c>_packageCacheDirs</c> to an explicit (possibly empty) list so
+    /// <see cref="GetSharedReferences"/> never falls through to <see cref="ResolveSymbolDirs"/>
+    /// (issue #1992). That fallback reads the CALLING MACHINE's real, process-wide symbol
+    /// caches — <c>~/.local/share/al-runner/symbols/&lt;ver&gt;</c> and
+    /// <c>~/.bcartifacts.cache/sandbox/&lt;ver&gt;/{w1/Extensions,platform/Applications}</c> —
+    /// which is exactly the behaviour <see cref="SetResolvedDeps"/> gives the real compile
+    /// pipeline, but tests that exercise the memo directly (bypassing SetResolvedDeps) got it
+    /// only by accident of whichever dirs happen to exist on whoever's machine runs them.
+    ///
+    /// A test asserting an EXACT rebuild count is reading BcCompiler's memo signature, which
+    /// folds in every scanned package dir (see ComputeLoaderSignature/DeduplicateAppPackageDirs).
+    /// On a dev box with a populated `.bcartifacts.cache/sandbox` (hundreds of real .app
+    /// files, some already deduped against each other), DeduplicateAppPackageDirs' "changed"
+    /// flag can already be true before the test's own fixture contributes anything — so the
+    /// FIRST call already takes the content-addressed staging path instead of the
+    /// unchanged-dirs fast path the test's math assumes as its baseline. A later call whose
+    /// only real-world change is a test-fixture duplicate (deduped away to the SAME surviving
+    /// file set) then hashes to the SAME staging key as the first call — the loader legitimately
+    /// serves the same modules, so this isn't wrong on the merits, but it defeats the test's
+    /// contract of forcing a rebuild through a specific narrow mechanism. Scoping
+    /// `_packageCacheDirs` here removes that machine-state coupling entirely: these tests then
+    /// see ONLY the dirs they construct, on every machine, deterministically.
+    /// </summary>
+    internal static void SetPackageCacheDirsForTests(IReadOnlyList<string> dirs)
+    {
+        lock (_refSync) { _packageCacheDirs = dirs; }
+    }
+
     private static List<string> DeduplicateAppPackageDirs(List<string> packageDirs, Guid? excludeAppId = null)
         => DeduplicateAppPackageDirs(packageDirs, excludeAppId, out _);
 

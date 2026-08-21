@@ -391,6 +391,15 @@ public sealed class BcCompilerSharedReferenceMemoTests : IDisposable
     private static (ISymbolReferenceLoader? Loader, SymbolReferenceSpecification[] Specs)
         InvokeGetSharedReferences(IEnumerable<string> bundleAlpackagesDirs)
     {
+        // Issue #1992: pin _packageCacheDirs to empty BEFORE every call so GetSharedReferences
+        // never falls through to ResolveSymbolDirs() and scans the CALLING MACHINE's real
+        // ~/.local/share/al-runner/symbols / ~/.bcartifacts.cache/sandbox caches. Those tests
+        // that never call SetResolvedDeps (this class's rebuild-count assertions) got that
+        // fallback by accident of the dev box, which could already fold real, unrelated .app
+        // duplicates into DeduplicateAppPackageDirs' "changed" decision before this test's own
+        // fixture ever touched it — deterministically wrong on a machine with a populated
+        // bcartifacts sandbox, silently right everywhere else. See SetPackageCacheDirsForTests.
+        BcCompiler.SetPackageCacheDirsForTests(Array.Empty<string>());
         var method = typeof(BcCompiler).GetMethod(
             "GetSharedReferences", BindingFlags.NonPublic | BindingFlags.Static)
             ?? throw new InvalidOperationException("BcCompiler.GetSharedReferences not found by reflection.");
