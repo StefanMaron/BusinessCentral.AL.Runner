@@ -6,6 +6,17 @@
 // virtual table works when called directly; this bundle exists to prove (or
 // disprove) that going through the real subscriber-dispatch path changes
 // anything.
+//
+// PurchaseLine/WarehouseReceiptHeader are built with raw field assignment +
+// Insert(false) rather than Library-Purchase's Validate-heavy helpers — those
+// helpers chain through Vendor/Dimension/User-Profile lookups that need a much
+// larger default-company setup (General Ledger Setup, Marketing Setup, a
+// resolvable user profile, ...) which is orthogonal to what #2008 is actually
+// about and, on some runner builds, hits its own unrelated gaps before ever
+// reaching PurchLine2ReceiptLine. PurchLine2ReceiptLine itself only reads
+// fields off the PurchaseLine parameter — it never re-fetches Purchase Header
+// or validates the line — so a raw, unvalidated PurchaseLine record is
+// faithful to what the procedure actually consumes.
 codeunit 61102 "FVTIT Whse Flow Tests"
 {
     Subtype = Test;
@@ -13,59 +24,56 @@ codeunit 61102 "FVTIT Whse Flow Tests"
 
     var
         Assert: Codeunit "FVTIT Assert";
-        LibraryPurchase: Codeunit "Library - Purchase";
-        LibraryInventory: Codeunit "Library - Inventory";
-        LibraryItemTracking: Codeunit "Library - Item Tracking";
         LibraryWarehouse: Codeunit "Library - Warehouse";
-        LibraryUtility: Codeunit "Library - Utility";
 
     [Test]
     procedure PurchLine2ReceiptLine_LotTrackedWithReservation_TriggersFieldVirtualTableLookupInSubscriber()
     var
         WarehouseSetup: Record "Warehouse Setup";
-        PurchasesPayablesSetup: Record "Purchases & Payables Setup";
-        SourceCodeSetup: Record "Source Code Setup";
-        ItemTrackingCode: Record "Item Tracking Code";
-        Item: Record Item;
+        InventorySetup: Record "Inventory Setup";
         WarehouseReceiptHeader: Record "Warehouse Receipt Header";
-        PurchaseHeader: Record "Purchase Header";
         PurchaseLine: Record "Purchase Line";
         ReservEntry: Record "Reservation Entry";
         PurchasesWarehouseManagement: Codeunit "Purchases Warehouse Mgt.";
     begin
         BindSubscription(this);
 
+        // Older runner builds (v2.3.1, the version #2008 was reported against) did not
+        // seed the Warehouse Setup singleton row via install triggers; current main does.
+        // Seed it explicitly so this test is portable across both, instead of silently
+        // depending on install-trigger completeness (a separate, unrelated area).
+        if not WarehouseSetup.Get() then begin
+            WarehouseSetup.Init();
+            WarehouseSetup.Insert();
+        end;
         LibraryWarehouse.NoSeriesSetup(WarehouseSetup);
 
-        PurchasesPayablesSetup.Get();
-        PurchasesPayablesSetup.Validate("Order Nos.", LibraryUtility.GetGlobalNoSeriesCode());
-        PurchasesPayablesSetup.Modify(true);
-
-        // Company-Initialize (codeunit 2) does not run to completion in this runner today
-        // (a Manufacturing subscriber NREs partway through InitSourceCodeSetup — see
-        // AlRunner/CompanyInitializer.cs "KNOWN INCOMPLETE"). That is a separate, already
-        // documented gap unrelated to #2008: it blocks Purchase Header's dimension-default
-        // lookup (CreateDim -> SourceCodeSetup.Get()) before this test ever reaches the
-        // Field-virtual-table surface under test. Insert the blank singleton row directly so
-        // this test proves #2008, not the unrelated company-init gap.
-        if not SourceCodeSetup.Get() then begin
-            SourceCodeSetup.Init();
-            SourceCodeSetup.Insert();
+        if not InventorySetup.Get() then begin
+            InventorySetup.Init();
+            InventorySetup.Insert();
         end;
 
-        // Lot-tracked item, matching #2008's exact setup.
-        LibraryItemTracking.CreateLotItem(Item);
-        ItemTrackingCode.Get(Item."Item Tracking Code");
-
-        LibraryPurchase.CreatePurchaseDocumentWithItem(
-            PurchaseHeader, PurchaseLine, PurchaseHeader."Document Type"::Order,
-            '', Item."No.", 4, '', 0D);
+        // Raw Purchase Line, no Item/Vendor/Dimension machinery — see file header.
+        PurchaseLine.Init();
+        PurchaseLine."Document Type" := PurchaseLine."Document Type"::Order;
+        PurchaseLine."Document No." := 'PO0001';
+        PurchaseLine."Line No." := 10000;
+        PurchaseLine.Type := PurchaseLine.Type::Item;
+        PurchaseLine."No." := 'FVTIT-ITEM';
+        PurchaseLine.Description := 'FVTIT lot-tracked item';
+        PurchaseLine."Unit of Measure Code" := 'PCS';
+        PurchaseLine."Qty. per Unit of Measure" := 1;
+        PurchaseLine.Quantity := 4;
+        PurchaseLine."Quantity (Base)" := 4;
+        PurchaseLine."Quantity Received" := 0;
+        PurchaseLine."Expected Receipt Date" := WorkDate();
+        PurchaseLine.Insert(false);
 
         // A lot-tracked Reservation Entry with Qty. to Handle (Base) = 2, sourced to this
         // purchase line — the exact seed #2008 describes.
         ReservEntry.Init();
         ReservEntry."Entry No." := 1;
-        ReservEntry."Item No." := Item."No.";
+        ReservEntry."Item No." := PurchaseLine."No.";
         ReservEntry."Source Type" := Database::"Purchase Line";
         ReservEntry."Source Subtype" := PurchaseLine."Document Type".AsInteger();
         ReservEntry."Source ID" := PurchaseLine."Document No.";

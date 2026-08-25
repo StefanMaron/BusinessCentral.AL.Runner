@@ -552,6 +552,11 @@ if (artifactPathArg != null)
 // The target project's app.json (application/platform) is read purely as a cross-check —
 // a mismatch means the project targets a BC major this runner build can't run, surfaced
 // as a clear message instead of a deep failure. All of this stays overridable.
+// Tracks whether bcVersionArg/artifactPathArg came from the auto-select default
+// below, so the explicit-selection engine-minor-mismatch warning further down (see
+// BcArtifacts.WarnIfExplicitEngineMinorMismatch) does not double-warn a case the
+// auto-select branch already covers with its own, richer message.
+bool bcVersionAutoSelected = false;
 if (bcVersionArg == null && artifactPathArg == null)
 {
     // The BUILT version (4-part, baked in at compile time) — not Ncl.dll's assembly
@@ -562,6 +567,7 @@ if (bcVersionArg == null && artifactPathArg == null)
     var engineMajor = engineVersion?.Major;
     if (engineVersion != null && engineMajor != null)
     {
+        bcVersionAutoSelected = true;
         // Prefer the engine's OWN major.minor. Latest-in-major used to win here, which
         // silently selected a minor the engine was not built for — measured at -45 passing
         // / +42 failing / +3 errors on Pageworks. See BcArtifacts.DefaultVersionPrefix.
@@ -623,6 +629,13 @@ try
     // and the engine can disagree — fail loud rather than crash deep in BC. Patch-level
     // skew (28.1.x build vs 28.1.y cache) is tolerated.
     AlRunner.Infrastructure.BcArtifacts.VerifyEngineConsistency(AppContext.BaseDirectory);
+    // #2008's root cause: VerifyEngineConsistency only catches a MAJOR mismatch (Ncl.dll's
+    // own AssemblyVersion is always major.0.0.0, so it cannot see a same-major
+    // different-minor selection). The auto-select default path above already warns about
+    // minor skew; an EXPLICIT --bc-version/--artifact-path bypassed that warning entirely
+    // and ran a mismatched engine silently. Only warn here for the explicit path.
+    if (!bcVersionAutoSelected)
+        AlRunner.Infrastructure.BcArtifacts.WarnIfExplicitEngineMinorMismatch();
     Console.Error.WriteLine($"[bc] selected BC {AlRunner.Infrastructure.BcArtifacts.SelectedVersion} " +
         $"({AlRunner.Infrastructure.BcArtifacts.ServiceTierDir})");
 }

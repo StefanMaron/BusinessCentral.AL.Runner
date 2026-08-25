@@ -352,4 +352,49 @@ public static class BcArtifacts
                 $"(--bc-version {engineVer.Major}).");
         }
     }
+
+    /// <summary>
+    /// Pure core of <see cref="WarnIfExplicitEngineMinorMismatch"/>, split out for direct unit
+    /// testing (see AlRunner.Tests.EngineMinorMismatchWarningTests) — mirrors the
+    /// BcEngineReadinessGuard.AssertReadyOnCi(bool,string?,bool) shape: a pure function over
+    /// explicit values is provable with no BC engine or CLI invocation involved.
+    ///
+    /// #2008's actual root cause: a shipped al-runner binary's engine (Ncl.dll etc.) is built
+    /// for one BC MINOR (the release pipeline pins BC 28.1 as `required-version` — see
+    /// bc-tests.yml), but Ncl.dll's own AssemblyVersion is always MAJOR.0.0.0, so
+    /// VerifyEngineConsistency (which only compares Major) cannot see a same-major
+    /// different-minor selection at all. Running that binary with `--bc-version 28.3`
+    /// silently ran BC 28.1's engine against BC 28.3 artifacts and threw a
+    /// NullReferenceException deep inside BC's own FieldDataProvider ctor
+    /// (NavGlobal.get_SystemTenant → get_NCLMetadata) with nothing pointing at the real
+    /// cause. The runner ALREADY had this exact warning — Program.cs's auto-select default
+    /// path prints it when the user passes neither --bc-version nor --artifact-path — but it
+    /// was unreachable in precisely the case that needed it: an EXPLICIT --bc-version/
+    /// --artifact-path skips the auto-select branch entirely. This is the same warning,
+    /// reachable from the explicit-selection path too.
+    /// </summary>
+    internal static string? DescribeExplicitEngineMinorMismatch(System.Version? builtVersion, System.Version selectedVersion)
+    {
+        if (builtVersion == null) return null; // older/unstamped binary — nothing to compare
+        if (builtVersion.Major == selectedVersion.Major && builtVersion.Minor == selectedVersion.Minor)
+            return null; // matched minor, or patch-level skew within it — tolerated, same as VerifyEngineConsistency
+
+        return $"[bc] warning: this binary's engine was built for BC {builtVersion} but BC {selectedVersion} was " +
+            $"explicitly selected (--bc-version/--artifact-path) — different minor is a KNOWN-DEGRADED " +
+            $"configuration (measured: dozens of extra failures from engine/artifact minor skew, see #2008). " +
+            $"Fix with one of: drop --bc-version so the runner auto-selects its own engine's minor " +
+            $"({builtVersion.Major}.{builtVersion.Minor}), or rebuild with -p:_BCVersion={selectedVersion}.";
+    }
+
+    /// <summary>
+    /// Called ONLY when the user explicitly chose the BC version (--bc-version or
+    /// --artifact-path) — never from the auto-select default path, which already prints its
+    /// own equivalent warning inside Program.cs and must not be double-warned. See
+    /// DescribeExplicitEngineMinorMismatch for the full rationale.
+    /// </summary>
+    public static void WarnIfExplicitEngineMinorMismatch()
+    {
+        var msg = DescribeExplicitEngineMinorMismatch(EngineBuiltVersion(), SelectedVersion);
+        if (msg != null) Console.Error.WriteLine(msg);
+    }
 }
