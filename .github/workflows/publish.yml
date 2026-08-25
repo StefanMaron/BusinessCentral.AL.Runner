@@ -165,9 +165,10 @@ jobs:
           # (and did — the v2.4.0 release) withdraw between when it was last bumped
           # and when a release runs, and nothing exercised that exact value except a
           # release itself. `needs.test.outputs.required-version` is the live-resolved
-          # 28.1.* build the test matrix THIS RUN just gated on (bc-tests.yml's
-          # resolve-versions job, same resolve-version call bc-tests.yml's other jobs
-          # use) — it cannot be a version Microsoft has withdrawn, because resolving it
+          # build of the NEWEST bc-versions.txt prefix that the test matrix THIS RUN just
+          # gated on (bc-tests.yml's resolve-versions job, same resolve-version call
+          # bc-tests.yml's other jobs use) — it cannot be a version Microsoft has
+          # withdrawn, because resolving it
           # is what proved it still exists, in this same run. It's also what the
           # package is stamped with (AssemblyMetadata BcEngineVersion, AlRunner.csproj)
           # so a released package still records a single, definite engine version.

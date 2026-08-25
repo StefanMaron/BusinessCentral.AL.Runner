@@ -33,14 +33,22 @@ on:
     outputs:
       required-version:
         description: >-
-          The live-resolved 28.1.* build this run actually tested (resolve-versions'
-          `required-version`, see below). publish.yml's release job reads this instead
-          of carrying its own static _BCVersion pin — see #2010: a hardcoded pin in the
-          one path nobody exercises except during a release rotted the moment Microsoft
-          withdrew the build it named, and the release failed AFTER the tag was already
-          pushed. Handing the caller the exact version THIS run resolved and gated on
-          means the release can never build against a version different from — or
-          staler than — the one that just passed the matrix.
+          The live-resolved build of the NEWEST BC prefix in .github/bc-versions.txt that
+          this run actually tested (resolve-versions' `required-version`, see below).
+          publish.yml's release job reads this instead of carrying its own static
+          _BCVersion pin — see #2010: a hardcoded pin in the one path nobody exercises
+          except during a release rotted the moment Microsoft withdrew the build it named,
+          and the release failed AFTER the tag was already pushed. Handing the caller the
+          exact version THIS run resolved and gated on means the release can never build
+          against a version different from — or staler than — the one that just passed
+          the matrix.
+          See #2020: this used to hardcode the "28.1" prefix specifically, which is why
+          every released al-runner binary was compiled against BC 28.1's engine
+          regardless of which BC version a caller's --bc-version asked for at runtime —
+          the exact root cause of #2008. Deriving it from the newest bc-versions.txt
+          prefix instead means it tracks forward automatically, but does not eliminate
+          the underlying engine/version-skew class of bug — it only moves which BC minor
+          is unaffected. See #2020 for the deeper fix options this does not attempt.
         value: ${{ jobs.resolve-versions.outputs.required-version }}
 
 env:
@@ -52,9 +60,12 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.resolve.outputs.matrix }}
-      # The PRIMARY version (28.1) — the one the runner is developed against, used by
-      # jobs that build once rather than across the matrix (currently `smoke`). Every
-      # version in the matrix now gates; this output just picks the representative one.
+      # The NEWEST version in .github/bc-versions.txt that successfully resolves — the
+      # one used by jobs that build once rather than across the matrix (`smoke`,
+      # `pack`/`build-and-pack`, and publish.yml's release job). Every version in the
+      # matrix now gates; this output just picks the representative one. See #2020 for
+      # why "newest" and not a hardcoded minor, and for what this change does and does
+      # not solve.
       required-version: ${{ steps.resolve.outputs.required-version }}
     steps:
       - uses: actions/checkout@v6
@@ -81,15 +92,38 @@ jobs:
           #
           # So the informational tier has nothing left to protect, and keeping it would
           # mean a BC 27 regression lands silently, which is exactly what this matrix
-          # exists to prevent. 28.1 stays singled out only as `required-version`, for
-          # single-build jobs that need to name one version.
+          # exists to prevent.
+          #
+          # `required-version` (single-build jobs: smoke, pack, publish.yml's release job)
+          # used to hardcode the "28.1" prefix specifically — see #2020, which traced #2008
+          # to exactly that: every released al-runner binary was compiled against BC 28.1's
+          # engine no matter which BC minor a caller's --bc-version asked it to run
+          # against. Deriving it from the NEWEST prefix in bc-versions.txt instead means it
+          # tracks forward automatically as this file gains newer entries, rather than
+          # needing a manual edit every time — but it does not eliminate the underlying
+          # engine/version-skew bug class, it only moves which single minor is unaffected
+          # (see #2020 for the options that would actually fix that).
+          #
+          # Sort DESCENDING by real version (not file order / last-line) so appending an
+          # OLDER prefix to this file can never silently change what ships — #2020 flagged
+          # this as a real risk of a naive "take the last line" implementation, since the
+          # file is a plain whitespace-separated list that only happens to end in the
+          # newest entry today.
           BC_PREFIXES=$(cat .github/bc-versions.txt | grep -v '^#' | tr '\n' ' ')
+          SORTED_PREFIXES=$(echo "$BC_PREFIXES" | tr ' ' '\n' | grep -v '^$' | sort -rV | tr '\n' ' ')
           ENTRIES="[]"
-          for prefix in $BC_PREFIXES; do
+          REQUIRED_RESOLVED=""
+          for prefix in $SORTED_PREFIXES; do
             FULL=$(dotnet run --project tools/DownloadArtifacts -- resolve-version "$prefix" dummy 2>/dev/null || true)
             if [ -n "$FULL" ]; then
               REQ=True
-              [ "$prefix" = "28.1" ] && echo "required-version=$FULL" >> "$GITHUB_OUTPUT"
+              # First prefix (in descending order) that actually resolves wins — so a
+              # transiently-unresolvable newest entry falls back to the next-newest
+              # rather than leaving required-version unset.
+              if [ -z "$REQUIRED_RESOLVED" ]; then
+                echo "required-version=$FULL" >> "$GITHUB_OUTPUT"
+                REQUIRED_RESOLVED="$FULL"
+              fi
               echo "  $prefix -> $FULL (required=$REQ)"
               ENTRIES=$(echo "$ENTRIES" | python3 -c "import json,sys; v=json.load(sys.stdin); v.append({'bc-version':'$FULL','required':$REQ}); print(json.dumps(v))")
             else
@@ -98,6 +132,7 @@ jobs:
           done
           echo "matrix={\"target\":$ENTRIES}" >> "$GITHUB_OUTPUT"
           echo "Matrix: $ENTRIES"
+          echo "required-version resolved to: $REQUIRED_RESOLVED"
 
   test:
     needs: resolve-versions
@@ -118,10 +153,11 @@ jobs:
           ref: ${{ inputs.ref }}
           submodules: true
 
-      # BC 28.1 is a .NET 8 product (Server.runtimeconfig.json tfm=net8.0); the runner
-      # targets net8.0 and runs it on its real runtime. (BC's Types.dll binds
-      # System.Text.Json 10, which the runner deploys app-local via deps.json — see
-      # AlRunner.csproj.) net8 SDK builds the runner and tools/DownloadArtifacts.
+      # Every BC version in .github/bc-versions.txt is a .NET 8 product
+      # (Server.runtimeconfig.json tfm=net8.0); the runner targets net8.0 and runs it
+      # on its real runtime. (BC's Types.dll binds System.Text.Json 10, which the
+      # runner deploys app-local via deps.json — see AlRunner.csproj.) net8 SDK builds
+      # the runner and tools/DownloadArtifacts.
       - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '8.0.x'
@@ -448,7 +484,8 @@ jobs:
           ref: ${{ inputs.ref }}
           submodules: recursive
 
-      # BC 28.1 runs on .NET 8; the runner targets net8.0. net8 SDK builds + runs it.
+      # BC runs on .NET 8 across every version in .github/bc-versions.txt; the runner
+      # targets net8.0. net8 SDK builds + runs it.
       - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '8.0.x'
@@ -458,9 +495,10 @@ jobs:
 
       - name: Build Release
         # Pin to the resolved REQUIRED version rather than AlRunner.csproj's baked-in
-        # _BCVersion default: resolve-versions picks whatever 28.1.* MS currently ships,
-        # so the hardcoded default goes stale the moment MS publishes a new build and
-        # this job then demanded an artifact dir nothing had provisioned.
+        # _BCVersion default: resolve-versions picks whatever the newest bc-versions.txt
+        # prefix currently ships as, so the hardcoded default goes stale the moment MS
+        # publishes a new build and this job then demanded an artifact dir nothing had
+        # provisioned.
         run: |
           dotnet build AlRunner.slnx \
             -p:_BCVersion=${{ needs.resolve-versions.outputs.required-version }} \
