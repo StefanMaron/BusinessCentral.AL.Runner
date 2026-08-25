@@ -29,7 +29,25 @@ public static class BcArtifacts
 {
     public const string ArtifactsRoot_Rel = ".local/share/al-runner/artifacts";
 
-    /// <summary>The explicit download command users must run (no auto-download).</summary>
+    /// <summary>
+    /// The tool-install-valid, one-command fix — works identically whether the runner
+    /// came from `dotnet tool install` or a source checkout. This is the PRIMARY
+    /// recommendation in every provisioning-gap message: unlike
+    /// <see cref="DownloadCommand"/>, it names no path that only exists in this repo's
+    /// own source tree.
+    /// </summary>
+    public static string ProvisionHint(string? versionPrefix = null)
+        => versionPrefix == null
+            ? "al-runner provision   (or re-run your command with --auto-provision)"
+            : $"al-runner provision --bc-version {versionPrefix}   (or re-run your command with --auto-provision)";
+
+    /// <summary>
+    /// The manual, repo-checkout-only fallback: invokes `tools/DownloadArtifacts` directly.
+    /// That project ships only as source in this repo — it is NOT part of the packaged
+    /// `dotnet tool install` output — so this command is only valid from a checkout, never
+    /// for a tool install. Callers must always pair it with <see cref="ProvisionHint"/> as
+    /// the primary, universally-valid recommendation.
+    /// </summary>
     public static string DownloadCommand(System.Version ver, string dir)
         => $"dotnet run --project tools/DownloadArtifacts -- service-tier {ver} \"{dir}\"";
 
@@ -144,8 +162,9 @@ public static class BcArtifacts
     {
         if (!Directory.Exists(rootDir))
             throw new InvalidOperationException(
-                $"BC artifact root not found: {rootDir}. No artifacts are downloaded — " +
-                $"download one explicitly, e.g.: {DownloadCommand(new System.Version(28, 1), rootDir)}");
+                $"BC artifact root not found: {rootDir}. No artifacts are downloaded — resolve it ONE of these ways: " +
+                $"(a) {ProvisionHint()}; " +
+                $"(b) manually, repo checkout only: {DownloadCommand(new System.Version(28, 1), rootDir)}");
 
         var candidates = Directory.EnumerateDirectories(rootDir)
             .Select(d => (Dir: d, Name: Path.GetFileName(d),
@@ -156,8 +175,9 @@ public static class BcArtifacts
 
         if (candidates.Count == 0)
             throw new InvalidOperationException(
-                $"BC artifact root {rootDir} contains no version-named directories. " +
-                $"Download one explicitly, e.g.: {DownloadCommand(new System.Version(28, 1), rootDir)}");
+                $"BC artifact root {rootDir} contains no version-named directories. Resolve it ONE of these ways: " +
+                $"(a) {ProvisionHint()}; " +
+                $"(b) manually, repo checkout only: {DownloadCommand(new System.Version(28, 1), rootDir)}");
 
         if (requestedVersionOrNull == null)
             return candidates[0].Dir;
@@ -171,7 +191,9 @@ public static class BcArtifacts
             var available = string.Join(", ", candidates.Select(t => t.Name));
             throw new InvalidOperationException(
                 $"No BC artifact under {rootDir} matches version '{requestedVersionOrNull}'. " +
-                $"Available: {available}. Download it explicitly, e.g.: " +
+                $"Available: {available}. Resolve it ONE of these ways: " +
+                $"(a) {ProvisionHint(prefix)}; " +
+                $"(b) manually, repo checkout only: " +
                 $"{DownloadCommand(System.Version.TryParse(EnsureFourPart(prefix), out var pv) ? pv : new System.Version(28, 1), rootDir)}");
         }
         return match.Dir;

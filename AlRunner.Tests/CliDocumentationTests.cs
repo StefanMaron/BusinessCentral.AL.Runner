@@ -223,7 +223,7 @@ public sealed class CliDocumentationTests
     /// </summary>
     private static readonly string[] BehaviorChangingFlags =
     {
-        "--tdd", "--watch", "--server", "--define", "--auto-provision", "--no-cache",
+        "--tdd", "--watch", "--server", "--define", "--auto-provision", "--no-auto-provision", "--no-cache",
     };
 
     /// <summary>Negative: an unknown documentation flag must not be silently accepted.</summary>

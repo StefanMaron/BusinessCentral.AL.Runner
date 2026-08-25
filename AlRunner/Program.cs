@@ -269,14 +269,27 @@ string? expectationsDirArg = null;
 string? countBaselinePath = null;
 // `provision` subcommand: `al-runner provision [<project>]` provisions the BC artifacts
 // for the project's version and exits (no test run). `--auto-provision` provisions on the
-// fly when artifacts are missing, then continues the normal run. Both are the opt-in that
-// gates the runner's otherwise-forbidden downloads (no silent auto-download).
+// fly when artifacts are missing, then continues the normal run.
+//
+// Issue #2024 (item 2): auto-provisioning is ON BY DEFAULT. Since PR #2023/#2026 the
+// packaged tool ships none of the BC engine assemblies — they resolve ONLY from
+// ~/.local/share/al-runner/artifacts/<version>/, populated by nothing but provisioning
+// itself. A first-time `dotnet tool install` user with an empty cache has no copy
+// anywhere, so opt-in provisioning (the pre-#2024 default) meant a clean install could
+// never run a single test without the user first discovering `--auto-provision` exists.
+// `--no-auto-provision` is the explicit opt-out for offline/air-gapped environments,
+// where reaching the network unasked for gigabyte-scale artifacts is a real problem —
+// see docs/scope.md and .claude/rules/loud-failures.md (a refused/failed provision must
+// still fail loud with an actionable, tool-install-valid fix command, never silently).
+// `--auto-provision` itself is kept as an explicit, redundant-with-the-default alias for
+// back-compat with existing scripts/docs that already pass it.
 bool provisionSubcommand = args.Length > 0 && args[0] == "provision";
-bool autoProvision = false;
+bool autoProvision = true;
 for (int i = 0; i < args.Length; i++)
 {
     if (i == 0 && args[i] == "provision") { continue; } // consumed as subcommand
     if (args[i] == "--auto-provision") { autoProvision = true; continue; }
+    if (args[i] == "--no-auto-provision") { autoProvision = false; continue; }
     if (args[i] == "--bc-version" && i + 1 < args.Length) { bcVersionArg = args[++i]; continue; }
     if (args[i] == "--artifact-path" && i + 1 < args.Length) { artifactPathArg = args[++i]; continue; }
     if (args[i] == "--out" && i + 1 < args.Length) { outPath = args[++i]; printClassification = true; continue; }
@@ -597,10 +610,11 @@ if (bcVersionArg == null && artifactPathArg == null)
                 $"runner build supports major {engineMajor} (cross-major needs a matching runner build).");
     }
 }
-// ── Provisioning (opt-in): `provision` subcommand or --auto-provision. Resolves the
-// target version, downloads the engine service-tier closure if it's missing/incomplete,
-// then (subcommand) exits or (flag) continues the run against what was provisioned. This
-// is the ONLY path that downloads — a normal run never does.
+// ── Provisioning (on by default since issue #2024; opt out with --no-auto-provision):
+// `provision` subcommand or autoProvision (default true). Resolves the target version,
+// downloads the engine service-tier closure if it's missing/incomplete, then (subcommand)
+// exits or (flag/default) continues the run against what was provisioned. This is the
+// ONLY path that downloads — a run with --no-auto-provision never does.
 if (provisionSubcommand || autoProvision)
 {
     // Issue #1996 (AC #6): manifest-app (platform-apps/test-apps) provisioning must have
@@ -823,7 +837,8 @@ if (!provisionSubcommand)
 
     if (decision.ShouldDownloadAny && !autoProvision)
     {
-        // Issue #1996 acceptance criterion #10: no download without opt-in, on EITHER path.
+        // Issue #1996 acceptance criterion #10 / issue #2024: no download when the caller
+        // has explicitly refused it with --no-auto-provision, on EITHER path.
         Console.Error.WriteLine(!platformReport.Ok
             ? platformReport.ToDetailedMessage()
             : AlRunner.Infrastructure.ProvisioningCheck.BuildManifestNeedsMissingMessage(
@@ -3809,9 +3824,16 @@ static void PrintGuide(TextWriter w)
     w.WriteLine("  not currently print its selection, so pass --bc-version explicitly rather than");
     w.WriteLine("  relying on the default — leaving it off can silently change test outcomes.");
     w.WriteLine();
-    w.WriteLine("  BC artifacts are never downloaded silently. Obtain them explicitly:");
-    w.WriteLine("    al-runner provision <bundle-dir>     # provision for that project's version, then exit");
-    w.WriteLine("    al-runner --auto-provision <dirs>    # provision on demand, then continue the run");
+    w.WriteLine("  BC artifacts are provisioned AUTOMATICALLY by default (issue #2024): a first run");
+    w.WriteLine("  against an empty ~/.local/share/al-runner/artifacts downloads the engine +");
+    w.WriteLine("  platform/test apps it needs and continues, no flag required. Pass");
+    w.WriteLine("  --no-auto-provision to refuse network access (offline/air-gapped machines) —");
+    w.WriteLine("  a refused or failed provision still fails loud, naming exactly what is");
+    w.WriteLine("  missing and a fix command that is valid for a `dotnet tool install`, never a");
+    w.WriteLine("  silent stub. Other provisioning entry points:");
+    w.WriteLine("    al-runner provision <bundle-dir>        # provision for that project's version, then exit");
+    w.WriteLine("    al-runner --auto-provision <dirs>       # same as the default, explicit for scripts");
+    w.WriteLine("    al-runner --no-auto-provision <dirs>    # fail loud instead of reaching the network");
     w.WriteLine("  The engine must be built against the same BC MINOR as the target artifacts");
     w.WriteLine("  (28.1 vs 28.2 matters; a major-only match is not sufficient).");
     w.WriteLine();
@@ -3858,8 +3880,10 @@ static void PrintGuide(TextWriter w)
     w.WriteLine("      Action: add the missing .app's directory via --package-cache.");
     w.WriteLine();
     w.WriteLine("  Artifact version not found");
-    w.WriteLine("      Action: the runner never auto-downloads. Run `al-runner provision`, or pass");
-    w.WriteLine("      --auto-provision, or point --artifact-path at an existing artifact root.");
+    w.WriteLine("      Action: auto-provisioning is on by default and should have fetched it —");
+    w.WriteLine("      if you passed --no-auto-provision, drop it (or run `al-runner provision`");
+    w.WriteLine("      explicitly). If provisioning itself failed (no network), point");
+    w.WriteLine("      --artifact-path at an existing artifact root instead.");
     w.WriteLine();
     w.WriteLine("  Compile succeeds, tests still do not run");
     w.WriteLine("      Action: read the DEPENDENCIES trap above. Compilation validates symbols");
@@ -3986,17 +4010,24 @@ static void PrintHelp(TextWriter w)
     w.WriteLine("  --bc-version X          Select the BC artifact version (e.g. \"28.1\" or a full");
     w.WriteLine("                          version). Default: the latest version present in");
     w.WriteLine("                          ~/.local/share/al-runner/artifacts. A prefix matches the");
-    w.WriteLine("                          highest version with that prefix. The runner never");
-    w.WriteLine("                          auto-downloads; an unavailable version fails loud.");
+    w.WriteLine("                          highest version with that prefix. Missing artifacts are");
+    w.WriteLine("                          auto-provisioned by default (see --no-auto-provision);");
+    w.WriteLine("                          an unavailable/refused version still fails loud.");
     w.WriteLine("                          Mutually exclusive with --artifact-path.");
     w.WriteLine("  --artifact-path DIR     Use an explicit BC artifact root (the dir containing");
     w.WriteLine("                          platform/ + w1/), bypassing the cache scan. Its version");
     w.WriteLine("                          is read from the dir name or the contained Ncl.dll.");
     w.WriteLine("                          Mutually exclusive with --bc-version.");
     w.WriteLine("  --auto-provision        Download the BC artifacts for the project's version if");
-    w.WriteLine("                          they are missing, then continue the run. The runner never");
-    w.WriteLine("                          downloads without this flag (or the `provision`");
-    w.WriteLine("                          subcommand) — a missing artifact otherwise fails loud.");
+    w.WriteLine("                          they are missing, then continue the run. ON BY DEFAULT");
+    w.WriteLine("                          since issue #2024 — this flag is now redundant with a");
+    w.WriteLine("                          plain run, kept for explicit scripts/back-compat. See");
+    w.WriteLine("                          --no-auto-provision to turn it off (or the `provision`");
+    w.WriteLine("                          subcommand to provision without running tests).");
+    w.WriteLine("  --no-auto-provision     Disable automatic provisioning: a missing/incomplete BC");
+    w.WriteLine("                          artifact fails loud instead of downloading it. Use this");
+    w.WriteLine("                          on offline/air-gapped machines, or anywhere reaching the");
+    w.WriteLine("                          network unasked for gigabyte-scale artifacts is unwanted.");
     w.WriteLine("  --package-cache PATH    Extra directory to scan for .app dependencies");
     w.WriteLine("                          (repeatable). Default scan: ~/.bcartifacts.cache,");
     w.WriteLine("                          ~/.local/share/al-runner/artifacts, and bundle .alpackages/.");
@@ -5465,8 +5496,9 @@ static string? TryDeriveBcMajorFromProject(IEnumerable<string> bundlePaths)
 // prefers an already-cached matching version (completing a partial one) and otherwise
 // resolves the latest full version from the CDN, then downloads the engine service-tier
 // closure if it is missing/incomplete. Returns 0 on success (already-complete counts) and
-// sets provisionedVersion to the full version to run against; 1 on failure. This is opt-in
-// — the only path in the runner that downloads.
+// sets provisionedVersion to the full version to run against; 1 on failure. This is the
+// only path in the runner that downloads — on by default since issue #2024, refusable
+// with --no-auto-provision.
 //
 // <paramref name="provisionManifestApps"/> (issue #1996, AC #6): whether THIS call should
 // also provision platform-apps/test-apps. Pass true only for the `provision` subcommand,

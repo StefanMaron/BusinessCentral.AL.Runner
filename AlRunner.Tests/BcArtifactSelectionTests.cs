@@ -64,9 +64,12 @@ public sealed class BcArtifactSelectionTests : IDisposable
 
         var ex = Assert.Throws<InvalidOperationException>(
             () => BcArtifacts.SelectArtifactVersionDir(_root, "26"));
-        // Loud failure: names what IS available so a human/agent can act.
+        // Loud failure: names what IS available so a human/agent can act, and leads with
+        // the tool-install-valid fix (issue #2024/#2028) before the repo-checkout-only
+        // manual fallback.
         Assert.Contains("28.2.50931.52786", ex.Message);
-        Assert.Contains("Download it explicitly", ex.Message);
+        Assert.Contains("al-runner provision", ex.Message);
+        Assert.Contains("dotnet run --project tools/DownloadArtifacts", ex.Message);
     }
 
     /// <summary>
