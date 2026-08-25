@@ -154,6 +154,33 @@ jobs:
           # stubs for both RIDs without needing an arm64 runner.
           sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
 
+      - name: Build each BC-minor engine variant (#2024 item 3 / #2027)
+        # Consumes needs.test.outputs.versions-json — the SAME live-resolved, ALREADY
+        # tested build list bc-tests.yml's own `pack` job uses (see that job's identical
+        # step for the full rationale) — rather than re-resolving versions here. Calling
+        # tools/DownloadArtifacts directly in this file is exactly the re-inlining
+        # ReleaseTestParityTests/#1976 fails a normal unit-test run over: two copies of
+        # version-resolution logic drifted before and broke two releases. Delegating the
+        # resolution to the shared bc-tests.yml workflow (via its versions-json output)
+        # keeps this file down to consuming an already-tested list, not restating it.
+        env:
+          VERSIONS_JSON: ${{ needs.test.outputs.versions-json }}
+        run: |
+          mkdir -p ./variants-staging
+          for full in $(echo "$VERSIONS_JSON" | python3 -c "import json,sys; [print(v) for v in json.load(sys.stdin)]"); do
+            echo "Building engine variant for BC $full..."
+            dotnet build AlRunner/ \
+              -p:_BCVersion="$full" -p:AllowBcArtifactDownload=true \
+              -o "./variant-build-$full"
+            mkdir -p "./variants-staging/$full"
+            for f in al-runner.dll al-runner.pdb al-runner.deps.json al-runner.runtimeconfig.json; do
+              cp "./variant-build-$full/$f" "./variants-staging/$full/$f"
+            done
+            rm -rf "./variant-build-$full"
+          done
+          echo "Staged variants:"
+          ls -la ./variants-staging
+
       - name: Build and pack
         id: build-and-pack
         run: |
@@ -202,6 +229,7 @@ jobs:
             -p:_BCVersion=${{ needs.test.outputs.required-version }} \
             -p:AllowBcArtifactDownload=true -p:Version=${{ inputs.version }} \
             -p:SuppressImplicitGitSourceLink=false -p:IncludeSourceRevisionInInformationalVersion=true \
+            -p:EngineVariantsStagingDir="$(pwd)/variants-staging" \
             -o ./nupkg
 
       - name: Generate CHANGELOG and push the release commit + tag

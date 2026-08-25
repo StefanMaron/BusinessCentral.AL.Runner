@@ -260,6 +260,37 @@ the exact value will see different results.
 
 ---
 
+## Per-BC-minor engine variants: granularity is per MINOR, not per exact build
+
+Every released `al-runner` binary used to be compiled against exactly one BC minor's
+reference assemblies (`Microsoft.Dynamics.Nav.CodeAnalysis` etc.), regardless of which
+`--bc-version` a user actually ran it against — running a mismatched minor could NRE
+deep inside BC's own code (#2020). The package now ships one thin engine variant per
+[`.github/bc-versions.txt`](../.github/bc-versions.txt) entry and swaps to the matching
+one automatically at startup (#2024 item 3, #2027) — a large improvement, but **not
+"any BC version works."**
+
+**`Microsoft.Dynamics.Nav.CodeAnalysis` is strong-named per BUILD, not per minor.**
+Two separate builds of the same BC minor ship different `CodeAnalysis` assembly
+versions (e.g. 28.1.49838.50794 → 17.0.36.40629 vs. 28.1.49838.53220 → 17.0.39.53543),
+and the runner's variant was compiled against whichever build was newest at PACK TIME.
+The strong-named reference does not tolerate that skew — a mismatched build fails loud
+at startup with `FileLoadException` before any test runs, not silently.
+
+So concretely: if the shipped `28.3` variant was built against build `28.3.52162.53954`
+and you have a *different* `28.3.x` build cached locally (a real scenario — Microsoft
+regularly ships more than one build per minor, and can withdraw one after the fact —
+see #2012), the runner prints a loud, explicit warning naming both versions and still
+attempts the run; it may or may not actually load, depending on how far that specific
+skew reaches. This is the one case per-minor variants don't close — only shipping a
+variant per exact 4-part build would, and that's a materially larger package for a
+combination that's uncommon in practice.
+
+Eight correctly-matched minors instead of one is the real, measured improvement here.
+Treat "shipped variant" and "exact user build" as related but distinct guarantees.
+
+---
+
 ## BC 26
 
 Not supported. The runner is tested against **BC 27.0 and up** — see

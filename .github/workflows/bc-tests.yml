@@ -42,6 +42,17 @@ on:
           means the release can never build against a version different from — or
           staler than — the one that just passed the matrix.
         value: ${{ jobs.resolve-versions.outputs.required-version }}
+      versions-json:
+        description: >-
+          JSON array of every live-resolved full BC build this run tested — one per
+          .github/bc-versions.txt entry (the same list `matrix` carries, flattened to
+          just the version strings). Used to build the per-BC-minor engine variants
+          (#2024 item 3 / #2027) WITHOUT either caller re-resolving versions itself —
+          re-resolving in a caller is exactly the re-inlining ReleaseTestParityTests
+          guards against (#1976), and would risk building a variant against a DIFFERENT
+          build than the one the matrix above just gated on if Microsoft published a new
+          build in between.
+        value: ${{ jobs.resolve-versions.outputs.versions-json }}
 
 env:
   DOTNET_NOLOGO: true
@@ -56,6 +67,7 @@ jobs:
       # jobs that build once rather than across the matrix (currently `smoke`). Every
       # version in the matrix now gates; this output just picks the representative one.
       required-version: ${{ steps.resolve.outputs.required-version }}
+      versions-json: ${{ steps.resolve.outputs.versions-json }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -98,6 +110,10 @@ jobs:
           done
           echo "matrix={\"target\":$ENTRIES}" >> "$GITHUB_OUTPUT"
           echo "Matrix: $ENTRIES"
+
+          VERSIONS_JSON=$(echo "$ENTRIES" | python3 -c "import json,sys; v=json.load(sys.stdin); print(json.dumps([e['bc-version'] for e in v]))")
+          echo "versions-json=$VERSIONS_JSON" >> "$GITHUB_OUTPUT"
+          echo "Versions: $VERSIONS_JSON"
 
   test:
     needs: resolve-versions
@@ -528,6 +544,41 @@ jobs:
       - name: Install the aarch64 cross-compiler (#1672)
         run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
 
+      - name: Build each BC-minor engine variant (#2024 item 3 / #2027)
+        # One thin al-runner.dll build per version in resolve-versions' versions-json
+        # output (already the live-resolved, already-tested build for every
+        # .github/bc-versions.txt entry — NOT re-resolved here: re-resolving would be
+        # exactly the re-inlining ReleaseTestParityTests/#1976 exists to catch, since
+        # publish.yml's release job runs this identical step and must not carry its own
+        # copy of `tools/DownloadArtifacts` version resolution). Staged for the pack step
+        # below to fold into variants/<full-build-version>/ in the nupkg (see
+        # AlRunner.csproj's EngineVariantsStagingDir property). EngineVariants.cs picks
+        # the matching one at startup instead of running a single fixed-minor engine
+        # against whatever BC artifact happens to be selected — the root cause of #2020.
+        # Deliberately rebuilds the SAME version the "Build and pack" step below also
+        # builds for the top-level entry point (whichever prefix resolve-versions marks
+        # `required-version`) — that duplication is intentional, not wasted: the
+        # top-level slot and its own variants/<version>/ copy are independent package
+        # locations by design (see AlRunner.csproj), and this loop is the single source
+        # of truth for every variant regardless of which one also happens to be primary.
+        env:
+          VERSIONS_JSON: ${{ needs.resolve-versions.outputs.versions-json }}
+        run: |
+          mkdir -p ./variants-staging
+          for full in $(echo "$VERSIONS_JSON" | python3 -c "import json,sys; [print(v) for v in json.load(sys.stdin)]"); do
+            echo "Building engine variant for BC $full..."
+            dotnet build AlRunner/ \
+              -p:_BCVersion="$full" -p:AllowBcArtifactDownload=true \
+              -o "./variant-build-$full"
+            mkdir -p "./variants-staging/$full"
+            for f in al-runner.dll al-runner.pdb al-runner.deps.json al-runner.runtimeconfig.json; do
+              cp "./variant-build-$full/$f" "./variants-staging/$full/$f"
+            done
+            rm -rf "./variant-build-$full"
+          done
+          echo "Staged variants:"
+          ls -la ./variants-staging
+
       - name: Build and pack (mirrors publish.yml's release job, minus the push)
         # #2010: publish.yml's "Build and pack" step is the one step in the whole
         # release path that ONLY ever ran during an actual release — the release of
@@ -550,6 +601,7 @@ jobs:
             -p:_BCVersion=${{ needs.resolve-versions.outputs.required-version }} \
             -p:AllowBcArtifactDownload=true -p:Version=0.0.0-ci \
             -p:SuppressImplicitGitSourceLink=false -p:IncludeSourceRevisionInInformationalVersion=true \
+            -p:EngineVariantsStagingDir="$(pwd)/variants-staging" \
             -o ./nupkg
 
       - name: Assert a package was actually produced
@@ -572,3 +624,16 @@ jobs:
         # NclShadowRuntime.cs's class doc for how Ncl.dll itself is now resolved from the
         # user's own BC artifact cache at runtime instead of being shipped.
         run: .github/scripts/check-nupkg-contents.sh ./nupkg/*.nupkg
+
+      - name: Assert every BC-minor engine variant made it into the package
+        # A staging-step failure that got silently skipped (e.g. a bad glob) would
+        # otherwise still produce a valid-looking package with zero variants — the exact
+        # "looks fine, quietly regressed" shape #1825/#2010's own history warns about.
+        run: |
+          count=$(unzip -l ./nupkg/*.nupkg | grep -c 'tools/net8.0/any/variants/.*/al-runner\.dll$')
+          expected=$(grep -v '^#' .github/bc-versions.txt | tr ' ' '\n' | grep -c .)
+          echo "Packed variants: $count, expected: $expected"
+          if [ "$count" -ne "$expected" ]; then
+            echo "::error::nupkg contains $count engine variant(s), expected $expected (one per .github/bc-versions.txt entry)"
+            exit 1
+          fi
