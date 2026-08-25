@@ -1,19 +1,44 @@
 name: Publish to NuGet
 
 # Triggered manually only — supply the version and the workflow does everything:
-# runs the full BC test matrix, then generates the CHANGELOG section, commits it to
-# main, pushes the tag, packs, pushes to NuGet, and creates the GitHub Release.
+# runs the full BC test matrix, then BUILDS AND PACKS, then generates the CHANGELOG
+# section, commits it to main, pushes the tag, pushes to NuGet, and creates the
+# GitHub Release.
 #
-# ORDER MATTERS, and it used to be backwards. Until #1978 the first job pushed the
-# release commit and the tag BEFORE a single test ran, so a red matrix left a
-# permanent tag on main with no release behind it. Not hypothetical: v2.3.0 and
-# v2.3.1 are both such tags. Tests now gate every write — a failed release attempt
-# leaves the repository exactly as it found it.
+# ORDER MATTERS, and it has been backwards twice.
 #
-# That ordering had a second cost. CHANGELOG sections are generated from
-# `git describe --tags`, so a dead tag becomes the baseline for the NEXT release:
-# [2.3.1] lists two entries while the 21 real ones sit under [2.3.0], a heading with
-# no release behind it.
+# Until #1978 the first job pushed the release commit and the tag BEFORE a single
+# test ran, so a red matrix left a permanent tag on main with no release behind
+# it (v2.3.0, v2.3.1). #1978 moved the TEST MATRIX ahead of the writes and this
+# header used to claim that made a failed release leave the repository exactly as
+# it found it. That claim was false: it never covered the release job's OWN build.
+# The v2.4.0 release proved it — all 8 matrix legs green, then `Build and pack`
+# failed on a withdrawn BC artifact (#2010), after the CHANGELOG commit and the
+# `v2.4.0` tag had already been pushed at what was then the FIRST step of this
+# job. Gating on tests is not gating on the build; the build can fail on its own,
+# independent of what the tests found.
+#
+# So as of #2010 the actual guarantee is: EVERYTHING THAT CAN FAIL — the test
+# matrix (a separate job) and, within this job, the build and the pack — runs
+# BEFORE anything is written. The commit + tag push is the last cheap,
+# almost-never-fails step before the genuinely irreversible ones (NuGet push,
+# GitHub Release), not the first step of the job. A build/pack failure now leaves
+# no commit, no tag, no NuGet push and no GitHub Release — see the `dry_run` input
+# below, which exercises exactly that path (everything except the NuGet push and
+# the GitHub Release) without publishing anything, so this guarantee is something
+# you can run, not just read.
+#
+# The one write that CAN still precede a later failure is the commit + tag push
+# itself: if NuGet rejects the push after that, the tag and commit stay on main
+# with no package and no release behind them yet. That is a known, accepted gap —
+# reordering the tag to come after NuGet would mean NuGet has no immutable ref to
+# attach provenance to — and the release job's final step reports exactly what was
+# and was not written so a NuGet-push failure is diagnosable, not silent.
+#
+# That ordering had a second cost, orthogonal to the one above. CHANGELOG sections
+# are generated from `git describe --tags`, so a dead tag becomes the baseline for
+# the NEXT release: [2.3.1] lists two entries while the 21 real ones sit under
+# [2.3.0], a heading with no release behind it.
 #
 # The release job's checkout uses RELEASE_DEPLOY_KEY (a write-access deploy key) so
 # the git push to main bypasses the branch ruleset ("Deploy keys" -> Always allow).
@@ -23,6 +48,17 @@ on:
       version:
         description: 'Package version (e.g. 1.0.23)'
         required: true
+      dry_run:
+        description: >-
+          Run every step except the NuGet push and the GitHub Release. Still runs the
+          full test matrix, and still builds, packs, generates the CHANGELOG section
+          and commits it — but does NOT push that commit or the tag to origin, and
+          stops before publishing. Use this to prove the build/pack step (and its BC
+          version resolution) actually works end to end, without writing anything to
+          main or nuget.org. See #2010.
+        type: boolean
+        required: false
+        default: false
 
 env:
   DOTNET_NOLOGO: true
@@ -85,6 +121,11 @@ jobs:
     # Gated on `test`: this job holds every write this workflow performs — the
     # CHANGELOG commit, the push to main, the tag, the NuGet push and the GitHub
     # Release. Nothing above it touches the repository. See #1978.
+    #
+    # WITHIN this job, order matters too (#2010): build-and-pack runs FIRST, before
+    # the commit/tag push, so a build/pack failure (the failure that broke v2.4.0)
+    # leaves no write behind either. See the workflow header for the full guarantee
+    # and its one known gap (a NuGet-push failure).
     needs: [plan, test]
     runs-on: ubuntu-latest
     permissions:
@@ -100,6 +141,68 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Install the aarch64 cross-compiler (#1672)
+        run: |
+          # This runner is linux-x64; AlRunner.csproj's BuildWin32PrebuiltStubs target
+          # uses the native `cc` for linux-x64 (always present) and this cross
+          # toolchain for linux-arm64, so a single x64 job ships prebuilt Win32
+          # stubs for both RIDs without needing an arm64 runner.
+          sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Build and pack
+        id: build-and-pack
+        run: |
+          # Packing also needs the BC service tier present (RAR resolves against it),
+          # so the same download switch applies here.
+          #
+          # #2010: _BCVersion is passed explicitly here rather than left at
+          # AlRunner.csproj's default. The default is a static pin that Microsoft can
+          # (and did — the v2.4.0 release) withdraw between when it was last bumped
+          # and when a release runs, and nothing exercised that exact value except a
+          # release itself. `needs.test.outputs.required-version` is the live-resolved
+          # 28.1.* build the test matrix THIS RUN just gated on (bc-tests.yml's
+          # resolve-versions job, same resolve-version call bc-tests.yml's other jobs
+          # use) — it cannot be a version Microsoft has withdrawn, because resolving it
+          # is what proved it still exists, in this same run. It's also what the
+          # package is stamped with (AssemblyMetadata BcEngineVersion, AlRunner.csproj)
+          # so a released package still records a single, definite engine version.
+          #
+          # Also runs BuildWin32PrebuiltStubs (see AlRunner.csproj) which ships the
+          # prebuilt libwin32_stubs.linux-{x64,arm64}.so shims in the resulting nupkg.
+          #
+          # #1881's Directory.Build.props turns OFF IncludeSourceRevisionInInformationalVersion
+          # and SuppressImplicitGitSourceLink=true repo-wide, so every dev/CI build of
+          # al-runner.dll is content-addressable (RunnerFingerprint.ContentHash stops
+          # being a hash of the commit). This is the ONE place that must turn them back
+          # ON: `dotnet pack`'s nuspec RepositoryUrl/RepositoryCommit come from
+          # SourceLink's git task, and PackAsTool=true (AlRunner.csproj) ships this to
+          # nuget.org under MSDyn365BC.AL.Runner — losing that would silently strip
+          # commit provenance / source-stepping from every released package.
+          #
+          # Safe to override here specifically: a released package's bytes are fixed for a
+          # given version, so the ContentHash an end user's run computes from it is stable.
+          # Commit-embedding only invalidates caches when the SAME code is rebuilt
+          # commit-to-commit — the dev/CI/test-matrix path, never the release path.
+          #
+          # This step now runs BEFORE the CHANGELOG commit below (it used to run after),
+          # so the embedded commit SHA is the tested commit, one commit behind the tag
+          # that will point at tested-commit-plus-CHANGELOG. The two commits are
+          # byte-identical in every file that affects the built DLL (CHANGELOG.md isn't
+          # compiled), so this costs nothing but a one-commit-back SourceLink pointer —
+          # a small, known trade for building before writing.
+          dotnet build AlRunner/ \
+            -p:_BCVersion=${{ needs.test.outputs.required-version }} \
+            -p:AllowBcArtifactDownload=true
+          dotnet pack AlRunner/ \
+            -p:_BCVersion=${{ needs.test.outputs.required-version }} \
+            -p:AllowBcArtifactDownload=true -p:Version=${{ inputs.version }} \
+            -p:SuppressImplicitGitSourceLink=false -p:IncludeSourceRevisionInInformationalVersion=true \
+            -o ./nupkg
 
       - name: Generate CHANGELOG and push the release commit + tag
         id: changelog
@@ -131,14 +234,23 @@ jobs:
             git add CHANGELOG.md
             git commit -m "chore: release v${VERSION}"
 
-            # Push the release commit BEFORE creating the tag, and deliberately without
-            # --force. HEAD is the commit the matrix tested plus a CHANGELOG-only diff,
-            # so this is a fast-forward exactly when main is still where the matrix found
-            # it. If someone merged during the run it fails here — and NO tag is created,
-            # which is the whole point of #1978. Re-dispatch against the new main.
-            git push origin HEAD:main
-            git tag "$TAG"
-            git push origin "$TAG"
+            if [ "${{ inputs.dry_run }}" = "true" ]; then
+              # #2010: dry_run proves the CHANGELOG generation + commit machinery works
+              # (the commit above ran for real, locally, in this checkout) without
+              # writing anything to origin — a dry run that pushed a real tag/commit to
+              # main would recreate the exact dead-tag problem this workflow exists to
+              # prevent, just self-inflicted during a test.
+              echo "dry_run: skipping push of the release commit and tag to origin."
+            else
+              # Push the release commit BEFORE creating the tag, and deliberately without
+              # --force. HEAD is the commit build-and-pack just built plus a CHANGELOG-only
+              # diff, so this is a fast-forward exactly when main is still where the matrix
+              # found it. If someone merged during the run it fails here — and NO tag is
+              # created, which is the whole point of #1978. Re-dispatch against the new main.
+              git push origin HEAD:main
+              git tag "$TAG"
+              git push origin "$TAG"
+            fi
           fi
 
           {
@@ -147,49 +259,14 @@ jobs:
             echo "EOF_NOTES"
           } >> "$GITHUB_OUTPUT"
 
-      - uses: actions/setup-dotnet@v5
-        with:
-          dotnet-version: '8.0.x'
-
-      - name: Install the aarch64 cross-compiler (#1672)
-        run: |
-          # This runner is linux-x64; AlRunner.csproj's BuildWin32PrebuiltStubs target
-          # uses the native `cc` for linux-x64 (always present) and this cross
-          # toolchain for linux-arm64, so a single x64 job ships prebuilt Win32
-          # stubs for both RIDs without needing an arm64 runner.
-          sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
-
-      - name: Build and pack
-        run: |
-          # Packing also needs the BC service tier present (RAR resolves against it),
-          # so the same download switch applies here. This job builds once at the
-          # csproj's default _BCVersion, which is the version the package is stamped
-          # with (AssemblyMetadata BcEngineVersion). It also runs
-          # BuildWin32PrebuiltStubs (see AlRunner.csproj) which ships the prebuilt
-          # libwin32_stubs.linux-{x64,arm64}.so shims in the resulting nupkg.
-          #
-          # #1881's Directory.Build.props turns OFF IncludeSourceRevisionInInformationalVersion
-          # and SuppressImplicitGitSourceLink=true repo-wide, so every dev/CI build of
-          # al-runner.dll is content-addressable (RunnerFingerprint.ContentHash stops
-          # being a hash of the commit). This is the ONE place that must turn them back
-          # ON: `dotnet pack`'s nuspec RepositoryUrl/RepositoryCommit come from
-          # SourceLink's git task, and PackAsTool=true (AlRunner.csproj) ships this to
-          # nuget.org under MSDyn365BC.AL.Runner — losing that would silently strip
-          # commit provenance / source-stepping from every released package.
-          #
-          # Safe to override here specifically: a released package's bytes are fixed for a
-          # given version, so the ContentHash an end user's run computes from it is stable.
-          # Commit-embedding only invalidates caches when the SAME code is rebuilt
-          # commit-to-commit — the dev/CI/test-matrix path, never the release path.
-          dotnet build AlRunner/ -p:AllowBcArtifactDownload=true
-          dotnet pack AlRunner/ -p:AllowBcArtifactDownload=true -p:Version=${{ inputs.version }} \
-            -p:SuppressImplicitGitSourceLink=false -p:IncludeSourceRevisionInInformationalVersion=true \
-            -o ./nupkg
-
       - name: Push to NuGet
+        id: nuget-push
+        if: ${{ inputs.dry_run != true }}
         run: dotnet nuget push ./nupkg/*.nupkg --api-key ${{ secrets.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json --skip-duplicate
 
       - name: Create GitHub Release
+        id: gh-release
+        if: ${{ inputs.dry_run != true }}
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ inputs.version }}
@@ -199,7 +276,27 @@ jobs:
           draft: false
           prerelease: false
 
+      - name: Report what this run wrote
+        # always(): AC2 (#2010) — a NuGet-push failure still leaves the commit + tag on
+        # main (see the header comment's known gap), so the failure needs to say
+        # exactly what happened rather than leave the next person to reconstruct it
+        # from raw step logs. Reads .outcome (not .conclusion) so a step that never ran
+        # because an earlier one failed reports as empty/skip, not as a false success.
+        if: always()
+        run: |
+          {
+            echo "## Release report — v${{ inputs.version }}${{ inputs.dry_run == true && ' (DRY RUN — nothing published)' || '' }}"
+            echo ""
+            echo "| Step | Outcome |"
+            echo "|---|---|"
+            echo "| Build and pack | ${{ steps.build-and-pack.outcome || 'did not run' }} |"
+            echo "| CHANGELOG commit + tag pushed to main | ${{ inputs.dry_run == true && 'skipped (dry_run)' || (steps.changelog.outcome || 'did not run') }} |"
+            echo "| Push to NuGet | ${{ inputs.dry_run == true && 'skipped (dry_run)' || (steps.nuget-push.outcome || 'did not run') }} |"
+            echo "| Create GitHub Release | ${{ inputs.dry_run == true && 'skipped (dry_run)' || (steps.gh-release.outcome || 'did not run') }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Summary
+        if: ${{ inputs.dry_run != true }}
         run: |
           echo "## Published to NuGet" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"

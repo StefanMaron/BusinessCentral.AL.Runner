@@ -30,6 +30,18 @@ on:
         type: string
         required: false
         default: ''
+    outputs:
+      required-version:
+        description: >-
+          The live-resolved 28.1.* build this run actually tested (resolve-versions'
+          `required-version`, see below). publish.yml's release job reads this instead
+          of carrying its own static _BCVersion pin — see #2010: a hardcoded pin in the
+          one path nobody exercises except during a release rotted the moment Microsoft
+          withdrew the build it named, and the release failed AFTER the tag was already
+          pushed. Handing the caller the exact version THIS run resolved and gated on
+          means the release can never build against a version different from — or
+          staler than — the one that just passed the matrix.
+        value: ${{ jobs.resolve-versions.outputs.required-version }}
 
 env:
   DOTNET_NOLOGO: true
@@ -489,3 +501,53 @@ jobs:
             exit 1
           fi
 
+  pack:
+    name: Release pack (dry, no publish)
+    needs: resolve-versions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref }}
+          submodules: true
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Install the aarch64 cross-compiler (#1672)
+        run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Build and pack (mirrors publish.yml's release job, minus the push)
+        # #2010: publish.yml's "Build and pack" step is the one step in the whole
+        # release path that ONLY ever ran during an actual release — the release of
+        # v2.4.0 passed all 8 matrix legs above and then failed here, because
+        # AlRunner.csproj's static _BCVersion pin named a build Microsoft had since
+        # withdrawn. The pin no longer exists (publish.yml now resolves it live from
+        # this workflow's resolve-versions output), but the failure mode this job
+        # guards against is broader than that one pin: ANYTHING in the build-and-pack
+        # step — a bad Directory.Build.props override, a Win32Stubs cross-compile
+        # regression, a nuspec/PackAsTool misconfiguration — used to be untestable
+        # without dispatching a real release. Running the identical commands here,
+        # on every push/PR, against the SAME live-resolved version the matrix above
+        # just gated on, means a release-build regression fails a normal CI run
+        # instead of a release.
+        run: |
+          dotnet build AlRunner/ \
+            -p:_BCVersion=${{ needs.resolve-versions.outputs.required-version }} \
+            -p:AllowBcArtifactDownload=true
+          dotnet pack AlRunner/ \
+            -p:_BCVersion=${{ needs.resolve-versions.outputs.required-version }} \
+            -p:AllowBcArtifactDownload=true -p:Version=0.0.0-ci \
+            -p:SuppressImplicitGitSourceLink=false -p:IncludeSourceRevisionInInformationalVersion=true \
+            -o ./nupkg
+
+      - name: Assert a package was actually produced
+        run: |
+          shopt -s nullglob
+          pkgs=(./nupkg/*.nupkg)
+          if [ "${#pkgs[@]}" -eq 0 ]; then
+            echo "::error::dotnet pack produced no .nupkg — the release path would ship nothing"
+            exit 1
+          fi
+          echo "Packed: ${pkgs[*]}"
