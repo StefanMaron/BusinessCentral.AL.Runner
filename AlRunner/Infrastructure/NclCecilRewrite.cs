@@ -8280,7 +8280,7 @@ public static class NclCecilRewrite
         var modifiedBytes = RewriteNcl(nclPath);
 
         Assembly? rewritten = null;
-        AlRunner.Infrastructure.EngineLoadContext.Current.Resolving += (alc, name) =>
+        System.Runtime.Loader.AssemblyLoadContext.Default.Resolving += (alc, name) =>
         {
             if (name.Name == "Microsoft.Dynamics.Nav.Ncl")
             {

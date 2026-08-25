@@ -72,10 +72,10 @@ public static class ServiceTierDllIndex
         {
             // Already loaded (by a prior hit on a sibling object in the same DLL)?
             var fileName = Path.GetFileNameWithoutExtension(dllPath);
-            foreach (var a in AlRunner.Infrastructure.EngineLoadContext.Current.Assemblies)
+            foreach (var a in AssemblyLoadContext.Default.Assemblies)
                 if (string.Equals(a.GetName().Name, fileName, StringComparison.Ordinal))
                     return a;
-            return AlRunner.Infrastructure.EngineLoadContext.Current.LoadFromAssemblyPath(dllPath);
+            return AssemblyLoadContext.Default.LoadFromAssemblyPath(dllPath);
         }
         catch (Exception ex)
         {
@@ -94,7 +94,7 @@ public static class ServiceTierDllIndex
         if (Interlocked.Exchange(ref _resolverInstalled, 1) != 0) return;
         var dir = CacheDir;
         if (dir == null) return;
-        AlRunner.Infrastructure.EngineLoadContext.Current.Resolving += (ctx, name) =>
+        AssemblyLoadContext.Default.Resolving += (ctx, name) =>
         {
             if (name.Name == null) return null;
             var probe = Path.Combine(dir, name.Name + ".dll");
