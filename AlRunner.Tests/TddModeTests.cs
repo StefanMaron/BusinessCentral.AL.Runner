@@ -266,16 +266,6 @@ public sealed class TddModeTests : IDisposable
         Assert.Contains("--server", err);
     }
 
-    /// <summary>Criterion 12 — --tdd + --watch is rejected, not silently ignored.</summary>
-    [SkippableFact]
-    public void Tdd_RejectedTogetherWithWatch()
-    {
-        var (_, stderr, exit) = RunRunner("--tdd", "--watch", $"\"{FixturePath}\"");
-        Assert.Equal(2, exit);
-        Assert.Contains("--tdd", stderr);
-        Assert.Contains("--watch", stderr);
-    }
-
     /// <summary>
     /// Criterion 11, behavioural half: a --tdd run must never produce a cache entry a
     /// normal run could accidentally reuse (or vice versa). This build satisfies that by

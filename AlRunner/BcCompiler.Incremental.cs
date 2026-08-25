@@ -321,7 +321,20 @@ public sealed partial class BcCompiler
         fallbackReason = "";
         if (!_radBaselines.TryGetValue(moduleName, out var baseline))
         {
-            fallbackReason = "no incremental baseline yet for this bundle (first --watch cycle, or the previous cycle fell back)";
+            // #2002: under --tdd, RecordIncrementalBaseline (called from Emit, below) is
+            // deliberately skipped whenever the cycle excluded an object for referencing a
+            // missing symbol — a baseline built while an object is missing would let a LATER
+            // incremental cycle silently treat it as "still there". That means the cycle
+            // where a --tdd exclusion happens, AND every cycle after it up to and including
+            // the one that finally implements the missing symbol, all land here. Name that
+            // explicitly instead of the generic reason, so the console explains WHY (see
+            // #1994's precedent for surfacing full-rebuild causes at default verbosity).
+            fallbackReason = _tddMode
+                ? "no incremental baseline yet for this bundle (first --watch cycle, or --tdd reported " +
+                  "a synthetic FAILED test for a missing symbol on a previous cycle — a baseline is only " +
+                  "recorded on a clean compile with nothing excluded, so cycles stay a full rebuild until " +
+                  "the missing symbol is implemented and the module compiles clean again)"
+                : "no incremental baseline yet for this bundle (first --watch cycle, or the previous cycle fell back)";
             return null;
         }
 

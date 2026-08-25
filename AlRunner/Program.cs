@@ -377,21 +377,34 @@ if (serverMode && watchMode)
 }
 // --tdd (issue #1997) only changes the bundled-mode CLI run loop's EMIT-EXCLUDED
 // handling (Program.cs, below). --server has its own, separate EMIT-EXCLUDED guard
-// (a different Emit() call site) that this issue's reduced scope does not touch, and
-// --watch's incremental (RAD) recompile path does not carry per-excluded-object
-// diagnostics through to a synthetic TestResult either. Rejecting both explicitly beats
-// silently ignoring the flag — a --tdd run that quietly behaved like a normal run under
-// --server/--watch would be far more confusing than an upfront error naming the gap.
+// (a different Emit() call site) that this issue's reduced scope does not touch, so
+// --tdd + --server stays rejected. Rejecting explicitly beats silently ignoring the
+// flag — a --tdd run that quietly behaved like a normal run under --server would be
+// far more confusing than an upfront error naming the gap.
 if (tddMode && serverMode)
 {
     Console.Error.WriteLine("--tdd is not supported together with --server yet (local-development flag; --server's EMIT-EXCLUDED handling is a separate code path this hasn't reached). Run --tdd from the CLI directly.");
     return 2;
 }
-if (tddMode && watchMode)
-{
-    Console.Error.WriteLine("--tdd is not supported together with --watch yet (the incremental/RAD recompile path doesn't carry per-excluded-object diagnostics). Run --tdd without --watch.");
-    return 2;
-}
+// --tdd + --watch (issue #2002, follow-up to #1997): NOT rejected. --watch's
+// incremental (RAD) recompile path (BcCompiler.TryEmitIncremental) genuinely does not
+// carry per-excluded-object diagnostics through to a synthetic TestResult — but it
+// does not need to, because of how BcCompiler.Emit's own baseline bookkeeping already
+// behaves: RecordIncrementalBaseline (the thing that lets TryEmitIncremental take the
+// fast path AT ALL) is only ever called when a cycle's Emit was a CLEAN success —
+// caught == null && excludedObjects.Count == 0 — see BcCompiler.cs. Under --tdd, a
+// cycle that excludes an object for referencing a missing symbol therefore NEVER
+// records a baseline, which forces every cycle downstream of it (including the one
+// where the missing symbol finally gets implemented) through TryEmitIncremental's own
+// "no incremental baseline yet" fallback into the ordinary full Emit() — the SAME
+// full-emit-retry loop that already builds TddExcludedObjectDetail and reports
+// synthetic FAILED tests regardless of watchMode. So the option 2 the issue's own
+// text proposes ("fall back to a full re-emit whenever a symbol is still missing,
+// revert to incremental once resolved") falls out of the EXISTING guard for free —
+// nothing here had to learn to carry TDD diagnostics through CreateForRad. See
+// TryEmitIncremental's own tdd-specific fallback-reason text for what a developer
+// actually sees on the console when this happens (issue #1994 precedent).
+
 // --tdd forces the AL-output cache off (same effect as --no-cache), on top of the
 // tdd:<0|1> cache-key line added above. The line alone stops a --tdd run from ever
 // SERVING a normal-mode DLL or vice versa (criterion 11) — but it does not make a
@@ -3962,8 +3975,11 @@ static void PrintHelp(TextWriter w)
     w.WriteLine("                          every object that DID compile and reports each [Test]");
     w.WriteLine("                          procedure in an object that could NOT be recovered as a");
     w.WriteLine("                          FAILED test naming the missing symbol, so a red-green TDD");
-    w.WriteLine("                          cycle can start with an honestly red test (exit 1). Not");
-    w.WriteLine("                          yet supported together with --watch or --server.");
+    w.WriteLine("                          cycle can start with an honestly red test (exit 1). Works");
+    w.WriteLine("                          together with --watch (a cycle with a missing symbol falls");
+    w.WriteLine("                          back to a full rebuild instead of the fast incremental");
+    w.WriteLine("                          path — the console names the reason). Not yet supported");
+    w.WriteLine("                          together with --server.");
     w.WriteLine("  --per-suite             Legacy per-Compilation path. Default is bundled mode");
     w.WriteLine("                          (5-7x faster, parity-verified).");
     w.WriteLine("  --bundled               No-op alias for the default bundled mode (deprecated).");
