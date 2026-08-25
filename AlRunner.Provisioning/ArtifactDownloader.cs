@@ -361,6 +361,31 @@ public static class ArtifactDownloader
     }
 
     // -----------------------------------------------------------------------
+    // Cheap existence probe for an EXACT 4-part version (issue #2033): a single HEAD
+    // request against the platform artifact, no download and no ZIP central-directory
+    // read. Used by BcArtifacts.DefaultProvisionTarget to check whether the engine's own
+    // exact build is fetchable before deciding to fall back to a looser tier (minor, then
+    // major). ResolveVersion below answers a different question (latest build matching a
+    // PREFIX); this answers "does this exact version exist at all".
+    // -----------------------------------------------------------------------
+    public static bool VersionExists(string version, Action<string>? log = null)
+    {
+        var logf = L(log);
+        var url = $"{CdnBase}/{version}/platform";
+        try
+        {
+            using var http = new HttpClient();
+            using var resp = http.Send(new HttpRequestMessage(HttpMethod.Head, url));
+            return resp.IsSuccessStatusCode;
+        }
+        catch (HttpRequestException ex)
+        {
+            logf($"[provision] could not probe BC {version} on the CDN: {ex.Message}");
+            return false;
+        }
+    }
+
+    // -----------------------------------------------------------------------
     // Resolve a BC version prefix (e.g. "28.2") to the latest full version via
     // Microsoft's public index. Returns null when nothing matches.
     // -----------------------------------------------------------------------

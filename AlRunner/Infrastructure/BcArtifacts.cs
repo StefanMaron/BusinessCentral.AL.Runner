@@ -356,6 +356,83 @@ public static class BcArtifacts
         }
     }
 
+    /// <summary>
+    /// Pure core of <see cref="DefaultProvisionTarget"/>, network-injectable for testing
+    /// (see AlRunner.Tests.DefaultProvisionTargetTests) — same shape as
+    /// <see cref="DescribeExplicitEngineMinorMismatch"/>/<see cref="WarnIfExplicitEngineMinorMismatch"/>:
+    /// a provable pure function plus a thin real-network wrapper.
+    ///
+    /// Issue #2033: <see cref="DefaultVersionPrefix"/> answers "what does the LOCAL CACHE
+    /// already have" — the right question when there is no provisioning step coming (offline
+    /// / --no-auto-provision), but the wrong one when auto-provisioning is about to run
+    /// anyway. On a genuinely empty cache it collapses straight to "major only" before a
+    /// single byte has been fetched, and the caller then asked provisioning for "the newest
+    /// build of major 28" instead of "BC 28.1, the engine's own minor" — landing on 28.4 while
+    /// the engine was built for 28.1. This variant tries the SAME three tiers (exact build,
+    /// then minor, then major) but at each tier also asks whether the CDN can fetch it before
+    /// giving up and falling looser, so auto-provisioning downloads what version selection
+    /// actually wants instead of "whatever happens to already be cached."
+    /// </summary>
+    /// <param name="tier">
+    /// Which tier won: "cached-exact"/"cached-minor" (already local, nothing to fetch,
+    /// identical to <see cref="DefaultVersionPrefix"/>'s outcome), "cdn-exact"/"cdn-minor"
+    /// (not cached but the CDN has it — provisioning will fetch exactly this), or
+    /// "major-fallback" (neither the engine's exact build nor its minor is available from
+    /// either source — genuinely degraded; the caller must warn, per issue #2020).
+    /// </param>
+    public static string ResolveProvisionTargetCore(Version engineVersion, string artifactsRoot,
+        Func<string, bool> cdnHasExactVersion, Func<string, string?> cdnResolvePrefix, out string tier)
+    {
+        // Tier 1: the exact 4-part build — cached, or fetchable from the CDN.
+        var exact = engineVersion.ToString();
+        try
+        {
+            SelectArtifactVersionDir(artifactsRoot, exact);
+            tier = "cached-exact";
+            return exact;
+        }
+        catch (InvalidOperationException) { /* not cached — try the CDN, then fall through */ }
+        if (cdnHasExactVersion(exact))
+        {
+            tier = "cdn-exact";
+            return exact;
+        }
+
+        // Tier 2: the engine's own minor — cached, or resolvable to a full build via the CDN.
+        var majorMinor = $"{engineVersion.Major}.{engineVersion.Minor}";
+        try
+        {
+            SelectArtifactVersionDir(artifactsRoot, majorMinor);
+            tier = "cached-minor";
+            return majorMinor;
+        }
+        catch (InvalidOperationException) { /* not cached — try the CDN, then fall through */ }
+        var minorResolved = cdnResolvePrefix(majorMinor);
+        if (minorResolved != null)
+        {
+            tier = "cdn-minor";
+            return minorResolved;
+        }
+
+        // Tier 3: neither the exact build nor the engine's own minor is available from
+        // either source (e.g. Microsoft withdrew the build — #2010). Fall back to the bare
+        // major; the caller resolves+downloads the latest build of it and must warn loud —
+        // this is the one genuinely degraded outcome, not the default-path norm.
+        tier = "major-fallback";
+        return engineVersion.Major.ToString();
+    }
+
+    /// <summary>
+    /// Real-network wrapper around <see cref="ResolveProvisionTargetCore"/> — the one
+    /// Program.cs calls on the auto-provision default path (issue #2033).
+    /// </summary>
+    public static string DefaultProvisionTarget(Version engineVersion, string artifactsRoot, out string tier,
+        Action<string>? log = null)
+        => ResolveProvisionTargetCore(engineVersion, artifactsRoot,
+            v => AlRunner.Provisioning.ArtifactDownloader.VersionExists(v, log),
+            p => AlRunner.Provisioning.ArtifactDownloader.ResolveVersion(p, log),
+            out tier);
+
     public static void VerifyEngineConsistency(string binDir)
     {
         var ncl = Path.Combine(binDir, "Microsoft.Dynamics.Nav.Ncl.dll");
