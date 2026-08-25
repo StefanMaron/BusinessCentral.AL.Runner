@@ -180,25 +180,31 @@ jobs:
           ls -la ~/.cache/al-runner/ncl-cecil/ || echo "WARNING: Cecil cache still cold"
 
           # AlRunner.Tests ships its OWN bin-deployed copy of Microsoft.Dynamics.Nav.Ncl.dll (it
-          # references Nav.Ncl directly — see AlRunner.Tests.csproj), and that copy starts out
-          # PRISTINE (un-rewritten) after every build. Left alone, BcEngineBootstrap (see
-          # AlRunner.Tests/BcEngineCollection.cs) would rewrite it in-process on the very first
-          # `dotnet test` invocation below, then skip rather than load a file it just replaced
-          # (BadImageFormatException 0x80131124 hazard) — on every fresh CI runner, every time,
-          # covering nothing. Pre-copy the ALREADY-rewritten copy from AlRunner's own bin dir
-          # above so the bootstrap below sees a no-op instead of a cold rewrite. This is NOT
-          # about the Cecil disk cache under ~/.cache/al-runner/ncl-cecil (that cache is keyed
-          # off the SERVICE-TIER Ncl's own bytes + the runner assembly's own CONTENT hash
-          # (#1871 — previously its mtime, see NclCecilRewrite.ComputeCacheKey) — the bin
-          # copy's own path/mtime never enters that key, so a plain `cp` cannot affect it
-          # either way).
-          # What actually makes this pre-copy work is BcEngineBootstrap's own
-          # before/after SHA-256 CONTENT hash of the bin copy (see the `FileHash` calls around
-          # `RewriteInPlace` in BcEngineCollection.cs): once the bin copy is already
-          # byte-identical to what the rewrite would produce, that comparison reports
-          # `changed == false` regardless of either file's timestamp, so the bootstrap treats
-          # it as already-rewritten and does not skip.
-          cp AlRunner/bin/Release/net8.0/Microsoft.Dynamics.Nav.Ncl.dll AlRunner.Tests/bin/Release/net8.0/Microsoft.Dynamics.Nav.Ncl.dll
+          # references Nav.Ncl directly — see AlRunner.Tests.csproj — and, unlike AlRunner
+          # itself, is NOT stripped of it: see Directory.Build.targets' project-scoped Ncl
+          # exclusion), and that copy starts out PRISTINE (un-rewritten) after every build.
+          # Left alone, BcEngineBootstrap (see AlRunner.Tests/BcEngineCollection.cs) would
+          # rewrite it in-process on the very first `dotnet test` invocation below, then skip
+          # rather than load a file it just replaced (BadImageFormatException 0x80131124
+          # hazard) — on every fresh CI runner, every time, covering nothing. Pre-copy an
+          # ALREADY-rewritten copy so the bootstrap below sees a no-op instead of a cold
+          # rewrite.
+          #
+          # Source: ~/.cache/al-runner/ncl-cecil, NOT AlRunner's own bin dir — AlRunner no
+          # longer ships (or even builds with) a bin-deployed Ncl.dll at all (see
+          # NclShadowRuntime.cs; the throwaway run above wrote its rewritten copy into a
+          # runner-owned SHADOW dir instead, keeping ncl-cecil warm same as before). The
+          # rewritten BYTES are identical regardless of which project triggered the rewrite
+          # (RewriteNcl is a deterministic transform of the same service-tier Ncl.dll; the
+          # cache key folds in the runner assembly's content hash only for INVALIDATION, not
+          # because the output differs per caller) — that's what makes this pre-copy work at
+          # all: BcEngineBootstrap's own before/after SHA-256 CONTENT hash comparison of the
+          # bin copy (see the `FileHash` calls around `RewriteInPlace` in
+          # BcEngineCollection.cs) reports `changed == false` once the bin copy is already
+          # byte-identical to what an in-process rewrite would produce, regardless of either
+          # file's timestamp or origin, so the bootstrap treats it as already-rewritten and
+          # does not skip.
+          cp "$(ls -t ~/.cache/al-runner/ncl-cecil/*.dll | head -1)" AlRunner.Tests/bin/Release/net8.0/Microsoft.Dynamics.Nav.Ncl.dll
 
       - name: Generate .runsettings for in-process BC engine tests
         run: |
@@ -454,7 +460,11 @@ jobs:
           dotnet-version: '8.0.x'
 
       - name: Clear cold-cache Cecil rewrite cache
-        run: rm -rf ~/.cache/al-runner/ncl-cecil/
+        # ncl-shadow alongside ncl-cecil: on a fresh ubuntu-latest runner neither has any
+        # prior content anyway, but clearing both keeps this step's intent (simulate a
+        # genuinely first-ever Cecil rewrite, not a cache HIT) unambiguous now that Ncl.dll
+        # is resolved via NclShadowRuntime's shadow dir rather than an in-place bin rewrite.
+        run: rm -rf ~/.cache/al-runner/ncl-cecil/ ~/.cache/al-runner/ncl-shadow/
 
       - name: Build Release
         # Pin to the resolved REQUIRED version rather than AlRunner.csproj's baked-in
@@ -553,11 +563,12 @@ jobs:
           echo "Packed: ${pkgs[*]}"
 
       - name: Assert the package doesn't ship BC/Aspose/Graph binaries
-        # Guards against a regression of the mechanism fixed by issue #2022: MSBuild's
-        # default assembly-reference resolution follows Ncl.dll's transitive closure
-        # (Aspose.PDF/Words/Cells, Microsoft.Graph, the whole Microsoft.BusinessCentral.*
-        # family, …) into the tool package unless Directory.Build.targets'
-        # StripBcAppClosureFromCopyLocal target strips it back out. See that target's
-        # comment for the full mechanism and why Microsoft.Dynamics.Nav.Ncl.dll itself is
-        # the one documented exception.
+        # Guards against a regression of the mechanism fixed by issues #2022/#2025:
+        # MSBuild's default assembly-reference resolution follows Ncl.dll's transitive
+        # closure (Aspose.PDF/Words/Cells, Microsoft.Graph, the whole
+        # Microsoft.BusinessCentral.* family, Ncl.dll itself, …) into the tool package
+        # unless Directory.Build.targets' StripBcAppClosureFromCopyLocal target strips it
+        # back out. No exceptions any more — see that target's comment and
+        # NclShadowRuntime.cs's class doc for how Ncl.dll itself is now resolved from the
+        # user's own BC artifact cache at runtime instead of being shipped.
         run: .github/scripts/check-nupkg-contents.sh ./nupkg/*.nupkg

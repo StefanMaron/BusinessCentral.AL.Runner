@@ -75,6 +75,10 @@
   -->
   <Target Name="StripBcAppClosureFromCopyLocal" AfterTargets="ResolveAssemblyReferences">
     <ItemGroup>
+      <!-- Universal (every project): the closure minus Ncl.dll itself. Unchanged by the
+           Ncl packaging fix below — AlRunner.Tests never needed Types/Common/Language/
+           Apps/CodeAnalysis in its own bin either (same reasoning as AlRunner: loaded
+           via ServiceTierDir at runtime, not TPA), only Ncl.dll is special. -->
       <ReferenceCopyLocalPaths Remove="@(ReferenceCopyLocalPaths)"
         Condition="$([System.String]::Copy('%(Filename)').StartsWith('Microsoft.Identity'))
                    OR $([System.String]::Copy('%(Filename)').StartsWith('System.IdentityModel'))
@@ -82,7 +86,8 @@
                    OR $([System.String]::Copy('%(Filename)').StartsWith('Aspose.'))
                    OR $([System.String]::Copy('%(Filename)').StartsWith('Microsoft.Graph'))
                    OR $([System.String]::Copy('%(Filename)').StartsWith('Microsoft.BusinessCentral.'))
-                   OR $([System.String]::Copy('%(Filename)').StartsWith('Microsoft.Dynamics.'))
+                   OR ($([System.String]::Copy('%(Filename)').StartsWith('Microsoft.Dynamics.'))
+                       AND '%(Filename)' != 'Microsoft.Dynamics.Nav.Ncl')
                    OR $([System.String]::Copy('%(Filename)').StartsWith('CoreWCF.'))
                    OR $([System.String]::Copy('%(Filename)').StartsWith('Grpc.'))
                    OR '%(Filename)' == 'System.Private.ServiceModel'
@@ -91,6 +96,17 @@
                    OR '%(Filename)' == 'Microsoft.Data.SqlClient'
                    OR '%(Filename)' == 'Microsoft.Exchange.WebServices.NETStandard'
                    OR '%(Filename)' == 'System.Drawing.Common'" />
+
+      <!-- Ncl.dll itself: stripped ONLY from AlRunner's own copy-local — that's the
+           project PackAsTool packs, and NclShadowRuntime.cs handles resolving Ncl.dll
+           from the user's BC artifact cache at runtime instead (see the class doc there,
+           and check-nupkg-contents.sh). AlRunner.Tests is NOT packed and keeps its own
+           pristine bin-deployed copy: BcEngineCollection's in-process engine tests load
+           Ncl.dll directly (they can't re-exec the way a real `al-runner` invocation
+           does — see bc-tests.yml's "Warm the Ncl Cecil rewrite cache" step, which
+           pre-seeds that copy from a throwaway `al-runner` run's shadow-dir output). -->
+      <ReferenceCopyLocalPaths Remove="@(ReferenceCopyLocalPaths)"
+        Condition="'$(MSBuildProjectName)' == 'AlRunner' AND '%(Filename)' == 'Microsoft.Dynamics.Nav.Ncl'" />
     </ItemGroup>
   </Target>
 
