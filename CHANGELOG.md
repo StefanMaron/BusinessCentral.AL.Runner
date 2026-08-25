@@ -6,26 +6,6 @@ All notable changes to this project are documented here. Format based on
 
 ## [Unreleased]
 
-## [2.4.0] - 2026-08-25
-
-### Changed
-- feat(cli): --tdd — infer and generate missing members instead of only refusing
-- fix(hooks): delete the ALSystemErrorHandling + ALSystemString orphaned-JmpHook clusters
-- feat(cli): --tdd — report excluded objects' tests as failed, not vanished
-- fix(provisioning): manifest-driven platform/test-app need detection
-- fix(pages): pageextension action stops dispatching when it also adds a part()
-- fix(watch): surface WHY a --watch cycle fell back to a full rebuild
-- fix(tests): isolate BcCompilerSharedReferenceMemoTests from the machine's real symbol caches
-- perf(watch): generalize incremental (RAD) recompile to every object kind and file operation
-- fix(hooks): delete the 17-hook ALIsolatedStorage orphaned-JmpHook cluster
-- fix(cli): resolve tests/expectations relative to bundle path, not just cwd
-- fix(record): fail loudly instead of silently disabling rowversion stamping
-- chore(corpus): bump al-language pin to e300a304, raise count baseline to 2124
-- fix(record): stamp rowversions on database-backed writes so HasBeenInserted answers truthfully
-- fix(testpage): dispatch triggers of page members whose AL names contain spaces
-- ci(release): tests gate every write — no more dead tags on main
-- ci: one BC test matrix, called by both the pull-request and release paths
-
 ## [2.3.1] - 2026-08-19
 
 ### Changed
