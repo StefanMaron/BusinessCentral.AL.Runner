@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
 using Xunit;
@@ -174,6 +175,56 @@ public sealed class CliDocumentationTests
         var (_, guide, _) = RunCli("--guide");
         Assert.Contains("CAPABILITY", guide, StringComparison.Ordinal);
     }
+
+    /// <summary>
+    /// Flags that materially change WHAT A RUN DOES — not merely how output is formatted —
+    /// must be covered in --guide, because CLAUDE.md and the al-runner-workflow skill both
+    /// tell an agent to start with --guide. --help alone is not sufficient: --tdd was fully
+    /// documented in --help (<see cref="Help_DocumentsEveryRecognizedFlag"/> already passed)
+    /// and STILL went undiscovered by an agent, because nothing ever pointed it at --guide's
+    /// existence for that flag (issue #2001).
+    /// <para>
+    /// Deliberately NOT every recognized flag — <see cref="Help_DocumentsEveryRecognizedFlag"/>
+    /// already owns that broader surface, and most flags there are output-shape switches
+    /// (--output-json, --quiet, --no-strict-exit, …) that don't need a guide section.
+    /// <see cref="BehaviorChangingFlags"/> is the curated set that DOES, and the check below
+    /// is a loop over it rather than one hardcoded <c>Assert.Contains</c> per flag — the
+    /// previous shape (<see cref="Guide_ExistsAndCoversInvocationEssentials"/>'s fixed list
+    /// of unrelated prose fragments) could never notice a new flag went undocumented, because
+    /// nothing connected that list to the flags the parser actually recognizes. Adding a flag
+    /// to <see cref="BehaviorChangingFlags"/> is now the ONLY step a future PR needs for this
+    /// gate to catch it — an omission there is a decision made in one auditable place, not a
+    /// gap nobody wrote a test for.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void Guide_CoversEveryBehaviorChangingFlag()
+    {
+        var (exit, guide, stderr) = RunCli("--guide");
+        Assert.True(exit == 0, $"--guide must exit 0. exit={exit}\n{stderr}");
+
+        var missing = BehaviorChangingFlags
+            .Where(f => !guide.Contains(f, StringComparison.Ordinal))
+            .ToList();
+
+        Assert.True(missing.Count == 0,
+            "These behavior-changing flags are missing from --guide. An agent that starts "
+            + "with --guide (per CLAUDE.md / the al-runner-workflow skill) has no way to "
+            + "discover them exist, even if --help documents them:\n  "
+            + string.Join("\n  ", missing));
+    }
+
+    /// <summary>
+    /// The curated set <see cref="Guide_CoversEveryBehaviorChangingFlag"/> checks against.
+    /// A flag belongs here when passing it changes WHICH CODE PATH a run takes or WHAT GETS
+    /// EXECUTED (compiles against different source, runs a daemon instead of one-shot,
+    /// changes the compile symbol set, generates code, watches for changes, …) — not when it
+    /// only reshapes how an unchanged run's result is reported.
+    /// </summary>
+    private static readonly string[] BehaviorChangingFlags =
+    {
+        "--tdd", "--watch", "--server", "--define", "--auto-provision", "--no-cache",
+    };
 
     /// <summary>Negative: an unknown documentation flag must not be silently accepted.</summary>
     [Fact]

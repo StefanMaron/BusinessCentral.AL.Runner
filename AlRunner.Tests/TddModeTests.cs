@@ -1,15 +1,16 @@
-// TddModeTests — issue #1997: --tdd turns objects excluded for referencing a
-// not-yet-implemented symbol into synthetic FAILED tests instead of a whole-module
-// compile failure.
+// TddModeTests — issue #1997 (refuse-only baseline) + #2001 (member generation, this
+// file's current shape): --tdd infers and generates the missing member an unresolved-
+// symbol compile error names, directly into the implementing app's own source, so the
+// referencing [Test] procedure actually RUNS instead of vanishing behind a whole-module
+// compile failure. Where nothing anchors a confident guess, it still falls through to
+// #1997's original refuse path (excluded, reported FAILED naming the AL diagnostic).
 //
-// This is a runner-specific claim (--tdd producing a failed test where BC's compiler
-// produces a hard error), not a BC-behaviour claim — it belongs here per
+// This is a runner-specific claim (--tdd producing a failed/passed test where BC's
+// compiler alone produces a hard error), not a BC-behaviour claim — it belongs here per
 // .claude/rules/bc-behavior-tests-go-upstream.md, not in the al-language corpus.
 //
-// Reduced scope (see the issue and the PR this file shipped in): no type inference.
-// Every missing symbol is REFUSED — reported as a failed test naming the symbol —
-// rather than guessed at. Acceptance criteria covered: 1, 2, 6, 7, 9, 10, 11, 12.
-// Criteria 3/4/5/8 (actual member generation) are a tracked follow-up.
+// Acceptance criteria covered by this file: 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12 — the
+// full set from #1997, closed out by #2001's generation work.
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
@@ -64,27 +65,25 @@ public sealed class TddModeTests : IDisposable
     }
 
     /// <summary>
-    /// The core proof. Without --tdd this fixture drops its whole module (see
-    /// <see cref="WithoutTdd_BehaviorIsByteForByteUnchanged"/>); with --tdd the three
-    /// broken [Test] procedures must report FAILED — each naming the specific missing
-    /// symbol, not a generic "compile failed" — while the unrelated healthy test in a
-    /// SIBLING object still passes.
+    /// The core proof, updated for issue #2001 (member generation, the deferred half of
+    /// #1997): a missing field / procedure / enum value each now get GENERATED into the
+    /// implementing app's own source and recompiled, so the referencing [Test] procedure
+    /// actually RUNS and fails by hitting the generated stub's <c>Error(...)</c> call —
+    /// not from a synthesized compile-diagnostic message. Covers criteria 3 (field), 4
+    /// (procedure, both the assignment-target AND nested-argument return-type anchors),
+    /// 5 (enum value), 6 (unrelated sibling test unaffected), 9 (exit 1, not 3).
     ///
-    /// Covers acceptance criteria 6 (unrelated tests unaffected), 7 (refuse-not-guess:
-    /// every one of these IS the refused case in this build — see below), 9 (exit 1,
-    /// not 3). Covers ONLY PART of 3/4/5: a missing field / procedure / enum value each
-    /// produce a failed test naming that specific symbol, which is as far as this build
-    /// goes. It does NOT cover the rest of 3 ("the test... runs and reports failed" —
-    /// under this build the [Test] procedure never executes; the FAILED result is
-    /// synthesized from the compile diagnostic, not from running the method body), nor
-    /// any of 4's "with parameter and return types inferred from the call" (there is no
-    /// type inference anywhere in this build — see TddSupport's doc comment). Criterion
-    /// 8 (the generated-members list) is exercised by this test's own stderr assertion
-    /// below, but the list is always empty here, for the same reason. See issue #2001
-    /// (member generation/inference — the follow-up to #1997) for what closes the gap.
+    /// The field case (the "MissingField..." assertion below) is the sharpest proof
+    /// available that this is REAL generation and
+    /// not a no-op: the generated field is actually written to and the test PASSES,
+    /// because <c>Rec."Loyalty Points" := 5;</c> has nothing left to fail on. A stub
+    /// implementation could not produce that outcome — a no-generation stub would still
+    /// exclude the object (see <see cref="WithoutTdd_BehaviorIsByteForByteUnchanged"/>),
+    /// and a WRONG generated type (e.g. Boolean instead of Integer) would fail to compile
+    /// the assignment and fall through to the refuse path instead of passing.
     /// </summary>
     [SkippableFact]
-    public void MissingSymbols_ReportAsFailedTestsNamingTheSymbol()
+    public void GeneratedMembers_CompileAndRunUntilTheStubFires()
     {
         TestArtifacts.SkipIfMissing();
 
@@ -96,34 +95,110 @@ public sealed class TddModeTests : IDisposable
 
         using var doc = JsonDocument.Parse(stdout.Trim());
         var root = doc.RootElement;
-        Assert.Equal(4, root.GetProperty("total").GetInt32());
-        Assert.Equal(1, root.GetProperty("passed").GetInt32());
-        Assert.Equal(3, root.GetProperty("failed").GetInt32());
+        Assert.Equal(8, root.GetProperty("total").GetInt32());
+        Assert.Equal(3, root.GetProperty("passed").GetInt32());
+        Assert.Equal(5, root.GetProperty("failed").GetInt32());
         Assert.Equal(0, root.GetProperty("errors").GetInt32());
 
         var tests = root.GetProperty("tests").EnumerateArray().ToList();
+        JsonElement Find(string nameContains) =>
+            tests.Single(t => t.GetProperty("name").GetString()!.Contains(nameContains));
 
-        var proc = tests.Single(t => t.GetProperty("name").GetString()!.Contains("MissingProcedure_ReportsFailedNotVanished"));
+        // Criterion 4 (procedure, assignment-target return-type anchor): the generated
+        // CalcTotal(Arg1: Integer): Integer stub compiles, RUNS, and fails by hitting its
+        // own generated Error() — not a compile-diagnostic message.
+        var proc = Find("MissingProcedure_ReportsFailedNotVanished");
         Assert.Equal("fail", proc.GetProperty("status").GetString());
         Assert.Contains("CalcTotal", proc.GetProperty("message").GetString());
+        Assert.Contains("generated stub", proc.GetProperty("message").GetString());
 
-        var field = tests.Single(t => t.GetProperty("name").GetString()!.Contains("MissingField_ReportsFailedNotVanished"));
-        Assert.Equal("fail", field.GetProperty("status").GetString());
-        Assert.Contains("Loyalty Points", field.GetProperty("message").GetString());
+        // Criterion 4 (procedure, NESTED-ARGUMENT return-type anchor — the acceptance
+        // table's own `Assert.AreEqual(100, Cu.CalcTotal())` example): return type comes
+        // from AreEqual's own second parameter (Integer), not from an assignment.
+        var procNested = Find("MissingProcedureNestedArg_ReportsFailedNotVanished");
+        Assert.Equal("fail", procNested.GetProperty("status").GetString());
+        Assert.Contains("CalcSubtotal", procNested.GetProperty("message").GetString());
 
-        var enumVal = tests.Single(t => t.GetProperty("name").GetString()!.Contains("MissingEnumValue_ReportsFailedNotVanished"));
-        Assert.Equal("fail", enumVal.GetProperty("status").GetString());
-        Assert.Contains("Archived", enumVal.GetProperty("message").GetString());
+        // Criterion 4 (procedure, IF-CONDITION return-type anchor — the acceptance
+        // table's `if Cust.HasLoyalty() then` example): return type is Boolean because
+        // the call sits directly in an `if ... then` condition.
+        var procIf = Find("MissingBooleanProcedure_ReportsFailedNotVanished");
+        Assert.Equal("fail", procIf.GetProperty("status").GetString());
+        Assert.Contains("HasDiscount", procIf.GetProperty("message").GetString());
+
+        // Criterion 3 (field) — the sharpest proof: the test PASSES because the generated
+        // Integer field accepts the assignment and there is nothing left to fail on.
+        var field = Find("MissingField_ReportsFailedNotVanished");
+        Assert.Equal("pass", field.GetProperty("status").GetString());
+
+        // Criterion 5 (enum value) — same shape: the generated value makes the assignment
+        // resolve and the test passes.
+        var enumVal = Find("MissingEnumValue_ReportsFailedNotVanished");
+        Assert.Equal("pass", enumVal.GetProperty("status").GetString());
 
         // Criterion 6: an unrelated test in a SIBLING object, referencing nothing
         // missing, still passes in the same run.
-        var healthy = tests.Single(t => t.GetProperty("name").GetString()!.Contains("UnrelatedTest_StillPasses"));
+        var healthy = Find("UnrelatedTest_StillPasses");
         Assert.Equal("pass", healthy.GetProperty("status").GetString());
 
-        // Criterion 8: the run prints a generated-members summary (empty in this build —
-        // no inference — but the summary line itself must appear, not silently vanish).
-        Assert.Contains("--tdd:", stderr);
-        Assert.Contains("no members were generated", stderr);
+        // Criterion 7 (refuse rather than invent) — proven in its own test below with the
+        // exact AL0132 diagnostics asserted; just confirms both still fail HERE too.
+        Assert.Equal("fail", Find("BareStatementCall_RefusesNotGuesses").GetProperty("status").GetString());
+        Assert.Equal("fail", Find("BothSidesUnresolved_RefusesNotGuesses").GetProperty("status").GetString());
+
+        // Criterion 8: the run prints the REAL generated-members list — one entry per
+        // member actually generated, naming the object and the inferred signature. Every
+        // signature below proves a DIFFERENT inference anchor from the acceptance table.
+        Assert.Contains("--tdd: generated 5 member(s) this run:", stderr);
+        Assert.Contains("Tdd Target Cu: procedure \"CalcTotal\"(Arg1: Integer): Integer", stderr);
+        Assert.Contains("Tdd Target Cu: procedure \"CalcSubtotal\"(Arg1: Integer): Integer", stderr);
+        Assert.Contains("Tdd Target Cu: procedure \"HasDiscount\"(Arg1: Integer): Boolean", stderr);
+        Assert.Contains("Tdd Target Table: field \"Loyalty Points\": Integer", stderr);
+        Assert.Contains("Tdd Target Enum: enum value \"Archived\" = 1", stderr);
+    }
+
+    /// <summary>
+    /// Criterion 7, in isolation: the two "must refuse" cases straight from #1997/#2001's
+    /// own text. A bare-statement call (<c>Target.DoThing();</c>) can't distinguish void
+    /// from a discarded return value, and an assignment where BOTH sides are unresolved
+    /// (<c>Rec."Bar" := GetUnknownValue();</c>) has no anchor on either side. Neither is
+    /// generated — both fall through to the pre-existing refuse path (excluded, reported
+    /// FAILED naming the AL diagnostic) exactly as they did before generation existed.
+    /// </summary>
+    [SkippableFact]
+    public void UnresolvableCalls_RefuseRatherThanInvent()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        var alCache = Path.Combine(_scratch, "al-cache-refuse");
+        var (stdout, stderr, exit) = RunRunner(
+            "--tdd", $"--cache \"{alCache}\"", "--output-json", $"\"{FixturePath}\"");
+        Assert.Equal(1, exit);
+
+        using var doc = JsonDocument.Parse(stdout.Trim());
+        var tests = doc.RootElement.GetProperty("tests").EnumerateArray().ToList();
+
+        var bareStatement = tests.Single(t => t.GetProperty("name").GetString()!.Contains("BareStatementCall_RefusesNotGuesses"));
+        Assert.Equal("fail", bareStatement.GetProperty("status").GetString());
+        Assert.Contains("DoThing", bareStatement.GetProperty("message").GetString());
+        Assert.Contains("did not compile", bareStatement.GetProperty("message").GetString());
+
+        var bothSides = tests.Single(t => t.GetProperty("name").GetString()!.Contains("BothSidesUnresolved_RefusesNotGuesses"));
+        Assert.Equal("fail", bothSides.GetProperty("status").GetString());
+        // The synthetic result's top-line message names whichever diagnostic TddSupport
+        // picked as the OBJECT's first (shared across every [Test] method in that excluded
+        // object — unchanged #2000 behaviour, not something this issue touches); the full
+        // diagnostic set — including the "Bar" field access this test is actually about —
+        // is carried in stackTrace instead (TddSupport.BuildFailedTests' diagText).
+        Assert.Contains("Bar", bothSides.GetProperty("stackTrace").GetString());
+
+        // Neither refused member appears in the generated-members list — proves refusal
+        // isn't silently generating something anyway under a different name.
+        var summaryIdx = stderr.IndexOf("--tdd: generated", StringComparison.Ordinal);
+        Assert.True(summaryIdx >= 0, "expected the --tdd generated-members summary line in stderr");
+        var summary = stderr[summaryIdx..];
+        Assert.DoesNotContain("DoThing", summary);
+        Assert.DoesNotContain("\"Bar\"", summary);
     }
 
     /// <summary>

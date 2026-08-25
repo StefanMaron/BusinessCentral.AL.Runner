@@ -77,7 +77,13 @@ public sealed record BcEmitOutput(
     IReadOnlyList<EmittedSource> Sources,
     IReadOnlyList<string> Diagnostics,
     IReadOnlyList<string> ExcludedObjects,
-    IReadOnlyList<TddExcludedObjectDetail>? TddExcludedDetails = null);
+    IReadOnlyList<TddExcludedObjectDetail>? TddExcludedDetails = null,
+    // --tdd (issue #2001): every member TddGeneration.Generate inferred and generated during
+    // THIS Emit call, regardless of whether the object it targeted ultimately still ended up
+    // excluded (a wrong guess still shows up here — see TddGeneration.cs's header for why
+    // that's fine: the object's own exclusion is what catches a bad guess, not this list).
+    // Null (not merely empty) when not in --tdd mode — same discipline as TddExcludedDetails.
+    IReadOnlyList<TddGeneratedMember>? TddGeneratedMembers = null);
 
 public sealed partial class BcCompiler
 {
@@ -1566,6 +1572,52 @@ public sealed partial class BcCompiler
         // quietly cost the al-language corpus 7 tests. Logging is therefore NOT the mechanism
         // that makes this loud: `excludedObjects` is returned to the caller, which fails the
         // bundle. Keep both — the log explains, the return value enforces.
+        // --tdd (issue #2001): before falling back to exclude-and-retry, try to infer and
+        // generate the missing member(s) any AL0132 ("does not contain a definition for")
+        // diagnostic names, directly into the SOURCE-COMPILED implementing app's own
+        // SyntaxTree (see TddGeneration.cs's header for the full rationale). Only attempted
+        // on a CLEAN diagnostic failure — not an emitter crash — so the crash-handling branch
+        // of the retry loop just below is completely unaffected when nothing was generated.
+        // A wrong or unrecognized guess costs nothing beyond this attempt: the recompile right
+        // here either succeeds outright, or leaves whatever's still broken for the SAME
+        // exclude-and-retry loop that runs unconditionally afterwards.
+        var tddGeneratedMembers = new List<TddGeneratedMember>();
+        if (_tddMode && caught == null && emitResult != null && !emitResult.Success)
+        {
+            var newlyGenerated = TddGeneration.Generate(compilation, trees, parseOpts, emitResult);
+            if (newlyGenerated.Count > 0)
+            {
+                tddGeneratedMembers.AddRange(newlyGenerated);
+                var genCompilation = NavCA.Compilation.Create(
+                    moduleName: moduleName, publisher: _currentPublisher ?? "AlRunner",
+                    version: _currentVersion ?? new Version(1, 0, 0, 0), appId: appId,
+                    syntaxTrees: trees, options: compOpts);
+                if (appRootDir != null && Directory.Exists(appRootDir))
+                    genCompilation = genCompilation.WithFileSystem(new NavCA.RelativeFileSystem(appRootDir));
+                if (refLoader != null)
+                {
+                    genCompilation = genCompilation.WithReferenceLoader(refLoader);
+                    if (specs.Length > 0) genCompilation = genCompilation.AddReferences(specs);
+                }
+                genCompilation = genCompilation.WithDotNetResolverFactory(GetOrCreateDotNetFactory());
+                var genOutputter = new CaptureOutputter();
+                Exception? genCaught = null;
+                NavEmit.EmitResult? genEmitResult = null;
+                try { genEmitResult = genCompilation.Emit(NavCA.EmitOptions.Default, genOutputter); }
+                catch (Exception exGen) { genCaught = exGen; }
+
+                Console.Error.WriteLine(
+                    $"[BcCompiler] {moduleName}: --tdd generated {newlyGenerated.Count} missing member(s) and " +
+                    $"recompiled ({(genEmitResult?.Success == true ? "compile now succeeds" : "still incomplete, falling through to exclusion")}): " +
+                    string.Join(", ", newlyGenerated.Select(g => $"{g.ObjectDisplayName}.{g.Signature}")));
+
+                outputter = genOutputter;
+                caught = genCaught;
+                emitResult = genEmitResult;
+                compilation = genCompilation;
+            }
+        }
+
         // Hoisted out of the retry block below so it survives into the returned
         // BcEmitOutput: the caller has to fail the run when anything was excluded, and
         // a stderr line alone does not do that (Log's [Component] filter eats it, and
@@ -1876,7 +1928,9 @@ public sealed partial class BcCompiler
             }
         }
 
-        var emitOutput = new BcEmitOutput(outputter.Captured, alDiags, excludedObjects, tddDetails);
+        var emitOutput = new BcEmitOutput(
+            outputter.Captured, alDiags, excludedObjects, tddDetails,
+            _tddMode ? tddGeneratedMembers : null);
 
         // #1902: only a CLEAN success (nothing excluded, every source captured) is trustworthy
         // as a RAD baseline — a module that only compiled after dropping broken objects must
