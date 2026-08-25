@@ -225,6 +225,24 @@ public static partial class BcRuntime
         }
     }
 
+    /// <summary>
+    /// True iff <c>NavSystemTenant.metadataProvider</c> — the field
+    /// <see cref="EnsureMetadataProviderSeeded"/> populates — currently holds a non-null
+    /// value. Reflects live field state rather than the "did we attempt to seed it"
+    /// <c>_metadataProviderSeeded</c> flag, so a caller diagnosing a downstream failure
+    /// (e.g. <c>FieldDataProvider</c>'s ctor throwing) can report a VERIFIED claim about
+    /// whether seeding actually took, instead of assuming it (see #2008: the runner's own
+    /// prior wording asserted "not seeded" unconditionally on any ctor failure, which is a
+    /// guess, not something the code had checked).
+    /// </summary>
+    public static bool IsMetadataProviderSeeded()
+    {
+        var systemTenantType = _systemTenantTypeForSeed;
+        if (systemTenantType == null || _skeletonSystemTenant == null) return false;
+        var stMetaProvField = systemTenantType.GetField("metadataProvider", BindingFlags.NonPublic | BindingFlags.Instance);
+        return stMetaProvField != null && stMetaProvField.GetValue(_skeletonSystemTenant) != null;
+    }
+
     /// <summary>Exposes the manufactured skeleton NCLMetadata so other patch files can
     /// FieldPoke into its caches (e.g. populate per-table NCLMetaTable entries).</summary>
     public static object? SkeletonNCLMetadata => _skeletonNCLMetadata;

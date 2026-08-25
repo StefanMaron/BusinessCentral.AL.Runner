@@ -1,0 +1,19 @@
+{
+  "id": "3f2e1d0c-9b8a-4756-a5f3-1e2d3c4b5a69",
+  "name": "Runner Extras - Field Virtual Table Item Tracking Ext",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Two-bundle #2008 reproducer, dependency half: a non-test, automatically-bound event subscriber that mirrors the reporter's 'the extension subscribes to the standard event' setup.",
+  "description": "Paired with field-virtual-table-item-tracking-test — reproduces #2008's exact two-path invocation shape (extension app + separate test app) rather than a single self-contained test bundle.",
+  "dependencies": [],
+  "idRanges": [
+    {
+      "from": 61200,
+      "to": 61249
+    }
+  ],
+  "platform": "28.0.0.0",
+  "application": "28.0.0.0",
+  "runtime": "17.0",
+  "target": "Cloud"
+}

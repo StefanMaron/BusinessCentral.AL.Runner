@@ -356,10 +356,21 @@ public static partial class RecordPatches
         catch (TargetInvocationException tie)
         {
             var inner = tie.InnerException ?? tie;
+            // #2008: do NOT assert "NavGlobal.MetadataProvider/NCLMetadata is not seeded" —
+            // that was a guess at the cause, stated unconditionally, even in runs where
+            // EnsureMetadataProviderSeeded() (one frame up, in PopulateFieldVirtualTable)
+            // had already completed successfully and the field genuinely was seeded. A wrong
+            // diagnosis sends the next investigator down a dead end (it did here — see #2008's
+            // triage comment). Report the VERIFIED seed state plus the real inner exception's
+            // type, message AND stack trace instead, so whoever hits this next can actually
+            // find the true failing member without re-deriving it from a decompile.
+            var seedState = AlRunner.BcRuntime.IsMetadataProviderSeeded()
+                ? "NavGlobal.MetadataProvider IS seeded (so that is not the cause)"
+                : "NavGlobal.MetadataProvider is NOT seeded";
             throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
                 "Field (virtual table 2000000041)",
                 $"field-virtual-table — FieldDataProvider ctor failed ({inner.GetType().Name}: {inner.Message}); " +
-                "the skeleton NavGlobal.MetadataProvider/NCLMetadata is not seeded; see docs/scope.md");
+                $"{seedState}; see docs/scope.md. Inner stack trace:\n{inner.StackTrace}");
         }
 
         // Bind base.metaTable to OUR 2000000041 instance so emitted rows align with the

@@ -1,0 +1,26 @@
+{
+  "id": "8b7c6d5e-4f3a-4b2c-9d1e-0f8a7c6b5d4e",
+  "name": "Runner Extras - Field Virtual Table Item Tracking",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Reproduces #2008: the virtual Field table (2000000041) must initialize during a Base App item-tracking/reservation lookup, not just for a bundle's own tables.",
+  "description": "Regression for #2008: FieldDataProvider ctor failing on a Base-App-dependent path even though the standalone field-virtual-table suite passes.",
+  "dependencies": [
+    {
+      "id": "d852d5d2-a39d-4179-baeb-f99a19e32510",
+      "name": "Application Test Library",
+      "publisher": "Microsoft",
+      "version": "28.0.0.0"
+    }
+  ],
+  "idRanges": [
+    {
+      "from": 61100,
+      "to": 61199
+    }
+  ],
+  "platform": "28.0.0.0",
+  "application": "28.0.0.0",
+  "runtime": "17.0",
+  "target": "Cloud"
+}
