@@ -2212,22 +2212,25 @@ public static partial class BcRuntime
         if (ffNavTypesAsm != null)
             AlRunner.Patches.FlowFieldPatches.Register(navNcl, ffNavTypesAsm);
 
-        // NavCancellationToken throws — uninitialized cancellation tokens trip the check.
+        // NavCancellationToken.ThrowIfCancellationRequested / ThrowOperationCanceledException
+        // (#1883 follow-up) — this Hook(...) registration was orphaned (JmpHook disabled by
+        // default) and its own comment claimed "uninitialized cancellation tokens trip the
+        // check", but that is stale like the NavCurrentThread.Session claims #2004 found: BC's
+        // real ThrowIfCancellationRequested only reads the plain `cancellationToken.
+        // IsCancellationRequested` bool field (never touches the `source` field that would NRE
+        // on an uninitialized/default token), and the runner never actually threads a bare
+        // default(NavCancellationToken) through this path anyway — NavSession.CancellationToken
+        // always resolves to a token built from a real (even if never-cancelled) source, exactly
+        // the shape NclCecilRewrite.cs's "NavMethodScope.RegisterCancellationToken — root-scope
+        // early-return" comment already documents for the root scope. This is the exact token
+        // RecordPatches.FieldFindIntercept.cs passes into BC's real async-enumerator
+        // GetAsyncEnumerator(session.CancellationToken) on every Find/FindSet/Next — exercised
+        // by 65+ al-language corpus files today with the registration already inert, corpus
+        // 2128/2128. Deleted outright (NoOp_OneArg/NoOp2 stay: shared by other still-orphaned
+        // clusters elsewhere in this file). `typesAsm` itself stays — still used below by the
+        // NavDialog.ALError NavNCLDialogException lookup.
         var typesAsm = AppDomain.CurrentDomain.GetAssemblies()
             .FirstOrDefault(a => a.GetName().Name == "Microsoft.Dynamics.Nav.Types");
-        var ctType = typesAsm?.GetType("Microsoft.Dynamics.Nav.Types.NavCancellationToken");
-        if (ctType != null)
-        {
-            foreach (var name in new[] { "ThrowOperationCanceledException", "ThrowIfCancellationRequested" })
-            foreach (var m in ctType.GetMethods(BindingFlags.Public | BindingFlags.NonPublic
-                                                | BindingFlags.Instance | BindingFlags.Static)
-                                    .Where(mm => mm.Name == name))
-            {
-                var p = m.GetParameters().Length + (m.IsStatic ? 0 : 1);
-                var noop = p switch { 1 => nameof(NoOp_OneArg), 2 => nameof(NoOp2), _ => null };
-                if (noop != null) Hook(m, noop, $"NavCancellationToken.{name}/{m.GetParameters().Length}");
-            }
-        }
 
         // NavSessionSettings.ALInit — called when AL SessionSettings variable is initialised;
         // NREs through NavGlobal / session infrastructure. No-op leaves settings at defaults.
