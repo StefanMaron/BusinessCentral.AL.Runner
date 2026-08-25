@@ -1622,42 +1622,28 @@ public static partial class BcRuntime
         // NavReportSync.SyncStaticRun (see NclCecilRewrite.cs §NavReport block); no JmpHook
         // needed, same as instance Run()/RunModal() below.
 
-        // ALDatabase.ALSid — BC's real getter walks NavCurrentThread.Session.Identity
-        // and NREs on the skeleton (no real session). Hook to return a constant stub
-        // SID. The JmpHook fires reliably for this static (R2R spike, 2026-05-18). See
-        // AlRunner/Patches/ALDatabasePatches.cs for the rationale.
+        // ALDatabase.ALSid / ALSessionID (#1883 follow-up) — the JmpHook registrations that
+        // used to live here were orphaned (JmpHook disabled by default) and their comments
+        // ("BC's real getter... NREs on the skeleton") turned out stale like the
+        // NavCurrentThread.Session / NavCancellationToken claims #2004/#2014 found in other
+        // clusters. Empirically verified (AL probe against the un-hooked build, not just
+        // reading the decompile): NavCurrentThread.Session is wired to the skeleton and
+        // ALSid(string) / ALSessionID() both return cleanly without an NRE —
+        // ALSid("") reads session.User.Sid (unpopulated windowsSID field → "", no crash);
+        // ALSessionID() reads session.Id (uninitialized-object default 0, not -1 — the
+        // GetUninitializedObject-built skeleton session skips the `= -1` field initializer)
+        // after session.CheckConnectionIsOpen() passes (hasBeenOpened is seeded true
+        // elsewhere in this method). 0 satisfies the corpus's own
+        // TestFinalCoverage.al SessionId_WithDatabasePrefix_ReturnsNonNegative /
+        // SessionId_IsCallable assertions (`I >= 0`), which is MORE faithful than the dead
+        // stub's fabricated 42. Deleted outright — see
+        // tests/runner-extras/standalone-suites/aldatabase-cluster-1883/ for the regression
+        // guard. ALDatabasePatches.ALDatabase_ALSid / _ALSessionID (the anti-pattern
+        // loud-failures.md itself cites — a fabricated "S-1-0-0" SID) are now unreferenced
+        // dead code, deleted from AlRunner/Patches/ALDatabasePatches.cs in the same change.
         var alDbType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.ALDatabase");
         if (alDbType != null)
         {
-            var alSid = alDbType.GetMethod("ALSid",
-                BindingFlags.Public | BindingFlags.Static, null, new[] { typeof(string) }, null);
-            if (alSid != null)
-            {
-                var repl = typeof(AlRunner.Patches.ALDatabasePatches)
-                    .GetMethod(nameof(AlRunner.Patches.ALDatabasePatches.ALDatabase_ALSid),
-                        BindingFlags.Public | BindingFlags.Static);
-                if (repl != null)
-                {
-                    AlRunner.Infrastructure.JmpHook.Apply(alSid, repl, "ALDatabase.ALSid");
-                    Console.Error.WriteLine("[BcRuntime] hooking ALDatabase.ALSid");
-                }
-            }
-
-            // ALDatabase.ALSessionID — same issue: reaches into NavCurrentThread.Session.
-            // No parameters; returns int. Hook returns fixed positive stub (42).
-            var alSessionId = alDbType.GetMethod("ALSessionID",
-                BindingFlags.Public | BindingFlags.Static, null, Type.EmptyTypes, null);
-            if (alSessionId != null)
-            {
-                var repl = typeof(AlRunner.Patches.ALDatabasePatches)
-                    .GetMethod(nameof(AlRunner.Patches.ALDatabasePatches.ALDatabase_ALSessionID),
-                        BindingFlags.Public | BindingFlags.Static);
-                if (repl != null)
-                {
-                    AlRunner.Infrastructure.JmpHook.Apply(alSessionId, repl, "ALDatabase.ALSessionID");
-                    Console.Error.WriteLine("[BcRuntime] hooking ALDatabase.ALSessionID");
-                }
-            }
 
             // DISABLED: ALTenantID is R2R-inlined; JmpHook.Apply(PrepareMethod) SIGSEGVs.
             // Cecil rewrite in NclCecilRewrite.RewriteNcl() replaces the body instead.
@@ -1728,14 +1714,16 @@ public static partial class BcRuntime
         // effects (file info, table connection strings, lock-timeout
         // enforcement, password change, task scheduling, dialog drawing) are
         // out of scope.
+        // ALDatabase.get_ALSerialNumber (#1883 follow-up) — unlike ALSid/ALSessionID above,
+        // this one genuinely NREs standalone (empirically confirmed: NavSession.get_License()
+        // NREs before ALSerialNumber's own body runs — see AL probe evidence in the PR).
+        // JmpHook can't fire (disabled by default), so this is now Cecil-owned instead —
+        // see NclCecilRewrite.cs's ALDatabase block (get_ALSerialNumber → ReturnStandalone_0Args).
+        // The dead JmpHook call site that used to live here is deleted; Cecil applies
+        // unconditionally so no Hook(...) registration is needed.
+
         if (alDbType != null)
         {
-            // ALDatabase.get_ALSerialNumber — reaches session.License (null on skeleton).
-            var alSerialGetter = alDbType.GetMethod("get_ALSerialNumber",
-                BindingFlags.Public | BindingFlags.Static);
-            if (alSerialGetter != null)
-                Hook(alSerialGetter, nameof(ReturnStandalone_0Args), "ALDatabase.get_ALSerialNumber");
-
             // ALDatabase.ALChangeUserPassword — both the void(2-arg) terminal and
             // the bool(3-arg) DataError wrapper that delegates to it. Real body
             // hits PermissionManagement / NavTenant.Database NRE chains.
@@ -1768,28 +1756,26 @@ public static partial class BcRuntime
             if (alDataFile != null && alDataFile.GetParameters().Length == 10)
                 Hook(alDataFile, nameof(ReturnFalse_10Args), "ALDatabase.ALDataFileInformation");
 
-            // ALDatabase.ALGetDefaultTableConnection — returns "" (no connections registered).
-            var alGetDefConn = alDbType.GetMethod("ALGetDefaultTableConnection",
-                BindingFlags.Public | BindingFlags.Static);
-            if (alGetDefConn != null)
-                Hook(alGetDefConn, nameof(ReturnEmptyString_OneArg), "ALDatabase.ALGetDefaultTableConnection");
-
-            // ALDatabase.{get,set}_ALLockTimeout / {get,set}_ALLockTimeoutDuration —
-            // each calls DataAccessSource.CreateTenantDataProvider() → SqlTableDataProvider
-            // ctor which NREs on session.Database. No SQL backend in headless mode;
-            // make these property pairs trivial.
-            var lockTOSet = alDbType.GetMethod("set_ALLockTimeout",
-                BindingFlags.Public | BindingFlags.Static);
-            if (lockTOSet != null) Hook(lockTOSet, nameof(NoOp_OneArg), "ALDatabase.set_ALLockTimeout");
-            var lockTOGet = alDbType.GetMethod("get_ALLockTimeout",
-                BindingFlags.Public | BindingFlags.Static);
-            if (lockTOGet != null) Hook(lockTOGet, nameof(ReturnFalse_0Args), "ALDatabase.get_ALLockTimeout");
-            var lockTODurSet = alDbType.GetMethod("set_ALLockTimeoutDuration",
-                BindingFlags.Public | BindingFlags.Static);
-            if (lockTODurSet != null) Hook(lockTODurSet, nameof(NoOp_OneArg), "ALDatabase.set_ALLockTimeoutDuration");
-            var lockTODurGet = alDbType.GetMethod("get_ALLockTimeoutDuration",
-                BindingFlags.Public | BindingFlags.Static);
-            if (lockTODurGet != null) Hook(lockTODurGet, nameof(ReturnZero_0Args), "ALDatabase.get_ALLockTimeoutDuration");
+            // ALDatabase.ALGetDefaultTableConnection / {get,set}_ALLockTimeout /
+            // {get,set}_ALLockTimeoutDuration (#1883 follow-up) — the JmpHook registrations
+            // that used to live here are deleted; empirically verified via AL probe against
+            // the un-hooked build (not just the stale "NREs on session.Database" comment,
+            // per #2004/#2014's discipline):
+            //   - ALGetDefaultTableConnection(TableConnectionType) reads
+            //     NavCurrentThread.Session.TableConnectionManager.GetDefaultTableConnection(...),
+            //     which returns "" (TableConnectionManager has no connections registered on
+            //     the skeleton, but the call itself does not NRE). Already exercised by the
+            //     corpus (TestSystemExtended.al
+            //     DatabaseGetDefaultTableConnection_ExternalSQL_CloudSandbox_IsCallable), which
+            //     only asserts callability — unaffected by removing the dead hook.
+            //   - Database.LockTimeout(true) then Database.LockTimeout() round-trips correctly
+            //     end to end (returns true) — get_/set_ALLockTimeoutDuration reach a real,
+            //     non-null SqlTableDataProvider-shaped DataAccessSource on the skeleton rather
+            //     than NREing. This is MORE faithful than the dead stub would have been (the
+            //     stub's get_ALLockTimeout ALWAYS returned false regardless of what was set,
+            //     breaking the round-trip the real body gets right).
+            // See tests/runner-extras/standalone-suites/aldatabase-cluster-1883/ for the
+            // regression guard.
         }
 
         // ALTaskScheduler.CanCreateTask(NavSession) is Cecil-owned (see NclCecilRewrite.cs,
@@ -1817,19 +1803,35 @@ public static partial class BcRuntime
 
         if (alDbType != null)
         {
-            // ALDatabase.ALImportData(DataError, bool, ByRef<NavText>, bool, bool, NavRecord, bool)
-            // — 7 args returning bool. Real body reaches into Database.ImportData
-            // which needs a real backup file; tests only verify the call signature.
-            foreach (var m in alDbType.GetMethods(BindingFlags.Public | BindingFlags.Static))
-            {
-                if (m.Name != "ALImportData") continue;
-                if (m.GetParameters().Length == 7)
-                    Hook(m, nameof(ReturnFalse_7Args), "ALDatabase.ALImportData");
-            }
+            // ALDatabase.ALImportData (#1883 follow-up) — the JmpHook registration that used
+            // to live here is deleted. Empirically verified via AL probe against the un-hooked
+            // build: Database.ImportData(false, FileName) does not NRE. It reaches
+            // session.ClientCallback.ImportDataAction(...), which raises BC's real
+            // NavNCLCallbackNotAllowedException ("Callback functions are not allowed") — the
+            // same "no test handler registered for an interactive callback" behaviour AL tests
+            // already rely on for Message/Confirm dispatch, not a runner crash. That is a more
+            // faithful outcome than the dead stub's silent `false` (BC's real body never
+            // silently returns false when no handler is registered — it raises this exact
+            // exception class). No corpus test exercises ImportData today. See
+            // tests/runner-extras/standalone-suites/aldatabase-cluster-1883/ for the
+            // regression guard.
 
-            // ALDatabase.ALAlterKeyAsync(NavSession, NavKeyRef, bool) — async
-            // ValueTask wrapper around key-alteration; no metadata mutation in
-            // headless runner. Hook to a default completed ValueTask.
+            // ALDatabase.ALAlterKeyAsync(NavSession, NavKeyRef, bool) — DEFERRED, not part of
+            // this #1883 follow-up's resolved set (still orphaned; audited but not yet
+            // rewritten). Empirically probed (RecordRef.KeyIndex + Database.AlterKey against
+            // the un-hooked build): the primary/unique/obsolete-key validation guard at the
+            // top of the real body runs correctly standalone (raises BC's own NavCSideException
+            // "Cannot alter the key..." for a primary key — no hook needed there), but for an
+            // actually-alterable secondary key the real body proceeds to
+            // `new NavSqlDdlCommands(session.Database).AlterIndexAsync(...)`, which genuinely
+            // NREs several frames deep in NavSqlStatementHelper.ConvertToSqlIdentifier — real
+            // SQL DDL string-building with no SQL backend to build for. Simply restoring the
+            // ReturnValueTask3 stub (a "completed no-op" ValueTask for every call, including
+            // the primary-key case) would regress the validation guard that already works for
+            // free without any hook. A correct fix needs a narrower Cecil rewrite that leaves
+            // the guard alone and only intercepts the SQL DDL tail — no corpus test exercises
+            // this method at all today, so this is deferred to a future #1883 slice rather
+            // than shipped half-verified. Left as-is (still an orphaned Hook(...) call site).
             var alAlterKey = alDbType.GetMethod("ALAlterKeyAsync",
                 BindingFlags.Public | BindingFlags.Static);
             if (alAlterKey != null && alAlterKey.GetParameters().Length == 3)

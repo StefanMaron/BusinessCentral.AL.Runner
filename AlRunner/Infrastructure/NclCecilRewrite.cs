@@ -54,6 +54,10 @@ public static class NclCecilRewrite
         // once the JmpHook layer went off by default — so BC's SQL body ran and NRE'd.
         "Microsoft.Dynamics.Nav.Runtime.ALDatabase::ALLastUsedRowVersion/0",
         "Microsoft.Dynamics.Nav.Runtime.ALDatabase::ALMinimumActiveRowVersion/0",
+        // ALDatabase.get_ALSerialNumber (#1883 follow-up) — genuinely NREs standalone
+        // (NavSession.get_License() chain), confirmed empirically. Cecil-migrated onto the
+        // ReturnStandalone_0Args sentinel; legacy JmpHook registration deleted from BcRuntime.cs.
+        "Microsoft.Dynamics.Nav.Runtime.ALDatabase::get_ALSerialNumber/0",
         // ALSystemEncryption AL-facing statics (Cecil-migrated onto the in-process
         // AES envelope) — legacy JmpHooks must no-op.
         "Microsoft.Dynamics.Nav.Runtime.ALSystemEncryption::ALEncrypt/1",
@@ -2428,6 +2432,24 @@ public static class NclCecilRewrite
                     il.Append(il.Create(OpCodes.Ret));
                     body.MaxStackSize = 1;
                     Console.Error.WriteLine($"[Cecil] Rewrote ALDatabase.{m.Name} → return false");
+                }
+
+                // ALDatabase.get_ALSerialNumber (#1883 follow-up) — genuinely NREs standalone,
+                // confirmed empirically (not just from the pre-existing comment, per #2004/#2014's
+                // discipline): NavSession.get_License() reads Database.SecurityAndLicense.License,
+                // which chains into skeleton-null service-tier state and throws
+                // NullReferenceException at Microsoft.Dynamics.Nav.Runtime.NavSession.get_License()
+                // before ALSerialNumber's own body even runs. The prior JmpHook registration for
+                // this (BcRuntime.cs, deleted in this same change) targeted this exact method and
+                // is provably orphaned now that JmpHook is off by default — Cecil must own it
+                // instead. Reuses the existing ReturnStandalone_0Args "STANDALONE" sentinel
+                // (same one Database.TenantId/318-navtext-string-rewrite already return) rather
+                // than inventing a new placeholder.
+                foreach (var m in alDatabaseType.Methods.Where(x =>
+                    x.Name == "get_ALSerialNumber" && x.Parameters.Count == 0 && x.HasBody))
+                {
+                    ReplaceBodyWithHelper(asm.MainModule, m, nameof(AlRunner.BcRuntime.ReturnStandalone_0Args));
+                    Console.Error.WriteLine("[Cecil] Rewrote ALDatabase.get_ALSerialNumber → STANDALONE sentinel");
                 }
             }
         }

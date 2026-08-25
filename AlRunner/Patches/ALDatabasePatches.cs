@@ -1,42 +1,22 @@
 // ALDatabasePatches — replacements for ALDatabase.AL* getters.
 //
-// Rationale: BC's real ALDatabase.ALSid (and siblings like ALCompanyName,
-// ALSerialNumber, ALTenantID, ALUserSecurityID) reach into service-tier
-// session state that does not exist in the skeleton runtime. The real body
-// NREs on `NavCurrentThread.Session.Identity` chain access.
-//
-// JmpHook on the static `ALDatabase.ALSid(string)` entry point fires
-// reliably (confirmed 2026-05-18 R2R spike — `feedback_r2r_envvar_doesnt_help`).
-// So the same constant-returning replacement strategy used elsewhere works
-// here: return a BC-faithful stub SID (`S-1-0-0` — the well-known NULL_SID
-// constant; clearly a placeholder, not a real domain SID).
-//
-// Faithfulness boundary: callers that only check non-empty / consistent /
-// not-equal-to-real-SID-prefix observe the same behaviour as a real session.
-// Callers that parse / validate / compare against a real account SID will
-// see stub values and should not be in scope (see `docs/scope.md §3.8 auth`).
+// ALDatabase_ALSid / ALDatabase_ALSessionID used to live here (fabricated "S-1-0-0" /
+// 42 stubs, wired via a JmpHook registration in BcRuntime.cs) but were deleted in
+// #1883's ALDatabase cluster follow-up: JmpHook is disabled by default, so that
+// registration was already orphaned, and BC's real, unpatched ALSid(string) /
+// ALSessionID() bodies were empirically verified (AL probe against the un-hooked
+// build) to run without an NRE — NavCurrentThread.Session is wired to the skeleton.
+// The fabricated stub values were exactly the loud-failures.md anti-pattern example
+// ("public static string ALDatabase_ALSid(string userName) => "S-1-0-0";" — silent
+// fake) — deleting them rather than reviving is the correct direction per that rule
+// and per the two prior measurements (#1990-era) that enabling orphaned JmpHooks
+// nets negative. See tests/runner-extras/standalone-suites/aldatabase-cluster-1883/.
 using System.Runtime.CompilerServices;
 
 namespace AlRunner.Patches;
 
 public static class ALDatabasePatches
 {
-    /// <summary>Constant stub SID — NULL_SID per Microsoft's well-known SID list.
-    /// Clearly a placeholder; not equal to any real domain SID prefix
-    /// (e.g. 'S-1-5-21') so the negative SID_NotRealWindowsSid test still passes.</summary>
-    private const string StubSid = "S-1-0-0";
-
-    /// <summary>Replacement for ALDatabase.ALSid(string userName).
-    /// Returns a fixed, non-empty, non-real-SID stub.</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    public static string ALDatabase_ALSid(string userName) => StubSid;
-
-    /// <summary>Replacement for ALDatabase.ALSessionID().
-    /// Returns a fixed positive integer stub (42). The real getter reaches into
-    /// NavCurrentThread.Session which does not exist in the skeleton runtime.</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    public static int ALDatabase_ALSessionID() => 42;
-
     // ── Row-version clock ──────────────────────────────────────────────────────
     // BC backs Database.LastUsedRowVersion() / MinimumActiveRowVersion() with SQL's
     // @@DBTS / MIN_ACTIVE_ROWVERSION(). The runner has no SQL connection, so the real
