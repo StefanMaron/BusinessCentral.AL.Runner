@@ -67,7 +67,7 @@ internal static class StartupHook
         var hookDir = System.IO.Path.GetDirectoryName(typeof(StartupHook).Assembly.Location);
         if (!string.IsNullOrEmpty(hookDir))
         {
-            System.Runtime.Loader.AssemblyLoadContext.Default.Resolving += (ctx, name) =>
+            AlRunner.Infrastructure.EngineLoadContext.Current.Resolving += (ctx, name) =>
             {
                 if (name.Name is null) return null;
                 var candidate = System.IO.Path.Combine(hookDir, name.Name + ".dll");

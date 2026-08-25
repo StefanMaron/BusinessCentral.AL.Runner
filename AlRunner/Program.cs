@@ -2101,7 +2101,7 @@ foreach (var bundle in bundles)
             else
             {
                 var loadSw = System.Diagnostics.Stopwatch.StartNew();
-                asm = Assembly.Load(assemblyBytes!);
+                asm = AlRunner.Infrastructure.EngineLoadContext.LoadFromBytes(assemblyBytes!);
                 loadSw.Stop();
                 AlRunner.PerfTrace.Log($"test assembly load {rel}/{moduleName} {loadSw.ElapsedMilliseconds}ms");
                 // Register this freshly-loaded module by AppId so a LATER bundle that
@@ -2312,7 +2312,7 @@ foreach (var bundle in bundles)
             IReadOnlyList<TestResult> tests;
             try
             {
-                var asm = Assembly.Load(compile.AssemblyBytes!);
+                var asm = AlRunner.Infrastructure.EngineLoadContext.LoadFromBytes(compile.AssemblyBytes!);
                 // #1861: same mark as the bundled-mode run loop, so the app-stage report
                 // is consistent whichever compile boundary --isolation chose.
                 using (AlRunner.Infrastructure.PhaseLog.AppStage("set-test-assembly"))
@@ -3532,7 +3532,7 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
             {
                 if (assemblyBytes == null)
                     return ServerRunResult.Failure(2, moduleName, "no assembly produced", fileHashes);
-                asm = Assembly.Load(assemblyBytes);
+                asm = AlRunner.Infrastructure.EngineLoadContext.LoadFromBytes(assemblyBytes);
                 // Register this freshly-loaded module under its AppId so a LATER
                 // bundle in this request/session that resolves the same AppId —
                 // either as its own bundle (this same method, a later iteration) or

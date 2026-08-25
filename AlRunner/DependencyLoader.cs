@@ -224,7 +224,7 @@ public sealed class DependencyLoader
             try
             {
                 var bytes = File.ReadAllBytes(precompiled);
-                var asm = Assembly.Load(bytes);
+                var asm = AlRunner.Infrastructure.EngineLoadContext.LoadFromBytes(bytes);
                 // #1852: pre-warm the Report{id} type-name cache from the bytes we already
                 // hold, so RecordPatches.CompiledReportIds() never has to call
                 // asm.GetTypes() on this assembly (asm.Location is empty for a byte[]-loaded
@@ -265,7 +265,7 @@ public sealed class DependencyLoader
                 {
                     try
                     {
-                        var asm = AssemblyLoadContext.Default.LoadFromAssemblyPath(dllPath);
+                        var asm = AlRunner.Infrastructure.EngineLoadContext.Current.LoadFromAssemblyPath(dllPath);
                         // #1852 (path variant, #perf-B): same pre-warm as Tier 1, but reads
                         // the TypeDef table straight off disk — the bytes are no longer held
                         // in memory after a path-based load, so re-reading them as byte[]
@@ -364,7 +364,7 @@ public sealed class DependencyLoader
                     replayedEnums = AlEnumMetadataRegistry.LoadSidecar(enumRegistrySidecar);
                 Console.Error.WriteLine(
                     $"[deps] source-cache HIT: {m.Name} v{m.Version} key={cacheKey[..12]} ({cachedBytes.Length} bytes, {replayedReports} report-metadata entries, {replayedEnums} enum-registry entries)");
-                return Assembly.Load(cachedBytes);
+                return AlRunner.Infrastructure.EngineLoadContext.LoadFromBytes(cachedBytes);
             }
             catch (Exception ex)
             {
@@ -474,7 +474,7 @@ public sealed class DependencyLoader
         {
             Console.Error.WriteLine($"[deps] source-cache write failed for {m.Name}: {ex.Message}");
         }
-        try { return Assembly.Load(compile.AssemblyBytes!); }
+        try { return AlRunner.Infrastructure.EngineLoadContext.LoadFromBytes(compile.AssemblyBytes!); }
         catch (Exception ex)
         {
             // LOAD-FAIL: the compiled bytes could not be loaded into the ALC.
@@ -636,7 +636,7 @@ public sealed class DependencyLoader
         // .TableProxyBuilder), it fails to load and the call NREs deep in MS code. The
         // probe below catches every Microsoft.Dynamics.Nav.* assembly request and serves
         // it from the artifact dir.
-        AssemblyLoadContext.Default.Resolving += (ctx, name) =>
+        AlRunner.Infrastructure.EngineLoadContext.Current.Resolving += (ctx, name) =>
         {
             if (name.Name == null) return null;
             if (_byName.TryGetValue(name.Name, out var asm))
