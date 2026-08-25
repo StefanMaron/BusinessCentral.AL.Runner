@@ -41,18 +41,23 @@
     ANY one of the 6 stays Private=true (copy-local), its own transitive dependencies (the
     entire Aspose/Graph/BusinessCentral closure) stay copy-local too, regardless of the other 5.
 
-    Ncl.dll ITSELF must stay Private=true (and therefore ship, both to bin and to the nupkg):
-    Program.cs Cecil-rewrites Ncl.dll IN PLACE at the exact `AppContext.BaseDirectory +
-    "Microsoft.Dynamics.Nav.Ncl.dll"` path, before Main resolves any BC type, and relies on
-    CoreCLR's TPA (trusted platform assemblies) probe — computed ONCE at native-host startup —
-    already knowing that path. Verified empirically: stripping Ncl.dll from bin (so TPA never
-    learns the path, even though Program.cs still successfully re-writes bytes there moments
-    later) makes the process fall through to DependencyLoader's Resolving handler instead,
-    which loads the RAW, un-Cecil-rewritten copy straight from the artifact dir — the
-    NavEnvironment cctor then calls the real WindowsIdentity.GetCurrent(), which throws
-    PlatformNotSupportedException on Linux, and the process crashes at startup. So Ncl.dll's
-    PATH must exist in bin/the package even though its bytes get overwritten every run; the
-    other 23 DLLs in its closure do not need to.
+    Ncl.dll ITSELF is also now stripped — it must NOT ship in bin or the nupkg either, even
+    though it's a Microsoft BC assembly like the rest of the closure. Historically it stayed
+    (see git blame on this comment for the older text) because Program.cs Cecil-rewrites it IN
+    PLACE at the exact `AppContext.BaseDirectory + "Microsoft.Dynamics.Nav.Ncl.dll"` path, and
+    relies on CoreCLR's TPA (trusted platform assemblies) probe — computed ONCE at native-host
+    startup — already knowing that path; stripping it (so TPA never learns the path, even
+    though Program.cs still successfully re-writes bytes there moments later) made the process
+    fall through to DependencyLoader's Resolving handler instead, which loads the RAW,
+    un-Cecil-rewritten copy straight from the artifact dir and crashes at startup
+    (NavEnvironment's cctor calls the real WindowsIdentity.GetCurrent(), PlatformNotSupported
+    on Linux). That's still true for THIS process — but NclShadowRuntime.cs (Program.cs's very
+    first BC-touching step) now works around it instead of requiring the file to ship: it
+    builds a runner-owned "shadow" directory that mirrors this install via symlinks plus one
+    real file (the Cecil-rewritten Ncl.dll, sourced from the user's own BC artifact cache) and
+    re-execs into it via the dotnet muxer, so the CHILD process's TPA is computed against a
+    directory where Ncl.dll genuinely, legitimately exists on disk. See NclShadowRuntime.cs's
+    class doc for the full mechanism and why an in-process fix is impossible.
 
     The other 5 direct references (Types/Common/Language/Apps/CodeAnalysis) do NOT need to
     ship at all: BcRuntime.ForceLoadBcDlls already loads Common/Types/Language explicitly via
@@ -61,9 +66,9 @@
     Resolving handler below already serves from ServiceTierDir. Confirmed by running a real
     bundle end to end with all 5 stripped from bin.
 
-    Verified end to end (dotnet pack + a clean tool install + a real bundle run) in the PR
-    that added this comment. Guarded in CI by the `pack` job's "Assert the package
-    doesn't ship BC/Aspose/Graph binaries" step (bc-tests.yml), which runs
+    Verified end to end (dotnet pack + a clean tool install + a real bundle run) in the PRs
+    that added and later completed this comment. Guarded in CI by the `pack` job's "Assert the
+    package doesn't ship BC/Aspose/Graph binaries" step (bc-tests.yml), which runs
     .github/scripts/check-nupkg-contents.sh against the real packed nupkg on every
     push/PR — a deny-list of today's known offenders plus a total-size ceiling so a
     future unwanted dependency that doesn't match any name here still fails the build.
@@ -77,8 +82,7 @@
                    OR $([System.String]::Copy('%(Filename)').StartsWith('Aspose.'))
                    OR $([System.String]::Copy('%(Filename)').StartsWith('Microsoft.Graph'))
                    OR $([System.String]::Copy('%(Filename)').StartsWith('Microsoft.BusinessCentral.'))
-                   OR ($([System.String]::Copy('%(Filename)').StartsWith('Microsoft.Dynamics.'))
-                       AND '%(Filename)' != 'Microsoft.Dynamics.Nav.Ncl')
+                   OR $([System.String]::Copy('%(Filename)').StartsWith('Microsoft.Dynamics.'))
                    OR $([System.String]::Copy('%(Filename)').StartsWith('CoreWCF.'))
                    OR $([System.String]::Copy('%(Filename)').StartsWith('Grpc.'))
                    OR '%(Filename)' == 'System.Private.ServiceModel'

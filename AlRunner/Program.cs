@@ -672,6 +672,38 @@ Console.WriteLine(serverMode
         ? $"al-runner — watch mode, {bundles.Count} bundle(s) (Ctrl+C to quit)"
         : $"al-runner — running {bundles.Count} bundle(s)");
 
+// The packaged tool no longer ships Microsoft.Dynamics.Nav.Ncl.dll (see
+// check-nupkg-contents.sh) — it must be resolved from the user's own BC artifact
+// cache at runtime, like every other BC/Aspose/Graph DLL already stripped from the
+// package. CoreCLR's TPA list is computed once, by the native host, before any of
+// our code runs, so a THIS-process fix is impossible once we're past that point:
+// re-exec into a shadow runtime dir (see NclShadowRuntime) that legitimately has the
+// file on disk before ITS TPA is computed. A shadow child's own base directory
+// always has the real file, so this naturally does not re-fire there.
+if (AlRunner.Infrastructure.NclShadowRuntime.NeedsShadow(AppContext.BaseDirectory)
+    && Environment.GetEnvironmentVariable("AL_RUNNER_NCL_SHADOW_DONE") != "1")
+{
+    var srcDirForShadow = AlRunner.Infrastructure.BcArtifacts.ServiceTierDir;
+    var shadowDll = AlRunner.Infrastructure.NclShadowRuntime.EnsureShadowDir(AppContext.BaseDirectory, srcDirForShadow);
+    var dotnetMuxer = AlRunner.Infrastructure.NclShadowRuntime.FindDotnetMuxer();
+
+    var psi = new System.Diagnostics.ProcessStartInfo(dotnetMuxer) { UseShellExecute = false };
+    psi.ArgumentList.Add("exec");
+    psi.ArgumentList.Add(shadowDll);
+    // argv[0] is THIS process's own entry path (apphost exe, or the dll path the
+    // dotnet muxer forwarded) — never a user arg, and irrelevant here since we've
+    // already picked the child's entry point explicitly above.
+    var argv = RewriteArtifactPathArg(Environment.GetCommandLineArgs());
+    foreach (var a in argv.Skip(1)) psi.ArgumentList.Add(a);
+    psi.Environment["AL_RUNNER_NCL_SHADOW_DONE"] = "1";
+
+    Console.Error.WriteLine("[Cecil] Ncl.dll not shipped in this install — re-execing into a shadow runtime dir that has it");
+    AlRunner.Infrastructure.PhaseLog.MarkReexecParent();
+    using var shadowChild = System.Diagnostics.Process.Start(psi)!;
+    shadowChild.WaitForExit();
+    return shadowChild.ExitCode;
+}
+
 // Cecil-rewrite Ncl.dll IN-PLACE on the bin path BEFORE CoreCLR's TPA probe
 // resolves it. Must run BEFORE any reference to BcRuntime (whose field metadata
 // triggers Ncl load on class init). Allowed surface per

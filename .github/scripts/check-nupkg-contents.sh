@@ -31,20 +31,20 @@ deny_patterns=(
   'Aspose\.[^/]*\.dll$'
   'Microsoft\.Graph[^/]*\.dll$'
 )
-# The one documented exception: Microsoft.Dynamics.Nav.Ncl.dll must ship. Program.cs
-# Cecil-rewrites it in place at the exact bin path CoreCLR's TPA probe — computed once
-# at native-host startup — must already know; stripping it makes the process fall
-# through to the RAW, un-rewritten copy in the artifact dir instead, which crashes at
-# startup (NavEnvironment..cctor calls the real WindowsIdentity.GetCurrent(), which
-# throws PlatformNotSupportedException on Linux). See Directory.Build.targets.
-allow_exact='Microsoft.Dynamics.Nav.Ncl.dll'
+# No allow-list exception. Microsoft.Dynamics.Nav.Ncl.dll used to be exempted here
+# because Program.cs Cecil-rewrote it in place at the exact bin path CoreCLR's TPA probe
+# needed to already know about, and TPA is computed once at native-host startup — so
+# stripping the file made the process fall through to the RAW, un-rewritten copy in the
+# artifact dir and crash at startup. NclShadowRuntime.cs now resolves that without
+# shipping the file: it builds a runner-owned shadow directory (symlinks to this
+# install, plus the Cecil-rewritten Ncl.dll copied from the user's own BC artifact
+# cache) and re-execs into it, so a fresh process's TPA legitimately includes it. See
+# Directory.Build.targets and NclShadowRuntime.cs's class doc for the full mechanism.
 
 violations=()
 for pat in "${deny_patterns[@]}"; do
   while IFS= read -r line; do
     [[ -z "$line" ]] && continue
-    fname=$(basename "$line")
-    [[ "$fname" == "$allow_exact" ]] && continue
     violations+=("$line")
   done < <(echo "$listing" | grep -E "$pat" || true)
 done

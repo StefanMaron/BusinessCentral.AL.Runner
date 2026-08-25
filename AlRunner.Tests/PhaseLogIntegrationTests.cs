@@ -307,7 +307,12 @@ public sealed class PhaseLogIntegrationTests : IDisposable
         // there rather than passing quietly here.
         var expectedParents =
             CountOccurrences(output, "[r2r] re-execing")
-            + CountOccurrences(output, "[Cecil] Fresh rewrite done");
+            + CountOccurrences(output, "[Cecil] Fresh rewrite done")
+            // The tool package no longer ships Microsoft.Dynamics.Nav.Ncl.dll (see
+            // check-nupkg-contents.sh) — NclShadowRuntime re-execs into a shadow runtime
+            // dir that legitimately has it, UNCONDITIONALLY (every cold AND warm spawn,
+            // not just a fresh-rewrite cache MISS), so this fires on every test run here.
+            + CountOccurrences(output, "[Cecil] Ncl.dll not shipped in this install");
         var parents = ReadRecords(_logPath, "process-reexec-parent");
         Assert.Equal(expectedParents, parents.Count);
         Assert.All(parents, parent =>

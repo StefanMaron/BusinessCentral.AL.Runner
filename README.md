@@ -35,7 +35,7 @@ What the runner does **not** do:
 
 What the runner **does** modify:
 
-- `Microsoft.Dynamics.Nav.Ncl.dll` — rewritten once via Cecil at startup and cached at `~/.cache/al-runner/ncl-cecil/<key>.dll`. This is the runtime-engine layer. See `AlRunner/Infrastructure/NclCecilRewrite.cs`.
+- `Microsoft.Dynamics.Nav.Ncl.dll` — rewritten once via Cecil at startup and cached at `~/.cache/al-runner/ncl-cecil/<key>.dll`. This is the runtime-engine layer. See `AlRunner/Infrastructure/NclCecilRewrite.cs`. The tool package does **not** ship this DLL (it's Microsoft's, resolved from your own BC artifact cache at runtime, same as the rest of the BC service-tier closure) — on first run for a given install + BC version, `AlRunner/Infrastructure/NclShadowRuntime.cs` builds a small shadow runtime directory containing the rewritten copy and re-execs into it once; that shadow dir is then reused on every later run.
 - Remaining R2R-reachable entry points — patched via JMP-hooks installed by `BcRuntime.EnsureApplied()` (`AlRunner/BcRuntime.cs`, `AlRunner/Patches/*.cs`).
 
 This is the **precompiled-DLL contract** described in `.claude/rules/precompiled-dll-respect.md`. AL output the runner emits is governed by the same contract once finalised — it is meant to be cacheable on disk and reusable like any MS or ISV DLL.
