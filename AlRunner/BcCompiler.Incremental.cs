@@ -876,6 +876,50 @@ public sealed partial class BcCompiler
     /// Resolves CreateForRad's mandatory <c>symbolReferenceLoader</c>/<c>symbolReferences</c> for
     /// THIS module's own baseline objects — see this file's header comment for why
     /// packagedModuleDefinition alone does not resolve them.
+    ///
+    /// Placed FIRST in the <see cref="CompositeSymbolReferenceLoader"/> chain built by
+    /// <see cref="TryEmitIncremental"/> (self loader, then <c>refLoader</c> — the real
+    /// package/JSON-symbols loader for every OTHER dependency, e.g. System Application, Base
+    /// Application). "Not mine" (a spec for any AppId other than this module's own) MUST
+    /// throw <see cref="FileNotFoundException"/> — the ONE "not mine" convention every
+    /// <see cref="NavCA.ISymbolReferenceLoader"/> composed via
+    /// <see cref="CompositeSymbolReferenceLoader"/> in this file uses (see
+    /// <see cref="JsonSymbolReferenceLoader"/>'s <c>LoadModule</c>/<c>LoadModuleInfo</c>/
+    /// <c>GetDependencies</c> in SymbolJson.cs, which already throw for exactly this reason,
+    /// on all three methods).
+    ///
+    /// Issue #2009: this loader used to signal "not mine" by returning <c>null</c> /
+    /// <c>Enumerable.Empty&lt;&gt;()</c> instead — a DIFFERENT convention from the rest of the
+    /// chain. Sitting first, that null/empty answer WAS the composite's final result for
+    /// every non-self spec on two of the three methods:
+    ///   - <c>CompositeSymbolReferenceLoader.LoadModuleInfo</c> has no null-check (`return
+    ///     child.LoadModuleInfo(...)` inside a `catch (FileNotFoundException)` only) — a
+    ///     `null` answer from THIS (first) child was returned as the composite's own final
+    ///     answer, without ever asking `refLoader`. Confirmed the live cause by instrumenting
+    ///     this method and reproducing #2009's exact "could not be loaded" diagnostics: BC's
+    ///     `CreateForRad` calls `LoadModuleInfo` (never bare `LoadModule`) to resolve each
+    ///     dependency spec, got `null` for every MS-app package, and reported it unresolved.
+    ///   - <c>CompositeSymbolReferenceLoader.GetDependencies</c> only falls through on
+    ///     `null`, and `Enumerable.Empty&lt;&gt;()` is not null — the same failure
+    ///     <see cref="JsonSymbolReferenceLoader.GetDependencies"/>'s own comment warns about
+    ///     ("would WIN the composite race and erase the real dependency list").
+    /// `LoadModule` happened to keep working only because
+    /// <c>CompositeSymbolReferenceLoader.LoadModule</c> is the one method with an explicit
+    /// `if (module != null) return module;` check — a second, independent "not mine" signal
+    /// that the other two methods do not share. Converging THIS loader onto the throwing
+    /// convention (rather than adding matching null-checks to the other two composite
+    /// methods) removes the split itself, so the next loader added to this chain cannot
+    /// reintroduce the same bug by picking the "wrong" one of two coexisting conventions.
+    ///
+    /// Throwing here is safe even when this loader is used bare (no `refLoader` — a bundle
+    /// with zero resolved dependencies, so `TryEmitIncremental` skips the
+    /// <see cref="CompositeSymbolReferenceLoader"/> wrapper entirely and hands
+    /// <c>Compilation.CreateForRad</c> this loader directly): <see cref="JsonSymbolReferenceLoader"/>
+    /// already throws unconditionally on every miss and is *also* sometimes handed to BC bare
+    /// (<c>BcCompiler.GetSharedReferences</c>' `chain.Count == 1` case) — proven safe by every
+    /// green corpus run that exercises that path, since BC's own reference resolution treats
+    /// the exception exactly like the null/empty answer it tolerates from a `Compilation`
+    /// built without any dependencies at all: a graceful "not found" diagnostic, not a crash.
     /// </summary>
     private sealed class RadSelfBaselineLoader : NavCA.ISymbolReferenceLoader
     {
@@ -884,12 +928,30 @@ public sealed partial class BcCompiler
         public RadSelfBaselineLoader(Guid appId, NavSymRef.ModuleDefinition module) { _appId = appId; _module = module; }
 
         public NavSymRef.ModuleDefinition? LoadModule(NavCA.SymbolReferenceSpecification reference, IList<NavCA.Diagnostics.Diagnostic> diagnostics)
-            => reference.AppId == _appId ? _module : null;
+        {
+            if (reference.AppId != _appId)
+                throw new FileNotFoundException(
+                    $"Symbol reference not found: {reference.Publisher}/{reference.Name} {reference.Version}");
+            return _module;
+        }
 
         public NavCA.ModuleInfo LoadModuleInfo(NavCA.SymbolReferenceSpecification reference, IList<NavCA.Diagnostics.Diagnostic> diagnostics, NavCA.LoadModuleInfoFlags flags)
-            => reference.AppId == _appId ? new NavCA.ModuleInfo(_module, documentationProvider: null) : null!;
+        {
+            if (reference.AppId != _appId)
+                throw new FileNotFoundException(
+                    $"Symbol reference not found: {reference.Publisher}/{reference.Name} {reference.Version}");
+            return new NavCA.ModuleInfo(_module, documentationProvider: null);
+        }
 
         public IEnumerable<NavCA.SymbolReferenceSpecification> GetDependencies(NavCA.SymbolReferenceSpecification reference, IList<NavCA.Diagnostics.Diagnostic> diagnostics)
-            => Enumerable.Empty<NavCA.SymbolReferenceSpecification>();
+        {
+            if (reference.AppId != _appId)
+                throw new FileNotFoundException(
+                    $"Symbol reference dependencies not found: {reference.Publisher}/{reference.Name} {reference.Version}");
+            // Self has no further transitive deps THIS loader needs to report — the
+            // module's own dependency closure is already the (separately supplied)
+            // `combinedSpecs` list, not something discovered on demand here.
+            return Enumerable.Empty<NavCA.SymbolReferenceSpecification>();
+        }
     }
 }
