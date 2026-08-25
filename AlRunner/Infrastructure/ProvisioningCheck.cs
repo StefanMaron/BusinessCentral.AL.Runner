@@ -345,6 +345,231 @@ public static class ProvisioningCheck
     public static string TestAppsDirFor(string artifactsRootDir, string fullVersion)
         => Path.Combine(artifactsRootDir, fullVersion, "test-apps");
 
+    // ── Issue #1996: manifest-driven need detection ──────────────────────────
+    // CheckPlatformApps / TestToolkitPresent above are REACTIVE: they can only report a
+    // gap for an app that is already PRESENT (as symbol-only) in the cache. An empty
+    // cache — no .alpackages at all, or a --package-cache dir that doesn't exist yet —
+    // therefore reads as vacuously "Ok": nothing was found, so nothing looks broken, so
+    // --auto-provision never fires and the run limps to a cryptic "Missing:" error deep
+    // in dependency resolution instead. The bundle's OWN app.json manifests are an
+    // independent source of truth for what's actually required, regardless of what
+    // currently exists on disk — these functions consult THAT instead.
+    //
+    // Two curated, ATOMIC download sets exist (see ArtifactDownloader.PlatformApps /
+    // .TestApps): a project either needs the whole platform-apps set or none of it (same
+    // for test-apps) — there is no per-app partial download. So a DOWNLOAD, once triggered,
+    // always fetches the full set. But "is it already satisfied" must NOT require every
+    // member of that set to be individually present on disk: System/Base Application and
+    // Business Foundation have a service-tier DLL dispatch fallback (the runner runs their
+    // codeunits even with no .app vendored at all — see KnownPlatformRuntimeApps' doc
+    // comment; only PRESENT-but-symbol-only is a gap for them, unchanged, via
+    // CheckPlatformApps). Application Test Library has NO such fallback (see
+    // ArtifactDownloader.PlatformApps' comment on it) — a bundle that needs it is
+    // unresolvable without a real .app in cache. So the "must be literally present" check
+    // is scoped to KnownNoFallbackPlatformApps, not the whole downloadable set — requiring
+    // the whole set would regress nearly every bundle in the corpus (virtually all of them
+    // carry implicit `application`/`platform` roots) into a spurious "needs download".
+
+    /// <summary>
+    /// Real Microsoft app names whose absence from the package cache is ALWAYS a genuine
+    /// gap — they have no service-tier DLL dispatch fallback the way System/Base
+    /// Application and Business Foundation do, so a bundle needing one is unresolvable
+    /// without a real (R2R or source-compilable) .app on disk. Application Test Library
+    /// ships in the w1 `platform-apps` set (see ArtifactDownloader.PlatformApps), not the
+    /// `test-apps` set — the specific miss issue #1996 is about.
+    /// </summary>
+    public static readonly IReadOnlyList<string> KnownNoFallbackPlatformApps = new[]
+    {
+        "Application Test Library",
+    };
+
+    /// <summary>
+    /// Real Microsoft app names supplied by the curated `test-apps` download (platform
+    /// artifact's Applications/&lt;area&gt;/Test + TestFramework trees — see
+    /// ArtifactDownloader.TestApps). Deliberately a closed allowlist, NOT "any Microsoft
+    /// app whose name contains Test" — an arbitrary Microsoft application extension (e.g.
+    /// a first-party ISV-style app) must never trigger a test-toolkit download it doesn't
+    /// need and the curated set can't satisfy anyway (issue #1996 acceptance criterion:
+    /// apps outside the known test-framework roots must not trigger test-apps provisioning).
+    /// </summary>
+    public static readonly IReadOnlyList<string> KnownTestFrameworkAppNames = new[]
+    {
+        "Business Foundation Test Libraries",
+        "System Application Test Library",
+        "Tests-TestLibraries",
+        "Library Assert",
+        "Library Variable Storage",
+        "Test Runner",
+        "Any",
+        "Permissions Mock",
+    };
+
+    /// <summary>Manifest-derived provisioning need, independent of what's currently on disk.</summary>
+    public sealed record ManifestNeeds(bool NeedsPlatformApps, bool NeedsTestApps);
+
+    /// <summary>
+    /// Classifies a bundle's unioned dependency roots (see Program.ReadBundleDependencyRoots)
+    /// into which curated download set(s) — if any — the bundle needs. Pure — does no I/O.
+    /// </summary>
+    public static ManifestNeeds DetermineManifestNeeds(IEnumerable<AlRunner.DependencyRef> roots)
+    {
+        bool needsPlatform = false, needsTest = false;
+        foreach (var d in roots)
+        {
+            if (!string.Equals(d.Publisher, "Microsoft", StringComparison.OrdinalIgnoreCase)) continue;
+            if (KnownNoFallbackPlatformApps.Any(n => string.Equals(n, d.Name, StringComparison.OrdinalIgnoreCase)))
+            {
+                needsPlatform = true;
+                // Confirmed via a live BC 28.1 platform-apps download (issue #1996): App
+                // Test Library's OWN manifest transitively depends on the MS test toolkit
+                // (Any, and from there Library Assert/Business Foundation Test Libraries)
+                // — invisible to this pre-scan, which only reads the BUNDLE's app.json, not
+                // a downloaded dependency's OWN manifest. Needing the no-fallback platform
+                // app therefore always implies needing the test toolkit too.
+                needsTest = true;
+            }
+            if (KnownTestFrameworkAppNames.Any(n => string.Equals(n, d.Name, StringComparison.OrdinalIgnoreCase)))
+                needsTest = true;
+        }
+        return new ManifestNeeds(needsPlatform, needsTest);
+    }
+
+    /// <summary>
+    /// True iff EVERY app in <see cref="KnownNoFallbackPlatformApps"/> is found (any
+    /// version, any R2R-ness — this only asks "is it there", not "is it runnable"; that's
+    /// CheckPlatformApps' job) somewhere across <paramref name="packageCacheDirs"/>.
+    /// </summary>
+    public static bool NoFallbackPlatformAppsPresent(IReadOnlyList<string> packageCacheDirs)
+    {
+        foreach (var required in KnownNoFallbackPlatformApps)
+        {
+            bool found = false;
+            foreach (var dir in packageCacheDirs)
+            {
+                if (!Directory.Exists(dir)) continue;
+                foreach (var appFile in Directory.EnumerateFiles(dir, "*.app", SearchOption.AllDirectories))
+                {
+                    var m = AlRunner.AppLoader.ReadManifest(appFile);
+                    if (m == null) continue;
+                    if (!string.Equals(m.Publisher, "Microsoft", StringComparison.OrdinalIgnoreCase)) continue;
+                    if (!string.Equals(m.Name, required, StringComparison.OrdinalIgnoreCase)) continue;
+                    found = true;
+                    break;
+                }
+                if (found) break;
+            }
+            if (!found) return false;
+        }
+        return true;
+    }
+
+    /// <summary>
+    /// The full provisioning decision for one invocation: what the manifest needs, what's
+    /// already complete in <paramref name="searchDirs"/>, and — combined with the legacy
+    /// symbol-only-R2R finding — whether a download should actually happen. Pure — does no I/O.
+    /// </summary>
+    public sealed record ManifestProvisionDecision(
+        bool NeedsPlatformApps,
+        bool NeedsTestApps,
+        bool PlatformComplete,
+        bool TestComplete,
+        bool ShouldDownloadPlatform,
+        bool ShouldDownloadTest)
+    {
+        public bool ShouldDownloadAny => ShouldDownloadPlatform || ShouldDownloadTest;
+    }
+
+    /// <summary>
+    /// Combines manifest-derived need with the legacy symbol-only-R2R finding
+    /// (<paramref name="legacySymbolOnlyReport"/> — CheckPlatformApps) to decide whether a
+    /// download is actually warranted, given what's already present in
+    /// <paramref name="searchDirs"/>. A found-but-symbol-only app is ALWAYS a gap (backward
+    /// compatible with issue #1678, even absent a manifest need — e.g. no app.json was
+    /// readable). A manifest need with nothing found anywhere is issue #1996's gap:
+    /// CheckPlatformApps alone reports that case vacuously "Ok".
+    /// </summary>
+    public static ManifestProvisionDecision DecideManifestProvisioning(
+        IEnumerable<AlRunner.DependencyRef> manifestRoots,
+        PlatformAppsReport legacySymbolOnlyReport,
+        IReadOnlyList<string> searchDirs)
+    {
+        var needs = DetermineManifestNeeds(manifestRoots);
+        var platformComplete = NoFallbackPlatformAppsPresent(searchDirs);
+        var testComplete = TestToolkitPresent(searchDirs);
+        var shouldDownloadPlatform = !legacySymbolOnlyReport.Ok || (needs.NeedsPlatformApps && !platformComplete);
+        var shouldDownloadTest = needs.NeedsTestApps && !testComplete;
+        return new ManifestProvisionDecision(
+            needs.NeedsPlatformApps, needs.NeedsTestApps, platformComplete, testComplete,
+            shouldDownloadPlatform, shouldDownloadTest);
+    }
+
+    /// <summary>
+    /// Reads dependency roots from every path in <paramref name="appJsonPaths"/> via
+    /// <paramref name="reader"/> (the caller's own app.json parser — kept as a delegate so
+    /// this stays a pure I/O-free helper with no duplicate JSON-parsing logic), swallowing
+    /// per-manifest read failures instead of throwing. This is a PRE-SCAN: the normal bundle
+    /// loader reaches the same manifest moments later and is the one responsible for the
+    /// real diagnostic on a malformed/non-object app.json (issue #1996 acceptance criterion
+    /// #9) — this pre-scan must never crash the whole invocation over it, it just treats an
+    /// unreadable manifest as "nothing declared" and lets the loader speak.
+    /// </summary>
+    public static IReadOnlyList<AlRunner.DependencyRef> TryReadManifestDependencyRoots(
+        IEnumerable<string> appJsonPaths,
+        Func<string, IEnumerable<AlRunner.DependencyRef>> reader,
+        Action<string>? onError = null)
+    {
+        var result = new List<AlRunner.DependencyRef>();
+        foreach (var path in appJsonPaths)
+        {
+            try
+            {
+                result.AddRange(reader(path));
+            }
+            catch (Exception ex)
+            {
+                onError?.Invoke($"[provision] manifest pre-scan: skipping unreadable '{path}': {ex.Message}");
+            }
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Loud message for the case DecideManifestProvisioning identifies: the manifest
+    /// declares a need, nothing satisfying it was found anywhere, and --auto-provision
+    /// was NOT given (issue #1996 acceptance criterion #10: no download without opt-in).
+    /// </summary>
+    public static string BuildManifestNeedsMissingMessage(
+        bool needsPlatform, bool needsTest, IReadOnlyList<string> searchedDirs)
+    {
+        var lines = new List<string>
+        {
+            "This bundle's app.json declares Microsoft dependencies that were not found in",
+            "any searched package cache — an empty/incomplete cache is not evidence they're unneeded.",
+            "",
+        };
+        if (needsPlatform)
+            lines.Add("  Needs: the Microsoft platform-app set (Base Application / System Application / " +
+                "Business Foundation / Application / Application Test Library).");
+        if (needsTest)
+            lines.Add("  Needs: the Microsoft test-toolkit set (Business Foundation Test Libraries / " +
+                "Library Assert / Test Runner / …).");
+        lines.Add("");
+        lines.Add($"  Searched: {string.Join(", ", searchedDirs)}");
+        lines.Add("");
+        lines.Add("  Resolve it ONE of these ways:");
+        lines.Add("");
+        lines.Add("  (a) One command (recommended):");
+        lines.Add("        al-runner provision");
+        lines.Add("      or re-run with --auto-provision.");
+        lines.Add("");
+        lines.Add("  (b) Download manually:");
+        if (needsPlatform)
+            lines.Add("        dotnet run --project tools/DownloadArtifacts -- platform-apps <full-version> \"<package-cache-dir>\"");
+        if (needsTest)
+            lines.Add("        dotnet run --project tools/DownloadArtifacts -- test-apps <full-version> \"<package-cache-dir>\"");
+        return string.Join(Environment.NewLine, lines);
+    }
+
     public sealed record Report(string Version, string ServiceTierDir, IReadOnlyList<string> MissingFiles)
     {
         public bool Ok => MissingFiles.Count == 0;

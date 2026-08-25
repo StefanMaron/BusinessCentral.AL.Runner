@@ -595,4 +595,260 @@ public sealed class ProvisioningCheckTests : IDisposable
         Assert.Single(withBundleDirs.Issues);
         Assert.Equal("System Application", withBundleDirs.Issues[0].Name);
     }
+
+    // ── Issue #1996: manifest-driven need detection ───────────────────────────
+    // The gate above only ever flags an app that is PRESENT as symbol-only. An empty
+    // cache (or one that simply doesn't vendor the app yet) reports "Ok" vacuously —
+    // absence is not evidence of completeness. These tests drive the manifest (the
+    // independent source of truth for what a bundle actually needs) instead of what
+    // happens to already be on disk.
+
+    [Fact]
+    public void DetermineManifestNeeds_ApplicationTestLibraryDependency_NeedsBothPlatformAndTest()
+    {
+        // Application Test Library ships in the w1 PLATFORM-apps set (see
+        // ArtifactDownloader.PlatformApps' wantedPrefixes), NOT the test-apps set — this is
+        // the exact app the issue's repro fails to resolve. BUT its own manifest
+        // transitively depends on the MS test toolkit (Any, from there Library Assert/
+        // Business Foundation Test Libraries) — confirmed via a live BC 28.1 download while
+        // fixing this issue — so needing it must ALSO trigger the test-apps set.
+        var roots = new[]
+        {
+            new DependencyRef(Guid.NewGuid(), "Application Test Library", "Microsoft", new Version(28, 0, 0, 0)),
+        };
+        var needs = ProvisioningCheck.DetermineManifestNeeds(roots);
+        Assert.True(needs.NeedsPlatformApps);
+        Assert.True(needs.NeedsTestApps);
+    }
+
+    [Fact]
+    public void DetermineManifestNeeds_ImplicitApplicationAndSystemRootsAlone_NeitherFlagSet()
+    {
+        // Mirrors ReadDependencies' synthesis of implicit `application`/`platform` roots
+        // (Guid.Empty, "Application"/"System", "Microsoft", Optional: true) — present on
+        // essentially every AL Runner bundle. These alone must NOT set NeedsPlatformApps:
+        // the apps they represent (System/Base Application, Business Foundation) have a
+        // service-tier DLL dispatch fallback the runner already uses when absent, so
+        // requiring literal presence here would regress nearly the whole corpus into a
+        // spurious "needs download".
+        var roots = new[]
+        {
+            new DependencyRef(Guid.Empty, "Application", "Microsoft", new Version(28, 1, 0, 0), Optional: true),
+            new DependencyRef(Guid.Empty, "System", "Microsoft", new Version(28, 1, 0, 0), Optional: true),
+        };
+        var needs = ProvisioningCheck.DetermineManifestNeeds(roots);
+        Assert.False(needs.NeedsPlatformApps);
+        Assert.False(needs.NeedsTestApps);
+    }
+
+    [Fact]
+    public void DetermineManifestNeeds_LibraryAssertDependency_NeedsTestNotPlatform()
+    {
+        var roots = new[]
+        {
+            new DependencyRef(Guid.NewGuid(), "Library Assert", "Microsoft", new Version(28, 1, 0, 0)),
+        };
+        var needs = ProvisioningCheck.DetermineManifestNeeds(roots);
+        Assert.True(needs.NeedsTestApps);
+        Assert.False(needs.NeedsPlatformApps);
+    }
+
+    [Fact]
+    public void DetermineManifestNeeds_NonMicrosoftPublisher_Ignored()
+    {
+        var roots = new[]
+        {
+            new DependencyRef(Guid.NewGuid(), "Application Test Library", "Contoso ISV", new Version(1, 0, 0, 0)),
+        };
+        var needs = ProvisioningCheck.DetermineManifestNeeds(roots);
+        Assert.False(needs.NeedsPlatformApps);
+        Assert.False(needs.NeedsTestApps);
+    }
+
+    [Fact]
+    public void DetermineManifestNeeds_UnknownMicrosoftExtension_TriggersNeither()
+    {
+        // AC #7: a Microsoft-published app outside the known test-framework/platform
+        // roots must NOT trigger test-apps (or platform-apps) provisioning — otherwise
+        // any Microsoft dependency creates an unsatisfiable completeness check.
+        var roots = new[]
+        {
+            new DependencyRef(Guid.NewGuid(), "Power BI Reports", "Microsoft", new Version(28, 1, 0, 0)),
+        };
+        var needs = ProvisioningCheck.DetermineManifestNeeds(roots);
+        Assert.False(needs.NeedsPlatformApps);
+        Assert.False(needs.NeedsTestApps);
+    }
+
+    // ── NoFallbackPlatformAppsPresent ──────────────────────────────────────────
+    // Deliberately narrower than "all curated platform apps present": System/Base
+    // Application and Business Foundation have a service-tier DLL dispatch fallback (the
+    // runner runs their codeunits even with NO .app vendored — see KnownPlatformRuntimeApps'
+    // doc comment), so their absence alone is not a gap; only PRESENT-BUT-SYMBOL-ONLY is
+    // (CheckPlatformApps, unchanged). Application Test Library has NO such fallback (see
+    // ArtifactDownloader.PlatformApps) — its absence is always a real gap. Scoping the
+    // "must literally be present" check to just this app avoids a blast-radius regression:
+    // almost every bundle's app.json carries implicit `application`/`platform` roots, so a
+    // check requiring literal Base/System Application presence would newly fail nearly
+    // every bundle that today runs fine via the DLL-dispatch fallback.
+
+    [Fact]
+    public void NoFallbackPlatformAppsPresent_EmptyDir_ReturnsFalse()
+    {
+        Assert.False(ProvisioningCheck.NoFallbackPlatformAppsPresent(new[] { _dir }));
+    }
+
+    [Fact]
+    public void NoFallbackPlatformAppsPresent_OnlyLegacyThreePresent_StillReturnsFalse()
+    {
+        // Base/System Application + Business Foundation present is NOT evidence that
+        // Application Test Library is — the two are independent artifact-set members.
+        var dir = Path.Combine(_dir, "pkg-legacy-three");
+        Directory.CreateDirectory(dir);
+        var names = new[] { "System Application", "Base Application", "Business Foundation" };
+        int i = 0;
+        foreach (var n in names)
+            WriteR2RApp(dir, $"app{i++}.app", Guid.NewGuid().ToString(), n, "Microsoft", "28.1.0.0");
+
+        Assert.False(ProvisioningCheck.NoFallbackPlatformAppsPresent(new[] { dir }));
+    }
+
+    [Fact]
+    public void NoFallbackPlatformAppsPresent_ApplicationTestLibraryPresent_ReturnsTrue()
+    {
+        var dir = Path.Combine(_dir, "pkg-atl-present");
+        Directory.CreateDirectory(dir);
+        WriteR2RApp(dir, "atl.app", Guid.NewGuid().ToString(), "Application Test Library", "Microsoft", "28.1.0.0");
+
+        Assert.True(ProvisioningCheck.NoFallbackPlatformAppsPresent(new[] { dir }));
+    }
+
+    // ── DecideManifestProvisioning ─────────────────────────────────────────────
+
+    [Fact]
+    public void DecideManifestProvisioning_EmptyCache_ManifestNeedsPlatform_ShouldDownload()
+    {
+        // The exact shape of issue #1996's repro: an empty package cache + a bundle whose
+        // app.json depends on Microsoft/Application Test Library. CheckPlatformApps alone
+        // reports "Ok" (nothing found = nothing symbol-only), which is the bug.
+        var roots = new[]
+        {
+            new DependencyRef(Guid.NewGuid(), "Application Test Library", "Microsoft", new Version(28, 0, 0, 0)),
+        };
+        var legacyReport = ProvisioningCheck.CheckPlatformApps("28.1.49838.50794", Array.Empty<string>());
+        Assert.True(legacyReport.Ok); // sanity: confirms the vacuous-Ok bug still exists in the legacy check
+
+        var decision = ProvisioningCheck.DecideManifestProvisioning(roots, legacyReport, Array.Empty<string>());
+
+        Assert.True(decision.NeedsPlatformApps);
+        Assert.False(decision.PlatformComplete);
+        Assert.True(decision.ShouldDownloadPlatform);
+        // ATL's own manifest transitively needs the test toolkit too (Any, …) — see
+        // DetermineManifestNeeds_ApplicationTestLibraryDependency_NeedsBothPlatformAndTest.
+        Assert.True(decision.NeedsTestApps);
+        Assert.True(decision.ShouldDownloadTest);
+    }
+
+    [Fact]
+    public void DecideManifestProvisioning_CompleteCacheAlreadyPresent_NoDownload()
+    {
+        // AC #4 / #5: a warm/complete cache — whether it's the runner-owned versioned
+        // destination from a prior run, or a complete explicit/default --package-cache —
+        // must short-circuit BEFORE any network attempt.
+        var dir = Path.Combine(_dir, "pkg-warm");
+        Directory.CreateDirectory(dir);
+        var names = new[]
+        {
+            "Application", "System", "System Application", "Base Application",
+            "Business Foundation", "Application Test Library",
+        };
+        int i = 0;
+        foreach (var n in names)
+            WriteR2RApp(dir, $"app{i++}.app", Guid.NewGuid().ToString(), n, "Microsoft", "28.1.0.0");
+
+        var roots = new[]
+        {
+            new DependencyRef(Guid.NewGuid(), "Application Test Library", "Microsoft", new Version(28, 0, 0, 0)),
+        };
+        var legacyReport = ProvisioningCheck.CheckPlatformApps("28.1.49838.50794", new[] { dir });
+        var decision = ProvisioningCheck.DecideManifestProvisioning(roots, legacyReport, new[] { dir });
+
+        Assert.True(decision.PlatformComplete);
+        Assert.False(decision.ShouldDownloadPlatform);
+    }
+
+    [Fact]
+    public void DecideManifestProvisioning_LegacySymbolOnlyIssue_AlwaysDownloads()
+    {
+        // Backward-compat: a found-but-symbol-only R2R app is a gap even with no
+        // manifest need (e.g. no app.json at all, or reading it failed) — this must not
+        // regress the pre-existing #1678 behavior.
+        var dir = Path.Combine(_dir, "pkg-symbol-only");
+        Directory.CreateDirectory(dir);
+        WriteSymbolOnlyApp(dir, "microsoft_system application_28.1.0.0.app",
+            Guid.NewGuid().ToString(), "System Application", "Microsoft", "28.1.0.0");
+
+        var legacyReport = ProvisioningCheck.CheckPlatformApps("28.1.49838.50794", new[] { dir });
+        Assert.False(legacyReport.Ok);
+
+        var decision = ProvisioningCheck.DecideManifestProvisioning(
+            Array.Empty<DependencyRef>(), legacyReport, new[] { dir });
+
+        Assert.False(decision.NeedsPlatformApps);
+        Assert.True(decision.ShouldDownloadPlatform);
+    }
+
+    [Fact]
+    public void DecideManifestProvisioning_UnrelatedMicrosoftExtension_NeverTriggersDownload()
+    {
+        // AC #7 at the decision level: an unrelated Microsoft app dependency (outside
+        // the curated platform/test roots) must not create an unsatisfiable "need".
+        var roots = new[]
+        {
+            new DependencyRef(Guid.NewGuid(), "Power BI Reports", "Microsoft", new Version(28, 1, 0, 0)),
+        };
+        var legacyReport = ProvisioningCheck.CheckPlatformApps("28.1.49838.50794", Array.Empty<string>());
+        var decision = ProvisioningCheck.DecideManifestProvisioning(roots, legacyReport, Array.Empty<string>());
+
+        Assert.False(decision.ShouldDownloadPlatform);
+        Assert.False(decision.ShouldDownloadTest);
+    }
+
+    // ── TryReadManifestDependencyRoots (AC #9: malformed manifest = pre-scan miss) ────
+
+    [Fact]
+    public void TryReadManifestDependencyRoots_MalformedManifest_SkippedNotThrown()
+    {
+        var calls = new List<string>();
+        Func<string, IEnumerable<DependencyRef>> reader = path =>
+        {
+            calls.Add(path);
+            throw new System.Text.Json.JsonException("not an object");
+        };
+        var errors = new List<string>();
+
+        var result = ProvisioningCheck.TryReadManifestDependencyRoots(
+            new[] { "/fake/app.json" }, reader, errors.Add);
+
+        Assert.Empty(result);
+        Assert.Single(calls);
+        Assert.Contains(errors, e => e.Contains("/fake/app.json"));
+    }
+
+    [Fact]
+    public void TryReadManifestDependencyRoots_MixedValidAndMalformed_ReturnsOnlyValid()
+    {
+        var good = new DependencyRef(Guid.NewGuid(), "Application Test Library", "Microsoft", new Version(28, 0, 0, 0));
+        Func<string, IEnumerable<DependencyRef>> reader = path =>
+        {
+            if (path == "/bad/app.json") throw new System.Text.Json.JsonException("boom");
+            return new[] { good };
+        };
+
+        var result = ProvisioningCheck.TryReadManifestDependencyRoots(
+            new[] { "/bad/app.json", "/good/app.json" }, reader);
+
+        Assert.Single(result);
+        Assert.Equal("Application Test Library", result[0].Name);
+    }
 }
