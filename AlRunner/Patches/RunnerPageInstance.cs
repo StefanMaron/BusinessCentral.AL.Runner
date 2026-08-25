@@ -970,16 +970,31 @@ internal sealed class RunnerPageInstance
     /// Constructed the same way <see cref="TryCreate"/> constructs the base page itself: the
     /// AL-compiler-emitted <c>(ITreeObject, NavRecord)</c> ctor (verified via IL: it just
     /// forwards to <c>NavFormExtension(ITreeObject, int extId, NavRecord, NCLStaticMetadata)</c>
-    /// with the extension's own object id baked in) — then <c>ParentObject</c> is set to this
-    /// page's own <c>_form</c>, because the extension's OWN <c>get_Rec</c>/<c>get_CurrPage</c>
-    /// overrides route through <c>ParentObject</c> (also verified via IL), not through the
-    /// record the ctor was handed. Real BC wires this by adding the extension to the page's
-    /// own <c>PageExtensions</c> list during metadata load; the runner's skeleton always keeps
-    /// that list empty (see NclCecilRewrite.cs's <c>get_PageExtensions</c> rewrite), so this
-    /// is the runner-owned substitute for that step — the trigger DISPATCH here has always
-    /// been the runner's own reflection scheme (see FindTrigger's remarks), never BC's real
-    /// action-invoke machinery, so this is consistent with the existing architecture, not a
-    /// new shortcut.
+    /// with the extension's own object id baked in), <b>passed this page's own <c>_form</c> as
+    /// the <c>ITreeObject parent</c> argument</b> — <c>NavFormExtension</c>'s own ctor does
+    /// <c>ParentObject = parent as NavForm</c> as its very first statement, and the extension's
+    /// <c>get_Rec</c>/<c>get_CurrPage</c> overrides route through <c>ParentObject</c> (verified
+    /// via IL), not through the record the ctor was handed. Real BC wires this by adding the
+    /// extension to the page's own <c>PageExtensions</c> list during metadata load; the
+    /// runner's skeleton always keeps that list empty (see NclCecilRewrite.cs's
+    /// <c>get_PageExtensions</c> rewrite), so this is the runner-owned substitute for that step
+    /// — the trigger DISPATCH here has always been the runner's own reflection scheme (see
+    /// FindTrigger's remarks), never BC's real action-invoke machinery, so this is consistent
+    /// with the existing architecture, not a new shortcut.
+    ///
+    /// Issue #1995: passing <c>_owner</c> (the TestPage's original caller, essentially never a
+    /// NavForm) here used to leave <c>ParentObject</c> null for the ENTIRE constructor body,
+    /// papered over afterward with a reflection <c>SetValue(instance, _form)</c> once
+    /// <c>ctor.Invoke</c> returned. That is too late for any AL-compiler-emitted constructor
+    /// code that touches <c>ParentObject</c> itself — a pageextension that adds a <c>part()</c>
+    /// to the page layout emits an <c>InitializeComponent()</c> override that calls
+    /// <c>ParentObject.RegisterUIPart(...)</c> from inside the ctor, which NREs on the still-null
+    /// property and aborts construction entirely. <c>GetOrCreateExtensionInstance</c> then
+    /// caches a null instance for that extension id, so EVERY trigger the extension declares —
+    /// not just ones near the part — reads as "extension not found", which surfaces up through
+    /// FindTrigger as the extension's actions "declaring no OnAction trigger". Passing <c>_form</c>
+    /// as the ctor's <c>parent</c> argument sets <c>ParentObject</c> correctly from the extension's
+    /// own base-class ctor, before any AL-emitted code runs.
     /// </summary>
     private object? GetOrCreateExtensionInstance(int extensionId)
     {
@@ -996,7 +1011,11 @@ internal sealed class RunnerPageInstance
             {
                 try
                 {
-                    instance = ctor.Invoke(new object?[] { _owner, _record });
+                    instance = ctor.Invoke(new object?[] { _form, _record });
+                    // Defensive, not load-bearing: the ctor argument above already sets
+                    // ParentObject correctly (see remarks). Kept in case some future
+                    // extension ctor overload does not run NavFormExtension's own base ctor
+                    // first.
                     _pFormExtensionParentObject?.SetValue(instance, _form);
                 }
                 catch (Exception ex)
