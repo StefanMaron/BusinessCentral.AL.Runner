@@ -66,24 +66,35 @@ public sealed class TddModeTests : IDisposable
 
     /// <summary>
     /// The core proof, updated for issue #2001 (member generation, the deferred half of
-    /// #1997): a missing field / procedure / enum value each now get GENERATED into the
-    /// implementing app's own source and recompiled, so the referencing [Test] procedure
-    /// actually RUNS and fails by hitting the generated stub's <c>Error(...)</c> call —
-    /// not from a synthesized compile-diagnostic message. Covers criteria 3 (field), 4
-    /// (procedure, both the assignment-target AND nested-argument return-type anchors),
+    /// #1997) AND for the orchestrator's review of the first version of this PR: a missing
+    /// field / procedure / enum value each now get GENERATED into the implementing app's own
+    /// source and recompiled, so the referencing [Test] procedure actually RUNS up to the
+    /// point of contact with the generated member — but EVERY test whose compile depended on
+    /// a generated member reports FAILED, never a pass, regardless of what actually happened
+    /// when it ran. Covers criteria 3 (field), 4 (procedure, all three return-type anchors),
     /// 5 (enum value), 6 (unrelated sibling test unaffected), 9 (exit 1, not 3).
     ///
-    /// The field case (the "MissingField..." assertion below) is the sharpest proof
-    /// available that this is REAL generation and
-    /// not a no-op: the generated field is actually written to and the test PASSES,
-    /// because <c>Rec."Loyalty Points" := 5;</c> has nothing left to fail on. A stub
-    /// implementation could not produce that outcome — a no-generation stub would still
-    /// exclude the object (see <see cref="WithoutTdd_BehaviorIsByteForByteUnchanged"/>),
-    /// and a WRONG generated type (e.g. Boolean instead of Integer) would fail to compile
-    /// the assignment and fall through to the refuse path instead of passing.
+    /// A generated member the implementing app hasn't defined yet is scaffolding, not an
+    /// implementation. The first version of this PR let a field/enum-value test PASS once its
+    /// generated member made the assignment compile — the reasoning ("real generation
+    /// produces a real read/write") was correct as a proof of the runner's OWN mechanism, but
+    /// it is also exactly the green-test-lies-about-what-executed failure
+    /// .claude/rules/loud-failures.md exists to rule out: a generated field is a fully
+    /// functional fake, which is worse than a default return, not better, and it defeats
+    /// #1997's whole stated goal — confirming a new test reports red BEFORE touching the
+    /// implementing app. A generated PROCEDURE already failed correctly (its stub raises
+    /// Error()); the asymmetry — field/enum pass, procedure fails, for the identical "the app
+    /// doesn't have this yet" situation — was the bug.
+    ///
+    /// The proof that generation is real is now in the failure MESSAGE, not the outcome: every
+    /// assertion below pins the exact generated signature (concrete inferred type included) a
+    /// wrong guess could not have produced, because a wrong guess would have failed to compile
+    /// and fallen through to the refuse path (proven separately in
+    /// <see cref="UnresolvableCalls_RefuseRatherThanInvent"/>) instead of generating anything
+    /// to name.
     /// </summary>
     [SkippableFact]
-    public void GeneratedMembers_CompileAndRunUntilTheStubFires()
+    public void GeneratedMembers_CompileAndRunButAlwaysReportFailed()
     {
         TestArtifacts.SkipIfMissing();
 
@@ -96,8 +107,12 @@ public sealed class TddModeTests : IDisposable
         using var doc = JsonDocument.Parse(stdout.Trim());
         var root = doc.RootElement;
         Assert.Equal(8, root.GetProperty("total").GetInt32());
-        Assert.Equal(3, root.GetProperty("passed").GetInt32());
-        Assert.Equal(5, root.GetProperty("failed").GetInt32());
+        // Exactly ONE test in this whole fixture references nothing missing at all
+        // (UnrelatedTest_StillPasses) — every other test's compile depended on --tdd
+        // generating something, so every other test must report failed. The run-level
+        // summary can never read as success while any member was generated.
+        Assert.Equal(1, root.GetProperty("passed").GetInt32());
+        Assert.Equal(7, root.GetProperty("failed").GetInt32());
         Assert.Equal(0, root.GetProperty("errors").GetInt32());
 
         var tests = root.GetProperty("tests").EnumerateArray().ToList();
@@ -105,39 +120,46 @@ public sealed class TddModeTests : IDisposable
             tests.Single(t => t.GetProperty("name").GetString()!.Contains(nameContains));
 
         // Criterion 4 (procedure, assignment-target return-type anchor): the generated
-        // CalcTotal(Arg1: Integer): Integer stub compiles, RUNS, and fails by hitting its
-        // own generated Error() — not a compile-diagnostic message.
+        // CalcTotal(Arg1: Integer): Integer stub compiles and RUNS (it hits its own
+        // generated Error()) but is reported failed for depending on generated scaffolding,
+        // not merely because the stub raised — the message names the concrete signature.
         var proc = Find("MissingProcedure_ReportsFailedNotVanished");
         Assert.Equal("fail", proc.GetProperty("status").GetString());
-        Assert.Contains("CalcTotal", proc.GetProperty("message").GetString());
-        Assert.Contains("generated stub", proc.GetProperty("message").GetString());
+        Assert.Contains("depends on", proc.GetProperty("message").GetString());
+        Assert.Contains("CalcTotal\"(Arg1: Integer): Integer", proc.GetProperty("message").GetString());
 
         // Criterion 4 (procedure, NESTED-ARGUMENT return-type anchor — the acceptance
         // table's own `Assert.AreEqual(100, Cu.CalcTotal())` example): return type comes
         // from AreEqual's own second parameter (Integer), not from an assignment.
         var procNested = Find("MissingProcedureNestedArg_ReportsFailedNotVanished");
         Assert.Equal("fail", procNested.GetProperty("status").GetString());
-        Assert.Contains("CalcSubtotal", procNested.GetProperty("message").GetString());
+        Assert.Contains("CalcSubtotal\"(Arg1: Integer): Integer", procNested.GetProperty("message").GetString());
 
         // Criterion 4 (procedure, IF-CONDITION return-type anchor — the acceptance
         // table's `if Cust.HasLoyalty() then` example): return type is Boolean because
         // the call sits directly in an `if ... then` condition.
         var procIf = Find("MissingBooleanProcedure_ReportsFailedNotVanished");
         Assert.Equal("fail", procIf.GetProperty("status").GetString());
-        Assert.Contains("HasDiscount", procIf.GetProperty("message").GetString());
+        Assert.Contains("HasDiscount\"(Arg1: Integer): Boolean", procIf.GetProperty("message").GetString());
 
-        // Criterion 3 (field) — the sharpest proof: the test PASSES because the generated
-        // Integer field accepts the assignment and there is nothing left to fail on.
+        // Criterion 3 (field) — the corrected behavior: even though the generated Integer
+        // field accepts the assignment cleanly and nothing else in the test fails, the
+        // result is still FAILED, and the message pins the exact inferred type (Integer) —
+        // a wrong guess (e.g. Boolean) could not have compiled and would never appear here.
         var field = Find("MissingField_ReportsFailedNotVanished");
-        Assert.Equal("pass", field.GetProperty("status").GetString());
+        Assert.Equal("fail", field.GetProperty("status").GetString());
+        Assert.Contains("depends on", field.GetProperty("message").GetString());
+        Assert.Contains("\"Loyalty Points\": Integer", field.GetProperty("message").GetString());
+        Assert.Contains("has not defined yet", field.GetProperty("message").GetString());
 
-        // Criterion 5 (enum value) — same shape: the generated value makes the assignment
-        // resolve and the test passes.
+        // Criterion 5 (enum value) — same corrected shape: FAILED, message pins the exact
+        // generated ordinal.
         var enumVal = Find("MissingEnumValue_ReportsFailedNotVanished");
-        Assert.Equal("pass", enumVal.GetProperty("status").GetString());
+        Assert.Equal("fail", enumVal.GetProperty("status").GetString());
+        Assert.Contains("enum value \"Archived\" = 1", enumVal.GetProperty("message").GetString());
 
         // Criterion 6: an unrelated test in a SIBLING object, referencing nothing
-        // missing, still passes in the same run.
+        // missing, still passes in the same run — the ONLY pass in this fixture.
         var healthy = Find("UnrelatedTest_StillPasses");
         Assert.Equal("pass", healthy.GetProperty("status").GetString());
 

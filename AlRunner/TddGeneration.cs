@@ -35,7 +35,21 @@ namespace AlRunner;
 /// <c>Archived = 1</c>) printed in the run's criterion-8 summary and usable directly as the
 /// API the implementing app still has to hand-write to replace the generated stub.
 /// </summary>
-public sealed record TddGeneratedMember(string ObjectDisplayName, string MemberKind, string Signature);
+/// <remarks>
+/// <see cref="DependentTests"/> — every "<c>ObjectDisplayName.MethodName</c>" the compile
+/// identified as referencing THIS member, resolved statically from each AL0132 diagnostic's
+/// own Location (source tree + span) rather than from anything observed at runtime — see
+/// <c>Program.cs</c>'s per-bundle override, which forces every one of these tests to report
+/// FAILED regardless of whether it happened to execute cleanly. A member the implementing app
+/// has not defined yet is scaffolding, not an implementation; a test that only ran against
+/// scaffolding must never be reported as a pass (.claude/rules/loud-failures.md) — a generated
+/// field silently holding whatever was written to it is a fully functional fake, which is
+/// worse than a default return, not better.
+/// </remarks>
+public sealed record TddGeneratedMember(string ObjectDisplayName, string MemberKind, string Signature)
+{
+    public IReadOnlyList<string> DependentTests { get; init; } = Array.Empty<string>();
+}
 
 public static class TddGeneration
 {
@@ -68,18 +82,25 @@ public static class TddGeneration
         NavCA.ParseOptions parseOptions,
         NavEmit.EmitResult emitResult)
     {
-        var generated = new List<TddGeneratedMember>();
         // Snapshot BEFORE any mutation: once a tree in `trees` is replaced (a second missing
         // member found on an object already patched earlier in this same pass), the ORIGINAL
         // SyntaxTree instance a symbol's Location still points at is no longer present in
         // `trees` — so tree-identity lookups always go through this frozen snapshot, and only
         // the mutation itself touches `trees[idx]`.
         var originalTrees = (NavSyntax.SyntaxTree[])trees.Clone();
-        // De-dup: the SAME missing member can be named by more than one AL0132 diagnostic
-        // (two sibling [Test] procedures referencing the same not-yet-declared field, the
-        // enum-value case's own two-diagnostic shape covered by ProcessedTargets below) —
-        // generate it once.
-        var processed = new HashSet<(int TreeIndex, string Kind, string Name)>();
+
+        // key = (target tree index, kind, member name) — the SAME missing member can be named
+        // by more than one AL0132 diagnostic (two sibling [Test] procedures referencing the
+        // same not-yet-declared field). Generated once; a null value means this key was
+        // ATTEMPTED and REFUSED (do not retry it on the next diagnostic naming it, and do not
+        // attribute any dependent test to it — nothing was actually generated).
+        var generatedByKey = new Dictionary<(int, string, string), TddGeneratedMember?>();
+        // key -> every "ObjectDisplayName.MethodName" this run's compile identified as
+        // depending on it — EVERY diagnostic naming the same missing member, not just whichever
+        // one happened to trigger the actual generation. Resolved statically from each
+        // diagnostic's own Location, never from what actually executed — see
+        // TddGeneratedMember.DependentTests' doc comment for why that matters.
+        var dependentsByKey = new Dictionary<(int, string, string), List<string>>();
 
         foreach (var diag in emitResult.Diagnostics)
         {
@@ -89,7 +110,23 @@ public static class TddGeneration
 
             try
             {
-                TryGenerateOne(compilation, trees, originalTrees, parseOptions, diag, processed, generated);
+                var target = ResolveTarget(compilation, originalTrees, diag);
+                if (target == null) continue; // unrecognized shape / unresolvable qualifier — refuse
+
+                var key = (target.Value.TargetTreeIdx, target.Value.Kind, target.Value.MemberName);
+                if (!generatedByKey.TryGetValue(key, out var member))
+                {
+                    member = TryGenerate(compilation, trees, parseOptions, target.Value);
+                    generatedByKey[key] = member;
+                }
+                if (member == null) continue; // this key was attempted (now or earlier) and refused
+
+                var testId = FindEnclosingTestMethod(diag);
+                if (testId == null) continue; // couldn't attribute — still generated, just untracked
+                var label = $"{testId.Value.ObjectName}.{testId.Value.MethodName}";
+                if (!dependentsByKey.TryGetValue(key, out var list))
+                    dependentsByKey[key] = list = new List<string>();
+                if (!list.Contains(label)) list.Add(label);
             }
             catch
             {
@@ -97,24 +134,40 @@ public static class TddGeneration
                 // leaves it for the pre-existing refuse path — never a reason to fail the run.
             }
         }
+
+        var generated = new List<TddGeneratedMember>();
+        foreach (var (key, member) in generatedByKey)
+        {
+            if (member == null) continue;
+            var deps = dependentsByKey.TryGetValue(key, out var l)
+                ? (IReadOnlyList<string>)l
+                : Array.Empty<string>();
+            generated.Add(member with { DependentTests = deps });
+        }
         return generated;
     }
 
-    private static void TryGenerateOne(
-        NavCA.Compilation compilation,
-        NavSyntax.SyntaxTree[] trees,
-        NavSyntax.SyntaxTree[] originalTrees,
-        NavCA.ParseOptions parseOptions,
-        NavDiag.Diagnostic diag,
-        HashSet<(int, string, string)> processed,
-        List<TddGeneratedMember> generated)
+    /// <summary>
+    /// Pure resolution step (no mutation): given an AL0132 diagnostic, determines WHAT is
+    /// missing (field / procedure / enum value), on WHICH object (by name — matched back to a
+    /// live <see cref="NavSyntax.ObjectSyntax"/> at generation time, since a PRIOR call in the
+    /// same <see cref="Generate"/> pass may already have mutated that object's tree), and the
+    /// call-site node (<paramref name="diag"/>'s own tree — never mutated by generation, so
+    /// it's safe to re-derive per diagnostic including repeat diagnostics for an
+    /// already-generated member). Returns null for every refuse case from this file's header:
+    /// unrecognized syntax shape, unresolvable qualifier, or a qualifier declared outside this
+    /// compile's own trees (a precompiled dependency, out of scope).
+    /// </summary>
+    private static (string Kind, int TargetTreeIdx, string TargetObjectName, string MemberName,
+        NavSyntax.MemberAccessExpressionSyntax? Mae)? ResolveTarget(
+        NavCA.Compilation compilation, NavSyntax.SyntaxTree[] originalTrees, NavDiag.Diagnostic diag)
     {
         var tree = diag.Location.SourceTree!;
         var root = tree.GetRoot();
         var token = root.FindToken(diag.Location.SourceSpan.Start);
-        if (token.Parent is not NavSyntax.IdentifierNameSyntax idNode) return;
+        if (token.Parent is not NavSyntax.IdentifierNameSyntax idNode) return null;
         var memberName = Unquote(idNode.Identifier.ValueText ?? idNode.Identifier.Text ?? "");
-        if (memberName.Length == 0) return;
+        if (memberName.Length == 0) return null;
 
         NavSyntax.CodeExpressionSyntax qualifierExpr;
         bool isEnumValueAccess;
@@ -132,12 +185,12 @@ public static class TddGeneration
         }
         else
         {
-            return; // unrecognized shape — refuse
+            return null; // unrecognized shape — refuse
         }
 
         var qualModel = compilation.GetSemanticModel(qualifierExpr.SyntaxTree);
         var qualType = ResolveExpressionType(qualModel, qualifierExpr);
-        if (qualType == null) return; // qualifier itself didn't resolve to anything with a type — refuse
+        if (qualType == null) return null; // qualifier itself didn't resolve to anything with a type — refuse
 
         var isInvocation = mae != null
             && mae.Parent is NavSyntax.InvocationExpressionSyntax invCheck
@@ -146,49 +199,92 @@ public static class TddGeneration
         string kind;
         if (isEnumValueAccess)
         {
-            if (qualType.NavTypeKind != NavCA.NavTypeKind.Enum) return;
+            if (qualType.NavTypeKind != NavCA.NavTypeKind.Enum) return null;
             kind = "enum-value";
         }
         else if (isInvocation)
         {
-            if (qualType.NavTypeKind != NavCA.NavTypeKind.Codeunit) return;
+            if (qualType.NavTypeKind != NavCA.NavTypeKind.Codeunit) return null;
             kind = "procedure";
         }
         else
         {
-            if (qualType.NavTypeKind != NavCA.NavTypeKind.Record) return;
+            if (qualType.NavTypeKind != NavCA.NavTypeKind.Record) return null;
             kind = "field";
         }
 
         // Precompiled-dependency / genuinely-unresolvable guard: only a symbol declared in ONE
         // OF THIS COMPILE'S OWN TREES can be generated into — see this file's header comment.
         var declLoc = qualType.Location;
-        if (declLoc?.SourceTree == null) return;
+        if (declLoc?.SourceTree == null) return null;
         var targetTreeIdx = Array.IndexOf(originalTrees, declLoc.SourceTree);
-        if (targetTreeIdx < 0) return;
+        if (targetTreeIdx < 0) return null;
 
-        var key = (targetTreeIdx, kind, memberName);
-        if (!processed.Add(key)) return; // already generated (or already attempted) this exact member
+        return (kind, targetTreeIdx, qualType.Name, memberName, mae);
+    }
 
-        var currentRoot = (NavSyntax.CompilationUnitSyntax)trees[targetTreeIdx].GetRoot();
+    private static TddGeneratedMember? TryGenerate(
+        NavCA.Compilation compilation, NavSyntax.SyntaxTree[] trees, NavCA.ParseOptions parseOptions,
+        (string Kind, int TargetTreeIdx, string TargetObjectName, string MemberName,
+            NavSyntax.MemberAccessExpressionSyntax? Mae) target)
+    {
+        var currentRoot = (NavSyntax.CompilationUnitSyntax)trees[target.TargetTreeIdx].GetRoot();
         var objects = currentRoot.Objects;
-        var objIdx = objects.IndexOf(o => Unquote(IdentTextOf(o.Name)) == qualType.Name);
-        if (objIdx < 0) return;
+        var objIdx = objects.IndexOf(o => Unquote(IdentTextOf(o.Name)) == target.TargetObjectName);
+        if (objIdx < 0) return null;
         var targetObj = objects[objIdx];
 
-        (NavSyntax.ObjectSyntax NewObj, TddGeneratedMember Member)? result = kind switch
+        (NavSyntax.ObjectSyntax NewObj, TddGeneratedMember Member)? result = target.Kind switch
         {
-            "field" => TryGenerateField(compilation, parseOptions, targetObj, memberName, mae!),
-            "procedure" => TryGenerateProcedure(compilation, parseOptions, targetObj, memberName, mae!),
-            "enum-value" => TryGenerateEnumValue(parseOptions, targetObj, memberName),
+            "field" => TryGenerateField(compilation, parseOptions, targetObj, target.MemberName, target.Mae!),
+            "procedure" => TryGenerateProcedure(compilation, parseOptions, targetObj, target.MemberName, target.Mae!),
+            "enum-value" => TryGenerateEnumValue(parseOptions, targetObj, target.MemberName),
             _ => null,
         };
-        if (result == null) return;
+        if (result == null) return null;
 
         var newObjects = objects.Replace(targetObj, result.Value.NewObj);
         var newRoot = currentRoot.WithObjects(newObjects);
-        trees[targetTreeIdx] = trees[targetTreeIdx].WithRootAndOptions(newRoot, trees[targetTreeIdx].Options);
-        generated.Add(result.Value.Member);
+        trees[target.TargetTreeIdx] = trees[target.TargetTreeIdx].WithRootAndOptions(newRoot, trees[target.TargetTreeIdx].Options);
+        return result.Value.Member;
+    }
+
+    /// <summary>
+    /// Walks UP from an AL0132 diagnostic's own location to the enclosing <c>[Test]</c>
+    /// procedure (if any) and its declaring object, purely from syntax — the same "resolve
+    /// statically, never from what ran" discipline as the rest of generation. Returns null when
+    /// the diagnostic isn't inside a [Test] procedure at all (an unlikely shape: a missing
+    /// symbol referenced from a non-test member), in which case the generated member still
+    /// happens, it's just not attributable to a specific test for the override in Program.cs.
+    /// </summary>
+    private static (string ObjectName, string MethodName)? FindEnclosingTestMethod(NavDiag.Diagnostic diag)
+    {
+        var tree = diag.Location.SourceTree;
+        if (tree == null) return null;
+        var root = tree.GetRoot();
+        var token = root.FindToken(diag.Location.SourceSpan.Start);
+
+        NavSyntax.MethodDeclarationSyntax? method = null;
+        for (NavCA.SyntaxNode? n = token.Parent; n != null; n = n.Parent)
+        {
+            if (n is NavSyntax.MethodDeclarationSyntax m) { method = m; break; }
+        }
+        if (method == null) return null;
+        var isTest = method.Attributes.Any(a =>
+            string.Equals(IdentTextOf(a.Name), "Test", StringComparison.OrdinalIgnoreCase));
+        if (!isTest) return null;
+
+        NavSyntax.ObjectSyntax? obj = null;
+        for (NavCA.SyntaxNode? n = method; n != null; n = n.Parent)
+        {
+            if (n is NavSyntax.ObjectSyntax o) { obj = o; break; }
+        }
+        if (obj == null) return null;
+
+        var objName = Unquote(IdentTextOf(obj.Name));
+        var methodName = Unquote(IdentTextOf(method.Name));
+        if (objName.Length == 0 || methodName.Length == 0) return null;
+        return (objName, methodName);
     }
 
     private static (NavSyntax.ObjectSyntax, TddGeneratedMember)? TryGenerateField(

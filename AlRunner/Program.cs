@@ -1411,6 +1411,46 @@ foreach (var bundle in bundles)
     var bundleErrors = new List<string>();
     var bundleStage = BucketStage.Ran;
     int sP = 0, sF = 0, sE = 0;
+    // --tdd (orchestrator review on #2005): "ObjectDisplayName.MethodName" -> every member
+    // that test's compile depended on --tdd generating. Populated below wherever this
+    // bundle's emitOutput.TddGeneratedMembers is collected; consumed by
+    // OverrideTddDependentResults right before either execution loop's real TestResult set
+    // is counted/added, so a test that only ran against scaffolding can never report pass —
+    // see TddGeneratedMember.DependentTests' doc comment for why a generated field is a fully
+    // functional fake, not a default return, and must be treated as strictly WORSE.
+    var bundleTddDependents = new Dictionary<string, List<TddGeneratedMember>>();
+    // --tdd (orchestrator review on #2005): forces every TestResult whose compile depended on
+    // a --tdd-generated member to report FAIL, regardless of what actually happened when it
+    // ran. The test still executes in full — "keep running the test... only the reported
+    // outcome changes" — a generated PROCEDURE stub already fails on its own (it raises
+    // Error()), but a generated FIELD or enum value has nothing to fail on: it is real,
+    // functioning storage, so a test that only writes and reads it back legitimately passes,
+    // and a green result there would be the exact lie loud-failures.md's first paragraph
+    // describes — worse than a default return, because it's a fully working fake. Message is
+    // rewritten uniformly for BOTH cases (not just the field/enum one) so the failure always
+    // names the generated member(s) and their inferred type(s) explicitly, per the review.
+    List<TestResult> OverrideTddDependentResults(IReadOnlyList<TestResult> raw)
+    {
+        if (bundleTddDependents.Count == 0) return raw as List<TestResult> ?? raw.ToList();
+        var overridden = new List<TestResult>(raw.Count);
+        foreach (var t in raw)
+        {
+            var label = string.IsNullOrEmpty(t.CodeunitDisplayName) ? t.Codeunit : t.CodeunitDisplayName!;
+            if (bundleTddDependents.TryGetValue($"{label}.{t.Method}", out var deps) && deps.Count > 0)
+            {
+                var depList = string.Join("; ", deps.Select(d => $"{d.ObjectDisplayName}: {d.MemberKind} {d.Signature}"));
+                var msg = $"--tdd: this test depends on {deps.Count} generated member(s) the " +
+                    $"implementing app has not defined yet: {depList}";
+                if (!string.IsNullOrEmpty(t.Message)) msg += $" (underlying result: {t.Message})";
+                overridden.Add(t with { Outcome = TestOutcome.Fail, Message = msg });
+            }
+            else
+            {
+                overridden.Add(t);
+            }
+        }
+        return overridden;
+    }
     // #1880: counts app groups (bundled mode) / suites (--per-suite) that actually
     // reached test execution and contributed to bundleTests — incremented at the
     // SAME point as bundleTests.AddRange below, in both loops, so a group that threw
@@ -1745,7 +1785,19 @@ foreach (var bundle in bundles)
                     // excluded afterward — generation can fully resolve an object with NO
                     // exclusion remaining, and that case still belongs in criterion 8's list.
                     if (emitOutput.TddGeneratedMembers != null)
+                    {
                         allTddGeneratedMembers.AddRange(emitOutput.TddGeneratedMembers);
+                        // Invert DependentTests (member -> tests) into (test -> members), so
+                        // OverrideTddDependentResults can look a REAL TestResult up by its own
+                        // (CodeunitDisplayName ?? Codeunit, Method) in O(1).
+                        foreach (var m in emitOutput.TddGeneratedMembers)
+                            foreach (var testLabel in m.DependentTests)
+                            {
+                                if (!bundleTddDependents.TryGetValue(testLabel, out var list))
+                                    bundleTddDependents[testLabel] = list = new List<TddGeneratedMember>();
+                                list.Add(m);
+                            }
+                    }
 
                     // An emit-retry exclusion means one or more AL objects are NOT in the
                     // compiled module. Any test they declared is now absent from the run —
@@ -2080,7 +2132,7 @@ foreach (var bundle in bundles)
                     BcRuntime.SetTestAssembly(asm, wireFieldTriggers: false);
                 BcRuntime.OosHooksActive = true;
                 var execSw = System.Diagnostics.Stopwatch.StartNew();
-                tests = executor.Run(asm);
+                tests = OverrideTddDependentResults(executor.Run(asm));
                 execSw.Stop();
                 AlRunner.PerfTrace.Log($"TestExecutor.Run {rel} {execSw.ElapsedMilliseconds}ms");
             }
@@ -2189,7 +2241,7 @@ foreach (var bundle in bundles)
                     BcRuntime.RegisterTestAssemblyInfo(asm);
                 }
                 BcRuntime.OosHooksActive = true;
-                tests = executor.Run(asm);
+                tests = OverrideTddDependentResults(executor.Run(asm));
             }
             catch (Exception ex)
             {
