@@ -175,4 +175,81 @@ public sealed class NclShadowRuntimeTests
             Directory.Delete(shadowDir, recursive: true);
         }
     }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // entrySource — per-BC-minor engine variant swap (#2024 item 3 / #2027)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// <summary>Positive: when entrySource is given, the entry assembly (and its
+    /// manifests) come from THAT directory instead of origDir — proves the actual
+    /// variant-swap mechanism, not just "some file got copied". Every OTHER file still
+    /// comes from origDir (the shared dependency closure), asserted via the untouched
+    /// dependency DLL.</summary>
+    [Fact]
+    public void MirrorInstallDirectory_WithEntrySource_EntryAssemblyComesFromEntrySource()
+    {
+        var origDir = NewTempDir("mirror-swap-orig");
+        var entryDir = NewTempDir("mirror-swap-entry");
+        var shadowDir = NewTempDir("mirror-swap-shadow");
+        try
+        {
+            var origBytes = new byte[] { 0x4D, 0x5A, 1, 1, 1 };
+            var variantBytes = new byte[] { 0x4D, 0x5A, 2, 2, 2 };
+            File.WriteAllBytes(Path.Combine(origDir, "al-runner.dll"), origBytes);
+            File.WriteAllText(Path.Combine(origDir, "al-runner.deps.json"), "{\"from\":\"orig\"}");
+            File.WriteAllBytes(Path.Combine(origDir, "Some.Dependency.dll"), new byte[] { 9, 9 });
+
+            File.WriteAllBytes(Path.Combine(entryDir, "al-runner.dll"), variantBytes);
+            File.WriteAllText(Path.Combine(entryDir, "al-runner.deps.json"), "{\"from\":\"variant\"}");
+
+            NclShadowRuntime.MirrorInstallDirectory(origDir, shadowDir, entryDir);
+
+            // The entry assembly and its present manifest came from entryDir, not origDir.
+            Assert.Equal(variantBytes, File.ReadAllBytes(Path.Combine(shadowDir, "al-runner.dll")));
+            Assert.Equal("{\"from\":\"variant\"}", File.ReadAllText(Path.Combine(shadowDir, "al-runner.deps.json")));
+            Assert.False(IsSymlink(Path.Combine(shadowDir, "al-runner.dll")));
+
+            // The shared dependency closure still comes from origDir, untouched.
+            var shadowDep = Path.Combine(shadowDir, "Some.Dependency.dll");
+            Assert.True(IsSymlink(shadowDep));
+            Assert.Equal(new byte[] { 9, 9 }, File.ReadAllBytes(shadowDep));
+        }
+        finally
+        {
+            Directory.Delete(origDir, recursive: true);
+            Directory.Delete(entryDir, recursive: true);
+            Directory.Delete(shadowDir, recursive: true);
+        }
+    }
+
+    /// <summary>Negative: a MustCopyNames file entrySource does NOT have (e.g. a variant
+    /// built without al-runner.runtimeconfig.dev.json, which only a plain `dotnet build`
+    /// produces) falls back to origDir's copy instead of leaving the shadow dir missing
+    /// that file.</summary>
+    [Fact]
+    public void MirrorInstallDirectory_WithEntrySource_MissingManifestFallsBackToOrigDir()
+    {
+        var origDir = NewTempDir("mirror-swap-fallback-orig");
+        var entryDir = NewTempDir("mirror-swap-fallback-entry");
+        var shadowDir = NewTempDir("mirror-swap-fallback-shadow");
+        try
+        {
+            File.WriteAllBytes(Path.Combine(origDir, "al-runner.dll"), new byte[] { 1 });
+            File.WriteAllText(Path.Combine(origDir, "al-runner.runtimeconfig.dev.json"), "{\"dev\":true}");
+            // entryDir has NO al-runner.runtimeconfig.dev.json at all.
+            File.WriteAllBytes(Path.Combine(entryDir, "al-runner.dll"), new byte[] { 2 });
+
+            NclShadowRuntime.MirrorInstallDirectory(origDir, shadowDir, entryDir);
+
+            Assert.Equal(new byte[] { 2 }, File.ReadAllBytes(Path.Combine(shadowDir, "al-runner.dll")));
+            Assert.Equal("{\"dev\":true}",
+                File.ReadAllText(Path.Combine(shadowDir, "al-runner.runtimeconfig.dev.json")));
+        }
+        finally
+        {
+            Directory.Delete(origDir, recursive: true);
+            Directory.Delete(entryDir, recursive: true);
+            Directory.Delete(shadowDir, recursive: true);
+        }
+    }
 }

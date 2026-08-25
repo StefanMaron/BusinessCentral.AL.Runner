@@ -91,6 +91,39 @@
     <None Include="../CHANGELOG.md" Pack="true" PackagePath="/" />
   </ItemGroup>
 
+  <!-- Per-BC-minor engine variants (#2024 item 3 / #2027). This binary is only ONE
+       engine build (whichever _BCVersion it was compiled with); EngineVariants.cs +
+       NclShadowRuntime pick and swap to the matching one at startup among whatever
+       ships under tools/$(TargetFramework)/any/variants/<full-build-version>/.
+
+       Packing them in is opt-in and additive: EngineVariantsStagingDir is empty by
+       default, so a plain `dotnet pack` (a dev machine, or any CI job that doesn't set
+       it) produces exactly today's single-engine package — EngineVariants.Discover then
+       finds no variants/ directory at all and every selection path falls back to the
+       existing single-build behaviour unchanged.
+
+       CI populates the staging dir before packing: one `dotnet build
+       -p:_BCVersion=<full-build>` per .github/bc-versions.txt entry (including the one
+       this csproj itself was built with — see the pack job for why that duplication is
+       deliberate, not wasted), each copied to
+       $(EngineVariantsStagingDir)/<full-build>/{al-runner.dll,.pdb,.deps.json,.runtimeconfig.json}.
+       %(RecursiveDir) reproduces that per-version subfolder under variants/ in the
+       packed nupkg. -->
+  <PropertyGroup>
+    <EngineVariantsStagingDir Condition="'$(EngineVariantsStagingDir)' == ''"></EngineVariantsStagingDir>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(EngineVariantsStagingDir)' != '' AND Exists('$(EngineVariantsStagingDir)')">
+    <_EngineVariantFiles Include="$(EngineVariantsStagingDir)/**/*" />
+    <!-- Explicit %(Filename)%(Extension) rather than letting PackagePath end in
+         %(RecursiveDir) alone — NuGet's pack task was observed appending the file's own
+         relative-include path AGAIN under a trailing-%(RecursiveDir) PackagePath,
+         doubling the version-folder segment (variants/<v>/<v>/al-runner.dll). Spelling
+         the full destination path out explicitly avoids relying on that inference. -->
+    <None Include="@(_EngineVariantFiles)"
+          Pack="true"
+          PackagePath="tools/$(TargetFramework)/any/variants/%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+
   <!-- Win32 P/Invoke stubs (kernel32 / user32 / advapi32 / …) for Linux. The .c
        source is compiled on first use by Win32Stubs.cs. Ship it beside the
        binary so the installed dotnet tool can find it. -->

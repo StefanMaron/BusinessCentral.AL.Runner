@@ -74,10 +74,34 @@ public static class NclShadowRuntime
     /// Builds (or reuses) the shadow directory mirroring <paramref name="origDir"/> and
     /// returns the absolute path to its <c>al-runner.dll</c> — the argument the caller
     /// should re-exec via <c>dotnet exec &lt;path&gt;</c>.
+    ///
+    /// <para><b><paramref name="entrySourceDir"/> — per-BC-minor engine variants
+    /// (#2024 item 3 / #2027).</b> Null (the default) mirrors <paramref name="origDir"/>
+    /// entirely, including its own entry assembly — today's behaviour, unchanged. When
+    /// non-null (the caller selected a DIFFERENT shipped variant than the one currently
+    /// running — see <see cref="EngineVariants"/>), the entry-assembly manifest set
+    /// (<see cref="MustCopyNames"/>) is copied from THAT directory instead, while every
+    /// other dependency DLL is still symlinked from <paramref name="origDir"/> — variants
+    /// share the exact same dependency closure (same commit, same NuGet package
+    /// versions; only the BC <c>&lt;Reference&gt;</c> set differs, and that's resolved
+    /// per-request from the artifact cache, not CopyLocal'd — see
+    /// <c>AlRunner.csproj</c>'s "Version-agnosticism" comment), so nothing needs
+    /// duplicating beyond the entry assembly itself. The Ncl.dll pre-rewrite below is
+    /// SKIPPED in this case: it would be keyed off THIS process's own
+    /// <see cref="RunnerFingerprint.ContentHash"/>, not the swapped-in variant's — the
+    /// child process (running as that variant) does its own first-start rewrite via the
+    /// existing, unchanged <see cref="NclCecilRewrite.RewriteInPlace"/> call in
+    /// Program.cs, correctly keyed to ITSELF. Skipping it here just avoids wasted work
+    /// (and a wrongly-keyed cache write) rather than risking incorrect bytes either way —
+    /// the rewrite transform of a given BC version's Ncl.dll is deterministic and
+    /// identical across variants of the same commit, so at worst an unswapped pre-write
+    /// would have been immediately overwritten by the child's own correctly-keyed one.
+    /// </para>
     /// </summary>
-    public static string EnsureShadowDir(string origDir, string bcServiceTierDir)
+    public static string EnsureShadowDir(string origDir, string bcServiceTierDir, string? entrySourceDir = null)
     {
         var origFull = Path.GetFullPath(origDir);
+        var entrySource = entrySourceDir != null ? Path.GetFullPath(entrySourceDir) : null;
 
         // Keys off the SAME hash NclCecilRewrite's own ncl-cecil cache uses (source Ncl
         // bytes + this runner build's content hash + its CACHE_VERSION) so the two
@@ -85,12 +109,30 @@ public static class NclShadowRuntime
         // HERE is a set of symlinks to a specific PATH, not just content, so two
         // installs that happen to be byte-identical must not share a shadow dir — if
         // one install is later removed, the other would be left with dangling links.
-        var nclSrc = Path.Combine(bcServiceTierDir, NclFileName);
-        var nclBytes = File.ReadAllBytes(nclSrc);
-        var contentKey = NclCecilRewrite.ComputeCacheKeyCore(nclBytes, RunnerFingerprint.ContentHash);
-        var pathHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(origFull)))
-            .ToLowerInvariant()[..16];
-        var key = $"{contentKey}-{pathHash}";
+        //
+        // When swapping in a different variant (entrySource != null), the identity
+        // component is the variant's OWN directory name (a stable per-build version
+        // string — see EngineVariants) rather than RunnerFingerprint.ContentHash (which
+        // would describe the CURRENTLY RUNNING process, not the variant being shadowed
+        // in) — otherwise two different variant swaps requested by the same running
+        // process would collide on one shadow dir. No nclBytes/contentKey needed in this
+        // branch since the Ncl pre-rewrite is skipped (see the doc comment above).
+        string key;
+        if (entrySource != null)
+        {
+            var pathHash0 = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(origFull)))
+                .ToLowerInvariant()[..16];
+            key = $"variant-{Path.GetFileName(entrySource)}-{pathHash0}";
+        }
+        else
+        {
+            var nclSrc = Path.Combine(bcServiceTierDir, NclFileName);
+            var nclBytes = File.ReadAllBytes(nclSrc);
+            var contentKey = NclCecilRewrite.ComputeCacheKeyCore(nclBytes, RunnerFingerprint.ContentHash);
+            var pathHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(origFull)))
+                .ToLowerInvariant()[..16];
+            key = $"{contentKey}-{pathHash}";
+        }
 
         var shadowRoot = CacheRoots.Resolve("ncl-shadow");
         var shadowDir = Path.Combine(shadowRoot, key);
@@ -134,12 +176,15 @@ public static class NclShadowRuntime
         Directory.CreateDirectory(tempDir);
         try
         {
-            MirrorInstallDirectory(origFull, tempDir);
+            MirrorInstallDirectory(origFull, tempDir, entrySource);
 
             // The one real file: Cecil-rewritten Ncl.dll, via the existing ncl-cecil
             // cache (populates it on MISS, reuses it on HIT — the same cache the child
             // process's own RewriteInPlace call reads once it starts from this dir).
-            NclCecilRewrite.RewriteInPlace(bcServiceTierDir, Path.Combine(tempDir, NclFileName));
+            // Skipped when swapping in a different variant — see the entrySourceDir doc
+            // comment on EnsureShadowDir above for why the child does this itself instead.
+            if (entrySource == null)
+                NclCecilRewrite.RewriteInPlace(bcServiceTierDir, Path.Combine(tempDir, NclFileName));
 
             // Marker goes in LAST, inside the temp dir, so the invariant "marker present
             // => fully built" survives the rename: nobody can observe a marker-bearing
@@ -183,7 +228,20 @@ public static class NclShadowRuntime
     /// isolated from the Ncl-specific/caching logic above so it's directly testable without
     /// needing real BC artifact bytes to Cecil-rewrite — see NclShadowRuntimeTests.
     /// </summary>
-    internal static void MirrorInstallDirectory(string origFull, string shadowDir)
+    /// <param name="origFull">The install directory to mirror (dependency closure,
+    /// satellite resource dirs, Win32Stubs, …).</param>
+    /// <param name="shadowDir">Destination.</param>
+    /// <param name="entrySource">When non-null, the entry-assembly manifest set
+    /// (<see cref="MustCopyNames"/>) is copied from HERE instead of
+    /// <paramref name="origFull"/> — the per-BC-minor engine-variant swap (see the doc
+    /// comment on <see cref="EnsureShadowDir"/>). A name missing from
+    /// <paramref name="entrySource"/> (e.g. a variant built without a
+    /// <c>.runtimeconfig.dev.json</c>, which only plain <c>dotnet build</c> produces)
+    /// falls back to <paramref name="origFull"/>'s copy — harmless, since only
+    /// <c>al-runner.dll</c> itself needs to be the swapped-in variant; the manifests
+    /// alongside it (deps/runtimeconfig) are only consulted for correctness when
+    /// they exist.</param>
+    internal static void MirrorInstallDirectory(string origFull, string shadowDir, string? entrySource = null)
     {
         foreach (var entry in Directory.EnumerateFileSystemEntries(origFull))
         {
@@ -200,11 +258,28 @@ public static class NclShadowRuntime
                 // entry assembly plus its deps/runtimeconfig manifests must be real,
                 // independent files; every other (large, numerous) dependency DLL is
                 // still fine as a symlink since nothing resolves BaseDirectory from them.
-                File.Copy(entry, target, overwrite: true);
+                var source = entrySource != null && File.Exists(Path.Combine(entrySource, name))
+                    ? Path.Combine(entrySource, name)
+                    : entry;
+                File.Copy(source, target, overwrite: true);
             }
             else
             {
                 LinkOrCopy(entry, target, isDirectory: Directory.Exists(entry));
+            }
+        }
+
+        // A variant swap's entry assembly might carry a MustCopyNames file that
+        // origFull's own enumeration never produced a `target` for (e.g. origFull is a
+        // dev build lacking al-runner.pdb, but the variant has one) — cheap top-up pass.
+        if (entrySource != null)
+        {
+            foreach (var name in MustCopyNames)
+            {
+                var source = Path.Combine(entrySource, name);
+                var target = Path.Combine(shadowDir, name);
+                if (File.Exists(source) && !File.Exists(target))
+                    File.Copy(source, target, overwrite: true);
             }
         }
     }

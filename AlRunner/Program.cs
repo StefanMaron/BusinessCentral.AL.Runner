@@ -572,90 +572,138 @@ if (artifactPathArg != null)
 bool bcVersionAutoSelected = false;
 if (bcVersionArg == null && artifactPathArg == null)
 {
-    // The BUILT version (4-part, baked in at compile time) — not Ncl.dll's assembly
-    // version, whose minor is always 0. Falls back to the Ncl major if the attribute is
-    // missing (e.g. an older build), which restores the previous major-only behaviour.
-    var engineVersion = AlRunner.Infrastructure.BcArtifacts.EngineBuiltVersion()
-        ?? AlRunner.Infrastructure.BcArtifacts.EngineVersion(AppContext.BaseDirectory);
-    var engineMajor = engineVersion?.Major;
-    if (engineVersion != null && engineMajor != null)
+    // #2027 BEHAVIOUR CHANGE: when this install ships per-BC-minor engine variants
+    // (variants/ present — see EngineVariants), the no-flags default INVERTS from
+    // engine-first to artifact-first. Below, ENGINE-first means "prefer whichever
+    // minor THIS compiled binary happens to be" — that bias existed because there was
+    // only ever one engine that could run at all, so a mismatched artifact was a real
+    // problem to steer away from (see the -45/+42/+3 Pageworks regression in the
+    // comment inside the else branch). With N correctly-matched variants shipped and
+    // auto-swapped-to below, that bias no longer protects anything — ANY of the N
+    // shipped minors is equally "this install's own engine" now, so picking the
+    // LATEST CACHED artifact (this was the runner's ORIGINAL default, before the
+    // engine-first change) is the more useful behaviour: a user who has since
+    // downloaded a newer BC artifact gets it by default, rather than being pinned to
+    // whichever minor happened to be copied into the package's top-level slot at pack
+    // time. TryDeriveBcMajorFromProject(bundles) is still the cross-check either way.
+    var shippedVariantsForDefault = AlRunner.Infrastructure.EngineVariants.Discover(AppContext.BaseDirectory);
+    if (shippedVariantsForDefault.Count > 0)
     {
         bcVersionAutoSelected = true;
         // Prefer the engine's OWN major.minor. Latest-in-major used to win here, which
         // silently selected a minor the engine was not built for — measured at -45 passing
         // / +42 failing / +3 errors on Pageworks. See BcArtifacts.DefaultVersionPrefix.
         //
-        // Issue #2033: when auto-provisioning is about to run anyway (the default since
-        // #2024/#2028), ask what it can FETCH — cache, then the CDN, at each tier — not
-        // just what's already cached. Otherwise a genuinely empty cache collapses this
-        // straight to "major only" before a single byte is downloaded, and provisioning
-        // then fetches "latest in major" (e.g. 28.4) while the engine was built for 28.1,
-        // landing a first run in the exact KNOWN-DEGRADED skew #2020 describes. Without
-        // --auto-provision there is no network step coming, so stay cache-only exactly as
-        // before — that path has nothing to gain from probing a CDN it will never use.
-        string tier;
-        if (provisionSubcommand || autoProvision)
-            bcVersionArg = AlRunner.Infrastructure.BcArtifacts.DefaultProvisionTarget(
-                engineVersion, AlRunner.Infrastructure.BcArtifacts.ArtifactsRootDir, out tier);
-        else
+        // #2027: with per-BC-minor engine variants shipped, this branch (variants present)
+        // goes artifact-first instead of engine-first — see the outer if/else below for why.
+        try
         {
-            bcVersionArg = AlRunner.Infrastructure.BcArtifacts.DefaultVersionPrefix(
-                engineVersion, AlRunner.Infrastructure.BcArtifacts.ArtifactsRootDir);
-            var engineMinorPfx = $"{engineVersion.Major}.{engineVersion.Minor}";
-            tier = bcVersionArg == engineVersion.ToString() ? "cached-exact"
-                : bcVersionArg == engineMinorPfx ? "cached-minor"
-                : "major-fallback-offline"; // distinct from "major-fallback": no CDN was consulted
+            var latestDir = AlRunner.Infrastructure.BcArtifacts.SelectArtifactVersionDir(
+                AlRunner.Infrastructure.BcArtifacts.ArtifactsRootDir, null);
+            bcVersionArg = Path.GetFileName(latestDir);
+            Console.Error.WriteLine($"[bc] no --bc-version given — selecting BC {bcVersionArg}, the latest " +
+                $"cached artifact ({shippedVariantsForDefault.Count} engine variant(s) shipped; the matching " +
+                $"one is selected automatically below). Override with --bc-version.");
+        }
+        catch (InvalidOperationException)
+        {
+            // No artifacts cached at all — leave bcVersionArg null. SelectVersion below
+            // throws the loud, path-naming "no artifacts" error users already see today.
         }
 
-        var engineMajorMinor = $"{engineVersion.Major}.{engineVersion.Minor}";
-        switch (tier)
+        var projMajorV = TryDeriveBcMajorFromProject(bundles);
+        if (projMajorV != null && bcVersionArg != null
+            && Version.TryParse(bcVersionArg, out var selV) && selV.Major.ToString() != projMajorV)
+            Console.Error.WriteLine($"[bc] warning: project app.json targets BC major {projMajorV} but the " +
+                $"latest cached artifact is {bcVersionArg} (major {selV.Major}).");
+    }
+    else
+    {
+        // The BUILT version (4-part, baked in at compile time) — not Ncl.dll's assembly
+        // version, whose minor is always 0. Falls back to the Ncl major if the attribute is
+        // missing (e.g. an older build), which restores the previous major-only behaviour.
+        var engineVersion = AlRunner.Infrastructure.BcArtifacts.EngineBuiltVersion()
+            ?? AlRunner.Infrastructure.BcArtifacts.EngineVersion(AppContext.BaseDirectory);
+        var engineMajor = engineVersion?.Major;
+        if (engineVersion != null && engineMajor != null)
         {
-            case "cached-exact":
-                Console.Error.WriteLine($"[bc] no --bc-version given — selecting BC {engineVersion}, the exact " +
-                    $"build this binary was compiled against. Override with --bc-version.");
-                break;
-            case "cdn-exact":
-                Console.Error.WriteLine($"[bc] no --bc-version given — provisioning BC {engineVersion}, the exact " +
-                    $"build this binary was compiled against. Override with --bc-version.");
-                break;
-            case "cached-minor":
-                // Degraded but usually survivable: right minor, different build. The CodeAnalysis
-                // assembly version can still differ between builds of one minor, which fails loud
-                // at startup rather than silently — see BcArtifacts.DefaultVersionPrefix.
-                Console.Error.WriteLine($"[bc] warning: no cached BC {engineVersion} — selecting the latest " +
-                    $"{engineMajorMinor}.x instead. Build-level skew within a minor can still fail to load " +
-                    $"Microsoft.Dynamics.Nav.CodeAnalysis. Fix with: al-runner provision --bc-version {engineVersion}");
-                break;
-            case "cdn-minor":
-                Console.Error.WriteLine($"[bc] no --bc-version given and BC {engineVersion} is not published on " +
-                    $"the CDN — provisioning the latest {engineMajorMinor}.x instead (still this binary's own " +
-                    $"engine minor). Build-level skew within a minor can still fail to load " +
-                    $"Microsoft.Dynamics.Nav.CodeAnalysis. Fix with: al-runner provision --bc-version {engineVersion}");
-                break;
-            case "major-fallback-offline":
-                // No network step is coming (--no-auto-provision, or the rare case where
-                // engineVersion resolved but auto-provisioning is off) — this can only speak
-                // to what's CACHED, never to CDN availability. Original pre-#2033 wording.
-                Console.Error.WriteLine($"[bc] warning: no cached BC {engineMajorMinor}.x — this binary's engine " +
-                    $"was built for {engineVersion}, so a different minor is a KNOWN-DEGRADED configuration " +
-                    $"(measured: dozens of extra failures from engine/artifact minor skew). Falling back to the " +
-                    $"latest cached {engineMajor}.x. Fix with: al-runner provision --bc-version {engineMajorMinor}");
-                break;
-            default: // major-fallback: neither the exact build nor the engine's own minor is
-                     // available from cache or the CDN — a genuine degradation (e.g. #2010,
-                     // Microsoft withdrew the build), not the default-path norm.
-                Console.Error.WriteLine($"[bc] warning: BC {engineMajorMinor}.x is not cached and not available " +
-                    $"from the CDN — this binary's engine was built for {engineVersion}, so a different minor is " +
-                    $"a KNOWN-DEGRADED configuration (measured: dozens of extra failures from engine/artifact " +
-                    $"minor skew). Falling back to the latest {engineMajor}.x. Fix with: al-runner provision " +
-                    $"--bc-version {engineMajorMinor}");
-                break;
-        }
+            bcVersionAutoSelected = true;
+            // Prefer the engine's OWN major.minor. Latest-in-major used to win here, which
+            // silently selected a minor the engine was not built for — measured at -45 passing
+            // / +42 failing / +3 errors on Pageworks. See BcArtifacts.DefaultVersionPrefix.
+            //
+            // Issue #2033: when auto-provisioning is about to run anyway (the default since
+            // #2024/#2028), ask what it can FETCH — cache, then the CDN, at each tier — not
+            // just what's already cached. Otherwise a genuinely empty cache collapses this
+            // straight to "major only" before a single byte is downloaded, and provisioning
+            // then fetches "latest in major" (e.g. 28.4) while the engine was built for 28.1,
+            // landing a first run in the exact KNOWN-DEGRADED skew #2020 describes. Without
+            // --auto-provision there is no network step coming, so stay cache-only exactly as
+            // before — that path has nothing to gain from probing a CDN it will never use.
+            string tier;
+            if (provisionSubcommand || autoProvision)
+                bcVersionArg = AlRunner.Infrastructure.BcArtifacts.DefaultProvisionTarget(
+                    engineVersion, AlRunner.Infrastructure.BcArtifacts.ArtifactsRootDir, out tier);
+            else
+            {
+                bcVersionArg = AlRunner.Infrastructure.BcArtifacts.DefaultVersionPrefix(
+                    engineVersion, AlRunner.Infrastructure.BcArtifacts.ArtifactsRootDir);
+                var engineMinorPfx = $"{engineVersion.Major}.{engineVersion.Minor}";
+                tier = bcVersionArg == engineVersion.ToString() ? "cached-exact"
+                    : bcVersionArg == engineMinorPfx ? "cached-minor"
+                    : "major-fallback-offline"; // distinct from "major-fallback": no CDN was consulted
+            }
 
-        var projMajor = TryDeriveBcMajorFromProject(bundles);
-        if (projMajor != null && projMajor != engineMajor.Value.ToString())
-            Console.Error.WriteLine($"[bc] warning: project app.json targets BC major {projMajor} but this " +
-                $"runner build supports major {engineMajor} (cross-major needs a matching runner build).");
+            var engineMajorMinor = $"{engineVersion.Major}.{engineVersion.Minor}";
+            switch (tier)
+            {
+                case "cached-exact":
+                    Console.Error.WriteLine($"[bc] no --bc-version given — selecting BC {engineVersion}, the exact " +
+                        $"build this binary was compiled against. Override with --bc-version.");
+                    break;
+                case "cdn-exact":
+                    Console.Error.WriteLine($"[bc] no --bc-version given — provisioning BC {engineVersion}, the exact " +
+                        $"build this binary was compiled against. Override with --bc-version.");
+                    break;
+                case "cached-minor":
+                    // Degraded but usually survivable: right minor, different build. The CodeAnalysis
+                    // assembly version can still differ between builds of one minor, which fails loud
+                    // at startup rather than silently — see BcArtifacts.DefaultVersionPrefix.
+                    Console.Error.WriteLine($"[bc] warning: no cached BC {engineVersion} — selecting the latest " +
+                        $"{engineMajorMinor}.x instead. Build-level skew within a minor can still fail to load " +
+                        $"Microsoft.Dynamics.Nav.CodeAnalysis. Fix with: al-runner provision --bc-version {engineVersion}");
+                    break;
+                case "cdn-minor":
+                    Console.Error.WriteLine($"[bc] no --bc-version given and BC {engineVersion} is not published on " +
+                        $"the CDN — provisioning the latest {engineMajorMinor}.x instead (still this binary's own " +
+                        $"engine minor). Build-level skew within a minor can still fail to load " +
+                        $"Microsoft.Dynamics.Nav.CodeAnalysis. Fix with: al-runner provision --bc-version {engineVersion}");
+                    break;
+                case "major-fallback-offline":
+                    // No network step is coming (--no-auto-provision, or the rare case where
+                    // engineVersion resolved but auto-provisioning is off) — this can only speak
+                    // to what's CACHED, never to CDN availability. Original pre-#2033 wording.
+                    Console.Error.WriteLine($"[bc] warning: no cached BC {engineMajorMinor}.x — this binary's engine " +
+                        $"was built for {engineVersion}, so a different minor is a KNOWN-DEGRADED configuration " +
+                        $"(measured: dozens of extra failures from engine/artifact minor skew). Falling back to the " +
+                        $"latest cached {engineMajor}.x. Fix with: al-runner provision --bc-version {engineMajorMinor}");
+                    break;
+                default: // major-fallback: neither the exact build nor the engine's own minor is
+                         // available from cache or the CDN — a genuine degradation (e.g. #2010,
+                         // Microsoft withdrew the build), not the default-path norm.
+                    Console.Error.WriteLine($"[bc] warning: BC {engineMajorMinor}.x is not cached and not available " +
+                        $"from the CDN — this binary's engine was built for {engineVersion}, so a different minor is " +
+                        $"a KNOWN-DEGRADED configuration (measured: dozens of extra failures from engine/artifact " +
+                        $"minor skew). Falling back to the latest {engineMajor}.x. Fix with: al-runner provision " +
+                        $"--bc-version {engineMajorMinor}");
+                    break;
+            }
+
+            var projMajor = TryDeriveBcMajorFromProject(bundles);
+            if (projMajor != null && projMajor != engineMajor.Value.ToString())
+                Console.Error.WriteLine($"[bc] warning: project app.json targets BC major {projMajor} but this " +
+                    $"runner build supports major {engineMajor} (cross-major needs a matching runner build).");
+        }
     }
 }
 // ── Provisioning (on by default since issue #2024; opt out with --no-auto-provision):
@@ -707,6 +755,55 @@ catch (InvalidOperationException ex)
     return 2;
 }
 
+// ── Per-BC-minor engine variant selection (#2024 item 3 / #2027). A packaged install
+// ships one thin engine variant per .github/bc-versions.txt entry under
+// variants/<full-build-version>/ (see EngineVariants) — this process's own compiled-in
+// engine is just ONE of them. A plain dev/test build (`dotnet build`/`dotnet run`) has no
+// variants/ directory at all, and this whole block is then a complete no-op: `variants`
+// comes back empty, `variantSwapDir` stays null, and every existing single-build code
+// path below behaves exactly as it always has.
+//
+// No match found among the shipped variants is a LOUD failure, never a silent fallback
+// to a nearby minor — that silent fallback is the root cause #2020 traced this whole
+// mechanism back to (see .claude/rules/loud-failures.md).
+string? variantSwapDir = null;
+{
+    var shippedVariants = AlRunner.Infrastructure.EngineVariants.Discover(AppContext.BaseDirectory);
+    if (shippedVariants.Count > 0)
+    {
+        var selected = AlRunner.Infrastructure.BcArtifacts.SelectedVersion;
+        var match = AlRunner.Infrastructure.EngineVariants.SelectBestMatch(shippedVariants, selected);
+        if (match == null)
+        {
+            Console.Error.WriteLine(
+                $"BC version selection failed: no shipped engine variant supports BC {selected} " +
+                $"(major {selected.Major}). Available variants: " +
+                $"{AlRunner.Infrastructure.EngineVariants.DescribeAvailable(shippedVariants)}. Select a " +
+                $"cached BC version this install ships an engine for (--bc-version), or update al-runner.");
+            return 2;
+        }
+
+        var (variant, degraded) = match.Value;
+        if (degraded)
+            Console.Error.WriteLine(
+                $"[bc] warning: the shipped {variant.BuildVersion.Major}.{variant.BuildVersion.Minor} engine " +
+                $"variant was built against {variant.BuildVersion}, not the selected {selected} — different " +
+                $"BUILDS of the same minor can still fail to load Microsoft.Dynamics.Nav.CodeAnalysis (it's " +
+                $"strong-named per build, not per minor). Expected: variants pin the newest build of a minor " +
+                $"AT PACK TIME, so any user on a different build of that same minor hits this. See " +
+                $"docs/limitations.md.");
+
+        var runningBuild = AlRunner.Infrastructure.BcArtifacts.EngineBuiltVersion();
+        if (runningBuild != variant.BuildVersion)
+        {
+            variantSwapDir = variant.Dir;
+            Console.Error.WriteLine(
+                $"[bc] selecting engine variant {variant.BuildVersion} for BC {selected} (this process is " +
+                $"currently running the {(runningBuild?.ToString() ?? "unknown")} variant) — re-execing.");
+        }
+    }
+}
+
 // Completeness gate: the selected version's dir exists, but is its engine closure whole?
 // A partial /service/ closure would otherwise fail deep in a FileLoadException at runtime
 // (the version-agnostic engine serves the BC-app closure from this dir). On a normal run
@@ -742,11 +839,17 @@ Console.WriteLine(serverMode
 // re-exec into a shadow runtime dir (see NclShadowRuntime) that legitimately has the
 // file on disk before ITS TPA is computed. A shadow child's own base directory
 // always has the real file, so this naturally does not re-fire there.
-if (AlRunner.Infrastructure.NclShadowRuntime.NeedsShadow(AppContext.BaseDirectory)
+// variantSwapDir != null (set above) ALSO routes through this same shadow-dir
+// mechanism: NclShadowRuntime.EnsureShadowDir's entrySourceDir parameter copies the
+// entry-assembly manifest set from the SELECTED VARIANT's own directory instead of this
+// process's, so one re-exec covers both "Ncl.dll isn't shipped" and "a different BC-minor
+// engine variant is needed" — see the doc comment on EnsureShadowDir.
+if ((AlRunner.Infrastructure.NclShadowRuntime.NeedsShadow(AppContext.BaseDirectory) || variantSwapDir != null)
     && Environment.GetEnvironmentVariable("AL_RUNNER_NCL_SHADOW_DONE") != "1")
 {
     var srcDirForShadow = AlRunner.Infrastructure.BcArtifacts.ServiceTierDir;
-    var shadowDll = AlRunner.Infrastructure.NclShadowRuntime.EnsureShadowDir(AppContext.BaseDirectory, srcDirForShadow);
+    var shadowDll = AlRunner.Infrastructure.NclShadowRuntime.EnsureShadowDir(
+        AppContext.BaseDirectory, srcDirForShadow, variantSwapDir);
     var dotnetMuxer = AlRunner.Infrastructure.NclShadowRuntime.FindDotnetMuxer();
 
     var psi = new System.Diagnostics.ProcessStartInfo(dotnetMuxer) { UseShellExecute = false };
@@ -759,7 +862,9 @@ if (AlRunner.Infrastructure.NclShadowRuntime.NeedsShadow(AppContext.BaseDirector
     foreach (var a in argv.Skip(1)) psi.ArgumentList.Add(a);
     psi.Environment["AL_RUNNER_NCL_SHADOW_DONE"] = "1";
 
-    Console.Error.WriteLine("[Cecil] Ncl.dll not shipped in this install — re-execing into a shadow runtime dir that has it");
+    Console.Error.WriteLine(variantSwapDir != null
+        ? "[Cecil] Re-execing into a shadow runtime dir with the matching BC-minor engine variant"
+        : "[Cecil] Ncl.dll not shipped in this install — re-execing into a shadow runtime dir that has it");
     AlRunner.Infrastructure.PhaseLog.MarkReexecParent();
     using var shadowChild = System.Diagnostics.Process.Start(psi)!;
     shadowChild.WaitForExit();
