@@ -809,10 +809,17 @@ if (!provisionSubcommand)
         // that case would never find a match and would incorrectly gate warm reuse on an
         // app the legacy issue has nothing to do with. Falling through to CDN resolution
         // here matches this path's pre-existing (issue #1678) behavior.
+        //
+        // Issue #2003: a warm candidate must also meet the version floor the bundle's own
+        // app.json manifests declare, not just be present — versionFloors carries that
+        // (derived from the SAME manifestDependencyRoots DetermineManifestNeeds already
+        // read above), so a stale warm set is skipped rather than silently reused.
+        var versionFloors = AlRunner.Infrastructure.ProvisioningCheck.DetermineVersionFloors(manifestDependencyRoots);
         var full = (platformReport.Ok
                 ? FindWarmProvisionedVersion(
                     AlRunner.Infrastructure.BcArtifacts.ArtifactsRootDir, mm,
-                    decision.NeedsPlatformApps, decision.ShouldDownloadTest)
+                    decision.NeedsPlatformApps, decision.ShouldDownloadTest,
+                    versionFloors, m => Console.Error.WriteLine(m))
                 : null)
             ?? AlRunner.Provisioning.ArtifactDownloader.ResolveVersion(
                 mm, m => Console.Error.WriteLine($"[provision] {m}"));
@@ -5054,9 +5061,24 @@ static string? SelectVersionDirOrNull(string root, string versionPrefix)
 /// whose major.minor matches <paramref name="majorMinorPrefix"/> and whose needed set(s) are
 /// already complete — highest patch first. Returns null when no such warm version exists
 /// (the caller then falls back to CDN resolution). Reuse-only: never downloads.
+///
+/// Issue #2003: "complete" used to mean presence alone — a warm set at the same
+/// major.minor but an OLDER patch than the bundle's app.json declares (<paramref
+/// name="versionFloors"/>) was reused unconditionally, and the run failed later on a
+/// compile diagnostic that pointed at the test code instead of the stale provisioning.
+/// NoFallbackPlatformAppsPresent/TestToolkitPresent now reject a candidate whose found app
+/// is below its floor, so this loop naturally skips it and falls through to the next
+/// (older) candidate, and eventually to CDN resolution if none qualify. When a candidate is
+/// rejected specifically because it was found-but-stale (not merely absent), <paramref
+/// name="onRejected"/> is told which app, the version found, and the version required —
+/// a silent re-download is better than reusing something too old, but a message is better
+/// than both. Null/empty <paramref name="versionFloors"/> (the default) reproduces the old
+/// presence-only behavior verbatim (AC #4).
 /// </summary>
 static string? FindWarmProvisionedVersion(
-    string artifactsRootDir, string majorMinorPrefix, bool needPlatform, bool needTest)
+    string artifactsRootDir, string majorMinorPrefix, bool needPlatform, bool needTest,
+    IReadOnlyDictionary<string, Version>? versionFloors = null,
+    Action<string>? onRejected = null)
 {
     if (!Directory.Exists(artifactsRootDir)) return null;
     var candidates = Directory.EnumerateDirectories(artifactsRootDir)
@@ -5070,11 +5092,23 @@ static string? FindWarmProvisionedVersion(
 
     foreach (var name in candidates)
     {
+        var platformDir = AlRunner.Infrastructure.ProvisioningCheck.PlatformAppsDirFor(artifactsRootDir, name);
+        var testDir = AlRunner.Infrastructure.ProvisioningCheck.TestAppsDirFor(artifactsRootDir, name);
         var platformOk = !needPlatform || AlRunner.Infrastructure.ProvisioningCheck.NoFallbackPlatformAppsPresent(
-            new[] { AlRunner.Infrastructure.ProvisioningCheck.PlatformAppsDirFor(artifactsRootDir, name) });
+            new[] { platformDir }, versionFloors);
         var testOk = !needTest || AlRunner.Infrastructure.ProvisioningCheck.TestToolkitPresent(
-            new[] { AlRunner.Infrastructure.ProvisioningCheck.TestAppsDirFor(artifactsRootDir, name) });
+            new[] { testDir }, versionFloors);
         if (platformOk && testOk) return name;
+
+        if (versionFloors is { Count: > 0 } && onRejected != null)
+        {
+            var violations = AlRunner.Infrastructure.ProvisioningCheck.FindVersionFloorViolations(
+                new[] { platformDir, testDir }, versionFloors);
+            foreach (var v in violations)
+                onRejected(
+                    $"[provision] warm set '{name}' rejected: '{v.AppName}' found at v{v.FoundVersion}, " +
+                    $"but this bundle's app.json requires >= v{v.RequiredVersion}.");
+        }
     }
     return null;
 }

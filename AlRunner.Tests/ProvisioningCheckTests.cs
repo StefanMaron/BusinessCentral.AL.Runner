@@ -851,4 +851,210 @@ public sealed class ProvisioningCheckTests : IDisposable
         Assert.Single(result);
         Assert.Equal("Application Test Library", result[0].Name);
     }
+
+    // ── Issue #2003: manifest-driven version floors ───────────────────────────
+    // FindWarmProvisionedVersion used to decide "reuse this warm set" on presence alone,
+    // ignoring the version floor the bundle's app.json manifests declare. A warm set at the
+    // same major.minor but an OLDER patch than the manifest requires was reused
+    // unconditionally, and the run failed later on a compile diagnostic pointing at the test
+    // code rather than a message naming the stale provisioning. These tests drive the shared
+    // primitives (DetermineVersionFloors / FindVersionFloorViolations / the floor-aware
+    // NoFallbackPlatformAppsPresent+TestToolkitPresent overloads / DecideManifestProvisioning)
+    // that both the initial gate and FindWarmProvisionedVersion's warm-reuse scan consult.
+
+    [Fact]
+    public void DetermineVersionFloors_TwoRootsSameApp_KeepsHigherVersion()
+    {
+        // A looser dependency declared elsewhere must never relax the strictest floor.
+        var roots = new[]
+        {
+            new DependencyRef(Guid.NewGuid(), "Application Test Library", "Microsoft", new Version(28, 0, 0, 0)),
+            new DependencyRef(Guid.NewGuid(), "Application Test Library", "Microsoft", new Version(28, 1, 5, 0)),
+        };
+        var floors = ProvisioningCheck.DetermineVersionFloors(roots);
+        Assert.Equal(new Version(28, 1, 5, 0), floors["Application Test Library"]);
+    }
+
+    [Fact]
+    public void DetermineVersionFloors_NonMicrosoftPublisher_Ignored()
+    {
+        var roots = new[]
+        {
+            new DependencyRef(Guid.NewGuid(), "Application Test Library", "Contoso ISV", new Version(9, 9, 9, 9)),
+        };
+        var floors = ProvisioningCheck.DetermineVersionFloors(roots);
+        Assert.False(floors.ContainsKey("Application Test Library"));
+    }
+
+    [Fact]
+    public void DetermineVersionFloors_NoMicrosoftRoots_ReturnsEmptyMap()
+    {
+        // AC #4 basis: a bundle whose manifests declare no floor gets an empty map, which
+        // every floor-aware lookup below then treats identically to "no floor given".
+        var floors = ProvisioningCheck.DetermineVersionFloors(Array.Empty<DependencyRef>());
+        Assert.Empty(floors);
+    }
+
+    [Fact]
+    public void FindVersionFloorViolations_AppBelowFloor_ReportsNameFoundAndRequired()
+    {
+        var dir = Path.Combine(_dir, "warm-stale");
+        Directory.CreateDirectory(dir);
+        WriteR2RApp(dir, "atl.app", Guid.NewGuid().ToString(), "Application Test Library", "Microsoft", "28.0.0.0");
+
+        var floors = new Dictionary<string, Version> { ["Application Test Library"] = new Version(28, 1, 0, 0) };
+        var violations = ProvisioningCheck.FindVersionFloorViolations(new[] { dir }, floors);
+
+        var v = Assert.Single(violations);
+        Assert.Equal("Application Test Library", v.AppName);
+        Assert.Equal(new Version(28, 0, 0, 0), v.FoundVersion);
+        Assert.Equal(new Version(28, 1, 0, 0), v.RequiredVersion);
+    }
+
+    [Fact]
+    public void FindVersionFloorViolations_AppAtOrAboveFloor_ReportsNothing()
+    {
+        var dir = Path.Combine(_dir, "warm-fresh");
+        Directory.CreateDirectory(dir);
+        WriteR2RApp(dir, "atl.app", Guid.NewGuid().ToString(), "Application Test Library", "Microsoft", "28.1.0.0");
+
+        var floors = new Dictionary<string, Version> { ["Application Test Library"] = new Version(28, 1, 0, 0) };
+        var violations = ProvisioningCheck.FindVersionFloorViolations(new[] { dir }, floors);
+
+        Assert.Empty(violations);
+    }
+
+    [Fact]
+    public void FindVersionFloorViolations_AppAbsent_ReportsNothing()
+    {
+        // Plain absence is a presence gap, not a version-floor violation — the two are
+        // reported through different mechanisms (CheckPlatformApps/DecideManifestProvisioning
+        // for absence, this for "found but stale").
+        var floors = new Dictionary<string, Version> { ["Application Test Library"] = new Version(28, 1, 0, 0) };
+        var violations = ProvisioningCheck.FindVersionFloorViolations(new[] { _dir }, floors);
+
+        Assert.Empty(violations);
+    }
+
+    [Fact]
+    public void NoFallbackPlatformAppsPresent_BelowFloor_ReturnsFalse()
+    {
+        // AC #2: a warm-but-stale Application Test Library does not count as present when
+        // the manifest declares a higher floor.
+        var dir = Path.Combine(_dir, "atl-stale");
+        Directory.CreateDirectory(dir);
+        WriteR2RApp(dir, "atl.app", Guid.NewGuid().ToString(), "Application Test Library", "Microsoft", "28.0.0.0");
+
+        var floors = new Dictionary<string, Version> { ["Application Test Library"] = new Version(28, 1, 0, 0) };
+        Assert.False(ProvisioningCheck.NoFallbackPlatformAppsPresent(new[] { dir }, floors));
+    }
+
+    [Fact]
+    public void NoFallbackPlatformAppsPresent_AtOrAboveFloor_ReturnsTrue()
+    {
+        // AC #1: a warm set that DOES meet the floor is still reused — the common path.
+        var dir = Path.Combine(_dir, "atl-fresh");
+        Directory.CreateDirectory(dir);
+        WriteR2RApp(dir, "atl.app", Guid.NewGuid().ToString(), "Application Test Library", "Microsoft", "28.1.5.0");
+
+        var floors = new Dictionary<string, Version> { ["Application Test Library"] = new Version(28, 1, 0, 0) };
+        Assert.True(ProvisioningCheck.NoFallbackPlatformAppsPresent(new[] { dir }, floors));
+    }
+
+    [Fact]
+    public void NoFallbackPlatformAppsPresent_NoFloorsGiven_MatchesOldPresenceOnlyBehavior()
+    {
+        // AC #4: omitting versionFloors (or passing null, the default) must reproduce the
+        // pre-#2003 presence-only behavior exactly — an old app still counts as present.
+        var dir = Path.Combine(_dir, "atl-no-floor");
+        Directory.CreateDirectory(dir);
+        WriteR2RApp(dir, "atl.app", Guid.NewGuid().ToString(), "Application Test Library", "Microsoft", "1.0.0.0");
+
+        Assert.True(ProvisioningCheck.NoFallbackPlatformAppsPresent(new[] { dir }));
+    }
+
+    [Fact]
+    public void TestToolkitPresent_BelowFloor_ReturnsFalse()
+    {
+        var dir = Path.Combine(_dir, "toolkit-stale");
+        Directory.CreateDirectory(dir);
+        WriteR2RApp(dir, "bftl.app", Guid.NewGuid().ToString(),
+            ProvisioningCheck.TestToolkitSentinelApp, "Microsoft", "28.0.0.0");
+
+        var floors = new Dictionary<string, Version> { [ProvisioningCheck.TestToolkitSentinelApp] = new Version(28, 1, 0, 0) };
+        Assert.False(ProvisioningCheck.TestToolkitPresent(new[] { dir }, floors));
+    }
+
+    [Fact]
+    public void TestToolkitPresent_AtOrAboveFloor_ReturnsTrue()
+    {
+        var dir = Path.Combine(_dir, "toolkit-fresh");
+        Directory.CreateDirectory(dir);
+        WriteR2RApp(dir, "bftl.app", Guid.NewGuid().ToString(),
+            ProvisioningCheck.TestToolkitSentinelApp, "Microsoft", "28.1.0.0");
+
+        var floors = new Dictionary<string, Version> { [ProvisioningCheck.TestToolkitSentinelApp] = new Version(28, 1, 0, 0) };
+        Assert.True(ProvisioningCheck.TestToolkitPresent(new[] { dir }, floors));
+    }
+
+    [Fact]
+    public void DecideManifestProvisioning_WarmSetBelowDeclaredFloor_NotReused_DownloadsInstead()
+    {
+        // AC #2, wired through the SAME decision the initial gate (and the warm-reuse re-
+        // check after a download) both consult — not just a standalone helper.
+        var dir = Path.Combine(_dir, "decide-stale");
+        Directory.CreateDirectory(dir);
+        WriteR2RApp(dir, "atl.app", Guid.NewGuid().ToString(), "Application Test Library", "Microsoft", "28.0.0.0");
+
+        var roots = new[]
+        {
+            new DependencyRef(Guid.NewGuid(), "Application Test Library", "Microsoft", new Version(28, 1, 0, 0)),
+        };
+        var legacyReport = ProvisioningCheck.CheckPlatformApps("28.1.49838.50794", new[] { dir });
+        var decision = ProvisioningCheck.DecideManifestProvisioning(roots, legacyReport, new[] { dir });
+
+        Assert.False(decision.PlatformComplete);
+        Assert.True(decision.ShouldDownloadPlatform);
+    }
+
+    [Fact]
+    public void DecideManifestProvisioning_WarmSetMeetsDeclaredFloor_ReusedNoDownload()
+    {
+        // AC #1: the common case — a warm set that DOES meet the floor is still reused
+        // with no download. A regression here means every run starts downloading.
+        var dir = Path.Combine(_dir, "decide-fresh");
+        Directory.CreateDirectory(dir);
+        WriteR2RApp(dir, "atl.app", Guid.NewGuid().ToString(), "Application Test Library", "Microsoft", "28.1.5.0");
+
+        var roots = new[]
+        {
+            new DependencyRef(Guid.NewGuid(), "Application Test Library", "Microsoft", new Version(28, 1, 0, 0)),
+        };
+        var legacyReport = ProvisioningCheck.CheckPlatformApps("28.1.49838.50794", new[] { dir });
+        var decision = ProvisioningCheck.DecideManifestProvisioning(roots, legacyReport, new[] { dir });
+
+        Assert.True(decision.PlatformComplete);
+        Assert.False(decision.ShouldDownloadPlatform);
+    }
+
+    [Fact]
+    public void DecideManifestProvisioning_NoDeclaredFloor_KeepsPresenceOnlyBehavior()
+    {
+        // AC #4: a bundle whose manifests declare NO version for the dependency at all (the
+        // implicit `application`/`platform` synthesis passes Optional roots without pinning
+        // a real floor beyond whatever ships) must not newly reject a warm set it would have
+        // accepted before #2003. Simulate "no floor" the same way DetermineVersionFloors
+        // would see it for an app that's warm-present but was never named in any manifest
+        // root — DecideManifestProvisioning is called with roots that don't mention
+        // Application Test Library at all, only the legacy symbol-only signal drives it.
+        var dir = Path.Combine(_dir, "decide-no-floor");
+        Directory.CreateDirectory(dir);
+        WriteR2RApp(dir, "atl.app", Guid.NewGuid().ToString(), "Application Test Library", "Microsoft", "1.0.0.0");
+
+        var legacyReport = ProvisioningCheck.CheckPlatformApps("28.1.49838.50794", new[] { dir });
+        var decision = ProvisioningCheck.DecideManifestProvisioning(Array.Empty<DependencyRef>(), legacyReport, new[] { dir });
+
+        Assert.True(decision.PlatformComplete);
+        Assert.False(decision.ShouldDownloadPlatform);
+    }
 }

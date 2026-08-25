@@ -269,9 +269,20 @@ public static class ProvisioningCheck
     /// True if the Microsoft test toolkit is provisioned in <paramref name="packageCacheDirs"/>,
     /// detected via <see cref="TestToolkitSentinelApp"/> (a Microsoft-published .app of that
     /// name). Missing/nonexistent dirs are skipped. Pure filesystem scan — no network.
+    ///
+    /// Issue #2003: <paramref name="versionFloors"/> is the manifest-declared minimum
+    /// version, if any, for <see cref="TestToolkitSentinelApp"/> (see
+    /// <see cref="DetermineVersionFloors"/>). A sentinel app found below its floor does NOT
+    /// count as present — presence alone used to be sufficient, which let a warm-but-stale
+    /// toolkit satisfy this check and get silently reused past the version the bundle's own
+    /// app.json actually requires. Null/empty (the default) preserves the old presence-only
+    /// behavior — a bundle whose manifests declare no floor is unaffected (AC #4).
     /// </summary>
-    public static bool TestToolkitPresent(IReadOnlyList<string> packageCacheDirs)
+    public static bool TestToolkitPresent(
+        IReadOnlyList<string> packageCacheDirs,
+        IReadOnlyDictionary<string, Version>? versionFloors = null)
     {
+        var floor = versionFloors != null && versionFloors.TryGetValue(TestToolkitSentinelApp, out var f) ? f : null;
         foreach (var dir in packageCacheDirs)
         {
             if (!Directory.Exists(dir)) continue;
@@ -280,8 +291,9 @@ public static class ProvisioningCheck
                 var m = AlRunner.AppLoader.ReadManifest(appFile);
                 if (m == null) continue;
                 if (!string.Equals(m.Publisher, "Microsoft", StringComparison.OrdinalIgnoreCase)) continue;
-                if (string.Equals(TestToolkitSentinelApp, m.Name, StringComparison.OrdinalIgnoreCase))
-                    return true;
+                if (!string.Equals(TestToolkitSentinelApp, m.Name, StringComparison.OrdinalIgnoreCase)) continue;
+                if (floor != null && m.Version < floor) continue;
+                return true;
             }
         }
         return false;
@@ -434,15 +446,98 @@ public static class ProvisioningCheck
         return new ManifestNeeds(needsPlatform, needsTest);
     }
 
+    // ── Issue #2003: manifest-driven version floors ──────────────────────────
+    // DetermineManifestNeeds above answers "is this app needed at all". It says nothing
+    // about WHICH version satisfies that need — a bundle's app.json can declare a
+    // dependency at a specific minimum version (e.g. Application Test Library 28.1.0.0),
+    // and a warm-provisioned set at the same major/minor but an OLDER patch used to satisfy
+    // every presence check unconditionally. The failure wasn't loud: the apps resolved,
+    // compilation proceeded, and the run failed later on whatever the missing symbol or
+    // changed signature produced — pointing at the test code instead of the stale
+    // provisioning. These helpers make the floor visible to the same presence checks that
+    // already decide "is this app already provisioned", so a stale warm set stops looking
+    // complete.
+
+    /// <summary>
+    /// The version floor (minimum acceptable version) each Microsoft dependency name
+    /// declares across <paramref name="roots"/> — the SAME roots
+    /// <see cref="DetermineManifestNeeds"/> reads. When multiple manifests (or bundles)
+    /// declare different floors for the same app name, the HIGHER one wins: a looser
+    /// dependency declared elsewhere can never relax what the strictest manifest requires.
+    /// Case-insensitive on name. Non-Microsoft roots are ignored (floors are only meaningful
+    /// for the curated platform-apps/test-apps sets, which are Microsoft-only). Pure — does
+    /// no I/O. Returns an empty (never null) map when no root declares a Microsoft
+    /// dependency, so callers can pass the result straight through without a null check —
+    /// which is also exactly AC #4: a bundle whose manifests declare no floor gets an empty
+    /// map, and every floor-aware lookup below then behaves identically to the old
+    /// presence-only check.
+    /// </summary>
+    public static IReadOnlyDictionary<string, Version> DetermineVersionFloors(IEnumerable<AlRunner.DependencyRef> roots)
+    {
+        var floors = new Dictionary<string, Version>(StringComparer.OrdinalIgnoreCase);
+        foreach (var d in roots)
+        {
+            if (!string.Equals(d.Publisher, "Microsoft", StringComparison.OrdinalIgnoreCase)) continue;
+            if (!floors.TryGetValue(d.Name, out var existing) || d.Version > existing)
+                floors[d.Name] = d.Version;
+        }
+        return floors;
+    }
+
+    /// <summary>One app found below the version floor its manifests declared for it.</summary>
+    public sealed record VersionFloorViolation(string AppName, Version FoundVersion, Version RequiredVersion);
+
+    /// <summary>
+    /// Scans <paramref name="packageCacheDirs"/> for every Microsoft app named in
+    /// <paramref name="versionFloors"/> and reports the ones whose highest found version is
+    /// BELOW its declared floor. An app entirely absent from <paramref name="packageCacheDirs"/>
+    /// is not a violation here (that's plain absence, already handled by the presence
+    /// checks) — this only flags "found, but too old", which is the specific silent gap
+    /// issue #2003 is about: a warm set that resolves as present yet doesn't meet what the
+    /// manifest actually requires. Pure filesystem scan — no network.
+    /// </summary>
+    public static IReadOnlyList<VersionFloorViolation> FindVersionFloorViolations(
+        IReadOnlyList<string> packageCacheDirs,
+        IReadOnlyDictionary<string, Version> versionFloors)
+    {
+        var violations = new List<VersionFloorViolation>();
+        foreach (var (appName, floor) in versionFloors)
+        {
+            Version? best = null;
+            foreach (var dir in packageCacheDirs)
+            {
+                if (!Directory.Exists(dir)) continue;
+                foreach (var appFile in Directory.EnumerateFiles(dir, "*.app", SearchOption.AllDirectories))
+                {
+                    var m = AlRunner.AppLoader.ReadManifest(appFile);
+                    if (m == null) continue;
+                    if (!string.Equals(m.Publisher, "Microsoft", StringComparison.OrdinalIgnoreCase)) continue;
+                    if (!string.Equals(m.Name, appName, StringComparison.OrdinalIgnoreCase)) continue;
+                    if (best == null || m.Version > best) best = m.Version;
+                }
+            }
+            if (best != null && best < floor)
+                violations.Add(new VersionFloorViolation(appName, best, floor));
+        }
+        return violations;
+    }
+
     /// <summary>
     /// True iff EVERY app in <see cref="KnownNoFallbackPlatformApps"/> is found (any
-    /// version, any R2R-ness — this only asks "is it there", not "is it runnable"; that's
-    /// CheckPlatformApps' job) somewhere across <paramref name="packageCacheDirs"/>.
+    /// R2R-ness — this only asks "is it there", not "is it runnable"; that's
+    /// CheckPlatformApps' job) somewhere across <paramref name="packageCacheDirs"/>, AT OR
+    /// ABOVE the version floor <paramref name="versionFloors"/> declares for it (issue
+    /// #2003). A found-but-below-floor app does NOT count as present. Null/empty
+    /// <paramref name="versionFloors"/> (the default) preserves the old any-version
+    /// presence-only behavior.
     /// </summary>
-    public static bool NoFallbackPlatformAppsPresent(IReadOnlyList<string> packageCacheDirs)
+    public static bool NoFallbackPlatformAppsPresent(
+        IReadOnlyList<string> packageCacheDirs,
+        IReadOnlyDictionary<string, Version>? versionFloors = null)
     {
         foreach (var required in KnownNoFallbackPlatformApps)
         {
+            var floor = versionFloors != null && versionFloors.TryGetValue(required, out var f) ? f : null;
             bool found = false;
             foreach (var dir in packageCacheDirs)
             {
@@ -453,6 +548,7 @@ public static class ProvisioningCheck
                     if (m == null) continue;
                     if (!string.Equals(m.Publisher, "Microsoft", StringComparison.OrdinalIgnoreCase)) continue;
                     if (!string.Equals(m.Name, required, StringComparison.OrdinalIgnoreCase)) continue;
+                    if (floor != null && m.Version < floor) continue;
                     found = true;
                     break;
                 }
@@ -487,15 +583,25 @@ public static class ProvisioningCheck
     /// compatible with issue #1678, even absent a manifest need — e.g. no app.json was
     /// readable). A manifest need with nothing found anywhere is issue #1996's gap:
     /// CheckPlatformApps alone reports that case vacuously "Ok".
+    ///
+    /// Issue #2003: "present" is no longer presence-alone. <paramref name="manifestRoots"/>
+    /// also carries each dependency's declared version, so PlatformComplete/TestComplete
+    /// (via NoFallbackPlatformAppsPresent/TestToolkitPresent) now require the found app to
+    /// meet that floor too — a warm-but-stale app in <paramref name="searchDirs"/> no longer
+    /// reads as complete, which was true here (the initial gate, before any
+    /// --auto-provision download decision) just as much as it was in the warm-reuse scan
+    /// this issue's repro pointed at.
     /// </summary>
     public static ManifestProvisionDecision DecideManifestProvisioning(
         IEnumerable<AlRunner.DependencyRef> manifestRoots,
         PlatformAppsReport legacySymbolOnlyReport,
         IReadOnlyList<string> searchDirs)
     {
-        var needs = DetermineManifestNeeds(manifestRoots);
-        var platformComplete = NoFallbackPlatformAppsPresent(searchDirs);
-        var testComplete = TestToolkitPresent(searchDirs);
+        var rootsList = manifestRoots as ICollection<AlRunner.DependencyRef> ?? manifestRoots.ToList();
+        var needs = DetermineManifestNeeds(rootsList);
+        var versionFloors = DetermineVersionFloors(rootsList);
+        var platformComplete = NoFallbackPlatformAppsPresent(searchDirs, versionFloors);
+        var testComplete = TestToolkitPresent(searchDirs, versionFloors);
         var shouldDownloadPlatform = !legacySymbolOnlyReport.Ok || (needs.NeedsPlatformApps && !platformComplete);
         var shouldDownloadTest = needs.NeedsTestApps && !testComplete;
         return new ManifestProvisionDecision(
