@@ -105,7 +105,11 @@ internal class MockITestPage : ITestPage
 
 internal class LiveNavTestPage : MockITestPage
 {
-    private readonly NavRecord _record;
+    // Null for a page with no SourceTable (issue #2007) — a legal AL shape (StandardDialog
+    // pickers/prompts bound to page globals). Every member that genuinely needs a row goes
+    // through RequireRecord, which turns a would-be NRE into a named, loud refusal instead of
+    // silently doing nothing; page-variable-bound field access never reaches here at all.
+    private readonly NavRecord? _record;
     private readonly IReadOnlyDictionary<int, int> _controlIdToFieldNo;
     private readonly Dictionary<int, LiveNavTestField> _fields = new();
     private readonly Dictionary<int, PageVariableTestField> _pageVariableFields = new();
@@ -121,17 +125,17 @@ internal class LiveNavTestPage : MockITestPage
     private readonly int _pageId;
     private readonly Dictionary<int, ITestPart> _parts = new();
 
-    public LiveNavTestPage(NavRecord record, IReadOnlyDictionary<int, int> controlIdToFieldNo)
+    public LiveNavTestPage(NavRecord? record, IReadOnlyDictionary<int, int> controlIdToFieldNo)
         : this(record, controlIdToFieldNo, creatable: true, page: null) { }
 
-    public LiveNavTestPage(NavRecord record, IReadOnlyDictionary<int, int> controlIdToFieldNo, bool creatable)
+    public LiveNavTestPage(NavRecord? record, IReadOnlyDictionary<int, int> controlIdToFieldNo, bool creatable)
         : this(record, controlIdToFieldNo, creatable, page: null) { }
 
-    public LiveNavTestPage(NavRecord record, IReadOnlyDictionary<int, int> controlIdToFieldNo, bool creatable,
+    public LiveNavTestPage(NavRecord? record, IReadOnlyDictionary<int, int> controlIdToFieldNo, bool creatable,
         RunnerPageInstance? page)
         : this(record, controlIdToFieldNo, creatable, page, owner: null, pageId: 0) { }
 
-    public LiveNavTestPage(NavRecord record, IReadOnlyDictionary<int, int> controlIdToFieldNo, bool creatable,
+    public LiveNavTestPage(NavRecord? record, IReadOnlyDictionary<int, int> controlIdToFieldNo, bool creatable,
         RunnerPageInstance? page, object? owner, int pageId)
     {
         _record = record;
@@ -142,7 +146,22 @@ internal class LiveNavTestPage : MockITestPage
         _pageId = pageId;
     }
 
-    internal NavRecord Record => _record;
+    internal NavRecord? Record => _record;
+
+    /// <summary>
+    /// The record this operation genuinely needs, or a loud, named refusal instead of an NRE
+    /// when the page has none (issue #2007: a page with no SourceTable — the StandardDialog
+    /// shape — is legal AL, and only Rec-dependent members are affected; page-variable-bound
+    /// field access resolves entirely through RunnerPageInstance's source-expression table and
+    /// never calls this).
+    /// </summary>
+    protected internal NavRecord RequireRecord(string what)
+        => _record ?? throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+            $"TestPage page {_pageId} — {what}",
+            "testpage-modal-no-source-table — this page has no SourceTable, so there is no "
+            + "record-backed rowset for this operation. Controls bound to page variables are "
+            + "supported; row navigation, filtering, Insert/Modify and Rec-bound field access "
+            + "are not, because there is no record to act on. See docs/scope.md");
 
     // BC reports these in NavInsertDeniedPermissionException and friends. Answering 0/""
     // (the mock's values) is what produced "Insert is not allowed. Page = , Id = 0" — an
@@ -196,7 +215,7 @@ internal class LiveNavTestPage : MockITestPage
         var part = new LiveNavTestPart(
             built.Record, RecordPatches.GetPageControlFieldMap(partPageId),
             RecordPatches.GetInsertAllowedForPage(partPageId), built.Page, _owner!, partPageId,
-            parentRecord: _record, links: SubPageLinks(definition, partPageId));
+            parentRecord: RequireRecord($"subpage part {controlId}"), links: SubPageLinks(definition, partPageId));
         _parts[controlId] = part;
         return part;
     }
@@ -298,7 +317,11 @@ internal class LiveNavTestPage : MockITestPage
     {
         if (_page == null)
         {
-            if (_owner != null && RecordPatches.GetPageExtensionIdsForPage(_pageId).Count > 0)
+            // ExtensionOnlyTestAction dispatches through a pageextension's OWN NavFormExtension
+            // instance, which is built over the record — a page with no SourceTable at all
+            // (this class's null-_record case) has nothing to build that from, so it falls
+            // through to the no-op mock rather than the extension path.
+            if (_record != null && _owner != null && RecordPatches.GetPageExtensionIdsForPage(_pageId).Count > 0)
                 return new ExtensionOnlyTestAction(this, _owner, _record, _pageId, actionId);
             return base.GetAction(actionId);
         }
@@ -394,6 +417,10 @@ internal class LiveNavTestPage : MockITestPage
 
     public override void InsertEmptyRow(bool beforeCurrent)
     {
+        // A page with no SourceTable has no rowset to insert into at all — refuse by name
+        // before touching any of the state below, rather than NRE-ing inside CaptureInsertPosition.
+        RequireRecord("New()");
+
         FlushPendingNewRow();   // starting a second row persists the first
 
         // The rows around the insert decide the new row's AutoSplitKey number, and the row
@@ -414,7 +441,8 @@ internal class LiveNavTestPage : MockITestPage
         if (!(_page?.TryNewRecord(!beforeCurrent) ?? false))
         {
             // Record-only mode: no page to ask, so no filters and no trigger to run either.
-            _record.ALInit();
+            // Non-null: guaranteed by the RequireRecord guard at the top of this method.
+            _record!.ALInit();
         }
 
         _pendingNewRow = true;
@@ -442,7 +470,9 @@ internal class LiveNavTestPage : MockITestPage
         // same as Rec.Insert(true) — that trigger is where a table assigns its number series,
         // stamps its own derived fields, and enforces what it will not accept. Passing false
         // wrote a row the table had never agreed to.
-        _record.ALInsertAsync(DataError.TrapError, true, false).GetAwaiter().GetResult();
+        // Non-null: _pendingNewRow is only ever set true by InsertEmptyRow, which refuses by
+        // name first when the page has no record — see RequireRecord there.
+        _record!.ALInsertAsync(DataError.TrapError, true, false).GetAwaiter().GetResult();
     }
 
     /// <summary>Abandon an in-progress new row without writing it — how Cancel closes.</summary>
@@ -525,10 +555,13 @@ internal class LiveNavTestPage : MockITestPage
     {
         _insertPositionCaptured = false;
         if (_page == null || !_page.NeedsAutoSplitKey) return;
+        // Non-null: only reached from InsertEmptyRow, which refuses by name first when the
+        // page has no record — see RequireRecord there.
+        var record = _record!;
         // The AutoSplitKey field is the LAST field of the primary key — BC picks it the same
         // way inside SplitKey, so a page whose key shape the runner read differently would
         // number a different field than BC validates.
-        var primaryKey = _record.MetaTable?.PrimaryKey;
+        var primaryKey = record.MetaTable?.PrimaryKey;
         if (primaryKey == null || primaryKey.KeyFieldCount == 0) return;
         var keyFieldNo = primaryKey.KeyFieldsList[primaryKey.KeyFieldCount - 1].FieldNo;
 
@@ -540,7 +573,7 @@ internal class LiveNavTestPage : MockITestPage
         // Cloned with reset:false so it carries the page's filters (a subpage part's
         // SubPageLink above all: without it this would walk the lines of SOME OTHER header)
         // and cannot disturb the cursor the page is on.
-        using var probe = _record.CloneRecord(_record.Parent, reset: false, keepCompany: true);
+        using var probe = record.CloneRecord(record.Parent, reset: false, keepCompany: true);
 
         // "The cursor sits on a saved row" is decided the way SplitKey itself decides it — a
         // row with the cursor's ALRecordId exists. With no cursor row the client viewport's
@@ -586,7 +619,10 @@ internal class LiveNavTestPage : MockITestPage
     {
         if (!_insertPositionCaptured) return null;
         _insertPositionCaptured = false;
-        var primaryKey = _record.MetaTable?.PrimaryKey;
+        // Non-null: only reached from ProposeAutoSplitKey/FlushPendingNewRow, both gated by
+        // _pendingNewRow, which is only set by InsertEmptyRow after its RequireRecord guard.
+        var record = _record!;
+        var primaryKey = record.MetaTable?.PrimaryKey;
         if (primaryKey == null || primaryKey.KeyFieldCount == 0) return null;
         var keyFieldNo = primaryKey.KeyFieldsList[primaryKey.KeyFieldCount - 1].FieldNo;
 
@@ -596,7 +632,7 @@ internal class LiveNavTestPage : MockITestPage
         // Int32 offered for a BigInteger or Decimal key is a different value than BC's
         // client would have sent.
         var draftRowCount = _insertDraftRowsBefore + 1 + _insertDraftRowsAfter;
-        return Unwrap(_record.GetFieldValue(keyFieldNo)) switch
+        return Unwrap(record.GetFieldValue(keyFieldNo)) switch
         {
             int => Box(CalculateClientAutoKey<int>(
                 (int?)_insertRangeStart, (int?)_insertRangeEnd, draftRowCount, _insertDraftRowsBefore)),
@@ -725,11 +761,17 @@ internal class LiveNavTestPage : MockITestPage
         // OnModifyRecord vetoes exactly as OnInsertRecord does.
         if (_page != null && !_page.RaiseOnModifyRecord()) return;
 
+        // Non-null: _pendingModify is only ever set by MarkEdited, which is only wired to a
+        // LiveNavTestField — a Rec-bound control, which cannot exist unless the page has a
+        // record (RecordPatches.GetPageControlFieldMap returns empty for a page with no
+        // SourceTable). A page-variable-bound field (PageVariableTestField) never calls it.
+        var record = _record!;
+
         // SystemModifiedAt/By are stamped by a Cecil prepend on NavRecord.ALModifyAsync — the
         // CODE-driven entry point this method deliberately does NOT use (see below). Real BC
         // stamps them in the data layer, so they move on a page write too; call the same helper
         // the prepend calls so switching entry points does not silently freeze them.
-        BcRuntime.StampSystemFieldsOnModify(_record);
+        BcRuntime.StampSystemFieldsOnModify(record);
 
         // ModifyAsync, NOT ALModifyAsync — and the difference is the whole xRec contract.
         //
@@ -752,7 +794,7 @@ internal class LiveNavTestPage : MockITestPage
         // trapping it turned "this page is not positioned on a row" into an edit that appeared
         // to succeed and quietly went nowhere; and both trigger flags on, because a page write
         // runs the table's OnModify and the global-trigger hook exactly like Rec.Modify(true).
-        _record.ModifyAsync(DataError.ThrowError, true, true).GetAwaiter().GetResult();
+        record.ModifyAsync(DataError.ThrowError, true, true).GetAwaiter().GetResult();
     }
 
     // Order matters at every flush point: an in-progress new row is finished by an Insert, an
@@ -815,12 +857,14 @@ internal class LiveNavTestPage : MockITestPage
         // distinction and the ancestor walk.
         if (_page?.ControlIsCompileTimeEliminated(id) == true) return null!;
 
-        // A control bound to a Rec field resolves against the record, as before.
+        // A control bound to a Rec field resolves against the record, as before. Non-null:
+        // _controlIdToFieldNo is only ever populated (RecordPatches.GetPageControlFieldMap)
+        // for a page that declares a SourceTable, so a hit here implies _record is set.
         if (_controlIdToFieldNo.TryGetValue(id, out var tableFieldNo))
         {
             if (!_fields.TryGetValue(tableFieldNo, out var field))
                 _fields[tableFieldNo] = field =
-                    new LiveNavTestField(_record, tableFieldNo, _page, id, MarkEdited);
+                    new LiveNavTestField(_record!, tableFieldNo, _page, id, MarkEdited);
             return field;
         }
 
@@ -842,7 +886,7 @@ internal class LiveNavTestPage : MockITestPage
             $"TestPage control {id}",
             "testpage-control-binding — this control is bound neither to a field of the page's "
             + $"source table nor to a page variable the runner could resolve (table "
-            + $"{_record.MetaTable?.TableName ?? "?"}"
+            + $"{_record?.MetaTable?.TableName ?? "?"}"
             + (_page == null
                 ? "; no AL page object was built for this page, so page-variable-bound controls "
                   + "cannot be resolved — see AlPageMetadataRegistry"
@@ -854,10 +898,10 @@ internal class LiveNavTestPage : MockITestPage
     // otherwise navigating away from a New() silently discards it. Parts flush too: moving
     // the parent re-links every part to a different row, so a row started in a part must be
     // persisted while the link that stamped its key is still the current one.
-    public override bool MoveFirst() { FlushParts(); FlushRow(); return Loaded(_record.ALFindFirstAsync(DataError.TrapError).GetAwaiter().GetResult()); }
-    public override bool MoveLast() { FlushParts(); FlushRow(); return Loaded(_record.ALFindLastAsync(DataError.TrapError).GetAwaiter().GetResult()); }
-    public override bool MoveNext() { FlushParts(); FlushRow(); return Loaded(_record.ALNextAsync().GetAwaiter().GetResult() != 0); }
-    public override bool MovePrevious() { FlushParts(); FlushRow(); return Loaded(_record.ALNextAsync(-1).GetAwaiter().GetResult() != 0); }
+    public override bool MoveFirst() { var record = RequireRecord("MoveFirst()"); FlushParts(); FlushRow(); return Loaded(record.ALFindFirstAsync(DataError.TrapError).GetAwaiter().GetResult()); }
+    public override bool MoveLast() { var record = RequireRecord("MoveLast()"); FlushParts(); FlushRow(); return Loaded(record.ALFindLastAsync(DataError.TrapError).GetAwaiter().GetResult()); }
+    public override bool MoveNext() { var record = RequireRecord("MoveNext()"); FlushParts(); FlushRow(); return Loaded(record.ALNextAsync().GetAwaiter().GetResult() != 0); }
+    public override bool MovePrevious() { var record = RequireRecord("MovePrevious()"); FlushParts(); FlushRow(); return Loaded(record.ALNextAsync(-1).GetAwaiter().GetResult() != 0); }
 
     /// <summary>
     /// A row just became the page's current row — run the page's OnAfterGetRecord, exactly
@@ -892,14 +936,16 @@ internal class LiveNavTestPage : MockITestPage
     /// <c>OldRecord.ALAssign(this)</c> was the only thing that ever populated xRec, which is
     /// what made a page-driven Modify report the NEW value as the old one.
     /// </summary>
-    private void SnapshotBeforeImage() => _record.OldRecord.ALAssign(_record);
+    // Non-null: only ever called from Loaded(true), which every MoveXxx/GoToBookmark caller
+    // reaches through RequireRecord first.
+    private void SnapshotBeforeImage() => _record!.OldRecord.ALAssign(_record);
 
-    public override object? GetBookmark() => _record.ALGetPosition();
+    public override object? GetBookmark() => RequireRecord("GetBookmark()").ALGetPosition();
 
     public override bool GoToBookmark(object bookmark)
     {
         if (bookmark is not string position || string.IsNullOrEmpty(position)) return false;
-        _record.ALSetPosition(position);
+        RequireRecord("GoToBookmark()").ALSetPosition(position);
         return Loaded(true);
     }
 
@@ -914,7 +960,8 @@ internal class LiveNavTestPage : MockITestPage
     {
         if (fieldNos.Length != values.Length) return false;
 
-        var original = _record.ALGetPosition();
+        var record = RequireRecord("locating a row");
+        var original = record.ALGetPosition();
         var hasCurrent = !string.IsNullOrEmpty(original);
 
         // Scan the WHOLE rowset, always starting from the first (or last, when searching
@@ -931,7 +978,7 @@ internal class LiveNavTestPage : MockITestPage
             hasRow = forward ? MoveNext() : MovePrevious();
         }
 
-        if (hasCurrent) { _record.ALSetPosition(original); Loaded(true); }
+        if (hasCurrent) { record.ALSetPosition(original); Loaded(true); }
         return false;
     }
 
@@ -943,7 +990,7 @@ internal class LiveNavTestPage : MockITestPage
     // "not a control" (Pageworks SetFilter(3, …) on PageworksPartial).
     public override void SetFilter(int fieldNo, string filterValue)
     {
-        _record.ALSetFilter(fieldNo, filterValue);
+        RequireRecord("SetFilter()").ALSetFilter(fieldNo, filterValue);
         RepositionAfterFilterChange();
     }
 
@@ -963,7 +1010,7 @@ internal class LiveNavTestPage : MockITestPage
     private void RepositionAfterFilterChange() => MoveFirst();
 
     public override string GetFilter(int fieldNo)
-        => _record.ALGetFilter(fieldNo);
+        => RequireRecord("GetFilter()").ALGetFilter(fieldNo);
 
     /// <summary>
     /// Resolve a CONTROL id to the source-table field it is bound to. A control bound to a
@@ -978,7 +1025,7 @@ internal class LiveNavTestPage : MockITestPage
         throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
             $"TestPage control {controlId} used to locate a row",
             "testpage-control-binding — this control is not bound to a field of the page's "
-            + $"source table ({_record.MetaTable?.TableName ?? "?"}), so it cannot be used to "
+            + $"source table ({_record?.MetaTable?.TableName ?? "?"}), so it cannot be used to "
             + "locate a row. See docs/scope.md");
     }
 
@@ -990,7 +1037,7 @@ internal class LiveNavTestPage : MockITestPage
         return true;
     }
 
-    private object? ReadClientObject(int fieldNo) => Unwrap(_record.GetFieldValue(fieldNo));
+    private object? ReadClientObject(int fieldNo) => Unwrap(RequireRecord("field access").GetFieldValue(fieldNo));
 
     internal static object? Unwrap(object? value)
         => value is NavValue navValue ? navValue.ClientObject : value;
@@ -1687,10 +1734,14 @@ internal sealed class LiveNavTestPart : LiveNavTestPage, ITestPart
     /// <summary>Filter the part's rowset to the parent's current row.</summary>
     private void ApplyLink()
     {
+        // A part always has its own SourceTable (it is a subpage over a table), so this is
+        // never the null-record case RequireRecord exists to catch — it is a guaranteed hit,
+        // used here for its record rather than for its refusal.
+        var record = RequireRecord("subpage link");
         foreach (var (partFieldNo, parentFieldNo) in _links)
         {
             var parentValue = _parentRecord.GetFieldValue(parentFieldNo);
-            Record.ALSetRange(partFieldNo, parentValue);
+            record.ALSetRange(partFieldNo, parentValue);
         }
     }
 
@@ -1714,7 +1765,8 @@ internal sealed class LiveNavTestPart : LiveNavTestPage, ITestPart
     {
         ApplyLink();
         base.InsertEmptyRow(beforeCurrent);
+        var record = RequireRecord("subpage link");
         foreach (var (partFieldNo, parentFieldNo) in _links)
-            Record.SetFieldValue(partFieldNo, _parentRecord.GetFieldValue(parentFieldNo));
+            record.SetFieldValue(partFieldNo, _parentRecord.GetFieldValue(parentFieldNo));
     }
 }

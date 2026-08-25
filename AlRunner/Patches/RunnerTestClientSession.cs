@@ -50,11 +50,18 @@ public sealed class RunnerTestClientSession : ITestClientSession
             return requestPage;
 
         var pageId = PageIdOf(form);
-        var record = ReadProperty(form, "SourceTable") as NavRecord
-            ?? throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
-                $"TestPage modal page {pageId}",
-                "testpage-modal — the modal form has no source table bound, so there is no record "
-                + "for the handler to read or write. See docs/scope.md");
+
+        // A page with no SourceTable is ordinary, legal AL — the StandardDialog shape, whose
+        // controls are bound to page globals rather than a record (issue #2007). It used to be
+        // refused right here with "the modal form has no source table bound", which is true and
+        // beside the point: the handler never needed a record in the first place, only the
+        // control tree. LiveNavTestPage accepts a null record and answers every Rec-dependent
+        // member (row navigation, filtering, Insert/Modify, Rec-bound field access) with a loud,
+        // named refusal ONLY if the AL under test actually reaches for one — see
+        // LiveNavTestPage.RequireRecord. A page-variable-bound field, which is the only shape a
+        // no-source-table page's controls can be, resolves through RunnerPageInstance's own
+        // source-expression table and never touches the record at all.
+        var record = ReadProperty(form, "SourceTable") as NavRecord;
 
         return new AlRunner.LiveNavTestPage(
             record,
