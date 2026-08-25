@@ -741,9 +741,18 @@ if (!provisionSubcommand)
         // AC #4/#5: prefer a version ALREADY cached (any patch of this major.minor) whose
         // needed set(s) are complete, before ever asking the CDN for "latest" — otherwise a
         // warm machine re-resolves and re-downloads a NEWER patch on every single run.
-        var full = FindWarmProvisionedVersion(
-                AlRunner.Infrastructure.BcArtifacts.ArtifactsRootDir, mm,
-                decision.ShouldDownloadPlatform, decision.ShouldDownloadTest)
+        // Skipped when a LEGACY symbol-only issue exists (!platformReport.Ok): that's a
+        // known-bad app already sitting in the cache, distinct from "nothing found yet",
+        // and NoFallbackPlatformAppsPresent's app (Application Test Library) doesn't even
+        // exist for every BC version (e.g. 27.x) — using it as the completeness signal for
+        // that case would never find a match and would incorrectly gate warm reuse on an
+        // app the legacy issue has nothing to do with. Falling through to CDN resolution
+        // here matches this path's pre-existing (issue #1678) behavior.
+        var full = (platformReport.Ok
+                ? FindWarmProvisionedVersion(
+                    AlRunner.Infrastructure.BcArtifacts.ArtifactsRootDir, mm,
+                    decision.NeedsPlatformApps, decision.ShouldDownloadTest)
+                : null)
             ?? AlRunner.Provisioning.ArtifactDownloader.ResolveVersion(
                 mm, m => Console.Error.WriteLine($"[provision] {m}"));
         if (full == null)
@@ -765,9 +774,19 @@ if (!provisionSubcommand)
             // Reuse-first (AC #4/#5): the resolved `full` version can be a warm same-
             // major/minor destination that a PRIOR run already completed (e.g. a
             // different patch of the same minor, or this exact invocation retried after
-            // a transient failure) — check before ever touching the network.
-            if (AlRunner.Infrastructure.ProvisioningCheck.NoFallbackPlatformAppsPresent(new[] { platformAppsOut })
-                && platformReport.Ok)
+            // a transient failure) — check before ever touching the network. Folding
+            // platformAppsOut into the search set FIRST and re-deciding against it (rather
+            // than a standalone ATL-only presence check) correctly covers BOTH triggers:
+            // the legacy symbol-only gap (some BC versions — e.g. 27.x — never ship
+            // Application Test Library at all, so an ATL-only check would never be
+            // satisfiable for them) and the manifest-driven ATL need.
+            if (!packageCacheDirs.Contains(platformAppsOut))
+                packageCacheDirs.Add(platformAppsOut);
+            var reuseReport = AlRunner.Infrastructure.ProvisioningCheck.CheckPlatformApps(
+                version, PlatformCheckDirs());
+            var reuseDecision = AlRunner.Infrastructure.ProvisioningCheck.DecideManifestProvisioning(
+                manifestDependencyRoots, reuseReport, PlatformCheckDirs());
+            if (!reuseDecision.ShouldDownloadPlatform)
             {
                 Console.Error.WriteLine($"[provision] platform apps already complete at {platformAppsOut}.");
             }
@@ -782,10 +801,6 @@ if (!provisionSubcommand)
                     return 2;
                 }
             }
-            // Make the downloaded apps visible to resolution: add the artifact-cache dir as
-            // an additional search root rather than copying its contents into the project.
-            if (!packageCacheDirs.Contains(platformAppsOut))
-                packageCacheDirs.Add(platformAppsOut);
             // Re-check: never silently continue on a partial/failed provision.
             platformReport = AlRunner.Infrastructure.ProvisioningCheck.CheckPlatformApps(
                 version, PlatformCheckDirs());
@@ -795,7 +810,12 @@ if (!provisionSubcommand)
                 Console.Error.WriteLine($"[provision] platform apps still symbol-only after download: {stillMissing}");
                 return 2;
             }
-            if (!AlRunner.Infrastructure.ProvisioningCheck.NoFallbackPlatformAppsPresent(PlatformCheckDirs()))
+            // Only demand literal Application Test Library presence when the MANIFEST
+            // actually declared a need for it — some BC versions never ship it at all, so
+            // requiring it unconditionally would fail every platform-apps download
+            // triggered solely by the legacy symbol-only gap (e.g. corpus bundles on BC 27.x).
+            if (decision.NeedsPlatformApps
+                && !AlRunner.Infrastructure.ProvisioningCheck.NoFallbackPlatformAppsPresent(PlatformCheckDirs()))
             {
                 Console.Error.WriteLine("[provision] platform apps (Application Test Library) still missing after download.");
                 return 2;
