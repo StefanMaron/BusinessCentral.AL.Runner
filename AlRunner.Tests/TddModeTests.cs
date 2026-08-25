@@ -68,9 +68,20 @@ public sealed class TddModeTests : IDisposable
     /// <see cref="WithoutTdd_BehaviorIsByteForByteUnchanged"/>); with --tdd the three
     /// broken [Test] procedures must report FAILED — each naming the specific missing
     /// symbol, not a generic "compile failed" — while the unrelated healthy test in a
-    /// SIBLING object still passes. Covers acceptance criteria 3 (field), 4 (procedure),
-    /// 5 (enum value), 6 (unrelated tests unaffected), 7 (refuse-not-guess: every one of
-    /// these IS the refused case in this build), 9 (exit 1, not 3).
+    /// SIBLING object still passes.
+    ///
+    /// Covers acceptance criteria 6 (unrelated tests unaffected), 7 (refuse-not-guess:
+    /// every one of these IS the refused case in this build — see below), 9 (exit 1,
+    /// not 3). Covers ONLY PART of 3/4/5: a missing field / procedure / enum value each
+    /// produce a failed test naming that specific symbol, which is as far as this build
+    /// goes. It does NOT cover the rest of 3 ("the test... runs and reports failed" —
+    /// under this build the [Test] procedure never executes; the FAILED result is
+    /// synthesized from the compile diagnostic, not from running the method body), nor
+    /// any of 4's "with parameter and return types inferred from the call" (there is no
+    /// type inference anywhere in this build — see TddSupport's doc comment). Criterion
+    /// 8 (the generated-members list) is exercised by this test's own stderr assertion
+    /// below, but the list is always empty here, for the same reason. See issue #2001
+    /// (member generation/inference — the follow-up to #1997) for what closes the gap.
     /// </summary>
     [SkippableFact]
     public void MissingSymbols_ReportAsFailedTestsNamingTheSymbol()
