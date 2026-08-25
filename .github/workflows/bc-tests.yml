@@ -552,8 +552,8 @@ jobs:
           fi
           echo "Packed: ${pkgs[*]}"
 
-      - name: Assert the package doesn't ship BC/Aspose/Graph binaries (issue: nupkg contents)
-        # Guards against a regression of the mechanism fixed by that issue: MSBuild's
+      - name: Assert the package doesn't ship BC/Aspose/Graph binaries
+        # Guards against a regression of the mechanism fixed by issue #2022: MSBuild's
         # default assembly-reference resolution follows Ncl.dll's transitive closure
         # (Aspose.PDF/Words/Cells, Microsoft.Graph, the whole Microsoft.BusinessCentral.*
         # family, …) into the tool package unless Directory.Build.targets'
