@@ -586,15 +586,11 @@ public static partial class BcRuntime
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static void NavDialog_ALOpen(object self, Guid automationId, string message, object[] getters) { }
 
-    // ALSystemString.ALLowercase / ALUppercase — real impls reach NavCurrentThread.Session.Culture
-    // which is null on the skeleton. Fall back to InvariantCulture.
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    public static string ALSystemString_ALLowercase(string value)
-        => string.IsNullOrEmpty(value) ? string.Empty : value.ToLower(System.Globalization.CultureInfo.InvariantCulture);
-
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    public static string ALSystemString_ALUppercase(string value)
-        => string.IsNullOrEmpty(value) ? string.Empty : value.ToUpper(System.Globalization.CultureInfo.InvariantCulture);
+    // ALSystemString_ALLowercase / ALSystemString_ALUppercase used to live here, backing an
+    // orphaned JmpHook registration in BcRuntime.cs (JmpHook disabled by default, so BC's real
+    // ALSystemString.ALLowercase/ALUppercase bodies ran anyway). Deleted along with the
+    // registration — see the comment in BcRuntime.cs's ApplyAllPatches for the empirical
+    // evidence (#1883 follow-up).
 
     // RecordImplementation.GetActiveCompany — touched by NavRecord.CloneRecord.
     // Real impl: Session.Database.CompanyTokens.Get(tableState.CompanyNameToken). Both

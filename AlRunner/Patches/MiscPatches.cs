@@ -29,80 +29,10 @@ public static partial class BcRuntime
         return new System.Threading.Tasks.ValueTask<bool>(false);
     }
 
-    // Cached reflection for skeleton-session error access.
-    private static System.Reflection.PropertyInfo? _pSessGetLastErrorText;
-    private static System.Reflection.PropertyInfo? _pSessGetLastErrorCode;
-    private static System.Reflection.MethodInfo? _mSessGetLastErrorCallstack;
-    private static System.Reflection.MethodInfo? _mSessClearLastError;
-
-    /// <summary>
-    /// Replacement for ALSystemErrorHandling.get_ALGetLastErrorText.
-    /// Real getter goes through NavCurrentThread.Session which is null on the
-    /// skeleton (no thread-local session installed) and NREs. Read directly from
-    /// the skeleton NavSession's `GetLastErrorText` internal property — that
-    /// property is null-safe (returns string.Empty when lastException is null).
-    /// </summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    public static string ALSystemErrorHandling_get_ALGetLastErrorText()
-    {
-        if (_skeletonSession == null) return string.Empty;
-        if (_pSessGetLastErrorText == null)
-            _pSessGetLastErrorText = _skeletonSession.GetType().GetProperty("GetLastErrorText",
-                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-        var v = _pSessGetLastErrorText?.GetValue(_skeletonSession) as string;
-        return v ?? string.Empty;
-    }
-
-    /// <summary>
-    /// Replacement for ALSystemErrorHandling.get_ALGetLastErrorCode. Same shape as
-    /// ALGetLastErrorText — read from skeleton session's internal property.
-    /// </summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    public static string ALSystemErrorHandling_get_ALGetLastErrorCode()
-    {
-        if (_skeletonSession == null) return string.Empty;
-        if (_pSessGetLastErrorCode == null)
-            _pSessGetLastErrorCode = _skeletonSession.GetType().GetProperty("GetLastErrorCode",
-                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-        var v = _pSessGetLastErrorCode?.GetValue(_skeletonSession) as string;
-        return v ?? string.Empty;
-    }
-
-    /// <summary>
-    /// Replacement for ALSystemErrorHandling.get_ALGetLastErrorCallStack.
-    /// </summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    public static string ALSystemErrorHandling_get_ALGetLastErrorCallStack()
-    {
-        // Prefer the AL call stack captured by AlCallStackCapture (FCE-based, accurate frames).
-        var captured = AlRunner.Infrastructure.AlCallStackCapture.GetCaptured();
-        if (!string.IsNullOrEmpty(captured)) return captured;
-
-        // Fallback: try the native NavSession.GetLastErrorCallstack method.
-        if (_skeletonSession == null) return string.Empty;
-        if (_mSessGetLastErrorCallstack == null)
-            _mSessGetLastErrorCallstack = _skeletonSession.GetType().GetMethod("GetLastErrorCallstack",
-                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance,
-                null, new[] { typeof(string) }, null);
-        try
-        {
-            var v = _mSessGetLastErrorCallstack?.Invoke(_skeletonSession, new object[] { "\\" }) as string;
-            return v ?? string.Empty;
-        }
-        catch { return string.Empty; }
-    }
-
-    /// <summary>
-    /// Replacement for ALSystemErrorHandling.ALClearLastError — clears skeleton session.
-    /// </summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    public static void ALSystemErrorHandling_ALClearLastError()
-    {
-        if (_skeletonSession == null) return;
-        if (_mSessClearLastError == null)
-            _mSessClearLastError = _skeletonSession.GetType().GetMethod("ClearLastError",
-                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance,
-                null, Type.EmptyTypes, null);
-        try { _mSessClearLastError?.Invoke(_skeletonSession, null); } catch { }
-    }
+    // ALSystemErrorHandling.get_AL{GetLastErrorText,GetLastErrorCode,GetLastErrorCallStack} and
+    // ALClearLastError replacements (ALSystemErrorHandling_get_ALGetLastErrorText/Code/CallStack,
+    // ALSystemErrorHandling_ALClearLastError) used to live here, backing an orphaned JmpHook
+    // registration in BcRuntime.cs (JmpHook disabled by default, so BC's real bodies ran anyway).
+    // Deleted along with the registration — see the comment in BcRuntime.cs's ApplyAllPatches
+    // for the empirical evidence (#1883 follow-up).
 }

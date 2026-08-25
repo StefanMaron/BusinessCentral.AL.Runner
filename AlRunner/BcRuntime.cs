@@ -1492,26 +1492,20 @@ public static partial class BcRuntime
         // null which is tolerated by the ScopeId getter.
 
         // ALSystemErrorHandling.get_AL{GetLastErrorText,GetLastErrorCode,GetLastErrorCallStack}
-        // and ALClearLastError — real getters chain through NavCurrentThread.Session which is
-        // null on the skeleton thread. Hook to read/clear via the skeleton session directly.
-        var alSysErrType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.ALSystemErrorHandling");
-        if (alSysErrType != null)
-        {
-            void HookAlErrProp(string propName, string replName, string desc)
-            {
-                var p = alSysErrType.GetProperty(propName,
-                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
-                var g = p?.GetGetMethod(true);
-                if (g != null) Hook(g, replName, desc);
-            }
-            HookAlErrProp("ALGetLastErrorText",     nameof(ALSystemErrorHandling_get_ALGetLastErrorText),     "ALSystemErrorHandling.get_ALGetLastErrorText");
-            HookAlErrProp("ALGetLastErrorCode",     nameof(ALSystemErrorHandling_get_ALGetLastErrorCode),     "ALSystemErrorHandling.get_ALGetLastErrorCode");
-            HookAlErrProp("ALGetLastErrorCallStack",nameof(ALSystemErrorHandling_get_ALGetLastErrorCallStack),"ALSystemErrorHandling.get_ALGetLastErrorCallStack");
-            var clearMethod = alSysErrType.GetMethod("ALClearLastError",
-                BindingFlags.Public | BindingFlags.Static, null, Type.EmptyTypes, null);
-            if (clearMethod != null)
-                Hook(clearMethod, nameof(ALSystemErrorHandling_ALClearLastError), "ALSystemErrorHandling.ALClearLastError");
-        }
+        // and ALClearLastError — used to Hook() replacements here on the theory that the real
+        // getters chain through NavCurrentThread.Session, which is null on the skeleton thread
+        // and NREs. That JmpHook.Apply call was an orphan under the default Cecil-only mode
+        // (#1883 follow-up): NavCurrentThread.Session is already wired to _skeletonSession
+        // (see RecordPatches.WireNavCurrentThreadSession), so the claim was stale — the real,
+        // unpatched bodies already resolve through the live skeleton session with no NRE. Proven
+        // by dozens of directly-named corpus assertions passing today with the registration
+        // already inert: error-handling/TestGetLastError.al's
+        // GetLastErrorText_AfterClearLastError_ReturnsEmpty (ClearLastError + GetLastErrorText
+        // round-trip), GetLastErrorCode_WithoutError_ReturnsEmpty,
+        // codeunit/TestCodeunitAlCallStack.al's CallStack_AfterAssertError_ContainsALFrames
+        // (GetLastErrorCallStack), plus record/TestRecordTestField.al's dozens of
+        // GetLastErrorText()-after-TestField-failure assertions. Deleted (MiscPatches'
+        // ALSystemErrorHandling_get_* / _ALClearLastError replacements are now unused too).
 
         // NavIntegerFormatter.FormatWithFormatNumber — used to Hook() a stub here on the theory
         // that the value passed via varargs is sometimes null and the real body NREs on
@@ -2122,40 +2116,16 @@ public static partial class BcRuntime
 
         // BitArrayHelpers.Equals is Cecil-owned (see NclCecilRewrite.cs).
 
-        // NavHttpRequestMessage.get_Target — same shape as NavRecordRef. Construct
-        // SharedNavHttpRequestMessage parented to skeleton container.
-        var navHttpReqType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NavHttpRequestMessage");
-        if (navHttpReqType != null)
-        {
-            var targetGetter = navHttpReqType.GetProperty("Target",
-                BindingFlags.NonPublic | BindingFlags.Instance)?.GetGetMethod(true);
-            if (targetGetter != null)
-                Hook(targetGetter, nameof(NavHttpRequestMessage_get_Target),
-                    "NavHttpRequestMessage.get_Target");
-        }
-
-        // NavHttpResponseMessageBase.get_Target — same shape. Construct SharedNavHttpResponseMessage
-        // parented to skeleton container. Ctor is safe (no HTTP infrastructure call).
-        var navHttpRespType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NavHttpResponseMessageBase");
-        if (navHttpRespType != null)
-        {
-            var targetGetter = navHttpRespType.GetProperty("Target",
-                BindingFlags.NonPublic | BindingFlags.Instance)?.GetGetMethod(true);
-            if (targetGetter != null)
-                Hook(targetGetter, nameof(NavHttpResponseMessageBase_get_Target),
-                    "NavHttpResponseMessageBase.get_Target");
-        }
-
-        // NavHttpClient.get_Target — same Option-C shape. SharedNavHttpClient(ITreeSharedObjectContainer)
-        // is safe (no CreateClient/HTTP infrastructure in that ctor).
-        var navHttpClientType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NavHttpClient");
-        if (navHttpClientType != null)
-        {
-            var targetGetter = navHttpClientType.GetProperty("Target",
-                BindingFlags.NonPublic | BindingFlags.Instance)?.GetGetMethod(true);
-            if (targetGetter != null)
-                Hook(targetGetter, nameof(NavHttpClient_get_Target), "NavHttpClient.get_Target");
-        }
+        // NavHttpRequestMessage.get_Target / NavHttpResponseMessageBase.get_Target /
+        // NavHttpClient.get_Target — used to Hook() these three here (JmpHook), each delegating
+        // to a BcRuntime helper that constructs the Shared* wrapper parented to the skeleton
+        // container. All three are now ALSO Cecil-owned (see NclCecilRewrite.cs — the IL of each
+        // real getter is rewritten to call the exact same BcRuntime helper directly), which is
+        // the mechanism that actually fires under the default Cecil-only mode; these three
+        // Hook(...) call sites were provably redundant dead code (JmpHook.Apply's CecilOwned
+        // check auto-skips them in every configuration, not just the default — #1883 follow-up).
+        // Deleted; the BcRuntime.NavHttp*_get_Target helper methods stay (Cecil calls them by
+        // name via NclCecilRewrite.cs).
 
         // SharedNavHttpClient.CreateFactoryClient() — used to Hook() a "return null" stub here on
         // the theory that it initialises a LazyEx<> that internally calls
@@ -2216,20 +2186,16 @@ public static partial class BcRuntime
             }
         }
 
-        // ALSystemString.ALLowercase / ALUppercase — real impls reach Session.Culture (null
-        // on skeleton). Fall back to InvariantCulture.
-        var alSysStrType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.ALSystemString");
-        if (alSysStrType != null)
-        {
-            var lower = alSysStrType.GetMethod("ALLowercase",
-                BindingFlags.Public | BindingFlags.Static, null, new[] { typeof(string) }, null);
-            if (lower != null)
-                Hook(lower, nameof(ALSystemString_ALLowercase), "ALSystemString.ALLowercase");
-            var upper = alSysStrType.GetMethod("ALUppercase",
-                BindingFlags.Public | BindingFlags.Static, null, new[] { typeof(string) }, null);
-            if (upper != null)
-                Hook(upper, nameof(ALSystemString_ALUppercase), "ALSystemString.ALUppercase");
-        }
+        // ALSystemString.ALLowercase / ALUppercase — used to Hook() InvariantCulture-backed
+        // replacements here on the theory that the real impls reach Session.Culture, which is
+        // null on the skeleton and NREs. That JmpHook.Apply call was an orphan under the default
+        // Cecil-only mode (#1883 follow-up): same stale claim as the ALSystemErrorHandling
+        // cluster above — NavCurrentThread.Session is already wired to _skeletonSession, so the
+        // real, unpatched bodies already resolve without NRE. AL's LowerCase()/UpperCase() are
+        // exercised directly by text/TestTextOperations.al's Text_LowerCase_ConvertsToLower and
+        // Text_UpperCase_ConvertsToUpper (asserting the exact converted string), both passing
+        // today with the registration already inert. Deleted (NavRecordRefPatches'
+        // ALSystemString_AL{Lowercase,Uppercase} replacements are now unused too).
 
         // RecordImplementation.GetActiveCompany is Cecil-owned (see NclCecilRewrite.cs).
 
