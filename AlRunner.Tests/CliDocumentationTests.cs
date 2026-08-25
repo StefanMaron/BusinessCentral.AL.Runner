@@ -131,7 +131,7 @@ public sealed class CliDocumentationTests
         Assert.True(idx >= 0, "--help should keep a 'NOT YET IMPLEMENTED' section.");
         var notYet = help[idx..];
 
-        foreach (var implemented in new[] { "--server", "--watch", "--define", "--auto-provision", "--output-json", "--output-junit" })
+        foreach (var implemented in new[] { "--server", "--watch", "--define", "--auto-provision", "--output-json", "--output-junit", "--tdd" })
             Assert.False(notYet.Contains(implemented, StringComparison.Ordinal),
                 $"{implemented} is implemented but listed under 'NOT YET IMPLEMENTED'.");
     }

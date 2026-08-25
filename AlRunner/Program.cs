@@ -230,6 +230,17 @@ int? testTimeoutSeconds = null;
 // same-bundle in-process reload is now safe because the type finders prefer the current
 // test assembly. Net: ~seconds per save instead of a cold re-run.
 bool watchMode = false;
+// --tdd (issue #1997): local-development-only flag, off by default. Normally a test
+// referencing a not-yet-implemented table field / procedure / enum value is a
+// method-body compile ERROR, which drops the WHOLE app group (BC's ContinueBuildOnError
+// does not cover method bodies — see BcCompiler.Emit's emit-retry-loop comment) and the
+// run reports a compile failure with zero test results, not a failing test. --tdd keeps
+// the recovered sources for the objects that DID compile and turns every [Test]
+// procedure inside an object that could NOT be recovered into a synthetic FAILED
+// TestResult naming the AL diagnostic that broke it — see TddSupport.BuildFailedTests
+// and Program.cs's EMIT-EXCLUDED handling below. Not recommended for CI: it exists so a
+// red-green TDD cycle can start with an honestly red test, not a compile failure.
+bool tddMode = false;
 // --dump-csharp DIR: write the emitted C# (BC Compilation.Emit output, post-BcAssembler
 // polyfill injection) to disk for every bundle compile. Useful for debugging codegen.
 string? dumpCsharpDir = null;
@@ -293,6 +304,7 @@ for (int i = 0; i < args.Length; i++)
     if (args[i] == "--no-cache") { alCacheDir = null; continue; }
     if (args[i] == "--print-cache-key") { printCacheKeyOnly = true; continue; }
     if (args[i] == "--watch") { watchMode = true; continue; }
+    if (args[i] == "--tdd") { tddMode = true; continue; }
     if (args[i] == "--server") { continue; }  // handled above (serverMode); consume so it isn't "unknown"
     if (args[i] == "--verbose") { AlRunner.Log.Verbose = true; continue; }
     if (args[i] == "--show-pass") { showPass = true; continue; }   // no-op (default in v2); kept for v1 back-compat
@@ -362,6 +374,42 @@ if (serverMode && watchMode)
 {
     Console.Error.WriteLine("--server and --watch are mutually exclusive (both stay warm in-process; pick one).");
     return 2;
+}
+// --tdd (issue #1997) only changes the bundled-mode CLI run loop's EMIT-EXCLUDED
+// handling (Program.cs, below). --server has its own, separate EMIT-EXCLUDED guard
+// (a different Emit() call site) that this issue's reduced scope does not touch, and
+// --watch's incremental (RAD) recompile path does not carry per-excluded-object
+// diagnostics through to a synthetic TestResult either. Rejecting both explicitly beats
+// silently ignoring the flag — a --tdd run that quietly behaved like a normal run under
+// --server/--watch would be far more confusing than an upfront error naming the gap.
+if (tddMode && serverMode)
+{
+    Console.Error.WriteLine("--tdd is not supported together with --server yet (local-development flag; --server's EMIT-EXCLUDED handling is a separate code path this hasn't reached). Run --tdd from the CLI directly.");
+    return 2;
+}
+if (tddMode && watchMode)
+{
+    Console.Error.WriteLine("--tdd is not supported together with --watch yet (the incremental/RAD recompile path doesn't carry per-excluded-object diagnostics). Run --tdd without --watch.");
+    return 2;
+}
+// --tdd forces the AL-output cache off (same effect as --no-cache), on top of the
+// tdd:<0|1> cache-key line added above. The line alone stops a --tdd run from ever
+// SERVING a normal-mode DLL or vice versa (criterion 11) — but it does not make a
+// --tdd HIT correct on its own: the synthetic FAILED TestResults for excluded
+// objects are derived fresh from source every Emit() call (TddSupport.BuildFailedTests
+// re-parses the excluded .al files), and nothing about them is baked into the cached
+// DLL. A --tdd cache HIT would skip Emit() entirely and silently drop back to
+// reporting only the objects that DID compile — the exact "tests vanished, run looks
+// green" failure mode this whole issue exists to fix, just moved one level down. Until
+// the excluded-object detail has its own cache sidecar (a --tdd cache HIT is a
+// reasonable follow-up), disabling the cache is what keeps every --tdd run correct.
+if (tddMode && alCacheDir != null)
+{
+    Console.Error.WriteLine(
+        "--tdd disables the AL-output cache for this run — its synthetic FAILED tests " +
+        "for excluded objects are derived fresh from source on every Emit() call and " +
+        "are not part of the cached DLL, so a cache HIT would silently drop them.");
+    alCacheDir = null;
 }
 // ── Positional bundle roots must exist (#1713) ────────────────────────────────
 // Checked HERE — at argument-parse time, before the BC artifact selection, the Cecil
@@ -862,6 +910,7 @@ if (!provisionSubcommand)
 DependencyLoader.EnsureResolverInstalled_Public();
 if (extraPreprocessorSymbols.Count > 0)
     BcCompiler.SetExtraPreprocessorSymbols(extraPreprocessorSymbols.Distinct().ToList());
+BcCompiler.SetTddMode(tddMode);
 if (Environment.GetEnvironmentVariable("AL_RUNNER_DIAG_FCE") is "1" or "2")
 {
     var fceFull = Environment.GetEnvironmentVariable("AL_RUNNER_DIAG_FCE") == "2";
@@ -1601,6 +1650,13 @@ foreach (var bundle in bundles)
             var et = System.Diagnostics.Stopwatch.StartNew();
             IReadOnlyList<EmittedSource> sources = Array.Empty<EmittedSource>();
             IReadOnlyList<string> alDiagnostics = Array.Empty<string>();
+            // --tdd only (issue #1997): count of objects the TDD-EXCLUDED branch below
+            // deliberately kept `sources` short by. The PARTIAL-EMIT-DROP guard further
+            // down flags any declared-vs-emitted gap as a SILENT drop — under --tdd that
+            // gap is not silent (it is exactly the TDD-EXCLUDED objects, already reported
+            // above with a synthetic FAILED test each), so the guard must subtract this
+            // count before deciding there is an unexplained gap left.
+            int tddExcludedCount = 0;
             // Emit-phase timeout: default 120 s, override via AL_RUNNER_EMIT_TIMEOUT_SEC.
             // Note: Task.Run thread continues in background after timeout — acceptable for a CLI tool.
             int emitTimeoutSec = int.TryParse(
@@ -1696,17 +1752,44 @@ foreach (var bundle in bundles)
                     if (emitOutput.ExcludedObjects.Count > 0)
                     {
                         var names = string.Join(", ", emitOutput.ExcludedObjects);
-                        // Untagged on purpose: a `[Component]` prefix would be swallowed by
-                        // Log's filter at default verbosity, which is the original defect.
-                        Console.Error.WriteLine(
-                            $"<bundled>: EMIT-EXCLUDED — {moduleName}: {emitOutput.ExcludedObjects.Count} object(s) " +
-                            $"could not be compiled and were dropped from the module, so any tests they declare " +
-                            $"are MISSING from this run: [{names}]. Re-run with --verbose for the AL diagnostics " +
-                            $"that identified them.");
-                        bundleErrors.Add(
-                            $"<bundled>: EMIT-EXCLUDED for {moduleName}: {emitOutput.ExcludedObjects.Count} " +
-                            $"object(s) dropped from the module — tests they declare are missing: [{names}].");
-                        sources = Array.Empty<EmittedSource>(); // do not run a module that is missing objects
+                        if (tddMode)
+                        {
+                            // --tdd (issue #1997): the default path above (else branch) is
+                            // UNCHANGED — this branch only runs when --tdd was passed. Keep the
+                            // recovered `sources` (BcCompiler's emit-retry loop already dropped
+                            // ONLY the broken objects and recompiled the survivors) instead of
+                            // discarding the whole module, and turn every [Test] procedure the
+                            // excluded objects declared into a synthetic FAILED TestResult naming
+                            // the AL diagnostic that broke it. bundleErrors MUST stay untouched
+                            // here: any entry there forces exit code 3 at the exit-code ladder
+                            // below, and the whole point of --tdd is to report a RED TEST (exit
+                            // 1), not a compile failure.
+                            var synthetic = TddSupport.BuildFailedTests(
+                                emitOutput.TddExcludedDetails ?? Array.Empty<TddExcludedObjectDetail>());
+                            Console.Error.WriteLine(
+                                $"<bundled>: TDD-EXCLUDED — {moduleName}: {emitOutput.ExcludedObjects.Count} " +
+                                $"object(s) could not be compiled: [{names}]. {synthetic.Count} [Test] " +
+                                $"procedure(s) they declare report as FAILED instead of vanishing from the run. " +
+                                $"Re-run with --verbose for the AL diagnostics that identified them.");
+                            bundleTests.AddRange(synthetic);
+                            tddExcludedCount = emitOutput.ExcludedObjects.Count;
+                            // sources stays as BcCompiler returned it (the recovered set) — do
+                            // NOT clear it, unlike the non-tdd branch below.
+                        }
+                        else
+                        {
+                            // Untagged on purpose: a `[Component]` prefix would be swallowed by
+                            // Log's filter at default verbosity, which is the original defect.
+                            Console.Error.WriteLine(
+                                $"<bundled>: EMIT-EXCLUDED — {moduleName}: {emitOutput.ExcludedObjects.Count} object(s) " +
+                                $"could not be compiled and were dropped from the module, so any tests they declare " +
+                                $"are MISSING from this run: [{names}]. Re-run with --verbose for the AL diagnostics " +
+                                $"that identified them.");
+                            bundleErrors.Add(
+                                $"<bundled>: EMIT-EXCLUDED for {moduleName}: {emitOutput.ExcludedObjects.Count} " +
+                                $"object(s) dropped from the module — tests they declare are missing: [{names}].");
+                            sources = Array.Empty<EmittedSource>(); // do not run a module that is missing objects
+                        }
                     }
 
                     // --dump-csharp DIR: write the emitted intermediate C# (BC's
@@ -1764,7 +1847,11 @@ foreach (var bundle in bundles)
                         System.Text.RegularExpressions.RegexOptions.Multiline))
                     .Select(m => m.Groups[2].Value.Trim())
                     .ToList();
-                if (declaredObjects.Count > sources.Count)
+                // #1997: the gap is not silent when it exactly matches tddExcludedCount — the
+                // TDD-EXCLUDED branch above already reported those objects loudly, with a
+                // synthetic FAILED test each. Only a gap BEYOND that is the unexplained,
+                // genuinely silent drop this guard exists to catch.
+                if (declaredObjects.Count > sources.Count + tddExcludedCount)
                 {
                     var emittedNames = sources.Select(s => s.Name).ToList();
                     bundleErrors.Add(
@@ -2387,6 +2474,23 @@ else
     if (printClassification)
         Reporter.PrintFailureClassification(results, Console.Out);
     Reporter.PrintSummary(results, Console.Out);
+}
+if (tddMode)
+{
+    // issue #1997 acceptance criterion 8: print the members --tdd generated this run —
+    // the API the implementing app still has to provide, derived from the tests rather
+    // than written by hand. This build's --tdd deliberately REFUSES to infer a missing
+    // member's type (see TddSupport's doc comment / .claude/rules/loud-failures.md — a
+    // wrong guess compiles and produces a test that is red for the wrong reason), so the
+    // list is always empty for now; the excluded [Test] results above already name every
+    // missing symbol individually. Printed either way so the summary's shape doesn't
+    // silently change once generation ships.
+    var tddOut = outputJson ? Console.Error : Console.Out;
+    tddOut.WriteLine();
+    tddOut.WriteLine(
+        "--tdd: no members were generated this run — every missing symbol was reported " +
+        "as a failed test instead (type inference is not implemented yet; see the FAILED " +
+        "test messages above for each missing symbol).");
 }
 if (outPath != null)
 {
@@ -3742,6 +3846,15 @@ static void PrintHelp(TextWriter w)
     w.WriteLine("                          protocol; all logs go to stderr. Used by the VS Code");
     w.WriteLine("                          extension. Commands: runTests, shutdown (execute: TODO).");
     w.WriteLine("                          See docs/server-mode.md. Mutually exclusive with --watch.");
+    w.WriteLine("  --tdd                   Local-development flag (not for CI). A test referencing a");
+    w.WriteLine("                          table field / procedure / enum value the implementing app");
+    w.WriteLine("                          doesn't have yet normally drops the whole app group with a");
+    w.WriteLine("                          compile failure (exit 3, zero test results). --tdd keeps");
+    w.WriteLine("                          every object that DID compile and reports each [Test]");
+    w.WriteLine("                          procedure in an object that could NOT be recovered as a");
+    w.WriteLine("                          FAILED test naming the missing symbol, so a red-green TDD");
+    w.WriteLine("                          cycle can start with an honestly red test (exit 1). Not");
+    w.WriteLine("                          yet supported together with --watch or --server.");
     w.WriteLine("  --per-suite             Legacy per-Compilation path. Default is bundled mode");
     w.WriteLine("                          (5-7x faster, parity-verified).");
     w.WriteLine("  --bundled               No-op alias for the default bundled mode (deprecated).");
@@ -5572,7 +5685,17 @@ static string ComputeAlCacheKey(
     //        branch, missing NoImplicitWith, stale contextSensitiveHelpUrl) forever, until
     //        something else in the key happened to change. v10 entries never hashed the
     //        manifest at all and must not be served under the new key shape.
-    WriteLine("schema:v11");
+    //    v12 (issue #1997): added a tdd:<0|1> line. --tdd keeps recovered sources for
+    //        objects a normal run drops entirely and can (in a follow-up) inject
+    //        generated members into the in-memory compile — a --tdd assembly and a
+    //        normal-mode assembly for the SAME source bytes are not the same output.
+    //        Without this line a bare run and a --tdd run over identical sources hash
+    //        identically, and whichever compiled first would silently serve the other:
+    //        a normal run reusing a --tdd-generated DLL, or (just as bad) a later --tdd
+    //        run reusing a normal-mode DLL and reporting the excluded tests' vanished
+    //        instead of failed. v11 entries never hashed this and must not be served.
+    WriteLine("schema:v12");
+    WriteLine($"tdd:{(AlRunner.BcCompiler.IsTddMode() ? "1" : "0")}");
 
     // 1. Runner assembly fingerprint (content hash, not mtime — see v10 note above) +
     //    the selected BC version, so any rewriter/polyfill/patch change in the runner,

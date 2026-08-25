@@ -1,0 +1,25 @@
+{
+  "id": "9a2c7e14-5b6d-4f8a-9c1e-3d7f2a8b6c40",
+  "name": "Runner Tests Fixture - Tdd",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Proves --tdd (issue #1997) turns objects excluded for referencing a not-yet-implemented symbol into synthetic FAILED tests instead of a whole-module compile failure.",
+  "description": "Three broken test codeunits (missing procedure, missing table field, missing enum value) plus one unrelated healthy test codeunit, all in the same bundle. Without --tdd this fixture behaves exactly like EmitExclusionLoudnessTests' fixture (exit 3, EMIT-EXCLUDED, zero test results). With --tdd it must exit 1, report each broken [Test] procedure as FAILED naming the missing symbol, and still run the healthy test to PASS.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "platform": "1.0.0.0",
+  "application": "1.0.0.0",
+  "idRanges": [
+    {
+      "from": 65000,
+      "to": 65099
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}

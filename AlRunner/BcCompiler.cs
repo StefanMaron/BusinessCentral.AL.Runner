@@ -50,10 +50,34 @@ public sealed record EmittedSource(string Name, string Code);
 /// silently cost 7 tests (1904 -> 1897) with no output at any verbosity below --verbose.
 /// The caller MUST treat this as a hard failure (.claude/rules/loud-failures.md).
 /// </param>
+/// <summary>
+/// Per-excluded-object detail captured DURING the emit-retry loop (issue #1997 —
+/// <c>--tdd</c>), before the retry loop's compilation/emitResult variables get
+/// reassigned to the next round's smaller retry compile and the diagnostics that
+/// identified this object become unreachable. Only populated when
+/// <see cref="BcCompiler.SetTddMode"/> is on — see that method's doc comment for why.
+/// </summary>
+/// <param name="FilePath">
+/// The excluded object's own source file — NOT a temp copy (precompiled-dll-respect.md
+/// / this issue's "do not compile from a temp-directory copy" note applies equally to
+/// this path: it is what makes a --tdd synthetic failure's message point at a real,
+/// clickable file).
+/// </param>
+/// <param name="ObjectDisplayName">Matches the corresponding entry in <c>ExcludedObjects</c>.</param>
+/// <param name="Diagnostics">
+/// The AL diagnostics (alc-style: <c>path(line,col): error ALXXXX: message</c>) that
+/// caused THIS object specifically to be excluded — not the whole module's diagnostics.
+/// </param>
+public sealed record TddExcludedObjectDetail(
+    string FilePath,
+    string ObjectDisplayName,
+    IReadOnlyList<string> Diagnostics);
+
 public sealed record BcEmitOutput(
     IReadOnlyList<EmittedSource> Sources,
     IReadOnlyList<string> Diagnostics,
-    IReadOnlyList<string> ExcludedObjects);
+    IReadOnlyList<string> ExcludedObjects,
+    IReadOnlyList<TddExcludedObjectDetail>? TddExcludedDetails = null);
 
 public sealed partial class BcCompiler
 {
@@ -227,6 +251,34 @@ public sealed partial class BcCompiler
             lock (_refSync) { _resolvedDeps = _saved; _refSpecs = null; }
         }
     }
+    // --tdd (issue #1997): off by default. When on, the emit-retry loop in Emit()
+    // additionally captures per-excluded-object TddExcludedObjectDetail (file path +
+    // the diagnostics that identified it) into the returned BcEmitOutput, so the
+    // caller (Program.cs) can turn each excluded object's [Test] procedures into
+    // synthetic FAILED TestResults instead of discarding the whole module — see
+    // Program.cs's EMIT-EXCLUDED handling. Gated behind this flag (rather than always
+    // capturing) so the default (non-tdd) path is PROVABLY unchanged: no extra
+    // allocation, no extra diagnostic formatting work, on every ordinary run.
+    private static bool _tddMode;
+
+    /// <summary>
+    /// Sets whether the emit-retry loop should capture <see cref="TddExcludedObjectDetail"/>
+    /// for excluded objects. Follows the same static-setter pattern as
+    /// <see cref="SetExtraPreprocessorSymbols"/> — compile-affecting CLI options are pushed
+    /// into BcCompiler this way because there are four Emit call sites in Program.cs and no
+    /// single place to thread a parameter through all of them.
+    /// </summary>
+    public static void SetTddMode(bool enabled)
+    {
+        lock (_refSync) { _tddMode = enabled; }
+    }
+
+    /// <summary>True when a --tdd run is in progress. Read-only mirror of <see cref="SetTddMode"/>.</summary>
+    public static bool IsTddMode()
+    {
+        lock (_refSync) { return _tddMode; }
+    }
+
     // Extra preprocessor symbols supplied by the caller via --define / --preprocessor-symbols.
     // Merged with the built-in CLEANSCHEMA1..25 set at both ParseOptions sites.
     private static IReadOnlyList<string>? _extraPreprocessorSymbols;
@@ -1519,6 +1571,15 @@ public sealed partial class BcCompiler
         // a stderr line alone does not do that (Log's [Component] filter eats it, and
         // nothing counts it).
         var excludedObjects = new List<string>();
+        // --tdd only (issue #1997): file path + the diagnostics that identified each
+        // excluded object, captured HERE — inside the round that identifies it — because
+        // `emitResult`/`caught` get reassigned to the next (smaller) retry compile's
+        // result at the bottom of this loop, at which point the diagnostics that named
+        // an EARLIER round's excluded object are no longer reachable from any variable
+        // in scope. Left null (not merely empty) when not in --tdd mode, so the emitted
+        // BcEmitOutput.TddExcludedDetails is null on the default path exactly as before
+        // this issue — no behavioural difference for a non-tdd caller.
+        var tddDetails = _tddMode ? new List<TddExcludedObjectDetail>() : null;
         {
             const int maxRounds = 10;
             // Indices are always relative to the ORIGINAL alFiles/trees arrays (captured once,
@@ -1557,7 +1618,17 @@ public sealed partial class BcCompiler
                         catch { nextKeepIdx.Add(i); continue; }
                         var hit = failing.FirstOrDefault(f => DeclaresObject(src, f.Type, f.Namespace, f.Name));
                         if (hit.Name != null)
-                            roundExcluded.Add($"{hit.Type} {hit.Namespace}.\"{hit.Name}\"");
+                        {
+                            var label = $"{hit.Type} {hit.Namespace}.\"{hit.Name}\"";
+                            roundExcluded.Add(label);
+                            // No structured Location for an emitter-crash exclusion — only the
+                            // exception's own message names it. Still useful for a --tdd
+                            // synthetic failure: it says WHICH object and WHY, even without a
+                            // path@line:col anchor.
+                            tddDetails?.Add(new TddExcludedObjectDetail(
+                                alFiles[i], label,
+                                new[] { $"emit-crash: {label} — {caught.Message.Split('\n', 2)[0]}" }));
+                        }
                         else
                             nextKeepIdx.Add(i);
                     }
@@ -1581,7 +1652,20 @@ public sealed partial class BcCompiler
                     foreach (var i in keepIdx)
                     {
                         if (badTrees.Contains(originalTrees[i]))
-                            roundExcluded.Add(Path.GetFileNameWithoutExtension(alFiles[i]));
+                        {
+                            var label = Path.GetFileNameWithoutExtension(alFiles[i]);
+                            roundExcluded.Add(label);
+                            if (tddDetails != null)
+                            {
+                                var objDiags = emitResult.Diagnostics
+                                    .Where(d => d.Severity == NavDiag.DiagnosticSeverity.Error
+                                        && d.Location.IsInSource
+                                        && d.Location.SourceTree == originalTrees[i])
+                                    .Select(d => $"{d.Location}: error {d.Id}: {d.GetMessage().Split('\n', 2)[0]}")
+                                    .ToList();
+                                tddDetails.Add(new TddExcludedObjectDetail(alFiles[i], label, objDiags));
+                            }
+                        }
                         else
                             nextKeepIdx.Add(i);
                     }
@@ -1792,7 +1876,7 @@ public sealed partial class BcCompiler
             }
         }
 
-        var emitOutput = new BcEmitOutput(outputter.Captured, alDiags, excludedObjects);
+        var emitOutput = new BcEmitOutput(outputter.Captured, alDiags, excludedObjects, tddDetails);
 
         // #1902: only a CLEAN success (nothing excluded, every source captured) is trustworthy
         // as a RAD baseline — a module that only compiled after dropping broken objects must
