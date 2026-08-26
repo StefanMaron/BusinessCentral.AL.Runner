@@ -86,6 +86,28 @@ public sealed class StartupOutputReexecDedupTests
     {
         TestArtifacts.SkipIfMissing();
 
+        // Issue #2061: this test and its sibling ShadowDoneEnvVarForced_... share mutable
+        // state — Microsoft.Dynamics.Nav.Ncl.dll in the runner's build output directory.
+        // The sibling deliberately writes it there and cleans up afterwards (see its
+        // finally block); if that cleanup ever failed silently, this test's warmup spawn
+        // below would observe NclShadowRuntime.NeedsShadow == false for that directory,
+        // never re-exec into a shadow dir, and fail 15+ lines later inside
+        // ExtractShadowDir with a message about a missing marker line — a symptom that
+        // reads like a parsing bug when the real cause is a violated precondition here.
+        // Assert the precondition directly, the same way the sibling already asserts its
+        // own precondition before running.
+        var originalNcl = Path.Combine(
+            ProjectPath, "bin", TestBuildConfig.Configuration, TestBuildConfig.Framework,
+            "Microsoft.Dynamics.Nav.Ncl.dll");
+        Assert.False(File.Exists(originalNcl),
+            $"precondition violated: {originalNcl} already exists in the runner's build " +
+            "output directory. NclShadowRuntime.NeedsShadow would be false for it, so the " +
+            "warmup spawn below would never re-exec into a shadow dir, and this test would " +
+            "silently stop exercising the scenario it claims to (its assertions would then " +
+            "fail much later, on an unrelated line, looking like a parsing bug instead of " +
+            "what it actually is). This is usually ShadowDoneEnvVarForced_... failing to " +
+            "clean up after itself — see issue #2061.");
+
         // Discover the shadow dir path from a REAL subprocess's own [Cecil] "Building/
         // Reusing Ncl shadow runtime dir at ..." line (verbose only for this discovery
         // spawn) rather than calling NclShadowRuntime.EnsureShadowDir in-process: this
@@ -182,8 +204,130 @@ public sealed class StartupOutputReexecDedupTests
             // effect of this scenario (see the doc comment above) — clean it up so it
             // cannot contaminate any other test in this assembly that inspects
             // NclShadowRuntime.NeedsShadow against that same directory.
-            try { File.Delete(originalNcl); } catch { /* best effort */ }
+            //
+            // Issue #2061: this used to be `try { File.Delete(originalNcl); } catch
+            // { /* best effort */ }`. A CI run (release 33006272355, BC 27.5 leg) showed
+            // this delete plausibly failing — the same job's teardown logged a lingering
+            // orphan `dotnet` process, exactly the kind of process that can hold the file
+            // open — and a swallowed failure here left Ncl.dll behind for
+            // NoReexecRun_StartupTrioUnchanged to trip over 60+ lines away, in a different
+            // test, with no indication the real cause was this cleanup. A test that cannot
+            // restore file-system state it mutated has failed, even though its own
+            // assertions above passed — so this is no longer best-effort.
+            DeleteOrFail(originalNcl);
         }
+    }
+
+    /// <summary>
+    /// Issue #2061, acceptance #2: a cleanup that genuinely cannot delete its file must
+    /// fail the test loudly, naming the file and the underlying exception — not swallow
+    /// the failure the way the old `catch { /* best effort */ }` did. Simulates an
+    /// undeletable file the same way a real dev box would produce one deterministically
+    /// (a directory the current user cannot write to — deleting a file requires write
+    /// permission on its CONTAINING directory, not the file itself, so this blocks
+    /// File.Delete regardless of the file's own permissions) rather than relying on a
+    /// same-process file lock, which .NET's own doc admits does not reliably block a
+    /// delete on non-Windows platforms including the ubuntu-latest CI runner this suite
+    /// targets.
+    /// </summary>
+    [Fact]
+    public void DeleteOrFail_UndeletableFile_FailsLoudlyNamingFileAndException()
+    {
+        var dir = Directory.CreateTempSubdirectory("al-runner-deleteorfail-").FullName;
+        var file = Path.Combine(dir, "Microsoft.Dynamics.Nav.Ncl.dll");
+        File.WriteAllText(file, "not a real dll — just needs to exist");
+        try
+        {
+            RunChmod("a-w", dir); // remove write permission on the DIRECTORY
+
+            var thrown = Assert.ThrowsAny<Exception>(() => DeleteOrFail(file));
+
+            // Both the exact file path and *something* naming the underlying cause must
+            // be in the failure — a message like "cleanup failed" alone would still pass
+            // a version of this test that hardcoded a generic string, so pin the actual
+            // exception type name too (UnauthorizedAccessException on Linux for a
+            // read-only-directory delete).
+            Assert.Contains(file, thrown.Message);
+            Assert.Contains("UnauthorizedAccessException", thrown.Message);
+            // The file must still exist — DeleteOrFail must not have silently swallowed
+            // the failure and let the caller believe cleanup succeeded.
+            Assert.True(File.Exists(file), "DeleteOrFail must leave the undeletable file in place, not pretend it was removed");
+        }
+        finally
+        {
+            RunChmod("u+w", dir);
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// Negative-of-the-negative: once the file CAN be deleted, DeleteOrFail must actually
+    /// delete it and return normally rather than always failing loudly regardless of
+    /// outcome (which would trivially "pass" the test above for the wrong reason).
+    /// </summary>
+    [Fact]
+    public void DeleteOrFail_DeletableFile_DeletesAndReturns()
+    {
+        var dir = Directory.CreateTempSubdirectory("al-runner-deleteorfail-ok-").FullName;
+        var file = Path.Combine(dir, "Microsoft.Dynamics.Nav.Ncl.dll");
+        File.WriteAllText(file, "not a real dll — just needs to exist");
+        try
+        {
+            DeleteOrFail(file);
+            Assert.False(File.Exists(file), "DeleteOrFail should have deleted a genuinely deletable file");
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    private static void RunChmod(string mode, string path)
+    {
+        using var p = Process.Start(new ProcessStartInfo("chmod", $"{mode} \"{path}\"")
+        {
+            UseShellExecute = false,
+        })!;
+        p.WaitForExit();
+        Assert.Equal(0, p.ExitCode);
+    }
+
+    /// <summary>
+    /// Deletes <paramref name="path"/>, retrying briefly to absorb a transient lock (e.g.
+    /// a not-yet-terminated child process still holding the file — see the CI evidence
+    /// cited at the call site in <see
+    /// cref="ShadowDoneEnvVarForced_NoFurtherReexecFollows_StartupTrioStillPrintsOnce"/>).
+    /// If it still cannot be deleted after retrying, this fails the CALLING test loudly,
+    /// naming the file and the underlying exception, rather than swallowing the failure:
+    /// a test that cannot restore file-system state it mutated has failed, because every
+    /// other test in this class that depends on that state's absence is now unreliable
+    /// (issue #2061).
+    /// </summary>
+    private static void DeleteOrFail(string path)
+    {
+        const int maxAttempts = 5;
+        Exception? last = null;
+        for (var attempt = 0; attempt < maxAttempts; attempt++)
+        {
+            try
+            {
+                if (!File.Exists(path)) return;
+                File.Delete(path);
+                if (!File.Exists(path)) return;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                last = ex;
+            }
+            Thread.Sleep(100);
+        }
+
+        Assert.Fail(
+            $"cleanup failed: could not delete {path} after {maxAttempts} attempts. This " +
+            "file is shared mutable state with sibling tests in this class " +
+            "(NclShadowRuntime.NeedsShadow checks for its presence), so leaving it behind " +
+            $"corrupts every later test that depends on it being absent. Underlying " +
+            $"exception: {last}");
     }
 
     /// <summary>Extracts the path from Program's own `[Cecil] Building/Reusing Ncl
