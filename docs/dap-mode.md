@@ -69,9 +69,15 @@ lifecycle:
    subsequent `StmtHit` that "qualifies" for the command sent, and the
    `stopped` event's `reason` is `"step"` rather than `"breakpoint"`. See
    `AlRunner/Infrastructure/AlDapSession.cs`'s file header for exactly what
-   "qualifies" means for each (it is defined purely in terms of
-   `NavMethodScope.StackDepth`, so it is correct through recursion too, not
-   just simple nested calls).
+   "qualifies" means for each. The depth signal is a manual walk of
+   `NavMethodScope.ParentScope` (the same chain `AlDapStackWalker` already
+   walks to build stack frames), NOT the scope's own (internal) `StackDepth`
+   property — measured directly: a local procedure call within the same
+   codeunit gets its own `NavMethodScope` (a genuinely nested frame) but
+   `StackDepth` on it comes back identical to its caller's, so a StackDepth-
+   based check could not tell "entered a nested call" apart from "next
+   statement, same scope" for exactly the case this feature needs to get
+   right. The `ParentScope` walk is correct through recursion too.
 8. `disconnect` / `terminate` — releases any paused thread (never leaves it
    stuck) and ends the session.
 
