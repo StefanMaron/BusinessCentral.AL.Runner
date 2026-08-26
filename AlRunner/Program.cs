@@ -4484,6 +4484,7 @@ static void PrintGuide(TextWriter w)
     w.WriteLine("  docs/limitations.md          the real architectural limits");
     w.WriteLine("  docs/scope.md                in-scope vs out-of-scope-by-design surfaces");
     w.WriteLine("  docs/server-mode.md          the --server JSON-RPC protocol");
+    w.WriteLine("  docs/dap-mode.md             the --dap Debug Adapter Protocol server");
     w.WriteLine("  docs/subsystems.md           subsystem map");
 }
 
@@ -4575,6 +4576,14 @@ static void PrintHelp(TextWriter w)
     w.WriteLine("                          protocol; all logs go to stderr. Used by the VS Code");
     w.WriteLine("                          extension. Commands: runTests, shutdown (execute: TODO).");
     w.WriteLine("                          See docs/server-mode.md. Mutually exclusive with --watch.");
+    w.WriteLine("  --dap [PORT]            Debug Adapter Protocol server (default port 4711):");
+    w.WriteLine("                          set AL breakpoints, pause execution, inspect locals over a");
+    w.WriteLine("                          real DAP TCP connection. Requires exactly one bundle path.");
+    w.WriteLine("                          Compiles on `launch`, pauses AL execution at StmtHit for");
+    w.WriteLine("                          any breakpointed statement once `configurationDone` starts");
+    w.WriteLine("                          the run. next/stepIn/stepOut currently behave like");
+    w.WriteLine("                          continue (real step granularity is follow-up work).");
+    w.WriteLine("                          See docs/dap-mode.md. Mutually exclusive with --server.");
     w.WriteLine("  --tdd                   Local-development flag (not for CI). A test referencing a");
     w.WriteLine("                          table field / procedure / enum value the implementing app");
     w.WriteLine("                          doesn't have yet normally drops the whole app group with a");

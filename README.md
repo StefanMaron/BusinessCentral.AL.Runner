@@ -143,6 +143,14 @@ al-runner --server [--package-cache PATH ...] [--cache DIR]
 
 A long-running JSON-RPC daemon over stdin/stdout. Dependencies and BC patches load once; each `runTests` request re-emits the bundle warm and runs it in-process (~19s→~4s). stdout carries only the newline-delimited JSON protocol; logs go to stderr. The VS Code extension uses this. Full protocol + the same-bundle reload contract: [docs/server-mode.md](docs/server-mode.md).
 
+### Debug adapter mode (breakpoints)
+
+```bash
+al-runner --dap [PORT] <bundle-dir>
+```
+
+A real Debug Adapter Protocol server (default port 4711) over a TCP socket: set AL breakpoints, pause execution, inspect locals. No new AL→source mapping — it reuses BC's own `StmtHit`/`[SourceSpans]` instrumentation, the same mechanism `--coverage` and `--capture-values` already consume. Full protocol + current limitations (no real step granularity yet, no VS Code launch configuration in this repo): [docs/dap-mode.md](docs/dap-mode.md).
+
 ### Precompile a single `.app` to a DLL
 
 ```bash
@@ -174,6 +182,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md#dev-loop) for provisioning them as a separ
 | `--isolation codeunit\|test\|disabled` | Test isolation mode. Default `codeunit`. |
 | `--watch` | Stay resident with warm dependencies; on every `.al` change reset + re-emit + run **in-process** (~seconds/save). Debounces on quiescence (default 250ms of no further `.al` event, capped at 10s) so a bulk multi-file rewrite — a branch switch, a rebase, a formatter run — settles before a cycle starts, instead of firing mid-checkout. Tune with `AL_RUNNER_WATCH_QUIET_MS` / `AL_RUNNER_WATCH_MAX_WAIT_MS`. |
 | `--server` | Long-running JSON-RPC daemon over stdin/stdout (warm deps → ~19s→~4s/run). See [docs/server-mode.md](docs/server-mode.md). |
+| `--dap [PORT]` | Debug Adapter Protocol server (default port 4711): set AL breakpoints, pause execution, inspect locals. Requires exactly one bundle path. See [docs/dap-mode.md](docs/dap-mode.md). |
 | `--per-suite` | Legacy per-suite compile mode (diagnostic). Default is bundled-per-bucket. |
 | `--bundled` | No-op alias for backwards compatibility. |
 | `--verbose` | Show internal `[Component]` diagnostic logs. Equivalent to `AL_RUNNER_VERBOSE=1`. |
