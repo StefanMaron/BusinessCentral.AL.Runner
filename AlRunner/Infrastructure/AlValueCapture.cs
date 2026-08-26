@@ -1,5 +1,8 @@
 // AlValueCapture — the runtime side of --capture-values (issue #1640, second slice of
-// the #1640 umbrella; --coverage was the first, #1922). Snapshots the AL locals of the
+// the #1640 umbrella; --coverage was the first, #1922). The NavName reflection lookup
+// and the wire-value conversion below are shared with --dap's live variable inspection
+// (issue #1642) via AlNavNameReflection / AlValueWireFormat — see those files.
+// Snapshots the AL locals of the
 // TOP-LEVEL AL call (the codeunit trigger the runner invokes directly — server `execute`'s
 // OnRun today) at the moment the scope is about to be disposed, via a Cecil-rewrite hook on
 // Microsoft.Dynamics.Nav.Ncl.dll's NavMethodScope.Exit() — see NclCecilRewrite's Exit block.
@@ -71,24 +74,6 @@ public static class AlValueCapture
     public static IReadOnlyList<AlCapturedValue> Collect() =>
         _snapshot ?? (IReadOnlyList<AlCapturedValue>)Array.Empty<AlCapturedValue>();
 
-    private static Type? _tNavNameAttr;
-    private static PropertyInfo? _piNavNameName;
-    private static bool _reflInit;
-
-    private static void EnsureReflInit()
-    {
-        if (_reflInit) return;
-        // NavNameAttribute lives alongside NavMethodScope in Ncl.dll.
-        var nclAsm = typeof(NavMethodScope).Assembly;
-        _tNavNameAttr = nclAsm.GetType("Microsoft.Dynamics.Nav.Runtime.NavNameAttribute")
-            ?? throw new InvalidOperationException(
-                "[capture-values] Microsoft.Dynamics.Nav.Runtime.NavNameAttribute not found in Ncl.dll — BC changed shape, do not ship silently");
-        _piNavNameName = _tNavNameAttr.GetProperty("Name", BindingFlags.Public | BindingFlags.Instance)
-            ?? throw new InvalidOperationException(
-                "[capture-values] NavNameAttribute.Name not found — BC changed shape, do not ship silently");
-        _reflInit = true;
-    }
-
     /// <summary>
     /// Hook target for the Cecil-rewritten NavMethodScope.Exit() — public static, exactly
     /// (NavMethodScope), prepended before Exit()'s own body (see the file header for why
@@ -104,7 +89,7 @@ public static class AlValueCapture
         // directly by the runner, i.e. server `execute`'s OnRun today.
         if (!scope.IsTopLevelCall) return;
 
-        EnsureReflInit();
+        AlNavNameReflection.EnsureInit();
         var scopeName = scope.ScopeName ?? "?";
         // Read BEFORE Exit()'s own body runs, so this is the real last-executed statement
         // index, not the int.MaxValue sentinel Exit() is about to write.
@@ -112,34 +97,13 @@ public static class AlValueCapture
         var values = new List<AlCapturedValue>();
         foreach (var f in scope.GetType().GetFields(BindingFlags.Public | BindingFlags.Instance))
         {
-            if (Attribute.GetCustomAttribute(f, _tNavNameAttr!) is not object navNameAttr) continue;
-            var name = _piNavNameName!.GetValue(navNameAttr) as string ?? f.Name;
+            var name = AlNavNameReflection.GetAlName(f);
+            if (name == null) continue;
             object? raw;
             try { raw = f.GetValue(scope); }
             catch { continue; } // a field that can't be read is skipped, never faked
-            values.Add(new AlCapturedValue(scopeName, name, ToWireValue(raw), statementId));
+            values.Add(new AlCapturedValue(scopeName, name, AlValueWireFormat.ToWireValue(raw), statementId));
         }
         _snapshot = values;
-    }
-
-    // JSON-serializable representation of a captured field's runtime value. CLR
-    // primitives (AL Integer/Boolean/BigInteger/... map straight to these — confirmed via
-    // DUMP_CS=1 on a probe fixture) pass through as-is so System.Text.Json emits a real
-    // JSON number/bool/string. Everything else is a BC value-type wrapper (NavText,
-    // NavCode, NavDate, Decimal18, NavOption, record handles, ...) — those are precompiled
-    // BC types we must not reimplement (.claude/rules/precompiled-dll-respect.md), so we
-    // take their own ToString() rather than guessing a bespoke encoding per type.
-    private static object? ToWireValue(object? raw)
-    {
-        if (raw == null) return null;
-        switch (raw)
-        {
-            case bool or byte or sbyte or short or ushort or int or uint or long or ulong
-                 or float or double or decimal or string:
-                return raw;
-            default:
-                try { return raw.ToString(); }
-                catch { return null; } // ToString() itself must never crash a capture
-        }
     }
 }

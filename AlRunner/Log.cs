@@ -40,8 +40,15 @@ public static class Log
     // same way BC-version selection is; the ~280 other `[Cecil]`-tagged per-method
     // rewrite diagnostics in NclCecilRewrite.cs are NOT retagged and stay suppressed —
     // that volume of internal detail is exactly what this filter exists to hide.
+    //
+    // `[dap]` was added for #1642: --dap's "listening on 127.0.0.1:<port>" line is the
+    // ONLY signal a DAP client (or a human at a terminal) has that the runner is ready
+    // to accept a connection — the exact same "readiness, not diagnostic" class as
+    // `[bc]`/`[reexec]` above. Caught by DapClient's own test harness timing out waiting
+    // for a line that was actually printed, just silently dropped before reaching
+    // stdout — the same failure shape the `[bc]` comment above describes.
     private static readonly Regex ComponentTag =
-        new(@"^\[(?!(?:layered|watch|provision|bc|dep|expectations|reexec)\])[A-Za-z][A-Za-z0-9._+]*\]",
+        new(@"^\[(?!(?:layered|watch|provision|bc|dep|expectations|reexec|dap)\])[A-Za-z][A-Za-z0-9._+]*\]",
             RegexOptions.Compiled);
 
     public static void Install()

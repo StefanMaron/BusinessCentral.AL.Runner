@@ -109,6 +109,27 @@ if (serverMode)
     Console.SetOut(Console.Error);
 }
 
+// ── --dap [port]: Debug Adapter Protocol server (issue #1642) — restores v1's AL
+// breakpoint debugging. Unlike --server, this speaks the DAP wire format (Content-
+// Length-framed JSON, see AlRunner/Infrastructure/DapTransport.cs) over a real TCP
+// socket, not stdin/stdout — that IS the DAP transport every DAP client (including
+// VS Code's built-in debug UI) expects, so there is no protocol reason to redirect
+// Console here the way --server does. Port defaults to 4711 (v1's default,
+// docs/archive/dap.md), overridable via a numeric argument right after --dap.
+bool dapMode = args.Contains("--dap");
+int dapPort = 4711;
+if (dapMode)
+{
+    var dapFlagIndex = Array.IndexOf(args, "--dap");
+    if (dapFlagIndex >= 0 && dapFlagIndex + 1 < args.Length && int.TryParse(args[dapFlagIndex + 1], out var parsedDapPort))
+        dapPort = parsedDapPort;
+}
+if (serverMode && dapMode)
+{
+    Console.Error.WriteLine("--server and --dap are mutually exclusive (both are long-running session modes; pick one).");
+    return 2;
+}
+
 // Output filters must be installed BEFORE any other code prints to Console.
 // Reads AL_RUNNER_VERBOSE env var by default; --verbose flag overrides below.
 AlRunner.Log.Install();
@@ -319,6 +340,11 @@ for (int i = 0; i < args.Length; i++)
     if (args[i] == "--watch") { watchMode = true; continue; }
     if (args[i] == "--tdd") { tddMode = true; continue; }
     if (args[i] == "--server") { continue; }  // handled above (serverMode); consume so it isn't "unknown"
+    if (args[i] == "--dap")  // handled above (dapMode/dapPort); consume the flag and an optional numeric port
+    {
+        if (i + 1 < args.Length && int.TryParse(args[i + 1], out _)) i++;
+        continue;
+    }
     if (args[i] == "--verbose") { AlRunner.Log.Verbose = true; continue; }
     if (args[i] == "--show-pass") { showPass = true; continue; }   // no-op (default in v2); kept for v1 back-compat
     if (args[i] == "--failures-only" || args[i] == "--quiet") { showPass = false; continue; }
@@ -1292,6 +1318,22 @@ var compilerPackageDirs = packageCacheDirs
 // same-identity bundle is picked up. Never returns to the bundle loop below.
 if (serverMode)
     return RunServerLoop(serverStdin!, serverStdout!);
+
+// ── --dap: start a Debug Adapter Protocol session and stay resident until the
+// client disconnects or the debuggee run finishes (issue #1642). Never returns to
+// the bundle loop below — same "stay resident" shape as --server above, minus the
+// warm-reload contract (a debug session runs the bundle exactly once).
+if (dapMode)
+{
+    if (bundles.Count != 1)
+    {
+        Console.Error.WriteLine(
+            $"--dap currently supports exactly one bundle path (got {bundles.Count}) — " +
+            "multi-bundle debugging is tracked as follow-up work, see issue #1642's PR.");
+        return 2;
+    }
+    return RunDapLoop(dapPort, bundles[0]);
+}
 
 // Watch loop: normal mode runs exactly one pass then breaks to the summary below.
 // Watch mode loops forever — each pass re-emits (warm) and re-runs in-process.
@@ -2844,6 +2886,731 @@ if (coverageEnabled)
 // Exit non-zero if anything failed — the default since the v2 cut, matching main/v1.
 // --no-strict-exit restores the old always-0 behaviour for JSON-only consumers.
 return strictExitCode ? computedExitCode : 0;
+    // Runs every bundle in sourcePaths in order and returns one ServerRunResult per
+    // bundle. Restores v1's "honour every sourcePaths entry" behaviour (v1 fed them
+    // all into a single compile; v2 keeps one bundle = one compile, so it runs each
+    // sequentially instead — the same shape the CLI already uses for multiple
+    // <bundle-dir> arguments). See #1658: honouring only sourcePaths[0] silently
+    // dropped the rest, returning a green empty result for an app + separate
+    // test-app request.
+    //
+    // When more than one path is given, first wire any inter-bundle dependency (the
+    // app + test-app shape --guide recommends) the same way the CLI does before its
+    // per-bundle loop: compile whichever bundle a sibling bundle depends on into a
+    // package cache the sibling can resolve against.
+    //
+    // `cancellationToken` (default: none, for the `execute` caller which has no
+    // active-run CTS) is checked BETWEEN bundles: a `cancel` landing while bundle 1
+    // of a multi-bundle runTests request is still running must stop bundle 2 from
+    // ever starting, not just stop mid-bundle-1 (that half is TestExecutor.Run's job).
+    List<ServerRunResult> RunAllBundlesForServer(string[] sourcePaths, string[]? requestPackagePaths,
+        Func<Assembly, IReadOnlyList<TestResult>> runStep,
+        System.Threading.CancellationToken cancellationToken = default)
+    {
+        // Drop the previous REQUEST's bundle-derived caches so a reloaded same-named
+        // bundle resolves the freshly-emitted Record/Codeunit types and starts with
+        // empty in-memory tables. Once per request, NOT per bundle: the CLI bucket
+        // loop never resets between bundles, so AddSourceDir accumulates across an
+        // app + test-app pair — resetting per bundle wiped the app bundle's parsed
+        // table schemas before the test bundle ran, and every Record op on an
+        // app-defined table died with "no NCLMetaTable for table N (AL source not
+        // parsed)" while the identical CLI invocation passed.
+        BcRuntime.ResetForNewBundleReload();
+
+        if (sourcePaths.Length > 1)
+        {
+            var bundleList = sourcePaths.ToList();
+            var workspaceScratch = new List<string>();
+            try
+            {
+                packageCacheDirs = RunLayeredPrePass(bundleList, packageCacheDirs, workspaceScratch);
+                packageCacheDirs = BuildSiblingSourceDeps(bundleList, packageCacheDirs, workspaceScratch);
+            }
+            catch (Exception ex)
+            {
+                // Loud per-bundle failure below (dep resolution during the per-bundle
+                // compile) already covers the "can't resolve" case; a failure in the
+                // wiring pre-pass itself must not silently fall back to unwired compiles.
+                return new List<ServerRunResult>
+                {
+                    ServerRunResult.Failure(3, "<inter-bundle-deps>", $"LAYERED-PREPASS-FAIL: {ex.Message}", new())
+                };
+            }
+        }
+
+        var results = new List<ServerRunResult>(sourcePaths.Length);
+        // #1888: open/close a phase-log bundle+app row per request bundle, mirroring
+        // the CLI loop's BeginBundle/EndBundle. Before this the server path never
+        // called into PhaseLog at all, so a --server process produced ZERO bundle/app
+        // rows regardless of whether it exited cleanly — the Stage()/AppStage() marks
+        // sprinkled through DependencyLoader/TestExecutor were silently no-ops the
+        // whole time (AddStageTo/AddApp bail out when _bundle/_app is null). Unlike
+        // the once-per-process row (written only from PhaseLog's ProcessExit hook,
+        // see WriteProcessRecord), EndBundle appends its row IMMEDIATELY on return —
+        // so as long as a request's bundle finishes before the process is later
+        // killed (true for every server test: CliServer.DisposeAsync always Kill()s
+        // AFTER the runTests round trip completes), this row survives the kill even
+        // though the process-level row still does not. bundle_index restarts at 1 per
+        // REQUEST (not per process lifetime) — server sessions have no single
+        // "argument order" the way a CLI invocation does, and nothing downstream reads
+        // it across requests.
+        var bundleIndex = 0;
+        foreach (var bundleDir in sourcePaths)
+        {
+            if (cancellationToken.IsCancellationRequested) break;
+            bundleIndex++;
+            var relBundle = Path.GetRelativePath(
+                Environment.CurrentDirectory, Path.GetFullPath(bundleDir));
+            AlRunner.Infrastructure.PhaseLog.BeginBundle(relBundle, bundleIndex);
+            var result = RunBundleForServer(bundleDir, requestPackagePaths, runStep,
+                out var emitElapsed, out var compileElapsed, out var runElapsed);
+            AlRunner.Infrastructure.PhaseLog.EndBundle(emitElapsed, compileElapsed, runElapsed);
+            results.Add(result);
+        }
+        return results;
+    }
+
+    // Compile + run one bundle, resetting bundle-derived caches first so an edited
+    // same-identity bundle is picked up (server reload contract). Mirrors the
+    // bundled-mode path of the normal run loop for a single bundle. The run step
+    // (executor.Run for runTests, OnRun dispatch for execute) is supplied by the caller.
+    ServerRunResult RunBundleForServer(string bundleDir, string[]? requestPackagePaths,
+        Func<Assembly, IReadOnlyList<TestResult>> runStep,
+        out TimeSpan emitElapsed, out TimeSpan compileElapsed, out TimeSpan runElapsed)
+    {
+        // #1888: defaulted here so every early-return path below (dep-resolve
+        // failure, empty bundle, …) satisfies definite assignment without needing
+        // its own assignment — those paths never opened an app row, so zero is the
+        // honest answer for them, not a stand-in for a real measurement.
+        emitElapsed = TimeSpan.Zero;
+        compileElapsed = TimeSpan.Zero;
+        runElapsed = TimeSpan.Zero;
+
+        // Cache reset happens once per request in RunAllBundlesForServer, not here —
+        // see the comment there for why per-bundle resetting breaks sibling bundles.
+
+        var bundleAbs = Path.GetFullPath(bundleDir);
+        var bucketRoot = FindBucketRoot(bundleAbs) ?? bundleAbs;
+
+        // Request package paths augment the server's default caches.
+        var effectivePkgDirs = (requestPackagePaths ?? Array.Empty<string>())
+            .Where(Directory.Exists)
+            .Concat(packageCacheDirs)
+            .Distinct()
+            .ToList();
+
+        IReadOnlyList<(AlRunner.AppManifest Manifest, string AppPath)> ordered =
+            Array.Empty<(AlRunner.AppManifest, string)>();
+        var appJsonPath = Path.Combine(bucketRoot, "app.json");
+        // Hoisted out of the `if (File.Exists(appJsonPath))` block below so the
+        // cross-bundle module identity dedup (#1892) can read it after this block:
+        // this bundle's OWN identity, used both to check whether an earlier bundle
+        // in this request/session already loaded the same AppId, and to register
+        // THIS bundle's freshly-compiled module under its AppId once loaded.
+        AlRunner.Infrastructure.BundleIdentity? bundleId = null;
+        if (File.Exists(appJsonPath))
+        {
+            try
+            {
+                var roots = ReadDependencies(appJsonPath);
+                var bundlePkgDirs = Directory
+                    .EnumerateDirectories(bucketRoot, ".alpackages", SearchOption.AllDirectories)
+                    .ToList();
+                var resolverDirs = bundlePkgDirs.Concat(effectivePkgDirs).Distinct().ToList();
+                var resolver = new DependencyResolver(resolverDirs);
+                ordered = resolver.Resolve(roots);
+                AlRunner.Infrastructure.PhaseLog.NoteDepsResolved(ordered.Count);
+                BcCompiler.SetResolvedDeps(ordered, resolverDirs);
+                var loaded = depLoader.LoadAll(ordered, bucketRoot);
+                AlRunner.Infrastructure.PhaseLog.NoteDepAssembliesLoaded(loaded.Count);
+                // New bundle in the server session: replace (not inherit) the
+                // install-trigger registrations, then register this bundle's deps.
+                AlRunner.InstallTriggerRunner.ResetForNewBundle();
+                AlRunner.InstallTriggerRunner.SetDependencyAssemblies(loaded);
+                BcCompiler.SetResolvedDeps(ordered, resolverDirs);
+                foreach (var (_, appPath) in ordered)
+                    AlRunner.Patches.RecordPatches.AddBcAppPath(appPath);
+                AlRunner.Patches.RecordPatches.RegisterBundleSymbolApps(bucketRoot);
+                SetBundleInfoFromAppJson(appJsonPath);
+                bundleId = AlRunner.Infrastructure.InProcessAppPackager.ReadIdentity(appJsonPath);
+                if (bundleId != null)
+                    BcCompiler.SetCurrentAppIdentity(bundleId.AppId, bundleId.Publisher, bundleId.Version);
+                else
+                    BcCompiler.SetCurrentAppIdentity(null, null, null);
+            }
+            catch (AlRunner.Infrastructure.DependencyLoadException ex)
+            {
+                return ServerRunResult.Failure(3, "<deps>", ex.Message, new());
+            }
+            catch (Exception ex)
+            {
+                return ServerRunResult.Failure(3, "<deps>", $"DEP-RESOLVE-FAIL: {ex.Message}", new());
+            }
+        }
+
+        var suites = EnumerateSuites(bundleAbs).ToList();
+        var allPaths = new List<string>();
+        // Batched via AddSourceDirs (#1833) — see the register-source-dirs comment in the
+        // non-server run loop above for why per-suite AddSourceDir calls were quadratic.
+        var dirsToRegister = new List<string>();
+        foreach (var suite in suites)
+        {
+            var s = Path.Combine(suite, "src");
+            if (Directory.Exists(s)) dirsToRegister.Add(s);
+            else if (!Directory.Exists(Path.Combine(suite, "test")))
+                dirsToRegister.Add(suite);
+            allPaths.AddRange(CollectSuitePaths(suite, bucketRoot));
+        }
+        AlRunner.Patches.RecordPatches.AddSourceDirs(dirsToRegister);
+        allPaths = allPaths.Distinct().ToList();
+        var fileHashes = ComputeServerFileHashes(allPaths);
+
+        if (allPaths.Count == 0)
+            return new ServerRunResult(Array.Empty<TestResult>(), 1, false, null, fileHashes);
+
+        var moduleName = $"V2_{Path.GetFileName(bundleAbs)}";
+
+        // ── cross-bundle module identity dedup (#1892, mirrors the CLI bundle
+        // loop's own #1683 fix) ──────────────────────────────────────────────
+        // RunAllBundlesForServer runs every sourcePaths entry through THIS method
+        // in order, in the SAME process, sharing the SAME DependencyLoader. If an
+        // earlier bundle in this request already compiled+loaded this bundle's
+        // AppId — either as ITS OWN bundle (this same method, an earlier
+        // iteration) or as a resolved dependency (DependencyLoader.LoadAll) —
+        // reuse that exact Assembly instead of emitting+compiling a second,
+        // distinct module for the same AL app identity. Without this, a sibling
+        // bundle that declares a dependency on THIS bundle's app resolves it via
+        // DependencyLoader's Tier-3 source-compile (a "Dep_..." module) BEFORE
+        // this bundle's own iteration ever runs, or vice versa — either order
+        // ends with two live modules for one AL identity, which is exactly the
+        // TargetException at NavEventSubscription's ValidateInvokeTarget #1683
+        // fixed for the CLI loop: a subscriber MethodInfo discovered from one
+        // module's Type paired with a subscriberInstance BC's dispatcher
+        // materialized from the OTHER module's Type.
+        Assembly? reusedAsm = null;
+        if (bundleId != null)
+        {
+            try
+            {
+                reusedAsm = DependencyLoader.TryGetByAppId(
+                    bundleId.AppId, bundleId.Name, bundleId.Publisher,
+                    bundleId.Version.ToString(), bundleAbs);
+            }
+            catch (AlRunner.Infrastructure.AppIdCollisionException ex)
+            {
+                // Two different apps declare the same app.json id (#1850) — never
+                // silently reuse one app's module for the other's tests.
+                return ServerRunResult.Failure(3, moduleName, $"FATAL: {ex.Message}", fileHashes);
+            }
+            if (reusedAsm != null)
+                Console.Error.WriteLine(
+                    $"  [server] {moduleName}: AppId {bundleId.AppId} already loaded earlier in " +
+                    "this request/session — reusing that module instead of recompiling " +
+                    "(see issue #1683/#1892).");
+        }
+
+        // #1888: one app row per server-mode module (this mode never groups several
+        // AL apps into one bundled compile the way the CLI's bundled mode does, so
+        // "1 of 1" is always correct here). EndApp in the finally below closes it on
+        // EVERY exit path, including the many early `return`s below — matching
+        // TestExecutor.EndApp's own idempotent-close contract.
+        AlRunner.Infrastructure.PhaseLog.BeginApp(moduleName, 1, 1);
+        try
+        {
+            // AL-output cache: HIT short-circuits Emit+Compile, like the normal loop.
+            // Skipped entirely when reusedAsm is already set (see the cross-bundle
+            // dedup check above) — nothing to cache-check, emit, or compile.
+            byte[]? assemblyBytes = null;
+            // A cross-bundle reuse (reusedAsm != null) is "cached" in the sense the
+            // caller cares about — nothing changed for THIS bundle's contribution to
+            // the request, exactly like an AL-output cache hit.
+            bool cached = reusedAsm != null;
+            string? cacheKey = null, cachePath = null, sidecarPath = null, querySidecarPath = null;
+            // See AlCacheSidecars: a query bundle without its query-symbols sidecar must MISS.
+            bool bundleDeclaresQuery = BcCompiler.BundleDeclaresQuery(allPaths);
+            if (reusedAsm == null && alCacheDir != null)
+            {
+                cacheKey = ComputeAlCacheKey(allPaths, moduleName,
+                    ordered: GetOrderedDepIds(bucketRoot, effectivePkgDirs), appRootDir: bucketRoot);
+                cachePath = Path.Combine(alCacheDir, cacheKey + ".dll");
+                sidecarPath = Path.Combine(alCacheDir, cacheKey + AlRunner.Infrastructure.AlCacheSidecars.EnumRegistrySuffix);
+                querySidecarPath = Path.Combine(alCacheDir, cacheKey + AlRunner.Infrastructure.AlCacheSidecars.QuerySymbolsSuffix);
+                if (AlRunner.Infrastructure.AlCacheSidecars.IsCompleteEntry(
+                        File.Exists(cachePath), File.Exists(sidecarPath),
+                        bundleDeclaresQuery, File.Exists(querySidecarPath)))
+                {
+                    try
+                    {
+                        var bytes = File.ReadAllBytes(cachePath);
+                        // Same short-read defence as the CLI path above (issue #1810): a torn
+                        // DLL is not a read error, so validate the PE image explicitly before
+                        // trusting it.
+                        AlRunner.Infrastructure.AlCacheSidecars.ValidateCachedAssemblyBytes(bytes, cachePath);
+                        LoadEnumRegistrySidecar(sidecarPath);
+                        if (bundleDeclaresQuery)
+                            AlRunner.Patches.RecordPatches.RegisterBundleQuerySymbolsJson(querySidecarPath);
+                        assemblyBytes = bytes;
+                        cached = true;
+                        AlRunner.Infrastructure.PhaseLog.NoteCacheHit();
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.Error.WriteLine($"  [cache] hit replay failed: {ex.Message} — rebuilding");
+                        assemblyBytes = null;
+                        cached = false;
+                    }
+                }
+            }
+
+            var compileErrors = new List<string>();
+            if (reusedAsm == null && assemblyBytes == null)
+            {
+                if (alCacheDir != null)
+                    AlRunner.Infrastructure.PhaseLog.NoteCacheMiss();
+                IReadOnlyList<EmittedSource> sources;
+                IReadOnlyList<string> alDiagnostics;
+                IReadOnlyList<string> excludedObjects;
+                var et = System.Diagnostics.Stopwatch.StartNew();
+                try
+                {
+                    var emitOutput = emitter.Emit(allPaths, moduleName, bucketRoot);
+                    sources = emitOutput.Sources;
+                    alDiagnostics = emitOutput.Diagnostics;
+                    excludedObjects = emitOutput.ExcludedObjects;
+                }
+                catch (Exception ex)
+                {
+                    return ServerRunResult.Failure(3, moduleName, $"EMIT-FAIL: {ex.Message.Split('\n')[0]}", fileHashes);
+                }
+                finally
+                {
+                    et.Stop();
+                    emitElapsed = et.Elapsed;
+                    AlRunner.Infrastructure.PhaseLog.AddAppEmit(et.Elapsed);
+                }
+                // An emit-retry exclusion means one or more AL objects are NOT in the
+                // compiled module, so any tests they declare silently vanish and the
+                // request looks green. Fail loudly with the same classification the CLI's
+                // bundled-mode EMIT-EXCLUDED guard uses (.claude/rules/loud-failures.md);
+                // without this the server path ran the surviving objects and reported
+                // exitCode 0 while e.g. a whole test codeunit was missing from the run.
+                if (excludedObjects.Count > 0)
+                {
+                    var names = string.Join(", ", excludedObjects);
+                    compileErrors.Add(
+                        $"EMIT-EXCLUDED: {excludedObjects.Count} object(s) dropped from the module — " +
+                        $"tests they declare are missing: [{names}]." +
+                        (alDiagnostics.Count > 0
+                            ? " The AL diagnostics that identified them follow."
+                            : " Re-run with --verbose for the AL diagnostics that identified them."));
+                    foreach (var d in alDiagnostics) compileErrors.Add(d);
+                    return new ServerRunResult(Array.Empty<TestResult>(), 3, false,
+                        new List<CompilationErrorGroup> { new(moduleName, compileErrors) }, fileHashes);
+                }
+                if (sources.Count == 0)
+                {
+                    foreach (var d in alDiagnostics) compileErrors.Add(d);
+                    if (compileErrors.Count == 0) compileErrors.Add("EMIT-ZERO: 0 sources emitted");
+                    return new ServerRunResult(Array.Empty<TestResult>(), 3, false,
+                        new List<CompilationErrorGroup> { new(moduleName, compileErrors) }, fileHashes);
+                }
+                var ct = System.Diagnostics.Stopwatch.StartNew();
+                var compile = assembler.Compile(moduleName, sources);
+                ct.Stop();
+                compileElapsed = ct.Elapsed;
+                AlRunner.Infrastructure.PhaseLog.AddAppCompile(ct.Elapsed);
+                if (!compile.Success)
+                {
+                    compileErrors.AddRange(compile.Errors);
+                    compileErrors.AddRange(alDiagnostics);
+                    return new ServerRunResult(Array.Empty<TestResult>(), 3, false,
+                        new List<CompilationErrorGroup> { new(moduleName, compileErrors) }, fileHashes);
+                }
+                assemblyBytes = compile.AssemblyBytes;
+                if (cachePath != null && assemblyBytes != null)
+                {
+                    try
+                    {
+                        // Same atomic, sidecars-first-DLL-last publish as the CLI path above
+                        // (issue #1810) — see the comment there for why the ordering matters.
+                        AlRunner.Infrastructure.AlCacheWriter.AtomicPublish(
+                            sidecarPath!, tmp => SaveEnumRegistrySidecar(tmp));
+                        var qsrc = BcCompiler.LastBundleQuerySymbolsPath;
+                        if (qsrc != null && File.Exists(qsrc))
+                            AlRunner.Infrastructure.AlCacheWriter.AtomicPublish(
+                                querySidecarPath!, tmp => File.Copy(qsrc, tmp, overwrite: true));
+                        AlRunner.Infrastructure.AlCacheWriter.AtomicPublish(
+                            cachePath, tmp => File.WriteAllBytes(tmp, assemblyBytes));
+                    }
+                    catch (Exception ex) { Console.Error.WriteLine($"  [cache] write failed: {ex.Message}"); }
+                }
+            }
+
+            Assembly asm;
+            if (reusedAsm != null)
+            {
+                // See the cross-bundle module identity dedup comment above: this
+                // bundle's AppId was already loaded earlier in this request/session,
+                // so run with that exact Assembly instead of Assembly.Load-ing a
+                // second, distinct module for the same AL identity.
+                asm = reusedAsm;
+            }
+            else
+            {
+                if (assemblyBytes == null)
+                    return ServerRunResult.Failure(2, moduleName, "no assembly produced", fileHashes);
+                asm = Assembly.Load(assemblyBytes);
+                // Register this freshly-loaded module under its AppId so a LATER
+                // bundle in this request/session that resolves the same AppId —
+                // either as its own bundle (this same method, a later iteration) or
+                // as a dependency (DependencyLoader.LoadAll) — reuses this exact
+                // Assembly instead of re-emitting/re-compiling a second module for
+                // the same AL identity (#1892, mirrors the CLI loop's #1683 fix).
+                if (bundleId != null)
+                {
+                    try
+                    {
+                        DependencyLoader.RegisterLoaded(
+                            bundleId.AppId, asm, bundleId.Name, bundleId.Publisher,
+                            bundleId.Version.ToString(), bundleAbs);
+                    }
+                    catch (AlRunner.Infrastructure.AppIdCollisionException ex)
+                    {
+                        // Same defence as the TryGetByAppId check above, for the (in
+                        // this process, one request at a time) race window between
+                        // that check and this registration — see loud-failures.md.
+                        return ServerRunResult.Failure(3, moduleName, $"FATAL: {ex.Message}", fileHashes);
+                    }
+                }
+            }
+
+            IReadOnlyList<TestResult> tests;
+            var rt = System.Diagnostics.Stopwatch.StartNew();
+            try
+            {
+                BcRuntime.SetTestAssembly(asm);
+                BcRuntime.RegisterTestAssemblyInfo(asm);
+                BcRuntime.OosHooksActive = true;
+                tests = runStep(asm);
+            }
+            catch (Exception ex)
+            {
+                return ServerRunResult.Failure(2, moduleName, $"EXEC-FAIL: {ex.Message.Split('\n')[0]}", fileHashes);
+            }
+            finally
+            {
+                BcRuntime.OosHooksActive = false;
+                rt.Stop();
+                runElapsed = rt.Elapsed;
+                AlRunner.Infrastructure.PhaseLog.AddAppRun(rt.Elapsed);
+            }
+
+            int exit = 0;
+            if (tests.Any(t => t.Outcome == TestOutcome.Fail || t.Outcome == TestOutcome.Error)) exit = 1;
+            return new ServerRunResult(tests, exit, cached, null, fileHashes);
+        }
+        finally
+        {
+            AlRunner.Infrastructure.PhaseLog.EndApp();
+        }
+    }
+
+
+// ── --dap loop (issue #1642) ─────────────────────────────────────────────────────
+// Non-static so it captures the warm pipeline objects (executor et al.) and
+// RunAllBundlesForServer, same reasons as RunServerLoop below. Unlike --server this
+// is not a warm-reload daemon: one TCP client, one bundle, one run, then exit — a
+// debug session is inherently single-shot (VS Code starts al-runner, debugs,
+// disconnects, the process goes away).
+//
+// Session shape (see docs/archive/dap.md for the mechanism this restores, and
+// AlDapSession's file header for why pausing at StmtHit(N) — unlike
+// --capture-values, #1640 — needs no Exit()-style redesign):
+//   initialize     -> capabilities, then an `initialized` event
+//   launch/attach  -> compiles the bundle SYNCHRONOUSLY (blocks the response until
+//                     compiledTcs resolves or the whole run finishes without ever
+//                     reaching runStep, i.e. a compile failure) so setBreakpoints
+//                     right after has real statement indices to resolve against
+//   setBreakpoints -> DapBreakpointResolver against the now-loaded scope types;
+//                     REPLACES this source's previous set (DAP contract)
+//   configurationDone -> releases the run-start gate; AL execution begins
+//   (AlDapSession.Stopped fires on the AL thread when a breakpoint hits; this loop
+//    pushes the "stopped" event the moment it fires — see the subscription below)
+//   threads/stackTrace/scopes/variables -> read AlDapSession.PausedScope while paused
+//   continue/next/stepIn/stepOut -> AlDapSession.Continue() (all four alike — see the
+//    PR description for why real step granularity is explicit follow-up scope)
+//   disconnect/terminate -> AlDapSession.Detach() (never leaves the AL thread stuck)
+int RunDapLoop(int port, string bundleDir)
+{
+    var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, port);
+    listener.Start();
+    Console.WriteLine($"[dap] listening on 127.0.0.1:{port} — waiting for a debug client to connect...");
+    using var tcpClient = listener.AcceptTcpClient();
+    listener.Stop();
+    Console.WriteLine("[dap] client connected.");
+
+    using var transport = new AlRunner.Infrastructure.DapTransport(tcpClient.GetStream(), tcpClient.GetStream());
+    AlRunner.Infrastructure.AlDapSession.Reset();
+
+    Dictionary<(string Label, int Id), string> sourceMap = new();
+    var lastFrames = new List<AlRunner.Infrastructure.AlDapFrame>();
+
+    var compiledTcs = new System.Threading.Tasks.TaskCompletionSource<Assembly>(
+        System.Threading.Tasks.TaskCreationOptions.RunContinuationsAsynchronously);
+    var configurationDoneGate = new System.Threading.SemaphoreSlim(0, 1);
+    var cts = new System.Threading.CancellationTokenSource();
+
+    Func<Assembly, IReadOnlyList<TestResult>> dapRunStep = asm =>
+    {
+        compiledTcs.TrySetResult(asm);
+        configurationDoneGate.Wait(cts.Token);
+        return executor.Run(asm, t => Console.WriteLine($"[dap] {t.Codeunit}.{t.Method}: {t.Outcome}"), cts.Token);
+    };
+
+    var bundleRunTask = System.Threading.Tasks.Task.Run(
+        () => RunAllBundlesForServer(new[] { bundleDir }, null, dapRunStep, cts.Token));
+
+    int exitCode = 0;
+    bool terminatedSent = false;
+    void SendTerminatedOnce()
+    {
+        if (terminatedSent) return;
+        terminatedSent = true;
+        transport.WriteEvent("terminated");
+        transport.WriteEvent("exited", new { exitCode });
+    }
+    // Reports the run's outcome the moment it finishes, on WHATEVER thread that is —
+    // Stopped's handler below writes to `transport` from the AL execution thread
+    // too, and DapTransport's write lock is what keeps those from interleaving.
+    _ = bundleRunTask.ContinueWith(t =>
+    {
+        if (t.IsFaulted)
+        {
+            exitCode = 2;
+        }
+        else
+        {
+            var runs = t.Result;
+            exitCode = runs.Count > 0 ? runs.Max(r => r.ExitCode) : 0;
+        }
+        SendTerminatedOnce();
+    }, System.Threading.Tasks.TaskScheduler.Default);
+
+    // Pushed synchronously on the AL EXECUTION thread by AlDapSession.OnStmtHit,
+    // right before it blocks — see that method's doc comment. Must not throw.
+    AlRunner.Infrastructure.AlDapSession.Stopped += (scope, stmt) =>
+    {
+        try
+        {
+            lastFrames = AlRunner.Infrastructure.AlDapStackWalker.Walk(scope, stmt, sourceMap);
+            var line = lastFrames.Count > 0 ? lastFrames[0].Line : 0;
+            transport.WriteEvent("stopped", new
+            {
+                reason = "breakpoint",
+                threadId = 1,
+                allThreadsStopped = true,
+                line,
+            });
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[dap] failed to report a breakpoint stop: {ex.Message}");
+        }
+    };
+
+    try
+    {
+        while (true)
+        {
+            AlRunner.Infrastructure.DapIncomingMessage? msg;
+            try { msg = transport.ReadMessageAsync().GetAwaiter().GetResult(); }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"[dap] transport error: {ex.Message}");
+                break;
+            }
+            if (msg == null) break; // client closed the connection
+
+            var command = msg.Command ?? "";
+            var args = msg.Arguments;
+            try
+            {
+                switch (command)
+                {
+                    case "initialize":
+                        transport.WriteResponse(msg.Seq, command, true, new
+                        {
+                            supportsConfigurationDoneRequest = true,
+                        });
+                        transport.WriteEvent("initialized");
+                        break;
+
+                    case "launch":
+                    case "attach":
+                    {
+                        var winner = System.Threading.Tasks.Task.WhenAny(compiledTcs.Task, bundleRunTask)
+                            .GetAwaiter().GetResult();
+                        if (!ReferenceEquals(winner, compiledTcs.Task))
+                        {
+                            // The run finished (or failed) before ever reaching dapRunStep —
+                            // a compile failure. Report it on the launch response rather than
+                            // silently proceeding into a session that will never run anything.
+                            var runs = bundleRunTask.Result;
+                            var errMsg = runs
+                                .SelectMany(r => r.CompileErrors ?? Array.Empty<CompilationErrorGroup>())
+                                .SelectMany(g => g.Errors)
+                                .FirstOrDefault() ?? "compile failed (no diagnostic captured)";
+                            transport.WriteResponse(msg.Seq, command, false, message: errMsg);
+                            break;
+                        }
+                        sourceMap = AlRunner.Infrastructure.AlCoverageSourceMap.Build(
+                            new[] { bundleDir }, relativeTo: null);
+                        transport.WriteResponse(msg.Seq, command, true);
+                        break;
+                    }
+
+                    case "setBreakpoints":
+                    {
+                        if (args == null || !args.Value.TryGetProperty("source", out var srcEl) ||
+                            !srcEl.TryGetProperty("path", out var pathEl) || pathEl.GetString() is not string srcPath)
+                        {
+                            transport.WriteResponse(msg.Seq, command, false, message: "setBreakpoints: missing source.path");
+                            break;
+                        }
+                        var lines = new List<int>();
+                        if (args.Value.TryGetProperty("breakpoints", out var bpsEl) && bpsEl.ValueKind == System.Text.Json.JsonValueKind.Array)
+                            foreach (var bp in bpsEl.EnumerateArray())
+                                if (bp.TryGetProperty("line", out var lineEl)) lines.Add(lineEl.GetInt32());
+                        else if (args.Value.TryGetProperty("lines", out var legacyLinesEl) && legacyLinesEl.ValueKind == System.Text.Json.JsonValueKind.Array)
+                            foreach (var l in legacyLinesEl.EnumerateArray()) lines.Add(l.GetInt32());
+
+                        var requests = lines.Select(l => new AlRunner.Infrastructure.DapBreakpointRequest(srcPath, l)).ToList();
+                        var resolved = AlRunner.Infrastructure.DapBreakpointResolver.Resolve(requests, sourceMap);
+
+                        var fullSrcPath = Path.GetFullPath(srcPath);
+                        // Replace (not accumulate) — DAP's setBreakpoints contract: this
+                        // request is the COMPLETE set for `source` from now on.
+                        foreach (var rb in resolved)
+                            if (rb.ScopeType != null) AlRunner.Infrastructure.AlDapSession.ClearBreakpoints(rb.ScopeType);
+                        foreach (var rb in resolved)
+                            if (rb.Verified && rb.ScopeType != null)
+                                AlRunner.Infrastructure.AlDapSession.SetBreakpoint(rb.ScopeType, rb.StatementIndex);
+
+                        transport.WriteResponse(msg.Seq, command, true, new
+                        {
+                            breakpoints = resolved.Select((rb, idx) => new
+                            {
+                                id = idx,
+                                verified = rb.Verified,
+                                line = rb.Verified ? rb.ActualLine : rb.RequestedLine,
+                            }),
+                        });
+                        break;
+                    }
+
+                    case "configurationDone":
+                        transport.WriteResponse(msg.Seq, command, true);
+                        AlRunner.Infrastructure.AlDapSession.Enabled = true;
+                        configurationDoneGate.Release();
+                        break;
+
+                    case "threads":
+                        transport.WriteResponse(msg.Seq, command, true, new
+                        {
+                            threads = new[] { new { id = 1, name = "AL Test Thread" } },
+                        });
+                        break;
+
+                    case "stackTrace":
+                        if (!AlRunner.Infrastructure.AlDapSession.IsPaused)
+                        {
+                            transport.WriteResponse(msg.Seq, command, false, message: "not stopped");
+                            break;
+                        }
+                        transport.WriteResponse(msg.Seq, command, true, new
+                        {
+                            stackFrames = lastFrames.Select(f => new
+                            {
+                                id = f.Id,
+                                name = f.ScopeName,
+                                source = f.SourcePath != null ? new { path = f.SourcePath, name = Path.GetFileName(f.SourcePath) } : null,
+                                line = f.Line,
+                                column = 1,
+                            }),
+                            totalFrames = lastFrames.Count,
+                        });
+                        break;
+
+                    case "scopes":
+                    {
+                        var frameId = args?.GetProperty("frameId").GetInt32() ?? -1;
+                        transport.WriteResponse(msg.Seq, command, true, new
+                        {
+                            scopes = new[] { new { name = "Locals", variablesReference = frameId, expensive = false } },
+                        });
+                        break;
+                    }
+
+                    case "variables":
+                    {
+                        var varsRef = args?.GetProperty("variablesReference").GetInt32() ?? -1;
+                        var frame = lastFrames.FirstOrDefault(f => f.Id == varsRef);
+                        if (frame.Scope == null)
+                        {
+                            transport.WriteResponse(msg.Seq, command, false, message: $"unknown variablesReference {varsRef}");
+                            break;
+                        }
+                        var locals = AlRunner.Infrastructure.AlScopeInspector.ReadLocals(frame.Scope);
+                        transport.WriteResponse(msg.Seq, command, true, new
+                        {
+                            variables = locals.Select(v => new
+                            {
+                                name = v.Name,
+                                value = v.Readable ? System.Text.Json.JsonSerializer.Serialize(v.Value) : (string)v.Value!,
+                                variablesReference = 0,
+                            }),
+                        });
+                        break;
+                    }
+
+                    case "continue":
+                    case "next":
+                    case "stepIn":
+                    case "stepOut":
+                    case "pause":
+                        AlRunner.Infrastructure.AlDapSession.Continue();
+                        transport.WriteResponse(msg.Seq, command, true,
+                            command == "continue" ? new { allThreadsContinued = true } : null);
+                        break;
+
+                    case "disconnect":
+                    case "terminate":
+                        AlRunner.Infrastructure.AlDapSession.Enabled = false;
+                        AlRunner.Infrastructure.AlDapSession.Detach();
+                        cts.Cancel();
+                        transport.WriteResponse(msg.Seq, command, true);
+                        SendTerminatedOnce();
+                        return exitCode;
+
+                    default:
+                        transport.WriteResponse(msg.Seq, command, false, message: $"unsupported command: {command}");
+                        break;
+                }
+            }
+            catch (Exception ex)
+            {
+                transport.WriteResponse(msg.Seq, command, false, message: ex.Message);
+            }
+        }
+    }
+    finally
+    {
+        AlRunner.Infrastructure.AlDapSession.Enabled = false;
+        AlRunner.Infrastructure.AlDapSession.Detach();
+        cts.Cancel();
+    }
+    return exitCode;
+}
 
 // ── --server loop ──────────────────────────────────────────────────────────────
 // Non-static so it captures the warm pipeline objects (emitter/assembler/executor/
@@ -3333,434 +4100,6 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
         }
     }
 
-    // Runs every bundle in sourcePaths in order and returns one ServerRunResult per
-    // bundle. Restores v1's "honour every sourcePaths entry" behaviour (v1 fed them
-    // all into a single compile; v2 keeps one bundle = one compile, so it runs each
-    // sequentially instead — the same shape the CLI already uses for multiple
-    // <bundle-dir> arguments). See #1658: honouring only sourcePaths[0] silently
-    // dropped the rest, returning a green empty result for an app + separate
-    // test-app request.
-    //
-    // When more than one path is given, first wire any inter-bundle dependency (the
-    // app + test-app shape --guide recommends) the same way the CLI does before its
-    // per-bundle loop: compile whichever bundle a sibling bundle depends on into a
-    // package cache the sibling can resolve against.
-    //
-    // `cancellationToken` (default: none, for the `execute` caller which has no
-    // active-run CTS) is checked BETWEEN bundles: a `cancel` landing while bundle 1
-    // of a multi-bundle runTests request is still running must stop bundle 2 from
-    // ever starting, not just stop mid-bundle-1 (that half is TestExecutor.Run's job).
-    List<ServerRunResult> RunAllBundlesForServer(string[] sourcePaths, string[]? requestPackagePaths,
-        Func<Assembly, IReadOnlyList<TestResult>> runStep,
-        System.Threading.CancellationToken cancellationToken = default)
-    {
-        // Drop the previous REQUEST's bundle-derived caches so a reloaded same-named
-        // bundle resolves the freshly-emitted Record/Codeunit types and starts with
-        // empty in-memory tables. Once per request, NOT per bundle: the CLI bucket
-        // loop never resets between bundles, so AddSourceDir accumulates across an
-        // app + test-app pair — resetting per bundle wiped the app bundle's parsed
-        // table schemas before the test bundle ran, and every Record op on an
-        // app-defined table died with "no NCLMetaTable for table N (AL source not
-        // parsed)" while the identical CLI invocation passed.
-        BcRuntime.ResetForNewBundleReload();
-
-        if (sourcePaths.Length > 1)
-        {
-            var bundleList = sourcePaths.ToList();
-            var workspaceScratch = new List<string>();
-            try
-            {
-                packageCacheDirs = RunLayeredPrePass(bundleList, packageCacheDirs, workspaceScratch);
-                packageCacheDirs = BuildSiblingSourceDeps(bundleList, packageCacheDirs, workspaceScratch);
-            }
-            catch (Exception ex)
-            {
-                // Loud per-bundle failure below (dep resolution during the per-bundle
-                // compile) already covers the "can't resolve" case; a failure in the
-                // wiring pre-pass itself must not silently fall back to unwired compiles.
-                return new List<ServerRunResult>
-                {
-                    ServerRunResult.Failure(3, "<inter-bundle-deps>", $"LAYERED-PREPASS-FAIL: {ex.Message}", new())
-                };
-            }
-        }
-
-        var results = new List<ServerRunResult>(sourcePaths.Length);
-        // #1888: open/close a phase-log bundle+app row per request bundle, mirroring
-        // the CLI loop's BeginBundle/EndBundle. Before this the server path never
-        // called into PhaseLog at all, so a --server process produced ZERO bundle/app
-        // rows regardless of whether it exited cleanly — the Stage()/AppStage() marks
-        // sprinkled through DependencyLoader/TestExecutor were silently no-ops the
-        // whole time (AddStageTo/AddApp bail out when _bundle/_app is null). Unlike
-        // the once-per-process row (written only from PhaseLog's ProcessExit hook,
-        // see WriteProcessRecord), EndBundle appends its row IMMEDIATELY on return —
-        // so as long as a request's bundle finishes before the process is later
-        // killed (true for every server test: CliServer.DisposeAsync always Kill()s
-        // AFTER the runTests round trip completes), this row survives the kill even
-        // though the process-level row still does not. bundle_index restarts at 1 per
-        // REQUEST (not per process lifetime) — server sessions have no single
-        // "argument order" the way a CLI invocation does, and nothing downstream reads
-        // it across requests.
-        var bundleIndex = 0;
-        foreach (var bundleDir in sourcePaths)
-        {
-            if (cancellationToken.IsCancellationRequested) break;
-            bundleIndex++;
-            var relBundle = Path.GetRelativePath(
-                Environment.CurrentDirectory, Path.GetFullPath(bundleDir));
-            AlRunner.Infrastructure.PhaseLog.BeginBundle(relBundle, bundleIndex);
-            var result = RunBundleForServer(bundleDir, requestPackagePaths, runStep,
-                out var emitElapsed, out var compileElapsed, out var runElapsed);
-            AlRunner.Infrastructure.PhaseLog.EndBundle(emitElapsed, compileElapsed, runElapsed);
-            results.Add(result);
-        }
-        return results;
-    }
-
-    // Compile + run one bundle, resetting bundle-derived caches first so an edited
-    // same-identity bundle is picked up (server reload contract). Mirrors the
-    // bundled-mode path of the normal run loop for a single bundle. The run step
-    // (executor.Run for runTests, OnRun dispatch for execute) is supplied by the caller.
-    ServerRunResult RunBundleForServer(string bundleDir, string[]? requestPackagePaths,
-        Func<Assembly, IReadOnlyList<TestResult>> runStep,
-        out TimeSpan emitElapsed, out TimeSpan compileElapsed, out TimeSpan runElapsed)
-    {
-        // #1888: defaulted here so every early-return path below (dep-resolve
-        // failure, empty bundle, …) satisfies definite assignment without needing
-        // its own assignment — those paths never opened an app row, so zero is the
-        // honest answer for them, not a stand-in for a real measurement.
-        emitElapsed = TimeSpan.Zero;
-        compileElapsed = TimeSpan.Zero;
-        runElapsed = TimeSpan.Zero;
-
-        // Cache reset happens once per request in RunAllBundlesForServer, not here —
-        // see the comment there for why per-bundle resetting breaks sibling bundles.
-
-        var bundleAbs = Path.GetFullPath(bundleDir);
-        var bucketRoot = FindBucketRoot(bundleAbs) ?? bundleAbs;
-
-        // Request package paths augment the server's default caches.
-        var effectivePkgDirs = (requestPackagePaths ?? Array.Empty<string>())
-            .Where(Directory.Exists)
-            .Concat(packageCacheDirs)
-            .Distinct()
-            .ToList();
-
-        IReadOnlyList<(AlRunner.AppManifest Manifest, string AppPath)> ordered =
-            Array.Empty<(AlRunner.AppManifest, string)>();
-        var appJsonPath = Path.Combine(bucketRoot, "app.json");
-        // Hoisted out of the `if (File.Exists(appJsonPath))` block below so the
-        // cross-bundle module identity dedup (#1892) can read it after this block:
-        // this bundle's OWN identity, used both to check whether an earlier bundle
-        // in this request/session already loaded the same AppId, and to register
-        // THIS bundle's freshly-compiled module under its AppId once loaded.
-        AlRunner.Infrastructure.BundleIdentity? bundleId = null;
-        if (File.Exists(appJsonPath))
-        {
-            try
-            {
-                var roots = ReadDependencies(appJsonPath);
-                var bundlePkgDirs = Directory
-                    .EnumerateDirectories(bucketRoot, ".alpackages", SearchOption.AllDirectories)
-                    .ToList();
-                var resolverDirs = bundlePkgDirs.Concat(effectivePkgDirs).Distinct().ToList();
-                var resolver = new DependencyResolver(resolverDirs);
-                ordered = resolver.Resolve(roots);
-                AlRunner.Infrastructure.PhaseLog.NoteDepsResolved(ordered.Count);
-                BcCompiler.SetResolvedDeps(ordered, resolverDirs);
-                var loaded = depLoader.LoadAll(ordered, bucketRoot);
-                AlRunner.Infrastructure.PhaseLog.NoteDepAssembliesLoaded(loaded.Count);
-                // New bundle in the server session: replace (not inherit) the
-                // install-trigger registrations, then register this bundle's deps.
-                AlRunner.InstallTriggerRunner.ResetForNewBundle();
-                AlRunner.InstallTriggerRunner.SetDependencyAssemblies(loaded);
-                BcCompiler.SetResolvedDeps(ordered, resolverDirs);
-                foreach (var (_, appPath) in ordered)
-                    AlRunner.Patches.RecordPatches.AddBcAppPath(appPath);
-                AlRunner.Patches.RecordPatches.RegisterBundleSymbolApps(bucketRoot);
-                SetBundleInfoFromAppJson(appJsonPath);
-                bundleId = AlRunner.Infrastructure.InProcessAppPackager.ReadIdentity(appJsonPath);
-                if (bundleId != null)
-                    BcCompiler.SetCurrentAppIdentity(bundleId.AppId, bundleId.Publisher, bundleId.Version);
-                else
-                    BcCompiler.SetCurrentAppIdentity(null, null, null);
-            }
-            catch (AlRunner.Infrastructure.DependencyLoadException ex)
-            {
-                return ServerRunResult.Failure(3, "<deps>", ex.Message, new());
-            }
-            catch (Exception ex)
-            {
-                return ServerRunResult.Failure(3, "<deps>", $"DEP-RESOLVE-FAIL: {ex.Message}", new());
-            }
-        }
-
-        var suites = EnumerateSuites(bundleAbs).ToList();
-        var allPaths = new List<string>();
-        // Batched via AddSourceDirs (#1833) — see the register-source-dirs comment in the
-        // non-server run loop above for why per-suite AddSourceDir calls were quadratic.
-        var dirsToRegister = new List<string>();
-        foreach (var suite in suites)
-        {
-            var s = Path.Combine(suite, "src");
-            if (Directory.Exists(s)) dirsToRegister.Add(s);
-            else if (!Directory.Exists(Path.Combine(suite, "test")))
-                dirsToRegister.Add(suite);
-            allPaths.AddRange(CollectSuitePaths(suite, bucketRoot));
-        }
-        AlRunner.Patches.RecordPatches.AddSourceDirs(dirsToRegister);
-        allPaths = allPaths.Distinct().ToList();
-        var fileHashes = ComputeServerFileHashes(allPaths);
-
-        if (allPaths.Count == 0)
-            return new ServerRunResult(Array.Empty<TestResult>(), 1, false, null, fileHashes);
-
-        var moduleName = $"V2_{Path.GetFileName(bundleAbs)}";
-
-        // ── cross-bundle module identity dedup (#1892, mirrors the CLI bundle
-        // loop's own #1683 fix) ──────────────────────────────────────────────
-        // RunAllBundlesForServer runs every sourcePaths entry through THIS method
-        // in order, in the SAME process, sharing the SAME DependencyLoader. If an
-        // earlier bundle in this request already compiled+loaded this bundle's
-        // AppId — either as ITS OWN bundle (this same method, an earlier
-        // iteration) or as a resolved dependency (DependencyLoader.LoadAll) —
-        // reuse that exact Assembly instead of emitting+compiling a second,
-        // distinct module for the same AL app identity. Without this, a sibling
-        // bundle that declares a dependency on THIS bundle's app resolves it via
-        // DependencyLoader's Tier-3 source-compile (a "Dep_..." module) BEFORE
-        // this bundle's own iteration ever runs, or vice versa — either order
-        // ends with two live modules for one AL identity, which is exactly the
-        // TargetException at NavEventSubscription's ValidateInvokeTarget #1683
-        // fixed for the CLI loop: a subscriber MethodInfo discovered from one
-        // module's Type paired with a subscriberInstance BC's dispatcher
-        // materialized from the OTHER module's Type.
-        Assembly? reusedAsm = null;
-        if (bundleId != null)
-        {
-            try
-            {
-                reusedAsm = DependencyLoader.TryGetByAppId(
-                    bundleId.AppId, bundleId.Name, bundleId.Publisher,
-                    bundleId.Version.ToString(), bundleAbs);
-            }
-            catch (AlRunner.Infrastructure.AppIdCollisionException ex)
-            {
-                // Two different apps declare the same app.json id (#1850) — never
-                // silently reuse one app's module for the other's tests.
-                return ServerRunResult.Failure(3, moduleName, $"FATAL: {ex.Message}", fileHashes);
-            }
-            if (reusedAsm != null)
-                Console.Error.WriteLine(
-                    $"  [server] {moduleName}: AppId {bundleId.AppId} already loaded earlier in " +
-                    "this request/session — reusing that module instead of recompiling " +
-                    "(see issue #1683/#1892).");
-        }
-
-        // #1888: one app row per server-mode module (this mode never groups several
-        // AL apps into one bundled compile the way the CLI's bundled mode does, so
-        // "1 of 1" is always correct here). EndApp in the finally below closes it on
-        // EVERY exit path, including the many early `return`s below — matching
-        // TestExecutor.EndApp's own idempotent-close contract.
-        AlRunner.Infrastructure.PhaseLog.BeginApp(moduleName, 1, 1);
-        try
-        {
-            // AL-output cache: HIT short-circuits Emit+Compile, like the normal loop.
-            // Skipped entirely when reusedAsm is already set (see the cross-bundle
-            // dedup check above) — nothing to cache-check, emit, or compile.
-            byte[]? assemblyBytes = null;
-            // A cross-bundle reuse (reusedAsm != null) is "cached" in the sense the
-            // caller cares about — nothing changed for THIS bundle's contribution to
-            // the request, exactly like an AL-output cache hit.
-            bool cached = reusedAsm != null;
-            string? cacheKey = null, cachePath = null, sidecarPath = null, querySidecarPath = null;
-            // See AlCacheSidecars: a query bundle without its query-symbols sidecar must MISS.
-            bool bundleDeclaresQuery = BcCompiler.BundleDeclaresQuery(allPaths);
-            if (reusedAsm == null && alCacheDir != null)
-            {
-                cacheKey = ComputeAlCacheKey(allPaths, moduleName,
-                    ordered: GetOrderedDepIds(bucketRoot, effectivePkgDirs), appRootDir: bucketRoot);
-                cachePath = Path.Combine(alCacheDir, cacheKey + ".dll");
-                sidecarPath = Path.Combine(alCacheDir, cacheKey + AlRunner.Infrastructure.AlCacheSidecars.EnumRegistrySuffix);
-                querySidecarPath = Path.Combine(alCacheDir, cacheKey + AlRunner.Infrastructure.AlCacheSidecars.QuerySymbolsSuffix);
-                if (AlRunner.Infrastructure.AlCacheSidecars.IsCompleteEntry(
-                        File.Exists(cachePath), File.Exists(sidecarPath),
-                        bundleDeclaresQuery, File.Exists(querySidecarPath)))
-                {
-                    try
-                    {
-                        var bytes = File.ReadAllBytes(cachePath);
-                        // Same short-read defence as the CLI path above (issue #1810): a torn
-                        // DLL is not a read error, so validate the PE image explicitly before
-                        // trusting it.
-                        AlRunner.Infrastructure.AlCacheSidecars.ValidateCachedAssemblyBytes(bytes, cachePath);
-                        LoadEnumRegistrySidecar(sidecarPath);
-                        if (bundleDeclaresQuery)
-                            AlRunner.Patches.RecordPatches.RegisterBundleQuerySymbolsJson(querySidecarPath);
-                        assemblyBytes = bytes;
-                        cached = true;
-                        AlRunner.Infrastructure.PhaseLog.NoteCacheHit();
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.Error.WriteLine($"  [cache] hit replay failed: {ex.Message} — rebuilding");
-                        assemblyBytes = null;
-                        cached = false;
-                    }
-                }
-            }
-
-            var compileErrors = new List<string>();
-            if (reusedAsm == null && assemblyBytes == null)
-            {
-                if (alCacheDir != null)
-                    AlRunner.Infrastructure.PhaseLog.NoteCacheMiss();
-                IReadOnlyList<EmittedSource> sources;
-                IReadOnlyList<string> alDiagnostics;
-                IReadOnlyList<string> excludedObjects;
-                var et = System.Diagnostics.Stopwatch.StartNew();
-                try
-                {
-                    var emitOutput = emitter.Emit(allPaths, moduleName, bucketRoot);
-                    sources = emitOutput.Sources;
-                    alDiagnostics = emitOutput.Diagnostics;
-                    excludedObjects = emitOutput.ExcludedObjects;
-                }
-                catch (Exception ex)
-                {
-                    return ServerRunResult.Failure(3, moduleName, $"EMIT-FAIL: {ex.Message.Split('\n')[0]}", fileHashes);
-                }
-                finally
-                {
-                    et.Stop();
-                    emitElapsed = et.Elapsed;
-                    AlRunner.Infrastructure.PhaseLog.AddAppEmit(et.Elapsed);
-                }
-                // An emit-retry exclusion means one or more AL objects are NOT in the
-                // compiled module, so any tests they declare silently vanish and the
-                // request looks green. Fail loudly with the same classification the CLI's
-                // bundled-mode EMIT-EXCLUDED guard uses (.claude/rules/loud-failures.md);
-                // without this the server path ran the surviving objects and reported
-                // exitCode 0 while e.g. a whole test codeunit was missing from the run.
-                if (excludedObjects.Count > 0)
-                {
-                    var names = string.Join(", ", excludedObjects);
-                    compileErrors.Add(
-                        $"EMIT-EXCLUDED: {excludedObjects.Count} object(s) dropped from the module — " +
-                        $"tests they declare are missing: [{names}]." +
-                        (alDiagnostics.Count > 0
-                            ? " The AL diagnostics that identified them follow."
-                            : " Re-run with --verbose for the AL diagnostics that identified them."));
-                    foreach (var d in alDiagnostics) compileErrors.Add(d);
-                    return new ServerRunResult(Array.Empty<TestResult>(), 3, false,
-                        new List<CompilationErrorGroup> { new(moduleName, compileErrors) }, fileHashes);
-                }
-                if (sources.Count == 0)
-                {
-                    foreach (var d in alDiagnostics) compileErrors.Add(d);
-                    if (compileErrors.Count == 0) compileErrors.Add("EMIT-ZERO: 0 sources emitted");
-                    return new ServerRunResult(Array.Empty<TestResult>(), 3, false,
-                        new List<CompilationErrorGroup> { new(moduleName, compileErrors) }, fileHashes);
-                }
-                var ct = System.Diagnostics.Stopwatch.StartNew();
-                var compile = assembler.Compile(moduleName, sources);
-                ct.Stop();
-                compileElapsed = ct.Elapsed;
-                AlRunner.Infrastructure.PhaseLog.AddAppCompile(ct.Elapsed);
-                if (!compile.Success)
-                {
-                    compileErrors.AddRange(compile.Errors);
-                    compileErrors.AddRange(alDiagnostics);
-                    return new ServerRunResult(Array.Empty<TestResult>(), 3, false,
-                        new List<CompilationErrorGroup> { new(moduleName, compileErrors) }, fileHashes);
-                }
-                assemblyBytes = compile.AssemblyBytes;
-                if (cachePath != null && assemblyBytes != null)
-                {
-                    try
-                    {
-                        // Same atomic, sidecars-first-DLL-last publish as the CLI path above
-                        // (issue #1810) — see the comment there for why the ordering matters.
-                        AlRunner.Infrastructure.AlCacheWriter.AtomicPublish(
-                            sidecarPath!, tmp => SaveEnumRegistrySidecar(tmp));
-                        var qsrc = BcCompiler.LastBundleQuerySymbolsPath;
-                        if (qsrc != null && File.Exists(qsrc))
-                            AlRunner.Infrastructure.AlCacheWriter.AtomicPublish(
-                                querySidecarPath!, tmp => File.Copy(qsrc, tmp, overwrite: true));
-                        AlRunner.Infrastructure.AlCacheWriter.AtomicPublish(
-                            cachePath, tmp => File.WriteAllBytes(tmp, assemblyBytes));
-                    }
-                    catch (Exception ex) { Console.Error.WriteLine($"  [cache] write failed: {ex.Message}"); }
-                }
-            }
-
-            Assembly asm;
-            if (reusedAsm != null)
-            {
-                // See the cross-bundle module identity dedup comment above: this
-                // bundle's AppId was already loaded earlier in this request/session,
-                // so run with that exact Assembly instead of Assembly.Load-ing a
-                // second, distinct module for the same AL identity.
-                asm = reusedAsm;
-            }
-            else
-            {
-                if (assemblyBytes == null)
-                    return ServerRunResult.Failure(2, moduleName, "no assembly produced", fileHashes);
-                asm = Assembly.Load(assemblyBytes);
-                // Register this freshly-loaded module under its AppId so a LATER
-                // bundle in this request/session that resolves the same AppId —
-                // either as its own bundle (this same method, a later iteration) or
-                // as a dependency (DependencyLoader.LoadAll) — reuses this exact
-                // Assembly instead of re-emitting/re-compiling a second module for
-                // the same AL identity (#1892, mirrors the CLI loop's #1683 fix).
-                if (bundleId != null)
-                {
-                    try
-                    {
-                        DependencyLoader.RegisterLoaded(
-                            bundleId.AppId, asm, bundleId.Name, bundleId.Publisher,
-                            bundleId.Version.ToString(), bundleAbs);
-                    }
-                    catch (AlRunner.Infrastructure.AppIdCollisionException ex)
-                    {
-                        // Same defence as the TryGetByAppId check above, for the (in
-                        // this process, one request at a time) race window between
-                        // that check and this registration — see loud-failures.md.
-                        return ServerRunResult.Failure(3, moduleName, $"FATAL: {ex.Message}", fileHashes);
-                    }
-                }
-            }
-
-            IReadOnlyList<TestResult> tests;
-            var rt = System.Diagnostics.Stopwatch.StartNew();
-            try
-            {
-                BcRuntime.SetTestAssembly(asm);
-                BcRuntime.RegisterTestAssemblyInfo(asm);
-                BcRuntime.OosHooksActive = true;
-                tests = runStep(asm);
-            }
-            catch (Exception ex)
-            {
-                return ServerRunResult.Failure(2, moduleName, $"EXEC-FAIL: {ex.Message.Split('\n')[0]}", fileHashes);
-            }
-            finally
-            {
-                BcRuntime.OosHooksActive = false;
-                rt.Stop();
-                runElapsed = rt.Elapsed;
-                AlRunner.Infrastructure.PhaseLog.AddAppRun(rt.Elapsed);
-            }
-
-            int exit = 0;
-            if (tests.Any(t => t.Outcome == TestOutcome.Fail || t.Outcome == TestOutcome.Error)) exit = 1;
-            return new ServerRunResult(tests, exit, cached, null, fileHashes);
-        }
-        finally
-        {
-            AlRunner.Infrastructure.PhaseLog.EndApp();
-        }
-    }
 
     // Run the bundle's OnRun-bearing codeunit (run-mode), mirroring CodeunitPatches'
     // OnRun dispatch. Prefers a non-[Test] codeunit; returns one TestResult named

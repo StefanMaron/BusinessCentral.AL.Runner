@@ -6659,6 +6659,52 @@ public static class NclCecilRewrite
         }
 
         // ─────────────────────────────────────────────────────────────────────
+        // NavMethodScope.StmtHit(int) / CStmtHit(int[, bool]) — --dap breakpoint hook
+        // (issue #1642). A THIRD unconditional prepend on the exact same methods the
+        // --coverage block above already hooks — same shape (`ldarg.0; ldarg.1; call`,
+        // int unboxed), same reasoning for why it's safe to add a second prepend to an
+        // already-once-rewritten method: each rewrite only ever prepends before the
+        // CURRENT first instruction, so this call runs AFTER AlCoverageTracker.OnStmtHit
+        // (inserted first, above) but still strictly BEFORE StmtHit's own body — the
+        // `statementNumber = currentStatementNumber` assignment AlCallStackCapture
+        // depends on is untouched either way.
+        //
+        // AlDapSession.OnStmtHit may BLOCK the calling thread (a breakpoint pause) —
+        // unlike AlCoverageTracker.OnStmtHit and AlValueCapture.OnExit, which are both
+        // side-effect-free beyond recording. That is intentional and safe: a normal
+        // (non-paused) StmtHit still returns immediately (Enabled gate, or the
+        // breakpoint-set lookup misses), so the added cost on every AL statement of
+        // every test — --dap or not — is one more near-zero-cost volatile read plus a
+        // dictionary lookup, not a block.
+        {
+            var nclMod = asm.MainModule;
+            const string MsType = "Microsoft.Dynamics.Nav.Runtime.NavMethodScope";
+            var hookMi = typeof(AlRunner.Infrastructure.AlDapSession).GetMethod(
+                nameof(AlRunner.Infrastructure.AlDapSession.OnStmtHit), BindingFlags.Public | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "[Cecil] AlDapSession.OnStmtHit not found — runner-side rename?");
+            var hookRef = nclMod.ImportReference(hookMi);
+
+            foreach (var (name, paramCount) in new[] { ("StmtHit", 1), ("CStmtHit", 1), ("CStmtHit", 2) })
+            {
+                var target = FindNclMethod(nclMod, MsType, name, paramCount);
+                if (target.Parameters[0].ParameterType.FullName != "System.Int32")
+                    throw new InvalidOperationException(
+                        $"[Cecil] NavMethodScope.{name}/{paramCount}'s first parameter is "
+                        + $"{target.Parameters[0].ParameterType.FullName}, expected System.Int32 — Ncl shape changed; do not commit");
+
+                var body = target.Body;
+                var il = body.GetILProcessor();
+                var first = body.Instructions[0];
+                il.InsertBefore(first, il.Create(OpCodes.Ldarg_0));
+                il.InsertBefore(first, il.Create(OpCodes.Ldarg_1));
+                il.InsertBefore(first, il.Create(OpCodes.Call, hookRef));
+                if (body.MaxStackSize < 2) body.MaxStackSize = 2;
+                Console.Error.WriteLine($"[Cecil] Prepended AlDapSession.OnStmtHit to NavMethodScope.{name}/{paramCount}");
+            }
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
         // ALFunctionTimingExecutionListener cluster — JmpHook→Cecil (Batch 2).
         //
         // Telemetry/diagnostic-only listener reached during AL method execution via
