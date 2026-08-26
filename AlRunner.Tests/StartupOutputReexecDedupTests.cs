@@ -16,9 +16,43 @@
 // them in that generation only. The generation that actually goes on to run tests (no
 // re-exec pending) always prints them, exactly once. The `[reexec]` explanation itself
 // (#2034/#2038) is untouched: it still prints from the parent, at default verbosity.
+//
+// Issue #2061 — shared mutable state between this class's tests, round 2
+// -------------------------------------------------------------------------------------
+// Two of this class's tests need a bin/-shaped directory where Ncl.dll is genuinely
+// present (NoReexecRun_...) or absent-then-forced (ShadowDoneEnvVarForced_...). Both
+// used to run directly against the SHARED AlRunner/bin/<config>/<tfm>/ directory that
+// Program.cs itself is built into — the same directory several OTHER test classes in
+// this assembly also spawn the real runner against concurrently (see
+// NclShadowRuntime.EnsureShadowDir's own doc comment on why its shadow-dir cache key
+// folds in a hash of the caller's directory: "AlRunner.Tests's own parallel test
+// collections proved this matters").
+//
+// A first pass at #2061 added a precondition assert (Ncl.dll must be absent before
+// NoReexecRun_...'s warmup spawn) plus a loud, retrying cleanup in
+// ShadowDoneEnvVarForced_... in place of a swallowed `catch { /* best effort */ }`. Both
+// were correct fixes in isolation, but PR #2063's own CI run (BC 27.3 leg) proved they
+// were not sufficient: the precondition passed, yet the warmup spawn's OWN re-check of
+// the identical path, moments later inside a freshly cold-started subprocess, found
+// Ncl.dll already there — and the TRX for that run showed zero wall-clock overlap
+// between the two tests, so it was not simple same-class scheduling. The real problem is
+// structural: a check here and a re-check inside a separate process launch are two
+// different moments in time, against a path this test does not own exclusively — no
+// amount of asserting the state at ONE of those moments closes a gap that exists BETWEEN
+// them.
+//
+// So both tests now build their OWN private, uniquely-named mirror of the real build
+// output (MirrorOriginalBinDir, reusing NclShadowRuntime.MirrorInstallDirectory — the
+// exact mechanism Program.cs's own shadow-dir builder uses: dependency DLLs symlinked,
+// the entry assembly and its manifests real-copied) and run every remaining step against
+// that private copy. Once mirrored, nothing else in the process — no sibling test, no
+// concurrently-running test class, no subprocess this test itself spawns — can ever
+// observe or mutate the path this test cares about, which removes the shared-state
+// hazard structurally rather than narrowing the window around it.
 using System.Diagnostics;
 using System.Text;
 using System.Text.RegularExpressions;
+using AlRunner.Infrastructure;
 using Xunit;
 
 namespace AlRunner.Tests;
@@ -48,6 +82,12 @@ public sealed class StartupOutputReexecDedupTests
     /// parent — all at DEFAULT verbosity (no AL_RUNNER_VERBOSE), since #2038 already
     /// made `[provision]`/`[bc]`/`[reexec]` survive the default-verbosity filter and
     /// this is what a real user actually sees.
+    ///
+    /// Unlike its two siblings below, this test does not need Ncl.dll's presence/absence
+    /// pinned to a specific value — either a genuine re-exec (trio suppressed once,
+    /// printed once by the child) or a no-re-exec run (trio printed once, directly) still
+    /// satisfies every assertion here, so it is naturally unaffected by the shared-state
+    /// hazard #2061 is about and needs no private mirror.
     /// </summary>
     [SkippableFact]
     public void WarmRun_PrintsStartupTrioExactlyOnce_ReexecExplanationStillFromParent()
@@ -86,71 +126,60 @@ public sealed class StartupOutputReexecDedupTests
     {
         TestArtifacts.SkipIfMissing();
 
-        // Issue #2061: this test and its sibling ShadowDoneEnvVarForced_... share mutable
-        // state — Microsoft.Dynamics.Nav.Ncl.dll in the runner's build output directory.
-        // The sibling deliberately writes it there and cleans up afterwards (see its
-        // finally block); if that cleanup ever failed silently, this test's warmup spawn
-        // below would observe NclShadowRuntime.NeedsShadow == false for that directory,
-        // never re-exec into a shadow dir, and fail 15+ lines later inside
-        // ExtractShadowDir with a message about a missing marker line — a symptom that
-        // reads like a parsing bug when the real cause is a violated precondition here.
-        // Assert the precondition directly, the same way the sibling already asserts its
-        // own precondition before running.
-        var originalNcl = Path.Combine(
-            ProjectPath, "bin", TestBuildConfig.Configuration, TestBuildConfig.Framework,
-            "Microsoft.Dynamics.Nav.Ncl.dll");
-        Assert.False(File.Exists(originalNcl),
-            $"precondition violated: {originalNcl} already exists in the runner's build " +
-            "output directory. NclShadowRuntime.NeedsShadow would be false for it, so the " +
-            "warmup spawn below would never re-exec into a shadow dir, and this test would " +
-            "silently stop exercising the scenario it claims to (its assertions would then " +
-            "fail much later, on an unrelated line, looking like a parsing bug instead of " +
-            "what it actually is). This is usually ShadowDoneEnvVarForced_... failing to " +
-            "clean up after itself — see issue #2061.");
+        // See the file header (#2061) for why this runs against a private mirror rather
+        // than the shared AlRunner/bin/.../ directory.
+        var privateDir = MirrorOriginalBinDir();
+        try
+        {
+            var privateDll = Path.Combine(privateDir, "al-runner.dll");
 
-        // Discover the shadow dir path from a REAL subprocess's own [Cecil] "Building/
-        // Reusing Ncl shadow runtime dir at ..." line (verbose only for this discovery
-        // spawn) rather than calling NclShadowRuntime.EnsureShadowDir in-process: this
-        // test host process has almost certainly already loaded
-        // Microsoft.Dynamics.Nav.Ncl.dll for some OTHER test in the same run, and
-        // NclCecilRewrite.RewriteInPlace silently no-ops ("Ncl already loaded before
-        // in-place rewrite — no effect") whenever that is true for the CURRENT
-        // AppDomain — it would build a shadow dir with every dependency mirrored except
-        // the one file this test is actually about. A fresh child process never has
-        // that problem, and it is exactly the path Program.cs itself takes.
-        var (warmupOutput, warmupExit) = SpawnVerbose();
-        Assert.Equal(0, warmupExit);
-        var shadowDir = ExtractShadowDir(warmupOutput);
-        var shadowDll = Path.Combine(shadowDir, "al-runner.dll");
-        Assert.True(File.Exists(shadowDll), $"shadow al-runner.dll not found at {shadowDll}");
-        Assert.True(
-            File.Exists(Path.Combine(shadowDir, "Microsoft.Dynamics.Nav.Ncl.dll")),
-            "shadow dir is missing its own Ncl.dll copy — NeedsShadow would be true there too");
+            // Discover the shadow dir path from a REAL subprocess's own [Cecil] "Building/
+            // Reusing Ncl shadow runtime dir at ..." line (verbose only for this discovery
+            // spawn) rather than calling NclShadowRuntime.EnsureShadowDir in-process: this
+            // test host process has almost certainly already loaded
+            // Microsoft.Dynamics.Nav.Ncl.dll for some OTHER test in the same run, and
+            // NclCecilRewrite.RewriteInPlace silently no-ops ("Ncl already loaded before
+            // in-place rewrite — no effect") whenever that is true for the CURRENT
+            // AppDomain — it would build a shadow dir with every dependency mirrored except
+            // the one file this test is actually about. A fresh child process never has
+            // that problem, and it is exactly the path Program.cs itself takes.
+            var (warmupOutput, warmupExit) = SpawnVerboseAssembly(privateDll);
+            Assert.Equal(0, warmupExit);
+            var shadowDir = ExtractShadowDir(warmupOutput);
+            var shadowDll = Path.Combine(shadowDir, "al-runner.dll");
+            Assert.True(File.Exists(shadowDll), $"shadow al-runner.dll not found at {shadowDll}");
+            Assert.True(
+                File.Exists(Path.Combine(shadowDir, "Microsoft.Dynamics.Nav.Ncl.dll")),
+                "shadow dir is missing its own Ncl.dll copy — NeedsShadow would be true there too");
 
-        var (output, exit) = SpawnAssembly(shadowDll);
-        Assert.Equal(0, exit);
-        Assert.Contains("pass:        1", output);
-        Assert.Contains("fail:        0", output);
+            var (output, exit) = SpawnAssembly(shadowDll);
+            Assert.Equal(0, exit);
+            Assert.Contains("pass:        1", output);
+            Assert.Contains("fail:        0", output);
 
-        Assert.Equal(1, CountOccurrences(output, "[provision] BC "));
-        Assert.Equal(1, CountOccurrences(output, "[bc] selected BC "));
-        Assert.Equal(1, CountOccurrences(output, "al-runner — running "));
-        Assert.DoesNotContain("[reexec]", output);
+            Assert.Equal(1, CountOccurrences(output, "[provision] BC "));
+            Assert.Equal(1, CountOccurrences(output, "[bc] selected BC "));
+            Assert.Equal(1, CountOccurrences(output, "al-runner — running "));
+            Assert.DoesNotContain("[reexec]", output);
+        }
+        finally
+        {
+            DeleteDirectoryOrFail(privateDir);
+        }
     }
 
     /// <summary>
     /// Regression: `reexecPending` must track the ACTUAL re-exec gate
     /// (`NeedsShadow(...) && AL_RUNNER_NCL_SHADOW_DONE != "1"`), not `NeedsShadow` alone.
     ///
-    /// Setup: Ncl.dll is genuinely absent from the original (non-shadow) bin/ — so
-    /// NeedsShadow is true — but AL_RUNNER_NCL_SHADOW_DONE=1 is forced by hand (a
-    /// plausible way to skip the shadow hop while debugging), and the ncl-cecil cache is
-    /// already warm for this exact build (primed by the earlier warm-up spawns in this
-    /// class). Under that combination: the shadow-re-exec block is skipped (env guard),
+    /// Setup: Ncl.dll is genuinely absent from a bin/-shaped directory — so NeedsShadow
+    /// is true — but AL_RUNNER_NCL_SHADOW_DONE=1 is forced by hand (a plausible way to
+    /// skip the shadow hop while debugging), and the ncl-cecil cache is already warm for
+    /// this exact build (primed by the earlier warm-up spawns in this class). Under that
+    /// combination: the shadow-re-exec block is skipped (env guard),
     /// NclCecilRewrite.RewriteInPlace hits the warm cache and just copies the cached
-    /// bytes into the original bin/'s Ncl.dll (no further re-exec — it only re-execs on
-    /// a genuine cache MISS), so this single process runs the whole bundle itself. ZERO
-    /// re-execs happen at all.
+    /// bytes into place (no further re-exec — it only re-execs on a genuine cache MISS),
+    /// so this single process runs the whole bundle itself. ZERO re-execs happen at all.
     ///
     /// If `reexecPending` were computed from `NeedsShadow` alone (ignoring the env
     /// guard), it would read true here even though no re-exec follows — suppressing the
@@ -165,24 +194,26 @@ public sealed class StartupOutputReexecDedupTests
     {
         TestArtifacts.SkipIfMissing();
 
-        var originalDll = Path.Combine(
-            ProjectPath, "bin", TestBuildConfig.Configuration, TestBuildConfig.Framework, "al-runner.dll");
-        var originalNcl = Path.Combine(Path.GetDirectoryName(originalDll)!, "Microsoft.Dynamics.Nav.Ncl.dll");
-
-        // Warm the ncl-cecil cache for this exact build (normal spawn, via the shadow
-        // dir — never touches the original bin/) so the forced run below hits a cache
-        // HIT rather than a genuine MISS (a MISS would trigger the UNRELATED
-        // fresh-rewrite re-exec — see Program.cs — which would mask exactly the
-        // single-generation scenario this test is pinning).
-        Spawn();
-        Assert.False(File.Exists(originalNcl),
-            $"precondition violated: {originalNcl} already exists — NeedsShadow would be false " +
-            "for the original bin/ regardless of the env guard, and this test would not be " +
-            "exercising the scenario it claims to.");
-
+        // See the file header (#2061) for why this runs against a private mirror rather
+        // than the shared AlRunner/bin/.../ directory.
+        var privateDir = MirrorOriginalBinDir();
         try
         {
-            var psi = BuildPsi(originalDll);
+            var privateDll = Path.Combine(privateDir, "al-runner.dll");
+            var privateNcl = Path.Combine(privateDir, "Microsoft.Dynamics.Nav.Ncl.dll");
+
+            // Warm the ncl-cecil cache for this exact build (normal spawn, via ITS OWN
+            // shadow dir — never touches the private mirror's own bin/ built above) so
+            // the forced run below hits a cache HIT rather than a genuine MISS (a MISS
+            // would trigger the UNRELATED fresh-rewrite re-exec — see Program.cs — which
+            // would mask exactly the single-generation scenario this test is pinning).
+            SpawnAssembly(privateDll);
+            Assert.False(File.Exists(privateNcl),
+                $"precondition violated: {privateNcl} already exists — NeedsShadow would be " +
+                "false for the mirror regardless of the env guard, and this test would not be " +
+                "exercising the scenario it claims to.");
+
+            var psi = BuildPsi(privateDll);
             psi.Environment["AL_RUNNER_NCL_SHADOW_DONE"] = "1";
             var (output, exit) = Run(psi);
 
@@ -200,58 +231,54 @@ public sealed class StartupOutputReexecDedupTests
         }
         finally
         {
-            // RewriteInPlace writes Ncl.dll directly into the original bin/ as a side
-            // effect of this scenario (see the doc comment above) — clean it up so it
-            // cannot contaminate any other test in this assembly that inspects
-            // NclShadowRuntime.NeedsShadow against that same directory.
+            // RewriteInPlace writes Ncl.dll directly into the private mirror as a side
+            // effect of this scenario (see the doc comment above) — clean up the WHOLE
+            // mirror (it is exclusively this test's own, private, uniquely-named copy;
+            // nothing else references it).
             //
             // Issue #2061: this used to be `try { File.Delete(originalNcl); } catch
-            // { /* best effort */ }`. A CI run (release 33006272355, BC 27.5 leg) showed
-            // this delete plausibly failing — the same job's teardown logged a lingering
-            // orphan `dotnet` process, exactly the kind of process that can hold the file
-            // open — and a swallowed failure here left Ncl.dll behind for
-            // NoReexecRun_StartupTrioUnchanged to trip over 60+ lines away, in a different
-            // test, with no indication the real cause was this cleanup. A test that cannot
-            // restore file-system state it mutated has failed, even though its own
-            // assertions above passed — so this is no longer best-effort.
-            DeleteOrFail(originalNcl);
+            // { /* best effort */ }` against the SHARED bin/ directory. A test that
+            // cannot restore state it mutated has failed, even though its own assertions
+            // above passed — so this is no longer best-effort, and (round 2) it is no
+            // longer shared state either.
+            DeleteDirectoryOrFail(privateDir);
         }
     }
 
     /// <summary>
-    /// Issue #2061, acceptance #2: a cleanup that genuinely cannot delete its file must
-    /// fail the test loudly, naming the file and the underlying exception — not swallow
-    /// the failure the way the old `catch { /* best effort */ }` did. Simulates an
-    /// undeletable file the same way a real dev box would produce one deterministically
-    /// (a directory the current user cannot write to — deleting a file requires write
-    /// permission on its CONTAINING directory, not the file itself, so this blocks
-    /// File.Delete regardless of the file's own permissions) rather than relying on a
-    /// same-process file lock, which .NET's own doc admits does not reliably block a
-    /// delete on non-Windows platforms including the ubuntu-latest CI runner this suite
-    /// targets.
+    /// Issue #2061, acceptance #2: a cleanup that genuinely cannot delete what it created
+    /// must fail the test loudly, naming the path and the underlying exception — not
+    /// swallow the failure the way the old `catch { /* best effort */ }` did. Simulates an
+    /// undeletable directory the same way a real dev box would produce one
+    /// deterministically (removing write permission on the directory itself — deleting an
+    /// entry FROM a directory requires write permission on that directory, not on the
+    /// entry) rather than relying on a same-process file lock, which .NET's own docs admit
+    /// does not reliably block a delete on non-Windows platforms including the
+    /// ubuntu-latest CI runner this suite targets.
     /// </summary>
     [Fact]
-    public void DeleteOrFail_UndeletableFile_FailsLoudlyNamingFileAndException()
+    public void DeleteDirectoryOrFail_UndeletableDirectory_FailsLoudlyNamingDirectoryAndException()
     {
-        var dir = Directory.CreateTempSubdirectory("al-runner-deleteorfail-").FullName;
-        var file = Path.Combine(dir, "Microsoft.Dynamics.Nav.Ncl.dll");
-        File.WriteAllText(file, "not a real dll — just needs to exist");
+        var dir = Directory.CreateTempSubdirectory("al-runner-deletedirorfail-").FullName;
+        File.WriteAllText(Path.Combine(dir, "Microsoft.Dynamics.Nav.Ncl.dll"), "not a real dll — just needs to exist");
         try
         {
-            RunChmod("a-w", dir); // remove write permission on the DIRECTORY
+            RunChmod("a-w", dir); // remove write permission on the directory itself, so
+                                   // its own entry (the file above) can no longer be unlinked.
 
-            var thrown = Assert.ThrowsAny<Exception>(() => DeleteOrFail(file));
+            var thrown = Assert.ThrowsAny<Exception>(() => DeleteDirectoryOrFail(dir));
 
-            // Both the exact file path and *something* naming the underlying cause must
-            // be in the failure — a message like "cleanup failed" alone would still pass
-            // a version of this test that hardcoded a generic string, so pin the actual
-            // exception type name too (UnauthorizedAccessException on Linux for a
+            // Both the exact directory path and *something* naming the underlying cause
+            // must be in the failure — a message like "cleanup failed" alone would still
+            // pass a version of this test that hardcoded a generic string, so pin the
+            // actual exception type name too (UnauthorizedAccessException on Linux for a
             // read-only-directory delete).
-            Assert.Contains(file, thrown.Message);
+            Assert.Contains(dir, thrown.Message);
             Assert.Contains("UnauthorizedAccessException", thrown.Message);
-            // The file must still exist — DeleteOrFail must not have silently swallowed
-            // the failure and let the caller believe cleanup succeeded.
-            Assert.True(File.Exists(file), "DeleteOrFail must leave the undeletable file in place, not pretend it was removed");
+            // The directory must still exist — DeleteDirectoryOrFail must not have
+            // silently swallowed the failure and let the caller believe cleanup succeeded.
+            Assert.True(Directory.Exists(dir),
+                "DeleteDirectoryOrFail must leave the undeletable directory in place, not pretend it was removed");
         }
         finally
         {
@@ -261,25 +288,20 @@ public sealed class StartupOutputReexecDedupTests
     }
 
     /// <summary>
-    /// Negative-of-the-negative: once the file CAN be deleted, DeleteOrFail must actually
-    /// delete it and return normally rather than always failing loudly regardless of
-    /// outcome (which would trivially "pass" the test above for the wrong reason).
+    /// Negative-of-the-negative: once the directory CAN be deleted, DeleteDirectoryOrFail
+    /// must actually delete it and return normally rather than always failing loudly
+    /// regardless of outcome (which would trivially "pass" the test above for the wrong
+    /// reason).
     /// </summary>
     [Fact]
-    public void DeleteOrFail_DeletableFile_DeletesAndReturns()
+    public void DeleteDirectoryOrFail_DeletableDirectory_DeletesAndReturns()
     {
-        var dir = Directory.CreateTempSubdirectory("al-runner-deleteorfail-ok-").FullName;
-        var file = Path.Combine(dir, "Microsoft.Dynamics.Nav.Ncl.dll");
-        File.WriteAllText(file, "not a real dll — just needs to exist");
-        try
-        {
-            DeleteOrFail(file);
-            Assert.False(File.Exists(file), "DeleteOrFail should have deleted a genuinely deletable file");
-        }
-        finally
-        {
-            Directory.Delete(dir, recursive: true);
-        }
+        var dir = Directory.CreateTempSubdirectory("al-runner-deletedirorfail-ok-").FullName;
+        File.WriteAllText(Path.Combine(dir, "Microsoft.Dynamics.Nav.Ncl.dll"), "not a real dll — just needs to exist");
+
+        DeleteDirectoryOrFail(dir);
+
+        Assert.False(Directory.Exists(dir), "DeleteDirectoryOrFail should have deleted a genuinely deletable directory");
     }
 
     private static void RunChmod(string mode, string path)
@@ -293,17 +315,14 @@ public sealed class StartupOutputReexecDedupTests
     }
 
     /// <summary>
-    /// Deletes <paramref name="path"/>, retrying briefly to absorb a transient lock (e.g.
-    /// a not-yet-terminated child process still holding the file — see the CI evidence
-    /// cited at the call site in <see
-    /// cref="ShadowDoneEnvVarForced_NoFurtherReexecFollows_StartupTrioStillPrintsOnce"/>).
-    /// If it still cannot be deleted after retrying, this fails the CALLING test loudly,
-    /// naming the file and the underlying exception, rather than swallowing the failure:
-    /// a test that cannot restore file-system state it mutated has failed, because every
-    /// other test in this class that depends on that state's absence is now unreliable
-    /// (issue #2061).
+    /// Deletes the directory at <paramref name="dir"/> (recursively), retrying briefly to
+    /// absorb a transient lock (e.g. a not-yet-terminated child process still holding a
+    /// file inside it open). If it still cannot be deleted after retrying, this fails the
+    /// CALLING test loudly, naming the directory and the underlying exception, rather than
+    /// swallowing the failure: a test that cannot restore file-system state it created has
+    /// failed, even if its own assertions passed (issue #2061).
     /// </summary>
-    private static void DeleteOrFail(string path)
+    private static void DeleteDirectoryOrFail(string dir)
     {
         const int maxAttempts = 5;
         Exception? last = null;
@@ -311,9 +330,9 @@ public sealed class StartupOutputReexecDedupTests
         {
             try
             {
-                if (!File.Exists(path)) return;
-                File.Delete(path);
-                if (!File.Exists(path)) return;
+                if (!Directory.Exists(dir)) return;
+                Directory.Delete(dir, recursive: true);
+                if (!Directory.Exists(dir)) return;
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
@@ -323,11 +342,10 @@ public sealed class StartupOutputReexecDedupTests
         }
 
         Assert.Fail(
-            $"cleanup failed: could not delete {path} after {maxAttempts} attempts. This " +
-            "file is shared mutable state with sibling tests in this class " +
-            "(NclShadowRuntime.NeedsShadow checks for its presence), so leaving it behind " +
-            $"corrupts every later test that depends on it being absent. Underlying " +
-            $"exception: {last}");
+            $"cleanup failed: could not delete directory {dir} after {maxAttempts} attempts. " +
+            "This private mirror was meant to be owned exclusively by the test that created " +
+            "it, so a failure removing it now means something is still holding one of its " +
+            $"files open. Underlying exception: {last}");
     }
 
     /// <summary>Extracts the path from Program's own `[Cecil] Building/Reusing Ncl
@@ -340,19 +358,54 @@ public sealed class StartupOutputReexecDedupTests
         return m.Groups[1].Value.TrimEnd('\r');
     }
 
+    /// <summary>
+    /// Mirrors the runner's real build output directory (AlRunner/bin/&lt;config&gt;/
+    /// &lt;tfm&gt;/) into a fresh, uniquely-named private directory, using the exact same
+    /// mechanism Program.cs's own shadow-dir builder uses
+    /// (NclShadowRuntime.MirrorInstallDirectory — dependency DLLs symlinked at near-zero
+    /// cost, the entry assembly and its manifests real-copied). See the file header
+    /// (issue #2061) for why the tests below need this instead of spawning directly
+    /// against the shared directory.
+    ///
+    /// Asserts the SOURCE directory's own Ncl.dll is absent before mirroring — issue
+    /// #2061 acceptance #3. Nothing in this file writes to the shared source directory
+    /// any more, so this should always hold; it exists to turn a contaminated SOURCE
+    /// (e.g. a stray Ncl.dll left over from manually reproducing this issue by hand, or
+    /// from some future change that regresses this file's own isolation) into an
+    /// immediate, named precondition failure instead of a confusing one down inside
+    /// ExtractShadowDir — the mirror would otherwise faithfully copy the contamination
+    /// forward and this test would silently stop exercising the scenario it claims to.
+    /// </summary>
+    private static string MirrorOriginalBinDir()
+    {
+        var originalBinDir = Path.Combine(
+            ProjectPath, "bin", TestBuildConfig.Configuration, TestBuildConfig.Framework);
+        var originalNcl = Path.Combine(originalBinDir, "Microsoft.Dynamics.Nav.Ncl.dll");
+        Assert.False(File.Exists(originalNcl),
+            $"precondition violated: {originalNcl} already exists in the runner's shared build " +
+            "output directory. Every test in this class now mirrors that directory into its own " +
+            "private copy rather than mutating it directly (see issue #2061), so this should never " +
+            "happen — if it does, something outside this file (or a manual repro left behind by " +
+            "hand) has contaminated the shared source, and the private mirror below would " +
+            "otherwise silently copy that contamination forward.");
+
+        var privateDir = Directory.CreateTempSubdirectory("al-runner-startup-mirror-").FullName;
+        NclShadowRuntime.MirrorInstallDirectory(originalBinDir, privateDir);
+        return privateDir;
+    }
+
     private (string Output, int Exit) Spawn() =>
         SpawnAssembly(Path.Combine(
             ProjectPath, "bin", TestBuildConfig.Configuration, TestBuildConfig.Framework, "al-runner.dll"));
 
-    /// <summary>Same spawn as <see cref="Spawn"/>, but AL_RUNNER_VERBOSE=1 so the
+    /// <summary>Same spawn as <see cref="SpawnAssembly"/>, but AL_RUNNER_VERBOSE=1 so the
     /// `[Cecil]`-tagged shadow-dir marker line (suppressed by default — see Log.cs) is
     /// observable, purely for path discovery. Not used for any of the count assertions,
     /// which must stay at default verbosity to prove what a real user actually sees.
     /// </summary>
-    private (string Output, int Exit) SpawnVerbose()
+    private (string Output, int Exit) SpawnVerboseAssembly(string dllPath)
     {
-        var psi = BuildPsi(Path.Combine(
-            ProjectPath, "bin", TestBuildConfig.Configuration, TestBuildConfig.Framework, "al-runner.dll"));
+        var psi = BuildPsi(dllPath);
         psi.Environment["AL_RUNNER_VERBOSE"] = "1";
         return Run(psi);
     }
