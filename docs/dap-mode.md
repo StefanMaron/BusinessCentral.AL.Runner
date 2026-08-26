@@ -81,14 +81,84 @@ and write `Content-Length: <n>\r\n\r\n<json>` frames by hand.
 - **A VS Code launch configuration.** There is no `type` contribution a
   `launch.json` can point at without an installed extension; wiring this up
   belongs in the (separate-repo) AL Runner VS Code extension. Tracked as
-  follow-up. Until then, `{"type": "al", "request": "attach", "debugServer":
-  4711}` (borrowing the AL extension's own dev-mode DAP attach point) is a
-  workaround for manual trying-out, not a supported story.
+  follow-up in #2046. See "VS Code integration status" below — the
+  `debugServer` workaround this section used to suggest does not actually
+  work with the currently shipped AL extension.
 - **Multiple bundles in one session.** `--dap` currently refuses more than one
   bundle path.
 - **`setVariable` / expression evaluation / conditional breakpoints.**
   `setVariable` is explicitly tracked separately (#2017); the others are not
   yet planned.
+
+## VS Code integration status (#2046)
+
+**Stock VS Code cannot attach to `--dap` from a plain `launch.json`.** A
+`launch.json` entry's `type` must be contributed by an installed extension's
+`contributes.debuggers` — VS Code has no generic "point me at a TCP DAP
+server" debug type. This was already known going into #2046; it is confirmed
+here rather than re-derived, since VS Code's extension model has not changed
+in a way that would affect it.
+
+**The previously-suggested `debugServer` workaround does not work.** This
+document used to suggest borrowing the AL extension's own `type: "al"` with
+`debugServer: 4711` to bypass its adapter and connect directly to al-runner's
+DAP port, as a way to try the adapter without installing anything new. That
+does not function with the currently shipped `ms-dynamics-smb.al` extension.
+Verified by decompiling the installed extension bundles (17.0.2273547 and the
+newer 18.0.2498801, both checked — same result in each) and VS Code's own
+`extensionHostProcess.js`, rather than by trying it and guessing why it
+failed:
+
+- VS Code core's debug-adapter resolution (`getAdapterDescriptor` in
+  `extensionHostProcess.js`) does exactly what the workaround assumes: if
+  `session.configuration.debugServer` is a number, it connects a raw TCP
+  socket to that port and never asks the extension for a debug adapter
+  executable at all.
+- But `session.configuration` there is the **resolved** configuration — the
+  output of every registered `DebugConfigurationProvider.resolveDebugConfiguration`
+  for that `type`, chained in sequence — not the literal object written in
+  `launch.json`. `ms-dynamics-smb.al` registers exactly such a provider for
+  `type: "al"` (`AlDebugConfigurationProvider`), and for both `launch` and
+  `attach` requests it rebuilds the configuration object field-by-field from
+  an explicit whitelist (`name`, `type`, `request`, `authentication`, `port`,
+  `server`, `serverInstance`, `tenant`, ... — dozens of named fields). Neither
+  build's whitelist includes `debugServer`, and the extension's bundled JS
+  contains zero occurrences of the string `"debugServer"` anywhere — it has no
+  special-case handling for it, so nothing preserves the field. By the time
+  VS Code core checks `session.configuration.debugServer`, the field is gone,
+  and it falls through to asking the AL extension for its own real debug
+  adapter instead of al-runner's.
+- This is a property of the currently-installed AL extension, not of VS Code:
+  a debug `type` with **no** competing `resolveDebugConfiguration` (i.e. a
+  type the AL extension does not own) would not have this problem, because
+  there would be nothing rebuilding the configuration out from under
+  `debugServer`.
+
+**What this means for the follow-up in the (separate) AL Runner VS Code
+extension**, restated from #1642/#2046 with the workaround option removed
+since it does not hold up:
+
+1. **A minimal extension contributing a new `debuggers` type needs no
+   TypeScript**, and would not hit the problem above, because a fresh `type`
+   name has no other extension's `resolveDebugConfiguration` in the way.
+   `package.json` alone can declare `contributes.debuggers: [{ "type":
+   "al-runner", "label": "AL Runner", "languages": ["al"],
+   "configurationAttributes": {...} }]` plus a `configurationSnippets` entry
+   whose body bakes in a fixed `debugServer` port — the user runs `al-runner
+   --dap` themselves in a terminal first, same manual two-step this document
+   already describes under "Trying it without a DAP client", just with a
+   `launch.json` entry instead of raw sockets.
+2. **Making the extension launch `al-runner --dap` itself** (instead of
+   requiring the manual terminal step) needs a small amount of TypeScript: a
+   `vscode.DebugAdapterDescriptorFactory` for that new type, returning a
+   `vscode.DebugAdapterServer(port)` after spawning the process — the same
+   shape the extension already needs for `--server` (`docs/server-mode.md`),
+   since it already knows where the al-runner binary is.
+3. Whether the existing (separate-repo, not-in-this-repo) AL Runner VS Code
+   extension can take either contribution cheaply is **not verified here** —
+   this repo has no access to that extension's source. That remains the open
+   question #2046's issue body raised, and is unchanged by this finding: it
+   is a decision, and a change, for whoever owns that extension's repository.
 
 ## See also
 
