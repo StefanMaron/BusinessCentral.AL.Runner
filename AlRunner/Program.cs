@@ -3151,15 +3151,11 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
     // SynthesizeInlineCodeBundle) and run through the SAME compile pipeline a
     // sourcePaths-based execute already uses (RunAllBundlesForServer →
     // RunBundleForServer → RunFirstCodeunitOnRun), rather than inventing a
-    // second execution path. `captureValues` stays out of scope — it needs the
-    // Cecil instrumentation pass tracked on #1640 — so that case still fails
-    // LOUD (never a silent fake) per .claude/rules/loud-failures.md.
+    // second execution path. `captureValues` (#1640, second slice — --coverage
+    // was the first, #1922) gates AlValueCapture.Enabled for the duration of
+    // this call; RunFirstCodeunitOnRun resets+collects it per bundle.
     string HandleServerExecute(AlRunner.ServerRequest req)
     {
-        if (req.CaptureValues == true)
-            return AlRunner.ServerProtocol.Error(
-                "execute: 'captureValues' is not yet supported in v2. See docs/server-mode.md.");
-
         string? scratchDir = null;
         string[] sourcePaths;
         if (!string.IsNullOrWhiteSpace(req.Code))
@@ -3183,6 +3179,10 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
         var isolationError = ApplyRequestIsolation(req);
         if (isolationError != null) return isolationError;
 
+        // Scoped to THIS request only — reset in `finally` below regardless of outcome,
+        // so a captureValues:true request never leaves the flag on for a later request
+        // that didn't ask for it (the flag is process-global, same as AlCoverageTracker.Enabled).
+        AlRunner.Infrastructure.AlValueCapture.Enabled = req.CaptureValues == true;
         try
         {
             var runs = RunAllBundlesForServer(sourcePaths, req.PackagePaths, RunFirstCodeunitOnRun);
@@ -3202,6 +3202,7 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
         }
         finally
         {
+            AlRunner.Infrastructure.AlValueCapture.Enabled = false;
             // Best-effort cleanup: the scratch dir's contents are fully consumed
             // once RunBundleForServer has emitted+compiled them into an in-memory
             // assembly (or failed trying) — nothing downstream needs the files on
@@ -3772,6 +3773,15 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
 
         var sw = System.Diagnostics.Stopwatch.StartNew();
         AlRunner.Infrastructure.AlCallStackCapture.Clear();
+        // #1640: only meaningfully non-null when the caller enabled
+        // AlValueCapture (HandleServerExecute, gated by req.CaptureValues). Reset
+        // BEFORE invoking, mirroring AlCallStackCapture.Clear() above — same
+        // process-global, sequential-invocation assumption.
+        AlRunner.Infrastructure.AlValueCapture.Reset();
+        IReadOnlyList<AlRunner.Infrastructure.AlCapturedValue>? Captured() =>
+            AlRunner.Infrastructure.AlValueCapture.Enabled
+                ? AlRunner.Infrastructure.AlValueCapture.Collect()
+                : null;
         try
         {
             var ctor = target.GetConstructors().FirstOrDefault(c =>
@@ -3787,19 +3797,21 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
             else target.GetMethod("OnRun",
                 System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance, null,
                 Type.EmptyTypes, null)!.Invoke(instance, null);
-            return new[] { new TestResult(target.Name, "OnRun", TestOutcome.Pass, null, null, sw.Elapsed) };
+            return new[] { new TestResult(target.Name, "OnRun", TestOutcome.Pass, null, null, sw.Elapsed,
+                CapturedValues: Captured()) };
         }
         catch (System.Reflection.TargetInvocationException tex)
         {
             var inner = tex.InnerException ?? tex;
             var alStack = AlRunner.Infrastructure.AlCallStackCapture.GetCaptured(inner);
             return new[] { new TestResult(target.Name, "OnRun", TestOutcome.Fail,
-                $"{inner.GetType().Name}: {inner.Message}", inner.ToString(), sw.Elapsed, alStack) };
+                $"{inner.GetType().Name}: {inner.Message}", inner.ToString(), sw.Elapsed, alStack,
+                CapturedValues: Captured()) };
         }
         catch (Exception ex)
         {
             return new[] { new TestResult(target.Name, "OnRun", TestOutcome.Error,
-                ex.Message, ex.ToString(), sw.Elapsed) };
+                ex.Message, ex.ToString(), sw.Elapsed, CapturedValues: Captured()) };
         }
     }
 }

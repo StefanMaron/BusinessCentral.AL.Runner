@@ -40,7 +40,7 @@ al-runner --server [--package-cache PATH ...] [--cache DIR]
   "packagePaths": ["/extra"],   // optional: extra .app caches, augment server defaults
   "stubPaths": [],              // v1 field, ignored in v2 (no stubs layer)
   "code": "...",                // execute only (inline AL); mutually exclusive with sourcePaths
-  "captureValues": false,       // execute only — not yet supported
+  "captureValues": false,       // execute only — see #1640
   "testIsolation": "codeunit"   // optional: "codeunit" (default) | "test"/"method" | "disabled"
                                  // — see #1616. Applies to this request only; a later
                                  // request that omits the field falls back to the
@@ -166,12 +166,23 @@ covers every object type BC supports, not just `codeunit`/`table` (#1931):
 ```
 
 `code` and `sourcePaths` are mutually exclusive — sending both is a
-request-level error. Value capture (`captureValues`) still needs the Cecil
-instrumentation pass on #1640, so that flag alone still fails loudly with a
-structured error rather than a silent fake, per `.claude/rules/loud-failures.md`:
+request-level error.
+
+`captureValues: true` (#1640) reports each test entry's AL locals as of the
+last statement that ran — captured via a Cecil hook on
+`NavMethodScope.Exit()`, not a pass over emitted AL output (see
+`AlRunner/Infrastructure/AlValueCapture.cs`). `capturedValues` is present per
+test only when the request set the flag; each entry is `{scopeName,
+variableName, value, statementId}`:
 
 ```json
-{"error":"execute: 'captureValues' is not yet supported in v2. See docs/server-mode.md."}
+{"command":"execute","captureValues":true,
+ "code":"codeunit 50100 X { trigger OnRun() var Msg: Text; begin Msg := 'hi'; end; }"}
+```
+
+```json
+{"exitCode":0,"tests":[{"name":"X.OnRun","status":"pass","durationMs":5,
+ "capturedValues":[{"scopeName":"OnRun","variableName":"Msg","value":"hi","statementId":0}]}]}
 ```
 
 ### `shutdown`

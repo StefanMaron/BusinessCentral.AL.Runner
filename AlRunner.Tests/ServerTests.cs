@@ -184,18 +184,71 @@ public class ServerTests : IClassFixture<SharedCliServer>
         Assert.Contains("executed-onrun-boom", tests[0].GetProperty("message").GetString());
     }
 
-    // #1917: 'captureValues' still needs the Cecil instrumentation pass tracked
-    // on #1640 — that half of v1 parity stays a loud, structured error.
+    // #1640 (second slice; --coverage was the first, #1922): 'captureValues:true' on
+    // `execute` reflects the AL locals of the top-level OnRun scope, as of the LAST
+    // statement that ran, via BC's own StmtHit instrumentation (AlValueCapture) — no
+    // Cecil pass over AL output, no dependency on #1642. Asserts EXACT values (42,
+    // "after") so this fails if the implementation were gutted to always report empty
+    // or default values.
     [SkippableFact]
-    public async Task Execute_CaptureValues_NotSupported_ReturnsError()
+    public async Task Execute_CaptureValues_True_ReportsFinalLocalsOfTopLevelScope()
     {
         TestArtifacts.SkipIfMissing();
         var server = await _fixture.GetAsync();
-        var r = await server.SendAsync(
-            "{\"command\":\"execute\",\"code\":\"Message('hi');\",\"captureValues\":true}");
+        var r = await server.SendAsync(JsonSerializer.Serialize(new
+        {
+            command = "execute",
+            captureValues = true,
+            code = "codeunit 60171 \"CV Capture SX\" { trigger OnRun() var Counter: Integer; " +
+                   "Msg: Text; begin Counter := 41; Msg := 'before'; Counter := 42; " +
+                   "Msg := 'after'; end; }"
+        }));
         var d = JsonSerializer.Deserialize<JsonElement>(r);
-        Assert.True(d.TryGetProperty("error", out var err));
-        Assert.Contains("captureValues", err.GetString());
+        Assert.False(d.TryGetProperty("error", out _), $"unexpected error response: {r}");
+        Assert.Equal(0, d.GetProperty("exitCode").GetInt32());
+        var tests = d.GetProperty("tests");
+        Assert.Equal(1, tests.GetArrayLength());
+        Assert.Equal("pass", tests[0].GetProperty("status").GetString());
+
+        Assert.True(tests[0].TryGetProperty("capturedValues", out var captured),
+            $"expected capturedValues on the response: {r}");
+        var byName = captured.EnumerateArray()
+            .ToDictionary(e => e.GetProperty("variableName").GetString()!, e => e);
+        Assert.True(byName.ContainsKey("Counter"), $"no Counter entry: {r}");
+        Assert.True(byName.ContainsKey("Msg"), $"no Msg entry: {r}");
+        // Final values, not the intermediate 41/"before" — proves the snapshot is
+        // taken continuously (overwritten every statement) rather than once at the
+        // first hit or some other stale point.
+        Assert.Equal(42, byName["Counter"].GetProperty("value").GetInt32());
+        Assert.Equal("after", byName["Msg"].GetProperty("value").GetString());
+        Assert.Equal("OnRun", byName["Counter"].GetProperty("scopeName").GetString());
+        // statementId indexes the LAST statement of the OnRun trigger (4 statements,
+        // 0-based) — the exact index [SourceSpans] backs, not just "some int".
+        Assert.Equal(3, byName["Counter"].GetProperty("statementId").GetInt32());
+    }
+
+    // Negative direction: the SAME codeunit shape, but captureValues omitted (false by
+    // default). capturedValues must be ABSENT — not an empty array, not present with
+    // stale/default data — proving the flag actually gates the feature rather than it
+    // being always-on (which the positive test alone could not distinguish).
+    [SkippableFact]
+    public async Task Execute_CaptureValues_Omitted_NoCapturedValuesField()
+    {
+        TestArtifacts.SkipIfMissing();
+        var server = await _fixture.GetAsync();
+        var r = await server.SendAsync(JsonSerializer.Serialize(new
+        {
+            command = "execute",
+            code = "codeunit 60172 \"CV NoCapture SX\" { trigger OnRun() var Counter: Integer; " +
+                   "begin Counter := 42; end; }"
+        }));
+        var d = JsonSerializer.Deserialize<JsonElement>(r);
+        Assert.False(d.TryGetProperty("error", out _), $"unexpected error response: {r}");
+        var tests = d.GetProperty("tests");
+        Assert.Equal(1, tests.GetArrayLength());
+        Assert.Equal("pass", tests[0].GetProperty("status").GetString());
+        Assert.False(tests[0].TryGetProperty("capturedValues", out _),
+            $"capturedValues must be absent when captureValues wasn't requested: {r}");
     }
 
     // #1917: inline `code` that is a bare statement list (no leading `codeunit`/

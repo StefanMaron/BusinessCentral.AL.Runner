@@ -6618,6 +6618,47 @@ public static class NclCecilRewrite
         }
 
         // ─────────────────────────────────────────────────────────────────────
+        // NavMethodScope.Exit() — --capture-values hook (issue #1640, second slice;
+        // --coverage above was the first, #1922).
+        //
+        // NOT a StmtHit hook, despite the coverage block right above being the obvious
+        // template — see AlValueCapture.cs's file header for why a StmtHit-based "keep
+        // overwriting the latest hit" design is provably one statement stale (BC calls
+        // StmtHit(N) BEFORE statement N's own side effect, so the LAST hit never sees the
+        // LAST statement's result). Exit() is decompiled as:
+        //   internal void Exit() { statementNumber = int.MaxValue; ...; Dispose(); }
+        // called from Run()'s `finally` — i.e. exactly once per scope, unconditionally
+        // (success or AL error), strictly AFTER every OnRun() statement has completed and
+        // strictly BEFORE Dispose() (confirmed by decompile: Dispose() only touches
+        // Tree/session bookkeeping, never AL-declared fields). Prepending BEFORE Exit()'s
+        // own first instruction means AlValueCapture.OnExit sees both the true final field
+        // values AND the real last-executed statementNumber (not yet stomped to
+        // int.MaxValue).
+        {
+            var nclMod = asm.MainModule;
+            const string MsType = "Microsoft.Dynamics.Nav.Runtime.NavMethodScope";
+            var hookMi = typeof(AlRunner.Infrastructure.AlValueCapture).GetMethod(
+                nameof(AlRunner.Infrastructure.AlValueCapture.OnExit), BindingFlags.Public | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "[Cecil] AlValueCapture.OnExit not found — runner-side rename?");
+            var hookRef = nclMod.ImportReference(hookMi);
+
+            var target = FindNclMethod(nclMod, MsType, "Exit", 0);
+            if (target.ReturnType.FullName != "System.Void")
+                throw new InvalidOperationException(
+                    $"[Cecil] NavMethodScope.Exit()'s return type is {target.ReturnType.FullName}, "
+                    + "expected void — Ncl shape changed; do not commit");
+
+            var body = target.Body;
+            var il = body.GetILProcessor();
+            var first = body.Instructions[0];
+            il.InsertBefore(first, il.Create(OpCodes.Ldarg_0));
+            il.InsertBefore(first, il.Create(OpCodes.Call, hookRef));
+            if (body.MaxStackSize < 1) body.MaxStackSize = 1;
+            Console.Error.WriteLine("[Cecil] Prepended AlValueCapture.OnExit to NavMethodScope.Exit()");
+        }
+
+        // ─────────────────────────────────────────────────────────────────────
         // ALFunctionTimingExecutionListener cluster — JmpHook→Cecil (Batch 2).
         //
         // Telemetry/diagnostic-only listener reached during AL method execution via

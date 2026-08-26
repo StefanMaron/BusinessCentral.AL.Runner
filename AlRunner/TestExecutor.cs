@@ -71,7 +71,15 @@ public sealed record TestResult(string Codeunit, string Method, TestOutcome Outc
                                 Exception? Exception = null,
                                 Infrastructure.ExpectationResult? Expectation = null,
                                 bool InsideTestProc = true,
-                                bool TimedOut = false);
+                                bool TimedOut = false,
+                                // #1640: only ever non-null when the caller asked for
+                                // --capture-values (server `execute`'s captureValues flag
+                                // today — see Program.cs's RunFirstCodeunitOnRun/HandleServerExecute
+                                // and AlValueCapture). Null means "not requested", never
+                                // "requested but empty" — an empty list IS how "requested,
+                                // zero AL locals" is represented (AlValueCapture.Collect()
+                                // never returns null).
+                                IReadOnlyList<Infrastructure.AlCapturedValue>? CapturedValues = null);
 
 public sealed class TestExecutor
 {

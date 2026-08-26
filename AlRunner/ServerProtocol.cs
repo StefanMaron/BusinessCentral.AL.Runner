@@ -30,9 +30,12 @@ namespace AlRunner;
 ///             "noop":bool}. `noop:true` when there was no active run (or it had
 ///             already finished) at the moment the cancel was processed — the v1
 ///             shape (#1613/#1614), reused verbatim rather than inventing a new one.
-///   execute : {exitCode, tests:[{name,status,durationMs,message,stackTrace}],
-///              messages|null, compilationErrors|null} — single response, not
-///              streamed (matches v1: only runTests streams).
+///   execute : {exitCode, tests:[{name,status,durationMs,message,stackTrace,
+///              capturedValues|omitted}], messages|null, compilationErrors|null} —
+///              single response, not streamed (matches v1: only runTests streams).
+///              `capturedValues` (#1640) is present per test only when the request
+///              set `captureValues:true`; each entry is {scopeName, variableName,
+///              value, statementId} — see AlValueCapture.
 ///   error   : {error}
 ///   shutdown: {status}
 /// </summary>
@@ -45,7 +48,13 @@ public sealed class ServerRequest
     [JsonPropertyName("stubPaths")] public string[]? StubPaths { get; set; }
     /// <summary>Inline AL source (used by the <c>execute</c> command).</summary>
     [JsonPropertyName("code")] public string? Code { get; set; }
-    /// <summary>Opt-in to variable capture on <c>execute</c> (v1 field; not yet supported in v2).</summary>
+    /// <summary>
+    /// Opt-in to variable capture on <c>execute</c> (v1 field; #1640 second slice —
+    /// --coverage was the first, #1922). When true, each response test entry's
+    /// <c>capturedValues</c> carries the top-level AL scope's locals as of the last
+    /// statement that ran (see AlValueCapture). Null/false = unchanged behaviour,
+    /// field omitted from the response.
+    /// </summary>
     [JsonPropertyName("captureValues")] public bool? CaptureValues { get; set; }
     /// <summary>
     /// "codeunit" (default) | "test"/"method" | "disabled" — see <see cref="TestIsolationParser"/>.
@@ -214,6 +223,11 @@ public static class ServerProtocol
     // (meaningful for AL-originated errors) and falls back to the raw C#
     // exception for runner-internal failures — see
     // .claude rule al_stack_vs_csharp_stack.
+    // capturedValues (#1640) is null-omitted (WhenWritingNull) when the request
+    // didn't set captureValues:true — t.CapturedValues is null in that case
+    // (RunFirstCodeunitOnRun only populates it when AlValueCapture.Enabled).
+    // When captureValues WAS requested it is present even as an empty array
+    // ("captured, zero AL locals" — a real, distinct answer from "not asked").
     private static object ToWire(TestResult t) => new
     {
         name = $"{t.Codeunit}.{t.Method}",
@@ -221,5 +235,17 @@ public static class ServerProtocol
         durationMs = (long)t.Duration.TotalMilliseconds,
         message = t.Message,
         stackTrace = (t.AlCallStack ?? t.FullException)?.TrimEnd(),
+        capturedValues = t.CapturedValues?.Select(ToWire),
+    };
+
+    // One captured AL local on the wire — the shape protocol-v2.schema.json already
+    // reserves for TestEvent.capturedValues (see the schema's top-level description),
+    // reused here for execute's own (schema-independent) response.
+    private static object ToWire(Infrastructure.AlCapturedValue v) => new
+    {
+        scopeName = v.ScopeName,
+        variableName = v.VariableName,
+        value = v.Value,
+        statementId = v.StatementId,
     };
 }
