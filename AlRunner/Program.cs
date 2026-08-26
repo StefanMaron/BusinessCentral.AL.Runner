@@ -726,7 +726,30 @@ if (bcVersionArg == null && artifactPathArg == null)
 // reach the shadow-re-exec check, so gating success-path noise here cannot hide one.
 // The `[reexec]` explanation itself (#2034/#2038) is a different print entirely and
 // stays unconditional — it is specifically about the parent and must keep firing there.
-var reexecPending = AlRunner.Infrastructure.NclShadowRuntime.NeedsShadow(AppContext.BaseDirectory);
+//
+// This MUST track the actual re-exec gate below (`NeedsShadow(...) || variantSwapDir !=
+// null) && AL_RUNNER_NCL_SHADOW_DONE != "1"`) as closely as it can be known this early:
+// - The `AL_RUNNER_NCL_SHADOW_DONE` clause is included below for exactly that reason.
+//   Without it, a process with Ncl.dll genuinely missing but that env var already set by
+//   hand (a plausible way to skip the shadow hop while debugging) would compute
+//   reexecPending=true, suppress all three lines, then NOT re-exec after all — silently
+//   dropping the very startup context (which BC version, which artifact dir) someone
+//   debugging an assembly-load failure in that exact scenario would need. Same failure
+//   class #2034 was about, one file over.
+// - `variantSwapDir` is deliberately NOT included: it is only known after SelectVersion
+//   resolves a version and the variant-selection block below matches it against the
+//   shipped variants, both well after this line. In the shipping shape that gap is not
+//   reachable — any install that ships per-BC-minor variants at all is one that also has
+//   Ncl.dll stripped from its top-level bin/ (variants are the packaged multi-version
+//   case; #2023/#2026 stripped Ncl.dll from every packaged install), so NeedsShadow is
+//   already true there regardless of variantSwapDir. If that coupling ever changes (e.g.
+//   a variants-shipping install that also ships its own default-variant Ncl.dll),
+//   NeedsShadow=false with variantSwapDir!=null would double-print again — restructuring
+//   to close that gap would mean computing SelectVersion + the variant match before any
+//   provisioning happens, which the provisioning step's own version resolution currently
+//   feeds into; that inversion is out of scope here.
+var reexecPending = AlRunner.Infrastructure.NclShadowRuntime.NeedsShadow(AppContext.BaseDirectory)
+    && Environment.GetEnvironmentVariable("AL_RUNNER_NCL_SHADOW_DONE") != "1";
 // ── Provisioning (on by default since issue #2024; opt out with --no-auto-provision):
 // `provision` subcommand or autoProvision (default true). Resolves the target version,
 // downloads the engine service-tier closure if it's missing/incomplete, then (subcommand)

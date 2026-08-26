@@ -116,6 +116,76 @@ public sealed class StartupOutputReexecDedupTests
         Assert.DoesNotContain("[reexec]", output);
     }
 
+    /// <summary>
+    /// Regression: `reexecPending` must track the ACTUAL re-exec gate
+    /// (`NeedsShadow(...) && AL_RUNNER_NCL_SHADOW_DONE != "1"`), not `NeedsShadow` alone.
+    ///
+    /// Setup: Ncl.dll is genuinely absent from the original (non-shadow) bin/ — so
+    /// NeedsShadow is true — but AL_RUNNER_NCL_SHADOW_DONE=1 is forced by hand (a
+    /// plausible way to skip the shadow hop while debugging), and the ncl-cecil cache is
+    /// already warm for this exact build (primed by the earlier warm-up spawns in this
+    /// class). Under that combination: the shadow-re-exec block is skipped (env guard),
+    /// NclCecilRewrite.RewriteInPlace hits the warm cache and just copies the cached
+    /// bytes into the original bin/'s Ncl.dll (no further re-exec — it only re-execs on
+    /// a genuine cache MISS), so this single process runs the whole bundle itself. ZERO
+    /// re-execs happen at all.
+    ///
+    /// If `reexecPending` were computed from `NeedsShadow` alone (ignoring the env
+    /// guard), it would read true here even though no re-exec follows — suppressing the
+    /// provisioning line, `[bc] selected BC`, and the banner in the ONLY generation that
+    /// ever runs, with no later generation to reprint them. Confirmed by reverting the
+    /// env-guard clause locally: the trio does not appear ANYWHERE in the output in that
+    /// configuration, even though the run itself passes cleanly (same silent-output
+    /// class of bug #2034 was about, one file over).
+    /// </summary>
+    [SkippableFact]
+    public void ShadowDoneEnvVarForced_NoFurtherReexecFollows_StartupTrioStillPrintsOnce()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        var originalDll = Path.Combine(
+            ProjectPath, "bin", TestBuildConfig.Configuration, TestBuildConfig.Framework, "al-runner.dll");
+        var originalNcl = Path.Combine(Path.GetDirectoryName(originalDll)!, "Microsoft.Dynamics.Nav.Ncl.dll");
+
+        // Warm the ncl-cecil cache for this exact build (normal spawn, via the shadow
+        // dir — never touches the original bin/) so the forced run below hits a cache
+        // HIT rather than a genuine MISS (a MISS would trigger the UNRELATED
+        // fresh-rewrite re-exec — see Program.cs — which would mask exactly the
+        // single-generation scenario this test is pinning).
+        Spawn();
+        Assert.False(File.Exists(originalNcl),
+            $"precondition violated: {originalNcl} already exists — NeedsShadow would be false " +
+            "for the original bin/ regardless of the env guard, and this test would not be " +
+            "exercising the scenario it claims to.");
+
+        try
+        {
+            var psi = BuildPsi(originalDll);
+            psi.Environment["AL_RUNNER_NCL_SHADOW_DONE"] = "1";
+            var (output, exit) = Run(psi);
+
+            Assert.Equal(0, exit);
+            Assert.Contains("pass:        1", output);
+            Assert.Contains("fail:        0", output);
+
+            // Zero re-execs of ANY kind fired — this really is the single-generation
+            // case, not the fresh-rewrite one masking it.
+            Assert.DoesNotContain("[reexec]", output);
+
+            Assert.Equal(1, CountOccurrences(output, "[provision] BC "));
+            Assert.Equal(1, CountOccurrences(output, "[bc] selected BC "));
+            Assert.Equal(1, CountOccurrences(output, "al-runner — running "));
+        }
+        finally
+        {
+            // RewriteInPlace writes Ncl.dll directly into the original bin/ as a side
+            // effect of this scenario (see the doc comment above) — clean it up so it
+            // cannot contaminate any other test in this assembly that inspects
+            // NclShadowRuntime.NeedsShadow against that same directory.
+            try { File.Delete(originalNcl); } catch { /* best effort */ }
+        }
+    }
+
     /// <summary>Extracts the path from Program's own `[Cecil] Building/Reusing Ncl
     /// shadow runtime dir at &lt;path&gt;` line.</summary>
     private static string ExtractShadowDir(string output)
