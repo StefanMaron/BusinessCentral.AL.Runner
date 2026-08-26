@@ -58,7 +58,8 @@
               "scopeName": { "type": "string" },
               "variableName": { "type": "string" },
               "value": {},
-              "statementId": { "type": "integer" }
+              "statementId": { "type": "integer" },
+              "captureError": { "type": "string" }
             }
           }
         }

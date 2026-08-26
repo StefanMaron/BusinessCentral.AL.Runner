@@ -15,8 +15,21 @@ public static class AlValueWireFormat
     /// (.claude/rules/precompiled-dll-respect.md), so we take their own ToString()
     /// rather than guessing a bespoke encoding per type.
     /// </summary>
-    public static object? ToWireValue(object? raw)
+    public static object? ToWireValue(object? raw) => ToWireValue(raw, out _);
+
+    /// <summary>
+    /// Same conversion as <see cref="ToWireValue(object?)"/>, but surfaces a ToString()
+    /// failure via <paramref name="captureError"/> instead of silently flattening it to
+    /// <c>null</c> (issue #2043 — a genuinely-null AL variable and one whose ToString()
+    /// threw were both reported as the same <c>null</c>, indistinguishable to the
+    /// consumer). <paramref name="captureError"/> is null whenever the conversion
+    /// succeeded (including the "raw is genuinely null" case), so callers can tell the
+    /// two apart. The value returned on a ToString() failure is still <c>null</c> — no
+    /// value was ever faked — but now the caller can see WHY.
+    /// </summary>
+    public static object? ToWireValue(object? raw, out string? captureError)
     {
+        captureError = null;
         if (raw == null) return null;
         switch (raw)
         {
@@ -25,7 +38,13 @@ public static class AlValueWireFormat
                 return raw;
             default:
                 try { return raw.ToString(); }
-                catch { return null; } // ToString() itself must never crash a capture
+                catch (Exception ex)
+                {
+                    // ToString() itself must never crash a capture — but the failure
+                    // must be visible, not silently flattened to null (loud-failures.md).
+                    captureError = $"ToString() threw {ex.GetType().Name}";
+                    return null;
+                }
         }
     }
 }

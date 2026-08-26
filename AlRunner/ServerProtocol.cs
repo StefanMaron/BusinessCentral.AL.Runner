@@ -35,7 +35,11 @@ namespace AlRunner;
 ///              single response, not streamed (matches v1: only runTests streams).
 ///              `capturedValues` (#1640) is present per test only when the request
 ///              set `captureValues:true`; each entry is {scopeName, variableName,
-///              value, statementId} — see AlValueCapture.
+///              value, statementId, captureError|omitted} — see AlValueCapture.
+///              `captureError` (#2043) is present, non-null, only when the field
+///              read or its ToString() threw; `value` is null in that case too but
+///              MUST NOT be read as "genuinely null" — a genuinely null AL variable
+///              has `captureError` absent.
 ///   error   : {error}
 ///   shutdown: {status}
 /// </summary>
@@ -241,11 +245,15 @@ public static class ServerProtocol
     // One captured AL local on the wire — the shape protocol-v2.schema.json already
     // reserves for TestEvent.capturedValues (see the schema's top-level description),
     // reused here for execute's own (schema-independent) response.
+    // captureError (#2043) is null-omitted (WhenWritingNull) on the common path — only
+    // present when the field read or its ToString() threw, so it never gets confused
+    // with a genuinely null AL variable (which has value:null and no captureError key).
     private static object ToWire(Infrastructure.AlCapturedValue v) => new
     {
         scopeName = v.ScopeName,
         variableName = v.VariableName,
         value = v.Value,
         statementId = v.StatementId,
+        captureError = v.CaptureError,
     };
 }

@@ -173,7 +173,7 @@ last statement that ran — captured via a Cecil hook on
 `NavMethodScope.Exit()`, not a pass over emitted AL output (see
 `AlRunner/Infrastructure/AlValueCapture.cs`). `capturedValues` is present per
 test only when the request set the flag; each entry is `{scopeName,
-variableName, value, statementId}`:
+variableName, value, statementId, captureError|omitted}`:
 
 ```json
 {"command":"execute","captureValues":true,
@@ -184,6 +184,16 @@ variableName, value, statementId}`:
 {"exitCode":0,"tests":[{"name":"X.OnRun","status":"pass","durationMs":5,
  "capturedValues":[{"scopeName":"OnRun","variableName":"Msg","value":"hi","statementId":0}]}]}
 ```
+
+`captureError` (issue #2043) is present, non-null, only when the runtime could
+not faithfully read or render this variable — either the reflective field
+read itself threw, or the raw value's own `ToString()` threw. It names the
+exception type (e.g. `"field read threw NotSupportedException"`). `value` is
+`null` in that case, but this must not be confused with a genuinely null AL
+variable: a genuinely null variable is reported with `value:null` and
+`captureError` **absent**. A variable whose read failed is never simply
+omitted from the array — that would be indistinguishable from "this variable
+does not exist" (`.claude/rules/loud-failures.md`).
 
 ### `shutdown`
 

@@ -48,8 +48,18 @@ namespace AlRunner.Infrastructure;
 /// <summary>One AL local's value, captured the instant its top-level scope's method body
 /// finished (NavMethodScope.Exit(), before Dispose()). <c>StatementId</c> indexes the SAME
 /// [SourceSpans] array AlCoverageTracker/AlCallStackCapture already decode, so a caller
-/// that also wants the AL source line can resolve it via AlSourceSpanCodec.</summary>
-public readonly record struct AlCapturedValue(string ScopeName, string VariableName, object? Value, int StatementId);
+/// that also wants the AL source line can resolve it via AlSourceSpanCodec.
+///
+/// <c>CaptureError</c> (issue #2043) is non-null exactly when this value could not be
+/// faithfully read or rendered — either the field read itself threw (reflection failure
+/// on the generated `*_Scope` class), or the raw value's own ToString() threw (see
+/// AlValueWireFormat). In both cases <c>Value</c> is null, but that null must never be
+/// confused with a genuinely null AL variable — a genuinely null variable has
+/// <c>CaptureError == null</c>. Naming the exception type in the message is deliberate:
+/// either failure mode is unusual and worth being able to see (.claude/rules/
+/// loud-failures.md — never drop or fake a value silently).</summary>
+public readonly record struct AlCapturedValue(
+    string ScopeName, string VariableName, object? Value, int StatementId, string? CaptureError = null);
 
 public static class AlValueCapture
 {
@@ -99,11 +109,36 @@ public static class AlValueCapture
         {
             var name = AlNavNameReflection.GetAlName(f);
             if (name == null) continue;
-            object? raw;
-            try { raw = f.GetValue(scope); }
-            catch { continue; } // a field that can't be read is skipped, never faked
-            values.Add(new AlCapturedValue(scopeName, name, AlValueWireFormat.ToWireValue(raw), statementId));
+            values.Add(CaptureField(scopeName, name, statementId, () => f.GetValue(scope)));
         }
         _snapshot = values;
+    }
+
+    /// <summary>
+    /// Captures one AL local given a way to read its raw CLR value. Extracted from
+    /// <see cref="OnExit"/> so the two failure modes issue #2043 names — a read that
+    /// throws, and a ToString() that throws — are unit-testable without a real
+    /// NavMethodScope: <paramref name="readField"/> is exactly <c>() =&gt;
+    /// f.GetValue(scope)</c> in production, but a test can inject a throwing delegate
+    /// directly. Neither failure mode is allowed to propagate out of this method (this is
+    /// what OnExit calls, and OnExit itself may never throw — see the file header and
+    /// AlValueCaptureErrorVisibilityTests).
+    /// </summary>
+    internal static AlCapturedValue CaptureField(
+        string scopeName, string name, int statementId, Func<object?> readField)
+    {
+        object? raw;
+        try { raw = readField(); }
+        catch (Exception ex)
+        {
+            // A field that can't be read is reported, not skipped — a variable silently
+            // absent from the list is indistinguishable from one that doesn't exist
+            // (.claude/rules/loud-failures.md). Value stays null: nothing was ever read,
+            // so nothing is faked.
+            return new AlCapturedValue(scopeName, name, null, statementId,
+                $"field read threw {ex.GetType().Name}");
+        }
+        var wireValue = AlValueWireFormat.ToWireValue(raw, out var captureError);
+        return new AlCapturedValue(scopeName, name, wireValue, statementId, captureError);
     }
 }
