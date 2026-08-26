@@ -4,12 +4,13 @@
 Protocol](https://microsoft.github.io/debug-adapter-protocol/overview) server
 over a TCP socket (default port `4711`, matching v1). It compiles the given
 bundle, waits for a DAP client to connect, and lets that client set
-breakpoints on AL source lines, pause execution at them, and inspect the AL
-locals in scope at the pause — with no BC service tier, no PDB, and no
-IL-offset mapping.
+breakpoints on AL source lines, pause execution at them, step through the
+paused code (`next`/`stepIn`/`stepOut`), and inspect the AL locals in scope
+at each pause — with no BC service tier, no PDB, and no IL-offset mapping.
 
-This is the first slice of issue #1642. See "What's not in this slice" below
-before assuming a capability exists.
+This started as the first slice of issue #1642 (breakpoints only); issue
+#2045 added real step granularity. See "What's not in this slice" below
+before assuming some other capability exists.
 
 ## Mechanism
 
@@ -62,8 +63,15 @@ lifecycle:
 6. `threads` / `stackTrace` / `scopes` / `variables` — read the paused call
    stack and each frame's `[NavName]`-tagged AL locals, live, via
    `AlScopeInspector`.
-7. `continue` / `next` / `stepIn` / `stepOut` — resumes execution (all four
-   behave identically in this slice; see below).
+7. `continue` — resumes execution; only a registered breakpoint pauses it
+   again. `next` (step over) / `stepIn` / `stepOut` (issue #2045) each arm a
+   depth-based condition instead — the AL execution thread stops at the first
+   subsequent `StmtHit` that "qualifies" for the command sent, and the
+   `stopped` event's `reason` is `"step"` rather than `"breakpoint"`. See
+   `AlRunner/Infrastructure/AlDapSession.cs`'s file header for exactly what
+   "qualifies" means for each (it is defined purely in terms of
+   `NavMethodScope.StackDepth`, so it is correct through recursion too, not
+   just simple nested calls).
 8. `disconnect` / `terminate` — releases any paused thread (never leaves it
    stuck) and ends the session.
 
@@ -75,9 +83,6 @@ and write `Content-Length: <n>\r\n\r\n<json>` frames by hand.
 
 ## What's not in this slice
 
-- **Real step granularity.** `next`/`stepIn`/`stepOut` all behave like
-  `continue` — none of them pause at the very next statement the way a real
-  single-step would. Tracked as follow-up.
 - **A VS Code launch configuration.** There is no `type` contribution a
   `launch.json` can point at without an installed extension; wiring this up
   belongs in the (separate-repo) AL Runner VS Code extension. Tracked as

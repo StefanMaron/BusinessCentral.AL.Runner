@@ -3392,8 +3392,10 @@ return strictExitCode ? computedExitCode : 0;
 //   (AlDapSession.Stopped fires on the AL thread when a breakpoint hits; this loop
 //    pushes the "stopped" event the moment it fires — see the subscription below)
 //   threads/stackTrace/scopes/variables -> read AlDapSession.PausedScope while paused
-//   continue/next/stepIn/stepOut -> AlDapSession.Continue() (all four alike — see the
-//    PR description for why real step granularity is explicit follow-up scope)
+//   continue -> AlDapSession.Continue(); next/stepIn/stepOut -> AlDapSession.StepOver()/
+//    StepIn()/StepOut() (issue #2045 — real step granularity, arms a depth-based
+//    qualifying condition instead of releasing unconditionally; see AlDapSession's file
+//    header for exactly what "qualifies" means for each)
 //   disconnect/terminate -> AlDapSession.Detach() (never leaves the AL thread stuck)
 int RunDapLoop(int port, string bundleDir)
 {
@@ -3419,7 +3421,14 @@ int RunDapLoop(int port, string bundleDir)
     {
         compiledTcs.TrySetResult(asm);
         configurationDoneGate.Wait(cts.Token);
-        return executor.Run(asm, t => Console.WriteLine($"[dap] {t.Codeunit}.{t.Method}: {t.Outcome}"), cts.Token);
+        return executor.Run(asm, t =>
+        {
+            Console.WriteLine($"[dap] {t.Codeunit}.{t.Method}: {t.Outcome}");
+            // issue #2045: a step armed for THIS test but never consumed (it ran to
+            // completion without another qualifying StmtHit) must not leak into the
+            // NEXT test — see AlDapSession.OnTestBoundary's doc comment.
+            AlRunner.Infrastructure.AlDapSession.OnTestBoundary();
+        }, cts.Token);
     };
 
     var bundleRunTask = System.Threading.Tasks.Task.Run(
@@ -3452,8 +3461,10 @@ int RunDapLoop(int port, string bundleDir)
     }, System.Threading.Tasks.TaskScheduler.Default);
 
     // Pushed synchronously on the AL EXECUTION thread by AlDapSession.OnStmtHit,
-    // right before it blocks — see that method's doc comment. Must not throw.
-    AlRunner.Infrastructure.AlDapSession.Stopped += (scope, stmt) =>
+    // right before it blocks — see that method's doc comment. Must not throw. `reason`
+    // is "breakpoint" or "step" (issue #2045), whichever condition actually caused
+    // this particular pause.
+    AlRunner.Infrastructure.AlDapSession.Stopped += (scope, stmt, reason) =>
     {
         try
         {
@@ -3461,7 +3472,7 @@ int RunDapLoop(int port, string bundleDir)
             var line = lastFrames.Count > 0 ? lastFrames[0].Line : 0;
             transport.WriteEvent("stopped", new
             {
-                reason = "breakpoint",
+                reason,
                 threadId = 1,
                 allThreadsStopped = true,
                 line,
@@ -3629,13 +3640,28 @@ int RunDapLoop(int port, string bundleDir)
                     }
 
                     case "continue":
-                    case "next":
-                    case "stepIn":
-                    case "stepOut":
                     case "pause":
                         AlRunner.Infrastructure.AlDapSession.Continue();
                         transport.WriteResponse(msg.Seq, command, true,
                             command == "continue" ? new { allThreadsContinued = true } : null);
+                        break;
+
+                    // issue #2045: real step granularity — each arms a depth-based
+                    // qualifying condition (see AlDapSession's file header) instead of
+                    // releasing unconditionally like "continue" above.
+                    case "next":
+                        AlRunner.Infrastructure.AlDapSession.StepOver();
+                        transport.WriteResponse(msg.Seq, command, true);
+                        break;
+
+                    case "stepIn":
+                        AlRunner.Infrastructure.AlDapSession.StepIn();
+                        transport.WriteResponse(msg.Seq, command, true);
+                        break;
+
+                    case "stepOut":
+                        AlRunner.Infrastructure.AlDapSession.StepOut();
+                        transport.WriteResponse(msg.Seq, command, true);
                         break;
 
                     case "disconnect":
@@ -4636,9 +4662,10 @@ static void PrintHelp(TextWriter w)
     w.WriteLine("                          real DAP TCP connection. Requires exactly one bundle path.");
     w.WriteLine("                          Compiles on `launch`, pauses AL execution at StmtHit for");
     w.WriteLine("                          any breakpointed statement once `configurationDone` starts");
-    w.WriteLine("                          the run. next/stepIn/stepOut currently behave like");
-    w.WriteLine("                          continue (real step granularity is follow-up work).");
-    w.WriteLine("                          See docs/dap-mode.md. Mutually exclusive with --server.");
+    w.WriteLine("                          the run. next/stepIn/stepOut pause at a real qualifying");
+    w.WriteLine("                          statement (step-over/into/out of the current call), not");
+    w.WriteLine("                          just at the next breakpoint. See docs/dap-mode.md.");
+    w.WriteLine("                          Mutually exclusive with --server.");
     w.WriteLine("  --tdd                   Local-development flag (not for CI). A test referencing a");
     w.WriteLine("                          table field / procedure / enum value the implementing app");
     w.WriteLine("                          doesn't have yet normally drops the whole app group with a");

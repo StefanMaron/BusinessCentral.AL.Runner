@@ -143,13 +143,13 @@ al-runner --server [--package-cache PATH ...] [--cache DIR]
 
 A long-running JSON-RPC daemon over stdin/stdout. Dependencies and BC patches load once; each `runTests` request re-emits the bundle warm and runs it in-process (~19s→~4s). stdout carries only the newline-delimited JSON protocol; logs go to stderr. The VS Code extension uses this. Full protocol + the same-bundle reload contract: [docs/server-mode.md](docs/server-mode.md).
 
-### Debug adapter mode (breakpoints)
+### Debug adapter mode (breakpoints + stepping)
 
 ```bash
 al-runner --dap [PORT] <bundle-dir>
 ```
 
-A real Debug Adapter Protocol server (default port 4711) over a TCP socket: set AL breakpoints, pause execution, inspect locals. No new AL→source mapping — it reuses BC's own `StmtHit`/`[SourceSpans]` instrumentation, the same mechanism `--coverage` and `--capture-values` already consume. Full protocol + current limitations (no real step granularity yet, no VS Code launch configuration in this repo): [docs/dap-mode.md](docs/dap-mode.md).
+A real Debug Adapter Protocol server (default port 4711) over a TCP socket: set AL breakpoints, pause execution, step through the paused code (`next`/`stepIn`/`stepOut`), inspect locals. No new AL→source mapping — it reuses BC's own `StmtHit`/`[SourceSpans]` instrumentation, the same mechanism `--coverage` and `--capture-values` already consume. Full protocol + current limitations (no VS Code launch configuration in this repo): [docs/dap-mode.md](docs/dap-mode.md).
 
 ### Precompile a single `.app` to a DLL
 
