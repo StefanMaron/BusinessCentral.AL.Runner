@@ -18,8 +18,11 @@ using Microsoft.Dynamics.Nav.Runtime;
 namespace AlRunner.Infrastructure;
 
 /// <summary>One AL local as seen at a live pause. <c>Value</c> is the wire-formatted
-/// value (see AlValueWireFormat); <c>Readable</c> is false only when reflection itself
-/// failed to read the field — the NAME still appears (never silently dropped, see
+/// value (see AlValueWireFormat); <c>Readable</c> is false when EITHER reflection itself
+/// failed to read the field OR the field read fine but the raw value's own ToString()
+/// threw (issue #2051 — before this fix, a ToString() failure was silently flattened to
+/// the same (Readable:true, Value:null) shape a genuinely-null AL local produces). The
+/// NAME still appears in both failure modes (never silently dropped, see
 /// .claude/rules/loud-failures.md), with an explicit marker instead of a value.</summary>
 public readonly record struct AlScopeLocal(string Name, object? Value, bool Readable);
 
@@ -41,15 +44,38 @@ public static class AlScopeInspector
         {
             var name = AlNavNameReflection.GetAlName(f);
             if (name == null) continue;
-            object? raw;
-            try { raw = f.GetValue(scope); }
-            catch (Exception ex)
-            {
-                result.Add(new AlScopeLocal(name, $"<unreadable: {ex.GetType().Name}>", false));
-                continue;
-            }
-            result.Add(new AlScopeLocal(name, AlValueWireFormat.ToWireValue(raw), true));
+            result.Add(ReadField(name, () => f.GetValue(scope)));
         }
         return result;
+    }
+
+    /// <summary>
+    /// Reads one AL local given a way to fetch its raw CLR value. Extracted from
+    /// <see cref="ReadLocals"/> (mirroring AlValueCapture.CaptureField's extraction for
+    /// #2043) so both failure modes issue #2051 names — a read that throws, and a
+    /// ToString() that throws — are unit-testable without a real NavMethodScope:
+    /// <paramref name="readField"/> is exactly <c>() =&gt; f.GetValue(scope)</c> in
+    /// production, but a test can inject a throwing delegate directly. Neither failure
+    /// mode is allowed to propagate — this feeds a live DAP "variables" response and must
+    /// never crash a paused debug session.
+    /// </summary>
+    internal static AlScopeLocal ReadField(string name, Func<object?> readField)
+    {
+        object? raw;
+        try { raw = readField(); }
+        catch (Exception ex)
+        {
+            return new AlScopeLocal(name, $"<unreadable: {ex.GetType().Name}>", false);
+        }
+        var wireValue = AlValueWireFormat.ToWireValue(raw, out var captureError);
+        if (captureError != null)
+        {
+            // Same marker-string / Readable:false convention as the read-throws case
+            // above, so both failure modes render identically in the DAP Variables pane
+            // instead of the ToString()-throws case silently collapsing to a genuinely-
+            // null AL local's (Readable:true, Value:null) shape.
+            return new AlScopeLocal(name, $"<unreadable: {captureError}>", false);
+        }
+        return new AlScopeLocal(name, wireValue, true);
     }
 }
