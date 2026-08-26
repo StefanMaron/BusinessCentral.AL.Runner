@@ -706,6 +706,27 @@ if (bcVersionArg == null && artifactPathArg == null)
         }
     }
 }
+// #2041: whether THIS process generation will need to hand off to a shadow-re-exec
+// child before it can touch any BC type — a cheap, deterministic filesystem check (does
+// Ncl.dll already exist beside this assembly?) that does NOT depend on the selected BC
+// version or the variant-swap decision further down, so it is safe to compute this
+// early, before any startup-reporting line below would print. The tool package no
+// longer ships Ncl.dll (#2023/#2026), so this is true on essentially every real
+// invocation's first generation — and that generation's child re-runs this EXACT same
+// startup sequence from scratch, so printing the informational "[provision] ... already
+// complete" / "[bc] selected BC ..." / "al-runner — running N bundle(s)" lines here too
+// just duplicates them on stderr (confirmed via strace: two execve calls on a warm run,
+// each printing all three — see the issue). Gating those three success-path prints on
+// this flag means the generation that actually goes on to run tests — either the final
+// generation after a shadow hop, or an install that ships Ncl.dll and never needed
+// one — always prints them exactly once, and a generation about to be replaced does
+// not print the steady-state lines at all. LOUD FAILURES are untouched: every error
+// path below (provisioning failure, BC version selection failure, no matching engine
+// variant, an incomplete artifact closure) returns before this generation would ever
+// reach the shadow-re-exec check, so gating success-path noise here cannot hide one.
+// The `[reexec]` explanation itself (#2034/#2038) is a different print entirely and
+// stays unconditional — it is specifically about the parent and must keep firing there.
+var reexecPending = AlRunner.Infrastructure.NclShadowRuntime.NeedsShadow(AppContext.BaseDirectory);
 // ── Provisioning (on by default since issue #2024; opt out with --no-auto-provision):
 // `provision` subcommand or autoProvision (default true). Resolves the target version,
 // downloads the engine service-tier closure if it's missing/incomplete, then (subcommand)
@@ -722,8 +743,12 @@ if (provisionSubcommand || autoProvision)
     // handles the ENGINE service-tier closure in that case; only the `provision` subcommand
     // (which never reaches the post-selection gate — it returns immediately below) also
     // provisions manifest apps itself.
+    //
+    // #2041: `quiet` is never true for the `provision` subcommand itself — it returns
+    // immediately below and never re-execs, so its own success line would otherwise be
+    // silently lost with no later generation to reprint it.
     var prc = RunProvisioning(bcVersionArg, artifactPathArg, bundles, provisionManifestApps: provisionSubcommand,
-        out var provisionedVersion);
+        quiet: reexecPending && !provisionSubcommand, out var provisionedVersion);
     if (provisionSubcommand)
         return prc; // the subcommand always exits after provisioning, never runs tests
     if (prc == 0 && provisionedVersion != null)
@@ -756,8 +781,11 @@ try
     if (AlRunner.Infrastructure.BcArtifacts.ShouldWarnExplicitEngineMinorMismatch(
             bcVersionAutoSelected, shippedVariants.Count))
         AlRunner.Infrastructure.BcArtifacts.WarnIfExplicitEngineMinorMismatch();
-    Console.Error.WriteLine($"[bc] selected BC {AlRunner.Infrastructure.BcArtifacts.SelectedVersion} " +
-        $"({AlRunner.Infrastructure.BcArtifacts.ServiceTierDir})");
+    // #2041: suppressed when this generation is about to shadow-re-exec — see the
+    // `reexecPending` comment above. The child re-prints this exact line for real.
+    if (!reexecPending)
+        Console.Error.WriteLine($"[bc] selected BC {AlRunner.Infrastructure.BcArtifacts.SelectedVersion} " +
+            $"({AlRunner.Infrastructure.BcArtifacts.ServiceTierDir})");
 }
 catch (InvalidOperationException ex)
 {
@@ -837,11 +865,15 @@ if (alCacheDir != null) Directory.CreateDirectory(alCacheDir);
 // before any DependencyLoader/BcAppSymbolCache/workspace-deps call — all four read
 // CacheRoots.Resolve for their cache directory.
 AlRunner.Infrastructure.CacheRoots.SetOverride(cacheRootOverride);
-Console.WriteLine(serverMode
-    ? "al-runner — server mode (JSON-RPC over stdin/stdout)"
-    : watchMode
-        ? $"al-runner — watch mode, {bundles.Count} bundle(s) (Ctrl+C to quit)"
-        : $"al-runner — running {bundles.Count} bundle(s)");
+// #2041: suppressed when this generation is about to shadow-re-exec — see the
+// `reexecPending` comment above. The child re-prints this exact banner for real; this
+// generation touches no bundle work at all before handing off.
+if (!reexecPending)
+    Console.WriteLine(serverMode
+        ? "al-runner — server mode (JSON-RPC over stdin/stdout)"
+        : watchMode
+            ? $"al-runner — watch mode, {bundles.Count} bundle(s) (Ctrl+C to quit)"
+            : $"al-runner — running {bundles.Count} bundle(s)");
 
 // The packaged tool no longer ships Microsoft.Dynamics.Nav.Ncl.dll (see
 // check-nupkg-contents.sh) — it must be resolved from the user's own BC artifact
@@ -5692,13 +5724,17 @@ static string? TryDeriveBcMajorFromProject(IEnumerable<string> bundlePaths)
 // sole owner instead, so passing true there would attempt the SAME download twice in one
 // invocation (once here, pre-selection; once there, post-selection).
 static int RunProvisioning(string? bcVersionArg, string? artifactPathArg,
-    List<string> bundles, bool provisionManifestApps, out string? provisionedVersion)
+    List<string> bundles, bool provisionManifestApps, bool quiet, out string? provisionedVersion)
 {
     provisionedVersion = null;
 
     if (artifactPathArg != null)
     {
-        Console.Error.WriteLine("[provision] --artifact-path points at an explicit dir; nothing to provision.");
+        // #2041: `quiet` suppresses only this STEADY-STATE success line, never an error
+        // path — see the call site's comment for why (this generation is about to
+        // shadow-re-exec, and the child re-prints it once for real).
+        if (!quiet)
+            Console.Error.WriteLine("[provision] --artifact-path points at an explicit dir; nothing to provision.");
         return 0;
     }
 
@@ -5727,6 +5763,12 @@ static int RunProvisioning(string? bcVersionArg, string? artifactPathArg,
             var cachedDir = AlRunner.Infrastructure.BcArtifacts.SelectArtifactVersionDir(
                 AlRunner.Infrastructure.BcArtifacts.ArtifactsRootDir, prefix);
             full = Path.GetFileName(cachedDir);
+            // Not gated on `quiet`: unlike the two lines below, a re-exec'd child sees a
+            // DIFFERENT resolution outcome here than the parent did whenever the parent
+            // itself just downloaded (parent: "no cached ... resolving from the CDN",
+            // child: "found cached ... verifying completeness") — the two lines are not
+            // literal duplicates of each other, so suppressing either risks hiding a
+            // real state transition rather than a genuine repeat.
             Console.Error.WriteLine($"[provision] found cached BC {full} for prefix '{prefix}' — verifying completeness.");
         }
         catch (InvalidOperationException)
@@ -5744,7 +5786,16 @@ static int RunProvisioning(string? bcVersionArg, string? artifactPathArg,
     var serviceTierDir = AlRunner.Infrastructure.BcArtifacts.ArtifactDirFor(full);
     var report = AlRunner.Infrastructure.ProvisioningCheck.Check(full, serviceTierDir);
     if (report.Ok)
-        Console.Error.WriteLine($"[provision] BC {full} engine artifacts already complete at {serviceTierDir}.");
+    {
+        // #2041: the steady-state "nothing to do" line — suppressed under `quiet`, same
+        // reasoning as the --artifact-path branch above. AutoProvision's own download
+        // progress messages below are NOT gated: they only fire once regardless (by the
+        // time a shadow-re-exec child gets here the download already completed, so IT
+        // takes this same Ok branch instead), and a download in progress is exactly the
+        // kind of "real one-time work" .claude/rules/loud-failures.md means to stay loud.
+        if (!quiet)
+            Console.Error.WriteLine($"[provision] BC {full} engine artifacts already complete at {serviceTierDir}.");
+    }
     else if (!AlRunner.Infrastructure.ProvisioningCheck.AutoProvision(full, serviceTierDir))
         return 1;
 
