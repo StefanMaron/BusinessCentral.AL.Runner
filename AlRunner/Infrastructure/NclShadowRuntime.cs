@@ -294,7 +294,10 @@ public static class NclShadowRuntime
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException)
         {
-            Console.Error.WriteLine($"[Cecil] Symlink for '{Path.GetFileName(source)}' refused ({ex.GetType().Name}) — falling back to a real copy");
+            // #2034 audit: a genuine unexpected condition during the shadow-dir build
+            // (not routine per-method Cecil-rewrite noise), so it uses the `[reexec]`
+            // tag — same reasoning as Program.cs's re-exec explanation lines.
+            Console.Error.WriteLine($"[reexec] Symlink for '{Path.GetFileName(source)}' refused ({ex.GetType().Name}) — falling back to a real copy");
         }
 
         if (isDirectory) CopyDirectoryRecursive(source, target);
@@ -332,9 +335,11 @@ public static class NclShadowRuntime
 
         foreach (var dir in stale)
         {
+            // #2034 audit: same reasoning as the symlink-fallback WARN above — a real
+            // failure during shadow-dir upkeep, not routine Cecil-rewrite diagnostics.
             try { Directory.Delete(dir, recursive: true); }
-            catch (IOException ex) { Console.Error.WriteLine($"[Cecil] WARN: failed to prune stale shadow dir {dir}: {ex.Message}"); }
-            catch (UnauthorizedAccessException ex) { Console.Error.WriteLine($"[Cecil] WARN: failed to prune stale shadow dir {dir}: {ex.Message}"); }
+            catch (IOException ex) { Console.Error.WriteLine($"[reexec] WARN: failed to prune stale shadow dir {dir}: {ex.Message}"); }
+            catch (UnauthorizedAccessException ex) { Console.Error.WriteLine($"[reexec] WARN: failed to prune stale shadow dir {dir}: {ex.Message}"); }
         }
     }
 

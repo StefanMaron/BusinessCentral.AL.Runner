@@ -149,10 +149,11 @@ public sealed class PhaseLogIntegrationTests : IDisposable
 
         // Verbose so the re-exec markers are observable. AlRunner/Log.cs installs a
         // FilteredWriter that drops `[Component]`-tagged lines at default verbosity;
-        // `[r2r] re-execing` is printed BEFORE Log.Install() and survives, but
-        // `[Cecil] Fresh rewrite done` is printed after it and does not. Without this,
-        // the marker-derived expected-parent count silently under-counts on a cold
-        // Cecil cache and the test is a coin flip on cache state.
+        // `[r2r] re-execing` is printed BEFORE Log.Install() and survives, and the
+        // re-exec explanations below (#2034: retagged `[reexec]`, exempted like `[bc]`)
+        // now also survive at default verbosity on their own — but this stays verbose
+        // regardless so the marker-derived expected-parent count never depends on which
+        // tags happen to be exempted today.
         psi.Environment["AL_RUNNER_VERBOSE"] = "1";
 
         var sb = new StringBuilder();
@@ -307,12 +308,12 @@ public sealed class PhaseLogIntegrationTests : IDisposable
         // there rather than passing quietly here.
         var expectedParents =
             CountOccurrences(output, "[r2r] re-execing")
-            + CountOccurrences(output, "[Cecil] Fresh rewrite done")
+            + CountOccurrences(output, "[reexec] Fresh rewrite done")
             // The tool package no longer ships Microsoft.Dynamics.Nav.Ncl.dll (see
             // check-nupkg-contents.sh) — NclShadowRuntime re-execs into a shadow runtime
             // dir that legitimately has it, UNCONDITIONALLY (every cold AND warm spawn,
             // not just a fresh-rewrite cache MISS), so this fires on every test run here.
-            + CountOccurrences(output, "[Cecil] Ncl.dll not shipped in this install");
+            + CountOccurrences(output, "[reexec] Ncl.dll not shipped in this install");
         var parents = ReadRecords(_logPath, "process-reexec-parent");
         Assert.Equal(expectedParents, parents.Count);
         Assert.All(parents, parent =>

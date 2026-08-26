@@ -731,6 +731,10 @@ if (provisionSubcommand || autoProvision)
     // On failure with --auto-provision we fall through; SelectVersion below emits the
     // loud, path-naming error (and the detailed ProvisioningCheck report if partial).
 }
+// #2037: discovered here, OUTSIDE and BEFORE the try block below, so both the warn-gate
+// (inside the try) and the variant-swap block (after it) share one discovery — see the
+// comments at each use site.
+var shippedVariants = AlRunner.Infrastructure.EngineVariants.Discover(AppContext.BaseDirectory);
 try
 {
     AlRunner.Infrastructure.BcArtifacts.SelectVersion(bcVersionArg, artifactPathArg);
@@ -744,7 +748,13 @@ try
     // different-minor selection). The auto-select default path above already warns about
     // minor skew; an EXPLICIT --bc-version/--artifact-path bypassed that warning entirely
     // and ran a mismatched engine silently. Only warn here for the explicit path.
-    if (!bcVersionAutoSelected)
+    //
+    // #2037: also only warn when this install ships NO per-BC-minor engine variants at
+    // all (see ShouldWarnExplicitEngineMinorMismatch) — once any variant is shipped, the
+    // variant-swap block below is the sole authority on whether the selection is
+    // degraded, not this generic same-process-engine comparison.
+    if (AlRunner.Infrastructure.BcArtifacts.ShouldWarnExplicitEngineMinorMismatch(
+            bcVersionAutoSelected, shippedVariants.Count))
         AlRunner.Infrastructure.BcArtifacts.WarnIfExplicitEngineMinorMismatch();
     Console.Error.WriteLine($"[bc] selected BC {AlRunner.Infrastructure.BcArtifacts.SelectedVersion} " +
         $"({AlRunner.Infrastructure.BcArtifacts.ServiceTierDir})");
@@ -766,9 +776,11 @@ catch (InvalidOperationException ex)
 // No match found among the shipped variants is a LOUD failure, never a silent fallback
 // to a nearby minor — that silent fallback is the root cause #2020 traced this whole
 // mechanism back to (see .claude/rules/loud-failures.md).
+//
+// `shippedVariants` was already discovered above (see #2037 comment on the warn gate) —
+// reused here rather than re-walking the variants/ directory a second time.
 string? variantSwapDir = null;
 {
-    var shippedVariants = AlRunner.Infrastructure.EngineVariants.Discover(AppContext.BaseDirectory);
     if (shippedVariants.Count > 0)
     {
         var selected = AlRunner.Infrastructure.BcArtifacts.SelectedVersion;
@@ -863,8 +875,13 @@ if ((AlRunner.Infrastructure.NclShadowRuntime.NeedsShadow(AppContext.BaseDirecto
     psi.Environment["AL_RUNNER_NCL_SHADOW_DONE"] = "1";
 
     Console.Error.WriteLine(variantSwapDir != null
-        ? "[Cecil] Re-execing into a shadow runtime dir with the matching BC-minor engine variant"
-        : "[Cecil] Ncl.dll not shipped in this install — re-execing into a shadow runtime dir that has it");
+        // #2034: this line explains why a second process is about to launch — a
+        // genuinely operational fact, not an internal Cecil-rewrite diagnostic — so it
+        // uses the exempted `[reexec]` tag rather than `[Cecil]`. Under `[Cecil]`, Log's
+        // filter suppressed a real, live re-exec silently: the shadow dir was built, the
+        // child launched, and nothing on stderr said why.
+        ? "[reexec] Re-execing into a shadow runtime dir with the matching BC-minor engine variant"
+        : "[reexec] Ncl.dll not shipped in this install — re-execing into a shadow runtime dir that has it");
     AlRunner.Infrastructure.PhaseLog.MarkReexecParent();
     using var shadowChild = System.Diagnostics.Process.Start(psi)!;
     shadowChild.WaitForExit();
@@ -903,7 +920,10 @@ if ((AlRunner.Infrastructure.NclShadowRuntime.NeedsShadow(AppContext.BaseDirecto
         foreach (var a in userArgs)
             psi.ArgumentList.Add(a);
         psi.Environment["AL_RUNNER_REEXECED"] = "1";
-        Console.Error.WriteLine("[Cecil] Fresh rewrite done — re-execing for a clean Ncl load");
+        // #2034 audit: this is the SAME class of silently-swallowed re-exec explanation
+        // (a fresh Cecil IL rewrite forces one more relaunch so the child loads the
+        // now-cached bytes cleanly) — also retagged so it survives the default filter.
+        Console.Error.WriteLine("[reexec] Fresh rewrite done — re-execing for a clean Ncl load");
         // This process waits for the child below, so its wall clock CONTAINS the
         // child's entire run. Re-label the row so aggregates that sum `kind=="process"`
         // do not double-count it.

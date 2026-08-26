@@ -496,4 +496,26 @@ public static class BcArtifacts
         var msg = DescribeExplicitEngineMinorMismatch(EngineBuiltVersion(), SelectedVersion);
         if (msg != null) Console.Error.WriteLine(msg);
     }
+
+    /// <summary>
+    /// Issue #2037: whether Program.cs should even CALL <see cref="WarnIfExplicitEngineMinorMismatch"/>
+    /// at all, given how many per-BC-minor engine variants this install ships (see
+    /// <see cref="EngineVariants.Discover"/>, called just before the variant-swap block in
+    /// Program.cs — the same input, so no rediscovery is needed at the call site).
+    ///
+    /// The warning compares THIS PROCESS's own compiled-in engine minor against the
+    /// selected version — a comparison that stopped being meaningful the moment a packaged
+    /// install started shipping more than one engine (#2027 / #2035): once <em>any</em>
+    /// variant is shipped, the variant-selection block downstream is the sole authority —
+    /// either a matching variant is found (this process is about to swap into the right
+    /// engine, making the warning's claim false, as reported live against the published
+    /// 2.5.0 package with `--bc-version 27.5.46862.53931`) or none matches (that block itself
+    /// exits with a sharper, version-naming error before a generic warning would even help).
+    /// So the warning has nothing correct left to say once <paramref name="shippedVariantCount"/>
+    /// is nonzero. It is only still true for a single-build install with no variants/
+    /// directory at all (shippedVariantCount == 0) — the case #2008 was filed against, which
+    /// must stay reachable.
+    /// </summary>
+    public static bool ShouldWarnExplicitEngineMinorMismatch(bool bcVersionAutoSelected, int shippedVariantCount)
+        => !bcVersionAutoSelected && shippedVariantCount == 0;
 }

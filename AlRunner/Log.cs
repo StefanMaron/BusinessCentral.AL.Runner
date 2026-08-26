@@ -31,8 +31,17 @@ public static class Log
     // eaten by this exact filter — the very issue those notices exist to fix. Whether
     // out-of-scope/known-gap/divergence classification applied to a run is a RESULT
     // (it changes pass/fail counts), not a diagnostic.
+    //
+    // `[reexec]` was added for #2034: NclShadowRuntime's re-exec explanation lines were
+    // tagged `[Cecil]` — the SAME class of bug as the `[bc]` swallow above — so a process
+    // silently relaunching a child had no explanation on stderr at default verbosity.
+    // These lines (why a second process is about to run, plus the genuinely unexpected
+    // conditions hit while building the shadow dir) are operationally significant in the
+    // same way BC-version selection is; the ~280 other `[Cecil]`-tagged per-method
+    // rewrite diagnostics in NclCecilRewrite.cs are NOT retagged and stay suppressed —
+    // that volume of internal detail is exactly what this filter exists to hide.
     private static readonly Regex ComponentTag =
-        new(@"^\[(?!(?:layered|watch|provision|bc|dep|expectations)\])[A-Za-z][A-Za-z0-9._+]*\]",
+        new(@"^\[(?!(?:layered|watch|provision|bc|dep|expectations|reexec)\])[A-Za-z][A-Za-z0-9._+]*\]",
             RegexOptions.Compiled);
 
     public static void Install()

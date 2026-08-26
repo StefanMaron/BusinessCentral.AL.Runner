@@ -55,6 +55,11 @@ public sealed class LogUserFacingTagsTests
     [InlineData("[layered] building")]   // already exempt; pinned so it stays that way
     [InlineData("[provision] downloading")]
     [InlineData("[watch] waiting")]
+    // #2034: NclShadowRuntime's re-exec explanation was tagged [Cecil] (suppressed by
+    // default, same class of bug as the [bc] swallow above) so a process silently
+    // launching a child had no explanation at default verbosity. re-exec explanations
+    // now use their own exempted tag.
+    [InlineData("[reexec] Ncl.dll not shipped in this install — re-execing into a shadow runtime dir that has it")]
     public void UserFacingTags_SurviveTheDefaultFilter(string line)
     {
         Assert.Contains(line, FilterOnce(line, verbose: false));
