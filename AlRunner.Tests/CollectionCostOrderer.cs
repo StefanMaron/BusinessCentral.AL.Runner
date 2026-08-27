@@ -129,6 +129,13 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             // t=400s.
             ["CountBaselineIntegrationTests"] = 84,
             ["ServerTests"] = 81,
+            // #2085: 5 tests, three of which download a real ~20MB Microsoft test-toolkit
+            // set from the public BC artifact CDN (twice for the force/no-force pair, once
+            // for the fresh-download positive test) — network-latency dependent, measured
+            // 83-125s across the four legs that first ran it. Round down to the low end so
+            // a fast run still ranks it above the freshness threshold rather than have it
+            // fall back to UnmeasuredWeightSeconds and reproduce the #1887 tail pattern.
+            ["ProvisionExplicitModesTests"] = 80,
             // #1940/#1941/#1943: 4 tests, each spawning a real runner subprocess (two
             // single-bundle, two layered two-bundle dep compiles) — needed because
             // NoImplicitWith's binder-shadowing effect isn't observable via a bare
