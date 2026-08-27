@@ -119,7 +119,14 @@ public static class AlDapSession
         // this against DapClient's own wall-clock trace only works if both use the
         // exact same, culture-independent rendering.
         var wall = DateTime.UtcNow.ToString("HH:mm:ss.fff", System.Globalization.CultureInfo.InvariantCulture);
-        Console.Error.WriteLine($"[dap-step-trace] t={_traceClock.Elapsed.TotalMilliseconds:F1}ms wall={wall}Z {msg}");
+        // Same InvariantCulture trap as the wall-clock stamp above: interpolation's
+        // ":F1" shorthand uses CURRENT CULTURE's decimal separator too (would render
+        // "13053,9" on a comma-decimal locale). This half of the line is intra-process
+        // only (never compared against another process's Stopwatch epoch) so it isn't
+        // load-bearing for #2070's cross-process comparison the way "wall" is, but a
+        // decimal point that silently isn't one is still a footgun worth closing here.
+        var elapsedMs = _traceClock.Elapsed.TotalMilliseconds.ToString("F1", System.Globalization.CultureInfo.InvariantCulture);
+        Console.Error.WriteLine($"[dap-step-trace] t={elapsedMs}ms wall={wall}Z {msg}");
     }
 
     private static readonly HashSet<(Type ScopeType, int Stmt)> _breakpoints = new();

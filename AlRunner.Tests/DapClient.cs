@@ -164,6 +164,18 @@ public sealed class DapClient : IAsyncDisposable
         return new DapClient(proc, tcp, transport, stdout, stderr);
     }
 
+    /// <summary>Bytes the OS has already received and buffered on this connection but
+    /// that our own StreamReader/NetworkStream hasn't been scheduled to read yet — see
+    /// the GIVEUP diagnostic in ReadOneAsync. TcpClient.Available can throw if the
+    /// socket is already closed/disposed by the time this runs (e.g. a racing
+    /// Detach()/process exit); that's not itself informative for THIS diagnostic, so
+    /// report it as -1 rather than letting it mask the TimeoutException being built.</summary>
+    private int SafeSocketAvailable()
+    {
+        try { return _tcp.Available; }
+        catch { return -1; }
+    }
+
     private static int GetFreeLoopbackPort()
     {
         var l = new TcpListener(System.Net.IPAddress.Loopback, 0);
@@ -247,6 +259,41 @@ public sealed class DapClient : IAsyncDisposable
         }
         catch (OperationCanceledException) when (cts.IsCancellationRequested)
         {
+            // Coordinator review on PR #2076: "the server did its logic correctly" and
+            // "the bytes never arrived" produce IDENTICAL evidence in a bare GIVEUP —
+            // a client that sent, waited, and saw nothing. Two more readings, taken at
+            // the exact moment of giveup, turn that ambiguity into a real answer:
+            //
+            // 1. Bytes already sitting in the OS socket buffer. TcpClient.Available
+            //    (Socket.Available under it) counts bytes the kernel has ALREADY
+            //    received and buffered, independent of whether OUR StreamReader/
+            //    NetworkStream has been scheduled to read them. If this is > 0 at
+            //    giveup, the "stopped" bytes truly arrived and it is our own read
+            //    continuation that never got CPU time — confirms starvation, not a
+            //    delivery failure. If it's 0, the bytes never got here at all and the
+            //    cause is elsewhere (server write, network stack, something else).
+            // 2. ThreadPool health + a live latency probe. ThreadPool.ThreadCount /
+            //    PendingWorkItemCount describe the pool's OWN view of its queue depth;
+            //    a genuinely healthy pool with a deep queue can still under-report
+            //    "starved" by those two numbers alone. Actually measuring how long a
+            //    trivial `await Task.Delay(1)` takes right now is the ground truth: a
+            //    1ms delay completing in low milliseconds means the pool is fine and
+            //    something else stalled; taking seconds proves pool starvation directly
+            //    rather than inferring it from a bare 60s timeout.
+            var socketAvailable = SafeSocketAvailable();
+            var poolThreads = System.Threading.ThreadPool.ThreadCount;
+            var poolPending = System.Threading.ThreadPool.PendingWorkItemCount;
+            var probeSw = System.Diagnostics.Stopwatch.StartNew();
+            await Task.Delay(1).ConfigureAwait(false);
+            probeSw.Stop();
+            // InvariantCulture explicitly for the same reason the wall-clock stamp above
+            // needs it: ".ToString("F1")" via interpolation uses CURRENT CULTURE's
+            // decimal separator, which rendered "1,1" instead of "1.1" on this exact
+            // machine's locale while building this — caught by eye, not by design.
+            var probeMs = probeSw.Elapsed.TotalMilliseconds.ToString("F1", System.Globalization.CultureInfo.InvariantCulture);
+            Trace($"GIVEUP waited {timeout.TotalSeconds:F0}s for the next message, nothing arrived — " +
+                  $"socket.Available={socketAvailable} threadPool.ThreadCount={poolThreads} " +
+                  $"threadPool.PendingWorkItemCount={poolPending} Task.Delay(1)ActualMs={probeMs}");
             // Give the background stdout/stderr drain loops (started in StartAsync,
             // reading proc.Standard{Output,Error}.ReadLineAsync() in a loop) one
             // scheduling quantum to catch up before snapshotting them: under the exact
@@ -255,7 +302,6 @@ public sealed class DapClient : IAsyncDisposable
             // lines the child process already wrote (diagnosed reproducing #2070 under
             // load: the dump cut off mid-startup even though the child had clearly
             // progressed much further, going by the exception's own elapsed time).
-            Trace($"GIVEUP waited {timeout.TotalSeconds:F0}s for the next message, nothing arrived");
             await Task.Delay(500).ConfigureAwait(false);
             throw new TimeoutException(
                 $"--dap read timed out after {timeout.TotalSeconds:F0}s.\n--- stdout ---\n{StdOut}\n--- stderr ---\n{StdErr}\n--- client trace ---\n{ClientTrace}");
