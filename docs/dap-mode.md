@@ -2,15 +2,19 @@
 
 `al-runner --dap [PORT] <bundle-dir>` starts a real [Debug Adapter
 Protocol](https://microsoft.github.io/debug-adapter-protocol/overview) server
-over a TCP socket (default port `4711`, matching v1). It compiles the given
-bundle, waits for a DAP client to connect, and lets that client set
-breakpoints on AL source lines, pause execution at them, step through the
-paused code (`next`/`stepIn`/`stepOut`), and inspect the AL locals in scope
-at each pause — with no BC service tier, no PDB, and no IL-offset mapping.
+over a TCP socket (default port `4711`, matching v1). `al-runner --dap stdio
+<bundle-dir>` starts the identical session over the process's own
+stdin/stdout instead — for a client that launches al-runner itself rather
+than connecting to a port (issue #2058). Either way, it compiles the given
+bundle, waits for a DAP client, and lets that client set breakpoints on AL
+source lines, pause execution at them, step through the paused code
+(`next`/`stepIn`/`stepOut`), and inspect the AL locals in scope at each pause
+— with no BC service tier, no PDB, and no IL-offset mapping.
 
 This started as the first slice of issue #1642 (breakpoints only); issue
-#2045 added real step granularity. See "What's not in this slice" below
-before assuming some other capability exists.
+#2045 added real step granularity; issue #2058 added the stdio transport.
+See "What's not in this slice" below before assuming some other capability
+exists.
 
 ## Mechanism
 
@@ -46,8 +50,32 @@ al-runner --dap 4711 ./tests/some-bundle
 ```
 
 The process prints `[dap] listening on 127.0.0.1:4711 — waiting for a debug
-client to connect...` on stdout, then blocks until a client connects. Session
-lifecycle:
+client to connect...` on stdout, then blocks until a client connects.
+
+### stdio transport (`--dap stdio`)
+
+```
+al-runner --dap stdio ./tests/some-bundle
+```
+
+Speaks the identical DAP session over stdin/stdout instead of a socket — the
+shape `vscode.DebugAdapterExecutable(command, args)` expects, so a client can
+launch al-runner directly instead of spawning it, polling for a free port,
+and connecting a `DebugAdapterServer(port)`. Chosen over a second flag
+(`--dap-stdio`) because both forms are the same session over a different
+transport, and `--dap [PORT|stdio]` says that at the call site: one flag,
+one argument that's either "which port" or "no port, use my stdio".
+
+**In this mode stdout carries ONLY the DAP wire format — Content-Length-framed
+JSON, nothing else.** Every line of startup/diagnostic output that the TCP
+path prints to stdout (including this loop's own readiness line) goes to
+stderr instead, the same redirection `--server` already does for its own
+protocol (`docs/server-mode.md`). A DAP client reading stdout as a strict
+byte stream must never see anything but well-formed frames — see
+`AlRunner.Tests/DapStdioClient.cs` for the harness that checks this
+byte-for-byte, not just "the handshake succeeded".
+
+Session lifecycle is identical to the TCP transport from here on:
 
 1. `initialize` → capabilities, then an `initialized` event.
 2. `launch`/`attach` → compiles the bundle. The response does not return until
@@ -161,10 +189,15 @@ since it does not hold up:
    `launch.json` entry instead of raw sockets.
 2. **Making the extension launch `al-runner --dap` itself** (instead of
    requiring the manual terminal step) needs a small amount of TypeScript: a
-   `vscode.DebugAdapterDescriptorFactory` for that new type, returning a
-   `vscode.DebugAdapterServer(port)` after spawning the process — the same
-   shape the extension already needs for `--server` (`docs/server-mode.md`),
-   since it already knows where the al-runner binary is.
+   `vscode.DebugAdapterDescriptorFactory` for that new type. As of #2058, the
+   simplest shape is `return new vscode.DebugAdapterExecutable(alRunnerPath,
+   ['--dap', 'stdio', bundleDir])` — VS Code launches the process and speaks
+   DAP over its stdio directly, no port to pick and no readiness race to poll
+   for. (The TCP form — spawning the process, waiting for it to report
+   listening, then returning `vscode.DebugAdapterServer(port)` — still works
+   and is what the extension already needs for `--server`
+   (`docs/server-mode.md`), but stdio removes that extra step for `--dap`
+   specifically.)
 3. Whether the existing (separate-repo, not-in-this-repo) AL Runner VS Code
    extension can take either contribution cheaply is **not verified here** —
    this repo has no access to that extension's source. That remains the open

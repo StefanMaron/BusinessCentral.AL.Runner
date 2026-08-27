@@ -109,20 +109,50 @@ if (serverMode)
     Console.SetOut(Console.Error);
 }
 
-// ── --dap [port]: Debug Adapter Protocol server (issue #1642) — restores v1's AL
-// breakpoint debugging. Unlike --server, this speaks the DAP wire format (Content-
-// Length-framed JSON, see AlRunner/Infrastructure/DapTransport.cs) over a real TCP
-// socket, not stdin/stdout — that IS the DAP transport every DAP client (including
-// VS Code's built-in debug UI) expects, so there is no protocol reason to redirect
-// Console here the way --server does. Port defaults to 4711 (v1's default,
-// docs/archive/dap.md), overridable via a numeric argument right after --dap.
+// ── --dap [port|stdio]: Debug Adapter Protocol server (issue #1642; stdio transport
+// added for #2058) — restores v1's AL breakpoint debugging. Two transports:
+//   --dap [PORT]  TCP on 127.0.0.1:PORT (default 4711, v1's default, see
+//                 docs/archive/dap.md). That IS the DAP transport every socket-based
+//                 DAP client expects, so there is no protocol reason to redirect
+//                 Console here — this branch is unchanged from before #2058.
+//   --dap stdio   speaks DAP over the process's own stdin/stdout (issue #2058, for
+//                 VS Code's DebugAdapterExecutable — no port to pick, no readiness
+//                 race polling for a free port or a "listening" line). Stdout
+//                 becomes the DAP channel the instant this is selected, so —
+//                 exactly like --server above — the raw OS stdin/stdout handles
+//                 must be captured via Console.OpenStandardInput()/OpenStandardOutput()
+//                 RIGHT NOW, before Log.Install or any Console.Write runs, and
+//                 Console.Out redirected to Console.Error so every startup banner
+//                 (including RunDapLoop's own readiness line) lands on stderr
+//                 instead. Capturing the raw Stream directly — not Console.Out —
+//                 means the transport's byte channel can never be intercepted by
+//                 anything that already cached a Console.Out reference; it also
+//                 gives DapTransport exactly the Stream-based input its constructor
+//                 already wants (see DapTransport.cs's own header), rather than the
+//                 TextReader/TextWriter pair --server hands to RunServerLoop.
 bool dapMode = args.Contains("--dap");
 int dapPort = 4711;
+bool dapStdioMode = false;
+System.IO.Stream? dapStdioInput = null;
+System.IO.Stream? dapStdioOutput = null;
 if (dapMode)
 {
     var dapFlagIndex = Array.IndexOf(args, "--dap");
-    if (dapFlagIndex >= 0 && dapFlagIndex + 1 < args.Length && int.TryParse(args[dapFlagIndex + 1], out var parsedDapPort))
-        dapPort = parsedDapPort;
+    if (dapFlagIndex >= 0 && dapFlagIndex + 1 < args.Length)
+    {
+        var dapArg = args[dapFlagIndex + 1];
+        if (string.Equals(dapArg, "stdio", StringComparison.OrdinalIgnoreCase))
+        {
+            dapStdioMode = true;
+            dapStdioInput = Console.OpenStandardInput();
+            dapStdioOutput = Console.OpenStandardOutput();
+            Console.SetOut(Console.Error);
+        }
+        else if (int.TryParse(dapArg, out var parsedDapPort))
+        {
+            dapPort = parsedDapPort;
+        }
+    }
 }
 if (serverMode && dapMode)
 {
@@ -340,9 +370,9 @@ for (int i = 0; i < args.Length; i++)
     if (args[i] == "--watch") { watchMode = true; continue; }
     if (args[i] == "--tdd") { tddMode = true; continue; }
     if (args[i] == "--server") { continue; }  // handled above (serverMode); consume so it isn't "unknown"
-    if (args[i] == "--dap")  // handled above (dapMode/dapPort); consume the flag and an optional numeric port
+    if (args[i] == "--dap")  // handled above (dapMode/dapPort/dapStdioMode); consume the flag and its optional value (numeric port, or "stdio")
     {
-        if (i + 1 < args.Length && int.TryParse(args[i + 1], out _)) i++;
+        if (i + 1 < args.Length && (int.TryParse(args[i + 1], out _) || string.Equals(args[i + 1], "stdio", StringComparison.OrdinalIgnoreCase))) i++;
         continue;
     }
     if (args[i] == "--verbose") { AlRunner.Log.Verbose = true; continue; }
@@ -1387,7 +1417,7 @@ if (dapMode)
             "multi-bundle debugging is tracked as follow-up work, see issue #1642's PR.");
         return 2;
     }
-    return RunDapLoop(dapPort, bundles[0]);
+    return RunDapLoop(bundles[0], dapPort, dapStdioMode, dapStdioInput, dapStdioOutput);
 }
 
 // Watch loop: normal mode runs exactly one pass then breaks to the summary below.
@@ -3371,12 +3401,19 @@ return strictExitCode ? computedExitCode : 0;
     }
 
 
-// ── --dap loop (issue #1642) ─────────────────────────────────────────────────────
+// ── --dap loop (issue #1642; stdio transport added for #2058) ────────────────────
 // Non-static so it captures the warm pipeline objects (executor et al.) and
 // RunAllBundlesForServer, same reasons as RunServerLoop below. Unlike --server this
-// is not a warm-reload daemon: one TCP client, one bundle, one run, then exit — a
+// is not a warm-reload daemon: one client, one bundle, one run, then exit — a
 // debug session is inherently single-shot (VS Code starts al-runner, debugs,
 // disconnects, the process goes away).
+//
+// `stdioMode` selects the transport: stdio (stdioInput/stdioOutput, captured as raw
+// OS handles before Log.Install — see the argument-parsing block above) or the
+// original TCP accept loop. Everything from AlDapSession.Reset() onward is
+// transport-agnostic and identical either way, matching DapTransport's own
+// Stream-based design (its header comment: proven against a non-socket stream by
+// AlRunner.Tests' in-memory-pipe harness well before this issue existed).
 //
 // Session shape (see docs/archive/dap.md for the mechanism this restores, and
 // AlDapSession's file header for why pausing at StmtHit(N) — unlike
@@ -3397,16 +3434,36 @@ return strictExitCode ? computedExitCode : 0;
 //    qualifying condition instead of releasing unconditionally; see AlDapSession's file
 //    header for exactly what "qualifies" means for each)
 //   disconnect/terminate -> AlDapSession.Detach() (never leaves the AL thread stuck)
-int RunDapLoop(int port, string bundleDir)
+int RunDapLoop(string bundleDir, int port, bool stdioMode, System.IO.Stream? stdioInput, System.IO.Stream? stdioOutput)
 {
-    var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, port);
-    listener.Start();
-    Console.WriteLine($"[dap] listening on 127.0.0.1:{port} — waiting for a debug client to connect...");
-    using var tcpClient = listener.AcceptTcpClient();
-    listener.Stop();
-    Console.WriteLine("[dap] client connected.");
-
-    using var transport = new AlRunner.Infrastructure.DapTransport(tcpClient.GetStream(), tcpClient.GetStream());
+    System.Net.Sockets.TcpListener? listener = null;
+    System.Net.Sockets.TcpClient? tcpClient = null;
+    AlRunner.Infrastructure.DapTransport transport;
+    if (stdioMode)
+    {
+        // Readiness signal for a stdio client: unlike the TCP branch below, there is
+        // no "listening" state to report (stdin/stdout are already connected the
+        // moment this process exists) — this just tells a human/log watcher the
+        // session loop is about to start reading. Console.Error directly, not
+        // Console.WriteLine: Console.Out is redirected to Console.Error already (see
+        // the argument-parsing block above) so it would land in the same place
+        // either way, but writing to Console.Error here documents the intent at the
+        // call site rather than relying on the earlier redirect being remembered.
+        Console.Error.WriteLine("[dap] stdio transport ready — waiting for a debug client to send 'initialize'...");
+        transport = new AlRunner.Infrastructure.DapTransport(stdioInput!, stdioOutput!);
+    }
+    else
+    {
+        listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, port);
+        listener.Start();
+        Console.WriteLine($"[dap] listening on 127.0.0.1:{port} — waiting for a debug client to connect...");
+        tcpClient = listener.AcceptTcpClient();
+        listener.Stop();
+        Console.WriteLine("[dap] client connected.");
+        transport = new AlRunner.Infrastructure.DapTransport(tcpClient.GetStream(), tcpClient.GetStream());
+    }
+    using var transportDisposable = transport;
+    using var tcpClientDisposable = tcpClient;
     AlRunner.Infrastructure.AlDapSession.Reset();
 
     Dictionary<(string Label, int Id), string> sourceMap = new();
@@ -4597,6 +4654,8 @@ static void PrintGuide(TextWriter w)
     w.WriteLine("  echoed live — a probe that writes to stdout will appear to produce nothing.");
     w.WriteLine("  Write diagnostics to a FILE instead.");
     w.WriteLine("  In --server mode stdout carries ONLY the JSON protocol; all logs go to stderr.");
+    w.WriteLine("  Same for --dap stdio: stdout carries ONLY the DAP wire format, all logs go to");
+    w.WriteLine("  stderr. --dap [PORT] (TCP) is unaffected — stdout is normal there.");
     w.WriteLine();
 
     w.WriteLine("TDD MODE (--tdd) — starting a red-green cycle before the app has the symbol yet");
@@ -4763,6 +4822,11 @@ static void PrintHelp(TextWriter w)
     w.WriteLine("                          statement (step-over/into/out of the current call), not");
     w.WriteLine("                          just at the next breakpoint. See docs/dap-mode.md.");
     w.WriteLine("                          Mutually exclusive with --server.");
+    w.WriteLine("  --dap stdio             Same DAP session, over this process's own stdin/stdout");
+    w.WriteLine("                          instead of a TCP socket — for a client that launches");
+    w.WriteLine("                          al-runner directly (e.g. VS Code's DebugAdapterExecutable),");
+    w.WriteLine("                          no port to pick, no readiness race. stdout carries ONLY the");
+    w.WriteLine("                          DAP protocol; all logs go to stderr. See docs/dap-mode.md.");
     w.WriteLine("  --tdd                   Local-development flag (not for CI). A test referencing a");
     w.WriteLine("                          table field / procedure / enum value the implementing app");
     w.WriteLine("                          doesn't have yet normally drops the whole app group with a");
