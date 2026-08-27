@@ -125,6 +125,78 @@ public class DapServerTests
         Assert.Equal(0, exited.GetProperty("body").GetProperty("exitCode").GetInt32());
     }
 
+    /// <summary>
+    /// Issue #2070: reproduces the root cause found while chasing the flaky CI hang on
+    /// Dap_Next_StepsOverNestedCall/Dap_StepIn_EntersNestedCall — NOT "stepping can miss
+    /// its target statement" (instrumented under CPU contention and never observed: every
+    /// captured hang showed the armed step's gate simply never released in time), but
+    /// TestExecutor's per-test watchdog (TestTimeout/InvokeWithTimeout) racing the DAP
+    /// pause: it has no notion of "this thread is legitimately parked in
+    /// AlDapSession.OnStmtHit's gate.Wait(), waiting on a debug client's next command,"
+    /// and if that pause outlasts the watchdog's window it reports the test as
+    /// "Error: Test exceeded Ns timeout" and moves on — while the actual AL execution
+    /// thread stays blocked forever (nothing ever calls Continue()/Detach() for it), so
+    /// the DAP client's ReadUntilEventAsync("stopped") then waits for an event that can
+    /// never arrive. Under CI load this shows up rarely because the round trip a debug
+    /// client makes between a breakpoint hit and its next command (stackTrace/scopes/
+    /// variables reads, network latency, actual thinking time) only occasionally pushes
+    /// total elapsed past DefaultTestTimeoutSeconds (60s); this test makes that race
+    /// deterministic by shrinking the watchdog window to 2s via AL_RUNNER_TEST_TIMEOUT_SEC
+    /// on the child process only, then genuinely pausing 4s before continuing — no CPU
+    /// contention needed, no flakiness, same code path.
+    ///
+    /// The prior (broken) behavior: exited.exitCode would be 1 (the watchdog's
+    /// "Error" outcome), not 0 — the RED state this test pins is a SPECIFIC exit code
+    /// mismatch, not just "did not hang", so a no-op timeout bypass or a coincidentally
+    /// still-passing test cannot satisfy it by accident.
+    /// </summary>
+    [SkippableFact]
+    public async Task Dap_LongPauseAcrossWatchdogTimeout_DoesNotAbortTheTest()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        await using var dap = await DapClient.StartAsync(
+            FixtureSrc, extraEnv: new Dictionary<string, string> { ["AL_RUNNER_TEST_TIMEOUT_SEC"] = "2" });
+
+        var initSeq = dap.SendRequest("initialize", new { adapterID = "al-runner-tests" });
+        await dap.ReadUntilResponseAsync(initSeq);
+        await dap.ReadUntilEventAsync("initialized");
+
+        var launchSeq = dap.SendRequest("launch", new { });
+        var launchResp = await dap.ReadUntilResponseAsync(launchSeq, timeout: TimeSpan.FromSeconds(120));
+        Assert.True(launchResp.GetProperty("success").GetBoolean(),
+            $"launch failed: {launchResp}\n--- stderr ---\n{dap.StdErr}");
+
+        var sourcePath = Path.Combine(FixtureSrc, SourceFileName);
+        var bpSeq = dap.SendRequest("setBreakpoints", new
+        {
+            source = new { path = sourcePath },
+            breakpoints = new[] { new { line = SecondStatementLine } },
+        });
+        var bpResp = await dap.ReadUntilResponseAsync(bpSeq);
+        Assert.True(bpResp.GetProperty("body").GetProperty("breakpoints")[0].GetProperty("verified").GetBoolean(),
+            $"breakpoint at line {SecondStatementLine} was not verified: {bpResp}");
+
+        var cfgSeq = dap.SendRequest("configurationDone");
+        await dap.ReadUntilResponseAsync(cfgSeq);
+
+        var stopped = await dap.ReadUntilEventAsync("stopped");
+        Assert.Equal(SecondStatementLine, stopped.GetProperty("body").GetProperty("line").GetInt32());
+
+        // The load-bearing wait: comfortably past the shrunk 2s watchdog window, WHILE
+        // still paused — exactly the "developer is reading a paused frame" shape the
+        // watchdog must not punish.
+        await Task.Delay(TimeSpan.FromSeconds(4));
+
+        var contSeq = dap.SendRequest("continue", new { threadId = 1 });
+        await dap.ReadUntilResponseAsync(contSeq);
+
+        var exited = await dap.ReadUntilEventAsync("exited", TimeSpan.FromSeconds(60));
+        // 0 = the AL test actually ran to completion and passed (Counter==3), proving
+        // the long pause did not get the test executor to abandon it as "timed out".
+        Assert.Equal(0, exited.GetProperty("body").GetProperty("exitCode").GetInt32());
+    }
+
     [SkippableFact]
     public async Task Dap_NoBreakpointsSet_RunsStraightThrough_NoStoppedEvent()
     {

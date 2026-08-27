@@ -818,8 +818,39 @@ public sealed class TestExecutor
         }
     }
 
+    // Issue #2070 root cause: this watchdog's clock is WALL-CLOCK time on the AL
+    // execution thread from the moment the test method starts, with no notion of "the
+    // thread is legitimately blocked, not runaway". AlDapSession.OnStmtHit's gate.Wait()
+    // (see that file) parks this exact thread — synchronously, inside the test's own
+    // call stack — for as long as a --dap client takes to decide its next command,
+    // which for a real interactive debugger (or a client merely slow under load) is
+    // routinely more than DefaultTestTimeoutSeconds. When the watchdog's thread.Join
+    // times out mid-pause it reports the test as "Error: Test exceeded Ns timeout" and
+    // TestExecutor moves on — but the parked background thread is NOT released (nothing
+    // calls AlDapSession.Continue()/Detach() on its behalf), so it stays blocked in
+    // gate.Wait() forever, and the DAP client's pending ReadUntilEventAsync("stopped")
+    // now waits for an event that source thread can never again produce: the exact
+    // "client reads forever, nothing was actually still armed to answer it" hang
+    // reproduced (twice, under CPU contention) for #2070 — see DapServerTests'
+    // Dap_LongPauseAcrossWatchdogTimeout_DoesNotAbortTheTest for the deterministic
+    // repro (shrinks AL_RUNNER_TEST_TIMEOUT_SEC on the child process so the race is
+    // a few seconds, not a real 60s+ wait).
+    //
+    // The watchdog exists to catch a runaway/infinite-looping AL TEST BODY running
+    // unattended; it was never meant to bound how long a human (or a client standing in
+    // for one) takes to single-step. A --dap session is a single-shot, one-client
+    // process a developer is actively driving, and it already has its own, deliberate
+    // way to interrupt a hung AL loop: VS Code's "stop debugging" sends `disconnect`,
+    // which AlDapSession.Detach() answers immediately (releases the gate, subsequent
+    // StmtHits run straight through) — so the watchdog is not filling a gap here, it is
+    // firing where a real gap doesn't exist and manufacturing this one instead. Bypass
+    // it outright whenever a --dap session is active, ahead of even an explicit
+    // --test-timeout: no fixed number is fireproof against a human legitimately taking
+    // longer to look at a paused frame than that number.
     private TimeSpan TestTimeout()
     {
+        if (AlRunner.Infrastructure.AlDapSession.Enabled)
+            return TimeSpan.FromHours(24);
         // Explicit --test-timeout (via TestExecutor.TimeoutSeconds) wins over the env var,
         // which in turn wins over the hardcoded default. See #1648.
         if (TimeoutSeconds is int explicitSeconds && explicitSeconds > 0)
