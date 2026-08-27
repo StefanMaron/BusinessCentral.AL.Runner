@@ -536,6 +536,42 @@ if (tddMode && serverMode)
 // TryEmitIncremental's own tdd-specific fallback-reason text for what a developer
 // actually sees on the console when this happens (issue #1994 precedent).
 
+// #2041/#2066/#2097: rather than PREDICTING whether this generation will need to
+// re-exec (the #2041 approach — a flag computed from NeedsShadow alone, before either
+// the per-BC-minor variant swap or the Cecil-rewrite cache state is knowable), the
+// success-path startup lines below are DEFERRED into this list and only flushed once
+// this generation has cleared every re-exec decision point in the function — the
+// shadow-hop check AND the Cecil-fresh-rewrite check, in that order, however many of
+// them fire.
+//
+// #2041's predict-then-suppress design covered exactly one re-exec (the shadow hop) and
+// silently broke the moment a SECOND one stacked on top: a per-BC-minor engine-variant
+// swap forces its own shadow-hop generation to also perform its first-ever Cecil rewrite
+// of that variant's Ncl.dll (a cache MISS, since the shadow-dir builder skips the
+// pre-rewrite for a variant swap — see EnsureShadowDir's doc comment), which is a SECOND
+// re-exec `reexecPending` had no way to see coming. That intermediate generation printed
+// the trio believing itself final, then re-exec'd anyway, and the real final generation
+// printed it again — three generations, two prints. See #2066.
+//
+// #2097: #2066 only fixed the trio. Two more steady-state informational lines on this
+// same startup path — the --tdd cache-disable notice, the expectations-manifest
+// found/not-found lines, and every branch of the BC auto-selection logic below (both the
+// per-BC-minor-variants-shipped branch and the no-variants-shipped switch) — had the
+// identical shape and duplicated the identical way, because they all print BEFORE
+// either re-exec decision point below and this list did not exist yet at the point they
+// ran. Declared here, ahead of all of them, instead of just ahead of the trio, so no
+// print between here and the flush point below can still slip past deferral.
+//
+// A generation that re-execs further always `return`s from inside one of the two
+// decision blocks below, before ever reaching the flush point — so its accumulated
+// entries are silently discarded, exactly as #2041 intended for the single-re-exec case,
+// but now correctly for however many stack. LOUD FAILURES are untouched: every error path
+// in this function (provisioning failure, BC version selection failure, no matching
+// engine variant, an incomplete artifact closure) returns its own specific message
+// immediately and never reaches — nor needs — this list. The `[reexec]` explanation
+// lines (#2034/#2038) are a different print entirely and stay unconditional, printed
+// from whichever generation actually decides to hand off.
+var deferredStartupLines = new List<Action>();
 // --tdd forces the AL-output cache off (same effect as --no-cache), on top of the
 // tdd:<0|1> cache-key line added above. The line alone stops a --tdd run from ever
 // SERVING a normal-mode DLL or vice versa (criterion 11) — but it does not make a
@@ -549,10 +585,13 @@ if (tddMode && serverMode)
 // reasonable follow-up), disabling the cache is what keeps every --tdd run correct.
 if (tddMode && alCacheDir != null)
 {
-    Console.Error.WriteLine(
+    // #2097: deferred — see `deferredStartupLines`'s declaration above. A no-string-
+    // interpolation constant message, so nothing needs capturing into a local before
+    // queueing.
+    deferredStartupLines.Add(() => Console.Error.WriteLine(
         "--tdd disables the AL-output cache for this run — its synthetic FAILED tests " +
         "for excluded objects are derived fresh from source on every Emit() call and " +
-        "are not part of the cached DLL, so a cache HIT would silently drop them.");
+        "are not part of the cached DLL, so a cache HIT would silently drop them."));
     alCacheDir = null;
 }
 // ── Positional bundle roots must exist (#1713) ────────────────────────────────
@@ -597,11 +636,17 @@ AlRunner.Infrastructure.ExpectationManifest? expectations = null;
             // every expect-oos/expect-divergence test in the run flipped to a plain
             // FAIL with nothing in the output to say why. Diagnosable, not inferred.
             var cwdCandidate = Path.Combine(Path.GetFullPath(Environment.CurrentDirectory), "tests", "expectations");
-            Console.Error.WriteLine(
+            // #2097: deferred — see `deferredStartupLines`'s declaration above. Captured
+            // into a local now: `bundles` itself is never mutated again after arg
+            // parsing, but capturing its count here (rather than reading `bundles.Count`
+            // fresh inside the closure) keeps this consistent with every other deferred
+            // line's rule of freezing values at queue time, not at flush time.
+            var bundleCountForPrint = bundles.Count;
+            deferredStartupLines.Add(() => Console.Error.WriteLine(
                 $"[expectations] no tests/expectations manifest found (probed {cwdCandidate}" +
-                (bundles.Count > 0 ? $" and the ancestor tree of {bundles.Count} bundle path(s)" : "") +
+                (bundleCountForPrint > 0 ? $" and the ancestor tree of {bundleCountForPrint} bundle path(s)" : "") +
                 ") — expect-oos / expect-fail-known-gap / expect-divergence classification is OFF " +
-                "this run. Pass --expectations DIR to set it explicitly.");
+                "this run. Pass --expectations DIR to set it explicitly."));
         }
     }
     if (expectationsDir != null)
@@ -609,9 +654,17 @@ AlRunner.Infrastructure.ExpectationManifest? expectations = null;
         try
         {
             expectations = AlRunner.Infrastructure.ExpectationManifest.LoadFromDirectory(expectationsDir);
-            Console.Error.WriteLine(
-                $"[expectations] loaded {expectations.Entries.Count} " +
-                (expectations.Entries.Count == 1 ? "entry" : "entries") + $" from {expectationsDir}");
+            // #2097: deferred — see `deferredStartupLines`'s declaration above. Captured
+            // into locals now (LoadFromDirectory has already returned, so these values
+            // are fixed) so the closure below reads exactly what THIS generation loaded,
+            // not `expectations`/`expectationsDir` as they stand whenever the list is
+            // eventually flushed.
+            var expectationsEntryCountForPrint = expectations.Entries.Count;
+            var expectationsDirForPrint = expectationsDir;
+            deferredStartupLines.Add(() => Console.Error.WriteLine(
+                $"[expectations] loaded {expectationsEntryCountForPrint} " +
+                (expectationsEntryCountForPrint == 1 ? "entry" : "entries") +
+                $" from {expectationsDirForPrint}"));
         }
         catch (InvalidOperationException ex)
         {
@@ -719,9 +772,17 @@ if (bcVersionArg == null && artifactPathArg == null)
             var latestDir = AlRunner.Infrastructure.BcArtifacts.SelectArtifactVersionDir(
                 AlRunner.Infrastructure.BcArtifacts.ArtifactsRootDir, null);
             bcVersionArg = Path.GetFileName(latestDir);
-            Console.Error.WriteLine($"[bc] no --bc-version given — selecting BC {bcVersionArg}, the latest " +
-                $"cached artifact ({shippedVariantsForDefault.Count} engine variant(s) shipped; the matching " +
-                $"one is selected automatically below). Override with --bc-version.");
+            // #2097: deferred — see `deferredStartupLines`'s declaration above. Captured
+            // into locals now: `bcVersionArg` is reassigned further down (after
+            // provisioning resolves the actual version to run against), so a closure
+            // reading `bcVersionArg` directly would print whatever THAT later
+            // reassignment left behind, not what THIS generation auto-selected here.
+            var autoSelectedVersionForPrint = bcVersionArg;
+            var shippedVariantCountForPrint = shippedVariantsForDefault.Count;
+            deferredStartupLines.Add(() => Console.Error.WriteLine(
+                $"[bc] no --bc-version given — selecting BC {autoSelectedVersionForPrint}, the latest " +
+                $"cached artifact ({shippedVariantCountForPrint} engine variant(s) shipped; the matching " +
+                $"one is selected automatically below). Override with --bc-version."));
         }
         catch (InvalidOperationException)
         {
@@ -732,8 +793,16 @@ if (bcVersionArg == null && artifactPathArg == null)
         var projMajorV = TryDeriveBcMajorFromProject(bundles);
         if (projMajorV != null && bcVersionArg != null
             && Version.TryParse(bcVersionArg, out var selV) && selV.Major.ToString() != projMajorV)
-            Console.Error.WriteLine($"[bc] warning: project app.json targets BC major {projMajorV} but the " +
-                $"latest cached artifact is {bcVersionArg} (major {selV.Major}).");
+        {
+            // #2097: deferred — see `deferredStartupLines`'s declaration above. Same
+            // `bcVersionArg`-reassignment hazard as the block above — capture now.
+            var projMajorForPrint = projMajorV;
+            var autoSelectedVersionForMismatchPrint = bcVersionArg;
+            var selMajorForPrint = selV.Major;
+            deferredStartupLines.Add(() => Console.Error.WriteLine(
+                $"[bc] warning: project app.json targets BC major {projMajorForPrint} but the " +
+                $"latest cached artifact is {autoSelectedVersionForMismatchPrint} (major {selMajorForPrint})."));
+        }
     }
     else
     {
@@ -773,83 +842,75 @@ if (bcVersionArg == null && artifactPathArg == null)
             }
 
             var engineMajorMinor = $"{engineVersion.Major}.{engineVersion.Minor}";
+            // #2097: every branch of this switch is deferred — see
+            // `deferredStartupLines`'s declaration above. `engineVersion`, `engineMajorMinor`
+            // and `engineMajor` are all `var`-declared once above and never reassigned
+            // afterward (unlike `bcVersionArg` elsewhere in this function), so the
+            // closures below can read them directly with no separate capture step; their
+            // values are already fixed for this generation.
             switch (tier)
             {
                 case "cached-exact":
-                    Console.Error.WriteLine($"[bc] no --bc-version given — selecting BC {engineVersion}, the exact " +
-                        $"build this binary was compiled against. Override with --bc-version.");
+                    deferredStartupLines.Add(() => Console.Error.WriteLine(
+                        $"[bc] no --bc-version given — selecting BC {engineVersion}, the exact " +
+                        $"build this binary was compiled against. Override with --bc-version."));
                     break;
                 case "cdn-exact":
-                    Console.Error.WriteLine($"[bc] no --bc-version given — provisioning BC {engineVersion}, the exact " +
-                        $"build this binary was compiled against. Override with --bc-version.");
+                    deferredStartupLines.Add(() => Console.Error.WriteLine(
+                        $"[bc] no --bc-version given — provisioning BC {engineVersion}, the exact " +
+                        $"build this binary was compiled against. Override with --bc-version."));
                     break;
                 case "cached-minor":
                     // Degraded but usually survivable: right minor, different build. The CodeAnalysis
                     // assembly version can still differ between builds of one minor, which fails loud
                     // at startup rather than silently — see BcArtifacts.DefaultVersionPrefix.
-                    Console.Error.WriteLine($"[bc] warning: no cached BC {engineVersion} — selecting the latest " +
+                    deferredStartupLines.Add(() => Console.Error.WriteLine(
+                        $"[bc] warning: no cached BC {engineVersion} — selecting the latest " +
                         $"{engineMajorMinor}.x instead. Build-level skew within a minor can still fail to load " +
-                        $"Microsoft.Dynamics.Nav.CodeAnalysis. Fix with: al-runner provision --bc-version {engineVersion}");
+                        $"Microsoft.Dynamics.Nav.CodeAnalysis. Fix with: al-runner provision --bc-version {engineVersion}"));
                     break;
                 case "cdn-minor":
-                    Console.Error.WriteLine($"[bc] no --bc-version given and BC {engineVersion} is not published on " +
+                    deferredStartupLines.Add(() => Console.Error.WriteLine(
+                        $"[bc] no --bc-version given and BC {engineVersion} is not published on " +
                         $"the CDN — provisioning the latest {engineMajorMinor}.x instead (still this binary's own " +
                         $"engine minor). Build-level skew within a minor can still fail to load " +
-                        $"Microsoft.Dynamics.Nav.CodeAnalysis. Fix with: al-runner provision --bc-version {engineVersion}");
+                        $"Microsoft.Dynamics.Nav.CodeAnalysis. Fix with: al-runner provision --bc-version {engineVersion}"));
                     break;
                 case "major-fallback-offline":
                     // No network step is coming (--no-auto-provision, or the rare case where
                     // engineVersion resolved but auto-provisioning is off) — this can only speak
                     // to what's CACHED, never to CDN availability. Original pre-#2033 wording.
-                    Console.Error.WriteLine($"[bc] warning: no cached BC {engineMajorMinor}.x — this binary's engine " +
+                    deferredStartupLines.Add(() => Console.Error.WriteLine(
+                        $"[bc] warning: no cached BC {engineMajorMinor}.x — this binary's engine " +
                         $"was built for {engineVersion}, so a different minor is a KNOWN-DEGRADED configuration " +
                         $"(measured: dozens of extra failures from engine/artifact minor skew). Falling back to the " +
-                        $"latest cached {engineMajor}.x. Fix with: al-runner provision --bc-version {engineMajorMinor}");
+                        $"latest cached {engineMajor}.x. Fix with: al-runner provision --bc-version {engineMajorMinor}"));
                     break;
                 default: // major-fallback: neither the exact build nor the engine's own minor is
                          // available from cache or the CDN — a genuine degradation (e.g. #2010,
                          // Microsoft withdrew the build), not the default-path norm.
-                    Console.Error.WriteLine($"[bc] warning: BC {engineMajorMinor}.x is not cached and not available " +
+                    deferredStartupLines.Add(() => Console.Error.WriteLine(
+                        $"[bc] warning: BC {engineMajorMinor}.x is not cached and not available " +
                         $"from the CDN — this binary's engine was built for {engineVersion}, so a different minor is " +
                         $"a KNOWN-DEGRADED configuration (measured: dozens of extra failures from engine/artifact " +
                         $"minor skew). Falling back to the latest {engineMajor}.x. Fix with: al-runner provision " +
-                        $"--bc-version {engineMajorMinor}");
+                        $"--bc-version {engineMajorMinor}"));
                     break;
             }
 
             var projMajor = TryDeriveBcMajorFromProject(bundles);
             if (projMajor != null && projMajor != engineMajor.Value.ToString())
-                Console.Error.WriteLine($"[bc] warning: project app.json targets BC major {projMajor} but this " +
-                    $"runner build supports major {engineMajor} (cross-major needs a matching runner build).");
+            {
+                // #2097: deferred — see `deferredStartupLines`'s declaration above.
+                // `projMajor` and `engineMajor` are stable for the same reason as the
+                // switch above.
+                deferredStartupLines.Add(() => Console.Error.WriteLine(
+                    $"[bc] warning: project app.json targets BC major {projMajor} but this " +
+                    $"runner build supports major {engineMajor} (cross-major needs a matching runner build)."));
+            }
         }
     }
 }
-// #2041/#2066: rather than PREDICTING whether this generation will need to re-exec (the
-// #2041 approach — a flag computed from NeedsShadow alone, before either the per-BC-minor
-// variant swap or the Cecil-rewrite cache state is knowable), the success-path startup
-// lines below are DEFERRED into this list and only flushed once this generation has
-// cleared every re-exec decision point in the function — the shadow-hop check AND the
-// Cecil-fresh-rewrite check, in that order, however many of them fire.
-//
-// #2041's predict-then-suppress design covered exactly one re-exec (the shadow hop) and
-// silently broke the moment a SECOND one stacked on top: a per-BC-minor engine-variant
-// swap forces its own shadow-hop generation to also perform its first-ever Cecil rewrite
-// of that variant's Ncl.dll (a cache MISS, since the shadow-dir builder skips the
-// pre-rewrite for a variant swap — see EnsureShadowDir's doc comment), which is a SECOND
-// re-exec `reexecPending` had no way to see coming. That intermediate generation printed
-// the trio believing itself final, then re-exec'd anyway, and the real final generation
-// printed it again — three generations, two prints. See #2066.
-//
-// A generation that re-execs further always `return`s from inside one of the two
-// decision blocks below, before ever reaching the flush point — so its accumulated
-// entries are silently discarded, exactly as #2041 intended for the single-re-exec case,
-// but now correctly for however many stack. LOUD FAILURES are untouched: every error path
-// in this function (provisioning failure, BC version selection failure, no matching
-// engine variant, an incomplete artifact closure) returns its own specific message
-// immediately and never reaches — nor needs — this list. The `[reexec]` explanation
-// lines (#2034/#2038) are a different print entirely and stay unconditional, printed
-// from whichever generation actually decides to hand off.
-var deferredStartupLines = new List<Action>();
 // ── Provisioning (on by default since issue #2024; opt out with --no-auto-provision):
 // `provision` subcommand or autoProvision (default true). Resolves the target version,
 // downloads the engine service-tier closure if it's missing/incomplete, then (subcommand)

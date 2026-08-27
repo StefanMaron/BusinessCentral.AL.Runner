@@ -258,6 +258,71 @@ public sealed class StartupOutputReexecDedupTests
     }
 
     /// <summary>
+    /// Issue #2097 — #2066 deferred the startup trio, but two more steady-state
+    /// informational lines on the exact same startup path were left unconditional and
+    /// duplicated once per process generation the same way: the "[bc] no --bc-version
+    /// given — selecting BC ..." auto-selection line, and the "[expectations] loaded N
+    /// entries from ..." manifest line. Both are printed BEFORE the shadow-re-exec
+    /// decision (unlike the trio, before `deferredStartupLines` even existed prior to
+    /// this fix), so the same stacked-three-generation shape
+    /// (ColdCecilCache_StackedShadowAndFreshRewriteReexec_... above) reprints them twice
+    /// too many.
+    ///
+    /// Unlike that sibling test, this one must NOT pass an explicit --bc-version — the
+    /// auto-selection line only prints when none is given (`bcVersionArg == null &&
+    /// artifactPathArg == null`), which is also the realistic case #2097's own
+    /// measurement used. This dev/CI environment always has the exact engine build
+    /// cached (TestArtifacts.SkipIfMissing's own precondition), so BcArtifacts.
+    /// DefaultVersionPrefix resolves the "cached-exact" tier deterministically —
+    /// the same branch #2097 measured against.
+    ///
+    /// Asserts both `[reexec]` lines first, exactly once each — proof this genuinely ran
+    /// three generations, not that nothing re-exec'd at all (a test that skipped that
+    /// check could pass by accident on a single-generation run where nothing had a
+    /// chance to duplicate).
+    /// </summary>
+    [SkippableFact]
+    public void ColdCecilCache_StackedShadowAndFreshRewriteReexec_BcAutoSelectAndExpectationsPrintExactlyOnce()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        // See the file header (#2061) for why this runs against a private mirror rather
+        // than the shared AlRunner/bin/.../ directory.
+        var privateDir = MirrorOriginalBinDir();
+        try
+        {
+            var privateDll = Path.Combine(privateDir, "al-runner.dll");
+
+            var psi = BuildPsiWithoutBcVersion(privateDll);
+            // Same forced-cold-cecil-cache technique as the sibling test above — see its
+            // own doc comment for why this reliably reproduces the stacked
+            // shadow-hop-then-fresh-rewrite, three-generation shape.
+            psi.Environment["AL_RUNNER_NCL_CACHE"] = "0";
+            var (output, exit) = Run(psi);
+
+            Assert.Equal(0, exit);
+            Assert.Contains("pass:        1", output);
+            Assert.Contains("fail:        0", output);
+
+            // Confirm three generations genuinely happened before trusting any of the
+            // exactly-once counts below — the same guard the sibling test above uses.
+            Assert.Equal(1, CountOccurrences(output, "[reexec] Ncl.dll not shipped in this install"));
+            Assert.Equal(1, CountOccurrences(output, "[reexec] Fresh rewrite done — re-execing for a clean Ncl load"));
+
+            // The two lines #2097 reported as still duplicating per generation.
+            Assert.Equal(1, CountOccurrences(output, "[bc] no --bc-version given — selecting BC "));
+            Assert.Equal(1, CountOccurrences(output, "[expectations] loaded "));
+        }
+        finally
+        {
+            // RewriteInPlace writes Ncl.dll directly into the private mirror (top-level
+            // dir) as a side effect of the top-level generation's own rewrite, same as
+            // the sibling tests above — clean up the whole mirror.
+            DeleteDirectoryOrFail(privateDir);
+        }
+    }
+
+    /// <summary>
     /// Regression: `reexecPending` must track the ACTUAL re-exec gate
     /// (`NeedsShadow(...) && AL_RUNNER_NCL_SHADOW_DONE != "1"`), not `NeedsShadow` alone.
     ///
@@ -501,12 +566,24 @@ public sealed class StartupOutputReexecDedupTests
 
     private (string Output, int Exit) SpawnAssembly(string dllPath) => Run(BuildPsi(dllPath));
 
-    private ProcessStartInfo BuildPsi(string dllPath)
+    private ProcessStartInfo BuildPsi(string dllPath) =>
+        BuildPsiCore($"\"{dllPath}\"{TestBuildConfig.BcVersionArg} \"{Fixture}\"");
+
+    /// <summary>
+    /// Same as <see cref="BuildPsi"/>, but WITHOUT the pinned `--bc-version` argument —
+    /// needed by issue #2097's test, which is specifically about the auto-selection
+    /// "[bc] no --bc-version given — selecting BC ..." line that only prints when no
+    /// version is given on the command line at all.
+    /// </summary>
+    private ProcessStartInfo BuildPsiWithoutBcVersion(string dllPath) =>
+        BuildPsiCore($"\"{dllPath}\" \"{Fixture}\"");
+
+    private ProcessStartInfo BuildPsiCore(string arguments)
     {
         var psi = new ProcessStartInfo
         {
             FileName = "dotnet",
-            Arguments = $"\"{dllPath}\"{TestBuildConfig.BcVersionArg} \"{Fixture}\"",
+            Arguments = arguments,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
