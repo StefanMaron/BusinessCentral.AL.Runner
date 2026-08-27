@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Linq;
 using System.Text;
+using System.Text.RegularExpressions;
 using Xunit;
 
 namespace AlRunner.Tests;
@@ -35,6 +36,25 @@ namespace AlRunner.Tests;
 /// them (it downloads to <c>~/.al-runner/…</c> and passes <c>--package-cache</c> explicitly
 /// on the steps that need it), while a dev box that once ran <c>--auto-provision</c> has
 /// them and silently took the working path.
+///
+/// #2067: that last sentence is not hypothetical — it is exactly what makes this test
+/// non-hermetic on a warm dev box, and it happens even with the explicit
+/// <c>--package-cache &lt;nonexistent dir&gt;</c> below. Program.cs folds the SELECTED BC
+/// version's runner-owned <c>&lt;ArtifactsRootDir&gt;/&lt;version&gt;/{platform-apps,test-apps}</c>
+/// into <c>packageCacheDirs</c> whenever that exact directory already exists on disk — by
+/// design (#1996), so a warm re-run of <c>--auto-provision</c>/<c>al-runner provision</c>
+/// never re-hits the CDN — and it does so AFTER the "package caches: N dir(s)" line below is
+/// printed, so that line's "0" is true of the explicit/default set only, not of what
+/// dependency resolution actually searches a moment later. CI's own provisioning writes to a
+/// DIFFERENT path (<c>$HOME/.al-runner/platform-apps</c> — see .github/workflows/bc-tests.yml),
+/// which the runner's fold-in logic never references, so CI's actual search set really is
+/// empty; a machine that has ever run <c>--auto-provision</c>/<c>provision</c> FOR THIS EXACT
+/// BC BUILD gets extra (correctly resolvable, Optional) Microsoft platform/test-toolkit
+/// candidates folded in and so resolves/loads more than the one sibling dep. That is
+/// legitimate warm-reuse behaviour, not a regression — so the assertions below only pin
+/// down what the #1748 fix actually claims (the sibling dep specifically is BOTH
+/// runtime-loadable and compile-visible), not the total dependency count, which is allowed
+/// to vary with this machine's own provisioning history.
 ///
 /// Spawns the real runner; needs the BC artifact cache. Skips (no-op) when absent.
 /// See DefineFlagIntegrationTests for why this used to be
@@ -153,6 +173,11 @@ public class SourceDepSymbolsWithoutPackageCacheTests
         args.Append($" \"{testsDir}\"");
         args.Append($" --cache \"{alCacheDir}\"");
         args.Append($" --package-cache \"{absentPackageCache}\"");
+        // --verbose: names which package WON each dependency slot (the "[dep] Publisher/Name
+        // Version <- path" line below), which is what lets the assertions confirm the
+        // SIBLING dep specifically resolved, independent of whatever else this machine's own
+        // provisioning history additionally folds in (see the class doc comment, #2067).
+        args.Append(" --verbose");
         var psi = new ProcessStartInfo
         {
             FileName = "dotnet", Arguments = args.ToString(),
@@ -170,12 +195,24 @@ public class SourceDepSymbolsWithoutPackageCacheTests
         string output;
         lock (sb) output = sb.ToString();
 
-        // Precondition: the configuration under test really is the zero-package-cache
-        // one. If the runner ever falls back to the default dirs here, this test would
-        // stop covering the CI path and go green for the wrong reason.
+        // Precondition: the EXPLICIT/DEFAULT package-cache set really is the zero-dir one
+        // (i.e. --package-cache pointing at a directory that doesn't exist really does take
+        // the explicit-arg branch, not a DefaultPackageCacheDirs fallback). This line is
+        // printed BEFORE Program.cs's runner-owned-provisioning fold (#1996), so it can be
+        // "0" even when the machine's own provisioning history later adds more candidates —
+        // see the class doc comment. If this ever goes non-zero, the explicit-arg branch
+        // itself broke, which is what this precondition actually guards.
         Assert.Contains("package caches: 0 dir(s)", output);
-        // The dep must be BOTH runtime-loadable and compile-visible.
-        Assert.Contains("loaded 1 dep assembl(ies)", output);
+        // The dep must be BOTH runtime-loadable and compile-visible. Do NOT pin the total
+        // dep count: a machine that has ever run --auto-provision/`provision` for this exact
+        // BC build resolves additional (legitimately available) Microsoft platform/test-
+        // toolkit apps too (#1996, #2067) — CI never does, because its own provisioning
+        // writes to a path the runner's fold-in logic doesn't reference. What the #1748 fix
+        // actually claims is that the SIBLING dep specifically resolved and loaded, which the
+        // --verbose "[dep] Publisher/Name" line below names directly, independent of whatever
+        // else got folded in alongside it.
+        Assert.Matches(new Regex(@"loaded [1-9]\d* dep assembl\(ies\)"), output);
+        Assert.Contains("[dep] Repro1731B/Repro1731B Dep App", output);
         Assert.DoesNotContain("AL0185", output);
         Assert.DoesNotContain("EMIT-ZERO", output);
         Assert.True(p.ExitCode == 0 && output.Contains("2P/0F/0E"),
