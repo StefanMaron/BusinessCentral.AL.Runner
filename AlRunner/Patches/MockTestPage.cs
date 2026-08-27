@@ -212,10 +212,16 @@ internal class LiveNavTestPage : MockITestPage
                 "testpage-part — the part's own page could not be driven live "
                 + "(no source table, or no runtime record type for it). See docs/scope.md");
 
+        // The parent record is only needed to evaluate SubPageLink pairs (issue #2053). A
+        // part with no links never reads it — and a FIELD link can only be declared against
+        // a parent SourceTable field, so a SourceTable-less host (the Worksheet-dialog shape,
+        // legal AL) always lands in the linkless case. Demanding the record up front turned
+        // every part access on such a host into a refusal the operation never required.
+        var links = SubPageLinks(definition, partPageId);
         var part = new LiveNavTestPart(
             built.Record, RecordPatches.GetPageControlFieldMap(partPageId),
             RecordPatches.GetInsertAllowedForPage(partPageId), built.Page, _owner!, partPageId,
-            parentRecord: RequireRecord($"subpage part {controlId}"), links: SubPageLinks(definition, partPageId));
+            parentRecord: links.Length == 0 ? null : RequireRecord($"subpage part {controlId}"), links: links);
         _parts[controlId] = part;
         return part;
     }
@@ -1783,12 +1789,15 @@ internal sealed class MockITestPart : MockITestPage, ITestPart
 /// </summary>
 internal sealed class LiveNavTestPart : LiveNavTestPage, ITestPart
 {
-    private readonly NavRecord _parentRecord;
+    // Null only when _links is empty (issue #2053: a linkless part on a SourceTable-less
+    // host has no parent record and needs none) — every read below sits inside a _links
+    // loop, so a null parent is never dereferenced.
+    private readonly NavRecord? _parentRecord;
     private readonly (int PartFieldNo, int ParentFieldNo)[] _links;
 
     public LiveNavTestPart(NavRecord record, IReadOnlyDictionary<int, int> controlIdToFieldNo, bool creatable,
         RunnerPageInstance? page, object owner, int pageId,
-        NavRecord parentRecord, (int PartFieldNo, int ParentFieldNo)[] links)
+        NavRecord? parentRecord, (int PartFieldNo, int ParentFieldNo)[] links)
         : base(record, controlIdToFieldNo, creatable, page, owner, pageId)
     {
         _parentRecord = parentRecord;
@@ -1807,7 +1816,7 @@ internal sealed class LiveNavTestPart : LiveNavTestPage, ITestPart
         var record = RequireRecord("subpage link");
         foreach (var (partFieldNo, parentFieldNo) in _links)
         {
-            var parentValue = _parentRecord.GetFieldValue(parentFieldNo);
+            var parentValue = _parentRecord!.GetFieldValue(parentFieldNo);
             record.ALSetRange(partFieldNo, parentValue);
         }
     }
@@ -1834,6 +1843,6 @@ internal sealed class LiveNavTestPart : LiveNavTestPage, ITestPart
         base.InsertEmptyRow(beforeCurrent);
         var record = RequireRecord("subpage link");
         foreach (var (partFieldNo, parentFieldNo) in _links)
-            record.SetFieldValue(partFieldNo, _parentRecord.GetFieldValue(parentFieldNo));
+            record.SetFieldValue(partFieldNo, _parentRecord!.GetFieldValue(parentFieldNo));
     }
 }
