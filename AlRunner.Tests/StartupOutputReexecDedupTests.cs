@@ -280,6 +280,15 @@ public sealed class StartupOutputReexecDedupTests
     /// three generations, not that nothing re-exec'd at all (a test that skipped that
     /// check could pass by accident on a single-generation run where nothing had a
     /// chance to duplicate).
+    ///
+    /// Only the "cached-exact"/"cached-minor" branches of Program.cs's BC-selection
+    /// switch and the "loaded" (not "not found") expectations line are actually
+    /// deferred by the fix — see Program.cs's own comments at each site for why the
+    /// "cdn-exact"/"cdn-minor"/KNOWN-DEGRADED branches and the --tdd cache-disable
+    /// notice deliberately stay immediate instead (deferring them broke
+    /// DefaultProvisionTargetMessagingTests, which pins their immediate-print
+    /// contract). This test only exercises the "cached-exact" branch, matching #2097's
+    /// own measured repro.
     /// </summary>
     [SkippableFact]
     public void ColdCecilCache_StackedShadowAndFreshRewriteReexec_BcAutoSelectAndExpectationsPrintExactlyOnce()
