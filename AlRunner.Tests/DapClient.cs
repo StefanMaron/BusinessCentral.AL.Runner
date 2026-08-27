@@ -12,8 +12,14 @@ namespace AlRunner.Tests;
 /// itself uses on the server side of this connection), for issue #1642. Unlike
 /// CliServer/SharedCliServer, a DAP session is inherently single-shot (one client,
 /// one bundle, one run) so there is no shared-process variant of this helper.
+///
+/// The response/event demultiplexing (queueing, phased drain, the #2070 race this
+/// exists to prevent) lives in the shared <see cref="DapClientBase"/> — see its
+/// header comment. This class supplies only what's specific to the TCP transport:
+/// spawning + connecting, and the socket-available/ThreadPool diagnostics attached
+/// to a genuine read timeout.
 /// </summary>
-public sealed class DapClient : IAsyncDisposable
+public sealed class DapClient : DapClientBase
 {
     private static readonly string RepoRoot = Path.GetFullPath(
         Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
@@ -21,7 +27,6 @@ public sealed class DapClient : IAsyncDisposable
 
     private readonly Process _process;
     private readonly TcpClient _tcp;
-    private readonly DapTransport _transport;
     private readonly StringBuilder _stderr;
     private readonly StringBuilder _stdout;
 
@@ -54,7 +59,7 @@ public sealed class DapClient : IAsyncDisposable
     // captured CI logs). Belt and suspenders: do both, trust the one already proven.
     private readonly StringBuilder _clientTrace = new();
 
-    private void Trace(string msg)
+    protected override void Trace(string msg)
     {
         if (!_traceEnabled) return;
         // InvariantCulture, not the interpolated ":" format-string shorthand — ":" in a
@@ -70,11 +75,14 @@ public sealed class DapClient : IAsyncDisposable
 
     private string ClientTrace { get { lock (_clientTrace) return _clientTrace.ToString(); } }
 
+    protected override string DiagnosticDump() =>
+        $"--- stdout ---\n{StdOut}\n--- stderr ---\n{StdErr}\n--- client trace ---\n{ClientTrace}";
+
     private DapClient(Process process, TcpClient tcp, DapTransport transport, StringBuilder stdout, StringBuilder stderr)
+        : base(transport)
     {
         _process = process;
         _tcp = tcp;
-        _transport = transport;
         _stdout = stdout;
         _stderr = stderr;
     }
@@ -185,139 +193,6 @@ public sealed class DapClient : IAsyncDisposable
         return port;
     }
 
-    /// <summary>Sends a DAP request and returns its seq (for matching against the
-    /// eventual response's request_seq via <see cref="ReadUntilResponseAsync"/>).</summary>
-    public int SendRequest(string command, object? arguments = null)
-    {
-        var seq = _transport.WriteRequest(command, arguments);
-        Trace($"SEND {command} seq={seq}");
-        return seq;
-    }
-
-    // Issue #2070's actual root cause, found AFTER the watchdog race (real, fixed) and
-    // the Stopped-handler exception swallow (real, fixed) both turned out NOT to be
-    // what any concrete local reproduction showed: DAP responses and events are two
-    // INDEPENDENT streams that interleave by protocol design, and every call site in
-    // this file used to call ReadUntilResponseAsync WITHOUT an `events` list — so any
-    // event that arrived while waiting for a response was read off the socket and then
-    // dropped on the floor by `events?.Add(root)` on a null list. Concretely, for
-    // "next"/"stepIn"/"stepOut": handling the command releases the paused AL thread,
-    // which is then free to run, qualify, and write its own "stopped" event — a race
-    // against the DAP loop thread writing the command's OWN response. If the AL thread
-    // wins, the wire order is "stopped" event FIRST, command response SECOND.
-    // ReadUntilResponseAsync reads the "stopped" event, throws it away (no events
-    // list), reads the response, returns — and the test's very next call,
-    // ReadUntilEventAsync("stopped"), is now waiting for a SECOND "stopped" event that
-    // will never be sent, hence the 60s timeout with socket.Available=0 (the event
-    // really was delivered — and consumed and discarded) and a perfectly healthy
-    // server (it did everything right; see AlDapSession.Trace / Program.cs's
-    // STOPPED-HANDLER trace, both of which show a clean ARM/EVAL/FIRE/Walk/WriteEvent
-    // sequence in every local reproduction of this hang). It only ever hits the step
-    // tests, never the initial breakpoint reached via configurationDone, because there
-    // the response is written before the AL thread starts running at all — no race.
-    //
-    // The fix is NOT to pass an `events` list at every call site — that only narrows
-    // the trap for whichever call remembered to. A real DAP client treats events as a
-    // durable, independent stream: anything that isn't the message currently being
-    // waited for is queued, not discarded, and later reads drain the queue before
-    // touching the socket.
-    //
-    // CAUGHT WHILE BUILDING THIS: a first version had both methods dequeue from
-    // _pendingEvents and unconditionally re-enqueue a non-matching item back onto the
-    // SAME queue, in the SAME loop iteration, with no socket I/O in between. With
-    // exactly one item queued (the common case) that dequeue-then-requeue is a net
-    // no-op that repeats at CPU-bound spin speed — no real wait, no forward progress —
-    // and blew up a StringBuilder from the accompanying Trace() calls before the
-    // nominal timeout's wall-clock deadline could even be reached. Fixed by splitting
-    // each method into two phases: first drain whatever was ALREADY queued, bounded by
-    // a snapshot of the queue's length taken before the scan starts (so a re-queued
-    // miss is never reconsidered within the same phase-1 pass); only once that snapshot
-    // is exhausted does phase 2 fall through to blocking socket reads, which is the
-    // only phase allowed to burn real wall-clock time.
-    private readonly Queue<JsonElement> _pendingEvents = new();
-
-    /// <summary>Reads messages until the response to <paramref name="requestSeq"/>
-    /// arrives, returning it. Any events seen along the way — whether already sitting
-    /// in <see cref="_pendingEvents"/> from an earlier read or freshly read off the
-    /// socket — are appended to <paramref name="events"/> if given, and (unconditionally)
-    /// left in <see cref="_pendingEvents"/> so a later <see cref="ReadUntilEventAsync"/>
-    /// still sees them even when no `events` list is given here. A response is never
-    /// queued (by construction, only "event"-typed messages are), so phase 1 can only
-    /// ever collect for `events`, never satisfy the wait itself — it still has to run
-    /// so already-queued events are not skipped when a caller wants to see them.</summary>
-    public async Task<JsonElement> ReadUntilResponseAsync(int requestSeq, List<JsonElement>? events = null, TimeSpan? timeout = null)
-    {
-        var t = timeout ?? TimeSpan.FromSeconds(30);
-
-        var alreadyQueued = _pendingEvents.Count;
-        for (var i = 0; i < alreadyQueued; i++)
-        {
-            var queuedRoot = _pendingEvents.Dequeue();
-            events?.Add(queuedRoot);
-            _pendingEvents.Enqueue(queuedRoot);
-        }
-
-        var deadline = DateTime.UtcNow + t;
-        while (DateTime.UtcNow < deadline)
-        {
-            var msg = await ReadOneAsync(t);
-            var root = msg.Raw.RootElement;
-            var type = root.GetProperty("type").GetString();
-            if (type == "response" && root.TryGetProperty("request_seq", out var rs) && rs.GetInt32() == requestSeq)
-                return root;
-            if (type == "event")
-            {
-                events?.Add(root);
-                var evName = root.TryGetProperty("event", out var evEl) ? evEl.GetString() : "?";
-                Trace($"QUEUE event={evName} arrived while waiting for response to seq={requestSeq} — not dropped");
-                _pendingEvents.Enqueue(root);
-            }
-        }
-        throw new TimeoutException($"no response to request seq {requestSeq} within timeout.\n--- stdout ---\n{StdOut}\n--- stderr ---\n{StdErr}\n--- client trace ---\n{ClientTrace}");
-    }
-
-    /// <summary>Reads messages until an event named <paramref name="eventName"/>
-    /// arrives, returning its body. Used to wait for e.g. "stopped". Every event seen
-    /// along the way (including the terminal one) is appended to <paramref
-    /// name="allEvents"/> if given, so a caller can assert on what did NOT arrive (e.g.
-    /// "no 'stopped' event fired") without a second read loop. Phase 1 scans whatever
-    /// is ALREADY in <see cref="_pendingEvents"/> — bounded to a snapshot of its length
-    /// so a non-matching item is examined exactly once per call, never spun on — before
-    /// phase 2 falls through to blocking socket reads.</summary>
-    public async Task<JsonElement> ReadUntilEventAsync(string eventName, TimeSpan? timeout = null, List<JsonElement>? allEvents = null)
-    {
-        var t = timeout ?? TimeSpan.FromSeconds(60);
-
-        var alreadyQueued = _pendingEvents.Count;
-        for (var i = 0; i < alreadyQueued; i++)
-        {
-            var queuedRoot = _pendingEvents.Dequeue();
-            allEvents?.Add(queuedRoot);
-            var queuedEventName = queuedRoot.TryGetProperty("event", out var qEvEl) ? qEvEl.GetString() : null;
-            if (queuedEventName == eventName) return queuedRoot;
-            _pendingEvents.Enqueue(queuedRoot);
-        }
-
-        var deadline = DateTime.UtcNow + t;
-        while (DateTime.UtcNow < deadline)
-        {
-            var msg = await ReadOneAsync(t);
-            var root = msg.Raw.RootElement;
-            if (root.GetProperty("type").GetString() != "event") continue;
-            allEvents?.Add(root);
-            var thisEventName = root.TryGetProperty("event", out var evEl) ? evEl.GetString() : null;
-            if (thisEventName == eventName)
-                return root;
-            // A different event than the one being awaited right now — re-queue it
-            // rather than drop it, same principle as ReadUntilResponseAsync above (a
-            // second step command in a row, each waiting on its own "stopped", is the
-            // same shape of race one level up).
-            Trace($"QUEUE event={thisEventName ?? "?"} arrived while waiting for event={eventName} — not dropped");
-            _pendingEvents.Enqueue(root);
-        }
-        throw new TimeoutException($"event '{eventName}' did not arrive within {t.TotalSeconds:F0}s.\n--- stdout ---\n{StdOut}\n--- stderr ---\n{StdErr}\n--- client trace ---\n{ClientTrace}");
-    }
-
     /// <summary>
     /// Issue #2070: a per-read timeout that genuinely fires (nothing ever arrives) used
     /// to surface as a bare <see cref="OperationCanceledException"/> from the awaited
@@ -332,13 +207,13 @@ public sealed class DapClient : IAsyncDisposable
     /// means the NEXT genuine hang's runner-side stderr (including the step trace) is
     /// actually visible in the test failure message instead of silently discarded.
     /// </summary>
-    private async Task<DapIncomingMessage> ReadOneAsync(TimeSpan timeout)
+    protected override async Task<DapIncomingMessage> ReadOneAsync(TimeSpan timeout)
     {
         using var cts = new CancellationTokenSource(timeout);
         DapIncomingMessage? msg;
         try
         {
-            msg = await _transport.ReadMessageAsync(cts.Token);
+            msg = await Transport.ReadMessageAsync(cts.Token);
         }
         catch (OperationCanceledException) when (cts.IsCancellationRequested)
         {
@@ -394,9 +269,9 @@ public sealed class DapClient : IAsyncDisposable
         return msg;
     }
 
-    public async ValueTask DisposeAsync()
+    public override async ValueTask DisposeAsync()
     {
-        try { _transport.Dispose(); } catch { }
+        try { Transport.Dispose(); } catch { }
         try { _tcp.Dispose(); } catch { }
         try
         {

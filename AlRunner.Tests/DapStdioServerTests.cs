@@ -21,6 +21,16 @@ public class DapStdioServerTests
     private const int SecondStatementLine = 21;
     private const string SourceFileName = "DapBreakpointTests.Codeunit.al";
 
+    // Same nested-call fixture DapServerTests uses for its step-granularity tests
+    // (issue #2045) — reused here rather than duplicated, see AlRunner.Tests/
+    // Fixtures/DapStepping/DapSteppingTests.Codeunit.al for the line numbering these
+    // constants are asserted against.
+    private static readonly string SteppingFixtureSrc = Path.GetFullPath(Path.Combine(
+        AppContext.BaseDirectory, "..", "..", "..", "Fixtures", "DapStepping"));
+    private const string SteppingSourceFileName = "DapSteppingTests.Codeunit.al";
+    private const int OuterCallLine = 22;             // Result := Double(Result);
+    private const int OuterThirdStatementLine = 23;   // Result := Result + 10;
+
     [SkippableFact]
     public async Task DapStdio_BreakpointOnSecondStatement_PausesBeforeItRuns_ThenContinueCompletesTheTest()
     {
@@ -135,5 +145,64 @@ public class DapStdioServerTests
         var exited = await dap.ReadUntilEventAsync("exited", timeout: TimeSpan.FromSeconds(60), allEvents: allEvents);
         Assert.Equal(0, exited.GetProperty("body").GetProperty("exitCode").GetInt32());
         Assert.DoesNotContain(allEvents, e => e.GetProperty("event").GetString() == "stopped");
+    }
+
+    /// <summary>
+    /// Issue #2070's actual root cause, one transport over: "next" releases the
+    /// paused AL thread, which is then free to run, qualify, and write its own
+    /// "stopped" event — racing the DAP loop thread writing the "next" response. When
+    /// the AL thread wins, the wire order is "stopped" event FIRST, response SECOND.
+    /// A ReadUntilResponseAsync that discards events seen while waiting for a response
+    /// (DapClient's own pre-#2070-fix shape — see DapClient.cs's header comment above
+    /// _pendingEvents) reads that "stopped" event, throws it away, reads the response,
+    /// returns — and this test's very next ReadUntilEventAsync("stopped") then waits
+    /// the full timeout for a second "stopped" that will never come. This is the exact
+    /// same race #2070 fixed for the TCP client (DapClient), reproduced here over
+    /// stdio because DapStdioClient shipped with its own, unfixed copy of the same
+    /// read loop.
+    /// </summary>
+    [SkippableFact]
+    public async Task DapStdio_Next_StepsOverNestedCall_LandsOnOuterNextStatement()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        await using var dap = await DapStdioClient.StartAsync(SteppingFixtureSrc);
+
+        var initSeq = dap.SendRequest("initialize", new { adapterID = "al-runner-tests" });
+        await dap.ReadUntilResponseAsync(initSeq);
+        await dap.ReadUntilEventAsync("initialized");
+
+        var launchSeq = dap.SendRequest("launch", new { });
+        var launchResp = await dap.ReadUntilResponseAsync(launchSeq, timeout: TimeSpan.FromSeconds(120));
+        Assert.True(launchResp.GetProperty("success").GetBoolean(), launchResp.ToString());
+
+        var sourcePath = Path.Combine(SteppingFixtureSrc, SteppingSourceFileName);
+        var bpSeq = dap.SendRequest("setBreakpoints", new
+        {
+            source = new { path = sourcePath },
+            breakpoints = new[] { new { line = OuterCallLine } },
+        });
+        var bpResp = await dap.ReadUntilResponseAsync(bpSeq);
+        Assert.True(bpResp.GetProperty("body").GetProperty("breakpoints")[0].GetProperty("verified").GetBoolean(),
+            $"breakpoint at line {OuterCallLine} was not verified: {bpResp}");
+
+        var cfgSeq = dap.SendRequest("configurationDone");
+        await dap.ReadUntilResponseAsync(cfgSeq);
+
+        var stopped = await dap.ReadUntilEventAsync("stopped");
+        Assert.Equal("breakpoint", stopped.GetProperty("body").GetProperty("reason").GetString());
+        Assert.Equal(OuterCallLine, stopped.GetProperty("body").GetProperty("line").GetInt32());
+
+        var nextSeq = dap.SendRequest("next", new { threadId = 1 });
+        await dap.ReadUntilResponseAsync(nextSeq);
+
+        var nextStopped = await dap.ReadUntilEventAsync("stopped");
+        Assert.Equal("step", nextStopped.GetProperty("body").GetProperty("reason").GetString());
+        Assert.Equal(OuterThirdStatementLine, nextStopped.GetProperty("body").GetProperty("line").GetInt32());
+
+        var contSeq = dap.SendRequest("continue", new { threadId = 1 });
+        await dap.ReadUntilResponseAsync(contSeq);
+        var exited2 = await dap.ReadUntilEventAsync("exited", TimeSpan.FromSeconds(60));
+        Assert.Equal(0, exited2.GetProperty("body").GetProperty("exitCode").GetInt32());
     }
 }

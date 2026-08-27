@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.Text;
-using System.Text.Json;
 using AlRunner.Infrastructure;
 
 namespace AlRunner.Tests;
@@ -11,8 +10,11 @@ namespace AlRunner.Tests;
 /// <see cref="DapTransport"/> class <see cref="DapClient"/> uses for the TCP path,
 /// just handed the process's piped stdio streams instead of a socket.
 ///
-/// The whole point of this harness (vs. reusing DapClient) is <see
-/// cref="RawStdoutBytes"/>: every byte the child ever wrote to its OWN stdout,
+/// The response/event demultiplexing (queueing, phased drain, the #2070 race this
+/// exists to prevent) lives in the shared <see cref="DapClientBase"/> — see its
+/// header comment. This class supplies only what's specific to stdio: spawning +
+/// readiness detection over stderr (stdout can't be used for that — see below), and
+/// <see cref="RawStdoutBytes"/>: every byte the child ever wrote to its OWN stdout,
 /// captured independently of DapTransport's own (lenient) header parser — see
 /// DapTransport.ReadMessageAsync, which silently skips any header line without a
 /// colon rather than failing on it. A test asserting only "the handshake succeeded"
@@ -20,14 +22,13 @@ namespace AlRunner.Tests;
 /// lets a test re-parse the exact bytes with a strict, no-tolerance framer instead
 /// (see DapRawFrameValidator).
 /// </summary>
-public sealed class DapStdioClient : IAsyncDisposable
+public sealed class DapStdioClient : DapClientBase
 {
     private static readonly string RepoRoot = Path.GetFullPath(
         Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
     private static readonly string ProjectPath = Path.Combine(RepoRoot, "AlRunner");
 
     private readonly Process _process;
-    private readonly DapTransport _transport;
     private readonly TeeReadStream _rawStdout;
     private readonly StringBuilder _stderr = new();
     private int _messagesReceived;
@@ -43,10 +44,12 @@ public sealed class DapStdioClient : IAsyncDisposable
     /// re-parse of <see cref="RawStdoutBytes"/> — see DapRawFrameValidator.</summary>
     public int MessagesReceived => _messagesReceived;
 
+    protected override string DiagnosticDump() => $"--- stderr ---\n{StdErr}";
+
     private DapStdioClient(Process process, DapTransport transport, TeeReadStream rawStdout)
+        : base(transport)
     {
         _process = process;
-        _transport = transport;
         _rawStdout = rawStdout;
     }
 
@@ -111,45 +114,21 @@ public sealed class DapStdioClient : IAsyncDisposable
         return client;
     }
 
-    public int SendRequest(string command, object? arguments = null) => _transport.WriteRequest(command, arguments);
-
-    public async Task<JsonElement> ReadUntilResponseAsync(int requestSeq, List<JsonElement>? events = null, TimeSpan? timeout = null)
-    {
-        var deadline = DateTime.UtcNow + (timeout ?? TimeSpan.FromSeconds(30));
-        while (DateTime.UtcNow < deadline)
-        {
-            var msg = await ReadOneAsync(timeout ?? TimeSpan.FromSeconds(30));
-            var root = msg.Raw.RootElement;
-            var type = root.GetProperty("type").GetString();
-            if (type == "response" && root.TryGetProperty("request_seq", out var rs) && rs.GetInt32() == requestSeq)
-                return root;
-            if (type == "event") events?.Add(root);
-        }
-        throw new TimeoutException($"no response to request seq {requestSeq} within timeout.\n--- stderr ---\n{StdErr}");
-    }
-
-    public async Task<JsonElement> ReadUntilEventAsync(string eventName, TimeSpan? timeout = null, List<JsonElement>? allEvents = null)
-    {
-        var t = timeout ?? TimeSpan.FromSeconds(60);
-        var deadline = DateTime.UtcNow + t;
-        while (DateTime.UtcNow < deadline)
-        {
-            var msg = await ReadOneAsync(t);
-            var root = msg.Raw.RootElement;
-            if (root.GetProperty("type").GetString() != "event") continue;
-            allEvents?.Add(root);
-            if (root.TryGetProperty("event", out var ev) && ev.GetString() == eventName)
-                return root;
-        }
-        throw new TimeoutException($"event '{eventName}' did not arrive within {t.TotalSeconds:F0}s.\n--- stderr ---\n{StdErr}");
-    }
-
-    private async Task<DapIncomingMessage> ReadOneAsync(TimeSpan timeout)
+    protected override async Task<DapIncomingMessage> ReadOneAsync(TimeSpan timeout)
     {
         using var cts = new CancellationTokenSource(timeout);
-        var msg = await _transport.ReadMessageAsync(cts.Token);
+        DapIncomingMessage? msg;
+        try
+        {
+            msg = await Transport.ReadMessageAsync(cts.Token);
+        }
+        catch (OperationCanceledException) when (cts.IsCancellationRequested)
+        {
+            throw new TimeoutException(
+                $"--dap stdio read timed out after {timeout.TotalSeconds:F0}s.\n{DiagnosticDump()}");
+        }
         if (msg == null)
-            throw new Exception($"--dap stdio connection closed unexpectedly.\n--- stderr ---\n{StdErr}");
+            throw new Exception($"--dap stdio connection closed unexpectedly.\n{DiagnosticDump()}");
         Interlocked.Increment(ref _messagesReceived);
         return msg;
     }
@@ -180,9 +159,9 @@ public sealed class DapStdioClient : IAsyncDisposable
         try { await _process.WaitForExitAsync(new CancellationTokenSource(t).Token); } catch { }
     }
 
-    public async ValueTask DisposeAsync()
+    public override async ValueTask DisposeAsync()
     {
-        try { _transport.Dispose(); } catch { }
+        try { Transport.Dispose(); } catch { }
         try
         {
             if (!_process.HasExited)
