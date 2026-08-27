@@ -422,6 +422,20 @@ public static partial class BcRuntime
         var pageId = GetPageIdFromTestPage(self);
         var tableId = RecordPatches.GetSourceTableIdForPage(pageId);
         var pkFields = RecordPatches.GetPrimaryKeyFieldIdsForTable(tableId);
+        if (pkFields.Length == 0)
+        {
+            // A page that ships PRECOMPILED (and its table) never went through the AL
+            // parser, so both lookups above answer empty — and returning false here left
+            // GoToRecord a silent no-op: the cursor never moved and every later Rec read
+            // on the page saw an unpositioned record (issue #2057). BC's own ALGoToRecord
+            // derives the key from the passed RECORD's compiled metadata
+            // (NCLMetadata.GetMetaTableById(record.TableID).PrimaryKey), not from parsed
+            // page source — mirror that.
+            var metaTable = Microsoft.Dynamics.Nav.Runtime.NavGlobal.NCLMetadata
+                .GetMetaTableById(record.TableID, requireCompiled: false);
+            pkFields = metaTable?.PrimaryKey?.KeyFieldsList?
+                .Select(f => f.FieldNo).ToArray() ?? Array.Empty<int>();
+        }
         if (pkFields.Length == 0) return false;
 
         var testPageField = FindInstanceField(self.GetType(), "testPage");
