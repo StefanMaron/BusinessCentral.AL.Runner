@@ -18,6 +18,10 @@ before calling them, and pass `owner: StefanMaron`, `repo: BusinessCentral.AL.Ru
 "this does not exist". The `gh` commands below are the local-CLI spelling; when `gh` is available, pass
 `--repo StefanMaron/BusinessCentral.AL.Runner` on every command.
 
+**Public posting needs approval** for anything editorial — review comments,
+issue comments, anything on another repo. See
+`.claude/rules/public-posting-approval.md`.
+
 ## Execution model
 Repeat Steps 1–4. After any action, restart from Step 1. Exit only after a full pass with no actions (Step 5).
 
@@ -53,13 +57,13 @@ For each PR:
 4. **CHANGELOG.md in diff** → check existing comments (`gh pr view <N> --json comments`); if not yet posted:
    > Please revert all changes to CHANGELOG.md — it is generated from commit messages post-merge and must not be edited in PRs.
    Do **not** merge until CHANGELOG.md is gone.
-5. **`tests/al-language/` in diff** → that submodule is read-only; the only legitimate change there is a pin bump, and pin bumps are centralized (their own PR, never bundled with a fix PR). If not yet posted:
-   > `tests/al-language/` is a read-only submodule — please revert any change to files inside it. If this PR needs a newer corpus test, get it merged upstream first, then let the orchestrator bump the pin in its own PR.
-   Do **not** merge until it's gone. (`docs/coverage.yaml` was removed at the v1→v2 cutover — v2's coverage spec is the `tests/al-language/` corpus itself, so there is no manifest to check for here anymore.)
-6. **No shipped SA implementations.** Auto-generated blank shells for dependency objects are fine — that is how the runner works. What is forbidden is shipping a *real implementation* of a System Application codeunit inside the runner (e.g. an actual Image processing / Cryptography / File Mgt. implementation, in `AlRunner/stubs/` as AL or in `AlRunner/Runtime/` as C# wired up via `RoslynRewriter.cs`). The only exceptions are test-automation libraries (`LibraryAssert` 130, `LibraryVariableStorage` 131004). If the diff adds anything else under that umbrella, block with:
+5. **`tests/al-language/` in diff** → the submodule content is read-only; the only legitimate change there is the gitlink line a pin bump produces, and that is only legitimate when this PR is the fix PR the bump is folded into (see `al-language-submodule.md` — a pin bump can never be its own PR, since it is red by construction until the accompanying fix lands). If the diff edits a file *inside* the submodule, or bumps the pin with no accompanying fix in the same PR, and this hasn't been flagged yet:
+   > `tests/al-language/` is a read-only submodule — please revert any change to files inside it. A pin bump belongs in the same PR as the runner fix it enables, not on its own.
+   Do **not** merge until it's resolved. (No `docs/coverage.yaml` to check for — retired at the v1→v2 cutover, see `al-runner-tests` skill.)
+6. **No shipped SA implementations.** Auto-generated blank shells for dependency objects are fine — that is how the runner works. What is forbidden is shipping a *real implementation* of a System Application codeunit inside the runner (e.g. an actual Image processing / Cryptography / File Mgt. implementation, as AL the runner emits or as C# under `AlRunner/Patches/` standing in for the SA codeunit's body). The only exceptions are test-automation libraries (`LibraryAssert` 130, `LibraryVariableStorage` 131004). If the diff adds anything else under that umbrella, block with:
    > The runner does not ship real implementations of System Application codeunits — only auto-generated blank shells (normal) and test-automation libraries (`LibraryAssert`, `LibraryVariableStorage`). This change appears to add a real SA implementation; please remove it. If the AL under test actually needs SA behavior to mean anything, file a runner-gap issue describing the AL pattern instead.
 7. Sanity check passed (step 1) + CI green + no CHANGELOG + no stray `tests/al-language/` edits + no forbidden SA implementation:
-   - CI in progress: `gh pr merge <N> --auto --squash --repo StefanMaron/BusinessCentral.AL.Runner`
+   - CI in progress: `gh pr merge <N> --auto --squash --repo StefanMaron/BusinessCentral.AL.Runner` (auto-merge is enabled as a repo setting — `allow_auto_merge=true`, `delete_branch_on_merge=true` — so this queues the merge rather than failing; it won't show in a checkout diff).
    - CI complete:   `gh pr merge <N> --squash --repo StefanMaron/BusinessCentral.AL.Runner`
    - Skip `gh pr review --approve` (fails when you are the repo owner).
 8. CI failing: read job log, post a specific actionable comment.
@@ -92,7 +96,7 @@ Full pass with no actions: print summary (PRs merged, comments posted, issues cl
 - `--repo StefanMaron/BusinessCentral.AL.Runner` on every `gh` command.
 - No duplicate comments — check existing comments before posting.
 - No merge if `CHANGELOG.md` is in the diff.
-- No merge if the diff touches `tests/al-language/` (read-only submodule; pin bumps are their own, separate PR).
+- No merge if the diff edits a file inside `tests/al-language/`, or bumps the pin with no accompanying fix in the same PR — a pin bump is only legitimate folded into the fix PR it enables (`al-language-submodule.md`).
 - No merge if the PR ships a real SA codeunit implementation (only auto-generated blank shells and test-automation libraries are allowed).
 - `git fetch origin main` at the start of each pass (Step 0).
-- **Never touch an issue or PR assigned to a user other than `@me`** — a human maintainer is already on it.
+- Assignee boundary from Step 1 applies throughout, not just PR review.

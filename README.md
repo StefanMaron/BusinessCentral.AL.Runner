@@ -80,7 +80,7 @@ al-runner tests/al-language/tests/al-language
 al-runner ./app1 ./app2
 
 # Specify package caches for dependency resolution (repeatable)
-al-runner --package-cache ~/.local/share/al-runner/packages tests/al-language/tests/al-language
+al-runner --package-cache "$HOME/.al-runner/platform-apps" tests/al-language/tests/al-language
 
 # Choose test isolation (matches BC's "Test Runner - Isol. Codeunit" by default)
 al-runner --isolation codeunit ./my-bundle

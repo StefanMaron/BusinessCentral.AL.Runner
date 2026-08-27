@@ -162,7 +162,7 @@ Pull requests run against a matrix of BC versions. A PR cannot merge unless ever
 dotnet run --project AlRunner -c Release -- tests/al-language/tests/al-language
 ```
 
-Exit code 2 is "runner limitations only" — not a fail in itself, but treat it as work-to-do. Exit codes 1 and 3 always fail CI.
+Exit codes: `0` all tests passed, `1` a test failed/errored, `2` a bundle could not execute (process-level error, or a bad invocation), `3` a bundle could not compile, `4` a `--count-baseline` mismatch. All non-zero codes fail CI.
 
 ---
 
@@ -178,3 +178,11 @@ All loaded automatically by `.claude/` in agent sessions. Read them once:
 - `.claude/rules/no-changelog-edits.md` — never touch `CHANGELOG.md`.
 - `.claude/rules/al-language-submodule.md` — the corpus is read-only.
 - `.claude/rules/file-issues-for-gaps.md` — gaps go to issues + expectation entries, never silent workarounds.
+- `.claude/rules/github-access.md` — `gh` is absent in web/remote sessions; detect and fall back to `mcp__github__*`.
+- `.claude/rules/bc-behavior-tests-go-upstream.md` — a test of plain BC behaviour goes upstream in the corpus, never `tests/runner-extras/`.
+- `.claude/rules/no-git-stash-with-worktrees.md` — the stash is shared across every worktree; never use it here.
+- `.claude/rules/ci-verdicts.md` — a CI verdict is per-commit-SHA; never re-run a failed job; "unrelated flake" needs evidence.
+- `.claude/rules/local-test-scope.md` — run the tests your change touches locally; the full suite/corpus is CI's job.
+- `.claude/rules/no-backgrounding-long-commands.md` — a backgrounded process dies with your turn; run long commands in the foreground.
+- `.claude/rules/pr-ci-monitoring.md` — check merge conflicts before CI status; drive a PR to merge, don't stop at "opened".
+- `.claude/rules/public-posting-approval.md` — filing issues on this repo needs no approval; comments, PR review comments, and anything on another repo do.

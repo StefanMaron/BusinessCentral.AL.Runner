@@ -103,6 +103,6 @@ Print to the user:
 
 - **You don't do the work.** Triage, implementation, and PR review all happen inside sub-agents. Your only direct `gh` calls are the read-only state reads in Step A.
 - **Don't deep-poll.** When background agents are running, wait for the runtime's notification rather than busy-checking.
-- **Don't re-run the triager mid-loop.** It runs once at the start of the cycle. New telemetry-driven issues that arrive mid-cycle will be picked up by the next `/work-cycle` invocation.
+- **Don't re-run the triager mid-loop.** It runs once at the start of the cycle. New issues that arrive mid-cycle will be picked up by the next `/work-cycle` invocation.
 - **Don't escalate concurrency past 2** without an explicit user instruction — the conventional impl identities are `impl-1` and `impl-2`, and going higher means inventing new identities and reasoning about queue contention.
 - **Stop when the terminal condition holds.** Do not invent more work to do; report and exit.

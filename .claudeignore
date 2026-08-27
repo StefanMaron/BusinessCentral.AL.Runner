@@ -2,6 +2,6 @@ cobertura.xml
 **/bin/
 **/obj/
 .claude/worktrees/
-tests/excluded/
+tests/archive/
 CHANGELOG.md
 *.app

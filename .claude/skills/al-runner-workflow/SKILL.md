@@ -22,7 +22,7 @@ If you are `impl-1` or `impl-2`:
 5. Implement red → green (`.claude/rules/tdd.md`). The right test depends on what kind of issue this is — see "Issue kinds" below.
 6. Open PR with `Closes #N` in the body. Label PR `agent: <your-id>` + `status: review-ready`. Assign to `@me`.
 7. Fix CI failures or review comments.
-8. Auto-merge fires when approved + green. Return to step 1.
+8. Auto-merge fires when approved + green (`allow_auto_merge=true` is a repo setting, not visible in the checkout). Return to step 1.
 
 **One issue at a time per impl agent.** No second claim while a PR is open.
 
@@ -48,6 +48,31 @@ If you are `orchestrator`:
 
 Workers self-select from the `status: ready` queue. The orchestrator does not assign issues to specific workers.
 
+## GitHub access: operation → tool map
+
+`.claude/rules/github-access.md` covers detecting whether `gh` is available.
+Once detected, here is which tool covers which operation:
+
+| Operation | `gh` | MCP tool |
+|---|---|---|
+| Who am I | `gh api user --jq .login` | `mcp__github__get_me` |
+| List issues | `gh issue list` | `mcp__github__list_issues` |
+| Read issue / its comments | `gh issue view` | `mcp__github__issue_read` (`get`, `get_comments`) |
+| Label / assign / close issue | `gh issue edit`, `gh issue close` | `mcp__github__issue_write` (`method: update`) |
+| Comment on issue or PR | `gh issue comment`, `gh pr comment` | `mcp__github__add_issue_comment` (PRs too — pass the PR number) |
+| List PRs | `gh pr list` | `mcp__github__list_pull_requests` |
+| PR detail / diff / files / CI | `gh pr view`, `gh pr diff`, `gh pr checks` | `mcp__github__pull_request_read` (`get`, `get_diff`, `get_files`, `get_check_runs`) |
+| Merge a PR | `gh pr merge --squash` | `mcp__github__merge_pull_request` (`merge_method: "squash"`) |
+| Open a PR | `gh pr create` | `mcp__github__create_pull_request` |
+| Label a PR | `gh pr edit --add-label` | `mcp__github__update_pull_request` |
+| Read failing CI logs | `gh run view --log-failed` | `mcp__github__get_job_logs` (`failed_only: true`, `return_content: true`) |
+| Search for duplicates | `gh issue list --search` | `mcp__github__search_issues` |
+
+Any agent definition granting `Bash` for GitHub work must also grant the
+`mcp__github__*` tools it needs (plus `ToolSearch`, since those tools are
+deferred) in its `tools:` frontmatter — otherwise the fallback is unavailable
+precisely where it is needed.
+
 ## Concurrency with human maintainers
 
 The **GitHub assignee field** is the boundary between agent-owned and human-owned work:
@@ -66,7 +91,7 @@ The **GitHub assignee field** is the boundary between agent-owned and human-owne
 - Set `status: review-ready` on the PR once CI is green.
 - One PR at a time per impl agent.
 - Never edit `CHANGELOG.md`.
-- Never edit `tests/al-language/`. Corpus bumps are their own PR.
+- Never edit a file inside `tests/al-language/`. A pin bump is folded into the fix PR it enables, never its own PR (`al-language-submodule.md`).
 - Honour the precompiled-DLL contract (`.claude/rules/precompiled-dll-respect.md`) and loud-failures rule (`.claude/rules/loud-failures.md`).
 - `--repo StefanMaron/BusinessCentral.AL.Runner` on every `gh` command when running outside the repo's default.
 

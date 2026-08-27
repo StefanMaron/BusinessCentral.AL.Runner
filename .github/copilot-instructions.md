@@ -15,12 +15,12 @@ When you receive a **PR review request**, you are a **code reviewer**. Apply the
 3. Implement following the TDD rules below — failing test first, then fix.
 4. Open PR with `Closes #N` in the body. Add labels `agent: <your-id>` and `status: review-ready`.
 5. Fix any CI failures or review comments that come back.
-6. Auto-merge fires once approved and CI is green.
+6. Auto-merge fires once approved and CI is green (`allow_auto_merge=true` is a repo setting, not visible in the checkout).
 
 **Hard rules:**
 - Never push directly to `main`.
 - Never edit `CHANGELOG.md` (auto-generated from squash-commit messages post-merge).
-- Never edit anything under `tests/al-language/` — that submodule is read-only. Corpus bumps are their own PR (`.claude/rules/al-language-submodule.md`).
+- Never edit a file under `tests/al-language/` — that submodule is read-only. A pin bump is folded into the fix PR it enables, never its own PR (`.claude/rules/al-language-submodule.md`).
 - Honour the precompiled-DLL contract: do not rewrite method bodies or rename types in MS / ISV business-logic DLLs (`.claude/rules/precompiled-dll-respect.md`).
 - Every unsupported surface must throw `RunnerOutOfScopeException` with a named API and reason from `docs/scope.md`. Never silently return a default (`.claude/rules/loud-failures.md`).
 
@@ -38,12 +38,13 @@ AlRunner/                      — runner source
   AppLoader.cs                 — load real MS / ISV .app DLLs in-process
   DependencyLoader.cs          — 3-tier dep resolution (precompiled / loose / compiled-from-source)
   Reporter.cs                  — JSON classification output
-  Patches/*.cs                 — per-API JMP-hook patches
+  Patches/*.cs                 — per-API patch bodies, only live if NclCecilRewrite routes to them
   Infrastructure/
-    NclCecilRewrite.cs         — one-time Cecil rewrite of Ncl.dll, cached
-    JmpHook.cs                 — legacy JMP-hook mechanism (Cecil-freeze rule applies to new patches)
-    ExpectationManifest.cs     — schema + loader for tests/expectations (not yet wired into Reporter)
+    NclCecilRewrite.cs         — one-time Cecil rewrite of Ncl.dll, cached; the only live patch mechanism
+    JmpHook.cs                 — legacy JMP-hook mechanism, disabled by default; a new call site is a silent no-op
+    ExpectationManifest.cs     — schema + loader for tests/expectations, wired into the run via Program.cs/TestExecutor
     RunnerOutOfScopeException.cs — typed OOS exception
+AlRunner.Tests/                — C# unit-test project (dotnet test AlRunner.Tests); mechanism-level tests, not AL
 tests/al-language/             — git submodule, canonical corpus (READ-ONLY)
 tests/expectations/            — JSON manifest declaring expected outcomes for corpus tests
 tests/runner-extras/           — runner-specific positive tests
@@ -54,7 +55,7 @@ tools/                         — DownloadArtifacts (used by AlRunner.csproj), 
 scripts/                       — al-inventory.py, coverage-gen.js
 ```
 
-The v1 layout (`tests/bucket-1/`, `tests/bucket-2/`, AlRunner.Tests/, stubs/, Runtime/MockX.cs, RoslynRewriter, DepCompiler, DAP server, `extract-deps`) has been removed. Do not reference it. There is no C# unit-test project.
+The v1 layout (`tests/bucket-1/`, `tests/bucket-2/`, stubs/, Runtime/MockX.cs, RoslynRewriter, DepCompiler, `extract-deps`) has been removed. Do not reference it. `AlRunner.Tests/` is current, not v1 — it is the C# unit-test project both `bc-tests.yml` and `pr-check.yml` depend on.
 
 ---
 
@@ -76,7 +77,7 @@ dotnet run --project AlRunner -c Release -- --isolation test tests/al-language/t
 dotnet run --project AlRunner -c Release -- --cache ~/.cache/al-runner/al-out tests/al-language/tests/al-language
 ```
 
-Exit codes: `0` all pass, `1` real failures or arg error, `2` runner limitations, `3` AL compile error.
+Exit codes: `0` all tests passed, `1` a test failed/errored, `2` a bundle could not execute (process-level error, or a bad invocation), `3` a bundle could not compile, `4` a `--count-baseline` mismatch.
 
 ---
 
@@ -134,7 +135,7 @@ Flag any patch that silently returns a default value for an unsupported surface.
 
 `tests/al-language/` is read-only. Flag any PR that:
 - Edits files under `tests/al-language/` directly.
-- Bundles a submodule pin bump with unrelated runner changes (corpus bumps are their own PR).
+- Bumps the submodule pin with no accompanying fix in the same PR — a pin bump alone is red by construction and belongs folded into the fix PR it enables.
 
 ## Code quality
 

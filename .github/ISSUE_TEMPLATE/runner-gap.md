@@ -48,26 +48,33 @@ codeunit 50101 MyCodeunitTest
 
 ## Root cause
 
-<!-- What BC runtime type or method is missing / crashing? -->
-<!-- e.g. "MockRecordRef does not have ALName" or "NavSession is null when ALIsInWriteTransaction() is called" -->
+<!-- Which BC runtime type or method is missing / crashing? -->
+<!-- e.g. "NavRecordRef.ALName has no Cecil rewrite" or "NavSession is null when ALIsInWriteTransaction() is called" -->
+<!-- Tip: AL_RUNNER_HOOK_AUDIT=1 names patch call sites that are silent no-ops. -->
 
 ## Expected behavior
 
-<!-- What should happen in standalone mode? -->
-<!-- e.g. "Return false (no write transaction in runner)", "Return empty string stub", "No-op" -->
+<!-- What does REAL BC do here? That is the target — the runner matches BC or throws loudly. -->
+<!-- A silent stub / no-op / default return is never the answer: see .claude/rules/loud-failures.md. -->
+<!-- If the surface is permanently out of scope, the expected behavior is
+     RunnerOutOfScopeException with a named API + a reason from docs/scope.md. -->
 
 ## Likely fix
 
 <!-- Where is the fix? Pick one: -->
-- [ ] Add stub/method to `Runtime/MockXxx.cs`
-- [ ] Add rewriter rule in `RoslynRewriter.cs`
-- [ ] New mock class needed
-- [ ] New built-in AL stub in `stubs/`
+- [ ] Cecil rewrite in `AlRunner/Infrastructure/NclCecilRewrite.cs` routing to a new/existing patch body
+- [ ] New or extended patch under `AlRunner/Patches/`
+- [ ] Compile-pipeline fix in `AlRunner/BcCompiler.cs` / `AlRunner/BcAssembler.cs`
+- [ ] Skeleton state the BC method reads (`NavSession`, `NavMethodScope`, …) is missing/unpopulated
+- [ ] Out of scope by design → `tests/expectations/oos-<area>.json` entry + a loud throw
 - [ ] Other: <!-- describe -->
 
 ## Acceptance criteria
 
-- [ ] Test case `tests/NN-name/` added with positive + negative cases
+- [ ] Proving test with positive + negative (`asserterror` + `Assert.ExpectedError`) cases.
+      A test of plain BC behavior goes UPSTREAM in `StefanMaron/BusinessCentral.AL.Language.Tests`;
+      only runner-specific claims go in `tests/runner-extras/`.
+      See `.claude/rules/bc-behavior-tests-go-upstream.md`.
 - [ ] RED confirmed before fix, GREEN after
-- [ ] Full regression passes
-- [ ] CHANGELOG updated under `[Unreleased]`
+- [ ] CI matrix green on the PR's own head commit
+- [ ] Do NOT edit `CHANGELOG.md` — it is generated post-merge (`.claude/rules/no-changelog-edits.md`)

@@ -5,23 +5,9 @@ in the claim — MUST live in the upstream corpus
 [`StefanMaron/BusinessCentral.AL.Language.Tests`](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests)
 (the `tests/al-language/` submodule), where it is validated against a **running BC
 service tier**. It must not be written as a runner-local test in
-`tests/runner-extras/`.
-
-## Why — a runner-local BC test proves nothing
-
-The corpus is the spec *because* every test in it has been run against real BC.
-A BC-behaviour test that has only ever run against AL Runner is not evidence about
-BC; it is a transcript of **our belief** about BC, written by the same reasoning
-that wrote the runtime.
-
-So when the runner is wrong, such a test does not fail — it was authored to match
-what the runner did. It goes green, the bug is now pinned as intended behaviour,
-and every future change is measured against the wrong baseline. The suite gets
-louder and less trustworthy at the same time.
-
-That is the whole argument in one line: **an unvalidated BC test cannot prove the
-runner correct, because it inherits the runner's errors as its expectations.**
-Green means "the runner agrees with itself".
+`tests/runner-extras/`. An unvalidated BC test inherits the runner's errors as
+its own expectations — green only means "the runner agrees with itself". Full
+argument: `docs/upstream-corpus-workflow.md`.
 
 ## The test
 
@@ -47,65 +33,31 @@ OOS-classification test behind in `tests/runner-extras/report-run-execution`.
 
 ## Workflow when a fix needs a BC-behaviour test
 
-The order matters, and step 3 is the one that is never optional.
+The order matters, and step 3 is the one that is never optional. Full detail
+on each step, including the escape hatches, is in `docs/upstream-corpus-workflow.md`.
 
 1. **Write the test** against the corpus repo's conventions (fixtures, `Assert`,
    file layout) — not as a `runner-extras` bundle you intend to move later.
-2. **Verify it against real BC.** A local BC container with the BC repository is
-   a perfectly good way to do this: publish the app, run the test, confirm it
-   passes for the reason you think it does. This step exists to stop you sending
-   a broken or wrongly-asserted test upstream — it does *not* by itself put the
-   test in the corpus.
-
-   **The corpus repo's own CI is also a real service tier**, and is the stronger
-   check of the two. `.github/workflows/ci.yml` there boots a real BC sandbox on
-   Linux (via `StefanMaron/MsDyn365Bc.On.Linux`) and runs the suite against **BC
-   27.5 and 28.1**, `fail-fast: false`. So a green PR check upstream *is* the
-   service-tier adjudication this rule demands, on two BC versions. If you have
-   no local container, opening the PR and letting CI run is a legitimate way to
-   perform step 2 — not a way to skip it.
+2. **Verify it against real BC** — a local container, or (the normal path for
+   agents) let the corpus repo's own CI adjudicate on a PR; both are real
+   service tiers.
 3. **Open a pull request into
    [`StefanMaron/BusinessCentral.AL.Language.Tests`](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests).**
-   This is the mandatory step. A test only becomes part of the corpus by being
-   merged into that repo's `main` — a test verified locally and never PR'd is
-   not published, not reviewed, and not available to anyone else.
-
-   **Who merges it: the orchestrator, not the authoring agent.** An impl agent
-   opens the corpus PR and stops there. The orchestrator reviews it and merges
-   once both BC legs are green. This split is deliberate — an agent merging its
-   own test means the same reasoning that wrote the test also clears it, which
-   is this rule's original failure mode relocated from "unvalidated" to
-   "unreviewed". Green CI proves the test *runs and passes against real BC*; an
-   independent read is what proves it *asserts something*.
-
-   **Green CI is necessary, not sufficient.** A test that asserts a default
-   value, or that would pass against a stub returning `0` / `''` / `false`, goes
-   green just as reliably as a good one. Before merging, apply `tdd.md`'s test:
-   would this still pass if the implementation were gutted? If yes it is noise —
-   send it back rather than merge it. Both directions (positive + `asserterror`
-   with a specific expected message) still apply upstream.
-4. **After that PR merges, bump the submodule pin** in this repo — its own PR,
-   diff inspected first (see `al-language-submodule.md`).
+   Mandatory — a test only becomes part of the corpus by merging into that
+   repo's `main`. The orchestrator merges it, not the authoring agent, once
+   both BC legs are green.
+4. **After that PR merges, bump the submodule pin** in this repo, folded into
+   the fix PR (see `al-language-submodule.md` — a pin bump cannot be its own
+   PR, it is red by construction).
 5. **Then merge the runner change here**, showing the corpus test going
    RED → GREEN against the new pin.
 
-So a runner fix for a BC-behaviour gap is normally **two PRs in two repos, in
-that order**: corpus first, runner second. Do not merge the runner change and
-leave the upstream test as a promise — once the fix is in, nothing forces the
-test to follow, and the gap quietly becomes untested behaviour.
-
-**"I have no local BC container" is not that situation.** Open the corpus PR and
-let its CI adjudicate — see step 2. Having no container is the normal case for
-agents in web/remote sessions and is fully handled by the upstream workflow.
-
-**If you cannot get a verdict from real BC at all** — corpus CI is broken, both
-BC legs are failing for unrelated reasons, or the behaviour genuinely cannot be
-expressed in the corpus — you may not substitute a runner-local BC-behaviour
-test to unblock yourself. Say so plainly in the PR/issue and stop at the
-boundary: land the runner fix with whatever runner-specific coverage is
-legitimately available, and record the missing upstream test as follow-up. An
-unvalidated stand-in is worse than an acknowledged gap, because it looks like
-coverage.
+**No local BC container** is not a blocker — open the corpus PR and let its CI
+adjudicate (step 2). **No verdict available at all** (corpus CI broken, both BC
+legs failing for unrelated reasons, behaviour not expressible in the corpus) —
+you may not substitute a runner-local BC-behaviour test to unblock yourself;
+say so plainly and land the runner fix with whatever runner-specific coverage
+is legitimately available, recording the missing upstream test as follow-up.
 
 ## Not a licence to skip TDD
 

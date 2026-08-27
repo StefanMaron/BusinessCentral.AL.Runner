@@ -16,8 +16,11 @@ know about AL Runner and must stay that way.
   If `Assert.IsNumber` excludes a type and that causes failures, the bug is
   that the runner classifies that type differently from real BC; fix the
   classification.
-- **Updating the corpus** = bumping the submodule pin. Always its own PR.
-  Inspect the diff first: `git -C tests/al-language diff $OLD..$NEW`.
+- **Updating the corpus** = bumping the submodule pin. This is folded into the
+  fix PR that makes the newly-pulled-in tests pass, together with the
+  `tests/expectations/count-baseline/` update — a pin bump can never be its
+  own PR, since it goes red by construction (the new tests fail without the
+  fix). Inspect the diff first: `git -C tests/al-language diff $OLD..$NEW`.
 
 ## Out-of-scope tests use the expectations manifest
 

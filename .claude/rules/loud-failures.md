@@ -12,7 +12,7 @@ the test code might rely on.
 
 ## What "loud" means
 
-Throw `AlRunnerV2.Infrastructure.RunnerOutOfScopeException` with:
+Throw `AlRunner.Infrastructure.RunnerOutOfScopeException` with:
 - the BC API name that was touched (e.g. `NavEmail.Send`),
 - a short reason citing `docs/scope.md` (e.g. `email-smtp — see docs/scope.md#email`),
 - optionally the test name / stack origin if it's cheap to capture.

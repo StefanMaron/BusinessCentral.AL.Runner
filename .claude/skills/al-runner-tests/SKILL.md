@@ -11,12 +11,16 @@ description: How AL tests are organised and run — the read-only al-language su
 tests/
   al-language/         ← git submodule, READ-ONLY (StefanMaron/BusinessCentral.AL.Language.Tests).
                          The canonical AL-language test corpus validated against a real BC service tier.
-                         Never edit. Bump the pin in its own PR.
+                         Never edit. Pin bump folds into the fix PR it enables — see below.
   expectations/        ← runner-owned JSON manifest declaring expected outcomes for corpus tests
                          the runner cannot or does not yet run.
                          - oos-<area>.json         out-of-scope-by-design
                          - known-gaps-<area>.json  in-scope but not yet implemented (links GH issue)
+                         - divergence-<area>.json  runner intentionally answers differently from BC
                          - disabled-<area>.json    won't compile or won't run; pure skip
+                         - count-baseline/         SEPARATE schema for --count-baseline; a
+                                                   subdirectory so the (non-recursive) --expectations
+                                                   scan never parses it as a classification array
   runner-extras/       ← runner-specific positive tests (e.g. "surface X throws OOS with reason Y")
   archive/             ← v1 buckets and fixtures, frozen, scheduled for deletion
 ```
@@ -30,14 +34,33 @@ dotnet build AlRunner.slnx -c Release
 dotnet run --project AlRunner -c Release -- tests/al-language/tests/al-language
 ```
 
-Useful flags (see `AlRunner/Program.cs` for the full list):
+**Match CI when you are proving something.** `.github/workflows/bc-tests.yml` runs the corpus as:
 
 ```bash
-# Show passes in addition to failures
-dotnet run --project AlRunner -c Release -- --show-pass tests/al-language/tests/al-language
+dotnet run --no-build --project AlRunner -c Release --framework net8.0 -- \
+    tests/al-language/tests/al-language \
+    --package-cache "$HOME/.al-runner/platform-apps" \
+    --strict \
+    --count-baseline tests/expectations/count-baseline/test-count-baseline.json \
+    --out al-language-results.json
+```
+
+and `tests/runner-extras` with a second `--package-cache "$HOME/.al-runner/test-apps"`. The
+`$HOME/.al-runner/platform-apps` cache is what `provision` / `--auto-provision` (on by default
+since #2024) and `tools/DownloadArtifacts` populate. A run without it falls back to whatever
+artifacts are cached, which is not necessarily the version the corpus declares.
+
+Useful flags (`--guide` and `AlRunner/Program.cs` are the full list):
+
+```bash
+# Only FAIL/ERROR lines (PASS lines are on by default in v2; --show-pass is a v1 no-op alias)
+dotnet run --project AlRunner -c Release -- --failures-only tests/al-language/tests/al-language
 
 # Verbose internal logs
 dotnet run --project AlRunner -c Release -- --verbose tests/al-language/tests/al-language
+
+# One test by name
+dotnet run --project AlRunner -c Release -- --test Record_Insert tests/al-language/tests/al-language
 
 # Test isolation modes
 dotnet run --project AlRunner -c Release -- --isolation codeunit  tests/al-language/tests/al-language
@@ -48,7 +71,7 @@ dotnet run --project AlRunner -c Release -- --isolation disabled  tests/al-langu
 dotnet run --project AlRunner -c Release -- --cache ~/.cache/al-runner/al-out tests/al-language/tests/al-language
 
 # Extra package caches for dep resolution (repeatable)
-dotnet run --project AlRunner -c Release -- --package-cache ~/.local/share/al-runner/packages tests/al-language/tests/al-language
+dotnet run --project AlRunner -c Release -- --package-cache "$HOME/.al-runner/platform-apps" tests/al-language/tests/al-language
 
 # JSON classification output
 dotnet run --project AlRunner -c Release -- --out results.json tests/al-language/tests/al-language
@@ -56,7 +79,7 @@ dotnet run --project AlRunner -c Release -- --out results.json tests/al-language
 
 ## Interpreting output
 
-Today the reporter prints raw PASS / FAIL / ERROR per test plus aggregate counts. Exit codes: `0` all pass, `1` real failures, `2` runner-limitations only, `3` AL compile error.
+Today the reporter prints raw PASS / FAIL / ERROR per test plus aggregate counts. Exit codes: `0` all passed, `1` at least one test FAILED or ERRORED, `2` a bundle could not execute (process-level error — also a bad invocation: unknown flag or a missing bundle path), `3` a bundle could not compile, `4` a `--count-baseline` count mismatch. `--no-strict-exit` forces `0`.
 
 `AlRunner/Infrastructure/ExpectationManifest.cs` loads the schema described in `docs/expectations.md` and is wired into the run, so results are additionally classified as:
 
@@ -121,10 +144,17 @@ git -C tests/al-language log --oneline HEAD..origin/master
 git -C tests/al-language diff HEAD..origin/master   # review
 git -C tests/al-language checkout origin/master
 git add tests/al-language
-git commit -m "Bump tests/al-language to <sha>"
 ```
 
-Tests that newly fail after the bump are runner gaps. Patch the runner (or add an expectation entry); never patch the corpus.
+**A pin bump cannot be its own PR — it is red by construction.** The new
+upstream tests it pulls in exist because they exercise a gap the runner does
+not yet handle; bumping the pin alone fails CI for that reason before anyone
+reviews it. Fold the pin bump into the **fix PR** that makes those new tests
+pass, together with the `tests/expectations/count-baseline/test-count-baseline.json`
+update (`--count-baseline` is an exact match — it fails on growth as well as
+shrinkage). Any other tests that newly fail after the bump are separate runner
+gaps: patch the runner or add an expectation entry for them; never patch the
+corpus.
 
 ## Sister docs
 

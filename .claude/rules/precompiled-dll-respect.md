@@ -18,7 +18,7 @@ the skeleton state they read from — is ours to modify however we need.
 
 | Layer | Examples | Modify? |
 |---|---|---|
-| **Runtime engine / framework** | `Microsoft.Dynamics.Nav.Ncl.dll`, `Microsoft.Dynamics.Nav.Types.dll` | ✓ JmpHook, Cecil-rewrite, subclass, field-poke, EventPipe — anything |
+| **Runtime engine / framework** | `Microsoft.Dynamics.Nav.Ncl.dll`, `Microsoft.Dynamics.Nav.Types.dll` | ✓ Cecil-rewrite (the live mechanism), subclass, field-poke, EventPipe — anything. The legacy JmpHook layer is off by default; a new `Hook(...)` call site is a silent no-op. |
 | **Skeleton state** their methods read | `NavSession`, `NavMethodScope`, threadlocals, etc. | ✓ Populate any fields we need |
 | **Our AL test output, freshly emitted** | DLLs emitted by our `Compilation.Emit` pipeline, in-process, not yet written to a cache | ✓ Modify only as part of the **compile pipeline** (Roslyn rewriters, Cecil passes that run before the DLL is finalised). Once finalised the same precompiled-DLL contract applies — see below. |
 | **New types we add** | subclasses of MS types, runner shims | ✓ Add as long as nothing renames an existing type |
@@ -66,9 +66,10 @@ When you find a method that NREs / misbehaves on the skeleton runtime:
    skeleton state it reads. Find that and patch it.
 
 2. **Is it inside the runtime engine** (`Ncl.dll`, `Types.dll`, dispatchers,
-   wrappers)? Anything goes — JmpHook, Cecil, EventPipe, subclass, field-poke,
-   etc. Pick the cheapest mechanism that's faithful to the AL-observable
-   semantics.
+   wrappers)? Anything goes — Cecil, EventPipe, subclass, field-poke, etc.
+   Pick the cheapest mechanism that's faithful to the AL-observable
+   semantics. **Not JmpHook** — that layer is disabled by default, so a hook
+   with no Cecil owner ships as a silent no-op (`AL_RUNNER_HOOK_AUDIT=1` lists them).
 
 3. **Is it our own AL output?** We can rewrite freely, but in practice the
    right fix for our output is almost always a runtime-engine patch instead,
