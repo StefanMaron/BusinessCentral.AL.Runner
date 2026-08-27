@@ -1287,6 +1287,40 @@ internal static class TestPageBooleanValue
     }
 }
 
+/// <summary>
+/// Date values as a page-variable TestPage control sees them (issue #2054).
+///
+/// A <c>Date</c> global is not a <c>NavStringValue</c>, so <c>NavTestField.ALSetValue</c> (the
+/// real, precompiled BC method the AL compiler emits for every <c>SetValue(&lt;Date&gt;)</c>
+/// call) round-trips it through OUR OWN <see cref="PageVariableTestField.FieldType"/> (now
+/// correctly answering <c>NavType.Date</c> — see that property's doc comment) and OUR OWN
+/// <c>ValueToString</c> before it ever reaches <see cref="ITestField.Value"/>'s setter. Both
+/// ends of that round trip are code this runner owns: <c>ValueToString</c> for this class is
+/// the generic <c>Convert.ToString(value, CultureInfo.InvariantCulture)</c>, which — once
+/// FieldType stops lying about the type — is handed a plain <c>DateTime</c>
+/// (<c>NavDate.ClientObject</c>) and renders it via .NET's InvariantCulture general date/time
+/// pattern (e.g. "12/31/2026 00:00:00"). <see cref="Resolve"/> only needs to invert THAT exact
+/// spelling, the same way <see cref="TestPageBooleanValue"/> only needs to invert "True"/"False".
+/// </summary>
+internal static class TestPageDateValue
+{
+    internal static NavValue Resolve(string value, string context)
+    {
+        if (!DateTime.TryParse(value, CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.None, out var parsed))
+            throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+                context,
+                $"testpage-date-value — '{value}' is not the round-trip spelling TestPage "
+                + "SetValue(Date) itself produces (InvariantCulture general date/time format). "
+                + "See docs/scope.md");
+
+        // NavDate.Create requires DateTimeKind.Local (its private ctor throws
+        // NavNCLDateInvalidException otherwise) — DateTime.Parse without an explicit style
+        // always returns Unspecified, so it must be stamped before handing it back.
+        return NavDate.Create(DateTime.SpecifyKind(parsed, DateTimeKind.Local));
+    }
+}
+
 internal sealed class LiveNavTestField : ITestField
 {
     private readonly NavRecord _record;
@@ -1498,7 +1532,16 @@ internal sealed class PageVariableTestField : ITestField
 
     public string Value
     {
-        get => Convert.ToString(ObjectValue, CultureInfo.InvariantCulture) ?? string.Empty;
+        // An Option/Enum-bound control answers with its CAPTION, not the ordinal it stores —
+        // the read-side complement of #1928 (issue #2055). LiveNavTestField.Value already does
+        // this for a Rec-bound control; this class never got it, so `Format(Field.Value())` on
+        // a page-variable enum control returned "1" instead of "OR" while the write direction
+        // (SetValue, below) already resolved captions correctly.
+        get => (CurrentOption() is { } option
+                   ? TestPageOptionValue.Display(option, _page.TryGetOptionCaptions(_controlId, option))
+                   : null)
+               ?? Convert.ToString(ObjectValue, CultureInfo.InvariantCulture)
+               ?? string.Empty;
         set
         {
             RunnerPageInstance.SetValue(_expression, ToBoundValue(value));
@@ -1507,6 +1550,11 @@ internal sealed class PageVariableTestField : ITestField
     }
 
     public object? ObjectValue => LiveNavTestPage.Unwrap(RunnerPageInstance.GetValue(_expression));
+
+    // The stored NavValue, not the unwrapped ClientObject — see LiveNavTestField.CurrentOption
+    // for why: the option metadata (and, for an Enum, whether it IS one — see
+    // TestPageOptionValue.EnumCaptions) rides on the NavOption itself.
+    private NavOption? CurrentOption() => RunnerPageInstance.GetValue(_expression) as NavOption;
 
     /// <summary>
     /// Convert the string a test wrote into the NavValue the binding actually holds.
@@ -1518,6 +1566,14 @@ internal sealed class PageVariableTestField : ITestField
     /// (#1837): a NavText written into it throws "The input string '...' was not in a
     /// correct format" instead of setting the field, so Boolean gets the same NavOption-style
     /// special case — see <see cref="TestPageBooleanValue"/>.
+    ///
+    /// Code and Date bindings (#2054) are the same shape of bug again. A `Code[20]` global's
+    /// generated setter throws "Unable to cast object of type 'NavText' to type 'NavCode'",
+    /// and a `Date` global's throws the same against 'NavDate' — Integer and Text globals
+    /// round-trip fine only because their generated setters happen to accept a NavText and
+    /// coerce it themselves, which Code's and Date's do not. NavCode carries the field's own
+    /// declared length (`Code[20]`), so the replacement is built against the CURRENT bound
+    /// value's own MaxLength rather than a guessed constant.
     /// </summary>
     private NavValue ToBoundValue(string value)
         => RunnerPageInstance.GetValue(_expression) switch
@@ -1525,6 +1581,8 @@ internal sealed class PageVariableTestField : ITestField
             NavOption option => TestPageOptionValue.Resolve(option, value, _page.TryGetOptionCaptions(_controlId, option),
                 $"TestPage SetValue (control {_controlId})"),
             NavBoolean => TestPageBooleanValue.Resolve(value, $"TestPage SetValue (control {_controlId})"),
+            NavCode current => new NavCode(current.MaxLength, value),
+            NavDate => TestPageDateValue.Resolve(value, $"TestPage SetValue (control {_controlId})"),
             _ => ALCompiler.ToNavValue(value),
         };
 
@@ -1542,11 +1600,20 @@ internal sealed class PageVariableTestField : ITestField
     // (NOT the "True"/"False" ValueToString itself would have produced) before ever reaching our
     // Value setter — which is why the var-bound and Rec-bound halves of #1837 threw two DIFFERENT
     // exceptions for the same SetValue(true) call: they disagreed about what string this control
-    // even claimed to receive.
+    // even claimed to receive. A Date global (#2054) failed the SAME way for the SAME reason:
+    // FieldType answering Text sent NavTestField.ALSetValue's DMY2Date(...) argument through
+    // Text metadata instead of Date, and the text it came out as could not be cast back into
+    // the Date binding. Code does not need an entry here — NavCode IS a NavStringValue, so
+    // ALSetValue's own fast path (`value is NavStringValue`) skips FieldType/ValueToString
+    // entirely for it and hands SetValue's literal straight to ToBoundValue above — but it is
+    // listed anyway so a reader checking "does this table cover every case ToBoundValue does"
+    // is not left wondering whether it was missed.
     public NavType FieldType => RunnerPageInstance.GetValue(_expression) switch
     {
         NavOption => NavType.Option,
         NavBoolean => NavType.Boolean,
+        NavCode => NavType.Code,
+        NavDate => NavType.Date,
         _ => NavType.Text,
     };
     public int ValidationErrorCount => 0;
