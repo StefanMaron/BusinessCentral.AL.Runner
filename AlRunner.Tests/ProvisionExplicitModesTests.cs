@@ -80,8 +80,12 @@ public sealed class ProvisionExplicitModesTests
         return dir;
     }
 
+    // Composed from the shared TestArtifacts.StandardCacheDir(home) root (the layout
+    // bc-tests.yml actually provisions), not spelled out here — TestArtifactsGateTests'
+    // OnlyTheSharedHelperNamesTheArtifactCachePathsInCode enforces that only TestArtifacts
+    // itself may name the raw ".local/share/al-runner/artifacts" path segments in code.
     private static string TestAppsDirFor(string home) =>
-        Path.Combine(home, ".local", "share", "al-runner", "artifacts", RealVersion, "test-apps");
+        Path.Combine(TestArtifacts.StandardCacheDir(home), RealVersion, "test-apps");
 
     /// <summary>
     /// Positive direction: `provision --test-apps --bc-version &lt;ver&gt;` downloads the
