@@ -92,6 +92,21 @@ public static class AlDapSession
     /// pattern as AlCoverageTracker.Enabled / AlValueCapture.Enabled.</summary>
     public static volatile bool Enabled;
 
+    // Diagnostic-only trace for issue #2070 (step-over test timing out on CI under
+    // load): opt-in via AL_DAP_STEP_TRACE=1, off by default so a real --dap session's
+    // stderr stays quiet. Only ever consulted from code paths already gated behind
+    // Enabled (an active --dap session), so this adds no cost to the !Enabled fast
+    // path a 2130-test corpus run takes on every statement. Emits to stderr with a
+    // monotonic timestamp so arm/qualify/miss ordering can be reconstructed even when
+    // the actual failure is a client-side read timeout with no other signal.
+    private static readonly bool _traceEnabled = Environment.GetEnvironmentVariable("AL_DAP_STEP_TRACE") == "1";
+    private static readonly System.Diagnostics.Stopwatch _traceClock = System.Diagnostics.Stopwatch.StartNew();
+
+    private static void Trace(string msg)
+    {
+        if (_traceEnabled) Console.Error.WriteLine($"[dap-step-trace] t={_traceClock.Elapsed.TotalMilliseconds:F1}ms {msg}");
+    }
+
     private static readonly HashSet<(Type ScopeType, int Stmt)> _breakpoints = new();
     private static readonly object _bpLock = new();
 
@@ -187,6 +202,7 @@ public static class AlDapSession
         // either — arm nothing rather than compare against a meaningless depth.
         _stepFromDepth = scope != null ? ComputeChainDepth(scope) : int.MinValue;
         _stepKind = kind;
+        Trace($"ARM kind={kind} fromDepth={_stepFromDepth} pausedScope={scope?.GetType().Name ?? "<null>"} pausedStmt={_pausedStatement}");
         _pauseGate?.Release();
     }
 
@@ -199,6 +215,8 @@ public static class AlDapSession
     /// stale armed step is a live hazard, not just clutter.</summary>
     public static void OnTestBoundary()
     {
+        if (_stepKind != AlDapStepKind.None)
+            Trace($"BOUNDARY disarming a step still armed at test end: kind={_stepKind} fromDepth={_stepFromDepth} — MISSED, no qualifying StmtHit arrived before the test finished");
         _stepKind = AlDapStepKind.None;
         _stepFromDepth = int.MinValue;
     }
@@ -209,6 +227,8 @@ public static class AlDapSession
     /// no silent hang is acceptable either).</summary>
     public static void Detach()
     {
+        if (_stepKind != AlDapStepKind.None)
+            Trace($"DETACH with a step still armed: kind={_stepKind} fromDepth={_stepFromDepth}");
         _detached = true;
         _pauseGate?.Release();
     }
@@ -232,7 +252,16 @@ public static class AlDapSession
         lock (_bpLock) breakpointHit = _breakpoints.Contains((scope.GetType(), currentStatementNumber));
 
         var stepKind = _stepKind;
-        bool stepHit = stepKind != AlDapStepKind.None && StepQualifies(stepKind, scope);
+        bool stepHit = false;
+        if (stepKind != AlDapStepKind.None)
+        {
+            stepHit = StepQualifies(stepKind, scope);
+            if (_traceEnabled)
+            {
+                var depth = ComputeChainDepth(scope);
+                Trace($"EVAL kind={stepKind} fromDepth={_stepFromDepth} scope={scope.GetType().Name} stmt={currentStatementNumber} depth={depth} qualifies={stepHit}");
+            }
+        }
 
         if (!breakpointHit && !stepHit) return;
 
@@ -243,6 +272,7 @@ public static class AlDapSession
         // it has either been consumed or superseded by an explicit breakpoint.
         var reason = breakpointHit ? "breakpoint" : "step";
         _stepKind = AlDapStepKind.None;
+        Trace($"FIRE reason={reason} scope={scope.GetType().Name} stmt={currentStatementNumber}");
 
         var gate = new System.Threading.SemaphoreSlim(0, 1);
         _pauseGate = gate;
@@ -251,7 +281,9 @@ public static class AlDapSession
         try
         {
             Stopped?.Invoke(scope, currentStatementNumber, reason);
+            Trace($"WAIT entering gate.Wait() reason={reason} scope={scope.GetType().Name} stmt={currentStatementNumber}");
             gate.Wait(); // blocks the AL execution thread until Continue()/Step*()/Detach()
+            Trace($"RESUME left gate.Wait() reason={reason} scope={scope.GetType().Name} stmt={currentStatementNumber}");
         }
         finally
         {

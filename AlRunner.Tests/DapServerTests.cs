@@ -227,6 +227,9 @@ public class DapServerTests
         await dap.ReadUntilResponseAsync(nextSeq);
 
         var stopped = await dap.ReadUntilEventAsync("stopped");
+        Console.Error.WriteLine("=== DEBUG-DUMP-STDERR-BEGIN ===");
+        Console.Error.WriteLine(dap.StdErr);
+        Console.Error.WriteLine("=== DEBUG-DUMP-STDERR-END ===");
         Assert.Equal("step", stopped.GetProperty("body").GetProperty("reason").GetString());
         Assert.Equal(OuterThirdStatementLine, stopped.GetProperty("body").GetProperty("line").GetInt32());
 
