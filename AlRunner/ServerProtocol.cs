@@ -8,14 +8,14 @@ namespace AlRunner;
 /// newline-delimited JSON protocol the VS Code extension depends on.
 ///
 /// One JSON object per line. stdin = requests, stdout = responses.
-///   request : {command, sourcePaths[], packagePaths[], stubPaths[], code, captureValues, testIsolation}
+///   request : {command, sourcePaths[], packagePaths[], stubPaths[], code, captureValues, coverage, testIsolation}
 ///   runTests: STREAMING (protocol-v2.schema.json — see #1641) — zero or more
 ///             {"type":"test", name, status, durationMs, message, errorKind,
 ///             stackFrames, stackTrace} lines, one per completed test as it
 ///             finishes, followed by exactly one terminal
 ///             {"type":"summary", exitCode, passed, failed, errors,
 ///             total, cached, cancelled|omitted, changedFiles|omitted,
-///             compilationErrors|omitted, wallSeconds|omitted,
+///             compilationErrors|omitted, coverage|omitted, wallSeconds|omitted,
 ///             protocolVersion:2} line.
 ///             `cancelled` (true) is present only when a concurrent `cancel`
 ///             command actually stopped the run before every test ran; omitted
@@ -31,7 +31,8 @@ namespace AlRunner;
 ///             already finished) at the moment the cancel was processed — the v1
 ///             shape (#1613/#1614), reused verbatim rather than inventing a new one.
 ///   execute : {exitCode, tests:[{name,status,durationMs,message,stackTrace,
-///              capturedValues|omitted}], messages|null, compilationErrors|null} —
+///              capturedValues|omitted}], messages|null, compilationErrors|null,
+///              coverage|omitted} —
 ///              single response, not streamed (matches v1: only runTests streams).
 ///              `capturedValues` (#1640) is present per test only when the request
 ///              set `captureValues:true`; each entry is {scopeName, variableName,
@@ -40,6 +41,15 @@ namespace AlRunner;
 ///              read or its ToString() threw; `value` is null in that case too but
 ///              MUST NOT be read as "genuinely null" — a genuinely null AL variable
 ///              has `captureError` absent.
+///   `coverage` (#2042, on BOTH `runTests`' summary and `execute`'s response) is
+///   present only when the request set `coverage:true`: one entry per AL source file,
+///   {file, statements:[{id, scope, line, column, endLine, endColumn, hits}]}. `id` is
+///   the SAME id-space as `capturedValues[].statementId` for the same `scope` — see
+///   AlStatementTableTests. Supersedes the schema-only v1 `FileCoverage{file, lines[],
+///   totalStatements, hitStatements}` shape (protocol-v2.schema.json never had a
+///   working implementation of it, so there is no compatibility break): per-statement
+///   detail with positions strictly subsumes a line-hit rollup, which a caller can
+///   still derive client-side by grouping `statements` on `line`.
 ///   error   : {error}
 ///   shutdown: {status}
 /// </summary>
@@ -60,6 +70,21 @@ public sealed class ServerRequest
     /// field omitted from the response.
     /// </summary>
     [JsonPropertyName("captureValues")] public bool? CaptureValues { get; set; }
+    /// <summary>
+    /// Opt-in to per-statement hit counts + a position table on `runTests`/`execute`
+    /// (issue #2042 — the id/position half `captureValues`' `statementId` needed to be
+    /// placeable in an editor, per SShadowS/ALchemist#1). When true, the response's
+    /// `coverage[]` carries one entry per AL source file; each entry's `statements[]`
+    /// gives every BC-instrumented statement's `id` (the SAME id-space as
+    /// `capturedValues[].statementId` for the SAME `scope` — see
+    /// AlStatementTableTests.CapturedValueStatementId_MatchesStatementTableScopeAndId), the
+    /// owning AL member name (`scope`), the 1-based start/end line+column, and this
+    /// run's hit count. Per statement, never per line: two statements sharing a line
+    /// are two separate entries, not one summed count. Reuses AlCoverageTracker's
+    /// existing StmtHit hook (#1922) — no new instrumentation. Null/false = unchanged
+    /// behaviour, `coverage` omitted from the response.
+    /// </summary>
+    [JsonPropertyName("coverage")] public bool? Coverage { get; set; }
     /// <summary>
     /// "codeunit" (default) | "test"/"method" | "disabled" — see <see cref="TestIsolationParser"/>.
     /// Null = the server's existing default (TestIsolation.Codeunit), matching the
@@ -175,6 +200,12 @@ public static class ServerProtocol
     /// first one). Omitted (never 0) when the caller does not supply it, same
     /// null-omission convention as every other optional field here.
     /// </summary>
+    /// <paramref name="statementTable"/> (#2042) is the run's aggregated per-statement
+    /// hit-count + position table (see AlCoverageTracker.CollectStatementTable), passed
+    /// only when the request set `coverage:true`. Null omits `coverage` entirely
+    /// (WhenWritingNull); a non-null EMPTY list still serializes as `coverage:[]` —
+    /// "asked, nothing instrumented" is a real, distinct answer from "didn't ask",
+    /// same convention `capturedValues` already uses for `captureValues`.
     public static string Summary(
         IReadOnlyList<TestResult> tests,
         int exitCode,
@@ -182,7 +213,8 @@ public static class ServerProtocol
         IReadOnlyList<string>? changedFiles = null,
         IReadOnlyList<CompilationErrorGroup>? compilationErrors = null,
         bool cancelled = false,
-        double? wallSeconds = null)
+        double? wallSeconds = null,
+        IReadOnlyList<Infrastructure.AlCoverageTracker.AlStatementRecord>? statementTable = null)
     {
         var payload = new
         {
@@ -198,18 +230,22 @@ public static class ServerProtocol
             compilationErrors = compilationErrors is { Count: > 0 }
                 ? compilationErrors.Select(g => new { file = g.File, errors = g.Errors })
                 : null,
+            coverage = ToStatementTableWire(statementTable),
             wallSeconds,
             protocolVersion = 2,
         };
         return JsonSerializer.Serialize(payload, Opts);
     }
 
-    /// <summary>Serialize an execute response (run-mode / inline code).</summary>
+    /// <summary>Serialize an execute response (run-mode / inline code). <paramref
+    /// name="statementTable"/> — see Summary's doc comment; identical `coverage`
+    /// shape and null-vs-empty convention.</summary>
     public static string Execute(
         IReadOnlyList<TestResult> tests,
         int exitCode,
         IReadOnlyList<string>? messages = null,
-        IReadOnlyList<CompilationErrorGroup>? compilationErrors = null)
+        IReadOnlyList<CompilationErrorGroup>? compilationErrors = null,
+        IReadOnlyList<Infrastructure.AlCoverageTracker.AlStatementRecord>? statementTable = null)
     {
         var payload = new
         {
@@ -219,8 +255,41 @@ public static class ServerProtocol
             compilationErrors = compilationErrors is { Count: > 0 }
                 ? compilationErrors.Select(g => new { file = g.File, errors = g.Errors })
                 : null,
+            coverage = ToStatementTableWire(statementTable),
         };
         return JsonSerializer.Serialize(payload, Opts);
+    }
+
+    // Groups a flat statement list into the wire's per-file shape (issue #2042):
+    // {file, statements:[{id, scope, line, column, endLine, endColumn, hits}]}.
+    // Null in -> null out (coverage omitted); a non-null empty list in -> an empty
+    // (but present) enumerable out, so Summary/Execute's WhenWritingNull only ever
+    // strips the field for "not requested", never for "requested, found nothing".
+    // Ordered (file, then line, then column) so repeated calls against the same run
+    // are byte-identical — reflection's assembly/type enumeration order is not a
+    // contract callers should have to tolerate drifting.
+    private static IEnumerable<object>? ToStatementTableWire(
+        IReadOnlyList<Infrastructure.AlCoverageTracker.AlStatementRecord>? statements)
+    {
+        if (statements == null) return null;
+        return statements
+            .GroupBy(s => s.FilePath)
+            .OrderBy(g => g.Key, StringComparer.Ordinal)
+            .Select(g => (object)new
+            {
+                file = g.Key,
+                statements = g.OrderBy(s => s.Line).ThenBy(s => s.Column).ThenBy(s => s.StatementId)
+                    .Select(s => new
+                    {
+                        id = s.StatementId,
+                        scope = s.ScopeName,
+                        line = s.Line,
+                        column = s.Column,
+                        endLine = s.EndLine,
+                        endColumn = s.EndColumn,
+                        hits = s.HitCount,
+                    }),
+            });
     }
 
     // A single test result on the wire. stackTrace prefers the AL call stack

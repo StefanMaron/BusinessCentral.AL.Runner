@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/schemas/protocol-v2.json",
   "title": "AL.Runner Server Protocol v2",
-  "description": "Newline-delimited JSON. A `runtests` request emits zero or more `test` lines, optional `progress` lines, then exactly one `summary` line. Each line is a separate JSON document. STATUS on v2 (#1641): --server streams this shape for `runTests`, and each `test` line carries `errorKind` and `stackFrames`. The `cancel` command and its `ack` response are live, and a run it actually stopped carries `cancelled:true` on the summary — see docs/server-mode.md. `progress` is defined but has no producer yet (same as v1: reserved for a future finer-grained progress signal; `test` lines already give per-test progress). Still schema-only: `capturedValues`/`coverage`/`alSourceFile`/`alSourceLine`, which need the Cecil instrumentation pass tracked on #1640. Absent optional fields mean 'not known', never 'empty'.",
+  "description": "Newline-delimited JSON. A `runtests` request emits zero or more `test` lines, optional `progress` lines, then exactly one `summary` line. Each line is a separate JSON document. STATUS on v2 (#1641): --server streams this shape for `runTests`, and each `test` line carries `errorKind` and `stackFrames`. The `cancel` command and its `ack` response are live, and a run it actually stopped carries `cancelled:true` on the summary — see docs/server-mode.md. `progress` is defined but has no producer yet (same as v1: reserved for a future finer-grained progress signal; `test` lines already give per-test progress). `Summary.coverage` (#2042) is live when the request set `coverage:true` — per-statement hit counts + position table, the SAME id-space as `execute`'s `capturedValues[].statementId` per scope; see docs/server-mode.md's \"Per-statement hit counts\" section. Still schema-only on TestEvent: `capturedValues`/`alSourceFile`/`alSourceLine`, which need the Cecil instrumentation pass tracked on #1640 wired into the STREAMING path specifically (execute's own, non-streamed response already carries capturedValues+coverage today). Absent optional fields mean 'not known', never 'empty'.",
   "definitions": {
     "AlStackFrame": {
       "type": "object",
@@ -65,24 +65,39 @@
         }
       }
     },
-    "FileCoverage": {
+    "StatementRecord": {
       "type": "object",
-      "required": ["file", "lines", "totalStatements", "hitStatements"],
+      "required": ["id", "scope", "line", "column", "hits"],
+      "properties": {
+        "id": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "BC's own StmtHit(N)/CStmtHit(N) index for this statement, scoped to `scope`. The SAME id-space as `capturedValues[].statementId` for a scope of the same name (#2042) — both are read straight off NavMethodScope.StatementNumber for the identical compiled scope class, never independently derived. Not globally unique across scopes: id 0 in one `scope` is a different statement from id 0 in another."
+        },
+        "scope": {
+          "type": "string",
+          "description": "The AL member (procedure/trigger/test method) name owning this statement — BC's own [NavName(...)] on the generated scope class, matching `capturedValues[].scopeName`."
+        },
+        "line": { "type": "integer", "minimum": 1 },
+        "column": { "type": "integer", "minimum": 1 },
+        "endLine": { "type": "integer", "minimum": 1 },
+        "endColumn": { "type": "integer", "minimum": 1 },
+        "hits": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Times this exact statement executed in THIS run — never summed with any other statement, even one sharing the same line."
+        }
+      }
+    },
+    "FileStatements": {
+      "type": "object",
+      "required": ["file", "statements"],
       "properties": {
         "file": { "type": "string" },
-        "lines": {
+        "statements": {
           "type": "array",
-          "items": {
-            "type": "object",
-            "required": ["line", "hits"],
-            "properties": {
-              "line": { "type": "integer", "minimum": 1 },
-              "hits": { "type": "integer", "minimum": 0 }
-            }
-          }
-        },
-        "totalStatements": { "type": "integer", "minimum": 0 },
-        "hitStatements": { "type": "integer", "minimum": 0 }
+          "items": { "$ref": "#/definitions/StatementRecord" }
+        }
       }
     },
     "Summary": {
@@ -116,7 +131,8 @@
         },
         "coverage": {
           "type": "array",
-          "items": { "$ref": "#/definitions/FileCoverage" }
+          "items": { "$ref": "#/definitions/FileStatements" },
+          "description": "Present only when the request set `coverage:true` (#2042). One entry per AL source file with per-statement hit counts and positions — see StatementRecord/FileStatements. Supersedes the older, never-implemented FileCoverage{lines[], totalStatements, hitStatements} shape (this repo shipped no working `coverage` producer for it, so there is no compatibility break): per-statement detail with positions strictly subsumes a line-hit rollup, which a caller can still derive client-side by grouping `statements` on `line`."
         },
         "wallSeconds": { "type": "number", "minimum": 0 },
         "protocolVersion": { "const": 2 }

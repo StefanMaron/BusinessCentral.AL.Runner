@@ -129,4 +129,98 @@ public static class AlCoverageTracker
 
         return result;
     }
+
+    /// <summary>
+    /// One AL statement's full identity + hit count for the statement-position table
+    /// (issue #2042): the SAME id-space <see cref="AlValueCapture"/>'s
+    /// <c>AlCapturedValue.StatementId</c> uses (both read straight off
+    /// NavMethodScope.StatementNumber / the StmtHit(N) argument for THIS scope type —
+    /// verified in AlStatementTableTests, not assumed), the AL member name that owns
+    /// the scope (<c>ScopeName</c>, matching <c>AlCapturedValue.ScopeName</c>), and the
+    /// FULL decoded [SourceSpans] position (start AND end line/column) rather than just
+    /// the start line <see cref="AlCoverageStatement"/> carries — the id↔position
+    /// mapping a consumer like ALchemist needs to place a captured value in an editor
+    /// instead of guessing from a covered-lines index (see the issue's linked
+    /// SShadowS/ALchemist#1 reply).
+    /// </summary>
+    public readonly record struct AlStatementRecord(
+        string FilePath, string ScopeName, int StatementId,
+        int Line, int Column, int EndLine, int EndColumn, int HitCount);
+
+    /// <summary>
+    /// Distinct scope Types that have recorded at least one hit since the last
+    /// <see cref="Reset"/> — i.e. scopes genuinely invoked in the CURRENT run.
+    ///
+    /// #2042's <see cref="CollectStatementTable"/> scans exactly this set instead of
+    /// every SourceSpans-carrying type currently loaded in the process (which is what
+    /// <see cref="Collect"/> does), because a warm <c>--server</c> process is not the
+    /// single-generation world <c>Collect</c> was built for: <c>RunBundleForServer</c>
+    /// calls <c>Assembly.Load(assemblyBytes)</c> again on EVERY request that isn't a
+    /// cross-bundle-dedup reuse — including a pure AL-output cache HIT with
+    /// byte-identical content — so re-running the SAME bundle N times against one warm
+    /// server leaves N distinct Assembly generations resident (assemblies are never
+    /// unloaded). Scanning "every loaded assembly" after <see cref="Reset"/> then
+    /// reports the SAME AL statement once per generation: the CURRENT generation with
+    /// its real hit count, plus one ghost entry per STALE generation showing 0 (its
+    /// Type is still reflectable; Reset() only cleared the dictionary, not the type
+    /// itself) — reproduced empirically by sending an identical `coverage:true`
+    /// `runTests` request twice to one warm server and observing duplicate
+    /// {id, line} entries, one live and one phantom-zero, per statement. Restricting
+    /// to _hits' own keys sidesteps this entirely: a stale generation's Type recorded
+    /// zero hits THIS run (Reset() cleared it and nothing in this run touched it), so
+    /// it is simply absent from the key set — no "which generation is live" logic
+    /// needed. <see cref="Collect"/> (--coverage, CLI-only) does not need this fix: a
+    /// CLI invocation is one short-lived process, so exactly one generation ever
+    /// exists there.
+    /// </summary>
+    private static IReadOnlyCollection<Type> GetHitTrackedTypes() =>
+        _hits.Keys.Select(k => k.ScopeType).Distinct().ToArray();
+
+    /// <summary>
+    /// Same idea as <see cref="Collect"/> (cross-reference SourceSpans-carrying scope
+    /// types against OnStmtHit's hit counts), but scoped to <see
+    /// cref="GetHitTrackedTypes"/> instead of every loaded assembly (see that method's
+    /// doc comment for why), and keeping each statement separate — never summed by
+    /// line — while carrying the scope name plus the full decoded span instead of
+    /// collapsing to (object, line, hits). Two statements sharing a line get two
+    /// entries here with the SAME line but different id/column, which is exactly the
+    /// distinction <see cref="AlCoverageReport"/>'s line-rollup necessarily discards.
+    /// </summary>
+    public static List<AlStatementRecord> CollectStatementTable(IReadOnlyDictionary<(string Label, int Id), string> sourceMap)
+    {
+        EnsureReflInit();
+        AlNavNameReflection.EnsureInit();
+        var result = new List<AlStatementRecord>();
+
+        foreach (var t in GetHitTrackedTypes())
+        {
+            if (Attribute.GetCustomAttribute(t, _tSourceSpansAttr!) is not object srcAttr) continue;
+            if (_piEncodedSpans!.GetValue(srcAttr) is not long[] spans || spans.Length == 0) continue;
+
+            var (label, id) = AlCallStackCapture.ParseObjectTypeAndId(t);
+            if (id == 0) continue;
+            if (!sourceMap.TryGetValue((label, id), out var filePath)) continue;
+
+            // [NavName] on the scope class itself is the AL procedure/trigger/test
+            // method name — the SAME attribute AlValueCapture reads off scope
+            // FIELDS for local names, here read off the TYPE instead (both are
+            // MemberInfo — see AlNavNameReflection). Confirmed via
+            // BCCOMPILER_DUMP_CS=1: `[NavName("Run")] private sealed class
+            // Run_Scope__... : NavMethodScope<...>`.
+            var scopeName = AlNavNameReflection.GetAlName(t) ?? "?";
+
+            var instrumented = AlCoverageInstrumentedStatements.Find(t);
+            foreach (var i in instrumented)
+            {
+                if (i < 0 || i >= spans.Length) continue; // defensive: BC shape drift
+                var (fromLine, fromColumn, toLine, toColumn) = AlSourceSpanCodec.Decode(spans[i]);
+                result.Add(new AlStatementRecord(
+                    filePath, scopeName, i,
+                    fromLine + 1, fromColumn + 1, toLine + 1, toColumn + 1,
+                    GetHitCount(t, i)));
+            }
+        }
+
+        return result;
+    }
 }

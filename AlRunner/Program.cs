@@ -3930,6 +3930,15 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
             return;
         }
 
+        // #2042: 'coverage:true' opts into per-statement hit counts + a position table
+        // on the terminal summary line — reuses AlCoverageTracker's existing StmtHit
+        // hook (#1922), same process-global-flag pattern as AlValueCapture.Enabled in
+        // HandleServerExecute below. Reset() (not just Enabled=true) so a warm
+        // server's hit counts from a PRIOR request never leak into this one — the
+        // dictionary is process-global and this process outlives many requests.
+        AlRunner.Infrastructure.AlCoverageTracker.Enabled = req.Coverage == true;
+        if (req.Coverage == true) AlRunner.Infrastructure.AlCoverageTracker.Reset();
+
         var cts = new System.Threading.CancellationTokenSource();
         System.Threading.Interlocked.Exchange(ref activeRunCts, cts);
         try
@@ -3992,17 +4001,37 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
             // theoretical TOCTOU. See ServerCancelTests.Cancel_AfterRunTestsCompletes_IsNoop.
             System.Threading.Interlocked.CompareExchange(ref activeRunCts, null, cts);
 
+            // #2042: built from sourcePaths (the SAME roots the run just compiled),
+            // matching the CLI --coverage path's AlCoverageSourceMap.Build call —
+            // scopes whose owning object isn't found here (framework/dependency
+            // assemblies outside the bundle under test) are silently excluded, same
+            // as --coverage. Only built when requested: reflection-scanning every
+            // loaded assembly's types on every plain runTests call would be wasted
+            // work for callers who never asked for it.
+            IReadOnlyList<AlRunner.Infrastructure.AlCoverageTracker.AlStatementRecord>? statementTable = null;
+            if (req.Coverage == true)
+            {
+                var covSourceMap = AlRunner.Infrastructure.AlCoverageSourceMap.Build(
+                    req.SourcePaths, relativeTo: null);
+                statementTable = AlRunner.Infrastructure.AlCoverageTracker.CollectStatementTable(covSourceMap);
+            }
+
             lock (outputLock)
             {
                 output.WriteLine(AlRunner.ServerProtocol.Summary(
                     allTests, exitCode, cached, changed,
                     allCompileErrors.Count > 0 ? allCompileErrors : null,
-                    cancelled: cancelled, wallSeconds: reqSw.Elapsed.TotalSeconds));
+                    cancelled: cancelled, wallSeconds: reqSw.Elapsed.TotalSeconds,
+                    statementTable: statementTable));
                 output.Flush();
             }
         }
         finally
         {
+            // Scoped to THIS request only, same reasoning as HandleServerExecute's
+            // AlValueCapture.Enabled reset below — a coverage:true request must never
+            // leave hit-count tracking on for a later request that didn't ask for it.
+            AlRunner.Infrastructure.AlCoverageTracker.Enabled = false;
             // Belt-and-braces: reaches the same state as the explicit clear above on
             // every path, INCLUDING an exception thrown before that point (e.g. from
             // RunAllBundlesForServer) — a pathological caller must never be left with a
@@ -4051,6 +4080,13 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
         // so a captureValues:true request never leaves the flag on for a later request
         // that didn't ask for it (the flag is process-global, same as AlCoverageTracker.Enabled).
         AlRunner.Infrastructure.AlValueCapture.Enabled = req.CaptureValues == true;
+        // #2042: 'coverage:true' on `execute` — same request/response correlation the
+        // issue's acceptance criteria need: THIS single `execute` call can enable BOTH
+        // captureValues AND coverage together, so a caller can prove statementId lines
+        // up between capturedValues and the statement table from ONE run (see
+        // AlStatementTableTests.CapturedValueStatementId_MatchesStatementTableScopeAndId).
+        AlRunner.Infrastructure.AlCoverageTracker.Enabled = req.Coverage == true;
+        if (req.Coverage == true) AlRunner.Infrastructure.AlCoverageTracker.Reset();
         try
         {
             var runs = RunAllBundlesForServer(sourcePaths, req.PackagePaths, RunFirstCodeunitOnRun);
@@ -4065,12 +4101,25 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                     combinedHashes[kv.Key] = kv.Value;
             lastFileHashes = combinedHashes;
 
+            // Built BEFORE returning (i.e. before `finally` deletes an inline-code
+            // scratchDir below) — sourcePaths here is either the caller's real
+            // sourcePaths or that same scratchDir, and AlCoverageSourceMap.Build
+            // needs the .al files on disk to still exist when it scans them.
+            IReadOnlyList<AlRunner.Infrastructure.AlCoverageTracker.AlStatementRecord>? statementTable = null;
+            if (req.Coverage == true)
+            {
+                var covSourceMap = AlRunner.Infrastructure.AlCoverageSourceMap.Build(sourcePaths, relativeTo: null);
+                statementTable = AlRunner.Infrastructure.AlCoverageTracker.CollectStatementTable(covSourceMap);
+            }
+
             return AlRunner.ServerProtocol.Execute(allTests, exitCode, null,
-                allCompileErrors.Count > 0 ? allCompileErrors : null);
+                allCompileErrors.Count > 0 ? allCompileErrors : null,
+                statementTable: statementTable);
         }
         finally
         {
             AlRunner.Infrastructure.AlValueCapture.Enabled = false;
+            AlRunner.Infrastructure.AlCoverageTracker.Enabled = false;
             // Best-effort cleanup: the scratch dir's contents are fully consumed
             // once RunBundleForServer has emitted+compiled them into an in-memory
             // assembly (or failed trying) — nothing downstream needs the files on

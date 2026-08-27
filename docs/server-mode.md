@@ -41,6 +41,7 @@ al-runner --server [--package-cache PATH ...] [--cache DIR]
   "stubPaths": [],              // v1 field, ignored in v2 (no stubs layer)
   "code": "...",                // execute only (inline AL); mutually exclusive with sourcePaths
   "captureValues": false,       // execute only — see #1640
+  "coverage": false,            // runTests + execute — per-statement hit counts + position table, see #2042
   "testIsolation": "codeunit"   // optional: "codeunit" (default) | "test"/"method" | "disabled"
                                  // — see #1616. Applies to this request only; a later
                                  // request that omits the field falls back to the
@@ -100,8 +101,9 @@ streams `test` lines across all of them before the one final `summary`.
   bundle (there was nothing to run).
 - `cancelled: true` is present on the summary only when a concurrent `cancel`
   command actually stopped the run before every test ran (see `cancel` below);
-  omitted otherwise (never emitted as `false`). `capturedValues` and `coverage`
-  still need the Cecil instrumentation pass tracked on #1640.
+  omitted otherwise (never emitted as `false`).
+- `coverage` (#2042) is present on the summary only when the request set
+  `coverage: true` — see "Per-statement hit counts (`coverage`)" below.
 
 A request-level problem (e.g. a missing `sourcePaths`) returns the usual single
 `{"error":"..."}` line instead of a `test`/`summary` sequence — see Errors below.
@@ -194,6 +196,60 @@ variable: a genuinely null variable is reported with `value:null` and
 `captureError` **absent**. A variable whose read failed is never simply
 omitted from the array — that would be indistinguishable from "this variable
 does not exist" (`.claude/rules/loud-failures.md`).
+
+### Per-statement hit counts (`coverage`)
+
+`coverage: true` (#2042) opts into a per-statement hit-count + position table on
+**both** `runTests`' terminal `summary` line and `execute`'s response — reusing
+`--coverage`'s existing `StmtHit`/`CStmtHit` hook (#1922), no new instrumentation.
+`coverage` is an array with one entry per AL source file; each file's
+`statements` array has one entry per BC-instrumented statement:
+
+```json
+{"command":"execute","captureValues":true,"coverage":true,
+ "code":"codeunit 50100 X { trigger OnRun() var Msg: Text; begin Msg := 'hi'; Msg := 'bye'; end; }"}
+```
+
+```json
+{"exitCode":0,"tests":[{"name":"X.OnRun","status":"pass","durationMs":7,
+ "capturedValues":[{"scopeName":"OnRun","variableName":"Msg","value":"bye","statementId":1}]}],
+ "coverage":[{"file":"/tmp/.../Scratch.al","statements":[
+   {"id":0,"scope":"OnRun","line":1,"column":57,"endLine":1,"endColumn":69,"hits":1},
+   {"id":1,"scope":"OnRun","line":1,"column":70,"endLine":1,"endColumn":83,"hits":1}]}]}
+```
+
+- **`id` is the SAME id-space as `capturedValues[].statementId` for the SAME
+  `scope`.** This is the feature's actual point: `--capture-values` (#2040)
+  emits a `statementId` with no reliable way to place it in an editor short of
+  treating it as an index into a sorted covered-lines list — a heuristic that
+  breaks on multi-statement lines and skipped statements (see the upstream
+  request, SShadowS/ALchemist#1). `coverage[].statements[].id` resolves it
+  exactly: look up the entry whose `scope` matches `capturedValues[].scopeName`
+  and whose `id` matches `capturedValues[].statementId`, and its `line`/`column`
+  is the real AL source position that value was captured at.
+- **Per statement, never per line.** Two statements sharing a source line are
+  two separate entries with their own `hits`, not one summed count — the
+  distinction a plain line-coverage rollup necessarily discards. A line rollup
+  is still trivial to derive client-side (group `statements` by `line`, sum
+  `hits`); the reverse is not.
+- `line`/`column`/`endLine`/`endColumn` are 1-based, decoded from BC's own
+  `[SourceSpans]` attribute (`AlSourceSpanCodec`) — the same source
+  `--coverage`'s Cobertura output and `--capture-values`' `statementId` both
+  already read.
+- `hits` is the number of times that exact statement executed in **this**
+  request — not accumulated across the server process's lifetime. A statement
+  hit 0 times (an untaken branch) is still listed, not omitted — "did not
+  execute" is a real, distinct answer from "not part of this scope".
+- Supersedes protocol-v2.schema.json's older, never-implemented
+  `FileCoverage{file, lines[], totalStatements, hitStatements}` shape — that
+  shape was schema-only (this repo never shipped a working `coverage` producer
+  for it), so there is no compatibility break. Per-statement detail with
+  positions strictly subsumes a line-hit rollup.
+- `coverage` is omitted entirely (not an empty array) when the request didn't
+  set `coverage: true`; a non-null but empty `coverage: []` means "asked,
+  nothing was instrumented" (e.g. a compile failure before any AL code ran) —
+  the same "requested vs found nothing" distinction `capturedValues` already
+  makes.
 
 ### `shutdown`
 
