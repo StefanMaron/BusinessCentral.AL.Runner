@@ -765,50 +765,32 @@ if (bcVersionArg == null && artifactPathArg == null)
         }
     }
 }
-// #2041: whether THIS process generation will need to hand off to a shadow-re-exec
-// child before it can touch any BC type — a cheap, deterministic filesystem check (does
-// Ncl.dll already exist beside this assembly?) that does NOT depend on the selected BC
-// version or the variant-swap decision further down, so it is safe to compute this
-// early, before any startup-reporting line below would print. The tool package no
-// longer ships Ncl.dll (#2023/#2026), so this is true on essentially every real
-// invocation's first generation — and that generation's child re-runs this EXACT same
-// startup sequence from scratch, so printing the informational "[provision] ... already
-// complete" / "[bc] selected BC ..." / "al-runner — running N bundle(s)" lines here too
-// just duplicates them on stderr (confirmed via strace: two execve calls on a warm run,
-// each printing all three — see the issue). Gating those three success-path prints on
-// this flag means the generation that actually goes on to run tests — either the final
-// generation after a shadow hop, or an install that ships Ncl.dll and never needed
-// one — always prints them exactly once, and a generation about to be replaced does
-// not print the steady-state lines at all. LOUD FAILURES are untouched: every error
-// path below (provisioning failure, BC version selection failure, no matching engine
-// variant, an incomplete artifact closure) returns before this generation would ever
-// reach the shadow-re-exec check, so gating success-path noise here cannot hide one.
-// The `[reexec]` explanation itself (#2034/#2038) is a different print entirely and
-// stays unconditional — it is specifically about the parent and must keep firing there.
+// #2041/#2066: rather than PREDICTING whether this generation will need to re-exec (the
+// #2041 approach — a flag computed from NeedsShadow alone, before either the per-BC-minor
+// variant swap or the Cecil-rewrite cache state is knowable), the success-path startup
+// lines below are DEFERRED into this list and only flushed once this generation has
+// cleared every re-exec decision point in the function — the shadow-hop check AND the
+// Cecil-fresh-rewrite check, in that order, however many of them fire.
 //
-// This MUST track the actual re-exec gate below (`NeedsShadow(...) || variantSwapDir !=
-// null) && AL_RUNNER_NCL_SHADOW_DONE != "1"`) as closely as it can be known this early:
-// - The `AL_RUNNER_NCL_SHADOW_DONE` clause is included below for exactly that reason.
-//   Without it, a process with Ncl.dll genuinely missing but that env var already set by
-//   hand (a plausible way to skip the shadow hop while debugging) would compute
-//   reexecPending=true, suppress all three lines, then NOT re-exec after all — silently
-//   dropping the very startup context (which BC version, which artifact dir) someone
-//   debugging an assembly-load failure in that exact scenario would need. Same failure
-//   class #2034 was about, one file over.
-// - `variantSwapDir` is deliberately NOT included: it is only known after SelectVersion
-//   resolves a version and the variant-selection block below matches it against the
-//   shipped variants, both well after this line. In the shipping shape that gap is not
-//   reachable — any install that ships per-BC-minor variants at all is one that also has
-//   Ncl.dll stripped from its top-level bin/ (variants are the packaged multi-version
-//   case; #2023/#2026 stripped Ncl.dll from every packaged install), so NeedsShadow is
-//   already true there regardless of variantSwapDir. If that coupling ever changes (e.g.
-//   a variants-shipping install that also ships its own default-variant Ncl.dll),
-//   NeedsShadow=false with variantSwapDir!=null would double-print again — restructuring
-//   to close that gap would mean computing SelectVersion + the variant match before any
-//   provisioning happens, which the provisioning step's own version resolution currently
-//   feeds into; that inversion is out of scope here.
-var reexecPending = AlRunner.Infrastructure.NclShadowRuntime.NeedsShadow(AppContext.BaseDirectory)
-    && Environment.GetEnvironmentVariable("AL_RUNNER_NCL_SHADOW_DONE") != "1";
+// #2041's predict-then-suppress design covered exactly one re-exec (the shadow hop) and
+// silently broke the moment a SECOND one stacked on top: a per-BC-minor engine-variant
+// swap forces its own shadow-hop generation to also perform its first-ever Cecil rewrite
+// of that variant's Ncl.dll (a cache MISS, since the shadow-dir builder skips the
+// pre-rewrite for a variant swap — see EnsureShadowDir's doc comment), which is a SECOND
+// re-exec `reexecPending` had no way to see coming. That intermediate generation printed
+// the trio believing itself final, then re-exec'd anyway, and the real final generation
+// printed it again — three generations, two prints. See #2066.
+//
+// A generation that re-execs further always `return`s from inside one of the two
+// decision blocks below, before ever reaching the flush point — so its accumulated
+// entries are silently discarded, exactly as #2041 intended for the single-re-exec case,
+// but now correctly for however many stack. LOUD FAILURES are untouched: every error path
+// in this function (provisioning failure, BC version selection failure, no matching
+// engine variant, an incomplete artifact closure) returns its own specific message
+// immediately and never reaches — nor needs — this list. The `[reexec]` explanation
+// lines (#2034/#2038) are a different print entirely and stay unconditional, printed
+// from whichever generation actually decides to hand off.
+var deferredStartupLines = new List<Action>();
 // ── Provisioning (on by default since issue #2024; opt out with --no-auto-provision):
 // `provision` subcommand or autoProvision (default true). Resolves the target version,
 // downloads the engine service-tier closure if it's missing/incomplete, then (subcommand)
@@ -826,11 +808,13 @@ if (provisionSubcommand || autoProvision)
     // (which never reaches the post-selection gate — it returns immediately below) also
     // provisions manifest apps itself.
     //
-    // #2041: `quiet` is never true for the `provision` subcommand itself — it returns
-    // immediately below and never re-execs, so its own success line would otherwise be
-    // silently lost with no later generation to reprint it.
+    // #2041/#2066: the `provision` subcommand itself always prints immediately (passes
+    // `deferredLines: null`) — it returns right below and never re-execs, so its own
+    // success line would otherwise be silently lost with no later generation to reprint
+    // it. The continuing (non-subcommand) path defers into `deferredStartupLines` instead
+    // of printing here — see that list's declaration above for why.
     var prc = RunProvisioning(bcVersionArg, artifactPathArg, bundles, provisionManifestApps: provisionSubcommand,
-        quiet: reexecPending && !provisionSubcommand, out var provisionedVersion);
+        deferredLines: provisionSubcommand ? null : deferredStartupLines, out var provisionedVersion);
     if (provisionSubcommand)
         return prc; // the subcommand always exits after provisioning, never runs tests
     if (prc == 0 && provisionedVersion != null)
@@ -863,11 +847,14 @@ try
     if (AlRunner.Infrastructure.BcArtifacts.ShouldWarnExplicitEngineMinorMismatch(
             bcVersionAutoSelected, shippedVariants.Count))
         AlRunner.Infrastructure.BcArtifacts.WarnIfExplicitEngineMinorMismatch();
-    // #2041: suppressed when this generation is about to shadow-re-exec — see the
-    // `reexecPending` comment above. The child re-prints this exact line for real.
-    if (!reexecPending)
-        Console.Error.WriteLine($"[bc] selected BC {AlRunner.Infrastructure.BcArtifacts.SelectedVersion} " +
-            $"({AlRunner.Infrastructure.BcArtifacts.ServiceTierDir})");
+    // #2041/#2066: deferred — see `deferredStartupLines`' declaration above. Captured into
+    // locals now (the values are fixed the instant SelectVersion above returns) so the
+    // closure below reads exactly what THIS generation selected, not whatever the static
+    // BcArtifacts state happens to hold whenever the list is eventually flushed.
+    var selectedVersionForPrint = AlRunner.Infrastructure.BcArtifacts.SelectedVersion;
+    var serviceTierDirForPrint = AlRunner.Infrastructure.BcArtifacts.ServiceTierDir;
+    deferredStartupLines.Add(() => Console.Error.WriteLine(
+        $"[bc] selected BC {selectedVersionForPrint} ({serviceTierDirForPrint})"));
 }
 catch (InvalidOperationException ex)
 {
@@ -907,13 +894,22 @@ string? variantSwapDir = null;
 
         var (variant, degraded) = match.Value;
         if (degraded)
-            Console.Error.WriteLine(
-                $"[bc] warning: the shipped {variant.BuildVersion.Major}.{variant.BuildVersion.Minor} engine " +
-                $"variant was built against {variant.BuildVersion}, not the selected {selected} — different " +
-                $"BUILDS of the same minor can still fail to load Microsoft.Dynamics.Nav.CodeAnalysis (it's " +
-                $"strong-named per build, not per minor). Expected: variants pin the newest build of a minor " +
-                $"AT PACK TIME, so any user on a different build of that same minor hits this. See " +
-                $"docs/limitations.md.");
+        {
+            // #2041/#2066: deferred — see `deferredStartupLines`' declaration above. This
+            // block runs in EVERY generation that reaches it (it is not itself gated on a
+            // re-exec prediction), so without deferring it this warning reprints once per
+            // generation — the specific "[bc] warning: ... built against ..." duplication
+            // (×3 on a stacked variant-swap-then-fresh-rewrite run) the issue measured.
+            var degradedVariantBuild = variant.BuildVersion;
+            var degradedSelected = selected;
+            deferredStartupLines.Add(() => Console.Error.WriteLine(
+                $"[bc] warning: the shipped {degradedVariantBuild.Major}.{degradedVariantBuild.Minor} engine " +
+                $"variant was built against {degradedVariantBuild}, not the selected {degradedSelected} — " +
+                $"different BUILDS of the same minor can still fail to load " +
+                $"Microsoft.Dynamics.Nav.CodeAnalysis (it's strong-named per build, not per minor). Expected: " +
+                $"variants pin the newest build of a minor AT PACK TIME, so any user on a different build of " +
+                $"that same minor hits this. See docs/limitations.md."));
+        }
 
         var runningBuild = AlRunner.Infrastructure.BcArtifacts.EngineBuiltVersion();
         if (runningBuild != variant.BuildVersion)
@@ -947,15 +943,15 @@ if (alCacheDir != null) Directory.CreateDirectory(alCacheDir);
 // before any DependencyLoader/BcAppSymbolCache/workspace-deps call — all four read
 // CacheRoots.Resolve for their cache directory.
 AlRunner.Infrastructure.CacheRoots.SetOverride(cacheRootOverride);
-// #2041: suppressed when this generation is about to shadow-re-exec — see the
-// `reexecPending` comment above. The child re-prints this exact banner for real; this
-// generation touches no bundle work at all before handing off.
-if (!reexecPending)
-    Console.WriteLine(serverMode
-        ? "al-runner — server mode (JSON-RPC over stdin/stdout)"
-        : watchMode
-            ? $"al-runner — watch mode, {bundles.Count} bundle(s) (Ctrl+C to quit)"
-            : $"al-runner — running {bundles.Count} bundle(s)");
+// #2041/#2066: deferred — see `deferredStartupLines`' declaration above. This generation
+// may still hand off via either re-exec decision below, and touches no bundle work at all
+// before doing so — the flush after both decisions is what makes this print exactly once,
+// from whichever generation is actually terminal.
+deferredStartupLines.Add(() => Console.WriteLine(serverMode
+    ? "al-runner — server mode (JSON-RPC over stdin/stdout)"
+    : watchMode
+        ? $"al-runner — watch mode, {bundles.Count} bundle(s) (Ctrl+C to quit)"
+        : $"al-runner — running {bundles.Count} bundle(s)"));
 
 // The packaged tool no longer ships Microsoft.Dynamics.Nav.Ncl.dll (see
 // check-nupkg-contents.sh) — it must be resolved from the user's own BC artifact
@@ -1047,6 +1043,16 @@ if ((AlRunner.Infrastructure.NclShadowRuntime.NeedsShadow(AppContext.BaseDirecto
         return child.ExitCode;
     }
 }
+
+// #2041/#2066: this generation has now cleared BOTH re-exec decision points above (the
+// shadow hop and the Cecil-fresh-rewrite hop) without returning — it is the terminal
+// generation for this invocation, so this is the one and only point that flushes the
+// startup lines queued in `deferredStartupLines`, in the order they were queued
+// (provisioning result, selected BC version, any degraded-variant warning, then the
+// running/watch/server-mode banner). Any earlier generation that instead re-exec'd
+// returned from inside one of those blocks and never reaches this line, so its own queued
+// entries are simply discarded — however many generations preceded this one.
+foreach (var deferredLine in deferredStartupLines) deferredLine();
 
 var packageCacheDirs = packageCacheArgs.Count > 0
     ? ExpandPackageCacheDirs(packageCacheArgs).ToList()
@@ -6327,17 +6333,22 @@ static string? TryDeriveBcMajorFromProject(IEnumerable<string> bundlePaths)
 // sole owner instead, so passing true there would attempt the SAME download twice in one
 // invocation (once here, pre-selection; once there, post-selection).
 static int RunProvisioning(string? bcVersionArg, string? artifactPathArg,
-    List<string> bundles, bool provisionManifestApps, bool quiet, out string? provisionedVersion)
+    List<string> bundles, bool provisionManifestApps, List<Action>? deferredLines, out string? provisionedVersion)
 {
     provisionedVersion = null;
 
     if (artifactPathArg != null)
     {
-        // #2041: `quiet` suppresses only this STEADY-STATE success line, never an error
-        // path — see the call site's comment for why (this generation is about to
-        // shadow-re-exec, and the child re-prints it once for real).
-        if (!quiet)
+        // #2041/#2066: `deferredLines` null means print immediately (the `provision`
+        // subcommand call — see the call site's comment for why); non-null means queue
+        // this STEADY-STATE success line onto it instead, never an error path. The
+        // caller flushes the queue once IT has confirmed no further re-exec follows —
+        // see `deferredStartupLines`'s declaration in Program's top-level flow.
+        if (deferredLines == null)
             Console.Error.WriteLine("[provision] --artifact-path points at an explicit dir; nothing to provision.");
+        else
+            deferredLines.Add(() => Console.Error.WriteLine(
+                "[provision] --artifact-path points at an explicit dir; nothing to provision."));
         return 0;
     }
 
@@ -6390,14 +6401,19 @@ static int RunProvisioning(string? bcVersionArg, string? artifactPathArg,
     var report = AlRunner.Infrastructure.ProvisioningCheck.Check(full, serviceTierDir);
     if (report.Ok)
     {
-        // #2041: the steady-state "nothing to do" line — suppressed under `quiet`, same
-        // reasoning as the --artifact-path branch above. AutoProvision's own download
-        // progress messages below are NOT gated: they only fire once regardless (by the
+        // #2041/#2066: the steady-state "nothing to do" line — deferred, same reasoning
+        // as the --artifact-path branch above. AutoProvision's own download progress
+        // messages below are NOT gated/deferred: they only fire once regardless (by the
         // time a shadow-re-exec child gets here the download already completed, so IT
         // takes this same Ok branch instead), and a download in progress is exactly the
         // kind of "real one-time work" .claude/rules/loud-failures.md means to stay loud.
-        if (!quiet)
-            Console.Error.WriteLine($"[provision] BC {full} engine artifacts already complete at {serviceTierDir}.");
+        var fullForPrint = full;
+        var serviceTierDirForPrint = serviceTierDir;
+        if (deferredLines == null)
+            Console.Error.WriteLine($"[provision] BC {fullForPrint} engine artifacts already complete at {serviceTierDirForPrint}.");
+        else
+            deferredLines.Add(() => Console.Error.WriteLine(
+                $"[provision] BC {fullForPrint} engine artifacts already complete at {serviceTierDirForPrint}."));
     }
     else if (!AlRunner.Infrastructure.ProvisioningCheck.AutoProvision(full, serviceTierDir))
         return 1;

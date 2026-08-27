@@ -1,4 +1,4 @@
-// StartupOutputReexecDedupTests — issue #2041.
+// StartupOutputReexecDedupTests — issues #2041 and #2066.
 //
 // Split out of #2037/#2038: this process's startup reporting (the `[provision] BC ...
 // already complete` line, `[bc] selected BC ...`, and the `al-runner — running N
@@ -10,12 +10,23 @@
 // trace=execve`: exactly two execve calls on a warm run, and all three lines appear
 // twice, once per process generation.
 //
-// The fix (see Program.cs) computes whether THIS generation will need to shadow-re-exec
-// — a cheap, deterministic filesystem check (does Ncl.dll already exist beside this
-// assembly?) that is known before any of the three lines would print — and suppresses
-// them in that generation only. The generation that actually goes on to run tests (no
-// re-exec pending) always prints them, exactly once. The `[reexec]` explanation itself
-// (#2034/#2038) is untouched: it still prints from the parent, at default verbosity.
+// #2041's original fix computed whether THIS generation would need to shadow-re-exec — a
+// cheap, deterministic filesystem check (does Ncl.dll already exist beside this
+// assembly?) known before any of the three lines would print — and suppressed them in
+// that generation only. That covered exactly the one re-exec it was written for. #2066
+// (published 2.7.0) found a SECOND re-exec that can stack on top — a per-BC-minor
+// engine-variant swap, or (the shape this file's tests reproduce deterministically) the
+// shadow-hop generation's own first-ever Cecil rewrite landing a cache MISS — which the
+// #2041 flag had no way to predict, since it is only knowable after the shadow hop has
+// already happened. Program.cs's fix (see its own comments starting at
+// `deferredStartupLines`) replaced predict-then-suppress with defer-then-flush: the three
+// lines (and the degraded-variant warning) are queued rather than printed immediately,
+// and flushed only once a generation clears EVERY re-exec decision point in the
+// function — a generation that re-execs further never reaches the flush and its queue is
+// simply discarded, so this now generalizes to however many generations stack, not just
+// the one #2041 anticipated. The `[reexec]` explanation itself (#2034/#2038) is
+// untouched: it still prints unconditionally from whichever generation decides to hand
+// off, at default verbosity.
 //
 // Issue #2061 — shared mutable state between this class's tests, round 2
 // -------------------------------------------------------------------------------------
@@ -96,8 +107,8 @@ public sealed class StartupOutputReexecDedupTests
 
         // Warm-up spawn: primes the ncl-cecil / ncl-shadow caches so the run asserted
         // on below is genuinely warm (a cold cache adds a THIRD generation via the
-        // fresh-Cecil-rewrite re-exec, which this issue's acceptance criteria does not
-        // cover — see Program.cs's comment on the "fresh rewrite" re-exec).
+        // fresh-Cecil-rewrite re-exec — that stacked, three-generation shape is what
+        // ColdCecilCache_StackedShadowAndFreshRewriteReexec_... below covers instead).
         Spawn();
 
         var (output, exit) = Spawn();
@@ -164,6 +175,84 @@ public sealed class StartupOutputReexecDedupTests
         }
         finally
         {
+            DeleteDirectoryOrFail(privateDir);
+        }
+    }
+
+    /// <summary>
+    /// Issue #2066: a run that stacks TWO re-execs — the shadow hop (Ncl.dll not shipped
+    /// beside this assembly) AND the Cecil-fresh-rewrite hop (cold ncl-cecil cache) — must
+    /// still print the startup trio and the `[reexec]` explanations from BOTH hops exactly
+    /// once each, across all three process generations.
+    ///
+    /// #2044's fix (see the file header above and Program.cs's history) predicted whether
+    /// the CURRENT generation would need to shadow-re-exec, using a flag computed BEFORE
+    /// the Cecil-rewrite decision could be known, and suppressed the trio in that
+    /// generation only. That covers exactly one re-exec. The reported real-world failure
+    /// (#2066) stacks a second one on top: the shadow-hop generation itself, once landed,
+    /// still needs to perform its OWN first-ever Cecil rewrite — a genuine cache MISS —
+    /// which forces a THIRD process generation. The flag from #2044 had already decided
+    /// (wrongly, for that middle generation) that no further re-exec was coming, so the
+    /// middle generation printed the trio believing itself final, then re-exec'd anyway,
+    /// and the true final generation printed it again: three generations, two prints.
+    ///
+    /// AL_RUNNER_NCL_CACHE=0 forces NclCecilRewrite.RewriteInPlace to treat EVERY call as a
+    /// fresh rewrite (bypassing the ncl-cecil cache read/write entirely — see
+    /// NclCecilRewrite.RewriteInPlace's own doc comment), which reliably reproduces the
+    /// exact "middle generation's own first rewrite is a cache MISS" shape without needing
+    /// a packaged per-BC-minor engine variant (the OTHER way #2066 observed three
+    /// generations) — both routes exercise the identical code path once the shadow hop has
+    /// landed, since EnsureShadowDir's own pre-rewrite (used for the "Ncl.dll not shipped"
+    /// case) is a completely separate call from the child's later RewriteInPlace at the top
+    /// of Program.cs, and it is that second call's cache-MISS decision this test pins.
+    ///
+    /// Confirmed as a genuine three-generation run (not an artifact of forcing the flag):
+    /// asserts both `[reexec]` explanation lines are present, each exactly once — one per
+    /// re-exec that actually fired.
+    /// </summary>
+    [SkippableFact]
+    public void ColdCecilCache_StackedShadowAndFreshRewriteReexec_StartupTrioPrintsExactlyOnce()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        // See the file header (#2061) for why this runs against a private mirror rather
+        // than the shared AlRunner/bin/.../ directory. This mirror genuinely lacks
+        // Ncl.dll (same precondition MirrorOriginalBinDir already asserts), so the shadow
+        // hop is guaranteed to fire for it regardless of any other test's state.
+        var privateDir = MirrorOriginalBinDir();
+        try
+        {
+            var privateDll = Path.Combine(privateDir, "al-runner.dll");
+
+            var psi = BuildPsi(privateDll);
+            // Forces a fresh Cecil rewrite in EVERY generation that reaches
+            // NclCecilRewrite.RewriteInPlace, including the shadow-hop child's own
+            // first-start rewrite — the deterministic stand-in for a genuinely cold
+            // ncl-cecil cache, reproducing the exact stacked scenario without racing
+            // the shared, machine-wide ncl-cecil cache directory other concurrently
+            // running tests/processes also read and write.
+            psi.Environment["AL_RUNNER_NCL_CACHE"] = "0";
+            var (output, exit) = Run(psi);
+
+            Assert.Equal(0, exit);
+            Assert.Contains("pass:        1", output);
+            Assert.Contains("fail:        0", output);
+
+            // Both re-exec triggers genuinely fired — three generations, not one or two.
+            Assert.Equal(1, CountOccurrences(output, "[reexec] Ncl.dll not shipped in this install"));
+            Assert.Equal(1, CountOccurrences(output, "[reexec] Fresh rewrite done — re-execing for a clean Ncl load"));
+
+            // The startup trio survives all three generations and prints exactly once,
+            // from the third (truly terminal) generation only.
+            Assert.Equal(1, CountOccurrences(output, "[provision] BC "));
+            Assert.Equal(1, CountOccurrences(output, "[bc] selected BC "));
+            Assert.Equal(1, CountOccurrences(output, "al-runner — running "));
+        }
+        finally
+        {
+            // RewriteInPlace writes Ncl.dll directly into the private mirror (top-level
+            // dir) as a side effect of the top-level generation's own rewrite, same as
+            // ShadowDoneEnvVarForced_... below — clean up the whole mirror.
             DeleteDirectoryOrFail(privateDir);
         }
     }
