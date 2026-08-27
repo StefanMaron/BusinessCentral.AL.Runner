@@ -197,20 +197,63 @@ public static class ProvisioningCheck
     }
 
     /// <summary>
-    /// Derives the BC major.minor to auto-provision platform apps for. The engine is
-    /// version-agnostic w.r.t. the R2R apps it dispatches to at runtime, so the minor to
-    /// download is the one the MISSING apps actually need (carried in
-    /// <paramref name="report"/>.Issues[0].AppVersion) — NOT the engine's own
-    /// <paramref name="fallbackVersion"/> (SelectedVersion), which can be a different minor
-    /// (e.g. engine 28.1 running 28.2 R2R business logic). Falls back to
-    /// <paramref name="fallbackVersion"/>'s major.minor when there are no issues. Pure —
-    /// does no I/O.
+    /// Derives the BC major.minor a symbol-only platform app already in the cache would
+    /// suggest for auto-provisioning. Carried in <paramref name="report"/>.Issues[0]
+    /// .AppVersion when one exists; falls back to <paramref name="fallbackVersion"/>'s
+    /// major.minor otherwise. Pure — does no I/O.
+    ///
+    /// Issue #2077: this used to be the value callers actually downloaded — "the engine is
+    /// version-agnostic w.r.t. the R2R apps it dispatches to, so download whatever the
+    /// on-disk symbol-only app needs" sounds reasonable until the app already in the cache
+    /// is simply a STALE artifact (a project's committed `.alpackages`, an old warm run) at
+    /// a DIFFERENT minor than the BC version the caller explicitly selected — then this
+    /// silently redirected the whole provisioning pass to that stale minor instead. Once a
+    /// BC version has been selected, provisioning MUST target that version — see
+    /// <see cref="ResolveProvisionMajorMinor"/>, the function callers now use for the
+    /// actual decision. This one is kept only as a pure cache-inspection signal, e.g. to
+    /// build the loud mismatch note <see cref="BuildProvisionVersionSkewNote"/> emits when
+    /// the cache disagrees with the selection.
     /// </summary>
     public static string DeriveProvisionMajorMinor(PlatformAppsReport report, string fallbackVersion)
     {
         var source = report.Issues.Count > 0 ? report.Issues[0].AppVersion : fallbackVersion;
-        var parts = source.Split('.');
-        return parts.Length >= 2 ? string.Join(".", parts.Take(2)) : source;
+        return MajorMinorOf(source);
+    }
+
+    /// <summary>
+    /// The BC major.minor to actually auto-provision platform apps/the test toolkit for:
+    /// always <paramref name="selectedVersion"/>'s own major.minor (issue #2077 — once a BC
+    /// version is selected, provisioning targets THAT version, never one derived from cache
+    /// contents, a symbol-only closure, or a project's vendored `.alpackages`). Pure — does
+    /// no I/O.
+    /// </summary>
+    public static string ResolveProvisionMajorMinor(string selectedVersion) => MajorMinorOf(selectedVersion);
+
+    /// <summary>Shared major.minor extraction used by the Derive*/Resolve* helpers above.</summary>
+    private static string MajorMinorOf(string version)
+    {
+        var parts = version.Split('.');
+        return parts.Length >= 2 ? string.Join(".", parts.Take(2)) : version;
+    }
+
+    /// <summary>
+    /// Issue #2077 acceptance criterion: "if the runner ever compiles against platform apps
+    /// whose build differs from the selected engine build, it says so explicitly." Returns
+    /// a loud one-line note when <paramref name="cacheDerivedMajorMinor"/> — what the
+    /// package cache alone would have suggested (<see cref="DeriveProvisionMajorMinor"/> /
+    /// <see cref="DerivePresentPlatformMajorMinor"/>) — disagrees with
+    /// <paramref name="selectedMajorMinor"/> (what <see cref="ResolveProvisionMajorMinor"/>
+    /// actually provisions). Null when they agree, so callers can
+    /// `if (note != null) Console.Error.WriteLine(note);` unconditionally. Pure.
+    /// </summary>
+    public static string? BuildProvisionVersionSkewNote(
+        string selectedMajorMinor, string cacheDerivedMajorMinor, string cacheSource)
+    {
+        if (string.Equals(selectedMajorMinor, cacheDerivedMajorMinor, StringComparison.OrdinalIgnoreCase))
+            return null;
+        return $"[provision] note: {cacheSource} suggest(s) BC {cacheDerivedMajorMinor}.x, which differs from " +
+               $"the selected BC {selectedMajorMinor}.x — provisioning platform R2R apps for the SELECTED " +
+               $"version, not the cache's.";
     }
 
     /// <summary>
@@ -300,14 +343,24 @@ public static class ProvisioningCheck
     }
 
     /// <summary>
-    /// Derives the BC major.minor to auto-provision FROM WHAT'S ALREADY IN THE CACHE: scans
-    /// <paramref name="packageCacheDirs"/> for a Microsoft "Base Application" or "System
-    /// Application" .app and returns its major.minor. Used when there's no
-    /// <see cref="PlatformAppsReport"/> issue to derive from (e.g. platform apps are already
-    /// R2R-complete but the test toolkit is still missing) — we still need SOME minor to
-    /// resolve a full artifact version for the test-toolkit download, and the platform apps
-    /// already in the cache are the most reliable signal of which minor this project targets.
-    /// Falls back to <paramref name="fallbackVersion"/>'s major.minor when no such app is found.
+    /// The BC major.minor a Microsoft "Base Application"/"System Application" .app already
+    /// present in <paramref name="packageCacheDirs"/> would suggest for auto-provisioning.
+    /// Falls back to <paramref name="fallbackVersion"/>'s major.minor when no such app is
+    /// found. Pure filesystem scan — no network.
+    ///
+    /// Issue #2077: this used to be the value callers actually downloaded whenever no
+    /// symbol-only-R2R issue existed — "the platform apps already in the cache are the most
+    /// reliable signal of which minor this project targets" sounds reasonable until the
+    /// apps already in the cache are simply a committed `.alpackages` symbol closure at a
+    /// DIFFERENT minor than the BC version the caller explicitly selected (e.g. `--bc-
+    /// version 28.4` with a project-vendored 28.1 closure) — then this silently redirected
+    /// the whole provisioning pass to that unrelated minor instead, and the run went on to
+    /// compile against it while reporting `[bc] selected BC 28.4...`. Once a BC version has
+    /// been selected, provisioning MUST target that version — see
+    /// <see cref="ResolveProvisionMajorMinor"/>, the function callers now use for the
+    /// actual decision. This one is kept only as a pure cache-inspection signal, e.g. to
+    /// build the loud mismatch note <see cref="BuildProvisionVersionSkewNote"/> emits when
+    /// the cache disagrees with the selection.
     /// </summary>
     public static string DerivePresentPlatformMajorMinor(
         IReadOnlyList<string> packageCacheDirs, string fallbackVersion)
@@ -323,13 +376,10 @@ public static class ProvisioningCheck
                 if (!string.Equals(m.Name, "Base Application", StringComparison.OrdinalIgnoreCase)
                     && !string.Equals(m.Name, "System Application", StringComparison.OrdinalIgnoreCase))
                     continue;
-                var v = m.Version.ToString();
-                var vparts = v.Split('.');
-                return vparts.Length >= 2 ? string.Join(".", vparts.Take(2)) : v;
+                return MajorMinorOf(m.Version.ToString());
             }
         }
-        var parts = fallbackVersion.Split('.');
-        return parts.Length >= 2 ? string.Join(".", parts.Take(2)) : fallbackVersion;
+        return MajorMinorOf(fallbackVersion);
     }
 
     // ── Auto-provision download destination (issue #1653) ────────────────────
@@ -396,6 +446,26 @@ public static class ProvisioningCheck
     };
 
     /// <summary>
+    /// Microsoft app names whose OWN manifest transitively depends on a
+    /// <see cref="KnownNoFallbackPlatformApps"/> member, even though the DEPENDENT never
+    /// names that app directly (issue #2073). <see cref="DetermineManifestNeeds"/> only
+    /// sees the roots a bundle's own app.json declares — it can't read a not-yet-downloaded
+    /// dependency's manifest to discover ITS dependencies — so a bundle that names
+    /// "Tests-TestLibraries" but never "Application Test Library" read as not needing the
+    /// platform-apps set at all, and `provision` reported success while downloading
+    /// nothing. Confirmed via the real Microsoft NavxManifest.xml (Tests-TestLibraries
+    /// v28.1.49838.53910 declares `&lt;Dependency Id="d852d5d2-a39d-4179-baeb-f99a19e32510"
+    /// Name="Application Test Library" Publisher="Microsoft" .../&gt;` — the exact AppId the
+    /// issue's "Missing:" error names). Recorded here the same way
+    /// <see cref="KnownNoFallbackPlatformApps"/> records real app names, so the pre-scan can
+    /// see the edge without ever reading the dependency's own manifest.
+    /// </summary>
+    public static readonly IReadOnlyList<string> KnownTransitiveNoFallbackPlatformDependents = new[]
+    {
+        "Tests-TestLibraries",
+    };
+
+    /// <summary>
     /// Real Microsoft app names supplied by the curated `test-apps` download (platform
     /// artifact's Applications/&lt;area&gt;/Test + TestFramework trees — see
     /// ArtifactDownloader.TestApps). Deliberately a closed allowlist, NOT "any Microsoft
@@ -442,6 +512,18 @@ public static class ProvisioningCheck
             }
             if (KnownTestFrameworkAppNames.Any(n => string.Equals(n, d.Name, StringComparison.OrdinalIgnoreCase)))
                 needsTest = true;
+            // Issue #2073: a root naming e.g. "Tests-TestLibraries" (already caught by
+            // KnownTestFrameworkAppNames above, for needsTest) ALSO transitively drags in
+            // "Application Test Library" — a KnownNoFallbackPlatformApps member — via that
+            // dependency's own manifest, which this pre-scan cannot read. Without this, a
+            // bundle shaped exactly like the issue's repro (names Tests-TestLibraries,
+            // never Application Test Library directly) read as needing no platform apps at
+            // all, and `provision` reported success while downloading nothing.
+            if (KnownTransitiveNoFallbackPlatformDependents.Any(n => string.Equals(n, d.Name, StringComparison.OrdinalIgnoreCase)))
+            {
+                needsPlatform = true;
+                needsTest = true;
+            }
         }
         return new ManifestNeeds(needsPlatform, needsTest);
     }

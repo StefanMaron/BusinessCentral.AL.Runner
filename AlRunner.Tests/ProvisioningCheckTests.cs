@@ -680,6 +680,44 @@ public sealed class ProvisioningCheckTests : IDisposable
         Assert.False(needs.NeedsTestApps);
     }
 
+    [Fact]
+    public void DetermineManifestNeeds_TestsTestLibrariesDependency_AlsoNeedsPlatform()
+    {
+        // Issue #2073: a bundle depending on "Tests-TestLibraries" (already recognized as a
+        // test-framework root, hence NeedsTestApps) never names "Application Test Library"
+        // directly — but Tests-TestLibraries' OWN manifest declares it as a dependency
+        // (confirmed via the real Microsoft NavxManifest.xml, v28.1.49838.53910:
+        // <Dependency Id="d852d5d2-a39d-4179-baeb-f99a19e32510" Name="Application Test
+        // Library" Publisher="Microsoft" .../> — the exact AppId the issue's "Missing:"
+        // error names). Before the fix this root produced NeedsPlatformApps == false, so
+        // `provision` reported "already present" and downloaded nothing.
+        var roots = new[]
+        {
+            new DependencyRef(Guid.NewGuid(), "Tests-TestLibraries", "Microsoft", new Version(28, 1, 0, 0)),
+        };
+        var needs = ProvisioningCheck.DetermineManifestNeeds(roots);
+        Assert.True(needs.NeedsPlatformApps);
+        Assert.True(needs.NeedsTestApps);
+    }
+
+    [Fact]
+    public void DetermineManifestNeeds_TestsTestLibrariesDependency_ImpliesDownloadWhenAbsent()
+    {
+        // The end-to-end shape of the issue's repro: a bundle naming only
+        // "Tests-TestLibraries", with an empty package cache (nothing provisioned yet).
+        // DecideManifestProvisioning must say a platform-apps download is needed — this is
+        // the pure decision `provision`'s "platform R2R apps already present" message was
+        // wrongly skipping.
+        var roots = new[]
+        {
+            new DependencyRef(Guid.NewGuid(), "Tests-TestLibraries", "Microsoft", new Version(28, 1, 0, 0)),
+        };
+        var legacyReport = ProvisioningCheck.CheckPlatformApps("28.1.49838.50794", Array.Empty<string>());
+        var decision = ProvisioningCheck.DecideManifestProvisioning(roots, legacyReport, Array.Empty<string>());
+        Assert.True(decision.NeedsPlatformApps);
+        Assert.True(decision.ShouldDownloadPlatform);
+    }
+
     // ── NoFallbackPlatformAppsPresent ──────────────────────────────────────────
     // Deliberately narrower than "all curated platform apps present": System/Base
     // Application and Business Foundation have a service-tier DLL dispatch fallback (the
@@ -1056,5 +1094,56 @@ public sealed class ProvisioningCheckTests : IDisposable
 
         Assert.True(decision.PlatformComplete);
         Assert.False(decision.ShouldDownloadPlatform);
+    }
+
+    // ── ResolveProvisionMajorMinor / BuildProvisionVersionSkewNote (issue #2077) ──────────
+    // `--bc-version 28.4` was observed provisioning 28.1 platform apps because the
+    // provisioning minor used to be DERIVED from whatever was already in the package cache
+    // (a project's committed `.alpackages`, or a stale symbol-only app) instead of the BC
+    // version the run had already selected. These prove the decision in isolation, and the
+    // loud note the fix emits when the cache disagrees with the selection.
+
+    [Fact]
+    public void ResolveProvisionMajorMinor_AlwaysUsesSelectedVersion_IgnoresCache()
+    {
+        // The exact repro shape: engine/selection is 28.4, regardless of anything found on
+        // disk elsewhere — this function takes no cache input at all, by design.
+        var mm = ProvisioningCheck.ResolveProvisionMajorMinor("28.4.53241.53989");
+        Assert.Equal("28.4", mm);
+    }
+
+    [Fact]
+    public void ResolveProvisionMajorMinor_ShortVersion_ReturnedAsIs()
+    {
+        var mm = ProvisioningCheck.ResolveProvisionMajorMinor("28");
+        Assert.Equal("28", mm);
+    }
+
+    [Fact]
+    public void BuildProvisionVersionSkewNote_CacheAgrees_ReturnsNull()
+    {
+        var note = ProvisioningCheck.BuildProvisionVersionSkewNote("28.4", "28.4", "platform apps in cache");
+        Assert.Null(note);
+    }
+
+    [Fact]
+    public void BuildProvisionVersionSkewNote_CacheDisagrees_NamesBothVersionsLoudly()
+    {
+        // The Pageworks.Bench repro: selected 28.4, but the bundle's committed
+        // `.alpackages` vendors a 28.1 symbol closure. The note must name BOTH versions —
+        // a vague "version mismatch" would not tell a reader which one actually got used.
+        var note = ProvisioningCheck.BuildProvisionVersionSkewNote(
+            "28.4", "28.1", "platform apps already in the package cache");
+        Assert.NotNull(note);
+        Assert.Contains("28.1", note);
+        Assert.Contains("28.4", note);
+        Assert.Contains("SELECTED", note);
+    }
+
+    [Fact]
+    public void BuildProvisionVersionSkewNote_CaseInsensitiveAgreement_ReturnsNull()
+    {
+        var note = ProvisioningCheck.BuildProvisionVersionSkewNote("28.4", "28.4", "x");
+        Assert.Null(note);
     }
 }

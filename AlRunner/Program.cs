@@ -1132,17 +1132,29 @@ if (!provisionSubcommand)
 
     if (autoProvision && decision.ShouldDownloadAny)
     {
-        // Resolve ONE target full version and reuse it for both artifact sets — avoids
-        // resolving two different minors for what should be the same provisioning pass.
-        // Priority: (a) the missing/symbol-only platform apps carry their OWN version
-        // (the engine is version-agnostic w.r.t. the R2R apps it dispatches to at
-        // runtime, so this can be a different minor than the engine's SelectedVersion);
-        // (b) else derive from whatever platform app IS already present in the cache
-        // (only the toolkit — or a manifest-only need — is missing); (c) else fall back
-        // to the engine's own version.
-        var mm = !platformReport.Ok
-            ? AlRunner.Infrastructure.ProvisioningCheck.DeriveProvisionMajorMinor(platformReport, version)
-            : AlRunner.Infrastructure.ProvisioningCheck.DerivePresentPlatformMajorMinor(PlatformCheckDirs(), version);
+        // Issue #2077: always target the SELECTED BC version's own major.minor — never one
+        // derived from cache contents (a symbol-only app, or a project-vendored
+        // `.alpackages` closure) as this used to. That derivation silently redirected the
+        // whole provisioning pass to whatever minor happened to already be on disk (e.g.
+        // `--bc-version 28.4` provisioning 28.1 platform apps because the bundle's own
+        // committed `.alpackages` vendors 28.1 symbols) — the engine ended up running R2R
+        // apps from a build nobody asked for, with the mismatch never stated.
+        var mm = AlRunner.Infrastructure.ProvisioningCheck.ResolveProvisionMajorMinor(version);
+        {
+            // Loud mismatch note (acceptance criterion): tell the user when the cache would
+            // have suggested a DIFFERENT minor than the one actually being provisioned, even
+            // though we no longer act on that suggestion.
+            var cacheMm = !platformReport.Ok
+                ? AlRunner.Infrastructure.ProvisioningCheck.DeriveProvisionMajorMinor(platformReport, version)
+                : AlRunner.Infrastructure.ProvisioningCheck.DerivePresentPlatformMajorMinor(PlatformCheckDirs(), version);
+            var skewNote = AlRunner.Infrastructure.ProvisioningCheck.BuildProvisionVersionSkewNote(
+                mm, cacheMm,
+                !platformReport.Ok
+                    ? "a symbol-only platform app already in the package cache"
+                    : "platform apps already in the package cache");
+            if (skewNote != null)
+                Console.Error.WriteLine(skewNote);
+        }
         // AC #4/#5: prefer a version ALREADY cached (any patch of this major.minor) whose
         // needed set(s) are complete, before ever asking the CDN for "latest" — otherwise a
         // warm machine re-resolves and re-downloads a NEWER patch on every single run.
@@ -6393,13 +6405,32 @@ static void EnsurePlatformAppsProvisioned(string engineVersion, List<string> bun
         manifestDependencyRoots, platformReport, bundleAlpackagesDirs);
     if (!decision.ShouldDownloadPlatform)
     {
-        Console.Error.WriteLine("[provision] platform R2R apps already present for the target bundle(s).");
+        // Issue #2073: "already present" is only true when something was actually VERIFIED
+        // present — a bundle that was simply determined not to need the set at all (the
+        // manifest names nothing platform-only) never checked presence, so claiming
+        // presence for it is a silent wrong answer under .claude/rules/loud-failures.md.
+        Console.Error.WriteLine(decision.NeedsPlatformApps
+            ? "[provision] platform R2R apps already present for the target bundle(s)."
+            : "[provision] target bundle(s) do not need the platform R2R apps set — nothing to provision.");
         return;
     }
 
-    var mm = !platformReport.Ok
-        ? AlRunner.Infrastructure.ProvisioningCheck.DeriveProvisionMajorMinor(platformReport, engineVersion)
-        : AlRunner.Infrastructure.ProvisioningCheck.DerivePresentPlatformMajorMinor(bundleAlpackagesDirs, engineVersion);
+    // Issue #2077: always target the SELECTED engine version's own major.minor — never one
+    // derived from cache contents, which used to silently redirect the download to whatever
+    // minor happened to already be vendored in the bundle's own `.alpackages`.
+    var mm = AlRunner.Infrastructure.ProvisioningCheck.ResolveProvisionMajorMinor(engineVersion);
+    {
+        var cacheMm = !platformReport.Ok
+            ? AlRunner.Infrastructure.ProvisioningCheck.DeriveProvisionMajorMinor(platformReport, engineVersion)
+            : AlRunner.Infrastructure.ProvisioningCheck.DerivePresentPlatformMajorMinor(bundleAlpackagesDirs, engineVersion);
+        var skewNote = AlRunner.Infrastructure.ProvisioningCheck.BuildProvisionVersionSkewNote(
+            mm, cacheMm,
+            !platformReport.Ok
+                ? "a symbol-only platform app already in the bundle's package cache"
+                : "platform apps already in the bundle's package cache");
+        if (skewNote != null)
+            Console.Error.WriteLine(skewNote);
+    }
     var platformFull = AlRunner.Provisioning.ArtifactDownloader.ResolveVersion(
         mm, m => Console.Error.WriteLine($"[provision] {m}"));
     if (platformFull == null)
