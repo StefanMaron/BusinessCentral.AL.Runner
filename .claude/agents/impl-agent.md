@@ -139,8 +139,8 @@ gh pr edit <pr-N> --add-label "agent: <AGENT-ID>" --add-label "status: review-re
 
 ## Step 5 — Monitor until merged
 
-See `.claude/rules/pr-ci-monitoring.md` and `.claude/rules/ci-verdicts.md` for
-the full guidance — "PR opened" is not the deliverable, drive it to merge.
+See `.claude/rules/ci-verdicts.md` for the full guidance — "PR opened" is not
+the deliverable, drive it to merge.
 
 ```
 gh pr view <pr-N> --json mergeStateStatus --repo StefanMaron/BusinessCentral.AL.Runner

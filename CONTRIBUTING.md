@@ -181,8 +181,7 @@ All loaded automatically by `.claude/` in agent sessions. Read them once:
 - `.claude/rules/github-access.md` — `gh` is absent in web/remote sessions; detect and fall back to `mcp__github__*`.
 - `.claude/rules/bc-behavior-tests-go-upstream.md` — a test of plain BC behaviour goes upstream in the corpus, never `tests/runner-extras/`.
 - `.claude/rules/no-git-stash-with-worktrees.md` — the stash is shared across every worktree; never use it here.
-- `.claude/rules/ci-verdicts.md` — a CI verdict is per-commit-SHA; never re-run a failed job; "unrelated flake" needs evidence.
+- `.claude/rules/ci-verdicts.md` — check merge conflicts before CI status; a verdict is per-commit-SHA; never re-run a failed job; "unrelated flake" needs evidence; drive a PR to merge, don't stop at "opened".
 - `.claude/rules/local-test-scope.md` — run the tests your change touches locally; the full suite/corpus is CI's job.
 - `.claude/rules/no-backgrounding-long-commands.md` — a backgrounded process dies with your turn; run long commands in the foreground.
-- `.claude/rules/pr-ci-monitoring.md` — check merge conflicts before CI status; drive a PR to merge, don't stop at "opened".
 - `.claude/rules/public-posting-approval.md` — filing issues on this repo needs no approval; comments, PR review comments, and anything on another repo do.
