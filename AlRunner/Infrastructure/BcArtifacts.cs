@@ -32,9 +32,9 @@ public static class BcArtifacts
     /// <summary>
     /// The tool-install-valid, one-command fix — works identically whether the runner
     /// came from `dotnet tool install` or a source checkout. This is the PRIMARY
-    /// recommendation in every provisioning-gap message: unlike
-    /// <see cref="DownloadCommand"/>, it names no path that only exists in this repo's
-    /// own source tree.
+    /// recommendation in every provisioning-gap message: unlike the old
+    /// `tools/DownloadArtifacts` fallback, it names no path that only exists in this
+    /// repo's own source tree.
     /// </summary>
     public static string ProvisionHint(string? versionPrefix = null)
         => versionPrefix == null
@@ -42,14 +42,16 @@ public static class BcArtifacts
             : $"al-runner provision --bc-version {versionPrefix}   (or re-run your command with --auto-provision)";
 
     /// <summary>
-    /// The manual, repo-checkout-only fallback: invokes `tools/DownloadArtifacts` directly.
-    /// That project ships only as source in this repo — it is NOT part of the packaged
-    /// `dotnet tool install` output — so this command is only valid from a checkout, never
-    /// for a tool install. Callers must always pair it with <see cref="ProvisionHint"/> as
-    /// the primary, universally-valid recommendation.
+    /// The explicit, force-a-specific-download fallback: `provision --service-tier`
+    /// (issue #2085). Unlike the old `dotnet run --project tools/DownloadArtifacts --
+    /// service-tier` this replaced — which required a source checkout of this repo, so it
+    /// was a dead end for anyone who reached it via `dotnet tool install` — this is a
+    /// subcommand on the SAME binary printing the message, so it always works. Bypasses
+    /// need-detection and resolves its own canonical output directory, so no directory
+    /// argument is needed here (kept as a parameter for the version only).
     /// </summary>
-    public static string DownloadCommand(System.Version ver, string dir)
-        => $"dotnet run --project tools/DownloadArtifacts -- service-tier {ver} \"{dir}\"";
+    public static string DownloadCommand(System.Version ver)
+        => $"al-runner provision --service-tier --bc-version {ver} --force";
 
     private static System.Version? _selectedVersion;
     private static string? _selectedRoot;
@@ -164,7 +166,7 @@ public static class BcArtifacts
             throw new InvalidOperationException(
                 $"BC artifact root not found: {rootDir}. No artifacts are downloaded — resolve it ONE of these ways: " +
                 $"(a) {ProvisionHint()}; " +
-                $"(b) manually, repo checkout only: {DownloadCommand(new System.Version(28, 1), rootDir)}");
+                $"(b) {DownloadCommand(new System.Version(28, 1))}");
 
         var candidates = Directory.EnumerateDirectories(rootDir)
             .Select(d => (Dir: d, Name: Path.GetFileName(d),
@@ -177,7 +179,7 @@ public static class BcArtifacts
             throw new InvalidOperationException(
                 $"BC artifact root {rootDir} contains no version-named directories. Resolve it ONE of these ways: " +
                 $"(a) {ProvisionHint()}; " +
-                $"(b) manually, repo checkout only: {DownloadCommand(new System.Version(28, 1), rootDir)}");
+                $"(b) {DownloadCommand(new System.Version(28, 1))}");
 
         if (requestedVersionOrNull == null)
             return candidates[0].Dir;
@@ -193,8 +195,7 @@ public static class BcArtifacts
                 $"No BC artifact under {rootDir} matches version '{requestedVersionOrNull}'. " +
                 $"Available: {available}. Resolve it ONE of these ways: " +
                 $"(a) {ProvisionHint(prefix)}; " +
-                $"(b) manually, repo checkout only: " +
-                $"{DownloadCommand(System.Version.TryParse(EnsureFourPart(prefix), out var pv) ? pv : new System.Version(28, 1), rootDir)}");
+                $"(b) {DownloadCommand(System.Version.TryParse(EnsureFourPart(prefix), out var pv) ? pv : new System.Version(28, 1))}");
         }
         return match.Dir;
     }

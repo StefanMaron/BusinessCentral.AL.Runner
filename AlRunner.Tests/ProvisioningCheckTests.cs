@@ -91,8 +91,12 @@ public sealed class ProvisioningCheckTests : IDisposable
 
         // Every missing item's FULL path is named (human/agent can act).
         Assert.Contains(Path.Combine(_dir, "Microsoft.Dynamics.Nav.Ncl.dll"), msg);
-        // The exact manual download command, with version and target dir.
-        Assert.Contains("service-tier 28.2.50931.52786", msg);
+        // The exact manual command, with version — issue #2085: this must be the
+        // tool-install-valid `provision --service-tier` subcommand, never
+        // `dotnet run --project tools/DownloadArtifacts`, which requires a source checkout
+        // a `dotnet tool install` user never has.
+        Assert.Contains("al-runner provision --service-tier --bc-version 28.2.50931.52786", msg);
+        Assert.DoesNotContain("dotnet run --project", msg);
         Assert.Contains(_dir, msg);
         // The one-command auto-resolve, targeting the project.
         Assert.Contains("al-runner provision", msg);

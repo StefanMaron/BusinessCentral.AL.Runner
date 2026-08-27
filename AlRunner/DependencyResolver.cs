@@ -281,7 +281,7 @@ public sealed class DependencyResolver
                         + "\n      have a member with that ID\". Provision a package that carries an"
                         + "\n      implementation — `al-runner provision`, or re-run with --auto-provision;"
                         + "\n      for the Microsoft test toolkit specifically:"
-                        + $"\n        dotnet run --project tools/DownloadArtifacts -- test-apps {best.Manifest.Version} \"<dir>\"");
+                        + $"\n        al-runner provision --test-apps --bc-version {best.Manifest.Version}");
                 }
                 else
                     _diagnostics.Add(

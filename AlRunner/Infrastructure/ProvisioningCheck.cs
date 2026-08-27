@@ -109,12 +109,12 @@ public static class ProvisioningCheck
             lines.Add("        al-runner provision");
             lines.Add("      or re-run with --auto-provision.");
             lines.Add("");
-            lines.Add("  (b) Download Microsoft platform apps only:");
+            lines.Add("  (b) Force-download Microsoft platform apps only:");
             // Use the FIRST missing app's own real version — not a truncation of Version
             // (the engine version), which can be a different minor and would 404 against
             // the artifact CDN (it needs a FULL artifact version, e.g. 28.2.50931.52786).
             var suggestVer = Issues.Count > 0 ? Issues[0].AppVersion : "<full-version, e.g. 28.2.50931.52786>";
-            lines.Add($"        dotnet run --project tools/DownloadArtifacts -- platform-apps {suggestVer} \"<package-cache-dir>\"");
+            lines.Add($"        al-runner provision --platform-apps --bc-version {suggestVer}");
             return string.Join(Environment.NewLine, lines);
         }
     }
@@ -279,7 +279,7 @@ public static class ProvisioningCheck
             // Suggest the APP's own version, not bcVersion (the engine's) — the engine is
             // version-agnostic w.r.t. the R2R apps it dispatches to, so these can differ
             // (e.g. engine 28.1 running 28.2 R2R apps); using bcVersion here would 404.
-            $"    dotnet run --project tools/DownloadArtifacts -- platform-apps {appVersion} \"<package-cache-dir>\"",
+            $"    al-runner provision --platform-apps --bc-version {appVersion}",
         });
     }
 
@@ -750,11 +750,11 @@ public static class ProvisioningCheck
         lines.Add("        al-runner provision");
         lines.Add("      or re-run with --auto-provision.");
         lines.Add("");
-        lines.Add("  (b) Download manually:");
+        lines.Add("  (b) Force-download a specific set:");
         if (needsPlatform)
-            lines.Add("        dotnet run --project tools/DownloadArtifacts -- platform-apps <full-version> \"<package-cache-dir>\"");
+            lines.Add("        al-runner provision --platform-apps --bc-version <full-version>");
         if (needsTest)
-            lines.Add("        dotnet run --project tools/DownloadArtifacts -- test-apps <full-version> \"<package-cache-dir>\"");
+            lines.Add("        al-runner provision --test-apps --bc-version <full-version>");
         return string.Join(Environment.NewLine, lines);
     }
 
@@ -788,8 +788,8 @@ public static class ProvisioningCheck
             lines.Add($"        al-runner provision{provisionTarget}");
             lines.Add($"      or re-run your command with --auto-provision.");
             lines.Add("");
-            lines.Add("  (b) Manually — fetch the full service-tier closure for this version:");
-            lines.Add($"        dotnet run --project tools/DownloadArtifacts -- service-tier {Version} \"{ServiceTierDir}\"");
+            lines.Add("  (b) Force-download the full service-tier closure for this version:");
+            lines.Add($"        al-runner provision --service-tier --bc-version {Version}");
             lines.Add("");
             lines.Add("  (c) Point the runner at an existing artifact dir with --artifact-path <dir>,");
             lines.Add("      or select a different cached version with --bc-version <ver>.");

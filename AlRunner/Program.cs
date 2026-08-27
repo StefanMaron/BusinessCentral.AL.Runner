@@ -339,9 +339,28 @@ string? countBaselinePath = null;
 // back-compat with existing scripts/docs that already pass it.
 bool provisionSubcommand = args.Length > 0 && args[0] == "provision";
 bool autoProvision = true;
+// Issue #2085: `provision --platform-apps` / `--test-apps` / `--service-tier` [--force]
+// force-download ONE specific artifact set into its canonical directory, bypassing
+// need-detection entirely. This is the tool-install-valid replacement for
+// `dotnet run --project tools/DownloadArtifacts -- <mode> <ver> <dir>`, which requires a
+// source checkout that a `dotnet tool install -g` user never has — see the issue for the
+// measured dead-end. `--resolve-version PREFIX` mirrors the CLI's `resolve-version` mode.
+// All four are only meaningful under the `provision` subcommand; validated below.
+bool provisionPlatformApps = false;
+bool provisionTestApps = false;
+bool provisionServiceTier = false;
+bool provisionForce = false;
+string? provisionResolveVersionPrefix = null;
+bool provisionHelp = false;
 for (int i = 0; i < args.Length; i++)
 {
     if (i == 0 && args[i] == "provision") { continue; } // consumed as subcommand
+    if (provisionSubcommand && (args[i] == "--help" || args[i] == "-h")) { provisionHelp = true; continue; }
+    if (args[i] == "--platform-apps") { provisionPlatformApps = true; continue; }
+    if (args[i] == "--test-apps") { provisionTestApps = true; continue; }
+    if (args[i] == "--service-tier") { provisionServiceTier = true; continue; }
+    if (args[i] == "--force") { provisionForce = true; continue; }
+    if (args[i] == "--resolve-version" && i + 1 < args.Length) { provisionResolveVersionPrefix = args[++i]; continue; }
     if (args[i] == "--auto-provision") { autoProvision = true; continue; }
     if (args[i] == "--no-auto-provision") { autoProvision = false; continue; }
     if (args[i] == "--bc-version" && i + 1 < args.Length) { bcVersionArg = args[++i]; continue; }
@@ -446,6 +465,46 @@ if (serverMode && watchMode)
 {
     Console.Error.WriteLine("--server and --watch are mutually exclusive (both stay warm in-process; pick one).");
     return 2;
+}
+// Issue #2085: --platform-apps/--test-apps/--service-tier/--resolve-version only make
+// sense under the `provision` subcommand (they force/bypass a specific artifact-set
+// download; a normal test run has no use for them). Reject early rather than silently
+// accepting-and-ignoring, which would look like support that isn't there.
+if (!provisionSubcommand && (provisionPlatformApps || provisionTestApps || provisionServiceTier
+    || provisionResolveVersionPrefix != null))
+{
+    var badFlag = provisionPlatformApps ? "--platform-apps"
+        : provisionTestApps ? "--test-apps"
+        : provisionServiceTier ? "--service-tier"
+        : "--resolve-version";
+    Console.Error.WriteLine($"{badFlag} is only valid with the `provision` subcommand (e.g. `al-runner provision {badFlag}`).");
+    return 2;
+}
+if (!provisionSubcommand && provisionForce)
+{
+    Console.Error.WriteLine("--force is only valid with `provision --platform-apps` / `--test-apps` / `--service-tier`.");
+    return 2;
+}
+// `al-runner provision --help`: subcommands must accept --help like everything else —
+// previously this fell through to the generic arg-parser and answered "Unknown option
+// '--help'. Run with --help for the supported flags.", which tells the caller to run the
+// exact command it just ran. Handled before any BC type loads, same as the top-level
+// --help/--guide fast paths.
+if (provisionHelp)
+{
+    PrintProvisionHelp(Console.Out);
+    return 0;
+}
+// `provision --resolve-version PREFIX` / `--platform-apps` / `--test-apps` / `--service-tier`:
+// force a specific artifact set, bypassing need-detection, and exit — never reaches the
+// bundle/version-auto-select machinery below (none of it applies: there's no run to size a
+// BC selection for). Handled here, before the shadow-re-exec / BcArtifacts.SelectVersion
+// machinery further down, so it works even with a completely empty artifacts cache.
+if (provisionSubcommand && (provisionPlatformApps || provisionTestApps || provisionServiceTier
+    || provisionResolveVersionPrefix != null))
+{
+    return RunExplicitProvisionModes(bcVersionArg, bundles, provisionPlatformApps, provisionTestApps,
+        provisionServiceTier, provisionForce, provisionResolveVersionPrefix);
 }
 // --tdd (issue #1997) only changes the bundled-mode CLI run loop's EMIT-EXCLUDED
 // handling (Program.cs, below). --server has its own, separate EMIT-EXCLUDED guard
@@ -4958,7 +5017,22 @@ static void PrintHelp(TextWriter w)
     w.WriteLine("  provision [<bundle-dir>] Download and install the BC artifacts matching the");
     w.WriteLine("                          project's version, then exit without running tests.");
     w.WriteLine("                          This is the supported way to obtain artifacts on a");
-    w.WriteLine("                          fresh machine.");
+    w.WriteLine("                          fresh machine — including a plain `dotnet tool install`");
+    w.WriteLine("                          with no source checkout. Run `al-runner provision --help`");
+    w.WriteLine("                          for its full flag list, or use one of:");
+    w.WriteLine("                            --platform-apps [--bc-version V] [--force]");
+    w.WriteLine("                                          Force-download Microsoft's platform .app");
+    w.WriteLine("                                          set into the canonical dir, bypassing");
+    w.WriteLine("                                          need-detection.");
+    w.WriteLine("                            --test-apps [--bc-version V] [--force]");
+    w.WriteLine("                                          Same, for the Microsoft test-toolkit set.");
+    w.WriteLine("                            --service-tier [--bc-version V] [--force]");
+    w.WriteLine("                                          Same, for the BC engine's service-tier DLLs.");
+    w.WriteLine("                            --resolve-version PREFIX");
+    w.WriteLine("                                          Print the latest full BC version for a");
+    w.WriteLine("                                          prefix (e.g. \"28.4\") to stdout.");
+    w.WriteLine("                          --force re-downloads even when the target directory");
+    w.WriteLine("                          already looks populated (default: leave it alone).");
     w.WriteLine("  --precompile <input.app> --out <output.dll> [--package-cache PATH ...]");
     w.WriteLine("                          Compile a single .app to a managed DLL without running");
     w.WriteLine("                          tests. Useful for pre-warming caches.");
@@ -5032,6 +5106,58 @@ static void PrintHelp(TextWriter w)
     w.WriteLine("  docs/limitations.md          architectural limits");
     w.WriteLine("  docs/cecil-migration.md      Cecil rewrite strategy");
     w.WriteLine("  docs/subsystems.md           subsystem map");
+}
+
+// Issue #2085: `provision --help` used to fall through to the generic arg-parser's
+// unknown-flag error ("Unknown option '--help'. Run with --help for the supported
+// flags.") — telling the caller to run the exact thing it just ran. Every subcommand
+// must answer --help, not just the top level.
+static void PrintProvisionHelp(TextWriter w)
+{
+    w.WriteLine("al-runner provision — download and install BC artifacts. Every form below works");
+    w.WriteLine("from a plain `dotnet tool install -g msdyn365bc.al.runner`; none require a source");
+    w.WriteLine("checkout of this repository.");
+    w.WriteLine();
+    w.WriteLine("USAGE");
+    w.WriteLine("  al-runner provision [<bundle-dir>]");
+    w.WriteLine("  al-runner provision --platform-apps [--bc-version V] [--force]");
+    w.WriteLine("  al-runner provision --test-apps [--bc-version V] [--force]");
+    w.WriteLine("  al-runner provision --service-tier [--bc-version V] [--force]");
+    w.WriteLine("  al-runner provision --resolve-version PREFIX");
+    w.WriteLine("  al-runner provision --help");
+    w.WriteLine();
+    w.WriteLine("OPTIONS");
+    w.WriteLine("  [<bundle-dir>]          With no mode flag: provision everything the named");
+    w.WriteLine("                          bundle's app.json needs (engine closure + platform apps");
+    w.WriteLine("                          + test toolkit, whichever are missing) and exit. This is");
+    w.WriteLine("                          the default `provision` behavior and what a provisioning-");
+    w.WriteLine("                          gap error's \"(a) One command (recommended)\" fix means.");
+    w.WriteLine("  --bc-version V          Target BC version (a prefix like \"28.4\" or a full");
+    w.WriteLine("                          4-part version). Default: this binary's own built");
+    w.WriteLine("                          engine version, or the target bundle's app.json.");
+    w.WriteLine("  --platform-apps         Force-download Microsoft's platform .app set (Base");
+    w.WriteLine("                          Application / System Application / Business Foundation /");
+    w.WriteLine("                          Application / Application Test Library) into the");
+    w.WriteLine("                          canonical <artifacts>/<version>/platform-apps directory,");
+    w.WriteLine("                          bypassing need-detection entirely.");
+    w.WriteLine("  --test-apps             Force-download the Microsoft test-toolkit .app set");
+    w.WriteLine("                          (Library Assert, Test Runner, Any, Tests-TestLibraries, …)");
+    w.WriteLine("                          into <artifacts>/<version>/test-apps, bypassing");
+    w.WriteLine("                          need-detection entirely.");
+    w.WriteLine("  --service-tier          Force-download the BC engine's ~55-DLL service-tier");
+    w.WriteLine("                          closure into <artifacts>/<version>, bypassing");
+    w.WriteLine("                          need-detection entirely.");
+    w.WriteLine("  --force                 With --platform-apps/--test-apps/--service-tier: re-run");
+    w.WriteLine("                          the download even if the canonical directory already");
+    w.WriteLine("                          contains files. Without it, a populated directory is");
+    w.WriteLine("                          left alone and nothing is re-downloaded.");
+    w.WriteLine("  --resolve-version PREFIX");
+    w.WriteLine("                          Resolve a BC version prefix (e.g. \"28.4\") to the latest");
+    w.WriteLine("                          full version published on the CDN and print it to stdout.");
+    w.WriteLine("  --help, -h              Print this text and exit 0.");
+    w.WriteLine();
+    w.WriteLine("--platform-apps/--test-apps/--service-tier/--resolve-version may be combined in");
+    w.WriteLine("one invocation (each named set is fetched); --force applies to all of them.");
 }
 
 static int RunPrecompile(string[] subArgs)
@@ -6309,6 +6435,129 @@ static string? TryDeriveBcMajorFromProject(IEnumerable<string> bundlePaths)
         catch { /* unparseable manifest — fall through to next bundle / latest-in-cache */ }
     }
     return null;
+}
+
+// Issue #2085: `al-runner provision --platform-apps|--test-apps|--service-tier [--force]`
+// — a tool-install-valid replacement for `dotnet run --project tools/DownloadArtifacts --
+// <mode> <ver> <dir>`, whose whole body is a switch over the same
+// AlRunner.Provisioning.ArtifactDownloader methods this calls. That project ships only as
+// source (never part of a packaged `dotnet tool install`), so a user without a checkout had
+// no way to reach it. Downloads straight into the canonical directory each mode already
+// resolves to at runtime (BcArtifacts.ArtifactDirFor / ProvisioningCheck.PlatformAppsDirFor /
+// TestAppsDirFor) — no need-detection, no bundle scan, just "fetch this set for this
+// version." `--force` re-downloads even when the directory already looks populated;
+// without it, a populated directory is left alone (mirrors EnsureTestToolkitProvisioned's
+// existing "already present" short-circuit).
+static int RunExplicitProvisionModes(string? bcVersionArg, List<string> bundles,
+    bool platformApps, bool testApps, bool serviceTier, bool force, string? resolveVersionPrefix)
+{
+    if (resolveVersionPrefix != null)
+    {
+        var resolved = AlRunner.Provisioning.ArtifactDownloader.ResolveVersion(
+            resolveVersionPrefix, m => Console.Error.WriteLine($"[provision] {m}"));
+        if (resolved == null)
+        {
+            Console.Error.WriteLine($"[provision] could not resolve a full BC version for prefix '{resolveVersionPrefix}'.");
+            return 1;
+        }
+        Console.WriteLine(resolved); // stdout for script/agent consumption, mirrors tools/DownloadArtifacts
+        return 0;
+    }
+
+    var full = ResolveFullVersionForExplicitProvision(bcVersionArg, bundles);
+    if (full == null)
+        return 1; // the resolver already printed a loud, named reason
+
+    bool anyFailed = false;
+    if (serviceTier)
+    {
+        var dir = AlRunner.Infrastructure.BcArtifacts.ArtifactDirFor(full);
+        anyFailed |= ForceProvisionMode("BC service-tier engine DLLs", dir, full, force, "*.dll",
+            (v, d, log) => AlRunner.Provisioning.ArtifactDownloader.ServiceTier(v, d, log)) != 0;
+    }
+    if (platformApps)
+    {
+        var dir = AlRunner.Infrastructure.ProvisioningCheck.PlatformAppsDirFor(
+            AlRunner.Infrastructure.BcArtifacts.ArtifactsRootDir, full);
+        anyFailed |= ForceProvisionMode("Microsoft platform apps", dir, full, force, "*.app",
+            (v, d, log) => AlRunner.Provisioning.ArtifactDownloader.PlatformApps(v, d, log)) != 0;
+    }
+    if (testApps)
+    {
+        var dir = TestAppsDirFor(full);
+        anyFailed |= ForceProvisionMode("Microsoft test-toolkit apps", dir, full, force, "*.app",
+            (v, d, log) => AlRunner.Provisioning.ArtifactDownloader.TestApps(v, d, log)) != 0;
+    }
+    return anyFailed ? 1 : 0;
+}
+
+// Shared by every explicit provision mode: skip the download when the canonical directory
+// already contains at least one file matching <paramref name="expectedGlob"/> (unless
+// --force), otherwise run <paramref name="download"/> and report success/failure. Named
+// per-mode so the log lines read like the rest of `[provision]` output, not a generic
+// "done"/"failed".
+static int ForceProvisionMode(string label, string outputDir, string fullVersion, bool force,
+    string expectedGlob, Func<string, string, Action<string>, int> download)
+{
+    if (!force && Directory.Exists(outputDir) && Directory.EnumerateFiles(outputDir, expectedGlob).Any())
+    {
+        Console.Error.WriteLine($"[provision] {label} already present at {outputDir} for BC {fullVersion} — skipping (pass --force to re-download).");
+        return 0;
+    }
+    Console.Error.WriteLine($"[provision] fetching {label} for BC {fullVersion} → {outputDir}");
+    try
+    {
+        var rc = download(fullVersion, outputDir, m => Console.Error.WriteLine($"[provision] {m}"));
+        if (rc != 0)
+            Console.Error.WriteLine($"[provision] warning: {label} download failed for BC {fullVersion}.");
+        return rc;
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"[provision] warning: {label} download failed for BC {fullVersion}: {ex.Message}");
+        return 1;
+    }
+}
+
+// Resolves the full 4-part BC version to target for an EXPLICIT provision mode
+// (--platform-apps/--test-apps/--service-tier). Deliberately mirrors RunProvisioning's own
+// resolution (explicit --bc-version, else the engine's own major, else the target bundle's
+// app.json major; prefer an already-cached matching version, else resolve the latest full
+// version from the CDN) — kept as a separate small function rather than sharing
+// RunProvisioning's inline block because that block's own success message ("verifying
+// completeness") describes what RunProvisioning does NEXT (an engine-closure completeness
+// check), which does not apply here.
+static string? ResolveFullVersionForExplicitProvision(string? bcVersionArg, List<string> bundles)
+{
+    if (bcVersionArg != null && System.Version.TryParse(bcVersionArg, out var maybeFull) && maybeFull.Revision >= 0
+        && bcVersionArg.Split('.').Length == 4)
+        return bcVersionArg; // an explicit 4-part version — target exactly that
+
+    var prefix = bcVersionArg
+        ?? AlRunner.Infrastructure.BcArtifacts.EngineMajor(AppContext.BaseDirectory)?.ToString()
+        ?? TryDeriveBcMajorFromProject(bundles);
+    if (prefix == null)
+    {
+        Console.Error.WriteLine("[provision] cannot determine which BC version to provision — pass " +
+            "--bc-version <ver> (no --bc-version, no engine in bin, and no readable project app.json).");
+        return null;
+    }
+    try
+    {
+        var cachedDir = AlRunner.Infrastructure.BcArtifacts.SelectArtifactVersionDir(
+            AlRunner.Infrastructure.BcArtifacts.ArtifactsRootDir, prefix);
+        var full = Path.GetFileName(cachedDir);
+        Console.Error.WriteLine($"[provision] found cached BC {full} for prefix '{prefix}'.");
+        return full;
+    }
+    catch (InvalidOperationException)
+    {
+        Console.Error.WriteLine($"[provision] no cached BC {prefix}.x — resolving latest full version from the CDN...");
+        var full = AlRunner.Provisioning.ArtifactDownloader.ResolveVersion(prefix);
+        if (full == null)
+            Console.Error.WriteLine($"[provision] could not resolve a full BC version for prefix '{prefix}'.");
+        return full;
+    }
 }
 
 // Provisioning driver for the `provision` subcommand / --auto-provision. Resolves the

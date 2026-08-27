@@ -50,7 +50,10 @@ public sealed class ArtifactDownloader404Tests
         Assert.False(ok);
         Assert.Equal(0, size);
         Assert.Contains(logs, l => l == "Error: no BC artifact published for 28.0.46665.47126 (w1).");
-        Assert.Contains(logs, l => l.Contains("dotnet run --project tools/DownloadArtifacts -- resolve-version 28.0"));
+        // Issue #2085: this hint must be tool-install-valid — `dotnet run --project` requires
+        // a source checkout a `dotnet tool install -g` user never has.
+        Assert.Contains(logs, l => l.Contains("al-runner provision --resolve-version 28.0"));
+        Assert.DoesNotContain(logs, l => l.Contains("dotnet run --project"));
     }
 
     [Fact]

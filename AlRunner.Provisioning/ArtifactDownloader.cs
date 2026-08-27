@@ -462,7 +462,12 @@ public static class ArtifactDownloader
             var prefix = string.Join(".", version.Split('.').Take(2));
             logf($"Error: no BC artifact published for {version} ({channel}).");
             logf("       Check the version, or resolve the latest for a prefix:");
-            logf($"         dotnet run --project tools/DownloadArtifacts -- resolve-version {prefix}");
+            // Issue #2085: this fires both from the standalone tools/DownloadArtifacts CLI
+            // (repo-checkout only) AND in-process from the shipped `al-runner` binary's own
+            // auto-provision path — a `dotnet run --project tools/DownloadArtifacts` hint
+            // here would be a dead end for anyone using the latter, which is the common
+            // case. `al-runner provision --resolve-version` works from both.
+            logf($"         al-runner provision --resolve-version {prefix}");
             size = 0;
             return false;
         }

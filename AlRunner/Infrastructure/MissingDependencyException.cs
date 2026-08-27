@@ -80,11 +80,11 @@ public sealed class MissingDependencyException : Exception
             lines.Add("        al-runner provision");
             lines.Add("      or re-run with --auto-provision.");
             lines.Add("");
-            lines.Add("  (b) Download Microsoft test-toolkit apps:");
-            lines.Add($"        dotnet run --project tools/DownloadArtifacts -- test-apps {versionHint} \"<package-cache-dir>\"");
+            lines.Add("  (b) Force-download Microsoft test-toolkit apps only:");
+            lines.Add($"        al-runner provision --test-apps --bc-version {versionHint}");
             lines.Add("");
-            lines.Add("  (c) Download Microsoft platform apps:");
-            lines.Add($"        dotnet run --project tools/DownloadArtifacts -- platform-apps {versionHint} \"<package-cache-dir>\"");
+            lines.Add("  (c) Force-download Microsoft platform apps only:");
+            lines.Add($"        al-runner provision --platform-apps --bc-version {versionHint}");
         }
         else
         {

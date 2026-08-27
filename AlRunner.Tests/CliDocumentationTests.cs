@@ -312,4 +312,44 @@ public sealed class CliDocumentationTests
         // alongside the new instructions, not be displaced by them.
         Assert.Contains("worse than none", section, StringComparison.Ordinal);
     }
+
+    /// <summary>
+    /// Issue #2085: `dotnet run --project tools/DownloadArtifacts` requires a source
+    /// checkout of this repository. A `dotnet tool install -g msdyn365bc.al.runner` user
+    /// has none — `tools/DownloadArtifacts` ships only as source, never as part of the
+    /// packaged tool — so a provisioning-gap message naming it as a fix is a dead end for
+    /// exactly the audience it's printed for (measured on the published 2.7.0: two of the
+    /// three "Resolve it" routes were unusable). `al-runner provision
+    /// --platform-apps/--test-apps/--service-tier [--force]` is the tool-install-valid
+    /// replacement every remediation message must use instead.
+    ///
+    /// Scans the actual source that BUILDS these messages, the same style as
+    /// <see cref="Help_DocumentsEveryRecognizedFlag"/>'s Program.cs scrape, rather than
+    /// driving every message site through a real provisioning-gap scenario. Comment-only
+    /// lines are excluded — they legitimately document the history/rationale (e.g. this
+    /// very test's own doc comment) — only live code lines that could actually reach a
+    /// console/exception message count.
+    /// </summary>
+    [Fact]
+    public void NoRemediationText_NamesTheCheckoutOnlyDownloadArtifactsInvocation()
+    {
+        var root = Path.Combine(RepoRoot, "AlRunner");
+        var offenders = new List<string>();
+        foreach (var file in Directory.EnumerateFiles(root, "*.cs", SearchOption.AllDirectories))
+        {
+            var lines = File.ReadAllLines(file);
+            for (int i = 0; i < lines.Length; i++)
+            {
+                var trimmed = lines[i].TrimStart();
+                if (trimmed.StartsWith("//")) continue; // comment: rationale, never emitted
+                if (lines[i].Contains("dotnet run --project", StringComparison.Ordinal))
+                    offenders.Add($"{Path.GetRelativePath(RepoRoot, file)}:{i + 1}: {lines[i].Trim()}");
+            }
+        }
+        Assert.True(offenders.Count == 0,
+            "These lines under AlRunner/ (the shipped binary's own source) build "
+            + "remediation text containing 'dotnet run --project', which requires a source "
+            + "checkout a `dotnet tool install` user never has:\n  "
+            + string.Join("\n  ", offenders));
+    }
 }
