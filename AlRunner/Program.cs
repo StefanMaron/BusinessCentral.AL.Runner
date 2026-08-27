@@ -1444,11 +1444,33 @@ var layeredWorkspaceDirs = new List<string>();
 // compile-time failure in this file does: a "<layered-deps>: COMPILE-FAIL" line on
 // stderr and the documented exit code 3 (docs/server-mode.md's "3 compilation error"
 // ladder — same code EMIT-ZERO/COMPILE-FAIL already return elsewhere in Main).
+//
+// #2095: a MissingDependencyException / DependencyVersionMismatchException reaching
+// either catch below is NOT a compile failure — it is a provisioning/version gap
+// discovered while resolving THIS pre-pass's OWN dependency closure (e.g. a sibling
+// source app's declared dep that no cache dir has, or has only too-old builds of).
+// Folding it into the generic "COMPILE-FAIL — {ex.Message}" line prints the short
+// one-liner (ex.Message) instead of the detailed, actionable ToDetailedMessage() the
+// exception already carries, and mislabels a missing/too-old package as "your AL code
+// did not compile". Special-case both (via the shared IDependencyProvisioningDiagnostic
+// marker) ahead of the generic path; every other exception keeps today's COMPILE-FAIL /
+// exit 3 behavior unchanged. Exit code 2 ("execution error" in docs/server-mode.md's
+// ladder) matches the ProvisioningCheck gap report a few hundred lines up (Program.cs,
+// the "Completeness gate" block) — same shape (bare ToDetailedMessage, no compile even
+// attempted yet) and the same exit code.
 if (bundles.Count > 1)
 {
     try
     {
         packageCacheDirs = RunLayeredPrePass(bundles, packageCacheDirs, layeredWorkspaceDirs);
+    }
+    catch (Exception ex) when (ex is AlRunner.Infrastructure.IDependencyProvisioningDiagnostic diag)
+    {
+        var bcVer = AlRunner.Infrastructure.BcArtifacts.SelectedVersion.ToString();
+        Console.Error.WriteLine();
+        Console.Error.WriteLine(diag.ToDetailedMessage(bcVer));
+        Console.Error.WriteLine();
+        return 2;
     }
     catch (Exception ex)
     {
@@ -1461,9 +1483,18 @@ if (bundles.Count > 1)
 // .app in any cache) — e.g. the corpus internalsVisibleTo fixture next to the
 // main test app. Inert when no declared dep matches a sibling source app.
 // Same unhandled-exception exposure as RunLayeredPrePass above (#1898) — same fix.
+// Same #2095 provisioning/version-gap special-case as RunLayeredPrePass above.
 try
 {
     packageCacheDirs = BuildSiblingSourceDeps(bundles, packageCacheDirs, layeredWorkspaceDirs);
+}
+catch (Exception ex) when (ex is AlRunner.Infrastructure.IDependencyProvisioningDiagnostic diag)
+{
+    var bcVer = AlRunner.Infrastructure.BcArtifacts.SelectedVersion.ToString();
+    Console.Error.WriteLine();
+    Console.Error.WriteLine(diag.ToDetailedMessage(bcVer));
+    Console.Error.WriteLine();
+    return 2;
 }
 catch (Exception ex)
 {

@@ -17,7 +17,7 @@ namespace AlRunner.Infrastructure;
 /// emit ONE loud, actionable "provisioning gap" message (not a misleading "your code is wrong"
 /// message).
 /// </summary>
-public sealed class MissingDependencyException : Exception
+public sealed class MissingDependencyException : Exception, IDependencyProvisioningDiagnostic
 {
     public string DepPublisher { get; }
     public string DepName { get; }
@@ -88,8 +88,13 @@ public sealed class MissingDependencyException : Exception
         }
         else
         {
-            lines.Add("  Add the missing package to your --package-cache directory.");
-            lines.Add("  Verify the package version satisfies the minimum declared in app.json.");
+            // Third-party (non-Microsoft) dep: the runner cannot download this from
+            // anywhere, so the fix is entirely on the reader — name the flag concretely
+            // (with an example dir) so an agent that has never used this tool can act
+            // without guessing what "--package-cache" means or where that dir usually is.
+            lines.Add("  Add the missing package to your --package-cache <dir> (usually your");
+            lines.Add("  project's .alpackages). Verify the package version satisfies the");
+            lines.Add("  minimum declared in app.json.");
         }
 
         return string.Join(Environment.NewLine, lines);

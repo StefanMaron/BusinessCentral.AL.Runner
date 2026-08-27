@@ -117,8 +117,8 @@ public sealed class DependencyResolverTests : IDisposable
 
     /// <summary>
     /// Dep requires minimum v29.0; only v17 and v28.1 are available.
-    /// Must throw InvalidOperationException whose message names the available versions.
-    /// (This is a version-mismatch problem, not a provisioning gap.)
+    /// Must throw DependencyVersionMismatchException whose message names the available
+    /// versions. (This is a version-mismatch problem, not a provisioning gap — #2095.)
     /// </summary>
     [Fact]
     public void MinimumNotSatisfied_ThrowsWithVersionDetail()
@@ -134,7 +134,8 @@ public sealed class DependencyResolverTests : IDisposable
         var dep = new DependencyRef(Guid.Parse(appId), "TestLib", "Microsoft",
             new Version(29, 0, 0, 0));
 
-        var ex = Assert.Throws<InvalidOperationException>(() => resolver.Resolve(new[] { dep }));
+        var ex = Assert.Throws<AlRunner.Infrastructure.DependencyVersionMismatchException>(
+            () => resolver.Resolve(new[] { dep }));
         // Error must mention the too-low versions so the problem is obviously a version issue.
         Assert.Contains("29.0", ex.Message);
         Assert.Contains("17.0", ex.Message);
@@ -236,11 +237,110 @@ public sealed class DependencyResolverTests : IDisposable
     }
 
     /// <summary>
-    /// Version near-miss (dep found but below minimum) still throws InvalidOperationException,
-    /// not MissingDependencyException — backward compatibility for existing callers.
+    /// #2095: the non-Microsoft branch names the flag CONCRETELY (with an example dir)
+    /// and says where that dir usually lives, for an agent that has never used this tool.
     /// </summary>
     [Fact]
-    public void VersionNearMiss_StillThrowsInvalidOperationException_NotMissingDependencyException()
+    public void DepCompletelyAbsent_ToDetailedMessage_ThirdPartyDep_NamesPackageCacheFlagConcretely()
+    {
+        var dir = MakeDir("MDE_msg_3p_concrete");
+        var ex = new AlRunner.Infrastructure.MissingDependencyException(
+            "Contoso", "Contoso Core Library", "5.0.0.0",
+            Guid.NewGuid(), new[] { dir });
+
+        var msg = ex.ToDetailedMessage("28.2.50931.52786");
+
+        Assert.Contains("--package-cache <dir>", msg);
+        Assert.Contains(".alpackages", msg);
+    }
+
+    /// <summary>
+    /// #2095: MissingDependencyException is recognized by the shared
+    /// IDependencyProvisioningDiagnostic marker Program.cs uses to special-case both
+    /// dependency-resolution exceptions ahead of the generic COMPILE-FAIL path.
+    /// </summary>
+    [Fact]
+    public void MissingDependencyException_ImplementsSharedProvisioningDiagnosticInterface()
+    {
+        var ex = new AlRunner.Infrastructure.MissingDependencyException(
+            "Contoso", "Contoso Core Library", "5.0.0.0", Guid.NewGuid(), Array.Empty<string>());
+
+        Assert.IsAssignableFrom<AlRunner.Infrastructure.IDependencyProvisioningDiagnostic>(ex);
+    }
+
+    // ── Part 2c: dep found but every version too old → DependencyVersionMismatchException ──
+
+    /// <summary>
+    /// #2095: DependencyVersionMismatchException.ToDetailedMessage names the "VERSION gap"
+    /// (not "PROVISIONING gap" — the dep IS in the cache, just too old), tells the reader
+    /// to obtain a newer build, and does NOT repeat the searched directories (already
+    /// implied by "Available (all too old)").
+    /// </summary>
+    [Fact]
+    public void DependencyVersionMismatch_ToDetailedMessage_NamesVersionGapAndNewerBuildAdvice()
+    {
+        var ex = new AlRunner.Infrastructure.DependencyVersionMismatchException(
+            "Acme Corp", "Acme Add-On", "2.0.0.0", Guid.NewGuid(),
+            new[] { "/some/cache/dir" }, "1.0.0.0");
+
+        var msg = ex.ToDetailedMessage();
+
+        Assert.Contains("VERSION gap", msg);
+        Assert.Contains("your code is NOT the problem", msg);
+        Assert.Contains("Acme Add-On", msg);
+        Assert.Contains("2.0.0.0", msg);
+        Assert.Contains("1.0.0.0", msg);
+        Assert.Contains("--package-cache", msg);
+        // Not a compile failure, not the missing-dep wording.
+        Assert.DoesNotContain("COMPILE-FAIL", msg);
+        Assert.DoesNotContain("PROVISIONING gap", msg);
+    }
+
+    /// <summary>
+    /// #2095 root cause: the short .Message unconditionally appended "Stack: " even when
+    /// the too-old dependency was a ROOT of the resolve call (empty chain), leaving a
+    /// dangling "Stack: " with nothing after it. Must be omitted entirely, not printed empty.
+    /// </summary>
+    [Fact]
+    public void DependencyVersionMismatch_RootLevelDependency_NoDanglingStackSegment()
+    {
+        var appId = "eeeeeeee-0000-0000-0000-000000000001";
+        var dir = MakeDir("VM_root");
+        WriteApp(dir, "App_v1.app", appId, "RootDep", "SomePub", "1.0.0.0");
+
+        var resolver = new DependencyResolver(new[] { dir });
+        // Root-level dep (empty stack) requiring a version that isn't available.
+        var dep = new DependencyRef(Guid.Parse(appId), "RootDep", "SomePub", new Version(2, 0, 0, 0));
+
+        var ex = Assert.Throws<AlRunner.Infrastructure.DependencyVersionMismatchException>(
+            () => resolver.Resolve(new[] { dep }));
+
+        Assert.Null(ex.DependencyStack);
+        Assert.DoesNotContain("Stack:", ex.Message);
+        Assert.DoesNotContain("Dependency chain:", ex.ToDetailedMessage());
+    }
+
+    /// <summary>
+    /// DependencyVersionMismatchException implements the same shared marker interface as
+    /// MissingDependencyException, so Program.cs recognizes both without a type check per
+    /// exception name.
+    /// </summary>
+    [Fact]
+    public void DependencyVersionMismatchException_ImplementsSharedProvisioningDiagnosticInterface()
+    {
+        var ex = new AlRunner.Infrastructure.DependencyVersionMismatchException(
+            "Acme Corp", "Acme Add-On", "2.0.0.0", Guid.NewGuid(),
+            Array.Empty<string>(), "1.0.0.0");
+
+        Assert.IsAssignableFrom<AlRunner.Infrastructure.IDependencyProvisioningDiagnostic>(ex);
+    }
+
+    /// <summary>
+    /// Version near-miss (dep found but below minimum) throws DependencyVersionMismatchException,
+    /// not MissingDependencyException — the two need different advice (#2095).
+    /// </summary>
+    [Fact]
+    public void VersionNearMiss_ThrowsDependencyVersionMismatchException_NotMissingDependencyException()
     {
         var appId = "dddddddd-0000-0000-0000-000000000001";
         var dir = MakeDir("MDE_nearmiss");
@@ -250,9 +350,10 @@ public sealed class DependencyResolverTests : IDisposable
         var dep = new DependencyRef(Guid.Parse(appId), "SomeLib", "SomePub",
             new Version(10, 0, 0, 0)); // requires v10 but only v5 exists
 
-        // Must be InvalidOperationException (version near-miss), NOT MissingDependencyException
-        // (completely absent).
-        var ex = Assert.Throws<InvalidOperationException>(() => resolver.Resolve(new[] { dep }));
+        // Must be DependencyVersionMismatchException (version near-miss), NOT
+        // MissingDependencyException (completely absent).
+        var ex = Assert.Throws<AlRunner.Infrastructure.DependencyVersionMismatchException>(
+            () => resolver.Resolve(new[] { dep }));
         Assert.IsNotType<AlRunner.Infrastructure.MissingDependencyException>(ex);
         Assert.Contains("5.0", ex.Message);
     }
@@ -309,7 +410,8 @@ public sealed class DependencyResolverTests : IDisposable
         var dep = new DependencyRef(Guid.Parse(appIdX), "Shared", "Vendor",
             new Version(10, 0, 0, 0));
 
-        var ex = Assert.Throws<InvalidOperationException>(() => resolver.Resolve(new[] { dep }));
+        var ex = Assert.Throws<AlRunner.Infrastructure.DependencyVersionMismatchException>(
+            () => resolver.Resolve(new[] { dep }));
         // Should report that v5 was found (near-miss) — not silently succeed.
         Assert.Contains("5.0", ex.Message);
     }
