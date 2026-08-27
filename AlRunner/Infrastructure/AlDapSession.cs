@@ -109,7 +109,22 @@ public static class AlDapSession
     private static readonly bool _traceEnabled = Environment.GetEnvironmentVariable("AL_DAP_STEP_TRACE") == "1";
     private static readonly System.Diagnostics.Stopwatch _traceClock = System.Diagnostics.Stopwatch.StartNew();
 
-    private static void Trace(string msg)
+    /// <summary>
+    /// internal, not private: issue #2070's follow-up found the actual bug this whole
+    /// trace exists to catch lives OUTSIDE this class — Program.cs's Stopped-event
+    /// handler (RunDapLoop) swallows an AlDapStackWalker.Walk exception via a bare
+    /// Console.Error.WriteLine and returns normally, which OnStmtHit then reads as "the
+    /// stop was reported" and proceeds straight into gate.Wait() — a silently-lost
+    /// "stopped" event, not a missed step and not client-side starvation (see that
+    /// handler's own trace calls for the three-way split: Walk threw, WriteEvent threw,
+    /// or the write genuinely completed and the bytes did not arrive). Exposed here so
+    /// that handler's diagnostics land in the SAME trace stream instead of a second,
+    /// differently-gated Console.Error path that the original bare
+    /// Console.Error.WriteLine used — a second path a two-reader DapClient bug (fixed
+    /// earlier in this issue) could just as easily have eaten silently, which is
+    /// exactly why this failure mode went unnoticed for as long as it did.
+    /// </summary>
+    internal static void Trace(string msg)
     {
         if (!_traceEnabled) return;
         // InvariantCulture explicitly: ":" in a custom DateTime format string is the

@@ -3464,12 +3464,47 @@ int RunDapLoop(int port, string bundleDir)
     // right before it blocks — see that method's doc comment. Must not throw. `reason`
     // is "breakpoint" or "step" (issue #2045), whichever condition actually caused
     // this particular pause.
+    //
+    // Issue #2070 root cause (found chasing a CI hang that survived the watchdog fix
+    // AND ruled out client-side starvation via socket.Available/ThreadPool evidence —
+    // see the PR discussion): this used to be `try { Walk(...); WriteEvent(...); }
+    // catch { Console.Error.WriteLine(...); }` — if Walk threw, WriteEvent was never
+    // reached, the catch swallowed the exception into a bare stderr line (invisible
+    // whenever DapClient's now-fixed two-reader bug happened to steal it), and the
+    // handler returned NORMALLY. OnStmtHit reads "the handler returned" as "the stop
+    // was reported" and proceeds straight into gate.Wait() — a real AL execution
+    // thread parked forever with NO "stopped" event ever sent, which is
+    // indistinguishable from the outside (and from every trace this issue built before
+    // this one) from "the step never fired" or "the client was never scheduled to
+    // read it". Per .claude/rules/loud-failures.md: a handler that cannot report a
+    // stop must never leave the client waiting with nothing sent. Walk failing now
+    // degrades (empty frame list, line 0) rather than aborting the whole report, and
+    // the client is told WHY via a DAP `output` event instead of silently getting
+    // nothing — the session stays alive and the developer sees the cause instead of
+    // an unexplained hang.
     AlRunner.Infrastructure.AlDapSession.Stopped += (scope, stmt, reason) =>
     {
+        AlRunner.Infrastructure.AlDapSession.Trace(
+            $"STOPPED-HANDLER enter scope={scope.GetType().Name} stmt={stmt} reason={reason}");
+        var line = 0;
+        Exception? walkError = null;
         try
         {
             lastFrames = AlRunner.Infrastructure.AlDapStackWalker.Walk(scope, stmt, sourceMap);
-            var line = lastFrames.Count > 0 ? lastFrames[0].Line : 0;
+            line = lastFrames.Count > 0 ? lastFrames[0].Line : 0;
+            AlRunner.Infrastructure.AlDapSession.Trace(
+                $"STOPPED-HANDLER walk ok frames={lastFrames.Count} line={line}");
+        }
+        catch (Exception ex)
+        {
+            walkError = ex;
+            lastFrames = new List<AlRunner.Infrastructure.AlDapFrame>();
+            AlRunner.Infrastructure.AlDapSession.Trace(
+                $"STOPPED-HANDLER walk THREW {ex.GetType().Name}: {ex.Message}");
+        }
+
+        try
+        {
             transport.WriteEvent("stopped", new
             {
                 reason,
@@ -3477,10 +3512,23 @@ int RunDapLoop(int port, string bundleDir)
                 allThreadsStopped = true,
                 line,
             });
+            AlRunner.Infrastructure.AlDapSession.Trace("STOPPED-HANDLER write-event(stopped) ok");
+            if (walkError != null)
+            {
+                transport.WriteEvent("output", new
+                {
+                    category = "stderr",
+                    output = $"[dap] failed to compute the stack frame for this stop " +
+                             $"(reason={reason}, stmt={stmt}): {walkError.GetType().Name}: " +
+                             $"{walkError.Message}\n",
+                });
+            }
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"[dap] failed to report a breakpoint stop: {ex.Message}");
+            AlRunner.Infrastructure.AlDapSession.Trace(
+                $"STOPPED-HANDLER write-event THREW {ex.GetType().Name}: {ex.Message}");
+            Console.Error.WriteLine($"[dap] failed to report a stop: {ex.Message}");
         }
     };
 
