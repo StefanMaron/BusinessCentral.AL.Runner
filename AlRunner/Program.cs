@@ -4675,6 +4675,15 @@ static void PrintGuide(TextWriter w)
     w.WriteLine("    al-runner provision <bundle-dir>        # provision for that project's version, then exit");
     w.WriteLine("    al-runner --auto-provision <dirs>       # same as the default, explicit for scripts");
     w.WriteLine("    al-runner --no-auto-provision <dirs>    # fail loud instead of reaching the network");
+    w.WriteLine("  If a provisioning-gap message names a specific missing set, force just that one");
+    w.WriteLine("  (bypasses need-detection entirely — useful when the default `provision` mis-detects,");
+    w.WriteLine("  issue #2085):");
+    w.WriteLine("    al-runner provision --platform-apps --bc-version V [--force]");
+    w.WriteLine("    al-runner provision --test-apps --bc-version V [--force]");
+    w.WriteLine("    al-runner provision --service-tier --bc-version V [--force]");
+    w.WriteLine("  Every one of these works from a plain `dotnet tool install -g` with no source");
+    w.WriteLine("  checkout — the standalone tools/DownloadArtifacts project these wrap ships only");
+    w.WriteLine("  as source in this repo and is unreachable from an installed tool.");
     w.WriteLine("  The engine must be built against the same BC MINOR as the target artifacts");
     w.WriteLine("  (28.1 vs 28.2 matters; a major-only match is not sufficient).");
     w.WriteLine();
