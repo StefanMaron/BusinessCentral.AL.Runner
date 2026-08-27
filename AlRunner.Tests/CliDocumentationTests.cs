@@ -234,4 +234,82 @@ public sealed class CliDocumentationTests
         Assert.True(exit != 0, "A misspelled flag must not exit 0.");
         Assert.Contains("--guied", stderr, StringComparison.Ordinal);
     }
+
+    /// <summary>
+    /// --help accepts three spellings (--help, -h, help). --version accepted only
+    /// one, so `al-runner -v` fell through to the bundle-path parser and produced
+    /// an unrelated "directory not found" error instead of pointing at --version
+    /// (issue #2072). -v, -V and bare "version" must all print the identical
+    /// version string and exit 0, same as --version itself.
+    /// </summary>
+    [Fact]
+    public void Version_AcceptsAllDocumentedSpellings()
+    {
+        var (baseExit, baseOut, baseErr) = RunCli("--version");
+        Assert.True(baseExit == 0, $"--version must exit 0. exit={baseExit}\n{baseErr}");
+        Assert.Matches(new Regex(@"^al-runner v\S+"), baseOut.Trim());
+
+        foreach (var spelling in new[] { "-v", "-V", "version" })
+        {
+            var (exit, stdout, stderr) = RunCli(spelling);
+            Assert.True(exit == 0, $"'{spelling}' must exit 0 like --version. exit={exit}\n{stderr}");
+            Assert.Equal(baseOut.Trim(), stdout.Trim());
+        }
+    }
+
+    /// <summary>
+    /// Negative: accepting -v/-V/version must not turn into accepting arbitrary
+    /// short flags. An unrecognized single-dash flag still falls through to the
+    /// existing bundle-path handling and fails loud, not silently as version 0.
+    /// </summary>
+    [Fact]
+    public void Version_UnrecognizedShortFlag_StillFailsAsBefore()
+    {
+        var (exit, stdout, _) = RunCli("-q");
+        Assert.True(exit != 0, "An unrecognized short flag must not exit 0.");
+        Assert.DoesNotContain("al-runner v", stdout, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// --help never printed which build is running (issue #2072). Someone pasting
+    /// --help output into a gap report should carry their runner version with it
+    /// without being asked separately for --version's output too.
+    /// </summary>
+    [Fact]
+    public void Help_PrintsVersionAsFirstLine()
+    {
+        var (_, version, _) = RunCli("--version");
+        var (exit, help, stderr) = RunCli("--help");
+        Assert.True(exit == 0, $"--help must exit 0. exit={exit}\n{stderr}");
+
+        var firstLine = help.Split('\n', 2)[0].Trim();
+        Assert.Equal(version.Trim(), firstLine);
+    }
+
+    /// <summary>
+    /// The REPORTING A RUNNER GAP section is the replacement for telemetry (#1643,
+    /// closed as not-planned). It must actually be able to produce a report: a
+    /// caller with only the binary needs the repository URL, and the section must
+    /// tell the agent to ask its human for permission before posting anything —
+    /// without that instruction the only two behaviors left are "post without
+    /// asking" and "say nothing and work around it silently", both wrong per
+    /// .claude/rules/file-issues-for-gaps.md.
+    /// </summary>
+    [Fact]
+    public void Guide_ReportingSectionCoversWhereAndPermission()
+    {
+        var (exit, guide, stderr) = RunCli("--guide");
+        Assert.True(exit == 0, $"--guide must exit 0. exit={exit}\n{stderr}");
+
+        var idx = guide.IndexOf("REPORTING A RUNNER GAP", StringComparison.Ordinal);
+        Assert.True(idx >= 0, "--guide should keep a 'REPORTING A RUNNER GAP' section.");
+        var section = guide[idx..];
+
+        Assert.Contains("github.com/StefanMaron/BusinessCentral.AL.Runner", section, StringComparison.Ordinal);
+        Assert.Contains("ask", section, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("permission", section, StringComparison.OrdinalIgnoreCase);
+        // The existing constraint against naming an unsupported cause must survive
+        // alongside the new instructions, not be displaced by them.
+        Assert.Contains("worse than none", section, StringComparison.Ordinal);
+    }
 }

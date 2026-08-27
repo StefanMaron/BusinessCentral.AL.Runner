@@ -55,10 +55,13 @@ if (args[0] == "--guide")
     return 0;
 }
 
-if (args[0] == "--version")
+// -v/-V accepted alongside --version and bare "version" (#2072), matching the
+// three-spelling treatment --help already gets at the top of this file. -v is
+// free: --verbose (line ~348) is matched only as its long form and has no
+// short alias, so there is no ambiguity to resolve here.
+if (args[0] == "--version" || args[0] == "-v" || args[0] == "-V" || args[0] == "version")
 {
-    var asmVer = typeof(Program).Assembly.GetName().Version?.ToString() ?? "unknown";
-    Console.WriteLine($"al-runner v{asmVer}");
+    Console.WriteLine(VersionString());
     return 0;
 }
 
@@ -4495,6 +4498,14 @@ static string SanitiseFilename(string name)
 // common failure signatures mean. Keep it self-contained — the moment an agent
 // has to go read docs/ or a HANDOFF file to form a correct invocation, this
 // guide has failed at its job.
+// Shared by --version/-v/-V/version and --help's first line, so a build's
+// self-reported version can never drift between the two surfaces (#2072).
+static string VersionString()
+{
+    var asmVer = typeof(Program).Assembly.GetName().Version?.ToString() ?? "unknown";
+    return $"al-runner v{asmVer}";
+}
+
 static void PrintGuide(TextWriter w)
 {
     w.WriteLine("al-runner — AGENT GUIDE");
@@ -4727,6 +4738,23 @@ static void PrintGuide(TextWriter w)
     w.WriteLine("  A report that names a cause the evidence does not support is worse than none:");
     w.WriteLine("  it sends someone to fix a subsystem that was never involved.");
     w.WriteLine();
+    w.WriteLine("  Where to file: https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues");
+    w.WriteLine("  Gap reports are welcome — this is the replacement for the telemetry channel");
+    w.WriteLine("  that used to exist (#1643, closed not-planned); nothing is sent anywhere");
+    w.WriteLine("  automatically, and no report happens without a human reading it first.");
+    w.WriteLine();
+    w.WriteLine("  Before posting anything: ask the person you are working with for permission,");
+    w.WriteLine("  and show them the report text first. Do not open the issue on your own, and");
+    w.WriteLine("  do not silently work around the gap instead — both are wrong. Filing without");
+    w.WriteLine("  asking treats someone else's repository as yours to post to; working around it");
+    w.WriteLine("  silently is exactly what runner-gap tracking exists to prevent.");
+    w.WriteLine();
+    w.WriteLine("  An uncertain report is still worth offering, as long as the uncertainty is");
+    w.WriteLine("  stated plainly. \"I do not know what caused this, here is the reproducer\" is a");
+    w.WriteLine("  good report. \"This is a metadata cache bug\", offered with no evidence for");
+    w.WriteLine("  that specific mechanism, is not — that is the cause-without-support problem");
+    w.WriteLine("  above, just stated with more confidence than the evidence supports.");
+    w.WriteLine();
 
     w.WriteLine("FURTHER READING");
     w.WriteLine("  --help                       full flag reference");
@@ -4739,6 +4767,10 @@ static void PrintGuide(TextWriter w)
 
 static void PrintHelp(TextWriter w)
 {
+    // First line so a build carries its own version wherever --help output gets
+    // pasted (e.g. into a gap report) without asking separately for --version's
+    // output too (#2072).
+    w.WriteLine(VersionString());
     w.WriteLine("al-runner — run Business Central AL unit tests in-process.");
     w.WriteLine();
     w.WriteLine("USAGE");
@@ -4748,7 +4780,7 @@ static void PrintHelp(TextWriter w)
     w.WriteLine("  al-runner --precompile <input.app> --out <output.dll> [--package-cache PATH ...]");
     w.WriteLine("  al-runner --emit-app <bundleDir> <outPath> [--package-cache PATH ...]");
     w.WriteLine("  al-runner --guide      (operating manual for automated callers)");
-    w.WriteLine("  al-runner --version");
+    w.WriteLine("  al-runner --version   (also: -v, -V, version)");
     w.WriteLine("  al-runner --help");
     w.WriteLine();
     w.WriteLine("Agents and scripted callers should start with --guide: it covers correct");
