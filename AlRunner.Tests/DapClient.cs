@@ -28,6 +28,48 @@ public sealed class DapClient : IAsyncDisposable
     public string StdErr { get { lock (_stderr) return _stderr.ToString(); } }
     public string StdOut { get { lock (_stdout) return _stdout.ToString(); } }
 
+    // Client-side half of issue #2070's decisive trace (coordinator request on PR
+    // #2076): AlDapSession.Trace (AlRunner/Infrastructure/AlDapSession.cs) already
+    // logs ARM/EVAL/FIRE/WAIT with a wall-clock UTC timestamp from inside the spawned
+    // al-runner --dap CHILD process. On its own that answers nothing about a client
+    // read timeout — it proves the SERVER did something, not whether the CLIENT ever
+    // saw it. Logging the client's own "I sent a step command at T" / "I gave up
+    // waiting at T+60s" on the SAME wall clock turns the two one-sided traces into one
+    // comparable timeline: if the server's FIRE sits at a small elapsed time relative
+    // to the client's SEND, but the client's GIVEUP still fires at the full timeout,
+    // the server did its job and the client's own socket read simply was not
+    // scheduled in time (CPU starvation on an oversubscribed runner) — not a step-
+    // logic defect. Gated on the SAME AL_DAP_STEP_TRACE=1 env var so one flag turns on
+    // both halves; written to this TEST PROCESS's own Console.Error (a different
+    // process from the child, so DapTransport's write lock over on that side plays no
+    // role here — xUnit/CI capture this process's stderr independently).
+    private static readonly bool _traceEnabled = Environment.GetEnvironmentVariable("AL_DAP_STEP_TRACE") == "1";
+    // Own instance's trace lines, appended here as well as written to Console.Error:
+    // vstest's per-test console capture SHOULD surface plain Console.Error output in a
+    // failed test's report, but that path isn't something this repo already has
+    // end-to-end proof of in CI, whereas embedding these lines directly into the
+    // TimeoutException's own message text (alongside the existing "--- stdout/stderr
+    // ---" dump of the CHILD process) is the exact mechanism already CONFIRMED to
+    // reach the CI job log for this class of failure (see the #2070 PR description's
+    // captured CI logs). Belt and suspenders: do both, trust the one already proven.
+    private readonly StringBuilder _clientTrace = new();
+
+    private void Trace(string msg)
+    {
+        if (!_traceEnabled) return;
+        // InvariantCulture, not the interpolated ":" format-string shorthand — ":" in a
+        // custom DateTime format is the CURRENT CULTURE's time-separator placeholder,
+        // and this must render byte-identically to AlDapSession.Trace's own wall-clock
+        // stamp (same InvariantCulture call there) for the two traces to line up on
+        // one timeline.
+        var wall = DateTime.UtcNow.ToString("HH:mm:ss.fff", System.Globalization.CultureInfo.InvariantCulture);
+        var line = $"[dap-client-trace] wall={wall}Z {msg}";
+        Console.Error.WriteLine(line);
+        lock (_clientTrace) _clientTrace.AppendLine(line);
+    }
+
+    private string ClientTrace { get { lock (_clientTrace) return _clientTrace.ToString(); } }
+
     private DapClient(Process process, TcpClient tcp, DapTransport transport, StringBuilder stdout, StringBuilder stderr)
     {
         _process = process;
@@ -133,7 +175,12 @@ public sealed class DapClient : IAsyncDisposable
 
     /// <summary>Sends a DAP request and returns its seq (for matching against the
     /// eventual response's request_seq via <see cref="ReadUntilResponseAsync"/>).</summary>
-    public int SendRequest(string command, object? arguments = null) => _transport.WriteRequest(command, arguments);
+    public int SendRequest(string command, object? arguments = null)
+    {
+        var seq = _transport.WriteRequest(command, arguments);
+        Trace($"SEND {command} seq={seq}");
+        return seq;
+    }
 
     /// <summary>Reads messages until the response to <paramref name="requestSeq"/>
     /// arrives, returning it. Any events seen along the way are appended to
@@ -152,7 +199,7 @@ public sealed class DapClient : IAsyncDisposable
                 return root;
             if (type == "event") events?.Add(root);
         }
-        throw new TimeoutException($"no response to request seq {requestSeq} within timeout.\n--- stdout ---\n{StdOut}\n--- stderr ---\n{StdErr}");
+        throw new TimeoutException($"no response to request seq {requestSeq} within timeout.\n--- stdout ---\n{StdOut}\n--- stderr ---\n{StdErr}\n--- client trace ---\n{ClientTrace}");
     }
 
     /// <summary>Reads messages until an event named <paramref name="eventName"/>
@@ -173,7 +220,7 @@ public sealed class DapClient : IAsyncDisposable
             if (root.TryGetProperty("event", out var ev) && ev.GetString() == eventName)
                 return root;
         }
-        throw new TimeoutException($"event '{eventName}' did not arrive within {t.TotalSeconds:F0}s.\n--- stdout ---\n{StdOut}\n--- stderr ---\n{StdErr}");
+        throw new TimeoutException($"event '{eventName}' did not arrive within {t.TotalSeconds:F0}s.\n--- stdout ---\n{StdOut}\n--- stderr ---\n{StdErr}\n--- client trace ---\n{ClientTrace}");
     }
 
     /// <summary>
@@ -208,9 +255,10 @@ public sealed class DapClient : IAsyncDisposable
             // lines the child process already wrote (diagnosed reproducing #2070 under
             // load: the dump cut off mid-startup even though the child had clearly
             // progressed much further, going by the exception's own elapsed time).
+            Trace($"GIVEUP waited {timeout.TotalSeconds:F0}s for the next message, nothing arrived");
             await Task.Delay(500).ConfigureAwait(false);
             throw new TimeoutException(
-                $"--dap read timed out after {timeout.TotalSeconds:F0}s.\n--- stdout ---\n{StdOut}\n--- stderr ---\n{StdErr}");
+                $"--dap read timed out after {timeout.TotalSeconds:F0}s.\n--- stdout ---\n{StdOut}\n--- stderr ---\n{StdErr}\n--- client trace ---\n{ClientTrace}");
         }
         if (msg == null)
             throw new Exception($"--dap connection closed unexpectedly.\n--- stdout ---\n{StdOut}\n--- stderr ---\n{StdErr}");

@@ -96,15 +96,30 @@ public static class AlDapSession
     // load): opt-in via AL_DAP_STEP_TRACE=1, off by default so a real --dap session's
     // stderr stays quiet. Only ever consulted from code paths already gated behind
     // Enabled (an active --dap session), so this adds no cost to the !Enabled fast
-    // path a 2130-test corpus run takes on every statement. Emits to stderr with a
-    // monotonic timestamp so arm/qualify/miss ordering can be reconstructed even when
-    // the actual failure is a client-side read timeout with no other signal.
+    // path a 2130-test corpus run takes on every statement. Emits to stderr with BOTH
+    // a monotonic per-process elapsed time (useful for intra-server ordering) AND a
+    // wall-clock UTC timestamp — the wall clock is the load-bearing half: this trace
+    // runs in the SPAWNED al-runner --dap CHILD process, a different process from the
+    // DapClient test harness that has its own independent trace (see DapClient.cs),
+    // and two different processes' Stopwatch.StartNew() epochs are NOT comparable to
+    // each other. Wall-clock UTC (same machine, same clock) is what lets a reader put
+    // "server FIRE'd at T" and "client gave up waiting at T+60s" on one timeline and
+    // answer issue #2070's actual question: did the server do its job and the client
+    // simply not get scheduled to read it, or did the server never fire at all.
     private static readonly bool _traceEnabled = Environment.GetEnvironmentVariable("AL_DAP_STEP_TRACE") == "1";
     private static readonly System.Diagnostics.Stopwatch _traceClock = System.Diagnostics.Stopwatch.StartNew();
 
     private static void Trace(string msg)
     {
-        if (_traceEnabled) Console.Error.WriteLine($"[dap-step-trace] t={_traceClock.Elapsed.TotalMilliseconds:F1}ms {msg}");
+        if (!_traceEnabled) return;
+        // InvariantCulture explicitly: ":" in a custom DateTime format string is the
+        // CURRENT CULTURE's time-separator placeholder, not a literal colon — caught
+        // this rendering as "08.28.01.165Z" (dots) while building this trace on a
+        // machine whose OS locale (en-DK) uses "." as its time separator. Comparing
+        // this against DapClient's own wall-clock trace only works if both use the
+        // exact same, culture-independent rendering.
+        var wall = DateTime.UtcNow.ToString("HH:mm:ss.fff", System.Globalization.CultureInfo.InvariantCulture);
+        Console.Error.WriteLine($"[dap-step-trace] t={_traceClock.Elapsed.TotalMilliseconds:F1}ms wall={wall}Z {msg}");
     }
 
     private static readonly HashSet<(Type ScopeType, int Stmt)> _breakpoints = new();

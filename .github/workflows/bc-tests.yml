@@ -262,6 +262,16 @@ jobs:
       - name: Run unit tests (AlRunner.Tests)
         env:
           AL_RUNNER_PHASE_LOG: ${{ github.workspace }}/phase-log-unit.jsonl
+          # Issue #2070: opt-in ARM/EVAL/FIRE/WAIT (server, AlDapSession.cs) + SEND/GIVEUP
+          # (client, DapClient.cs) trace, both stamped with the SAME wall-clock UTC so the
+          # two one-sided traces become one comparable timeline. Ambient like
+          # AL_RUNNER_PHASE_LOG above (not RunConfiguration-scoped like DOTNET_STARTUP_HOOKS
+          # further up) because it needs to reach the SPAWNED al-runner --dap child process
+          # DapClient starts via Process.Start, which inherits ambient env vars, not
+          # .runsettings-scoped ones. Zero behavior change when unset; here specifically so
+          # the NEXT DapServerTests step-timeout failure carries the trace instead of another
+          # "[dap] client connected." dead end.
+          AL_DAP_STEP_TRACE: "1"
         run: |
           # --settings wires the DOTNET_STARTUP_HOOKS chain generated above so the in-process BC
           # engine tests (BcEngineCollection) execute here, in this single pass, instead of
