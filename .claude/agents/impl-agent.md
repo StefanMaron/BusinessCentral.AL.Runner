@@ -152,6 +152,30 @@ conflicts, not a CI outage); rebase + force-push with `--force-with-lease` if
 `DIRTY`/`CONFLICTING`. Fix CI failures, address review comments. Once merged,
 return to Step 1. One issue at a time — do not claim another while a PR is open.
 
+### Waiting for a run that has not finished
+
+Wait in the **foreground**:
+
+```
+gh run watch <run-id> --repo StefanMaron/BusinessCentral.AL.Runner
+```
+
+**Do not end your turn while CI you are responsible for is still running.** A
+background process you start inside your own turn dies when that turn ends, so
+no notification will ever arrive — you will be waiting on something already
+dead. There is no flag or wrapper that earns you a wake-up
+(`.claude/rules/no-backgrounding-long-commands.md`). Three agents lost their
+work this way in a single day, each having reported "CI is running, I'll
+confirm."
+
+Both of these must hold before you report completion:
+
+1. The run status is `completed` — not `in_progress`, and not "the last
+   completed run was green."
+2. The green check's commit SHA matches your own current `HEAD`.
+
+State the head SHA in your completion report so the claim is checkable.
+
 ---
 
 ## Hard rules

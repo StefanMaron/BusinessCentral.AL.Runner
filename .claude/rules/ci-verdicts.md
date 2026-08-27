@@ -37,6 +37,11 @@ The one required check on `main` is **`All BC versions passed`**
 (`.github/workflows/test-matrix.yml`); matrix legs report as
 `bc-tests / BC <ver> (required)`.
 
+Wait for a running check in the **foreground** — `gh run watch <run-id>`. Do not
+end a turn while CI you are responsible for is still running: a background
+process started inside your own turn dies with it, so the notification you are
+waiting for never comes (`no-backgrounding-long-commands.md`).
+
 ## 3. Never re-run a failed job
 
 `gh run rerun` and the web "Re-run" button overwrite the failed run's logs
