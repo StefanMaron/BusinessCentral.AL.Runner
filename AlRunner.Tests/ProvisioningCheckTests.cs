@@ -722,6 +722,117 @@ public sealed class ProvisioningCheckTests : IDisposable
         Assert.True(decision.ShouldDownloadPlatform);
     }
 
+    // ── Issue #2087: transitive need must be DERIVED (a closure walk over recorded
+    // dependency edges), not a hand-maintained list of "apps known to reach the no-fallback
+    // set today". Before this fix, DetermineManifestNeeds could only recognize the ONE
+    // literal name #2086 hardcoded (Tests-TestLibraries); a different Microsoft app with
+    // the identical shape (declares a dependency that itself, or transitively, reaches
+    // "Application Test Library") was invisible to it. These tests prove the WALK, not just
+    // the two apps that happen to already be known.
+
+    [Fact]
+    public void DetermineManifestNeeds_TransitiveClosure_CatchesAnyChainNotJustTheKnownOne()
+    {
+        // Synthetic dependency graph standing in for "the next Microsoft app with the same
+        // shape" (issue #2087's whole point): a two-hop chain nobody has hand-listed
+        // anywhere, ending at "Application Test Library" (a real KnownNoFallbackPlatformApps
+        // member). Neither name here is "Tests-TestLibraries" or in KnownTestFrameworkAppNames
+        // — a bespoke one-entry list keyed on THAT name could never catch this. The walk must.
+        var syntheticEdges = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Contoso-Style Future App"] = new[] { "Some Intermediate Microsoft App" },
+            ["Some Intermediate Microsoft App"] = new[] { "Application Test Library" },
+        };
+        var roots = new[]
+        {
+            new DependencyRef(Guid.NewGuid(), "Contoso-Style Future App", "Microsoft", new Version(29, 0, 0, 0)),
+        };
+        var needs = ProvisioningCheck.DetermineManifestNeeds(roots, syntheticEdges);
+        Assert.True(needs.NeedsPlatformApps);
+        Assert.True(needs.NeedsTestApps);
+    }
+
+    [Fact]
+    public void DetermineManifestNeeds_ClosureWalk_DoesNotOverfireOnUnrelatedChain()
+    {
+        // Negative direction (issue #2087 acceptance): a synthetic app whose OWN declared
+        // dependency chain never reaches a KnownNoFallbackPlatformApps member must NOT be
+        // flagged. Proves the walk terminates on a real (non-trivial, multi-edge) graph
+        // without false-positiving — the mistake "widen to every known test-framework app"
+        // would have made.
+        var syntheticEdges = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Contoso-Style Future App"] = new[] { "Some Intermediate Microsoft App" },
+            ["Some Intermediate Microsoft App"] = new[] { "Some Unrelated Microsoft App" },
+        };
+        var roots = new[]
+        {
+            new DependencyRef(Guid.NewGuid(), "Contoso-Style Future App", "Microsoft", new Version(29, 0, 0, 0)),
+        };
+        var needs = ProvisioningCheck.DetermineManifestNeeds(roots, syntheticEdges);
+        Assert.False(needs.NeedsPlatformApps);
+    }
+
+    [Fact]
+    public void DetermineManifestNeeds_SystemApplicationTestLibraryDependency_NeedsTestNotPlatform()
+    {
+        // Real Microsoft app (confirmed via its own NavxManifest.xml, BC 28.3.52162.53954):
+        // "System Application Test Library" depends on "System Application" and "Any" — real
+        // recorded edges in KnownMicrosoftAppDependencyEdges — but NEITHER reaches
+        // "Application Test Library". Proves the closure walk doesn't over-fire just because
+        // an app HAS recorded edges; it must actually reach the target.
+        var roots = new[]
+        {
+            new DependencyRef(Guid.NewGuid(), "System Application Test Library", "Microsoft", new Version(28, 1, 0, 0)),
+        };
+        var needs = ProvisioningCheck.DetermineManifestNeeds(roots);
+        Assert.True(needs.NeedsTestApps);
+        Assert.False(needs.NeedsPlatformApps);
+    }
+
+    [Fact]
+    public void ReachesAnyOf_DirectMember_ReturnsTrue()
+    {
+        var edges = new Dictionary<string, IReadOnlyList<string>>();
+        Assert.True(ProvisioningCheck.ReachesAnyOf("Application Test Library", edges, new[] { "Application Test Library" }));
+    }
+
+    [Fact]
+    public void ReachesAnyOf_MultiHopChain_ReturnsTrue()
+    {
+        var edges = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["A"] = new[] { "B" },
+            ["B"] = new[] { "C" },
+            ["C"] = new[] { "Target" },
+        };
+        Assert.True(ProvisioningCheck.ReachesAnyOf("A", edges, new[] { "Target" }));
+    }
+
+    [Fact]
+    public void ReachesAnyOf_NoPathToTarget_ReturnsFalse()
+    {
+        var edges = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["A"] = new[] { "B" },
+            ["B"] = new[] { "C" },
+        };
+        Assert.False(ProvisioningCheck.ReachesAnyOf("A", edges, new[] { "Target" }));
+    }
+
+    [Fact]
+    public void ReachesAnyOf_CyclicEdges_TerminatesWithoutHanging()
+    {
+        // A malformed/future edge table with a cycle must not hang the walk — cycle safety
+        // is the mechanism's own correctness property, independent of any specific app name.
+        var edges = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["A"] = new[] { "B" },
+            ["B"] = new[] { "A" },
+        };
+        Assert.False(ProvisioningCheck.ReachesAnyOf("A", edges, new[] { "Target" }));
+    }
+
     // ── NoFallbackPlatformAppsPresent ──────────────────────────────────────────
     // Deliberately narrower than "all curated platform apps present": System/Base
     // Application and Business Foundation have a service-tier DLL dispatch fallback (the

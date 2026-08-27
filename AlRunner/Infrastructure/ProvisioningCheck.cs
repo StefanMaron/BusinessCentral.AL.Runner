@@ -446,24 +446,79 @@ public static class ProvisioningCheck
     };
 
     /// <summary>
-    /// Microsoft app names whose OWN manifest transitively depends on a
-    /// <see cref="KnownNoFallbackPlatformApps"/> member, even though the DEPENDENT never
-    /// names that app directly (issue #2073). <see cref="DetermineManifestNeeds"/> only
-    /// sees the roots a bundle's own app.json declares — it can't read a not-yet-downloaded
-    /// dependency's manifest to discover ITS dependencies — so a bundle that names
-    /// "Tests-TestLibraries" but never "Application Test Library" read as not needing the
-    /// platform-apps set at all, and `provision` reported success while downloading
-    /// nothing. Confirmed via the real Microsoft NavxManifest.xml (Tests-TestLibraries
-    /// v28.1.49838.53910 declares `&lt;Dependency Id="d852d5d2-a39d-4179-baeb-f99a19e32510"
-    /// Name="Application Test Library" Publisher="Microsoft" .../&gt;` — the exact AppId the
-    /// issue's "Missing:" error names). Recorded here the same way
-    /// <see cref="KnownNoFallbackPlatformApps"/> records real app names, so the pre-scan can
-    /// see the edge without ever reading the dependency's own manifest.
+    /// Known DIRECT dependency edges among Microsoft apps that participate in the
+    /// platform-apps / test-apps provisioning sets, each one extracted from that app's own
+    /// real NavxManifest.xml &lt;Dependencies&gt; block (BC 28.3.52162.53954, verified against
+    /// the actual downloaded .app files — see the per-entry comment; not invented). This is
+    /// the smallest fact <see cref="DetermineManifestNeeds"/> cannot avoid recording ahead of
+    /// time: it only ever sees a BUNDLE's own declared roots, and it can't download a
+    /// not-yet-fetched dependency's manifest just to learn what THAT app depends on — the
+    /// same chicken-and-egg <see cref="KnownNoFallbackPlatformApps"/>' own doc comment
+    /// describes (issue #2073).
+    ///
+    /// Issue #2087: a PRIOR fix recorded this as a one-entry "known transitive dependents of
+    /// Application Test Library" list — correct for the one app it named
+    /// ("Tests-TestLibraries"), but shaped as a lookup table, not detection: the next
+    /// Microsoft app that reaches "Application Test Library" (directly or through another
+    /// app) would fail exactly the same silent way. Recording actual per-app EDGES here
+    /// instead, and walking them with <see cref="ReachesAnyOf"/>, generalizes: an app that
+    /// reaches a <see cref="KnownNoFallbackPlatformApps"/> member through ANY number of hops
+    /// is caught the moment its OWN direct edge is added here — no second per-shape list to
+    /// keep in sync, and a multi-hop chain composes automatically instead of needing its own
+    /// hand-written entry.
     /// </summary>
-    public static readonly IReadOnlyList<string> KnownTransitiveNoFallbackPlatformDependents = new[]
+    public static readonly IReadOnlyDictionary<string, IReadOnlyList<string>> KnownMicrosoftAppDependencyEdges =
+        new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase)
+        {
+            // Microsoft_Tests-TestLibraries.app NavxManifest.xml <Dependencies>: depends
+            // directly on "Application Test Library" (the exact edge issues #2073/#2086
+            // needed — AppId d852d5d2-a39d-4179-baeb-f99a19e32510, the one the "Missing:"
+            // error names), plus "System Application Test Library" and "Permissions Mock".
+            ["Tests-TestLibraries"] = new[]
+            {
+                "System Application Test Library", "Permissions Mock", "Application Test Library",
+            },
+            // Microsoft_System Application Test Library.app NavxManifest.xml: depends on
+            // "System Application" and "Any". Neither reaches a KnownNoFallbackPlatformApps
+            // member today, but recording the real edge means a FUTURE app naming only
+            // "System Application Test Library" still gets the right answer via the same
+            // walk, instead of needing its own bespoke check.
+            ["System Application Test Library"] = new[] { "System Application", "Any" },
+            // Microsoft_Business Foundation Test Libraries.app NavxManifest.xml: depends on
+            // "System Application" and "Business Foundation".
+            ["Business Foundation Test Libraries"] = new[] { "System Application", "Business Foundation" },
+        };
+
+    /// <summary>
+    /// True iff <paramref name="appName"/> itself is in <paramref name="targets"/>, or
+    /// reaches a member of it by following <paramref name="edges"/> through any number of
+    /// hops. Pure graph BFS — the general closure-walk mechanism issue #2087 asked for,
+    /// exposed separately from <see cref="DetermineManifestNeeds"/> so the WALK itself (not
+    /// just the specific apps <see cref="KnownMicrosoftAppDependencyEdges"/> happens to
+    /// record today) can be proven against synthetic data. Cycle-safe — a malformed or
+    /// future edge table with a loop terminates instead of hanging — and case-insensitive on
+    /// names, matching every other Microsoft-app-name comparison in this file.
+    /// </summary>
+    public static bool ReachesAnyOf(
+        string appName,
+        IReadOnlyDictionary<string, IReadOnlyList<string>> edges,
+        IReadOnlyList<string> targets)
     {
-        "Tests-TestLibraries",
-    };
+        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { appName };
+        var queue = new Queue<string>();
+        queue.Enqueue(appName);
+        while (queue.Count > 0)
+        {
+            var current = queue.Dequeue();
+            if (targets.Any(t => string.Equals(t, current, StringComparison.OrdinalIgnoreCase)))
+                return true;
+            if (!edges.TryGetValue(current, out var deps)) continue;
+            foreach (var dep in deps)
+                if (visited.Add(dep))
+                    queue.Enqueue(dep);
+        }
+        return false;
+    }
 
     /// <summary>
     /// Real Microsoft app names supplied by the curated `test-apps` download (platform
@@ -493,13 +548,30 @@ public static class ProvisioningCheck
     /// Classifies a bundle's unioned dependency roots (see Program.ReadBundleDependencyRoots)
     /// into which curated download set(s) — if any — the bundle needs. Pure — does no I/O.
     /// </summary>
-    public static ManifestNeeds DetermineManifestNeeds(IEnumerable<AlRunner.DependencyRef> roots)
+    /// <param name="roots">The bundle's own unioned dependency roots.</param>
+    /// <param name="dependencyEdges">
+    /// Known Microsoft app dependency edges to walk via <see cref="ReachesAnyOf"/> when
+    /// deciding whether a root transitively needs <see cref="KnownNoFallbackPlatformApps"/>.
+    /// Defaults to <see cref="KnownMicrosoftAppDependencyEdges"/>; overridable so tests can
+    /// prove the WALK against synthetic graphs (issue #2087) without needing a real
+    /// not-yet-discovered Microsoft app to exist first.
+    /// </param>
+    public static ManifestNeeds DetermineManifestNeeds(
+        IEnumerable<AlRunner.DependencyRef> roots,
+        IReadOnlyDictionary<string, IReadOnlyList<string>>? dependencyEdges = null)
     {
+        var edges = dependencyEdges ?? KnownMicrosoftAppDependencyEdges;
         bool needsPlatform = false, needsTest = false;
         foreach (var d in roots)
         {
             if (!string.Equals(d.Publisher, "Microsoft", StringComparison.OrdinalIgnoreCase)) continue;
-            if (KnownNoFallbackPlatformApps.Any(n => string.Equals(n, d.Name, StringComparison.OrdinalIgnoreCase)))
+            // Issue #2087: ONE closure walk replaces what used to be two separate checks —
+            // a direct KnownNoFallbackPlatformApps membership test, and a second hardcoded
+            // list of names known (by hand) to transitively reach one. ReachesAnyOf treats
+            // "d.Name IS a no-fallback app" and "d.Name REACHES one through recorded edges"
+            // as the same question, so a future multi-hop chain is caught the moment its own
+            // edge is recorded — no new list, no per-shape entry.
+            if (ReachesAnyOf(d.Name, edges, KnownNoFallbackPlatformApps))
             {
                 needsPlatform = true;
                 // Confirmed via a live BC 28.1 platform-apps download (issue #1996): App
@@ -512,18 +584,6 @@ public static class ProvisioningCheck
             }
             if (KnownTestFrameworkAppNames.Any(n => string.Equals(n, d.Name, StringComparison.OrdinalIgnoreCase)))
                 needsTest = true;
-            // Issue #2073: a root naming e.g. "Tests-TestLibraries" (already caught by
-            // KnownTestFrameworkAppNames above, for needsTest) ALSO transitively drags in
-            // "Application Test Library" — a KnownNoFallbackPlatformApps member — via that
-            // dependency's own manifest, which this pre-scan cannot read. Without this, a
-            // bundle shaped exactly like the issue's repro (names Tests-TestLibraries,
-            // never Application Test Library directly) read as needing no platform apps at
-            // all, and `provision` reported success while downloading nothing.
-            if (KnownTransitiveNoFallbackPlatformDependents.Any(n => string.Equals(n, d.Name, StringComparison.OrdinalIgnoreCase)))
-            {
-                needsPlatform = true;
-                needsTest = true;
-            }
         }
         return new ManifestNeeds(needsPlatform, needsTest);
     }
