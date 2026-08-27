@@ -48,4 +48,33 @@
     <SuppressImplicitGitSourceLink>true</SuppressImplicitGitSourceLink>
   </PropertyGroup>
 
+  <!--
+    #2102: declared here, ONCE, so AlRunner.csproj and AlRunner.Tests.csproj cannot drift
+    apart again. They used to each carry their own default (28.1.49838.53910 vs
+    28.1.49838.50794) — a project-level MSBuild property never flows to a sibling project,
+    so a bare `dotnet build`/`dotnet test` with no override compiled the two against
+    different BC builds and failed with CS1705. A command-line `-p:_BCVersion` is a global
+    property that overrides both regardless, which is why every CI leg (all of which pass
+    it explicitly) never saw the mismatch.
+
+    This is a DEV-MACHINE FALLBACK ONLY, not the release version — every CI/release caller
+    still passes -p:_BCVersion explicitly, live-resolved via tools/DownloadArtifacts'
+    `resolve-version` command, and only a bare local build ever reads this. It WILL go
+    stale the next time Microsoft withdraws this exact build (#2010: that is what broke the
+    v2.4.0 release, back when this value doubled as the release default) — that is expected
+    and low-stakes now, costing a local rebuild against a fresh -p:_BCVersion, never a
+    broken release. Bump opportunistically when noticed; nothing gates on it.
+
+    Condition="'$(_BCVersion)' == ''" so a caller's -p:_BCVersion (a global property) still
+    wins here exactly as it did in each project before consolidation, AND reaches every
+    project's own direct BC references, not just AlRunner.csproj's ProjectReference output
+    — without the Condition, AlRunner.Tests's direct <Reference> items to the BC DLLs
+    stayed pinned to whatever this said regardless of the command line, while
+    AlRunner.csproj's referenced output correctly followed it, and in-process tests that
+    read those DLLs directly silently exercised the wrong BC version on every CI leg.
+  -->
+  <PropertyGroup>
+    <_BCVersion Condition="'$(_BCVersion)' == ''">28.1.49838.53910</_BCVersion>
+  </PropertyGroup>
+
 </Project>

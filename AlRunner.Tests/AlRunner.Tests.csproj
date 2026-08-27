@@ -78,15 +78,19 @@
        Same resolution as AlRunner.csproj — plain <Reference> items do not flow
        transitively through the project reference. -->
   <PropertyGroup>
-    <!-- Condition="'$(_BCVersion)' == ''" so a matrix build's -p:_BCVersion (AlRunner.slnx ->
-         AlRunner.csproj's own _BCVersion) reaches this project's direct BC references too.
-         Before this Condition, the plain assignment below always won regardless of the
-         command line, so these two <Reference> items (below) stayed pinned to 28.1 on every
-         CI leg while AlRunner.csproj's ProjectReference output correctly followed the matrix
-         version — the two disagreed, and in-process tests that read the BC DLL actually
-         copied into this project's own bin (not the subprocess-spawned runner) silently
-         exercised 28.1 no matter which leg was running. -->
-    <_BCVersion Condition="'$(_BCVersion)' == ''">28.1.49838.50794</_BCVersion>
+    <!-- _BCVersion itself is declared once in the repo-root Directory.Build.props (#2102),
+         under the same Condition="'$(_BCVersion)' == ''" this project used to carry its own
+         copy of — that Condition is what lets a matrix build's -p:_BCVersion reach this
+         project's direct BC <Reference> items below, not just AlRunner.csproj's
+         ProjectReference output. Before the Condition existed here at all, a plain
+         assignment always won regardless of the command line, so these two <Reference>
+         items stayed pinned to 28.1 on every CI leg while AlRunner.csproj's referenced
+         output correctly followed the matrix version — the two disagreed, and in-process
+         tests that read the BC DLL actually copied into this project's own bin (not the
+         subprocess-spawned runner) silently exercised 28.1 no matter which leg was running.
+         Carrying its OWN default value on top of that Condition is what caused #2102: it
+         disagreed with AlRunner.csproj's separate default on a bare local build with no
+         override at all. -->
     <_CacheBase Condition="$([MSBuild]::IsOSPlatform('Windows'))">$(USERPROFILE)/.local/share/al-runner</_CacheBase>
     <_CacheBase Condition="!$([MSBuild]::IsOSPlatform('Windows'))">$(HOME)/.local/share/al-runner</_CacheBase>
     <ServiceTierPath Condition="'$(ServiceTierPath)' == ''">$(_CacheBase)/artifacts/$(_BCVersion)</ServiceTierPath>

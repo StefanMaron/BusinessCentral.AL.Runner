@@ -195,29 +195,11 @@
   </ItemGroup>
 
   <PropertyGroup>
-    <!-- #2010: this default is a DEV-MACHINE FALLBACK ONLY, not the release version. It used
-         to be both — publish.yml's release job built with whatever this said, and that is
-         exactly what broke the v2.4.0 release: Microsoft withdrew 28.1.49838.50794 (the value
-         that WAS here) between when this was last bumped and when the release ran, the release
-         job's build failed on "no BC artifact published", and by then the release commit and
-         tag had already been pushed to main — because nothing had exercised this value except
-         a release itself.
+    <!-- _BCVersion's dev-machine-fallback default is declared once in the repo-root
+         Directory.Build.props (#2102) — see the comment there — not per-project, so it
+         cannot drift from AlRunner.Tests.csproj's copy the way it did before.
 
-         Every CI/release caller now passes -p:_BCVersion explicitly, live-resolved via
-         tools/DownloadArtifacts' `resolve-version` command (the same call bc-tests.yml's
-         resolve-versions job makes): the BC-test matrix (per matrix
-         leg), the smoke job, the pack job (bc-tests.yml, added by #2010 specifically to run
-         publish.yml's build-and-pack commands on ordinary CI instead of only during a release),
-         and publish.yml's release job, which reads bc-tests.yml's `required-version` output —
-         the exact build the matrix it just depended on tested — rather than resolving again or
-         reading this property. So this value only fires for a bare `dotnet build`/`dotnet pack`
-         with no override, i.e. an interactive dev machine. It WILL still go stale the next time
-         Microsoft withdraws this exact build; that is expected and low-stakes now — it costs a
-         local rebuild against a fresh -p:_BCVersion, not a broken release. Bump opportunistically
-         when noticed; nothing gates on it. -->
-    <_BCVersion>28.1.49838.53910</_BCVersion>
-
-    <!-- No compile-time BC feature constants. BC-version differences are handled by
+         No compile-time BC feature constants. BC-version differences are handled by
          reflection at runtime — one binary, no build matrix in the source.
 
          A set of BC 26 constants lived here briefly (BC_TESTPAGE_GETPAGE,
