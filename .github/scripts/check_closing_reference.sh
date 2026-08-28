@@ -4,10 +4,15 @@
 #
 # This repo squash-merges, and GitHub folds the PR title + body into the
 # squash commit message (see .claude/rules/branch-and-pr.md). GitHub's
-# closing-reference parser (Closes/Fixes/Resolves + #N, case-insensitive,
-# optionally repo-prefixed) matches ANYWHERE in that message and does not
-# understand surrounding prose -- negation, qualification, "not", none of it
-# changes what fires on merge. Two failure modes follow from that:
+# closing-reference parser (Closes/Fixes/Resolves + one of "#N",
+# "owner/repo#N", or a full issue/PR URL, case-insensitive) matches ANYWHERE
+# in that message and does not understand surrounding prose -- negation,
+# qualification, "not", none of it changes what fires on merge. A bare
+# number with no "#" is NOT one of the forms GitHub honors, so this script
+# must not treat it as one either -- see the REF_HASH/REF_URL comment below
+# for the false positive that shipped when an earlier version of this script
+# made the "#" optional. Two failure modes follow from what GitHub DOES
+# honor:
 #
 #   1. Missing (#2121): the PR body has no closing reference at all, so the
 #      linked issue never auto-closes and is left labeled in-progress
@@ -51,15 +56,43 @@ set -uo pipefail
 : "${PR_BODY?PR_BODY is required (may be empty)}"
 
 KEYWORDS='close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved'
-# Issue ref: optional "owner/repo" prefix, optional "#", then digits.
-REF='(?:[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)?#?[0-9]+'
+
+# Issue reference forms GitHub's closing-keyword parser actually honors:
+#   - "#N"            (# is REQUIRED -- "Closes 3" is plain English, not a
+#                       reference; GitHub does not act on a bare number, so
+#                       this script must not either. A prior version of this
+#                       script made the "#" optional, which flagged ordinary
+#                       sentences like "This fixes 3 bugs in the parser" as
+#                       an unintended close of issue #3 -- a false positive
+#                       reported after #2129 first shipped.)
+#   - "owner/repo#N"  (cross-repo reference, also honored)
+#   - a full issue/PR URL, e.g. https://github.com/owner/repo/issues/123 --
+#     honored, and the likeliest accidental trigger of the three since
+#     people paste issue links into PR bodies constantly.
+#
+# Deliberately NOT treated as a reference: "GH-N". That shorthand only
+# becomes a live GitHub reference if the repository has configured a custom
+# autolink for the "GH-" prefix (Settings > General > Autolink references) --
+# it is not a built-in, always-on form the way "#N" and the full URL are.
+# This repo has no autolinks configured (`gh api repos/.../autolinks` -> `[]`
+# at the time this was written), so "GH-N" does not close anything here, and
+# treating it as if it did would reintroduce the exact false-positive class
+# this comment is describing above. Revisit if this repo ever configures one.
+REF_HASH='(?:[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)?#[0-9]+'
+REF_URL='https?://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/(?:issues|pull)/[0-9]+'
+REF="(?:${REF_HASH}|${REF_URL})"
+
 CANONICAL_LINE_RE="^[[:space:]]*(?:${KEYWORDS})[[:space:]]+${REF}[[:space:]]*[.]?[[:space:]]*\$"
 STRAY_MATCH_RE="\\b(?:${KEYWORDS})[[:space:]]+${REF}"
 ESCAPE_LINE_RE='^[[:space:]]*No linked issue:[[:space:]]*(.*)$'
 
 extract_number() {
   # Pull the trailing digits out of a matched fragment like
-  # "closes owner/repo#2125" or "Fixes 2125".
+  # "closes owner/repo#2125" or "fixes https://github.com/o/r/issues/2125".
+  # The issue/PR number is always the LAST run of digits in the fragment,
+  # whether it came after a bare "#", an "owner/repo#", or the final path
+  # segment of a URL -- any earlier digit runs are just noise from an
+  # owner or repo name that happens to contain digits.
   printf '%s' "$1" | command grep -oE '[0-9]+' | tail -1
 }
 
