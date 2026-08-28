@@ -1210,8 +1210,18 @@ foreach (var deferredLine in deferredStartupLines) deferredLine();
 var packageCacheDirs = packageCacheArgs.Count > 0
     ? ExpandPackageCacheDirs(packageCacheArgs).ToList()
     : DefaultPackageCacheDirs().ToList();
+// #2107: this count is the explicit/default set ONLY. packageCacheDirs still gains
+// entries below (extraProvisionSearchDirs, then platformAppsOut/testAppsOut inside the
+// provisioning block) before dependency resolution ever runs, so this line is true of
+// what the caller asked for / what the default scan found, never of what actually gets
+// searched a moment later. Kept — and its wording UNCHANGED — because
+// SourceDepSymbolsWithoutPackageCacheTests/SourceDepCacheEnumMetadataTests pin it as a
+// precondition on the explicit-arg branch specifically (it must read 0 when
+// --package-cache points at a directory that doesn't exist, independent of anything a
+// prior --auto-provision/`provision` run for this exact BC build later folds in — see
+// those tests' doc comments). The honest, final count is the second line printed once
+// the list is complete, below.
 Console.WriteLine($"  package caches: {packageCacheDirs.Count} dir(s)");
-AlRunner.Infrastructure.PhaseLog.SetPackageCacheDirs(packageCacheDirs.Count);
 AlRunner.Infrastructure.PhaseLog.SetBundles(bundles);
 
 // Issue #1678: the platform-app R2R gate below used to scan ONLY packageCacheDirs
@@ -1439,6 +1449,27 @@ if (!provisionSubcommand)
         }
     }
 }
+
+// #2107: packageCacheDirs is now complete — every fold-in above (extraProvisionSearchDirs,
+// then platformAppsOut/testAppsOut inside the provisioning block just closed) has already
+// run, whichever branch of `if (!provisionSubcommand)` was taken. This is the FIRST point
+// where a count of packageCacheDirs is the number dependency resolution (PlatformCheckDirs,
+// DependencyResolver's resolverDirs) actually searches, rather than what the caller passed
+// or the default scan found before any of those folds. Reported separately from the earlier
+// "package caches: N dir(s)" line rather than replacing it, so neither claim is lost: that
+// line is a precondition several tests pin on the explicit/default set specifically (see the
+// comment above it), and this one is the true search set a person debugging a resolution
+// gap like #2067 actually needs.
+AlRunner.Infrastructure.PhaseLog.SetPackageCacheDirs(packageCacheDirs.Count);
+Console.WriteLine($"  package caches (final search set): {packageCacheDirs.Count} dir(s)");
+// --verbose: name the directories themselves, not just the count. The count alone was
+// exactly what made #2067 hard to read — "0" on a machine that went on to search several
+// dirs — so the natural companion to the --verbose "[dep] Publisher/Name" line below (which
+// names which package WON each dependency slot) is naming what got SEARCHED to produce that
+// winner in the first place.
+if (AlRunner.Log.Verbose)
+    foreach (var d in packageCacheDirs)
+        Console.WriteLine($"    [pkg-cache] {d}");
 
 // One-time runtime setup. Must happen BEFORE any BC type is touched.
 // Install the assembly Resolving handler FIRST so patch reflection or generic
@@ -4776,6 +4807,14 @@ static void PrintGuide(TextWriter w)
     w.WriteLine("      [dep] <Publisher>/<Name> <Version>  <- /path/to/the/winning.app");
     w.WriteLine("    That is the resolved set. Check the path and version of each dependency that");
     w.WriteLine("    is actually on the failing call's path, not just the one that threw.");
+    w.WriteLine();
+    w.WriteLine("    The [dep] winner comes FROM somewhere: --verbose also lists every directory");
+    w.WriteLine("    that was actually searched to produce it, as [pkg-cache] lines, right after");
+    w.WriteLine("    the \"package caches (final search set): N dir(s)\" count — the honest total,");
+    w.WriteLine("    folded in AFTER the earlier \"package caches: N dir(s)\" line (which reports");
+    w.WriteLine("    only the explicit/default set, before a prior --auto-provision/`provision`");
+    w.WriteLine("    run's own artifacts get added). If a package you expect to win is missing,");
+    w.WriteLine("    check whether its directory is even in that final list.");
     w.WriteLine();
     w.WriteLine("  VERSION SKEW ACROSS A FAMILY. When a workspace's .alpackages reference two");
     w.WriteLine("  different minors of the same platform family, stage BOTH minors in the");
