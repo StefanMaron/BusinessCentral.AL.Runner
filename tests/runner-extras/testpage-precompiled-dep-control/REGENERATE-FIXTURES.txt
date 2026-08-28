@@ -109,14 +109,19 @@ Regenerate, from the repo root (AlRunner already built, -c Release):
   #      navx_manifest = f'''<?xml version="1.0" encoding="utf-8"?>
   #      <Package xmlns="http://schemas.microsoft.com/navx/2015/manifest">
   #        <App Id="{APP_ID}" Name="{NAME}" Publisher="{PUBLISHER}" Version="{VERSION}"
-  #             Platform="28.0.0.0" Runtime="17.0" Target="Cloud" ShowMyCode="true"
-  #             PropagateDependencies="false" />
+  #             Target="Cloud" ShowMyCode="true" PropagateDependencies="false" />
   #        <IdRanges><IdRange MinObjectId="65600" MaxObjectId="65699" /></IdRanges>
   #        <Dependencies />
   #      </Package>
   #      '''
+  #      # NO Platform/Runtime attributes on <App> and NO top-level "RuntimeVersion" in
+  #      # SymbolReference.json -- CI caught this the hard way (#2124): a real value here
+  #      # (e.g. "17.0") makes BC 27.0's compiler (runtime ceiling 16.0) refuse EVERY OTHER
+  #      # dependency .app in the SAME combined tests/runner-extras run with AL1153 "cannot
+  #      # be loaded by the compiler", not just this suite's own -- one over-declared
+  #      # dependency poisons every sibling suite's compile on older BC legs. The sibling
+  #      # report-precompiled-dep-metadata fixture's own .app has neither attribute either.
   #      symbol_reference = {
-  #          "RuntimeVersion": "17.0",
   #          "Tables": [{
   #              "Id": 65600, "Name": "TPCD Dep Table",
   #              "Fields": [
