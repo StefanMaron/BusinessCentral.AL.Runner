@@ -2,7 +2,8 @@ name: Publish to NuGet
 
 # Triggered manually only — supply the version and the workflow does everything:
 # runs the full BC test matrix, then BUILDS AND PACKS, then generates the CHANGELOG
-# section, commits it to main, pushes the tag, pushes to NuGet, and creates the
+# section, commits it to the dispatched branch (normally main; see #2060 below for
+# releasing from anything else), pushes the tag, pushes to NuGet, and creates the
 # GitHub Release.
 #
 # ORDER MATTERS, and it has been backwards twice.
@@ -40,8 +41,31 @@ name: Publish to NuGet
 # the NEXT release: [2.3.1] lists two entries while the 21 real ones sit under
 # [2.3.0], a heading with no release behind it.
 #
+# #2060: this workflow used to hardcode its release-commit push as `git push origin
+# HEAD:main`, from a detached HEAD, regardless of what was actually dispatched. That
+# is a latent bug even for the ordinary path — it names a destination the workflow
+# already knows from context instead of asking for it — and it is fatal the moment
+# anything other than main is dispatched: a non-`main` ref is not, in general, a
+# fast-forward of `main`, so the push cannot succeed, and the failure only surfaced
+# after the full ~40-minute test matrix had already run. Fixed two ways:
+#
+#   1. The release commit is pushed back to whatever ref was actually dispatched
+#      (needs.plan.outputs.branch, read from github.ref_name) instead of the
+#      hardcoded literal "main". For the ordinary path github.ref_name IS "main",
+#      so this is a no-op there.
+#   2. The plan job — which runs first and takes seconds — rejects a dispatch that
+#      isn't against a branch (e.g. a tag, which can't receive this push at all)
+#      before the matrix runs, instead of discovering the push was impossible
+#      40 minutes later. See .github/scripts/resolve_release_ref.sh, which is
+#      unit-tested directly rather than provable only by dispatching a real release.
+#
+# Whether this workflow should support releasing from a branch OTHER than main at
+# all — and, if so, what that means for CHANGELOG.md on main — is a separate,
+# undecided question tracked on #2060. Nothing here assumes an answer either way.
+#
 # The release job's checkout uses RELEASE_DEPLOY_KEY (a write-access deploy key) so
-# the git push to main bypasses the branch ruleset ("Deploy keys" -> Always allow).
+# the git push to the released branch bypasses the branch ruleset ("Deploy keys" ->
+# Always allow).
 on:
   workflow_dispatch:
     inputs:
@@ -71,32 +95,32 @@ jobs:
     outputs:
       ref: ${{ steps.plan.outputs.ref }}
       tag-exists: ${{ steps.plan.outputs.tag-exists }}
+      branch: ${{ steps.plan.outputs.branch }}
     steps:
       - uses: actions/checkout@v6
 
       - name: Decide which commit this release tests and ships
         id: plan
+        # The actual decision logic (including the #2060 branch-or-fail check) lives
+        # in resolve_release_ref.sh, extracted specifically so it can be unit-tested
+        # without dispatching this workflow for real -- see
+        # .github/scripts/test_resolve_release_ref.sh. This step is just the git
+        # lookup (TAG_EXISTS_REMOTELY) the script can't do itself without a network
+        # dependency, plus wiring GitHub's context values into its env vars.
         run: |
           TAG="v${{ inputs.version }}"
-
           if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
-            # A retry of an attempt that already tagged — which now means the release
-            # job itself failed after tagging (NuGet rejected the push, the Release API
-            # call failed), NOT that tests failed, because tests run first. Test and
-            # ship the tag as it stands and let the release job skip re-committing.
-            echo "Tag $TAG already exists on origin — testing and shipping that tag."
-            echo "ref=$TAG" >> "$GITHUB_OUTPUT"
-            echo "tag-exists=true" >> "$GITHUB_OUTPUT"
+            TAG_EXISTS_REMOTELY=true
           else
-            # github.sha is main's head at dispatch. Pinning it HERE, rather than letting
-            # the release job read origin/main once the matrix finishes, is what makes the
-            # tag point at the commit that was actually tested: main can move during a
-            # 40-minute run, and whatever gets merged meanwhile has not been through this
-            # matrix at this version.
-            echo "Releasing ${{ github.sha }} (main at dispatch)."
-            echo "ref=${{ github.sha }}" >> "$GITHUB_OUTPUT"
-            echo "tag-exists=false" >> "$GITHUB_OUTPUT"
+            TAG_EXISTS_REMOTELY=false
           fi
+
+          VERSION="${{ inputs.version }}" \
+          REF_TYPE="${{ github.ref_type }}" \
+          REF_NAME="${{ github.ref_name }}" \
+          SHA="${{ github.sha }}" \
+          TAG_EXISTS_REMOTELY="$TAG_EXISTS_REMOTELY" \
+          .github/scripts/resolve_release_ref.sh >> "$GITHUB_OUTPUT"
 
   test:
     needs: plan
@@ -266,16 +290,19 @@ jobs:
               # #2010: dry_run proves the CHANGELOG generation + commit machinery works
               # (the commit above ran for real, locally, in this checkout) without
               # writing anything to origin — a dry run that pushed a real tag/commit to
-              # main would recreate the exact dead-tag problem this workflow exists to
-              # prevent, just self-inflicted during a test.
+              # the branch would recreate the exact dead-tag problem this workflow exists
+              # to prevent, just self-inflicted during a test.
               echo "dry_run: skipping push of the release commit and tag to origin."
             else
               # Push the release commit BEFORE creating the tag, and deliberately without
-              # --force. HEAD is the commit build-and-pack just built plus a CHANGELOG-only
-              # diff, so this is a fast-forward exactly when main is still where the matrix
-              # found it. If someone merged during the run it fails here — and NO tag is
-              # created, which is the whole point of #1978. Re-dispatch against the new main.
-              git push origin HEAD:main
+              # --force, to the branch that was actually dispatched (needs.plan.outputs.branch
+              # — "main" for the ordinary path, a release branch for a patch release; #2060).
+              # HEAD is the commit build-and-pack just built plus a CHANGELOG-only diff, so
+              # this is a fast-forward exactly when that branch is still where the matrix
+              # found it. If someone pushed to it during the run this fails here — and NO
+              # tag is created, which is the whole point of #1978. Re-dispatch against the
+              # branch's new head.
+              git push origin HEAD:${{ needs.plan.outputs.branch }}
               git tag "$TAG"
               git push origin "$TAG"
             fi

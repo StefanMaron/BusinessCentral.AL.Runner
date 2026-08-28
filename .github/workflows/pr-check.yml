@@ -64,6 +64,44 @@ jobs:
           echo ""
           echo "Test presence check passed. Copilot review will assess test quality."
 
+  release-workflow-script-tests:
+    name: Release workflow script tests
+    runs-on: ubuntu-latest
+    # The actual test run is gated inside the job (see the "Check whether..."
+    # step below) on whether publish.yml's extracted scripts or their tests
+    # changed -- they're plain bash unrelated to the rest of a typical PR.
+    # #2060: resolve_release_ref.sh is a new extraction of publish.yml's
+    # resolve/validate logic (which ref gets pushed to, and whether the
+    # dispatch can be released at all), specifically so it's provable
+    # without dispatching the real release workflow.
+    #
+    # generate_changelog.py also has a local test file (test_generate_changelog.py)
+    # from earlier #2060 work on backfilling CHANGELOG sections from published
+    # tags -- deliberately NOT wired in here. Whether this workflow should
+    # support releasing from a branch other than main (and, if so, what that
+    # means for CHANGELOG.md) is still an open question on #2060; that script
+    # change stays on the branch, unused, until it's resolved.
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Check whether the scripts or their tests changed
+        id: changed
+        run: |
+          BASE=${{ github.event.pull_request.base.sha }}
+          HEAD=${{ github.event.pull_request.head.sha }}
+          CHANGED=$(git diff --name-only "$BASE"..."$HEAD")
+          if echo "$CHANGED" | grep -qE '^\.github/scripts/(resolve_release_ref\.sh|test_resolve_release_ref\.sh)$'; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run resolve_release_ref.sh tests
+        if: steps.changed.outputs.run == 'true'
+        run: bash .github/scripts/test_resolve_release_ref.sh
+
   # validate-coverage (docs/coverage.yaml) removed at the v1->v2 cutover: v1 tracked
   # AL-language coverage in a hand-curated YAML the orchestrator validated on every PR.
   # v2's spec is the tests/al-language/ corpus itself -- every AL surface that needs
