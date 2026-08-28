@@ -1,0 +1,31 @@
+{
+  "id": "e2f3a4b5-6c7d-4e2f-8a9b-2c3d4e5f6a72",
+  "name": "Runner Extras - TestPage Precompiled Dep Control",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Proves a TestPage field read resolves on a page that ships precompiled in a dependency .app (issue #2088), the same as it does for an identical page compiled from AL source.",
+  "description": "Regression test for RecordPatches.GetPageControlFieldMap answering empty for any page not AL-source-parsed in this bundle. The dependency 'TPCD Precompiled Control Dep' (declared below, resolved from the committed .alpackages/*.app symbol package, loaded from the committed .deps-bin/*.dll -- see DependencyLoader's Tier-1 precompiled-DLL path) ships page 61601 with two Rec.-bound field controls (one whose control name differs from its bound field, one where it matches) as PURE COMPILED CODE, no AL source reachable at runtime. This hermetically reproduces the real-world bug class (Base Application page 700 'Error Messages') without depending on an externally-provisioned Microsoft Base Application. The fix's negative direction (a control the fallback must not fabricate a binding for) is pinned separately in AlRunner.Tests/RecordPatchesGetPageControlFieldMapDependencyTests.cs -- see this suite's REGENERATE-FIXTURES.txt for why that cannot be proven end-to-end in AL.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [
+    {
+      "id": "d1e2f3a4-5b6c-4d1e-9f8a-1b2c3d4e5f61",
+      "name": "TPCD Precompiled Control Dep",
+      "publisher": "AL Runner Fixtures",
+      "version": "1.0.0.0"
+    }
+  ],
+  "screenshots": [],
+  "idRanges": [
+    {
+      "from": 61200,
+      "to": 61249
+    }
+  ],
+  "runtime": "17.0",
+  "target": "Cloud",
+  "features": []
+}

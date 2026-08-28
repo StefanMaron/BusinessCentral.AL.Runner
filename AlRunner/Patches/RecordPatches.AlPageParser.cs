@@ -151,10 +151,19 @@ public static partial class RecordPatches
     /// <summary>
     /// Whether the page permits inserts (AL's <c>InsertAllowed</c>, default TRUE when the
     /// property is absent). Drives ITestPage.Creatable, which BC's NavTestPageBase.New()
-    /// checks before inserting. Unknown pages default to true — same as AL.
+    /// checks before inserting.
+    /// <para>Checks the runner's own AL-source-parsed pages first, then (issue #2088's sibling
+    /// defect — this method had the SAME "_parsedPages only" gap as
+    /// <see cref="GetPageControlFieldMap"/>, called right alongside it at every TestPage/part
+    /// construction site) a loaded dependency .app's SymbolReference.json, which already
+    /// carries InsertAllowed for the "Page Metadata" virtual table (#1769). A page unknown to
+    /// either source defaults to true — AL's own default.</para>
     /// </summary>
     internal static bool GetInsertAllowedForPage(int pageId)
-        => !_parsedPages.TryGetValue(pageId, out var page) || page.InsertAllowed;
+    {
+        if (_parsedPages.TryGetValue(pageId, out var page)) return page.InsertAllowed;
+        return TryGetDependencyPageSymbol(pageId)?.InsertAllowed ?? true;
+    }
 
     /// <summary>
     /// Whether the AL source parser has seen this PAGE at all. Lets callers tell
@@ -232,25 +241,62 @@ public static partial class RecordPatches
     /// `field(NoteField; Rec."Note")` made BC ask LiveNavTestPage.GetField for control
     /// 788108655 == GetMemberId(64301, "NoteField"); GetMemberId(64300, "NoteField") is
     /// 321499490 and never appears.</para>
+    /// <para><b>Precompiled-dependency fallback (issue #2088):</b> a page that ships
+    /// precompiled in a dependency .app (Base Application, System Application, an ISV
+    /// extension) is never AL-source-parsed here, so it is never in <c>_parsedPages</c> —
+    /// that used to mean this method answered an empty map for it regardless of what its
+    /// controls are actually bound to, and every field control read on such a page refused
+    /// with <c>testpage-control-binding</c>, even ones the dependency's own
+    /// SymbolReference.json states are plain <c>Rec.Field</c> bindings. That file is the
+    /// SAME source the "Page Control Field" virtual table (#1779) already reads for exactly
+    /// this data, so a page miss here now falls back to it via the shared
+    /// <see cref="ResolveDependencyControlField"/> resolver — one control resolution rule for
+    /// both consumers, not a second hand-rolled one. Pageextensions are not folded into this
+    /// fallback: a pageextension that extends a dependency-only base page is itself
+    /// AL-source-parsed (or it too ships precompiled and gets its own dependency-symbol
+    /// entry), and <see cref="GetPageExtensionIdsForPage"/> already resolves the base page's
+    /// name through the same dependency fallback for that separate, existing path.</para>
     /// </summary>
     internal static IReadOnlyDictionary<int, int> GetPageControlFieldMap(int pageId)
     {
-        if (!_parsedPages.TryGetValue(pageId, out var page) || string.IsNullOrWhiteSpace(page.SourceTableName))
+        if (_parsedPages.TryGetValue(pageId, out var page))
+        {
+            if (string.IsNullOrWhiteSpace(page.SourceTableName))
+                return new Dictionary<int, int>();
+
+            var table = _parsedTables.Values.FirstOrDefault(t => NamesEqual(t.TableName, page.SourceTableName));
+            if (table == null) return new Dictionary<int, int>();
+
+            var result = new Dictionary<int, int>();
+            BindControls(page.ControlIdToFieldName, table, result);
+            // Only extensions of THIS page. Binding every extension's controls onto every page
+            // would fabricate bindings that the AL never declared.
+            foreach (var ext in _parsedPageExtensions.Values)
+                if (NamesEqual(ext.BaseName, page.Name))
+                    BindControls(ext.ControlIdToFieldName, table, result);
+            return result;
+        }
+
+        var symbol = TryGetDependencyPageSymbol(pageId);
+        if (symbol == null || symbol.SourceTableId == 0 || symbol.Controls == null || symbol.Controls.Count == 0)
             return new Dictionary<int, int>();
 
-        var table = _parsedTables.Values.FirstOrDefault(t => NamesEqual(t.TableName, page.SourceTableName));
-        if (table == null) return new Dictionary<int, int>();
+        if (!_parsedTables.TryGetValue(symbol.SourceTableId, out var depTable))
+        {
+            TryPopulateParsedTableFromBcApps(symbol.SourceTableId);
+            _parsedTables.TryGetValue(symbol.SourceTableId, out depTable);
+        }
+        if (depTable == null) return new Dictionary<int, int>();
 
-        var result = new Dictionary<int, int>();
-        BindControls(page.ControlIdToFieldName);
-        // Only extensions of THIS page. Binding every extension's controls onto every page
-        // would fabricate bindings that the AL never declared.
-        foreach (var ext in _parsedPageExtensions.Values)
-            if (NamesEqual(ext.BaseName, page.Name))
-                BindControls(ext.ControlIdToFieldName);
-        return result;
+        var depResult = new Dictionary<int, int>();
+        foreach (var control in symbol.Controls)
+        {
+            var (_, fieldNo) = ResolveDependencyControlField(control.SourceExpression, symbol.SourceTableId, depTable);
+            if (fieldNo != 0) depResult[control.Id] = fieldNo;
+        }
+        return depResult;
 
-        void BindControls(IReadOnlyDictionary<int, string> controls)
+        static void BindControls(IReadOnlyDictionary<int, string> controls, ParsedTable table, Dictionary<int, int> result)
         {
             foreach (var kvp in controls)
             {

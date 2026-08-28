@@ -1,0 +1,200 @@
+How .alpackages/*.app and .deps-bin/*.dll in this folder were produced
+========================================================================
+
+These two binary fixtures make "TPCD Precompiled Control Dep" (page 61601,
+table 61600) load as a genuinely Tier-1 precompiled dependency
+(DependencyLoader.LoadOne: <bucketRoot>/.deps-bin/<Publisher>_<Name>_<Version>.dll)
+with NO AL source reachable at runtime -- the exact shape a real precompiled
+MS/ISV .app has (e.g. Base Application page 700 "Error Messages", the field
+report for issue #2088), without needing an external Base Application.
+
+IMPORTANT: the dep's AL source must NEVER live inside this suite folder (or
+any other runner-extras suite folder) -- a flat-bundle suite's compile step
+scans *.al recursively under its own root, so source sitting next to these
+fixtures would get swept into the MAIN app's own compile and silently defeat
+the whole point of the test (the page would get a real _parsedPages entry
+instead of exercising the SymbolReference.json fallback path). Keep the dep
+source external (a scratch dir, NOT under tests/), regenerate there, then
+copy only the two binary artifacts back here.
+
+WHY THE .app NEEDS A REAL SymbolReference.json, NOT JUST src/*.al
+-------------------------------------------------------------------
+`al-runner --emit-app` (the tool report-precompiled-dep-metadata's fixtures
+were produced with) writes NavxManifest.xml + src/*.al only -- no
+SymbolReference.json. That is sufficient when the main app never references
+the dependency's objects BY NAME (that sibling suite calls Report.SaveAs by
+numeric id). This suite's main app DOES reference the dependency's table and
+page by name (`Record "TPCD Dep Table"`, `TestPage "TPCD Dep Page"`), which
+needs the AL compiler's OWN cross-app symbol resolution -- and that requires
+a REAL SymbolReference.json inside the .app, the same shape a real compiled
+BC package carries (verified against Base Application 28.1's own package:
+NAVX header, NavxManifest.xml, SymbolReference.json, [Content_Types].xml --
+the OPC content-types entry is required too, or the compiler's package
+scanner reports AL1023 "package not valid" even with a well-formed
+SymbolReference.json present). There is no existing al-runner subcommand that
+emits this; the script below builds it directly.
+
+Dep AL source (place in a scratch dir, e.g. /tmp/tpcd-dep/), for producing
+the DLL half only -- table 61600 "TPCD Dep Table" (fields: ID Integer PK,
+Message Text[100], "Additional Information" Text[100]) and page 61601
+"TPCD Dep Page" (PageType = List, SourceTable = "TPCD Dep Table", two field
+controls: `field(Description; Rec.Message)` -- name differs from the field
+it binds to -- and `field("Additional Information"; Rec."Additional
+Information")` -- name matches):
+
+  table 61600 "TPCD Dep Table"
+  {
+      DataClassification = ToBeClassified;
+      fields
+      {
+          field(1; ID; Integer) { }
+          field(2; Message; Text[100]) { }
+          field(3; "Additional Information"; Text[100]) { }
+      }
+      keys { key(PK; ID) { Clustered = true; } }
+  }
+
+  page 61601 "TPCD Dep Page"
+  {
+      PageType = List;
+      SourceTable = "TPCD Dep Table";
+      ApplicationArea = All;
+      UsageCategory = Lists;
+      layout
+      {
+          area(Content)
+          {
+              repeater(Group)
+              {
+                  field(Description; Rec.Message) { ApplicationArea = All; }
+                  field("Additional Information"; Rec."Additional Information")
+                  { ApplicationArea = All; }
+              }
+          }
+      }
+  }
+
+Dep app.json (same scratch dir):
+  {
+    "id": "d1e2f3a4-5b6c-4d1e-9f8a-1b2c3d4e5f61",
+    "name": "TPCD Precompiled Control Dep",
+    "publisher": "AL Runner Fixtures",
+    "version": "1.0.0.0",
+    "dependencies": [],
+    "idRanges": [ { "from": 61600, "to": 61699 } ],
+    "runtime": "17.0",
+    "target": "Cloud",
+    "features": []
+  }
+
+Regenerate, from the repo root (AlRunner already built, -c Release):
+
+  # 1. Produce the raw compiled DLL (Tier-1 target) by running the dep as a
+  #    normal bundle once (bundled Emit+Compile writes a cache entry) and
+  #    copying the cached DLL out.
+  dotnet run --project AlRunner -c Release -- --bc-version 28.1 /tmp/tpcd-dep
+  # -> prints "[cache] WROTE key=<KEY> path=~/.cache/al-runner/al-out/<KEY>.dll"
+  cp ~/.cache/al-runner/al-out/<KEY>.dll \
+     "tests/runner-extras/testpage-precompiled-dep-control/.deps-bin/AL_Runner_Fixtures_TPCD_Precompiled_Control_Dep_1.0.0.0.dll"
+
+  # 2. Produce the .alpackages symbol package by hand -- a NAVX-header zip of
+  #    NavxManifest.xml + SymbolReference.json + [Content_Types].xml, matching
+  #    what a real BC compile produces (verified against a real Base
+  #    Application 28.1 package's own inner .app). Save as a scratch script,
+  #    e.g. /tmp/tpcd-dep/build_symbol_app.py:
+  #
+  #      import zipfile, io, struct, uuid, sys, json
+  #      APP_ID = "d1e2f3a4-5b6c-4d1e-9f8a-1b2c3d4e5f61"
+  #      NAME, PUBLISHER, VERSION = "TPCD Precompiled Control Dep", "AL Runner Fixtures", "1.0.0.0"
+  #      navx_manifest = f'''<?xml version="1.0" encoding="utf-8"?>
+  #      <Package xmlns="http://schemas.microsoft.com/navx/2015/manifest">
+  #        <App Id="{APP_ID}" Name="{NAME}" Publisher="{PUBLISHER}" Version="{VERSION}"
+  #             Platform="28.0.0.0" Runtime="17.0" Target="Cloud" ShowMyCode="true"
+  #             PropagateDependencies="false" />
+  #        <IdRanges><IdRange MinObjectId="61600" MaxObjectId="61699" /></IdRanges>
+  #        <Dependencies />
+  #      </Package>
+  #      '''
+  #      symbol_reference = {
+  #          "RuntimeVersion": "17.0",
+  #          "Tables": [{
+  #              "Id": 61600, "Name": "TPCD Dep Table",
+  #              "Fields": [
+  #                  {"Id": 1, "Name": "ID", "TypeDefinition": {"Name": "Integer"}, "Properties": []},
+  #                  {"Id": 2, "Name": "Message", "TypeDefinition": {"Name": "Text[100]"}, "Properties": []},
+  #                  {"Id": 3, "Name": "Additional Information", "TypeDefinition": {"Name": "Text[100]"}, "Properties": []},
+  #              ],
+  #              "Keys": [{"Name": "PK", "FieldNames": ["ID"], "Properties": [{"Name": "Clustered", "Value": "1"}]}],
+  #              "ReferenceSourceFileName": "Table.al",
+  #              "Properties": [{"Name": "DataClassification", "Value": "ToBeClassified"}],
+  #          }],
+  #          "Pages": [{
+  #              "Id": 61601, "Name": "TPCD Dep Page",
+  #              "Properties": [{"Name": "PageType", "Value": "List"}, {"Name": "SourceTable", "Value": "61600"}],
+  #              "ReferenceSourceFileName": "Page.al",
+  #              "Controls": [{
+  #                  "Kind": 1, "Id": 1, "Name": "content", "TypeDefinition": {"Name": "None"},
+  #                  "Controls": [
+  #                      {"Kind": 8, "Id": 61601001, "Name": "Description",
+  #                       "TypeDefinition": {"Name": "Text[100]"},
+  #                       "Properties": [{"Name": "SourceExpression", "Value": "Rec.Message"}]},
+  #                      {"Kind": 8, "Id": 61601002, "Name": "Additional Information",
+  #                       "TypeDefinition": {"Name": "Text[100]"},
+  #                       "Properties": [{"Name": "SourceExpression", "Value": "Rec.\"Additional Information\""}]},
+  #                  ],
+  #              }],
+  #          }],
+  #          "AppId": APP_ID, "Name": NAME, "Publisher": PUBLISHER, "Version": VERSION,
+  #      }
+  #      def write_navx(zip_bytes, out_path):
+  #          header = b"NAVX" + struct.pack("<I", 40) + struct.pack("<I", 2) \
+  #              + uuid.UUID(APP_ID).bytes_le + struct.pack("<Q", len(zip_bytes)) + b"NAVX"
+  #          with open(out_path, "wb") as f: f.write(header); f.write(zip_bytes)
+  #      buf = io.BytesIO()
+  #      with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+  #          zf.writestr("NavxManifest.xml", navx_manifest)
+  #          zf.writestr("SymbolReference.json", json.dumps(symbol_reference))
+  #          zf.writestr("[Content_Types].xml",
+  #              '<?xml version="1.0" encoding="utf-8"?>'
+  #              '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+  #              '<Default Extension="xml" ContentType="" /><Default Extension="json" ContentType="" />'
+  #              '<Default Extension="al" ContentType="" /><Default Extension="png" ContentType="" />'
+  #              '</Types>')
+  #      write_navx(buf.getvalue(), sys.argv[1])
+  #
+  python3 /tmp/tpcd-dep/build_symbol_app.py /tmp/tpcd-dep/out/dep-symbols.app
+  cp /tmp/tpcd-dep/out/dep-symbols.app \
+     tests/runner-extras/testpage-precompiled-dep-control/.alpackages/AL_Runner_Fixtures_TPCD_Precompiled_Control_Dep_1.0.0.0.app
+
+The control ids (61601001 / 61601002) are arbitrary but must be internally
+consistent -- GetPageControlFieldMap keys its returned map by whatever "Id"
+SymbolReference.json states for each control, the same as LiveNavTestPage
+passes to GetField() when the main app's compiled TestPage accessor reads
+that control (both read the SAME symbol file's stated ids; they do not need
+to equal BC's real IdSpace.GetMemberId hash for this fixture to prove the
+fix, since nothing here depends on the dependency's OWN compiled business
+logic dispatching to a specific id).
+
+WHY NOT A THIRD "GENUINELY UNRESOLVABLE" CONTROL, END-TO-END
+--------------------------------------------------------------
+BC's own AL compiler only emits a GetField(id) dispatch for a field control
+whose SourceExpression it can already validate, at compile time, as a plain
+Rec.Field against the SAME symbol data the runner reads -- a plain Rec.Field
+control that fails that check could never have compiled into a real
+dependency .app in the first place (real BC rejects it at publish time,
+before a .app is ever produced), and a control bound to anything else
+(a name absent from the table, a compound expression) compiles to different
+generated code that never reaches LiveNavTestPage.GetField at all (verified
+while authoring this fixture: adding a third control this way to page 61601
+never printed a single GetField trace for it, regardless of ordering, ID, or
+whether it was even really implemented in the compiled dependency DLL). The
+negative direction of the fix -- that GetPageControlFieldMap's fallback does
+NOT fabricate a binding for an unresolvable control -- is pinned directly
+against the fixed method instead, in
+AlRunner.Tests/RecordPatchesGetPageControlFieldMapDependencyTests.cs.
+
+Verify (must be RED without the RecordPatches.GetPageControlFieldMap fix,
+GREEN with it -- no --package-cache needed, fully hermetic):
+
+  dotnet run --project AlRunner -c Release -- --bc-version 28.1 --strict \
+      tests/runner-extras/testpage-precompiled-dep-control
