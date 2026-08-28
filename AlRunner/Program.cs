@@ -5047,6 +5047,7 @@ static void PrintHelp(TextWriter w)
     w.WriteLine("  al-runner [OPTIONS] <bundle-dir>...");
     w.WriteLine("  al-runner provision [<bundle-dir>]");
     w.WriteLine("  al-runner --server [--package-cache PATH ...] [--cache DIR]");
+    w.WriteLine("  al-runner --dap [PORT|stdio] <bundle-dir>");
     w.WriteLine("  al-runner --precompile <input.app> --out <output.dll> [--package-cache PATH ...]");
     w.WriteLine("  al-runner --emit-app <bundleDir> <outPath> [--package-cache PATH ...]");
     w.WriteLine("  al-runner --guide      (operating manual for automated callers)");
@@ -5125,8 +5126,11 @@ static void PrintHelp(TextWriter w)
     w.WriteLine("                          deps + BC patches loaded once; ~19s->~4s per run). One");
     w.WriteLine("                          JSON request/response per line. stdout carries ONLY the");
     w.WriteLine("                          protocol; all logs go to stderr. Used by the VS Code");
-    w.WriteLine("                          extension. Commands: runTests, shutdown (execute: TODO).");
-    w.WriteLine("                          See docs/server-mode.md. Mutually exclusive with --watch.");
+    w.WriteLine("                          extension. Commands: runTests (streaming per-test results),");
+    w.WriteLine("                          execute (compile+run inline AL source; one response with");
+    w.WriteLine("                          tests, Message() output, coverage and captured values),");
+    w.WriteLine("                          shutdown. Full wire schema: docs/server-mode.md. Mutually");
+    w.WriteLine("                          exclusive with --watch.");
     w.WriteLine("  --dap [PORT]            Debug Adapter Protocol server (default port 4711):");
     w.WriteLine("                          set AL breakpoints, pause execution, inspect locals over a");
     w.WriteLine("                          real DAP TCP connection. Requires exactly one bundle path.");
@@ -5298,10 +5302,6 @@ static void PrintHelp(TextWriter w)
     w.WriteLine("NOT YET IMPLEMENTED (see docs/v1-to-v2-migration.md)");
     w.WriteLine("  Nothing in this section is accepted as a flag. Everything documented above IS");
     w.WriteLine("  implemented.");
-    w.WriteLine("  (debug adapter)         v1's DAP debug server (DapServer.cs). Needs an AL→C#");
-    w.WriteLine("                          source map the compile pipeline does not currently");
-    w.WriteLine("                          expose; tracked as a separate workstream. Distinct from");
-    w.WriteLine("                          the JSON-RPC daemon in EXECUTION above, which IS supported.");
     w.WriteLine("  --stubs DIR             v1's stub-merge path. Real MS DLLs load in-process so the");
     w.WriteLine("                          original use case mostly evaporated; still possible to");
     w.WriteLine("                          add as an extra source-root merge if needed.");

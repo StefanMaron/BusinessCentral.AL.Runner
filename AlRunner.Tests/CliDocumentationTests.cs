@@ -138,6 +138,71 @@ public sealed class CliDocumentationTests
     }
 
     /// <summary>
+    /// --help is user-facing documentation, not a source-comment scratchpad. A flag
+    /// whose behavior --help calls "TODO" is either not shipped (and must not claim
+    /// otherwise) or is shipped and the text just never got updated — issue #2118:
+    /// `--server`'s `execute` command shipped and returns real results (tests,
+    /// `capturedValues`, `coverage`, and — as of #2117/#2120 — `messages`), but
+    /// --help still read "Commands: runTests, shutdown (execute: TODO)" for multiple
+    /// releases of the thing it describes. Neither the flag-name scrape
+    /// (<see cref="Help_DocumentsEveryRecognizedFlag"/>) nor the "not listed as
+    /// unimplemented" check (<see cref="Help_DoesNotListImplementedFlagsAsUnimplemented"/>)
+    /// would have caught this: `execute` is not a `--flag`, and the stale text lived
+    /// under EXECUTION, not under "NOT YET IMPLEMENTED". A blanket "no literal TODO"
+    /// guard catches this whole class without needing to know which command it names.
+    /// </summary>
+    [Fact]
+    public void Help_NeverMarksAShippedCommandAsTodo()
+    {
+        var (_, help, _) = RunCli("--help");
+        Assert.DoesNotContain("TODO", help, StringComparison.Ordinal);
+
+        var (_, guide, _) = RunCli("--guide");
+        Assert.DoesNotContain("TODO", guide, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// --dap is documented in full later in the flag list (its own EXECUTION entries,
+    /// with docs/dap-mode.md), but the USAGE synopsis at the very top of --help never
+    /// mentioned it (issue #2118) even though every other mode flag with its own
+    /// invocation shape (--server, --precompile, --emit-app) got a synopsis line. An
+    /// agent that only skims USAGE before scrolling to the flag it already knows the
+    /// name of would not learn --dap exists at all.
+    /// </summary>
+    [Fact]
+    public void Usage_SynopsisListsDap()
+    {
+        var (_, help, _) = RunCli("--help");
+        var usageIdx = help.IndexOf("USAGE", StringComparison.Ordinal);
+        var selectionIdx = help.IndexOf("SELECTION", StringComparison.Ordinal);
+        Assert.True(usageIdx >= 0 && selectionIdx > usageIdx, "--help should keep USAGE/SELECTION sections.");
+        var usage = help[usageIdx..selectionIdx];
+        Assert.Contains("--dap", usage, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// --dap (issue #1642, stdio transport in #2058) is fully implemented and already
+    /// documented as such earlier in --help, but "NOT YET IMPLEMENTED" carried a stale
+    /// "(debug adapter)" bullet dating from before --dap existed (issue #2118), naming
+    /// a DapServer.cs that has since been deleted from the repository entirely. The
+    /// curated-flag-name check in <see cref="Help_DoesNotListImplementedFlagsAsUnimplemented"/>
+    /// does not catch this shape of staleness: the stale bullet never spells out the
+    /// literal flag ("--dap") it is actually describing, so a flag-name-based
+    /// allowlist has nothing to match against.
+    /// </summary>
+    [Fact]
+    public void Help_DoesNotDescribeDapAsUnimplemented()
+    {
+        var (_, help, _) = RunCli("--help");
+        var idx = help.IndexOf("NOT YET IMPLEMENTED", StringComparison.Ordinal);
+        Assert.True(idx >= 0, "--help should keep a 'NOT YET IMPLEMENTED' section.");
+        var notYet = help[idx..];
+
+        Assert.DoesNotContain("debug adapter", notYet, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("DapServer", notYet, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// --guide is advertised in CLAUDE.md and the al-runner-workflow skill. It must
     /// actually exist, and it must answer the questions an agent gets wrong when it
     /// only has the binary: how to invoke against a real app + test app, where deps
