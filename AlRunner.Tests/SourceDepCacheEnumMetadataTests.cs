@@ -57,7 +57,7 @@ public class SourceDepCacheEnumMetadataTests
         args.Append(TestBuildConfig.BcVersionArg);
         args.Append($" \"{bundleDir}\"");
         args.Append($" --cache \"{alCacheDir}\"");
-        // Pin `package caches: 0 dir(s)` — the fixture depends on NOTHING Microsoft
+        // Pin `package caches (requested): 0 dir(s)` — the fixture depends on NOTHING Microsoft
         // (platform/application 1.0.0.0, no declared deps), so no package cache is
         // needed, and passing an --package-cache path that does not exist makes the
         // runner take the explicit-arg branch and resolve it to the empty set
@@ -202,7 +202,7 @@ public class SourceDepCacheEnumMetadataTests
         // --package-cache that does not exist and silently falls back to the default
         // dirs, this test would quietly stop covering the zero-package-cache path
         // (the one CI actually runs) and go green for the wrong reason.
-        Assert.Contains("package caches: 0 dir(s)", output1);
+        Assert.Contains("package caches (requested): 0 dir(s)", output1);
         // Name the specific regression this direction guards: with no package cache
         // dir the compiler used to skip building the source-dep *.symbols.json loader
         // chain entirely, so the sibling source dep was runtime-loadable but
@@ -218,7 +218,7 @@ public class SourceDepCacheEnumMetadataTests
 
         // Run 2: dep HIT + bundle MISS — the exact condition from the issue.
         var (output2, exit2) = RunRunner(testsDir, alCacheDir, absentPackageCache);
-        Assert.Contains("package caches: 0 dir(s)", output2);
+        Assert.Contains("package caches (requested): 0 dir(s)", output2);
 
         // The exact reported defect. Never let a run that hits this pass silently —
         // the assertion below is the whole point of the RED -> GREEN cycle.

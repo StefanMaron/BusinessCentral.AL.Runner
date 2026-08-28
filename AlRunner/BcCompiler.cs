@@ -1060,8 +1060,8 @@ public sealed partial class BcCompiler
                 // This block is built BEFORE the .app scanner and independently of it: with
                 // no package-cache dir at all (a bundle whose only dependency is a SIBLING
                 // SOURCE app — no .alpackages, no ~/.bcartifacts.cache, no provisioned
-                // test-apps/platform-apps dir; exactly CI's `package caches: 0 dir(s)`), the
-                // old `loaderScanDirs.Count == 0` early-return bailed out here and the
+                // test-apps/platform-apps dir; exactly CI's `package caches (requested): 0
+                // dir(s)`), the old `loaderScanDirs.Count == 0` early-return bailed out here and the
                 // source dep's freshly written *.symbols.json was never consulted. The dep
                 // loaded fine at RUNTIME and was invisible at COMPILE time — AL0185
                 // "Codeunit 'X' is missing", after which BC's emitter crashes on the

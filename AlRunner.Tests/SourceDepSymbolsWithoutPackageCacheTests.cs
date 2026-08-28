@@ -43,9 +43,10 @@ namespace AlRunner.Tests;
 /// version's runner-owned <c>&lt;ArtifactsRootDir&gt;/&lt;version&gt;/{platform-apps,test-apps}</c>
 /// into <c>packageCacheDirs</c> whenever that exact directory already exists on disk — by
 /// design (#1996), so a warm re-run of <c>--auto-provision</c>/<c>al-runner provision</c>
-/// never re-hits the CDN — and it does so AFTER the "package caches: N dir(s)" line below is
-/// printed, so that line's "0" is true of the explicit/default set only, not of what
-/// dependency resolution actually searches a moment later. CI's own provisioning writes to a
+/// never re-hits the CDN — and it does so AFTER the "package caches (requested): N dir(s)"
+/// line below is printed, so that line's "0" is true of the explicit/default set only
+/// (#2107 relabeled it "(requested)" for exactly this reason), not of what dependency
+/// resolution actually searches a moment later. CI's own provisioning writes to a
 /// DIFFERENT path (<c>$HOME/.al-runner/platform-apps</c> — see .github/workflows/bc-tests.yml),
 /// which the runner's fold-in logic never references, so CI's actual search set really is
 /// empty; a machine that has ever run <c>--auto-provision</c>/<c>provision</c> FOR THIS EXACT
@@ -79,7 +80,7 @@ public class SourceDepSymbolsWithoutPackageCacheTests
         // Deliberately NEVER created: ExpandPackageCacheDirs drops non-existent dirs, so
         // passing it takes the explicit-arg branch and resolves to the EMPTY set rather
         // than falling back to DefaultPackageCacheDirs. That reproduces CI's
-        // "package caches: 0 dir(s)" on any machine, provisioned or not.
+        // "package caches (requested): 0 dir(s)" on any machine, provisioned or not.
         var absentPackageCache = Path.Combine(scratchRoot, "no-such-package-cache");
         Directory.CreateDirectory(depDir);
         Directory.CreateDirectory(testsDir);
@@ -202,7 +203,7 @@ public class SourceDepSymbolsWithoutPackageCacheTests
         // "0" even when the machine's own provisioning history later adds more candidates —
         // see the class doc comment. If this ever goes non-zero, the explicit-arg branch
         // itself broke, which is what this precondition actually guards.
-        Assert.Contains("package caches: 0 dir(s)", output);
+        Assert.Contains("package caches (requested): 0 dir(s)", output);
         // The dep must be BOTH runtime-loadable and compile-visible. Do NOT pin the total
         // dep count: a machine that has ever run --auto-provision/`provision` for this exact
         // BC build resolves additional (legitimately available) Microsoft platform/test-

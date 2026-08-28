@@ -1,15 +1,18 @@
-// Issue #2107 — "package caches: N dir(s)" is printed in Program.cs BEFORE three later
-// additions fold into packageCacheDirs (extraProvisionSearchDirs, platformAppsOut,
-// testAppsOut), so the number it reports is not the set dependency resolution actually
-// searches a moment later. This surfaced diagnosing #2067: the line read "package caches:
-// 0 dir(s)" on a machine where resolution went on to search several directories, because a
-// prior --auto-provision/`provision` run for the exact same BC build had left runner-owned
-// `<artifacts>/<version>/{platform-apps,test-apps}` on disk, and Program.cs folds those in
-// right after printing the count.
+// Issue #2107 — Program.cs prints "package caches (requested): N dir(s)" for the
+// explicit/default set BEFORE three later additions fold into packageCacheDirs
+// (extraProvisionSearchDirs, platformAppsOut, testAppsOut), so that count is never the
+// set dependency resolution actually searches a moment later. Before the fix the line
+// carried no "(requested)" qualifier at all, so it read as the whole story: it printed
+// "package caches: 0 dir(s)" on a machine where resolution went on to search several
+// directories, because a prior --auto-provision/`provision` run for the exact same BC
+// build had left runner-owned `<artifacts>/<version>/{platform-apps,test-apps}` on disk,
+// and Program.cs folds those in right after printing the count. That is what made #2067
+// slow to diagnose.
 //
 // This test forces that fold deterministically and asserts the run also reports a SECOND,
-// later line naming the TRUE final count — not just that some number gets printed (the
-// pre-fix code already does that; it is simply the wrong number at the wrong time).
+// later line naming the TRUE final count under its own "(final search set)" label — not
+// just that some number gets printed (the pre-fix code already did that; it was simply
+// the wrong number, unlabeled, at the wrong time).
 //
 // Uses --artifact-path (not --bc-version) so the engine/service-tier directory stays
 // pinned at the REAL, already-provisioned machine path — BcArtifacts.ServiceTierDir takes
@@ -134,8 +137,8 @@ public sealed class PackageCacheFinalSearchSetTests
         args.Append($" --cache \"{alCacheDir}\"");
         // Deliberately NEVER created: ExpandPackageCacheDirs drops non-existent dirs, so
         // this takes the explicit-arg branch and resolves to the EMPTY set — the same
-        // "package caches: 0 dir(s)" precondition SourceDepSymbolsWithoutPackageCacheTests
-        // relies on.
+        // "package caches (requested): 0 dir(s)" precondition
+        // SourceDepSymbolsWithoutPackageCacheTests relies on.
         args.Append($" --package-cache \"{absentPackageCache}\"");
         var psi = new ProcessStartInfo
         {
@@ -170,9 +173,11 @@ public sealed class PackageCacheFinalSearchSetTests
     }
 
     /// <summary>
-    /// RED (pre-fix): the ONLY "package caches" line prints the pre-fold count (0), taken
-    /// before Program.cs adds the two runner-owned dirs this test pre-creates — the exact
-    /// #2067 shape. GREEN: a second, later line reports the true final count (2).
+    /// RED (pre-fix): the ONLY "package caches" line prints the pre-fold count (0, and
+    /// unlabeled — no "(requested)" qualifier existed yet), taken before Program.cs adds
+    /// the two runner-owned dirs this test pre-creates — the exact #2067 shape. GREEN: the
+    /// "(requested)" line still reads 0, and a second, later "(final search set)" line
+    /// reports the true final count (2).
     /// </summary>
     [SkippableFact]
     public void FinalSearchSet_ReflectsRunnerOwnedFoldIn()
@@ -188,7 +193,7 @@ public sealed class PackageCacheFinalSearchSetTests
         {
             var output = RunAgainstIsolatedHome(testsDir, alCacheDir, isolatedHome, foldRunnerOwnedDirs: true);
 
-            Assert.Contains("package caches: 0 dir(s)", output);
+            Assert.Contains("package caches (requested): 0 dir(s)", output);
             Assert.Matches(new Regex(@"package caches \(final search set\): 2 dir\(s\)"), output);
         }
         finally
@@ -198,9 +203,10 @@ public sealed class PackageCacheFinalSearchSetTests
     }
 
     /// <summary>
-    /// The plain-path guard: when nothing runner-owned exists to fold in, the final line
-    /// must report the SAME count as the first — the fix must not distort the common case
-    /// (no --auto-provision history for this BC build) by inventing a phantom addition.
+    /// The plain-path guard: when nothing runner-owned exists to fold in, the "(final
+    /// search set)" line must report the SAME count as the "(requested)" line — the fix
+    /// must not distort the common case (no --auto-provision history for this BC build)
+    /// by inventing a phantom addition.
     /// </summary>
     [SkippableFact]
     public void FinalSearchSet_UnchangedWhenNothingFolds()
@@ -216,7 +222,7 @@ public sealed class PackageCacheFinalSearchSetTests
         {
             var output = RunAgainstIsolatedHome(testsDir, alCacheDir, isolatedHome, foldRunnerOwnedDirs: false);
 
-            Assert.Contains("package caches: 0 dir(s)", output);
+            Assert.Contains("package caches (requested): 0 dir(s)", output);
             Assert.Contains("package caches (final search set): 0 dir(s)", output);
         }
         finally
