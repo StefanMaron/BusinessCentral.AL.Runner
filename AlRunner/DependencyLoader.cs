@@ -154,14 +154,26 @@ public sealed class DependencyLoader
             {
                 asm = LoadOne(m, path, bucketRoot);
             }
-            catch (AlRunner.Infrastructure.DependencyLoadException) when (microsoftSourceOnly)
+            // #2131: this guard USED to be bare `when (microsoftSourceOnly)` — it caught
+            // and silently swallowed EVERY Microsoft-source-only Tier-3 failure, including
+            // genuine test-library apps (Library Assert, …) that have no service-tier DLL
+            // fallback at all. That swallow-and-continue left the dependency unloaded with
+            // no abort, so the FIRST time the consuming test called one of its members it
+            // died with a cryptic NavNCLMissingMethodException ("object with ID 0") instead
+            // of ever seeing the real EMIT-ZERO/EMIT-FAIL/COMPILE-FAIL cause. The narrowed
+            // guard below only swallows when HasServiceTierDllFallback proves this specific
+            // app's own codeunits ARE served by the extracted service-tier DLL index — a
+            // FAITHFUL fallback (real MS-compiled code), matching case (a) in the tier
+            // comment above (platform-runtime app not yet in KnownPlatformRuntimeApps).
+            // Everything else propagates uncaught to Program.cs's existing
+            // `catch (DependencyLoadException ex)` handler, which aborts the WHOLE run with
+            // one loud "FATAL: dependency compile failed — cannot continue. {ex.Message}"
+            // line naming the dependency + stage — see .claude/rules/loud-failures.md.
+            catch (AlRunner.Infrastructure.DependencyLoadException) when (microsoftSourceOnly && HasServiceTierDllFallback(path))
             {
-                // Platform symbol-stub app whose runtime is the service-tier DLLs: skip the
-                // source-compile and let runtime codeunit resolution serve real bodies from the
-                // DLL index (or NoOp for the documented system/test-toolkit ranges).
                 Console.Error.WriteLine(
                     $"[deps] Microsoft source-only {m.Publisher}_{m.Name} v{m.Version}: Tier-3 compile " +
-                    $"unavailable — deferring to service-tier DLL dispatch at runtime");
+                    $"unavailable — deferring to service-tier DLL dispatch at runtime (partial index coverage)");
                 continue;
             }
             if (asm != null)
@@ -585,6 +597,42 @@ public sealed class DependencyLoader
             foreach (System.Text.RegularExpressions.Match mm in _codeunitDecl.Matches(src))
                 set.Add("Codeunit" + mm.Groups[1].Value);
         return set;
+    }
+
+    // #2131: pure decision extracted so AlRunner.Tests can pin it directly (no BC engine
+    // boot needed) — see DependencyLoaderServiceTierFallbackTests. True only when the
+    // extracted service-tier DLL index genuinely covers at least one of THIS app's own
+    // codeunits, i.e. LoadAll's catch below may faithfully defer to real MS-compiled code
+    // instead of aborting. A Microsoft test-library app (Library Assert, …) whose bodies
+    // exist ONLY as AL source has ZERO coverage here — this returns false for it, so the
+    // caller must NOT swallow the failure. Before this existed, LoadAll's catch swallowed
+    // EVERY Microsoft-source-only Tier-3 failure unconditionally, which is how a broken
+    // Library Assert compile turned into a cryptic NavNCLMissingMethodException deep inside
+    // the CONSUMING test instead of a named "Library Assert failed to build" abort.
+    internal static bool HasFaithfulServiceTierFallback(
+        bool serviceTierIndexAvailable,
+        IReadOnlyCollection<string> codeunitTypeNames,
+        Func<string, bool> indexContains)
+    {
+        if (!serviceTierIndexAvailable || codeunitTypeNames.Count == 0) return false;
+        foreach (var name in codeunitTypeNames)
+            if (indexContains(name)) return true;
+        return false;
+    }
+
+    /// <summary>Real-state wrapper around <see cref="HasFaithfulServiceTierFallback"/> —
+    /// extracts this app's own codeunit names and asks the actual ServiceTierDllIndex.
+    /// Never throws: an unreadable .app just means "no fallback", not a crash here.</summary>
+    private static bool HasServiceTierDllFallback(string appPath)
+    {
+        IReadOnlyList<(string Name, string Src)> alSources;
+        try { alSources = AppLoader.ExtractAl(appPath); }
+        catch { return false; }
+        var codeunitIds = ExtractCodeunitTypeNames(alSources);
+        return HasFaithfulServiceTierFallback(
+            AlRunner.Infrastructure.ServiceTierDllIndex.Available,
+            codeunitIds,
+            AlRunner.Infrastructure.ServiceTierDllIndex.Contains);
     }
 
     private static string SanitizeFileName(string s)
