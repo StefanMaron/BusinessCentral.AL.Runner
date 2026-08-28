@@ -32,6 +32,23 @@ anything. The notifying kind of background work is the `Agent` tool, which
 you may not have. There is no flag, wrapper, or phrasing of a `Bash` call that
 earns you a wake-up.
 
+**Nor does the harness backgrounding it FOR you.** A long foreground command
+can be moved to the background out from under you, together with a message
+saying you will be notified when it completes. That promise does not hold for
+a process started inside your own turn — whatever produced it. This has already
+cost a stall: an agent correctly ran `gh run watch` in the foreground, the
+harness backgrounded it and promised a notification, and the agent ended its
+turn waiting for one that could never arrive.
+
+When that happens, do not end your turn on the strength of the promise. Re-check
+the thing directly and keep checking in the foreground:
+
+```bash
+gh run view <run-id> --json status,conclusion
+```
+
+Anything other than `completed` means "not yet reported", never "green".
+
 The correct shapes, in order of preference: run it in the foreground; or push
 first so the loss is survivable and let CI be the verdict; or genuinely
 abandon it and say so. "End the turn and wait" is not on the list. Of every

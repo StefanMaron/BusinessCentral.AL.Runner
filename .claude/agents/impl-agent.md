@@ -168,6 +168,14 @@ dead. There is no flag or wrapper that earns you a wake-up
 work this way in a single day, each having reported "CI is running, I'll
 confirm."
 
+This includes the case where the harness moves your foreground `gh run watch`
+to the background on its own and says it will notify you. It will not, for
+anything you started. Re-check directly instead, and keep checking:
+
+```
+gh run view <run-id> --json status,conclusion
+```
+
 Both of these must hold before you report completion:
 
 1. The run status is `completed` — not `in_progress`, and not "the last

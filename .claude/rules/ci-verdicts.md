@@ -42,6 +42,11 @@ end a turn while CI you are responsible for is still running: a background
 process started inside your own turn dies with it, so the notification you are
 waiting for never comes (`no-backgrounding-long-commands.md`).
 
+That holds even when the harness backgrounds the watch itself and tells you it
+will notify you — it will not, for anything you started. Re-check with
+`gh run view <id> --json status,conclusion` and treat anything other than
+`completed` as "not yet reported".
+
 ## 3. Never re-run a failed job
 
 `gh run rerun` and the web "Re-run" button overwrite the failed run's logs
