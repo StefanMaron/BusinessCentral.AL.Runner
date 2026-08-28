@@ -71,6 +71,35 @@ Tests must PROVE the feature: assert specific values, cover positive + negative 
 - **`--package-cache "$HOME/.al-runner/platform-apps"` is required on every corpus run in this repo's CI** (see `.github/workflows/bc-tests.yml`) — the runner build's default BC major and the corpus's platform apps don't line up without it, and the run aborts on a provisioning-gap message before executing a single test. If that cache directory doesn't exist yet on your machine, run `al-runner provision` (or pass `--auto-provision`) first, or fetch it with `tools/DownloadArtifacts` (see the skill and `bc-tests.yml` for the exact invocation).
 - **Never background a long-running command and end your turn.** See `.claude/rules/no-backgrounding-long-commands.md` — a cold full-corpus run is not a few-seconds operation, budget several minutes in the foreground, and commit/push before starting anything long.
 
+### Fix the shape, not just the reported line
+
+Before you call the fix done, look for the same defect elsewhere. A reported bug is one
+observation of a shape, and the shape usually repeats — the reporter found the instance
+that bit them, not every instance.
+
+Ask three questions and answer them in the PR body, **even when the answer is "nothing
+found"**:
+
+1. **Does the same wrong pattern appear at another call site?** Grep for the shape you
+   just fixed, not the symptom you were handed.
+2. **Does a sibling function make the same assumption?** Methods called alongside the
+   broken one, or reading the same state, usually share its blind spot.
+3. **If two code paths write the same state, do they maintain the same invariant?** One
+   path having a guard the other lacks is a defect whether or not anyone has hit it.
+
+This is not scope creep. Fixing one of N instances closes the issue while leaving the bug
+in, and the next report reads as a regression. If the wider fix is genuinely too large,
+say so and file the rest per `.claude/rules/file-issues-for-gaps.md` — never silently fix
+only what was reported.
+
+Recorded because it keeps paying: in one day this step found a sibling `_parsedPages`
+gap in `GetInsertAllowedForPage` called at every TestPage construction site (#2088), five
+more call sites doing the same unrooted `Path.Combine` on a home directory (#2114), a
+`--help` section listing a shipped feature as unimplemented (#2118), a wrong
+statement-attribution bug that an existing test had encoded as correct (#2074), and a
+`WorkDate` regression that would have broken nearly every `execute` call (#2117). CI was
+green in all five cases and would have stayed green.
+
 ### What to run before you push — targeted, not everything
 
 See `.claude/rules/local-test-scope.md` for the general rule. Concretely for
