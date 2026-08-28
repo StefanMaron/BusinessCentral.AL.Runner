@@ -13,18 +13,65 @@
 // process with no real client connection — no Cecil rewrite of NavDialog or any other
 // Ncl.dll business logic is needed.
 //
-// SCOPE OF THE CHANGE
-//   DialogMessage is the ONLY member whose answer differs from what real BC would do
-//   with no client connected. Every other member reproduces
-//   NavNCLCallbackNotAllowedException exactly — the SAME exception
-//   `NavSession.ClientCallback`'s throwing getter raises when ClientCallbackOrNull is
-//   null. That matters because installing this override makes ClientCallbackOrNull
-//   non-null for the WHOLE session, so BC's own ALConfirm/ALStrMenu bodies (which read
-//   the throwing `session.ClientCallback`, not `ClientCallbackOrNull`) stop throwing at
-//   the property access and instead call DialogConfirm/DialogSelectionMenu on US.
-//   Reproducing the exact same exception type+message there means Confirm()/StrMenu()
-//   on the `execute` path keep their EXISTING, already-correct, already-loud behaviour
-//   byte-for-byte — this override changes NOTHING observable except Message().
+// WHY THIS IS SAFE TO INSTALL SESSION-WIDE, NOT JUST FOR ALMessage
+//   Installing ClientCallbackOverride makes ClientCallbackOrNull non-null for the WHOLE
+//   session, not only inside ALMessage — so every OTHER Ncl.dll call site that reads
+//   ClientCallbackOrNull/ClientCallback is affected too. Verified by decompiling
+//   Microsoft.Dynamics.Nav.Ncl.dll 28.1 in full (ilspycmd -il on the whole assembly,
+//   every `callvirt ... IClientCallback::<Member>` site traced back to its nearest
+//   preceding getter) rather than assumed. Two shapes exist, and they need DIFFERENT
+//   answers here:
+//
+//   (A) Reached via the THROWING `session.ClientCallback` property (or a decorator
+//       whose own ctor already went through it, e.g. DataItemIteratorClientCallback /
+//       QueryClientCallback) — DialogConfirm, DialogSelectionMenu, DialogOpen/Update/
+//       Close, ProcessServerRequests, ImportDataAction/ExportDataAction,
+//       DownloadFileAction/UploadFileAction/ViewFileAction, FormRun/FormRunModal/
+//       FormClose/FormActivate, CreateDotNetHandle/GetDotNetObject/
+//       InvokeAutomationMethod/DisposeAutomationObject, RequestCredentials,
+//       ClearClientMetadataCache, DialogHyperlink, InvokeTaskPaneAction,
+//       DataSetPageReady, VerifyCallbackAllowed. On the runner (no client, no
+//       override) that property THROWS before any of these are ever reached — with
+//       this override installed it returns US instead, so these members must
+//       reproduce that EXACT exception rather than silently answering something.
+//       They throw NavNCLCallbackNotAllowedException — the identical type+message
+//       `ClientCallback`'s own getter raises — so this class changes NOTHING
+//       observable for any of them.
+//
+//   (B) Reached via a NULL-CHECK on `ClientCallbackOrNull` (never the throwing
+//       property) — WorkDateChanged (NavSession.set_WorkDate — AL `WorkDate := ...`,
+//       extremely common), FeedbackRequested (Base App's in-app-feedback codeunit
+//       2000000021), SendSessionUpdateRequest (NavSessionSettings.SaveSessionSettings),
+//       CompanyInformationChanged (SystemTableTriggers reacting to a Company
+//       display-name write), TokenChangedNotification (Agents.
+//       AgentTaskTableChangeMonitor's background poll). BC's own real behaviour for
+//       ALL of these, with no client, is "do nothing" — a pure best-effort
+//       client-UI-refresh signal with nobody to receive it, same shape as the
+//       existing Batch-5 no-op headless progress dialog
+//       (ALSystemOperatingSystem's neighbouring NavDialog.ALOpenAsync/ALUpdateAsync/
+//       ALClose — see NclCecilRewrite.cs). THROWING here instead — which an earlier
+//       revision of this file did — would be a REAL regression on the `execute` path:
+//       any AL codeunit that sets `WorkDate` (near-universal in BC test setup) would
+//       flip from "ran fine" to "throws", discovered only by a reviewer decompiling
+//       Ncl.dll, not stated here. So these five reproduce the EXACT pre-existing
+//       silent-no-client answer: do nothing, return a default where one is needed.
+//       This is not the silent-fake loud-failures.md forbids — it is the literal,
+//       unconditional real-BC answer for "no client is connected" on a
+//       notification nobody exists to receive; DialogMessage (case (D) below) is
+//       the ONE such site this issue changes on purpose, and it changes it because
+//       the caller of `execute` explicitly wants that text, unlike these five.
+//       NavNotification.ALSend/ALRecall (SendNotification/SendGlobalNotification's
+//       PUBLIC AL-facing entry points) are separately Cecil-owned (NclCecilRewrite.cs,
+//       Batch 8) — their REAL bodies with this same null-check shape are already dead
+//       code on the runner regardless of what this class does, so those two members
+//       are implemented here only to complete the interface, never actually reached.
+//
+//   (C) The `CallbackAllowed` getter (`ClientCallbackOrNull?.IsCallbackAllowed ??
+//       false`) — deliberately answers `true`: the runner IS a UI-capable session
+//       (same reasoning as ALSystemOperatingSystem.get_ALGuiAllowed's own Cecil
+//       rewrite), not a silent default.
+//
+//   (D) DialogMessage — the fix. See below.
 //
 // [Test]-PROCEDURE BEHAVIOUR IS UNCHANGED
 //   Message() called from within a [Test] procedure never reaches this class at all:
@@ -43,16 +90,13 @@ namespace AlRunner.Patches;
 
 public sealed class RunnerClientCallback : IClientCallback
 {
-    // The runner IS a UI-capable session for the same reason
-    // ALSystemOperatingSystem.get_ALGuiAllowed is rewritten to true (see
-    // NclCecilRewrite.cs ~line 1537) — it dispatches UI callbacks itself rather than
-    // delegating to a client window. Nothing on the Message()/Confirm()/StrMenu() path
+    // (C) — see file header. Nothing on the Message()/Confirm()/StrMenu() path
     // consults this getter today; it is answered truthfully rather than defaulted to
     // false in case something else ever does.
     public bool IsCallbackAllowed => true;
 
-    /// <summary>The fix: capture the message and the AL statement that produced it
-    /// instead of the real BC "no client" answer (silently doing nothing). Reads
+    /// <summary>(D) — the fix: capture the message and the AL statement that produced
+    /// it instead of the real BC "no client" answer (silently doing nothing). Reads
     /// AlCurrentStatement, NOT NavSession.CurrentMethodScope — see that class's doc
     /// comment for why the latter does not track a trigger scope like OnRun.</summary>
     public void DialogMessage(string message, Guid automationId)
@@ -71,10 +115,23 @@ public sealed class RunnerClientCallback : IClientCallback
         Infrastructure.AlMessageCapture.Record(message, scopeName, statementId);
     }
 
-    // ── Everything else: reproduce BC's own "no client connected" answer exactly ──
-    // (see the file header — this is NOT a silent fake: it is the identical exception
-    // NavSession.ClientCallback's throwing getter raises today, for callers this
-    // override's mere existence would otherwise divert around that getter.)
+    // ── (B) — reached only via a null-check today; a no-op here is the EXACT real-BC
+    // "no client connected" answer, not a silent fake (see file header, case (B)).
+    public void WorkDateChanged(DateTime workDate) { }
+    public Task FeedbackRequested(FeedbackRequest feedbackRequest) => Task.CompletedTask;
+    public void SendSessionUpdateRequest(SessionSettingsInfo sessionSettingsInfo) { }
+    public void CompanyInformationChanged(CompanyInformationChanges companyInformationChanges) { }
+    public void TokenChangedNotification() { }
+    // NavNotification.ALSend/ALRecall (the only AL-facing entry points to these two)
+    // are Cecil-owned (NclCecilRewrite.cs, Batch 8) — dead code regardless of this
+    // implementation. No-op for the same reason as the rest of case (B), not reached.
+    public void SendNotification(NotificationInfo notification) { }
+    public void SendGlobalNotification(NotificationInfo notification) { }
+
+    // ── (A) — reproduce BC's own "no client connected" answer exactly (see file
+    // header): the identical exception NavSession.ClientCallback's throwing getter
+    // raises today, for callers this override's mere existence would otherwise divert
+    // around that getter.
     public void DialogHyperlink(string hyperlink, Guid automationId) => throw NotAllowed();
     public bool DialogConfirm(string message, bool defaultValue, Guid automationId) => throw NotAllowed();
     public void ProcessServerRequests() => throw NotAllowed();
@@ -99,15 +156,8 @@ public sealed class RunnerClientCallback : IClientCallback
     public void DisposeAutomationObject(int handle, bool suppressDispose) => throw NotAllowed();
     public object InvokeAutomationMethod(InvokeAutomationMethodRequest<object> request) => throw NotAllowed();
     public void ClearClientMetadataCache() => throw NotAllowed();
-    public void SendNotification(NotificationInfo notification) => throw NotAllowed();
-    public void SendGlobalNotification(NotificationInfo notification) => throw NotAllowed();
-    public void SendSessionUpdateRequest(SessionSettingsInfo sessionSettingsInfo) => throw NotAllowed();
-    public void CompanyInformationChanged(CompanyInformationChanges companyInformationChanges) => throw NotAllowed();
-    public void WorkDateChanged(DateTime workDate) => throw NotAllowed();
     public void VerifyCallbackAllowed(NavApplicationObjectBase applicationObject) => throw NotAllowed();
     public Task SendPageBackgroundTaskCompletedNotificationAsync(Guid formHandle, int taskId, string clientActivityId) => throw NotAllowed();
-    public Task FeedbackRequested(FeedbackRequest feedbackRequest) => throw NotAllowed();
-    public void TokenChangedNotification() => throw NotAllowed();
     public Task InvokeTaskPaneAction(InvokeTaskPaneActionArguments arguments) => throw NotAllowed();
 
     private static NavNCLCallbackNotAllowedException NotAllowed() => new();

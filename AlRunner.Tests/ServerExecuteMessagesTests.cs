@@ -232,4 +232,39 @@ public class ServerExecuteMessagesTests : IClassFixture<SharedCliServer>
         var message = tests[0].GetProperty("message").GetString() ?? "";
         Assert.Contains("Callback", message);
     }
+
+    // Decompile-verified regression guard: installing RunnerClientCallback makes
+    // NavSession.ClientCallbackOrNull non-null for the WHOLE session, not only inside
+    // ALMessage — NavSession.set_WorkDate's real body ALSO reads it (null-checked, not
+    // via the throwing property) to fire IClientCallback.WorkDateChanged, a
+    // client-UI-refresh notification. `WorkDate := ...` is near-universal in BC test
+    // setup, so an earlier revision of this fix that made every non-DialogMessage
+    // member throw would have made this ONE line fail every such `execute` call. Proven
+    // two ways in one request: the run must still pass (not throw), and Format(WorkDate)
+    // fed back through the now-fixed Message() capture must show the REAL assigned
+    // date, not a default/unset one.
+    [SkippableFact]
+    public async Task Execute_SetsWorkDate_DoesNotThrow_AndNewValueIsObservable()
+    {
+        TestArtifacts.SkipIfMissing();
+        var server = await _fixture.GetAsync();
+        var r = await server.SendAsync(JsonSerializer.Serialize(new
+        {
+            command = "execute",
+            code = "codeunit 60204 \"WorkDate NoClient SX\" { trigger OnRun() " +
+                   "begin WorkDate := DMY2Date(17, 3, 2031); " +
+                   "Message(Format(WorkDate, 0, '<Day,2>/<Month,2>/<Year4>')); end; }",
+        }));
+        var d = JsonSerializer.Deserialize<JsonElement>(r);
+        Assert.False(d.TryGetProperty("error", out _), $"unexpected error response: {r}");
+        Assert.Equal(0, d.GetProperty("exitCode").GetInt32());
+        var tests = d.GetProperty("tests");
+        Assert.Equal(1, tests.GetArrayLength());
+        Assert.Equal("pass", tests[0].GetProperty("status").GetString());
+
+        Assert.True(d.TryGetProperty("messages", out var messages), $"expected messages on the response: {r}");
+        var entries = messages.EnumerateArray().ToList();
+        Assert.Single(entries);
+        Assert.Equal("17/03/2031", entries[0].GetProperty("text").GetString());
+    }
 }
