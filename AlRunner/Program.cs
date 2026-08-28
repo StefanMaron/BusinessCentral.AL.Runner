@@ -5073,9 +5073,11 @@ static void PrintHelp(TextWriter w)
     w.WriteLine("                          is accepted as a shell-friendly no-op.");
     w.WriteLine("  --isolation MODE, --test-isolation MODE");
     w.WriteLine("                          Test isolation:");
-    w.WriteLine("                            codeunit  state shared inside a codeunit, reset between");
+    w.WriteLine("                            codeunit  database resets before every [Test]; AL global");
+    w.WriteLine("                                      variables stay shared across a codeunit's tests");
     w.WriteLine("                                      (default; BC's \"Isol. Codeunit\" 130450)");
-    w.WriteLine("                            test      every [Test] gets a fresh state (BC's 130452)");
+    w.WriteLine("                            test      every [Test] gets a fresh codeunit instance AND");
+    w.WriteLine("                                      a database reset (BC's \"Isol. Test\" 130452)");
     w.WriteLine("                            disabled  no resets at all (BC's 130453)");
     w.WriteLine("                            method    v1 alias for 'test' (v1's per-method reset)");
     w.WriteLine("  --test-timeout SECONDS  Per-test timeout override (v1 carryover). Default: 60s, or");

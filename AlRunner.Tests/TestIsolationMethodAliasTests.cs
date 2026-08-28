@@ -11,9 +11,21 @@
 // Ghost-test trap avoided: the fixture below has two [Test] procedures in ONE
 // codeunit. Step1 inserts a row and commits implicitly at the end of the method
 // (BC always commits between test methods). Step2 asserts the row count is
-// UNCONDITIONALLY 0 — under `--test-isolation codeunit` (the true "shared within a
-// codeunit" mode) that assertion is FALSE, so a no-op fix that keeps `method`
-// pointed at Codeunit isolation makes this test FAIL, not vacuously pass.
+// UNCONDITIONALLY 0 — under `--test-isolation codeunit` that assertion held FALSE
+// before the fix below landed, so a no-op fix that keeps `method` pointed at
+// Codeunit isolation makes this test FAIL, not vacuously pass.
+//
+// Database-contrast fact retired: this file used to also carry a fourth fact,
+// TestIsolationCodeunit_SharesStateBetweenTestMethods, proving `codeunit` isolation
+// was a REAL, distinct mode from `method`/`test` by showing the database row from
+// Step1 survived into Step2 under `codeunit` but not under `method`/`test`. Real BC's
+// "Test Runner - Isol. Codeunit" 130450 rolls the database back between every test
+// inside the codeunit too — only AL GLOBAL VARIABLES stay shared — so that
+// database-row discriminator stopped being true once the runner's `codeunit` mode was
+// brought in line with BC (issue distinct from #1647; the CLASS's own #1647 concern
+// still stands, just needs a discriminator that BC still preserves). See
+// TestIsolationCodeunitVariableSharingTests below for the replacement proof, built on
+// an AL global variable instead of a database row.
 using System.Diagnostics;
 using System.Text;
 using Xunit;
@@ -52,8 +64,10 @@ public sealed class TestIsolationMethodAliasTests : IDisposable
     ///       Step2_ExpectsFreshTable asserts the table is empty (UNCONDITIONALLY).
     ///     Under real per-test isolation (v1's `method`, v2's `test`), Step2 always
     ///     sees an empty table because state resets before every [Test]. Under
-    ///     per-codeunit isolation (v2's true `codeunit` mode), the row from Step1
-    ///     survives into Step2 and the assertion fails.
+    ///     `codeunit` isolation the row from Step1 must ALSO be gone now — real BC's
+    ///     130450 rolls the database back between tests inside the codeunit — so this
+    ///     fixture proves the DATABASE half of the fix for every isolation mode; see
+    ///     TestIsolationCodeunitVariableSharingTests for the half that must NOT reset.
     /// </summary>
     private static void WriteFixture(string dir)
     {
@@ -120,7 +134,7 @@ public sealed class TestIsolationMethodAliasTests : IDisposable
             var
                 Marker: Record "IMA Marker";
             begin
-                Assert.AreEqual(0, Marker.Count(), 'table must be reset before this test — per-method isolation must have fired');
+                Assert.AreEqual(0, Marker.Count(), 'table must be reset before this test — per-test database rollback must have fired');
             end;
         }
         """);
@@ -184,22 +198,23 @@ public sealed class TestIsolationMethodAliasTests : IDisposable
     }
 
     /// <summary>
-    /// Negative / contrast case: real `--test-isolation codeunit` shares state within
-    /// a codeunit (BC's "Isol. Codeunit" 130450), so the row Step1 inserted survives
-    /// into Step2 and its unconditional "table must be empty" assertion fails. This
-    /// proves the fixture actually exercises the isolation boundary — a no-op fix
-    /// that keeps `method` pointed at Codeunit isolation would make this outcome
-    /// identical to the `method` runs above, not just "some test passes".
+    /// #2132: real BC's "Test Runner - Isol. Codeunit" 130450 rolls the DATABASE back
+    /// between every test inside the codeunit too, not just between codeunits. Before
+    /// the #2132 fix, `--isolation codeunit` left Step1's row in place for Step2 and
+    /// this assertion failed (RED). After the fix the row is gone here exactly like it
+    /// is under `method`/`test` — the database half of the two modes is now identical;
+    /// see TestIsolationCodeunitVariableSharingTests for the half that still differs.
     /// </summary>
     [SkippableFact]
-    public void TestIsolationCodeunit_SharesStateBetweenTestMethods()
+    public void TestIsolationCodeunit_DatabaseNoLongerLeaksBetweenTestMethods()
     {
         TestArtifacts.SkipIfMissing();
 
-        var (output, exit) = RunRunner("--test-isolation codeunit");
+        var (output, exit) = RunRunner("--isolation codeunit");
 
-        Assert.NotEqual(0, exit);
+        Assert.Equal(0, exit);
+        Assert.DoesNotContain("FAIL  Codeunit", output);
+        Assert.Contains("Step1_InsertsRow", output);
         Assert.Contains("Step2_ExpectsFreshTable", output);
-        Assert.Contains("table must be reset before this test", output);
     }
 }

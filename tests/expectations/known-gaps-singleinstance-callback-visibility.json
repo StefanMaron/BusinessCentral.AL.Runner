@@ -1,0 +1,122 @@
+[
+  {
+    "codeunitId": 60237,
+    "CodeunitName": "Test Event ByRef Mut",
+    "Method": "TableEvent_OnBeforeValidate_RecMutation_VisibleToCallerAndPersistable",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2143",
+    "Note": "#2132 made the default TestIsolation.Codeunit exercise the per-test reset path TestIsolation.Test always used, surfacing a pre-existing gap: a SingleInstance codeunit (ALT Event Mutation Control) written to via one variable reference inside the [Test] procedure is read back empty via a different Codeunit variable reference inside an [EventSubscriber] invoked later in the same test. Reproduces on unmodified main with --isolation test, but ONLY as part of the full al-language corpus run \u2014 the affected codeunit passes cleanly when run alone with --test, so this is order-dependent on an earlier test/codeunit in the suite, not a same-test race. See issue #2143."
+  },
+  {
+    "codeunitId": 60237,
+    "CodeunitName": "Test Event ByRef Mut",
+    "Method": "TableEvent_OnAfterValidate_RecMutation_VisibleToCallerAndPersistable",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2143",
+    "Note": "Same SingleInstance-across-callback gap as the OnBeforeValidate entry above."
+  },
+  {
+    "codeunitId": 60237,
+    "CodeunitName": "Test Event ByRef Mut",
+    "Method": "TableEvent_OnBeforeValidate_XRecMutation_VisibleToLaterSubscribers",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2143",
+    "Note": "Same SingleInstance-across-callback gap."
+  },
+  {
+    "codeunitId": 60237,
+    "CodeunitName": "Test Event ByRef Mut",
+    "Method": "TableEvent_OnBeforeInsert_RecMutation_PersistsToInsertedRecord",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2143",
+    "Note": "Same SingleInstance-across-callback gap."
+  },
+  {
+    "codeunitId": 60237,
+    "CodeunitName": "Test Event ByRef Mut",
+    "Method": "TableEvent_OnAfterInsert_RecMutation_VisibleToCaller",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2143",
+    "Note": "Same SingleInstance-across-callback gap."
+  },
+  {
+    "codeunitId": 60237,
+    "CodeunitName": "Test Event ByRef Mut",
+    "Method": "TableEvent_OnBeforeModify_RecMutation_PersistsToStoredRecord",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2143",
+    "Note": "Same SingleInstance-across-callback gap."
+  },
+  {
+    "codeunitId": 60237,
+    "CodeunitName": "Test Event ByRef Mut",
+    "Method": "TableEvent_OnBeforeModify_XRecMutation_VisibleToLaterSubscribers",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2143",
+    "Note": "Same SingleInstance-across-callback gap."
+  },
+  {
+    "codeunitId": 60237,
+    "CodeunitName": "Test Event ByRef Mut",
+    "Method": "TableEvent_OnAfterModify_RecMutation_VisibleToCaller",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2143",
+    "Note": "Same SingleInstance-across-callback gap."
+  },
+  {
+    "codeunitId": 60237,
+    "CodeunitName": "Test Event ByRef Mut",
+    "Method": "TableEvent_OnBeforeDelete_RecMutation_VisibleToLaterSubscribers",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2143",
+    "Note": "Same SingleInstance-across-callback gap."
+  },
+  {
+    "codeunitId": 60237,
+    "CodeunitName": "Test Event ByRef Mut",
+    "Method": "TableEvent_OnAfterDelete_RecMutation_VisibleToCaller",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2143",
+    "Note": "Same SingleInstance-across-callback gap."
+  },
+  {
+    "codeunitId": 60237,
+    "CodeunitName": "Test Event ByRef Mut",
+    "Method": "TableEvent_OnBeforeRename_RecMutation_PersistsToRenamedRecord",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2143",
+    "Note": "Same SingleInstance-across-callback gap."
+  },
+  {
+    "codeunitId": 60237,
+    "CodeunitName": "Test Event ByRef Mut",
+    "Method": "TableEvent_OnBeforeRename_XRecMutation_VisibleToLaterSubscribers",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2143",
+    "Note": "Same SingleInstance-across-callback gap."
+  },
+  {
+    "codeunitId": 60237,
+    "CodeunitName": "Test Event ByRef Mut",
+    "Method": "TableEvent_OnAfterRename_RecMutation_VisibleToCaller",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2143",
+    "Note": "Same SingleInstance-across-callback gap. CodeunitEvent_VarScalarMutation_VisibleToPublisher in this same codeunit is NOT listed here because it passes \u2014 that scenario reads the SingleInstance control codeunit from within the SAME procedure that set it, never crossing a callback boundary."
+  },
+  {
+    "codeunitId": 60922,
+    "CodeunitName": "ASK Tests",
+    "Method": "TestPage_ActionInvoke_OnANewSubpageRow_AutoSplitKeyHasAssignedTheLineNo",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2143",
+    "Note": "Same class of gap as the Codeunit 60237 entries: a SingleInstance codeunit (ASK Probe) written to from a TestPage action's OnAction trigger is read back at its default (unset) value from the [Test] procedure's own variable reference. Reproduces on unmodified main with --isolation test, but ONLY as part of the full al-language corpus run \u2014 the affected codeunit passes cleanly when run alone with --test, so this is order-dependent on an earlier test/codeunit in the suite, not a same-test race. See issue #2143."
+  },
+  {
+    "codeunitId": 60922,
+    "CodeunitName": "ASK Tests",
+    "Method": "TestPage_ActionInvoke_WithoutAutoSplitKey_SavesTheRowButLeavesTheLineNoAtZero",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2143",
+    "Note": "Same SingleInstance-across-callback gap as the sibling AutoSplitKey test above."
+  }
+]

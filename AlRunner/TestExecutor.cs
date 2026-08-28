@@ -12,11 +12,20 @@ public enum TestOutcome { Pass, Fail, Error, Skipped }
 
 /// <summary>
 /// Test-isolation granularity. Mirrors the BC "Test Runner" codeunits:
-///   Codeunit (default, matches 130450 "Test Runner - Isol. Codeunit") — all
-///     tests inside a single codeunit share state; reset happens once per CU.
+///   Codeunit (default, matches 130450 "Test Runner - Isol. Codeunit") — the
+///     DATABASE rolls back before every [Test] procedure, same as Test below, but
+///     every [Test] in the codeunit runs on the SAME codeunit instance, so AL
+///     GLOBAL VARIABLES stay shared across the whole codeunit (#2132 — a real BC
+///     28 container measurement showed 130450 rolling the database back per test,
+///     which the runner's `codeunit` mode did not do before this fix; only the
+///     variable-state half of "codeunit" isolation is now what distinguishes it
+///     from Test).
 ///   Test  (matches 130452 "Test Runner - Isol. Test") — every [Test] gets a
-///     fresh in-memory state.
-///   Disabled (matches 130453) — no state reset; suite-long sharing.
+///     brand new codeunit instance AND a database rollback: neither AL global
+///     variables nor database rows survive from one [Test] to the next.
+///   Disabled (matches 130453) — no state reset at all; suite-long sharing of
+///     both the database and the one shared codeunit instance.
+/// See "Test isolation modes" in docs/limitations.md for the full mapping table.
 /// </summary>
 public enum TestIsolation { Codeunit, Test, Disabled }
 
@@ -136,10 +145,13 @@ public sealed class TestExecutor
     // RecordLink / IsolatedStorage entries stashed outside a table row — would not be
     // reproduced on a HIT. That would be a real gap.
     //
-    // It isn't one, because every codeunit boundary in this run — INCLUDING the app
-    // group's very first codeunit — calls RecordPatches.RestoreInstallBaseline() (see the
-    // TestIsolation.Codeunit / TestIsolation.Test branches further down in this file), and
-    // that call begins with ResetPerTestState() (RecordPatches.cs), which unconditionally
+    // It isn't one, because every test boundary in this run — INCLUDING the app
+    // group's very first test — calls RecordPatches.RestoreInstallBaseline() under both
+    // TestIsolation.Codeunit and TestIsolation.Test (see RunOne further down in this
+    // file — #2132 made this call fire per TEST rather than per codeunit under Codeunit
+    // isolation too, so this invariant now holds even more often than when this comment
+    // was first written), and that call begins with ResetPerTestState() (RecordPatches.cs),
+    // which unconditionally
     // wipes exactly those things: _dataAccessByTable per-table rows,
     // RecordLinkPatches.ResetForTest(), TenantStoragePatches.ResetForTest(),
     // MediaSetPatches.ResetForTest(), ALDatabasePatches.ResetWriteTransactionState(),
@@ -397,8 +409,24 @@ public sealed class TestExecutor
         PerfTrace.Log($"TestExecutor.InitialInstallSeed {seedSw.ElapsedMilliseconds}ms");
 
         long scanMs = 0, instMs = 0, dispMs = 0, methodsMs = 0, disposeMs = 0, methodLoopMs = 0;   // PERF attribution accumulators
-        long injectMs = 0, resetMs = 0;   // #1861 app-stage accumulators, same shape as the above
+        long injectMs = 0;   // #1861 app-stage accumulator, same shape as the above
+        // #2132: the reset that used to happen HERE (once per codeunit, Codeunit
+        // isolation only) now happens per TEST inside RunOne for both Codeunit and
+        // Test isolation, so its cost is folded into methodsMs/"run-test-methods"
+        // below instead of being separately attributable at the codeunit boundary.
+        // The "codeunit-reset" stage mark stays wired at a constant zero (rather than
+        // being deleted) so PhaseLogIntegrationTests' fixed stage-name list — which
+        // exists to catch a stage mark silently disappearing — does not have to change
+        // shape for a mark that still fires, just no longer carries a distinct cost.
+        const long resetMs = 0;
         var stageSw = new System.Diagnostics.Stopwatch();
+        // #2132: TestIsolation.Test gives every [Test] a BRAND NEW codeunit instance
+        // (matches BC's 130452 "Test Runner - Isol. Test" — neither AL globals nor the
+        // database survive from one test to the next). Codeunit/Disabled keep ONE
+        // instance for every test in the codeunit, which is what still lets AL global
+        // variables persist across tests under Codeunit isolation now that the database
+        // reset (below, in RunOne) fires under both modes alike.
+        var perTestInstance = Isolation == TestIsolation.Test;
         foreach (var t in types)
         {
             // Cooperative cancellation: stop before instantiating the next test
@@ -421,18 +449,14 @@ public sealed class TestExecutor
             injectMs += injectSw.ElapsedMilliseconds;
             PerfTrace.Log($"EventSubscriber.InjectAllUsingStoredLookup {t.Name} {injectSw.ElapsedMilliseconds}ms");
 
-            // Per-codeunit reset: BC's 130450 "Test Runner - Isol. Codeunit" wraps
-            // the whole codeunit in one transaction, so tests inside share state but
-            // each NEW codeunit starts fresh.
-            if (Isolation == TestIsolation.Codeunit)
-            {
-                var resetSw = System.Diagnostics.Stopwatch.StartNew();
-                AlRunner.Patches.RecordPatches.RestoreInstallBaseline();
-                resetSw.Stop();
-                resetMs += resetSw.ElapsedMilliseconds;
-                PerfTrace.Log($"TestExecutor.CodeunitBoundary {t.Name} restore={resetSw.ElapsedMilliseconds}ms t={totalSw.ElapsedMilliseconds}ms");
-            }
-
+            // The database reset that used to happen HERE, once per codeunit under
+            // TestIsolation.Codeunit, now happens per TEST inside RunOne (for both
+            // Codeunit and Test isolation — see RunOne further down) so it fires before
+            // every [Test] procedure, matching real BC's 130450/130452 both rolling the
+            // database back per test. This first instantiation still needs to happen
+            // before the reset can run (the reset lives inside RunOne, after a test
+            // method — and, for Test isolation, an instance — is already selected), so
+            // there is nothing left to do at the codeunit boundary itself.
             object? instance;
             PerfTrace.Log($"TestExecutor.Instantiate START {t.Name}");
             stageSw.Restart();
@@ -456,9 +480,18 @@ public sealed class TestExecutor
             // Resolve the AL object name (e.g. "Test Table Event Dispatch") off the
             // instantiated codeunit — it derives from NavApplicationObjectBase and exposes
             // a public ObjectName property. Falls back to the .NET type name on failure.
+            // Resolved once and reused for every test in this codeunit type (including,
+            // under Test isolation, the later per-test-fresh instances below) — the
+            // AL object name is a compile-time property of the TYPE, not the instance.
             stageSw.Restart();
             var displayName = ResolveDisplayName(instance, t.Name);
             dispMs += stageSw.ElapsedMilliseconds;
+
+            // Under Test isolation, `instance` above was never touched by any test body,
+            // so it is already "fresh" — it becomes the FIRST test's instance instead of
+            // being thrown away and re-instantiated immediately. Every test after the
+            // first gets a newly-instantiated one (see inside the loop below).
+            var isFirstMethod = true;
 
             var loopSw = System.Diagnostics.Stopwatch.StartNew();
             try
@@ -477,6 +510,9 @@ public sealed class TestExecutor
                         // skip = "must not be invoked" (docs/expectations.md), so the
                         // decision has to sit HERE, before the body runs — a post-run
                         // classification could only hide the result, not the side effects.
+                        // isFirstMethod is intentionally left untouched: a skipped test
+                        // never runs, so it must not consume the pre-built `instance`
+                        // that the first ACTUALLY-RUN test under Test isolation gets.
                         var skippedResult = new TestResult(t.Name, m.Name, TestOutcome.Skipped,
                             $"skipped — declared in {entry.SourceFile}", null, TimeSpan.Zero,
                             null, displayName, null, Infrastructure.ExpectationResult.Skipped);
@@ -484,14 +520,64 @@ public sealed class TestExecutor
                         onTestComplete?.Invoke(skippedResult);
                         continue;
                     }
+
+                    object testInstance;
+                    if (!perTestInstance || isFirstMethod)
+                    {
+                        // Codeunit/Disabled: always the one shared instance. Test
+                        // isolation's first test: the untouched instance from above.
+                        testInstance = instance;
+                        isFirstMethod = false;
+                    }
+                    else
+                    {
+                        // Test isolation, second+ test in this codeunit: a genuinely
+                        // fresh instance, so no AL global variable set by an earlier
+                        // [Test] procedure is visible here (#2132).
+                        stageSw.Restart();
+                        object? fresh;
+                        try { fresh = InstantiateCodeunit(t); }
+                        catch (Exception ex)
+                        {
+                            var ctorResult = new TestResult(t.Name, m.Name, TestOutcome.Error,
+                                Unwrap(ex).Message, ex.ToString(), TimeSpan.Zero,
+                                null, displayName, Unwrap(ex), InsideTestProc: false);
+                            results.Add(ctorResult);
+                            onTestComplete?.Invoke(ctorResult);
+                            continue;
+                        }
+                        instMs += stageSw.ElapsedMilliseconds;
+                        if (fresh == null)
+                        {
+                            // The very first instantiation of this type (above) already
+                            // succeeded with a matching constructor, so this can only
+                            // mean the type stopped being instantiable mid-codeunit,
+                            // which should never happen — treat it the same as the
+                            // outer "no matching ctor" case rather than fail every
+                            // remaining test one by one.
+                            break;
+                        }
+                        testInstance = fresh;
+                    }
+
                     stageSw.Restart();
-                    var raw = RunOne(t.Name, m, instance, displayName);
+                    var raw = RunOne(t.Name, m, testInstance, displayName);
                     methodsMs += stageSw.ElapsedMilliseconds;
                     var result = Expectations != null
                         ? ApplyExpectation(raw, displayName, entry)
                         : raw;
                     results.Add(result);
                     onTestComplete?.Invoke(result);
+
+                    if (perTestInstance && !ReferenceEquals(testInstance, instance))
+                    {
+                        // Dispose every per-test instance created above except the
+                        // shared `instance` (disposed once, in the outer finally below).
+                        stageSw.Restart();
+                        (testInstance as IDisposable)?.Dispose();
+                        disposeMs += stageSw.ElapsedMilliseconds;
+                    }
+
                     // Timeout is judged on the RAW outcome: even if a manifest entry
                     // reclassifies the hung test, its runaway thread still poisons the
                     // process, so the suite must stop either way.
@@ -511,7 +597,9 @@ public sealed class TestExecutor
                 // amplification — see InstallTriggerRunner.RunAll) base leak. Nothing
                 // needs this instance once its test methods have all run, so dispose it
                 // here to unlink it from RootTreeStub (TreeHandler.Dispose() →
-                // InternalRemoveChild).
+                // InternalRemoveChild). Under Test isolation this disposes only the
+                // FIRST test's instance — every later one was already disposed above,
+                // right after its own test ran.
                 stageSw.Restart();
                 (instance as IDisposable)?.Dispose();
                 disposeMs += stageSw.ElapsedMilliseconds;
@@ -746,9 +834,15 @@ public sealed class TestExecutor
     {
         var sw = System.Diagnostics.Stopwatch.StartNew();
         PerfTrace.Log($"TestExecutor.RunOne START {codeunit}.{m.Name}");
-        // Per-test reset only when isolation == Test. For Codeunit / Disabled the
-        // reset (if any) happens at codeunit boundaries instead.
-        if (Isolation == TestIsolation.Test)
+        // #2132: the database rolls back before EVERY test under both Codeunit and
+        // Test isolation, matching real BC's 130450 "Test Runner - Isol. Codeunit" and
+        // 130452 "Test Runner - Isol. Test" (both were measured against a real BC 28
+        // container rolling the database back per test; a real BC container measurement
+        // is what surfaced this — see issue #2132). Disabled never resets — that mode
+        // exists specifically to opt OUT of isolation for the whole suite. The half
+        // that still tells Codeunit and Test apart is which codeunit INSTANCE runs this
+        // test — see the perTestInstance branch in Run() — not this reset.
+        if (Isolation is TestIsolation.Test or TestIsolation.Codeunit)
         {
             AlRunner.Patches.RecordPatches.RestoreInstallBaseline();
         }
