@@ -17,12 +17,21 @@ name: Sync CHANGELOG [Unreleased]
 # the full bc-tests.yml matrix test-matrix.yml would otherwise trigger for a
 # CHANGELOG-only commit) in the first place.
 #
-# A release itself (publish.yml) also pushes straight to main and would
-# otherwise re-trigger this workflow too. That run is harmless without any
-# special-casing: PREV_TAG at that point IS the tag the release just created,
-# so the commit range is empty and this workflow simply clears [Unreleased]
-# back out — which is exactly the state it should be in right after a
-# release ships.
+# A release itself (publish.yml) also pushes its own CHANGELOG commit
+# straight to main and would otherwise re-trigger this workflow on THAT push.
+# This is deliberately made race-proof, not just probably-fine: publish.yml
+# pushes the release commit BEFORE its next command creates and pushes the
+# release tag, so a sync run triggered by that same push could be checked out
+# on the release commit while the tag still isn't visible on origin.
+# generate_changelog.py's update_unreleased() handles this by recognizing the
+# checked-out commit as a release commit FROM ITS OWN MESSAGE ("chore:
+# release vX.Y.Z") and refusing to run at all in that case — it never
+# consults `git describe`, so it never depends on whether the tag has landed.
+# See that function's docstring for the full reasoning. The complementary
+# half of the fix lives in generate_release_section() (also in
+# generate_changelog.py, called by publish.yml): it WIPES whatever this
+# workflow last wrote into [Unreleased] before inserting the new version's
+# own section, rather than leaving that content dangling underneath it.
 #
 # This is the ONE place besides a release itself that CHANGELOG.md changes
 # outside a pull request. It has to be that way: no PR may touch

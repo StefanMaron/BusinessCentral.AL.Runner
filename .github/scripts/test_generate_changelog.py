@@ -164,6 +164,13 @@ class RepeatedPrNumberStrippingTests(unittest.TestCase):
 
 class UpdateUnreleasedTests(unittest.TestCase):
 
+    # A real, unrelated commit subject -- so these tests exercise the normal
+    # path deterministically rather than depending on whatever HEAD's message
+    # happens to be in whatever repo the test suite is run inside (which would
+    # otherwise make these tests hit real git AND be non-hermetic: they'd behave
+    # differently if ever run checked out exactly at a real release commit).
+    NOT_A_RELEASE_COMMIT = 'fix: unrelated commit, not a release'
+
     def setUp(self):
         self.tmp_path = os.path.join(
             SCRIPT_DIR, '.test_changelog_scratch_2109.md'
@@ -187,6 +194,7 @@ class UpdateUnreleasedTests(unittest.TestCase):
         changed = gc.update_unreleased(
             self.tmp_path,
             commits_raw='feat(dap): new debugger feature\nfix(startup): faster boot',
+            head_message=self.NOT_A_RELEASE_COMMIT,
         )
 
         self.assertTrue(changed)
@@ -205,7 +213,11 @@ class UpdateUnreleasedTests(unittest.TestCase):
             '## [1.0.0] - 2026-01-01\n'
         )
 
-        gc.update_unreleased(self.tmp_path, commits_raw='feat(x): brand new thing')
+        gc.update_unreleased(
+            self.tmp_path,
+            commits_raw='feat(x): brand new thing',
+            head_message=self.NOT_A_RELEASE_COMMIT,
+        )
 
         text = self.read()
         self.assertNotIn('stale entry', text)
@@ -217,7 +229,9 @@ class UpdateUnreleasedTests(unittest.TestCase):
             '## [1.0.0] - 2026-01-01\n'
         )
 
-        changed = gc.update_unreleased(self.tmp_path, commits_raw='')
+        changed = gc.update_unreleased(
+            self.tmp_path, commits_raw='', head_message=self.NOT_A_RELEASE_COMMIT,
+        )
 
         self.assertTrue(changed)
         text = self.read()
@@ -227,16 +241,132 @@ class UpdateUnreleasedTests(unittest.TestCase):
     def test_idempotent_rerun_reports_no_change(self):
         self.write('# Changelog\n\n## [Unreleased]\n\n## [1.0.0] - 2026-01-01\n')
 
-        first = gc.update_unreleased(self.tmp_path, commits_raw='fix(a): thing one')
+        first = gc.update_unreleased(
+            self.tmp_path, commits_raw='fix(a): thing one', head_message=self.NOT_A_RELEASE_COMMIT,
+        )
         self.assertTrue(first)
 
-        second = gc.update_unreleased(self.tmp_path, commits_raw='fix(a): thing one')
+        second = gc.update_unreleased(
+            self.tmp_path, commits_raw='fix(a): thing one', head_message=self.NOT_A_RELEASE_COMMIT,
+        )
         self.assertFalse(second)
 
     def test_missing_unreleased_heading_raises(self):
         self.write('# Changelog\n\n## [1.0.0] - 2026-01-01\n')
         with self.assertRaises(SystemExit):
-            gc.update_unreleased(self.tmp_path, commits_raw='fix: x')
+            gc.update_unreleased(
+                self.tmp_path, commits_raw='fix: x', head_message=self.NOT_A_RELEASE_COMMIT,
+            )
+
+    # ---- race with publish.yml's own release commit (#2109 PR discussion) --------
+
+    def test_skips_entirely_when_head_is_a_release_commit(self):
+        # A release's CHANGELOG commit lands on main and pushes BEFORE
+        # publish.yml's very next command creates and pushes the release tag.
+        # If sync-changelog-unreleased.yml's run on that same push fell through
+        # to git_commits_since_last_tag(), `git describe` could still resolve
+        # the PREVIOUS tag (this release's own tag isn't visible on origin
+        # yet), wrongly re-including everything just shipped. The commit's own
+        # message is checked first and short-circuits before any of that.
+        self.write(
+            '# Changelog\n\n## [Unreleased]\n\n## [1.0.0] - 2026-01-01\n'
+        )
+
+        changed = gc.update_unreleased(
+            self.tmp_path,
+            # Deliberately non-empty -- proves the skip happens BEFORE this is
+            # ever consulted, not that it coincidentally produced no diff.
+            commits_raw='feat(x): this must never be written',
+            head_message='chore: release v1.1.0',
+        )
+
+        self.assertFalse(changed)
+        text = self.read()
+        self.assertNotIn('this must never be written', text)
+        self.assertEqual(text, '# Changelog\n\n## [Unreleased]\n\n## [1.0.0] - 2026-01-01\n')
+
+    def test_release_commit_recognized_case_insensitively_and_with_whitespace(self):
+        changed = gc.update_unreleased(
+            self._scratch_with_unreleased(),
+            commits_raw='feat(x): must not land',
+            head_message='  Chore: Release v2.0.0  ',
+        )
+        self.assertFalse(changed)
+
+    def _scratch_with_unreleased(self):
+        self.write('# Changelog\n\n## [Unreleased]\n\n## [1.0.0] - 2026-01-01\n')
+        return self.tmp_path
+
+    def test_non_release_commit_that_merely_mentions_release_still_runs_normally(self):
+        # Must not be a substring match -- "release" appearing anywhere in an
+        # unrelated commit message must not be mistaken for the release commit
+        # itself, or a real change would silently vanish.
+        changed = gc.update_unreleased(
+            self._scratch_with_unreleased(),
+            commits_raw='feat(x): document the release process',
+            head_message='docs: explain how to release a version',
+        )
+        self.assertTrue(changed)
+        self.assertIn('document the release process', self.read())
+
+
+class GenerateReleaseSectionTests(unittest.TestCase):
+
+    def setUp(self):
+        self.tmp_path = os.path.join(
+            SCRIPT_DIR, '.test_changelog_scratch_2109_release.md'
+        )
+
+    def tearDown(self):
+        if os.path.exists(self.tmp_path):
+            os.remove(self.tmp_path)
+
+    def write(self, content):
+        with open(self.tmp_path, 'w') as f:
+            f.write(content)
+
+    def read(self):
+        with open(self.tmp_path) as f:
+            return f.read()
+
+    def test_wipes_stale_unreleased_content_left_by_the_sync_workflow(self):
+        # Simulates the exact race #2109's PR review raised: sync-changelog-
+        # unreleased.yml already wrote something into [Unreleased] before this
+        # release ran. commits_raw covers the SAME "since last tag" range, so
+        # the stale text must be replaced, not left dangling under the new
+        # version heading.
+        self.write(
+            '# Changelog\n\n## [Unreleased]\n\n### Fixed\n'
+            '- **startup:** stale entry the sync workflow already wrote\n\n'
+            '## [1.0.0] - 2026-01-01\n'
+        )
+
+        section = gc.generate_release_section(
+            '1.1.0', '2026-03-01', 'fix(startup): stale entry the sync workflow already wrote',
+            self.tmp_path,
+        )
+
+        text = self.read()
+        # The stale line appears exactly once -- inside the new release
+        # section -- not a second time left over under [Unreleased].
+        self.assertEqual(text.count('stale entry the sync workflow already wrote'), 1)
+        self.assertIn('## [1.1.0] - 2026-03-01', text)
+        self.assertIn(
+            '## [1.1.0] - 2026-03-01\n\n### Fixed\n- **startup:** stale entry the sync workflow already wrote',
+            text,
+        )
+        # [Unreleased] itself is empty again -- nothing sits between its
+        # heading and the new release heading.
+        self.assertIn('## [Unreleased]\n\n## [1.1.0]', text)
+        self.assertEqual(section, '## [1.1.0] - 2026-03-01\n\n### Fixed\n- **startup:** stale entry the sync workflow already wrote')
+
+    def test_old_sections_below_are_untouched(self):
+        self.write(
+            '# Changelog\n\n## [Unreleased]\n\n## [1.0.0] - 2026-01-01\n\nold notes here\n'
+        )
+        gc.generate_release_section('1.1.0', '2026-03-01', 'feat(x): new thing', self.tmp_path)
+        text = self.read()
+        self.assertIn('## [1.0.0] - 2026-01-01\n\nold notes here', text)
 
 
 if __name__ == '__main__':
