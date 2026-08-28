@@ -1,0 +1,64 @@
+name: Sync CHANGELOG [Unreleased]
+
+# Keeps CHANGELOG.md's "## [Unreleased]" section a live answer to "what's
+# about to ship", recomputed from every commit since the last release tag
+# (#2109). Before this workflow, generate_changelog.py only ran inside
+# publish.yml at release time, so [Unreleased] sat empty between releases —
+# right when it was filed, empty with 11 merged PRs already sitting on main.
+#
+# generate_changelog.py --unreleased recomputes the section from
+# `git describe --tags --abbrev=0`..HEAD every time this runs and reports
+# whether the text actually changed (`changed=true`/`false`), so a run that
+# finds nothing new commits nothing. That also makes this workflow safe
+# against re-triggering itself: pushing the sync commit onto main fires this
+# workflow again, but by then HEAD already reflects the state the sync
+# computed, so the second run is a no-op. The sync commit's message carries
+# "[skip ci]" as well, so GitHub does not even schedule that second run (or
+# the full bc-tests.yml matrix test-matrix.yml would otherwise trigger for a
+# CHANGELOG-only commit) in the first place.
+#
+# A release itself (publish.yml) also pushes straight to main and would
+# otherwise re-trigger this workflow too. That run is harmless without any
+# special-casing: PREV_TAG at that point IS the tag the release just created,
+# so the commit range is empty and this workflow simply clears [Unreleased]
+# back out — which is exactly the state it should be in right after a
+# release ships.
+#
+# This is the ONE place besides a release itself that CHANGELOG.md changes
+# outside a pull request. It has to be that way: no PR may touch
+# CHANGELOG.md at all (.claude/rules/no-changelog-edits.md), specifically so
+# merges never conflict on it. Pushes here bypass the branch ruleset the same
+# documented way publish.yml's release job does — via RELEASE_DEPLOY_KEY, a
+# deploy key with "Always allow" set for it.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ssh-key: ${{ secrets.RELEASE_DEPLOY_KEY }}
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Recompute [Unreleased] from commits since the last tag
+        id: sync
+        run: python3 .github/scripts/generate_changelog.py --unreleased >> "$GITHUB_OUTPUT"
+
+      - name: Commit and push if it changed
+        if: steps.sync.outputs.changed == 'true'
+        run: |
+          git add CHANGELOG.md
+          git commit -m "chore: update changelog [skip ci]"
+          git push origin HEAD:main

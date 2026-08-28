@@ -74,13 +74,6 @@ jobs:
     # resolve/validate logic (which ref gets pushed to, and whether the
     # dispatch can be released at all), specifically so it's provable
     # without dispatching the real release workflow.
-    #
-    # generate_changelog.py also has a local test file (test_generate_changelog.py)
-    # from earlier #2060 work on backfilling CHANGELOG sections from published
-    # tags -- deliberately NOT wired in here. Whether this workflow should
-    # support releasing from a branch other than main (and, if so, what that
-    # means for CHANGELOG.md) is still an open question on #2060; that script
-    # change stays on the branch, unused, until it's resolved.
     steps:
       - uses: actions/checkout@v6
         with:
@@ -101,6 +94,38 @@ jobs:
       - name: Run resolve_release_ref.sh tests
         if: steps.changed.outputs.run == 'true'
         run: bash .github/scripts/test_resolve_release_ref.sh
+
+  changelog-generator-tests:
+    name: CHANGELOG generator tests
+    runs-on: ubuntu-latest
+    # Gated inside the job (see "Check whether..." below) on whether the
+    # generator or its tests changed -- plain Python unrelated to most PRs.
+    # #2109: the classifier now shells out to git for --unreleased mode
+    # (git describe / git log), where it used to be a pure string-classifier
+    # driven entirely by caller-supplied env vars.
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Check whether the generator or its tests changed
+        id: changed
+        run: |
+          BASE=${{ github.event.pull_request.base.sha }}
+          HEAD=${{ github.event.pull_request.head.sha }}
+          CHANGED=$(git diff --name-only "$BASE"..."$HEAD")
+          if echo "$CHANGED" | grep -qE '^\.github/scripts/(generate_changelog\.py|test_generate_changelog\.py)$'; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run generate_changelog.py tests
+        if: steps.changed.outputs.run == 'true'
+        run: |
+          git config --global user.email "test@example.com"
+          git config --global user.name "Test"
+          python3 .github/scripts/test_generate_changelog.py
 
   # validate-coverage (docs/coverage.yaml) removed at the v1->v2 cutover: v1 tracked
   # AL-language coverage in a hand-curated YAML the orchestrator validated on every PR.
