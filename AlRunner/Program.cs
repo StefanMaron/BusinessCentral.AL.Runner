@@ -1768,6 +1768,9 @@ if (watchUi) PaintWatchRunning();
 
 while (true)
 {
+// A watch rerun is a new execution even though it reuses the process. NumberSequence
+// values deliberately survive bundle and test boundaries within this cycle.
+AlRunner.Patches.NumberSequencePatches.ResetForNewExecution();
 results.Clear();
 watchFullRebuildReasons.Clear();
 // Clean loading (#5): the interactive dashboard owns the whole screen, but the
@@ -3245,6 +3248,10 @@ return strictExitCode ? computedExitCode : 0;
         Func<Assembly, IReadOnlyList<TestResult>> runStep,
         System.Threading.CancellationToken cancellationToken = default)
     {
+        // Server requests share a process, so give each request the same fresh
+        // NumberSequence lifetime as a standalone CLI/watch execution.
+        AlRunner.Patches.NumberSequencePatches.ResetForNewExecution();
+
         // Drop the previous REQUEST's bundle-derived caches so a reloaded same-named
         // bundle resolves the freshly-emitted Record/Codeunit types and starts with
         // empty in-memory tables. Once per request, NOT per bundle: the CLI bucket

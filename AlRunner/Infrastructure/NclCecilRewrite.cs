@@ -19,7 +19,7 @@ namespace AlRunner.Infrastructure;
 
 public static class NclCecilRewrite
 {
-    private const int CACHE_VERSION = 128;
+    private const int CACHE_VERSION = 130;
 
     // ─────────────────────────────────────────────────────────────────────────
     // Cecil-owned skip registry (JmpHook→Cecil migration enabler).
@@ -54,6 +54,26 @@ public static class NclCecilRewrite
         // once the JmpHook layer went off by default — so BC's SQL body ran and NRE'd.
         "Microsoft.Dynamics.Nav.Runtime.ALDatabase::ALLastUsedRowVersion/0",
         "Microsoft.Dynamics.Nav.Runtime.ALDatabase::ALMinimumActiveRowVersion/0",
+        // AL NumberSequence's public synchronous entry points. Their real bodies
+        // delegate to SQL-backed async methods and NRE on the standalone skeleton.
+        "Microsoft.Dynamics.Nav.Runtime.ALNumberSequence::ALInsert/4",
+        "Microsoft.Dynamics.Nav.Runtime.ALNumberSequence::ALRestart/3",
+        "Microsoft.Dynamics.Nav.Runtime.ALNumberSequence::ALExists/2",
+        "Microsoft.Dynamics.Nav.Runtime.ALNumberSequence::ALDelete/2",
+        "Microsoft.Dynamics.Nav.Runtime.ALNumberSequence::ALNext/2",
+        "Microsoft.Dynamics.Nav.Runtime.ALNumberSequence::ALCurrent/2",
+        "Microsoft.Dynamics.Nav.Runtime.ALNumberSequence::ALRange/3",
+        "Microsoft.Dynamics.Nav.Runtime.ALNumberSequence::ALRange/4",
+        // Precompiled Microsoft apps call these async entry points directly instead of
+        // passing through the synchronous AL wrappers, so both surfaces must share state.
+        "Microsoft.Dynamics.Nav.Runtime.ALNumberSequence::ALInsertAsync/5",
+        "Microsoft.Dynamics.Nav.Runtime.ALNumberSequence::ALRestartAsync/4",
+        "Microsoft.Dynamics.Nav.Runtime.ALNumberSequence::ALExistsAsync/3",
+        "Microsoft.Dynamics.Nav.Runtime.ALNumberSequence::ALDeleteAsync/3",
+        "Microsoft.Dynamics.Nav.Runtime.ALNumberSequence::ALNextAsync/3",
+        "Microsoft.Dynamics.Nav.Runtime.ALNumberSequence::ALCurrentAsync/3",
+        "Microsoft.Dynamics.Nav.Runtime.ALNumberSequence::ALRangeAsync/4",
+        "Microsoft.Dynamics.Nav.Runtime.ALNumberSequence::ALRangeAsync/5",
         // ALDatabase.get_ALSerialNumber (#1883 follow-up) — genuinely NREs standalone
         // (NavSession.get_License() chain), confirmed empirically. Cecil-migrated onto the
         // ReturnStandalone_0Args sentinel; legacy JmpHook registration deleted from BcRuntime.cs.
@@ -409,6 +429,35 @@ public static class NclCecilRewrite
     /// </summary>
     public static string Key(MethodBase m)
         => NormalizeTypeName(m.DeclaringType?.FullName ?? "") + "::" + m.Name + "/" + m.GetParameters().Length;
+
+    internal static MethodDefinition ResolveNumberSequenceEntryPoint(
+        TypeDefinition type,
+        string methodName,
+        string returnType,
+        params string[] parameterTypes)
+    {
+        var matches = type.Methods.Where(method =>
+                method.Name == methodName &&
+                method.IsPublic &&
+                method.IsStatic &&
+                method.HasBody &&
+                method.ReturnType.FullName == returnType &&
+                method.Parameters.Select(parameter => parameter.ParameterType.FullName)
+                    .SequenceEqual(parameterTypes, StringComparer.Ordinal))
+            .ToArray();
+
+        if (matches.Length == 1)
+            return matches[0];
+
+        var expected = $"{returnType} {type.FullName}.{methodName}({string.Join(", ", parameterTypes)})";
+        var available = string.Join("; ", type.Methods
+            .Where(method => method.Name == methodName)
+            .Select(method => method.FullName));
+        throw new InvalidOperationException(
+            $"[Cecil] expected exactly one {expected}, found {matches.Length}. " +
+            $"Available overloads: {(available.Length == 0 ? "<none>" : available)}. " +
+            "Ncl shape changed; do not commit (#2049).");
+    }
 
     // Cecil uses '/' between an outer type and a nested type; reflection uses '+'.
     // Our targets are all top-level so neither separator appears, but normalize
@@ -2732,6 +2781,102 @@ public static class NclCecilRewrite
 
                 Console.Error.WriteLine("[Cecil] Patched NavDotNet.CreateDotNet catch-all → RethrowIfRunnerOOS guard");
             }
+        }
+
+        // ALNumberSequence — runner-emitted AL calls the synchronous entry points, while
+        // precompiled Microsoft apps call the async entry points directly. Rewrite both
+        // public surfaces so neither can reach SQL and both observe the same store.
+        {
+            const string sequenceTypeName = "Microsoft.Dynamics.Nav.Runtime.ALNumberSequence";
+            var sequenceType = asm.MainModule.GetType(sequenceTypeName)
+                ?? throw new InvalidOperationException(
+                    $"[Cecil] type {sequenceTypeName} not found — Ncl shape changed; do not commit (#2049)");
+            var patchType = typeof(AlRunner.Patches.NumberSequencePatches);
+
+            void RewriteSequence(
+                string methodName,
+                string returnType,
+                Type[] helperParameterTypes,
+                params string[] nclParameterTypes)
+            {
+                var target = ResolveNumberSequenceEntryPoint(
+                    sequenceType, methodName, returnType, nclParameterTypes);
+                var helper = patchType.GetMethod(
+                    methodName,
+                    BindingFlags.Public | BindingFlags.Static,
+                    binder: null,
+                    types: helperParameterTypes,
+                    modifiers: null)
+                    ?? throw new InvalidOperationException(
+                        $"[Cecil] helper {patchType.Name}.{methodName}({string.Join(", ", helperParameterTypes.Select(type => type.Name))}) not found");
+                var helperReturnType = asm.MainModule.ImportReference(helper.ReturnType).FullName;
+                var helperParameters = helper.GetParameters()
+                    .Select(parameter => asm.MainModule.ImportReference(parameter.ParameterType).FullName)
+                    .ToArray();
+                if (helperReturnType != returnType ||
+                    !helperParameters.SequenceEqual(nclParameterTypes, StringComparer.Ordinal))
+                    throw new InvalidOperationException(
+                        $"[Cecil] helper {helper} does not exactly match {target.FullName}");
+                var asyncAttribute = target.CustomAttributes.FirstOrDefault(attribute =>
+                    attribute.AttributeType.Name == "AsyncStateMachineAttribute");
+                if (asyncAttribute != null)
+                    target.CustomAttributes.Remove(asyncAttribute);
+                ReplaceBodyWithHelper(asm.MainModule, target, helper);
+            }
+
+            RewriteSequence("ALInsert", "System.Void",
+                new[] { typeof(string), typeof(long), typeof(long), typeof(bool) },
+                "System.String", "System.Int64", "System.Int64", "System.Boolean");
+            RewriteSequence("ALRestart", "System.Void",
+                new[] { typeof(string), typeof(long), typeof(bool) },
+                "System.String", "System.Int64", "System.Boolean");
+            RewriteSequence("ALExists", "System.Boolean",
+                new[] { typeof(string), typeof(bool) },
+                "System.String", "System.Boolean");
+            RewriteSequence("ALDelete", "System.Void",
+                new[] { typeof(string), typeof(bool) },
+                "System.String", "System.Boolean");
+            RewriteSequence("ALNext", "System.Int64",
+                new[] { typeof(string), typeof(bool) },
+                "System.String", "System.Boolean");
+            RewriteSequence("ALCurrent", "System.Int64",
+                new[] { typeof(string), typeof(bool) },
+                "System.String", "System.Boolean");
+            RewriteSequence("ALRange", "System.Int64",
+                new[] { typeof(string), typeof(int), typeof(bool) },
+                "System.String", "System.Int32", "System.Boolean");
+            RewriteSequence("ALRange", "System.Int64",
+                new[] { typeof(string), typeof(int), typeof(Microsoft.Dynamics.Nav.Runtime.ByRef<long>), typeof(bool) },
+                "System.String", "System.Int32",
+                "Microsoft.Dynamics.Nav.Runtime.ByRef`1<System.Int64>", "System.Boolean");
+
+            RewriteSequence("ALInsertAsync", "System.Threading.Tasks.ValueTask",
+                new[] { typeof(Microsoft.Dynamics.Nav.Runtime.NavSession), typeof(string), typeof(long), typeof(long), typeof(bool) },
+                "Microsoft.Dynamics.Nav.Runtime.NavSession", "System.String", "System.Int64", "System.Int64", "System.Boolean");
+            RewriteSequence("ALRestartAsync", "System.Threading.Tasks.ValueTask",
+                new[] { typeof(Microsoft.Dynamics.Nav.Runtime.NavSession), typeof(string), typeof(long), typeof(bool) },
+                "Microsoft.Dynamics.Nav.Runtime.NavSession", "System.String", "System.Int64", "System.Boolean");
+            RewriteSequence("ALExistsAsync", "System.Threading.Tasks.ValueTask`1<System.Boolean>",
+                new[] { typeof(Microsoft.Dynamics.Nav.Runtime.NavSession), typeof(string), typeof(bool) },
+                "Microsoft.Dynamics.Nav.Runtime.NavSession", "System.String", "System.Boolean");
+            RewriteSequence("ALDeleteAsync", "System.Threading.Tasks.ValueTask",
+                new[] { typeof(Microsoft.Dynamics.Nav.Runtime.NavSession), typeof(string), typeof(bool) },
+                "Microsoft.Dynamics.Nav.Runtime.NavSession", "System.String", "System.Boolean");
+            RewriteSequence("ALNextAsync", "System.Threading.Tasks.ValueTask`1<System.Int64>",
+                new[] { typeof(Microsoft.Dynamics.Nav.Runtime.NavSession), typeof(string), typeof(bool) },
+                "Microsoft.Dynamics.Nav.Runtime.NavSession", "System.String", "System.Boolean");
+            RewriteSequence("ALCurrentAsync", "System.Threading.Tasks.ValueTask`1<System.Int64>",
+                new[] { typeof(Microsoft.Dynamics.Nav.Runtime.NavSession), typeof(string), typeof(bool) },
+                "Microsoft.Dynamics.Nav.Runtime.NavSession", "System.String", "System.Boolean");
+            RewriteSequence("ALRangeAsync", "System.Threading.Tasks.ValueTask`1<System.Int64>",
+                new[] { typeof(Microsoft.Dynamics.Nav.Runtime.NavSession), typeof(string), typeof(int), typeof(bool) },
+                "Microsoft.Dynamics.Nav.Runtime.NavSession", "System.String", "System.Int32", "System.Boolean");
+            RewriteSequence("ALRangeAsync", "System.Threading.Tasks.ValueTask`1<System.Int64>",
+                new[] { typeof(Microsoft.Dynamics.Nav.Runtime.NavSession), typeof(string), typeof(int), typeof(Microsoft.Dynamics.Nav.Runtime.ByRef<long>), typeof(bool) },
+                "Microsoft.Dynamics.Nav.Runtime.NavSession", "System.String", "System.Int32",
+                "Microsoft.Dynamics.Nav.Runtime.ByRef`1<System.Int64>", "System.Boolean");
+            Console.Error.WriteLine(
+                "[Cecil] Rewrote ALNumberSequence sync+async {Insert,Restart,Exists,Delete,Next,Current,Range×2} → in-memory store");
         }
 
         // IsolatedStorageRepository — Cecil migration of the TenantStoragePatches
