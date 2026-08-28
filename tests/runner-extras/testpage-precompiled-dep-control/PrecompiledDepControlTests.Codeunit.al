@@ -29,7 +29,7 @@
 //   symbol-declared control whose SourceExpression names a field absent from the resolved
 //   table must NOT appear in the returned map, proving the fallback does not fabricate a
 //   binding no real compiled dependency could ever have shipped.
-codeunit 61201 "TPCD Precompiled Ctrl Tests"
+codeunit 65201 "TPCD Precompiled Ctrl Tests"
 {
     Subtype = Test;
 

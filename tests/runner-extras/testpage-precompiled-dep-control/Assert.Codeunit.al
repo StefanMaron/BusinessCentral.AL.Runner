@@ -1,7 +1,7 @@
 /// <summary>
 /// Minimal assertion helper for this runner-extras app (own ID range).
 /// </summary>
-codeunit 61200 "TPCD Assert"
+codeunit 65200 "TPCD Assert"
 {
     procedure AreEqual(Expected: Text; Actual: Text; Msg: Text)
     begin

@@ -1,8 +1,8 @@
 How .alpackages/*.app and .deps-bin/*.dll in this folder were produced
 ========================================================================
 
-These two binary fixtures make "TPCD Precompiled Control Dep" (page 61601,
-table 61600) load as a genuinely Tier-1 precompiled dependency
+These two binary fixtures make "TPCD Precompiled Control Dep" (page 65601,
+table 65600) load as a genuinely Tier-1 precompiled dependency
 (DependencyLoader.LoadOne: <bucketRoot>/.deps-bin/<Publisher>_<Name>_<Version>.dll)
 with NO AL source reachable at runtime -- the exact shape a real precompiled
 MS/ISV .app has (e.g. Base Application page 700 "Error Messages", the field
@@ -35,14 +35,14 @@ SymbolReference.json present). There is no existing al-runner subcommand that
 emits this; the script below builds it directly.
 
 Dep AL source (place in a scratch dir, e.g. /tmp/tpcd-dep/), for producing
-the DLL half only -- table 61600 "TPCD Dep Table" (fields: ID Integer PK,
-Message Text[100], "Additional Information" Text[100]) and page 61601
+the DLL half only -- table 65600 "TPCD Dep Table" (fields: ID Integer PK,
+Message Text[100], "Additional Information" Text[100]) and page 65601
 "TPCD Dep Page" (PageType = List, SourceTable = "TPCD Dep Table", two field
 controls: `field(Description; Rec.Message)` -- name differs from the field
 it binds to -- and `field("Additional Information"; Rec."Additional
 Information")` -- name matches):
 
-  table 61600 "TPCD Dep Table"
+  table 65600 "TPCD Dep Table"
   {
       DataClassification = ToBeClassified;
       fields
@@ -54,7 +54,7 @@ Information")` -- name matches):
       keys { key(PK; ID) { Clustered = true; } }
   }
 
-  page 61601 "TPCD Dep Page"
+  page 65601 "TPCD Dep Page"
   {
       PageType = List;
       SourceTable = "TPCD Dep Table";
@@ -81,7 +81,7 @@ Dep app.json (same scratch dir):
     "publisher": "AL Runner Fixtures",
     "version": "1.0.0.0",
     "dependencies": [],
-    "idRanges": [ { "from": 61600, "to": 61699 } ],
+    "idRanges": [ { "from": 65600, "to": 65699 } ],
     "runtime": "17.0",
     "target": "Cloud",
     "features": []
@@ -111,14 +111,14 @@ Regenerate, from the repo root (AlRunner already built, -c Release):
   #        <App Id="{APP_ID}" Name="{NAME}" Publisher="{PUBLISHER}" Version="{VERSION}"
   #             Platform="28.0.0.0" Runtime="17.0" Target="Cloud" ShowMyCode="true"
   #             PropagateDependencies="false" />
-  #        <IdRanges><IdRange MinObjectId="61600" MaxObjectId="61699" /></IdRanges>
+  #        <IdRanges><IdRange MinObjectId="65600" MaxObjectId="65699" /></IdRanges>
   #        <Dependencies />
   #      </Package>
   #      '''
   #      symbol_reference = {
   #          "RuntimeVersion": "17.0",
   #          "Tables": [{
-  #              "Id": 61600, "Name": "TPCD Dep Table",
+  #              "Id": 65600, "Name": "TPCD Dep Table",
   #              "Fields": [
   #                  {"Id": 1, "Name": "ID", "TypeDefinition": {"Name": "Integer"}, "Properties": []},
   #                  {"Id": 2, "Name": "Message", "TypeDefinition": {"Name": "Text[100]"}, "Properties": []},
@@ -129,16 +129,16 @@ Regenerate, from the repo root (AlRunner already built, -c Release):
   #              "Properties": [{"Name": "DataClassification", "Value": "ToBeClassified"}],
   #          }],
   #          "Pages": [{
-  #              "Id": 61601, "Name": "TPCD Dep Page",
-  #              "Properties": [{"Name": "PageType", "Value": "List"}, {"Name": "SourceTable", "Value": "61600"}],
+  #              "Id": 65601, "Name": "TPCD Dep Page",
+  #              "Properties": [{"Name": "PageType", "Value": "List"}, {"Name": "SourceTable", "Value": "65600"}],
   #              "ReferenceSourceFileName": "Page.al",
   #              "Controls": [{
   #                  "Kind": 1, "Id": 1, "Name": "content", "TypeDefinition": {"Name": "None"},
   #                  "Controls": [
-  #                      {"Kind": 8, "Id": 61601001, "Name": "Description",
+  #                      {"Kind": 8, "Id": 65601001, "Name": "Description",
   #                       "TypeDefinition": {"Name": "Text[100]"},
   #                       "Properties": [{"Name": "SourceExpression", "Value": "Rec.Message"}]},
-  #                      {"Kind": 8, "Id": 61601002, "Name": "Additional Information",
+  #                      {"Kind": 8, "Id": 65601002, "Name": "Additional Information",
   #                       "TypeDefinition": {"Name": "Text[100]"},
   #                       "Properties": [{"Name": "SourceExpression", "Value": "Rec.\"Additional Information\""}]},
   #                  ],
@@ -166,7 +166,7 @@ Regenerate, from the repo root (AlRunner already built, -c Release):
   cp /tmp/tpcd-dep/out/dep-symbols.app \
      tests/runner-extras/testpage-precompiled-dep-control/.alpackages/AL_Runner_Fixtures_TPCD_Precompiled_Control_Dep_1.0.0.0.app
 
-The control ids (61601001 / 61601002) are arbitrary but must be internally
+The control ids (65601001 / 65601002) are arbitrary but must be internally
 consistent -- GetPageControlFieldMap keys its returned map by whatever "Id"
 SymbolReference.json states for each control, the same as LiveNavTestPage
 passes to GetField() when the main app's compiled TestPage accessor reads
@@ -185,7 +185,7 @@ dependency .app in the first place (real BC rejects it at publish time,
 before a .app is ever produced), and a control bound to anything else
 (a name absent from the table, a compound expression) compiles to different
 generated code that never reaches LiveNavTestPage.GetField at all (verified
-while authoring this fixture: adding a third control this way to page 61601
+while authoring this fixture: adding a third control this way to page 65601
 never printed a single GetField trace for it, regardless of ordering, ID, or
 whether it was even really implemented in the compiled dependency DLL). The
 negative direction of the fix -- that GetPageControlFieldMap's fallback does
