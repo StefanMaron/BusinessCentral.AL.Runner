@@ -31,7 +31,7 @@ namespace AlRunner;
 ///             already finished) at the moment the cancel was processed — the v1
 ///             shape (#1613/#1614), reused verbatim rather than inventing a new one.
 ///   execute : {exitCode, tests:[{name,status,durationMs,message,stackTrace,
-///              capturedValues|omitted}], messages|null, compilationErrors|null,
+///              capturedValues|omitted}], messages|omitted, compilationErrors|null,
 ///              coverage|omitted} —
 ///              single response, not streamed (matches v1: only runTests streams).
 ///              `capturedValues` (#1640) is present per test only when the request
@@ -41,6 +41,21 @@ namespace AlRunner;
 ///              read or its ToString() threw; `value` is null in that case too but
 ///              MUST NOT be read as "genuinely null" — a genuinely null AL variable
 ///              has `captureError` absent.
+///   `messages` (#2117) is the OnRun-driven codeunit's Message() calls, in the order
+///   they were made — UNLIKE `capturedValues`/`coverage` there is no request field
+///   that opts into this: an `execute` call always collects Message() output, so
+///   "omitted" always means "zero messages produced", never "did not collect" (see
+///   AlMessageCapture.Snapshot's doc comment — there is no not-collected state to
+///   distinguish it from). Each entry is {text, scopeName, statementId}; `statementId`
+///   is the SAME id-space `coverage[].statements[].id` / `capturedValues[].statementId`
+///   use for the SAME scope, so a caller (SShadowS/ALchemist#1) can place a message at
+///   the exact AL statement that produced it instead of guessing from a line count —
+///   this matters for a loop, where the same source line calls Message() N times with
+///   N different statement executions but only ONE statement id. A `[Test]` procedure's
+///   Message() calls are UNCHANGED by this: they still raise BC's own "Unhandled UI"
+///   when no [MessageHandler] is declared, exactly as before — see
+///   AlRunner.Patches.RunnerClientCallback's header for why the two paths never
+///   collide, and ServerExecuteMessagesTests for the regression guard.
 ///   `coverage` (#2042, on BOTH `runTests`' summary and `execute`'s response) is
 ///   present only when the request set `coverage:true`: one entry per AL source file,
 ///   {file, statements:[{id, scope, line, column, endLine, endColumn, hits}]}. `id` is
@@ -239,11 +254,13 @@ public static class ServerProtocol
 
     /// <summary>Serialize an execute response (run-mode / inline code). <paramref
     /// name="statementTable"/> — see Summary's doc comment; identical `coverage`
-    /// shape and null-vs-empty convention.</summary>
+    /// shape and null-vs-empty convention. <paramref name="messages"/> (#2117) — see
+    /// this class's top-of-file doc comment for the `messages` shape and why it has
+    /// no request-side opt-in, unlike `coverage`/`capturedValues`.</summary>
     public static string Execute(
         IReadOnlyList<TestResult> tests,
         int exitCode,
-        IReadOnlyList<string>? messages = null,
+        IReadOnlyList<Infrastructure.AlCapturedMessage>? messages = null,
         IReadOnlyList<CompilationErrorGroup>? compilationErrors = null,
         IReadOnlyList<Infrastructure.AlCoverageTracker.AlStatementRecord>? statementTable = null)
     {
@@ -251,7 +268,7 @@ public static class ServerProtocol
         {
             exitCode,
             tests = tests.Select(ToWire),
-            messages = messages is { Count: > 0 } ? messages : null,
+            messages = messages is { Count: > 0 } ? messages.Select(ToWire) : null,
             compilationErrors = compilationErrors is { Count: > 0 }
                 ? compilationErrors.Select(g => new { file = g.File, errors = g.Errors })
                 : null,
@@ -324,5 +341,14 @@ public static class ServerProtocol
         value = v.Value,
         statementId = v.StatementId,
         captureError = v.CaptureError,
+    };
+
+    // One Message() call on the wire (#2117) — see the class doc comment for `execute`'s
+    // `messages` shape and the id-space `statementId` shares with `capturedValues`/`coverage`.
+    private static object ToWire(Infrastructure.AlCapturedMessage m) => new
+    {
+        text = m.Text,
+        scopeName = m.ScopeName,
+        statementId = m.StatementId,
     };
 }

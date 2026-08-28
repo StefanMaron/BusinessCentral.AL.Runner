@@ -39,9 +39,17 @@ public static class AlCoverageTracker
     /// exactly (NavMethodScope, int) so the rewrite can forward `ldarg.0; ldarg.1; call`
     /// without boxing the int. Must stay side-effect-free beyond counting: it runs on
     /// every AL statement of every test, coverage or not.
+    ///
+    /// Also feeds AlCurrentStatement (#2117) UNCONDITIONALLY — i.e. before the Enabled
+    /// check below, not gated by it. That tracker answers "which AL statement is
+    /// executing right now" for RunnerClientCallback's Message() capture, which (unlike
+    /// coverage/capturedValues) has no request-side opt-in — see AlCurrentStatement's
+    /// and AlMessageCapture's doc comments for why session.CurrentMethodScope could not
+    /// answer that question and this hook's own scope argument can.
     /// </summary>
     public static void OnStmtHit(NavMethodScope scope, int currentStatementNumber)
     {
+        AlCurrentStatement.Update(scope, currentStatementNumber);
         if (!Enabled) return;
         // NavMethodScope.ExitStatementNumber (int.MaxValue) is written directly by
         // Exit(), never passed to StmtHit by generated code — guarded defensively so a

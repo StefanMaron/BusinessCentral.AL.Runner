@@ -4420,6 +4420,21 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
         // AlStatementTableTests.CapturedValueStatementId_MatchesStatementTableScopeAndId).
         AlRunner.Infrastructure.AlCoverageTracker.Enabled = req.Coverage == true;
         if (req.Coverage == true) AlRunner.Infrastructure.AlCoverageTracker.Reset();
+        // #2117: Message() output — UNCONDITIONAL, not gated by a request field, matching
+        // ServerProtocol's own long-standing doc comment for `execute`'s `messages`
+        // (`messages|null` was documented before this field was ever populated). Reset
+        // ONCE before the whole (possibly multi-bundle) run so messages from every bundle
+        // land in ONE ordered list — see AlMessageCapture.Reset's doc comment for why
+        // that differs from AlValueCapture's per-bundle scoping. ClientCallbackOverride
+        // is installed on the skeleton session for the SAME reason AlValueCapture.Enabled
+        // /AlCoverageTracker.Enabled are process-global flags reset in `finally` below: a
+        // later request that isn't `execute` (e.g. `runTests`) must never see it — though
+        // in practice nothing on the [Test]-procedure path would ever consult it (see
+        // RunnerClientCallback.cs's header).
+        AlRunner.Infrastructure.AlMessageCapture.Reset();
+        var messageCaptureSession = AlRunner.BcRuntime.SkeletonSession as Microsoft.Dynamics.Nav.Runtime.NavSession;
+        if (messageCaptureSession != null)
+            messageCaptureSession.ClientCallbackOverride = new AlRunner.Patches.RunnerClientCallback();
         try
         {
             var runs = RunAllBundlesForServer(sourcePaths, req.PackagePaths, RunFirstCodeunitOnRun);
@@ -4445,7 +4460,8 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                 statementTable = AlRunner.Infrastructure.AlCoverageTracker.CollectStatementTable(covSourceMap);
             }
 
-            return AlRunner.ServerProtocol.Execute(allTests, exitCode, null,
+            return AlRunner.ServerProtocol.Execute(allTests, exitCode,
+                AlRunner.Infrastructure.AlMessageCapture.Snapshot(),
                 allCompileErrors.Count > 0 ? allCompileErrors : null,
                 statementTable: statementTable);
         }
@@ -4453,6 +4469,7 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
         {
             AlRunner.Infrastructure.AlValueCapture.Enabled = false;
             AlRunner.Infrastructure.AlCoverageTracker.Enabled = false;
+            if (messageCaptureSession != null) messageCaptureSession.ClientCallbackOverride = null;
             // Best-effort cleanup: the scratch dir's contents are fully consumed
             // once RunBundleForServer has emitted+compiled them into an in-memory
             // assembly (or failed trying) — nothing downstream needs the files on
