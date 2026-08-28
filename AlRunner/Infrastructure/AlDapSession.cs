@@ -8,16 +8,21 @@
 // docs/archive/dap.md's v1 design note: "Single SemaphoreSlim for pause/resume").
 //
 // WHY pausing AT StmtHit(N) is the RIGHT boundary for a debugger — unlike
-// AlValueCapture (#1640), which had to move OFF StmtHit and onto Exit() because a
-// "keep the latest StmtHit" snapshot is always one statement stale (BC calls
-// StmtHit(N) BEFORE statement N's own side effect runs). A breakpoint does not have
-// that problem: "stopped at line L" is CONVENTIONALLY DEFINED, in every mainstream
-// debugger, as "about to execute L; every statement before L has completed". That is
-// exactly what is true the instant StmtHit(N) fires — statement N-1's effects are
-// already visible on the scope's fields, statement N's are not yet. So pausing here,
-// and reading the live scope's fields from that exact instant (AlScopeInspector), is
-// not an approximation the way --capture-values' StmtHit-based prototype was — it is
-// the correct pause point by definition. No Exit()-style redesign is needed for pause.
+// AlValueCapture (#1640)'s ORIGINAL design, which had to move OFF a "keep the latest
+// StmtHit" snapshot and onto Exit() because that shape is always one statement stale
+// (BC calls StmtHit(N) BEFORE statement N's own side effect runs). A breakpoint does
+// not have that problem: "stopped at line L" is CONVENTIONALLY DEFINED, in every
+// mainstream debugger, as "about to execute L; every statement before L has
+// completed". That is exactly what is true the instant StmtHit(N) fires — statement
+// N-1's effects are already visible on the scope's fields, statement N's are not yet.
+// So pausing here, and reading the live scope's fields from that exact instant
+// (AlScopeInspector), is not an approximation the way the ORIGINAL --capture-values
+// StmtHit-based prototype was — it is the correct pause point by definition. No
+// Exit()-style redesign is needed for pause. (#2074 later brought AlValueCapture back
+// onto StmtHit too, but attributing each observation to the PREVIOUS statement id
+// rather than overwriting a single "latest" slot — see AlValueCapture's own file
+// header; that redesign does not change anything about THIS session's live-read
+// timing, which was always correct.)
 //
 // STEP GRANULARITY (issue #2045) — next/stepIn/stepOut arm a SECOND, orthogonal gate:
 // "pause at the next qualifying StmtHit regardless of the registered breakpoint set".

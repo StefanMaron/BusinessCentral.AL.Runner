@@ -170,11 +170,13 @@ covers every object type BC supports, not just `codeunit`/`table` (#1931):
 `code` and `sourcePaths` are mutually exclusive — sending both is a
 request-level error.
 
-`captureValues: true` (#1640) reports each test entry's AL locals as of the
-last statement that ran — captured via a Cecil hook on
-`NavMethodScope.Exit()`, not a pass over emitted AL output (see
-`AlRunner/Infrastructure/AlValueCapture.cs`). `capturedValues` is present per
-test only when the request set the flag; each entry is `{scopeName,
+`captureValues: true` (#1640) reports ONE ENTRY PER STATEMENT EXECUTION that
+changed a top-level AL local's value, in execution order — not a single
+end-of-test snapshot (#2074) — captured via Cecil hooks on
+`NavMethodScope.StmtHit(int)` (every intermediate execution) and
+`NavMethodScope.Exit()` (the final one), not a pass over emitted AL output
+(see `AlRunner/Infrastructure/AlValueCapture.cs`). `capturedValues` is present
+per test only when the request set the flag; each entry is `{scopeName,
 variableName, value, statementId, captureError|omitted}`:
 
 ```json
@@ -185,6 +187,27 @@ variableName, value, statementId, captureError|omitted}`:
 ```json
 {"exitCode":0,"tests":[{"name":"X.OnRun","status":"pass","durationMs":5,
  "capturedValues":[{"scopeName":"OnRun","variableName":"Msg","value":"hi","statementId":0}]}]}
+```
+
+A local reassigned N times (e.g. inside a loop) produces N entries sharing
+that assignment statement's `statementId`, each carrying the value that
+execution actually produced — never collapsed to just the final one. A caller
+that only wants "the final value" reads the LAST entry for a given
+`variableName`. A local that is declared but never assigned produces NO entry
+at all — nothing executed a value into it, so there is no execution to
+report. The next example shows the SAME variable assigned twice on two
+different statements — TWO entries, not one:
+
+```json
+{"command":"execute","captureValues":true,
+ "code":"codeunit 50101 X2 { trigger OnRun() var Msg: Text; begin Msg := 'hi'; Msg := 'bye'; end; }"}
+```
+
+```json
+{"exitCode":0,"tests":[{"name":"X2.OnRun","status":"pass","durationMs":1,
+ "capturedValues":[
+   {"scopeName":"OnRun","variableName":"Msg","value":"hi","statementId":0},
+   {"scopeName":"OnRun","variableName":"Msg","value":"bye","statementId":1}]}]}
 ```
 
 `captureError` (issue #2043) is present, non-null, only when the runtime could
@@ -212,7 +235,9 @@ does not exist" (`.claude/rules/loud-failures.md`).
 
 ```json
 {"exitCode":0,"tests":[{"name":"X.OnRun","status":"pass","durationMs":7,
- "capturedValues":[{"scopeName":"OnRun","variableName":"Msg","value":"bye","statementId":1}]}],
+ "capturedValues":[
+   {"scopeName":"OnRun","variableName":"Msg","value":"hi","statementId":0},
+   {"scopeName":"OnRun","variableName":"Msg","value":"bye","statementId":1}]}],
  "coverage":[{"file":"/tmp/.../Scratch.al","statements":[
    {"id":0,"scope":"OnRun","line":1,"column":57,"endLine":1,"endColumn":69,"hits":1},
    {"id":1,"scope":"OnRun","line":1,"column":70,"endLine":1,"endColumn":83,"hits":1}]}]}

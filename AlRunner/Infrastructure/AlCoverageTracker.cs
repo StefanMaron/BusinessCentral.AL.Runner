@@ -46,10 +46,17 @@ public static class AlCoverageTracker
     /// coverage/capturedValues) has no request-side opt-in — see AlCurrentStatement's
     /// and AlMessageCapture's doc comments for why session.CurrentMethodScope could not
     /// answer that question and this hook's own scope argument can.
+    ///
+    /// Also feeds AlValueCapture.OnStmtHit (#2074) — the per-execution half of
+    /// --capture-values, SELF-gated by AlValueCapture.Enabled (a separate flag from this
+    /// class's own Enabled), so a coverage:false/captureValues:true request still gets
+    /// per-statement value diffing, and a plain corpus run (neither flag set) pays only
+    /// the volatile-bool check inside that method.
     /// </summary>
     public static void OnStmtHit(NavMethodScope scope, int currentStatementNumber)
     {
         AlCurrentStatement.Update(scope, currentStatementNumber);
+        AlValueCapture.OnStmtHit(scope, currentStatementNumber);
         if (!Enabled) return;
         // NavMethodScope.ExitStatementNumber (int.MaxValue) is written directly by
         // Exit(), never passed to StmtHit by generated code — guarded defensively so a

@@ -6634,6 +6634,14 @@ public static class NclCecilRewrite
         // own first instruction means AlValueCapture.OnExit sees both the true final field
         // values AND the real last-executed statementNumber (not yet stomped to
         // int.MaxValue).
+        //
+        // #2074 later ALSO fed AlValueCapture from the StmtHit hook above (via
+        // AlCoverageTracker.OnStmtHit -> AlValueCapture.OnStmtHit — no new Cecil rewrite,
+        // it reuses the same call site), for every INTERMEDIATE execution. This Exit()
+        // hook stays exactly as it was: it is still the only observation point for
+        // whatever the TRUE FINAL statement changed, since there is no StmtHit call after
+        // it — the "one statement stale" problem this comment describes for a naive
+        // overwrite-on-every-hit design still applies to that one, unavoidable case.
         {
             var nclMod = asm.MainModule;
             const string MsType = "Microsoft.Dynamics.Nav.Runtime.NavMethodScope";

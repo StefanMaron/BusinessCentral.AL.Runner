@@ -66,10 +66,18 @@ public class AlStatementTableTests : IClassFixture<SharedCliServer>
     // statementId and the statement table's id are the SAME id-space for the SAME
     // scope, proven from ONE `execute` call (not asserted separately and assumed to
     // line up). The codeunit is the SAME 4-statement shape ServerTests'
-    // Execute_CaptureValues_True_ReportsFinalLocalsOfTopLevelScope already proves
-    // reports statementId 3 for its last statement — this fact additionally locates
-    // that exact id in the statement table and asserts its POSITION is the literal
-    // AL source line "Msg := 'after';" sits on (line 11 below), not just "some line".
+    // Execute_CaptureValues_True_ReportsOneEntryPerStatementExecutionInOrder proves in
+    // full — this fact additionally locates Msg's LAST entry's id in the statement table
+    // and asserts its POSITION is the literal AL source line "Msg := 'after';" sits on
+    // (line 11 below), not just "some line".
+    //
+    // #2074 UPDATE: capturedValues now carries ONE entry per statement execution, so
+    // Counter appears TWICE (41 at statement 0, 42 at statement 2) — its statementId is
+    // no longer uniformly the scope's LAST statement, the way the pre-#2074 snapshot
+    // reported it. This test now cross-references Msg's LAST entry instead (still
+    // statement 3, the scope's true last statement, since "Msg := 'after';" IS the last
+    // statement) so the line-11 assertion below is unchanged; Counter's own corrected
+    // attribution (statement 2, not 3) is covered directly by ServerTests.
     [SkippableFact]
     public async Task CapturedValueStatementId_MatchesStatementTableScopeAndId()
     {
@@ -97,10 +105,14 @@ public class AlStatementTableTests : IClassFixture<SharedCliServer>
         var tests = d.GetProperty("tests");
         Assert.Equal(1, tests.GetArrayLength());
         var captured = tests[0].GetProperty("capturedValues");
-        var counterEntry = captured.EnumerateArray()
-            .Single(e => e.GetProperty("variableName").GetString() == "Counter");
-        Assert.Equal("OnRun", counterEntry.GetProperty("scopeName").GetString());
-        var capturedStatementId = counterEntry.GetProperty("statementId").GetInt32();
+        // Msg is assigned TWICE (statement 1, then statement 3) — take its LAST entry,
+        // the "final value" a caller reading only the tail of the series would see.
+        var msgEntry = captured.EnumerateArray()
+            .Where(e => e.GetProperty("variableName").GetString() == "Msg")
+            .Last();
+        Assert.Equal("OnRun", msgEntry.GetProperty("scopeName").GetString());
+        Assert.Equal("after", msgEntry.GetProperty("value").GetString());
+        var capturedStatementId = msgEntry.GetProperty("statementId").GetInt32();
         Assert.Equal(3, capturedStatementId); // 4 statements, 0-based, last one
 
         Assert.True(d.TryGetProperty("coverage", out var coverage), $"expected coverage on the response: {r}");

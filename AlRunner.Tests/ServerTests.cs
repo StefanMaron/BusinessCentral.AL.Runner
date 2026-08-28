@@ -184,14 +184,18 @@ public class ServerTests : IClassFixture<SharedCliServer>
         Assert.Contains("executed-onrun-boom", tests[0].GetProperty("message").GetString());
     }
 
-    // #1640 (second slice; --coverage was the first, #1922): 'captureValues:true' on
-    // `execute` reflects the AL locals of the top-level OnRun scope, as of the LAST
-    // statement that ran, via BC's own StmtHit instrumentation (AlValueCapture) — no
-    // Cecil pass over AL output, no dependency on #1642. Asserts EXACT values (42,
-    // "after") so this fails if the implementation were gutted to always report empty
-    // or default values.
+    // #1640/#2074 (second slice; --coverage was the first, #1922): 'captureValues:true'
+    // on `execute` reports ONE entry per statement EXECUTION that changed a top-level
+    // OnRun local's value, in execution order — not a single end-of-test snapshot (see
+    // AlValueCapture's file header for the #2074 redesign). Four assignment statements,
+    // two variables, no loop: Counter is assigned twice (41, then 42) and Msg is assigned
+    // twice ('before', then 'after'), interleaved. Asserting the FULL ordered series
+    // (not just each variable's final value) is what proves this is a per-execution
+    // series and not a snapshot — a snapshot-based implementation would collapse this to
+    // two entries, both attributed to statement 3 (see AlStatementTableTests's corollary
+    // fix for the OLD, coarser attribution this replaces).
     [SkippableFact]
-    public async Task Execute_CaptureValues_True_ReportsFinalLocalsOfTopLevelScope()
+    public async Task Execute_CaptureValues_True_ReportsOneEntryPerStatementExecutionInOrder()
     {
         TestArtifacts.SkipIfMissing();
         var server = await _fixture.GetAsync();
@@ -212,19 +216,33 @@ public class ServerTests : IClassFixture<SharedCliServer>
 
         Assert.True(tests[0].TryGetProperty("capturedValues", out var captured),
             $"expected capturedValues on the response: {r}");
-        var byName = captured.EnumerateArray()
-            .ToDictionary(e => e.GetProperty("variableName").GetString()!, e => e);
-        Assert.True(byName.ContainsKey("Counter"), $"no Counter entry: {r}");
-        Assert.True(byName.ContainsKey("Msg"), $"no Msg entry: {r}");
-        // Final values, not the intermediate 41/"before" — proves the snapshot is
-        // taken continuously (overwritten every statement) rather than once at the
-        // first hit or some other stale point.
-        Assert.Equal(42, byName["Counter"].GetProperty("value").GetInt32());
-        Assert.Equal("after", byName["Msg"].GetProperty("value").GetString());
-        Assert.Equal("OnRun", byName["Counter"].GetProperty("scopeName").GetString());
-        // statementId indexes the LAST statement of the OnRun trigger (4 statements,
-        // 0-based) — the exact index [SourceSpans] backs, not just "some int".
-        Assert.Equal(3, byName["Counter"].GetProperty("statementId").GetInt32());
+        var entries = captured.EnumerateArray()
+            .Select(e => (
+                Name: e.GetProperty("variableName").GetString(),
+                Value: e.GetProperty("value"),
+                StatementId: e.GetProperty("statementId").GetInt32(),
+                ScopeName: e.GetProperty("scopeName").GetString()))
+            .ToList();
+
+        // The whole point of #2074: FOUR executions, not two collapsed final values —
+        // Counter's FIRST assignment (41) is now visible, which the old single-snapshot
+        // shape could never report.
+        Assert.Equal(4, entries.Count);
+        Assert.Equal(new[] { "Counter", "Msg", "Counter", "Msg" }, entries.Select(e => e.Name).ToArray());
+        Assert.Equal(41, entries[0].Value.GetInt32());
+        Assert.Equal("before", entries[1].Value.GetString());
+        Assert.Equal(42, entries[2].Value.GetInt32());
+        Assert.Equal("after", entries[3].Value.GetString());
+        Assert.All(entries, e => Assert.Equal("OnRun", e.ScopeName));
+
+        // statementId is attributed to the ACTUAL producing statement (0-based, 4
+        // statements total) — Counter's SECOND assignment is statement 2, NOT the
+        // scope's last statement (3), which is what the pre-#2074 design always
+        // reported regardless of which variable or which assignment produced it.
+        Assert.Equal(0, entries[0].StatementId);
+        Assert.Equal(1, entries[1].StatementId);
+        Assert.Equal(2, entries[2].StatementId);
+        Assert.Equal(3, entries[3].StatementId);
     }
 
     // Negative direction: the SAME codeunit shape, but captureValues omitted (false by

@@ -37,6 +37,18 @@ namespace AlRunner;
 ///              `capturedValues` (#1640) is present per test only when the request
 ///              set `captureValues:true`; each entry is {scopeName, variableName,
 ///              value, statementId, captureError|omitted} — see AlValueCapture.
+///              `capturedValues` carries ONE ENTRY PER STATEMENT EXECUTION THAT
+///              CHANGED A LOCAL'S VALUE, in execution order (#2074) — NOT one
+///              end-of-test snapshot per variable. A local reassigned N times (e.g.
+///              inside a loop) produces N entries sharing that assignment
+///              statement's `statementId`, each with the value that execution
+///              actually produced — a caller that only wants "the final value"
+///              reads the LAST entry for a given `variableName`. A local that is
+///              declared but never assigned produces NO entry at all (nothing
+///              executed into existing it). `statementId` is the id-space
+///              `coverage[].statements[].id` cross-references (see below) —
+///              genuinely the statement that PRODUCED this value, never the
+///              following one.
 ///              `captureError` (#2043) is present, non-null, only when the field
 ///              read or its ToString() threw; `value` is null in that case too but
 ///              MUST NOT be read as "genuinely null" — a genuinely null AL variable
@@ -80,9 +92,10 @@ public sealed class ServerRequest
     /// <summary>
     /// Opt-in to variable capture on <c>execute</c> (v1 field; #1640 second slice —
     /// --coverage was the first, #1922). When true, each response test entry's
-    /// <c>capturedValues</c> carries the top-level AL scope's locals as of the last
-    /// statement that ran (see AlValueCapture). Null/false = unchanged behaviour,
-    /// field omitted from the response.
+    /// <c>capturedValues</c> carries ONE ENTRY PER STATEMENT EXECUTION that changed a
+    /// top-level AL scope local's value, in execution order — not a single end-of-test
+    /// snapshot (issue #2074; see AlValueCapture's file header). Null/false = unchanged
+    /// behaviour, field omitted from the response.
     /// </summary>
     [JsonPropertyName("captureValues")] public bool? CaptureValues { get; set; }
     /// <summary>
