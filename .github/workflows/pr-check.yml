@@ -127,6 +127,42 @@ jobs:
           git config --global user.name "Test"
           python3 .github/scripts/test_generate_changelog.py
 
+  reject-ci-skip-directives:
+    name: PR title/body must not contain a CI-skip directive
+    runs-on: ubuntu-latest
+    # #2116: this repo squash-merges, and GitHub's default squash commit
+    # message is "<title> (#N)" followed by the PR body (see
+    # .claude/rules/branch-and-pr.md). GitHub matches several skip-CI
+    # spellings ANYWHERE in a commit message, not just in a dedicated
+    # trailer -- so a directive appearing in EITHER the title or the body,
+    # even just describing it in prose, lands in the merge commit and
+    # silently skips every workflow on that commit. This happened for real:
+    # #2115's own PR body explained sync-changelog-unreleased.yml's use of
+    # "[skip ci]" in its own commit, and that explanation -- once squashed
+    # into 7a3c3535's commit message -- skipped the one required check on
+    # main, along with the sync workflow's own first run. Nothing enforced
+    # this at write time; this job catches it before merge, the only point
+    # where it's still cheap. No label bypasses this one -- unlike
+    # require-tests, there's no legitimate reason for a PR to actually ship
+    # a live skip directive in its title or body, only to WRITE ABOUT one,
+    # which the escape hatch in check_ci_skip_directives.sh's failure
+    # message covers.
+    #
+    # The actual check logic lives in check_ci_skip_directives.sh, extracted
+    # specifically so it's unit-tested (test_check_ci_skip_directives.sh)
+    # rather than provable only by opening a real PR against it.
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Run check_ci_skip_directives.sh's own unit tests
+        run: bash .github/scripts/test_check_ci_skip_directives.sh
+
+      - name: Check PR title and body for CI-skip directives
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: bash .github/scripts/check_ci_skip_directives.sh
+
   # validate-coverage (docs/coverage.yaml) removed at the v1->v2 cutover: v1 tracked
   # AL-language coverage in a hand-curated YAML the orchestrator validated on every PR.
   # v2's spec is the tests/al-language/ corpus itself -- every AL surface that needs

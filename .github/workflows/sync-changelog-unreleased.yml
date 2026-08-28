@@ -43,6 +43,18 @@ name: Sync CHANGELOG [Unreleased]
 on:
   push:
     branches: [main]
+  # #2116: a push whose commit message trips one of GitHub's CI-skip
+  # spellings never triggers this workflow at all -- it isn't "this run
+  # failed", it's "GitHub never scheduled a run", so there's nothing to
+  # retry from the Actions UI. workflow_dispatch lets a human recover by
+  # hand once that's noticed; schedule means it self-heals without anyone
+  # noticing, since a run against unchanged content is a genuine no-op
+  # (generate_changelog.py --unreleased reports changed=false and nothing
+  # is committed) -- this costs nothing beyond a few seconds of compute on
+  # every day nothing was missed.
+  workflow_dispatch:
+  schedule:
+    - cron: '17 6 * * *'  # once daily; the exact time doesn't matter
 
 permissions:
   contents: write
