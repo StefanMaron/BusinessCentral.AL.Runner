@@ -163,6 +163,41 @@ jobs:
           PR_BODY: ${{ github.event.pull_request.body }}
         run: bash .github/scripts/check_ci_skip_directives.sh
 
+  reject-bad-closing-references:
+    name: PR body closing references must be correct, both directions
+    runs-on: ubuntu-latest
+    # #2121 (missing) and #2128 (unintended): this repo squash-merges, and
+    # GitHub folds the PR title + body into the squash commit message (see
+    # .claude/rules/branch-and-pr.md). GitHub's closing-reference parser
+    # (Closes/Fixes/Resolves + #N, case-insensitive, optionally repo-prefixed)
+    # fires on that pattern ANYWHERE in the message, and does not understand
+    # surrounding prose -- negation, qualification, none of it changes what
+    # closes on merge. Two failure modes follow:
+    #
+    #   - Missing: the PR body has no closing reference at all, so the linked
+    #     issue never auto-closes and is left labeled in-progress forever.
+    #     Real instances: #2046, #1642, #1640.
+    #   - Unintended: the PR body has a closing keyword next to an issue
+    #     number the PR does NOT intend to close, often written to explicitly
+    #     say it does NOT close that issue. GitHub closes it anyway. Real
+    #     instance: PR #2127's body said "This does not close #2125" and
+    #     merge commit fe789a13 closed #2125 regardless.
+    #
+    # The actual check logic lives in check_closing_reference.sh, extracted
+    # specifically so it's unit-tested (test_check_closing_reference.sh)
+    # rather than provable only by opening a real PR against it.
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Run check_closing_reference.sh's own unit tests
+        run: bash .github/scripts/test_check_closing_reference.sh
+
+      - name: Check PR body for a correct closing reference
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: bash .github/scripts/check_closing_reference.sh
+
   # validate-coverage (docs/coverage.yaml) removed at the v1->v2 cutover: v1 tracked
   # AL-language coverage in a hand-curated YAML the orchestrator validated on every PR.
   # v2's spec is the tests/al-language/ corpus itself -- every AL surface that needs
