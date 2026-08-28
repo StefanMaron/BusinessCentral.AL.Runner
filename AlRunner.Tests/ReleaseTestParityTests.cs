@@ -340,7 +340,11 @@ public sealed class ReleaseTestParityTests
         var writes = new (string Marker, string What)[]
         {
             ("git push origin \"$TAG\"", "the release tag"),
-            ("git push origin HEAD:main", "the CHANGELOG commit on main"),
+            // #2060: the push target used to be the literal "main" -- pushing to whatever
+            // ref was actually dispatched instead is the fix, so the marker here has to be
+            // the templated form or this assertion would start failing for the right reason
+            // (the write moved) reported as the wrong one (no owner found at all).
+            ("git push origin HEAD:${{ needs.plan.outputs.branch }}", "the CHANGELOG commit on the released branch"),
             ("dotnet nuget push", "the NuGet package"),
             ("softprops/action-gh-release", "the GitHub Release"),
         };
