@@ -31,14 +31,47 @@ the BC runtime environment:
 - **Setup tables** — `General Ledger Setup`, `Sales Setup`, etc. are empty.
   Code that reads setup fields gets type defaults.
 
-### No transaction semantics
+### Transaction semantics — commit-point rollback is modeled; `Codeunit.Run`'s write-transaction scoping is not
 
-There is one flat, in-memory record store shared across the entire test run.
-`Commit()` and `Rollback()` are no-ops. As a result:
+There is one flat, in-memory record store shared across the entire test run — no
+SQL transaction log, no isolation levels, no `READCOMMITTED`/`REPEATABLEREAD`
+distinctions. On top of that store, though, the runner tracks a rolling **commit
+point**: established at the start of every test method, by an explicit AL
+`Commit()`, and by BC's own APIs that complete a real nested transaction
+internally (both calling shapes of `XmlPort.Import`, tracked in #1946). When an AL
+error is caught — by `asserterror`, or anywhere else BC's own
+`NavMethodScope.AssertError` catches it — every write made since the last commit
+point is rolled back, mirroring BC's own `session.Rollback()`.
 
-- Code that detects whether a nested codeunit called `Commit()` will not work.
-- Code that relies on rollback to undo partial writes will not work.
-- The isolation between a "worker session" and its caller does not exist.
+This is not a guess: it is pinned by the upstream corpus, which a real BC service
+tier validates. `error-handling/TestAssertErrorRollback.al` checks whether an
+uncommitted `Insert`/`Modify` survives an unrelated later error (no), whether an
+explicit `Commit()` moves the surviving boundary forward (yes), and whether
+temporary-table writes participate in rollback at all (no — they have no database
+backing to roll back). `record/TestTriggerRollback.al` checks the same thing for a
+write that fails inside its own `OnInsert`/`OnModify`/`OnDelete` trigger.
+
+What this means in practice:
+
+- `Commit()` is not a no-op — it moves the rollback boundary forward. A write made
+  before `Commit()` survives a later unrelated error; a write made after the last
+  `Commit()` does not.
+- Rollback undoes partial writes correctly along the main call path, including
+  writes made inside a nested codeunit call, and including writes a nested BC API
+  already committed inside its own transaction (`XmlPort.Import` et al.).
+- A test that relies on "the previous test method's `Commit()`ed row is still
+  there, but this method's own uncommitted writes get rolled back by my
+  `asserterror`" works the same way it does on real BC.
+
+**The residual gap:** `Codeunit.Run` where its `Boolean` return value is consumed
+(e.g. `Ok := MyCodeunit.Run();`) does not scope a write transaction the way real BC
+does — on real BC, that specific calling shape decides whether the codeunit's
+writes get their own transaction boundary, and the runner does not yet reproduce
+that decision. Tracked in #2133.
+
+Separately, and unrelated to rollback: the isolation between a "worker session"
+and its caller does not exist. `StartSession` runs synchronously, inline, sharing
+the same record store as the caller — see "No parallel session execution" below.
 
 ### No parallel session execution
 
@@ -153,16 +186,31 @@ AL that tests the *logic* around task creation (what codeunit runs, what state i
 - `System.GetDotNetType(Joker)` — resolves the `.NET` type for an arbitrary AL value; no `.NET` type resolution without BC service tier.
 - `assembly_declaration`, `dotnet_declaration`, `type_declaration` — object types that wrap .NET assemblies; not compiled in standalone mode.
 
-### Query — single-dataitem only
+### Query — joins and dataset export work; aggregation does not
 
-Query objects with a single dataitem work in-memory: `Open` reads from the
-mock table store, `Read` iterates rows, `Close` releases the result set.
-`SetFilter`, `SetRange`, and `TopNumberOfRows` filter and limit the results.
-Column values are returned from the current row via `GetColumnValueSafe`.
+Query objects work in-memory: `Open` reads from the mock table store, `Read`
+iterates rows, `Close` releases the result set. `SetFilter`, `SetRange`, and
+`TopNumberOfRows` filter and limit the results, including runtime `SetRange`/
+`SetFilter` applied to either side of a join. Column values are returned from the
+current row via `GetColumnValueSafe`.
 
-**Not supported:** multi-dataitem queries (JOINs), aggregation methods
-(Sum, Count, Average, Min, Max), and `SaveAsCsv`/`SaveAsXml`/`SaveAsJson`/
-`SaveAsExcel`. These throw `NotSupportedException`.
+**Multi-dataitem queries (JOINs) are supported.** Inner and left-outer joins
+across two dataitems run a real in-memory join, including unmatched-parent
+handling for `LeftOuterJoin`. Pinned by the upstream corpus
+(`query/TestQueryJoin.al`, migrated from this repo's own `query-join` suite).
+
+**`SaveAsJson`, `SaveAsXml`, and `SaveAsCsv` run BC's own implementation** against
+the query's real metadata and produce a genuine dataset — they are not stubbed out.
+
+There is no `Query.SaveAsExcel` method in the AL language; this doc previously
+listed one that doesn't exist.
+
+**Not supported: aggregation.** A column with `Method = Sum` (or `Count`,
+`Average`, `Min`, `Max`) does not aggregate or group — the runner returns each
+row's own value unaggregated instead of collapsing rows per BC's SQL projection.
+This is a known gap, not the documented `NotSupportedException` this doc used to
+claim — the runner returns a wrong value silently rather than throwing. Tracked in
+[#2137](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2137).
 
 ### UI objects — out of scope
 
@@ -255,7 +303,7 @@ the exact value will see different results.
 | `GetFilter(field)` | Serialised filter expression | Returns serialised filter expression (functional) |
 | Field `InitValue` | Applied on `Init()` | Applied — parsed from AL source at pipeline start via `TableInitValueRegistry` |
 | `FieldRef.Caption` / `.Name` | Field metadata from schema | Real values for all AL-compiled tables including tableextension fields; `"FieldNN"` stub only for base-app tables not compiled in the current run |
-| `Commit()` | Commits current transaction | No-op |
+| `Commit()` | Commits current transaction | Establishes a rollback commit-point — see "Transaction semantics" above; not a no-op |
 | `FilterGroup(n)` | Scoped filter groups | Not tracked — `FilterGroup()` is a no-op; all filters apply to group 0 |
 
 ---
@@ -344,6 +392,9 @@ These are not architectural limits. They can be fixed; report them at
 https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
 
 - **FilterGroup** — `Rec.FilterGroup(n)` has no effect; filters always apply to group 0.
+- **Query aggregation** — a query column with `Method = Sum`/`Count`/`Average`/`Min`/`Max`
+  does not aggregate or group rows; it silently returns each row's own unaggregated value.
+  Tracked in [#2137](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2137).
 
 ---
 
@@ -357,7 +408,9 @@ are listed above. For those, test in the full pipeline:
 
 - Real company or setup data being present
 - Parallel sessions running concurrently
-- Transaction boundaries (commit / rollback)
+- `Codeunit.Run`'s write-transaction scoping when its return value is consumed
+  (error-rollback to the last commit point is otherwise modeled — see
+  "Transaction semantics" above)
 - Page or report rendering
 - HTTP calls to external services
 - Permissions or entitlements
