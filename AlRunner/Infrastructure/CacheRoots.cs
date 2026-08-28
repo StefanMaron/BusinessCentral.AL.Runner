@@ -59,9 +59,9 @@ public static class CacheRoots
     /// </summary>
     public static string Resolve(string name)
     {
-        var root = _override ?? Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-            ".cache", "al-runner");
+        // AlRunnerPaths.UserHome throws loudly (issue #2114) rather than silently handing
+        // back a relative path when $HOME names a directory that does not exist.
+        var root = _override ?? Path.Combine(AlRunnerPaths.UserHome, ".cache", "al-runner");
         return Path.Combine(root, name);
     }
 

@@ -611,9 +611,11 @@ public sealed partial class BcCompiler
         // transitive Ncl reference does not match the pinned-version Ncl on the path → the
         // toolkit's Azure-KV / Azure-AD codeunits fail to bind the interface (AL0133). Scope
         // to the pinned version (mirrors BcArtifacts' highest-version convention).
+        // AlRunner.Infrastructure.AlRunnerPaths.UserHome throws loudly (issue #2114) rather
+        // than silently handing back a relative path when $HOME names a directory that
+        // does not exist.
         var sandbox = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-            ".bcartifacts.cache", "sandbox");
+            AlRunner.Infrastructure.AlRunnerPaths.UserHome, ".bcartifacts.cache", "sandbox");
         if (Directory.Exists(sandbox))
         {
             var bestSandbox = Directory.EnumerateDirectories(sandbox)

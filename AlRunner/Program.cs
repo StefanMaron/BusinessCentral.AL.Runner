@@ -247,9 +247,23 @@ bool bundledMode = true;
 // of (all .al source files contributing to the bundle, the resolved-deps list,
 // the runner assembly mtime). See `precompiled-dll-respect.md` —
 // "Our AL output is meant to be cacheable".
-string? alCacheDir = Path.Combine(
-    Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-    ".cache", "al-runner", "al-out");
+// AlRunner.Infrastructure.AlRunnerPaths.UserHome throws loudly (issue #2114) rather than
+// silently handing back a relative path when $HOME names a directory that does not exist.
+// Caught HERE (not left to propagate) because nothing wraps top-level statements at this
+// point in the file — an uncaught exception this early reproduces the exact bug being
+// fixed (an unhandled .NET exception aborts the process instead of a documented exit).
+string? alCacheDir;
+try
+{
+    alCacheDir = Path.Combine(
+        AlRunner.Infrastructure.AlRunnerPaths.UserHome,
+        ".cache", "al-runner", "al-out");
+}
+catch (InvalidOperationException ex)
+{
+    Console.Error.WriteLine(ex.Message);
+    return 2;
+}
 // #1821: mirrors alCacheDir, but only ever set by an explicit --cache flag (never by
 // the default init above, never by --no-cache) — see the --cache parsing branch below
 // and AlRunner.Infrastructure.CacheRoots for what this drives.
@@ -822,7 +836,18 @@ if (bcVersionArg == null && artifactPathArg == null)
         var engineVersion = AlRunner.Infrastructure.BcArtifacts.EngineBuiltVersion()
             ?? AlRunner.Infrastructure.BcArtifacts.EngineVersion(AppContext.BaseDirectory);
         var engineMajor = engineVersion?.Major;
-        if (engineVersion != null && engineMajor != null)
+        // #2114: ArtifactsRootDir (used twice inside this block) throws loudly when $HOME
+        // cannot be resolved to an absolute path. Probing it here — instead of letting the
+        // two calls below throw UNCAUGHT (nothing wraps this block, unlike the sibling
+        // "shippedVariantsForDefault" branch above, which already swallows the same
+        // exception the same way) — lets a broken $HOME fall through to the
+        // unconditionally-reached SelectVersion call further down, which IS wrapped in a
+        // try/catch that turns this into the correct "BC version selection failed: ..."
+        // exit-2 diagnostic, instead of crashing here unhandled.
+        bool artifactsRootResolvable;
+        try { _ = AlRunner.Infrastructure.BcArtifacts.ArtifactsRootDir; artifactsRootResolvable = true; }
+        catch (InvalidOperationException) { artifactsRootResolvable = false; }
+        if (engineVersion != null && engineMajor != null && artifactsRootResolvable)
         {
             bcVersionAutoSelected = true;
             // Prefer the engine's OWN major.minor. Latest-in-major used to win here, which

@@ -106,9 +106,19 @@ public static class ServiceTierDllIndex
 
     private static string? ResolveCacheDir()
     {
-        var root = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-            ".cache/al-runner/servicetier-dlls");
+        // Runs inside CacheDir's static-property initializer (eager, type-init time), so
+        // letting AlRunnerPaths.UserHome's #2114 loud failure propagate here would poison
+        // the WHOLE type with a TypeInitializationException for the rest of the process on
+        // every subsequent access — for what is only an optional, best-effort perf cache
+        // (a missing/absent index just means "not extracted yet", already a legitimate
+        // null return below). The load-bearing resolvers that actually consume $HOME as
+        // data (BcArtifacts.ArtifactsRoot, CacheRoots.Resolve) still throw loud; a broken
+        // $HOME surfaces there instead, deterministically, without this optional cache
+        // taking the whole process down first.
+        string home;
+        try { home = AlRunnerPaths.UserHome; }
+        catch (InvalidOperationException) { return null; }
+        var root = Path.Combine(home, ".cache/al-runner/servicetier-dlls");
         if (!Directory.Exists(root)) return null;
         return Directory.EnumerateDirectories(root)
             .Select(d => (Dir: d, Ver: System.Version.TryParse(Path.GetFileName(d), out var v) ? v : null))

@@ -80,8 +80,9 @@ public static class BcArtifacts
 
     private static readonly object _lock = new();
 
-    private static string ArtifactsRoot => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ArtifactsRoot_Rel);
+    // AlRunnerPaths.UserHome throws loudly (issue #2114) rather than silently handing back
+    // a relative path when $HOME names a directory that does not exist.
+    private static string ArtifactsRoot => Path.Combine(AlRunnerPaths.UserHome, ArtifactsRoot_Rel);
 
     /// <summary>The per-user artifacts root (<c>~/.local/share/al-runner/artifacts</c>),
     /// where each BC version lives in a version-named subdir. Public for the provisioning
