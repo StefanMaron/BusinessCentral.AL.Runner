@@ -541,47 +541,15 @@ public static partial class RecordPatches
 
             Console.Error.WriteLine($"[TableExt] parsed extension {extId} '{extName}' extends '{baseName}' with {fields.Count} fields");
 
-            var key = baseName.ToLowerInvariant();
-            // De-dup by field id (mirrors the symbol-index merge in
-            // RecordPatches.BcAppFallback.cs's EnsureBcSymbolExtensionIndex): the same
-            // extension source file can legitimately be scanned more than once (e.g. a
-            // dependency app's source dir registered both by its own suite AND by
-            // BuildSiblingSourceDeps' sibling-source discovery — see #1686), and without
-            // this guard the same field id lands twice in the merged list. A duplicated
-            // NCLMetaField with the same FieldNo corrupts NCLMetaTable.AssignFromMetaTable's
-            // positional field-count arithmetic, which crashes deep inside
-            // NCLMetaTable.SetSystemFields() with a bare NullReferenceException — surfaced
-            // to the caller as the misleading "no NCLMetaTable ... (AL source not parsed)".
-            if (!_parsedExtensionFields.TryGetValue(key, out var existing))
-                _parsedExtensionFields[key] = fields;
-            else
-            {
-                var existingIds = new HashSet<int>(existing.Select(f => f.FieldId));
-                foreach (var f in fields)
-                    if (existingIds.Add(f.FieldId))
-                        existing.Add(f);
-            }
-
-            // The base table's NCLMetaTable may ALREADY be built and cached at this point:
-            // a table pulled in from a precompiled dependency .app is materialised lazily
-            // the moment something references it, which happens during source parsing —
-            // i.e. BEFORE this tableextension is parsed. BuildNCLMetaTable merges
-            // _parsedExtensionFields at build time only, so that cached metatable is frozen
-            // without the extension's fields, and every AL access to one of them dies in
-            // NCLMetaTable_GetFieldByNoExt ("extension field N ... not found").
-            // Evict it so the next access rebuilds WITH the merge. Safe here: source
-            // parsing runs before any AL test code, so nothing holds the stale instance.
-            EvictCachedMetaTableForBaseTable(baseName);
-
-            // Record the extension object id so its emitted TableExtension{extId} CLR type
-            // can be instantiated and registered on each record of the base table — this is
-            // what makes the extension's record-level triggers (OnInsert/OnModify/OnDelete/
-            // OnRename) and field-validate triggers fire. Preserve declaration order and
-            // de-dup (the same extension file is scanned from multiple source dirs).
-            if (!_extensionIdsByBaseTable.TryGetValue(key, out var extIds))
-                _extensionIdsByBaseTable[key] = extIds = new List<int>();
-            if (!extIds.Contains(extId))
-                extIds.Add(extId);
+            // Merge into _parsedExtensionFields, record the extension id (so its emitted
+            // TableExtension{extId} CLR type can be instantiated and registered on each
+            // record of the base table — record-level triggers + field-validate dispatch),
+            // and evict any already-built NCLMetaTable for the base table so a rebuild picks
+            // up these fields. All three steps — including the eviction, whose necessity is
+            // explained on MergeExtensionFields itself (#2126) — happen atomically in the
+            // shared helper so a second writer (RecordPatches.BcAppFallback.cs's
+            // EnsureBcSymbolExtensionIndex) can't repeat this file's own former omission of it.
+            MergeExtensionFields(baseName, extId, fields);
         }
     }
 

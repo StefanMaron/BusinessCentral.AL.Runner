@@ -465,7 +465,11 @@ public static partial class RecordPatches
     /// Only runs once per registration epoch; reset by <see cref="AddBcAppPath"/> and by
     /// <see cref="ResetForReload"/> (since _parsedExtensionFields is cleared on reload).
     ///
-    /// Mirrors AlSourceParser.cs:246-260 for populating those dictionaries.
+    /// Mirrors AlSourceParser.cs's TryParseTableExtensionFile for populating those
+    /// dictionaries; both funnel through the shared <see cref="MergeExtensionFields"/>
+    /// helper, which also evicts any already-built NCLMetaTable for the base table — see
+    /// #2126. Registration is guarded in RegisterParsedTableExtensions: malformed instances
+    /// (ObjectId.ObjectNumber ≠ extId) and duplicates are skipped without crashing.
     ///
     /// De-duplicates by field id: precompiled BaseApp SymbolReference.json lists fields both
     /// in the base table's Tables[] entry AND in TableExtensions[].Fields. The merge skips
@@ -485,32 +489,8 @@ public static partial class RecordPatches
                 foreach (var ext in BcAppSymbolCache.GetTableExtensions(appPath))
                 {
                     if (string.IsNullOrEmpty(ext.TargetTableName)) continue;
-                    var key = ext.TargetTableName.ToLowerInvariant();
 
-                    // Append fields to _parsedExtensionFields — keep existing list from AL source.
-                    // Also add the extension id to _extensionIdsByBaseTable so RegisterParsedTableExtensions
-                    // can instantiate the precompiled TableExtension{id} CLR type (from dep .app DLLs)
-                    // and wire its triggers. This mirrors the AL-source path (AlSourceParser.cs:257-260).
-                    // Registration is guarded in RegisterParsedTableExtensions: malformed instances
-                    // (ObjectId.ObjectNumber ≠ extId) and duplicates are skipped without crashing.
-                    if (ext.ExtensionId > 0)
-                    {
-                        if (!_extensionIdsByBaseTable.TryGetValue(key, out var extIdList))
-                            _extensionIdsByBaseTable[key] = extIdList = new List<int>();
-                        if (!extIdList.Contains(ext.ExtensionId))
-                            extIdList.Add(ext.ExtensionId);
-                    }
-
-                    if (!_parsedExtensionFields.TryGetValue(key, out var existing))
-                        _parsedExtensionFields[key] = new List<ParsedField>(ext.Fields);
-                    else
-                    {
-                        var existingIds = new HashSet<int>(existing.Select(f => f.FieldId));
-                        foreach (var f in ext.Fields)
-                            if (existingIds.Add(f.FieldId))
-                                existing.Add(f);
-                    }
-
+                    MergeExtensionFields(ext.TargetTableName, ext.ExtensionId, ext.Fields);
                     merged++;
                 }
             }
