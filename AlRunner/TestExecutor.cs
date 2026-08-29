@@ -853,6 +853,11 @@ public sealed class TestExecutor
         AlRunner.Patches.RecordPatches.MarkCommitPoint();
         // Clear any AL call stack captured from a previous test on this thread.
         AlRunner.Infrastructure.AlCallStackCapture.Clear();
+        // #2135: mark this test's execution window for per-test coverage attribution.
+        // Same "{Codeunit}.{Method}" key format ServerProtocol's own `name` field
+        // uses on the wire (see AlCoverageTracker.BeginTest's doc comment) — always
+        // called, cheap even when perTestCoverage was never requested.
+        AlRunner.Infrastructure.AlCoverageTracker.BeginTest($"{codeunit}.{m.Name}");
         // Enter BC's own "in test" scope for the duration of this test (mirrors
         // NavTestExecution.EnterTestCodeunit/LeaveTestCodeunit) — see BcRuntime.EnterTestExecutionScope
         // for why: it's what makes NavTenantSettingsHelper.IsSandbox()/IsProduction() (Codeunit 457
@@ -907,6 +912,13 @@ public sealed class TestExecutor
         finally
         {
             BcRuntime.LeaveTestExecutionScope();
+            // #2135: close this test's coverage-attribution window — see BeginTest's
+            // call above. A stray timed-out background thread (see this method's
+            // TIMEOUT branch above) may still be executing AL statements after this
+            // returns; those land with _currentTestKey already null, i.e.
+            // unattributed, same as the install-trigger seed run between codeunits —
+            // never mis-attributed to whichever test starts next.
+            AlRunner.Infrastructure.AlCoverageTracker.EndTest();
             // Env-gated memory-census diagnostic (AL_RUNNER_MEM_CENSUS=1); no-op when unset — see MemoryCensus.cs.
             MemoryCensus.Log(codeunit, m.Name);
         }

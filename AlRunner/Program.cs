@@ -4296,6 +4296,13 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
         // dictionary is process-global and this process outlives many requests.
         AlRunner.Infrastructure.AlCoverageTracker.Enabled = req.Coverage == true;
         if (req.Coverage == true) AlRunner.Infrastructure.AlCoverageTracker.Reset();
+        // #2135: 'perTestCoverage:true' opts into the SAME per-statement hit counts,
+        // grouped by the test whose window recorded them instead of summed over the
+        // whole run — a SEPARATE flag/dictionary from 'coverage' above (see
+        // AlCoverageTracker.PerTestEnabled's doc comment), so the two opt-ins are
+        // priced independently and a caller can ask for either, both, or neither.
+        AlRunner.Infrastructure.AlCoverageTracker.PerTestEnabled = req.PerTestCoverage == true;
+        if (req.PerTestCoverage == true) AlRunner.Infrastructure.AlCoverageTracker.ResetPerTest();
 
         var cts = new System.Threading.CancellationTokenSource();
         System.Threading.Interlocked.Exchange(ref activeRunCts, cts);
@@ -4367,11 +4374,17 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
             // loaded assembly's types on every plain runTests call would be wasted
             // work for callers who never asked for it.
             IReadOnlyList<AlRunner.Infrastructure.AlCoverageTracker.AlStatementRecord>? statementTable = null;
-            if (req.Coverage == true)
+            IReadOnlyDictionary<string, List<AlRunner.Infrastructure.AlCoverageTracker.AlStatementRecord>>? perTestStatementTable = null;
+            if (req.Coverage == true || req.PerTestCoverage == true)
             {
                 var covSourceMap = AlRunner.Infrastructure.AlCoverageSourceMap.Build(
                     req.SourcePaths, relativeTo: null);
-                statementTable = AlRunner.Infrastructure.AlCoverageTracker.CollectStatementTable(covSourceMap);
+                if (req.Coverage == true)
+                    statementTable = AlRunner.Infrastructure.AlCoverageTracker.CollectStatementTable(covSourceMap);
+                // #2135: independent of the aggregate table above — see
+                // AlCoverageTracker.CollectPerTestStatementTable's doc comment.
+                if (req.PerTestCoverage == true)
+                    perTestStatementTable = AlRunner.Infrastructure.AlCoverageTracker.CollectPerTestStatementTable(covSourceMap);
             }
 
             lock (outputLock)
@@ -4380,7 +4393,8 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                     allTests, exitCode, cached, changed,
                     allCompileErrors.Count > 0 ? allCompileErrors : null,
                     cancelled: cancelled, wallSeconds: reqSw.Elapsed.TotalSeconds,
-                    statementTable: statementTable));
+                    statementTable: statementTable,
+                    perTestStatementTable: perTestStatementTable));
                 output.Flush();
             }
         }
@@ -4390,6 +4404,8 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
             // AlValueCapture.Enabled reset below — a coverage:true request must never
             // leave hit-count tracking on for a later request that didn't ask for it.
             AlRunner.Infrastructure.AlCoverageTracker.Enabled = false;
+            // #2135: same per-request scoping as Enabled above.
+            AlRunner.Infrastructure.AlCoverageTracker.PerTestEnabled = false;
             // Belt-and-braces: reaches the same state as the explicit clear above on
             // every path, INCLUDING an exception thrown before that point (e.g. from
             // RunAllBundlesForServer) — a pathological caller must never be left with a
@@ -4445,6 +4461,10 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
         // AlStatementTableTests.CapturedValueStatementId_MatchesStatementTableScopeAndId).
         AlRunner.Infrastructure.AlCoverageTracker.Enabled = req.Coverage == true;
         if (req.Coverage == true) AlRunner.Infrastructure.AlCoverageTracker.Reset();
+        // #2135: same per-test opt-in as HandleServerRunTests — see
+        // AlCoverageTracker.PerTestEnabled's doc comment.
+        AlRunner.Infrastructure.AlCoverageTracker.PerTestEnabled = req.PerTestCoverage == true;
+        if (req.PerTestCoverage == true) AlRunner.Infrastructure.AlCoverageTracker.ResetPerTest();
         // #2117: Message() output — UNCONDITIONAL, not gated by a request field, matching
         // ServerProtocol's own long-standing doc comment for `execute`'s `messages`
         // (`messages|null` was documented before this field was ever populated). Reset
@@ -4479,21 +4499,27 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
             // sourcePaths or that same scratchDir, and AlCoverageSourceMap.Build
             // needs the .al files on disk to still exist when it scans them.
             IReadOnlyList<AlRunner.Infrastructure.AlCoverageTracker.AlStatementRecord>? statementTable = null;
-            if (req.Coverage == true)
+            IReadOnlyDictionary<string, List<AlRunner.Infrastructure.AlCoverageTracker.AlStatementRecord>>? perTestStatementTable = null;
+            if (req.Coverage == true || req.PerTestCoverage == true)
             {
                 var covSourceMap = AlRunner.Infrastructure.AlCoverageSourceMap.Build(sourcePaths, relativeTo: null);
-                statementTable = AlRunner.Infrastructure.AlCoverageTracker.CollectStatementTable(covSourceMap);
+                if (req.Coverage == true)
+                    statementTable = AlRunner.Infrastructure.AlCoverageTracker.CollectStatementTable(covSourceMap);
+                if (req.PerTestCoverage == true)
+                    perTestStatementTable = AlRunner.Infrastructure.AlCoverageTracker.CollectPerTestStatementTable(covSourceMap);
             }
 
             return AlRunner.ServerProtocol.Execute(allTests, exitCode,
                 AlRunner.Infrastructure.AlMessageCapture.Snapshot(),
                 allCompileErrors.Count > 0 ? allCompileErrors : null,
-                statementTable: statementTable);
+                statementTable: statementTable,
+                perTestStatementTable: perTestStatementTable);
         }
         finally
         {
             AlRunner.Infrastructure.AlValueCapture.Enabled = false;
             AlRunner.Infrastructure.AlCoverageTracker.Enabled = false;
+            AlRunner.Infrastructure.AlCoverageTracker.PerTestEnabled = false;
             if (messageCaptureSession != null) messageCaptureSession.ClientCallbackOverride = null;
             // Best-effort cleanup: the scratch dir's contents are fully consumed
             // once RunBundleForServer has emitted+compiled them into an in-memory
@@ -4646,6 +4672,11 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
             AlRunner.Infrastructure.AlValueCapture.Enabled
                 ? AlRunner.Infrastructure.AlValueCapture.Collect()
                 : null;
+        // #2135: same test-window bracket TestExecutor.RunOne uses for [Test]
+        // procedures, applied to `execute`'s single OnRun invocation — the key
+        // matches the SAME "{Codeunit}.{Method}" shape (target.Name is the .NET type
+        // name TestResult's own Codeunit field already carries).
+        AlRunner.Infrastructure.AlCoverageTracker.BeginTest($"{target.Name}.OnRun");
         try
         {
             var ctor = target.GetConstructors().FirstOrDefault(c =>
@@ -4676,6 +4707,10 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
         {
             return new[] { new TestResult(target.Name, "OnRun", TestOutcome.Error,
                 ex.Message, ex.ToString(), sw.Elapsed, CapturedValues: Captured()) };
+        }
+        finally
+        {
+            AlRunner.Infrastructure.AlCoverageTracker.EndTest();
         }
     }
 }

@@ -8,15 +8,16 @@ namespace AlRunner;
 /// newline-delimited JSON protocol the VS Code extension depends on.
 ///
 /// One JSON object per line. stdin = requests, stdout = responses.
-///   request : {command, sourcePaths[], packagePaths[], stubPaths[], code, captureValues, coverage, testIsolation}
+///   request : {command, sourcePaths[], packagePaths[], stubPaths[], code, captureValues,
+///              coverage, perTestCoverage, testIsolation}
 ///   runTests: STREAMING (protocol-v2.schema.json — see #1641) — zero or more
 ///             {"type":"test", name, status, durationMs, message, errorKind,
 ///             stackFrames, stackTrace} lines, one per completed test as it
 ///             finishes, followed by exactly one terminal
 ///             {"type":"summary", exitCode, passed, failed, errors,
 ///             total, cached, cancelled|omitted, changedFiles|omitted,
-///             compilationErrors|omitted, coverage|omitted, wallSeconds|omitted,
-///             protocolVersion:2} line.
+///             compilationErrors|omitted, coverage|omitted, perTestCoverage|omitted,
+///             wallSeconds|omitted, protocolVersion:2} line.
 ///             `cancelled` (true) is present only when a concurrent `cancel`
 ///             command actually stopped the run before every test ran; omitted
 ///             (never `false`) otherwise — see the `cancel` command below.
@@ -77,6 +78,31 @@ namespace AlRunner;
 ///   working implementation of it, so there is no compatibility break): per-statement
 ///   detail with positions strictly subsumes a line-hit rollup, which a caller can
 ///   still derive client-side by grouping `statements` on `line`.
+///   `perTestCoverage` (#2135, on BOTH `runTests`' summary and `execute`'s response)
+///   is present only when the request set `perTestCoverage:true`: one entry per test
+///   that recorded at least one mappable hit, {test, coverage:[{file,
+///   statements:[{id, scope, line, column, endLine, endColumn, hits}]}]} — `test` is
+///   the SAME "{Codeunit}.{Method}" string `tests[].name`/TestEvent's own `name`
+///   already use, and each STATEMENT ENTRY in the nested `coverage` array has the
+///   SAME field shape as the top-level `coverage[]`'s own entries — {id, scope,
+///   line, column, endLine, endColumn, hits}. The MEMBERSHIP differs, and a
+///   consumer that assumes otherwise gets a silently wrong answer: the top-level
+///   `coverage[]` (CollectStatementTable) walks every BC-instrumented statement in
+///   the run and includes hits:0 entries for ones NEVER executed by ANY test — that
+///   0 is what lets a caller distinguish "instrumented but not covered" from "not
+///   instrumented at all". The nested per-test `coverage`
+///   (CollectPerTestStatementTable) walks ONLY the statements THAT test actually
+///   hit, so hits is ALWAYS >= 1 there and a statement absent from a test's list
+///   means "this test did not execute it" — NOT "it was never instrumented"; that
+///   second question can only be answered by cross-referencing the top-level
+///   `coverage[]` (request `coverage:true` alongside `perTestCoverage:true` to get
+///   both in one run). Independent of `coverage`: a caller may request either,
+///   both, or neither, and `id`/`scope` are the SAME id-space either way. This is
+///   the per-test HALF of the same statement-execution data `coverage:true`
+///   already aggregates over the whole run — it exists so a consumer (a
+///   mutation-testing harness — see the issue) can ask "which tests could possibly
+///   have executed this statement" instead of running every test against every
+///   mutant.
 ///   error   : {error}
 ///   shutdown: {status}
 /// </summary>
@@ -113,6 +139,31 @@ public sealed class ServerRequest
     /// behaviour, `coverage` omitted from the response.
     /// </summary>
     [JsonPropertyName("coverage")] public bool? Coverage { get; set; }
+    /// <summary>
+    /// Opt-in to PER-TEST statement attribution on `runTests`/`execute` (issue #2135 —
+    /// "which tests executed which code", the grouping-by-test half `coverage:true`'s
+    /// whole-run aggregate table never answered). When true, the response's
+    /// `perTestCoverage[]` carries one entry per test that recorded at least one hit,
+    /// `{test, coverage:[{file, statements:[{id, scope, line, column, endLine,
+    /// endColumn, hits}]}]}` — `test` is the SAME "{Codeunit}.{Method}" string
+    /// TestEvent/`tests[].name` already use, and each STATEMENT ENTRY in the nested
+    /// `coverage` has the SAME field shape as the top-level `coverage[]`'s own
+    /// entries (see AlCoverageTracker.CollectPerTestStatementTable) — but NOT the
+    /// same MEMBERSHIP: the top-level `coverage[]` lists every instrumented
+    /// statement including hits:0 ones no test ever executed, while this nested
+    /// `coverage` lists ONLY what THAT test hit (always hits >= 1) — an absent
+    /// statement here means "this test didn't run it", not "it wasn't
+    /// instrumented"; request `coverage:true` too if you need to tell those apart.
+    /// A test that touched nothing mappable (or wasn't requested/didn't run) has no
+    /// entry at all — never an empty array — same null-omission convention
+    /// `coverage`/`capturedValues` already use. Independent of `coverage`: a
+    /// caller can request either, both, or neither; `id`/`scope`
+    /// are the SAME id-space either way (AlCoverageTracker.PerTestEnabled is a
+    /// SEPARATE flag from Enabled specifically so the two opt-ins are priced apart —
+    /// see that flag's own doc comment for the measured cost). Null/false = unchanged
+    /// behaviour, field omitted from the response.
+    /// </summary>
+    [JsonPropertyName("perTestCoverage")] public bool? PerTestCoverage { get; set; }
     /// <summary>
     /// "codeunit" (default) | "test"/"method" | "disabled" — see <see cref="TestIsolationParser"/>.
     /// Null = the server's existing default (TestIsolation.Codeunit), matching the
@@ -234,6 +285,10 @@ public static class ServerProtocol
     /// (WhenWritingNull); a non-null EMPTY list still serializes as `coverage:[]` —
     /// "asked, nothing instrumented" is a real, distinct answer from "didn't ask",
     /// same convention `capturedValues` already uses for `captureValues`.
+    /// <paramref name="perTestStatementTable"/> (#2135) — passed only when the request
+    /// set `perTestCoverage:true`; see ServerRequest.PerTestCoverage's doc comment for
+    /// the wire shape. Independent of <paramref name="statementTable"/>: a caller can
+    /// supply either, both, or neither.
     public static string Summary(
         IReadOnlyList<TestResult> tests,
         int exitCode,
@@ -242,7 +297,8 @@ public static class ServerProtocol
         IReadOnlyList<CompilationErrorGroup>? compilationErrors = null,
         bool cancelled = false,
         double? wallSeconds = null,
-        IReadOnlyList<Infrastructure.AlCoverageTracker.AlStatementRecord>? statementTable = null)
+        IReadOnlyList<Infrastructure.AlCoverageTracker.AlStatementRecord>? statementTable = null,
+        IReadOnlyDictionary<string, List<Infrastructure.AlCoverageTracker.AlStatementRecord>>? perTestStatementTable = null)
     {
         var payload = new
         {
@@ -259,6 +315,7 @@ public static class ServerProtocol
                 ? compilationErrors.Select(g => new { file = g.File, errors = g.Errors })
                 : null,
             coverage = ToStatementTableWire(statementTable),
+            perTestCoverage = ToPerTestCoverageWire(perTestStatementTable),
             wallSeconds,
             protocolVersion = 2,
         };
@@ -267,15 +324,17 @@ public static class ServerProtocol
 
     /// <summary>Serialize an execute response (run-mode / inline code). <paramref
     /// name="statementTable"/> — see Summary's doc comment; identical `coverage`
-    /// shape and null-vs-empty convention. <paramref name="messages"/> (#2117) — see
-    /// this class's top-of-file doc comment for the `messages` shape and why it has
-    /// no request-side opt-in, unlike `coverage`/`capturedValues`.</summary>
+    /// shape and null-vs-empty convention. <paramref name="perTestStatementTable"/>
+    /// (#2135) — see Summary's own doc comment. <paramref name="messages"/> (#2117) —
+    /// see this class's top-of-file doc comment for the `messages` shape and why it
+    /// has no request-side opt-in, unlike `coverage`/`capturedValues`.</summary>
     public static string Execute(
         IReadOnlyList<TestResult> tests,
         int exitCode,
         IReadOnlyList<Infrastructure.AlCapturedMessage>? messages = null,
         IReadOnlyList<CompilationErrorGroup>? compilationErrors = null,
-        IReadOnlyList<Infrastructure.AlCoverageTracker.AlStatementRecord>? statementTable = null)
+        IReadOnlyList<Infrastructure.AlCoverageTracker.AlStatementRecord>? statementTable = null,
+        IReadOnlyDictionary<string, List<Infrastructure.AlCoverageTracker.AlStatementRecord>>? perTestStatementTable = null)
     {
         var payload = new
         {
@@ -286,6 +345,7 @@ public static class ServerProtocol
                 ? compilationErrors.Select(g => new { file = g.File, errors = g.Errors })
                 : null,
             coverage = ToStatementTableWire(statementTable),
+            perTestCoverage = ToPerTestCoverageWire(perTestStatementTable),
         };
         return JsonSerializer.Serialize(payload, Opts);
     }
@@ -319,6 +379,34 @@ public static class ServerProtocol
                         endColumn = s.EndColumn,
                         hits = s.HitCount,
                     }),
+            });
+    }
+
+    // Groups per-test statement lists into the wire's per-test shape (issue #2135):
+    // {test, coverage:[{file, statements:[...]}]} — the SERIALIZATION FUNCTION here
+    // is literally ToStatementTableWire, reused rather than re-invented, so each
+    // STATEMENT ENTRY has the identical field shape the top-level `coverage[]` uses.
+    // That does NOT make the two arrays' MEMBERSHIP the same: this call is fed only
+    // the (Type, statementId) pairs THIS test's own bucket recorded (always hits >=
+    // 1), never the full instrumented-statement set with hits:0 entries the
+    // top-level `coverage[]` carries — see ServerRequest.PerTestCoverage's doc
+    // comment for why that distinction matters to a caller. Null in -> null out
+    // (perTestCoverage omitted entirely, matching every other opt-in field's
+    // convention here); a non-null but EMPTY dictionary still serializes as
+    // `perTestCoverage:[]` — "asked, no test recorded a mappable hit" is a real,
+    // distinct answer from "didn't ask". Ordered by test name so repeated calls
+    // against the same run are byte-identical, same reasoning ToStatementTableWire's
+    // own file/line/column ordering already documents.
+    private static IEnumerable<object>? ToPerTestCoverageWire(
+        IReadOnlyDictionary<string, List<Infrastructure.AlCoverageTracker.AlStatementRecord>>? perTest)
+    {
+        if (perTest == null) return null;
+        return perTest
+            .OrderBy(kv => kv.Key, StringComparer.Ordinal)
+            .Select(kv => (object)new
+            {
+                test = kv.Key,
+                coverage = ToStatementTableWire(kv.Value),
             });
     }
 

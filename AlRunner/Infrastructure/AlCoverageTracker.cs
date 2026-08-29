@@ -29,10 +29,56 @@ public static class AlCoverageTracker
     /// the Cecil-rewritten StmtHit call is unconditional, this flag is not.</summary>
     public static volatile bool Enabled;
 
+    /// <summary>
+    /// True only while a `perTestCoverage:true` request (#2135) is executing tests —
+    /// a SEPARATE flag from <see cref="Enabled"/> so a plain `coverage:true` request
+    /// (the aggregate, whole-run table) never pays for per-test bucketing it did not
+    /// ask for, and vice versa: `perTestCoverage:true` alone works without also
+    /// setting `coverage:true`. Gates the SECOND write in <see cref="OnStmtHit"/> —
+    /// same "volatile bool check on the hot path, real work only when set" shape
+    /// <see cref="Enabled"/> and <see cref="AlValueCapture"/>.Enabled already use.
+    /// </summary>
+    public static volatile bool PerTestEnabled;
+
+    // Set by TestExecutor.RunOne (and Program.cs's RunFirstCodeunitOnRun for the
+    // `execute` single-codeunit path) around a test's own invocation window — see
+    // BeginTest's doc comment. Single process-global slot, not per-thread: the SAME
+    // "the runner invokes exactly one test body at a time" assumption
+    // AlCurrentStatement's single slot already documents (InvokeWithTimeout hands the
+    // AL body to a fresh Thread each test, but only ONE such thread is ever alive at
+    // once — the caller Join()s, with a timeout, before starting the next).
+    private static volatile string? _currentTestKey;
+
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<(Type ScopeType, int Stmt), int> _hits = new();
+
+    // Per-test hit buckets (#2135) — one inner dictionary per test key, populated
+    // ONLY while PerTestEnabled is true. Keyed by the SAME "{Codeunit}.{Method}"
+    // string TestEvent/ToWire(TestResult) already put on the wire as `name`, so a
+    // caller can join this back to a specific test with no separate id mapping.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<
+        string, System.Collections.Concurrent.ConcurrentDictionary<(Type ScopeType, int Stmt), int>> _perTestHits = new();
 
     /// <summary>Reset between coverage collections (tests). Exposed for test isolation.</summary>
     public static void Reset() => _hits.Clear();
+
+    /// <summary>Reset between per-test coverage collections — the per-test analogue of
+    /// <see cref="Reset"/>, kept SEPARATE so a caller that only wants aggregate
+    /// `coverage:true` never pays to clear (or populate) this dictionary.</summary>
+    public static void ResetPerTest() => _perTestHits.Clear();
+
+    /// <summary>
+    /// Marks the start of one test's execution window for per-test attribution
+    /// (#2135). Called UNCONDITIONALLY from TestExecutor.RunOne / Program.cs's
+    /// RunFirstCodeunitOnRun — same "always call, cheap even when the feature is
+    /// off" pattern AlCallStackCapture.Clear() already uses — so neither caller needs
+    /// to know whether `perTestCoverage:true` was actually requested; the cost of
+    /// NOT requesting it is a single volatile write here plus one unread volatile
+    /// read per StmtHit (PerTestEnabled's own check, see OnStmtHit).
+    /// </summary>
+    public static void BeginTest(string testKey) => _currentTestKey = testKey;
+
+    /// <summary>Marks the end of the current test's execution window. See <see cref="BeginTest"/>.</summary>
+    public static void EndTest() => _currentTestKey = null;
 
     /// <summary>
     /// Hook target for the Cecil-rewritten NavMethodScope.StmtHit(int). Public static,
@@ -57,12 +103,28 @@ public static class AlCoverageTracker
     {
         AlCurrentStatement.Update(scope, currentStatementNumber);
         AlValueCapture.OnStmtHit(scope, currentStatementNumber);
-        if (!Enabled) return;
         // NavMethodScope.ExitStatementNumber (int.MaxValue) is written directly by
         // Exit(), never passed to StmtHit by generated code — guarded defensively so a
-        // future BC emit change can't corrupt the dictionary with a giant fake index.
+        // future BC emit change can't corrupt either dictionary with a giant fake
+        // index. Shared by BOTH the aggregate and per-test paths below.
         if (currentStatementNumber == int.MaxValue) return;
-        _hits.AddOrUpdate((scope.GetType(), currentStatementNumber), 1, static (_, c) => c + 1);
+        if (Enabled)
+            _hits.AddOrUpdate((scope.GetType(), currentStatementNumber), 1, static (_, c) => c + 1);
+        // #2135: per-test attribution — a SEPARATE flag/dictionary from the aggregate
+        // one above, so the two opt-ins are priced independently (see PerTestEnabled's
+        // doc comment). _currentTestKey is null outside any test's window (e.g. the
+        // install-trigger seed run between codeunits) — statements hit there are
+        // deliberately NOT attributed to any test.
+        if (PerTestEnabled)
+        {
+            var testKey = _currentTestKey;
+            if (testKey != null)
+            {
+                var bucket = _perTestHits.GetOrAdd(testKey,
+                    static _ => new System.Collections.Concurrent.ConcurrentDictionary<(Type, int), int>());
+                bucket.AddOrUpdate((scope.GetType(), currentStatementNumber), 1, static (_, c) => c + 1);
+            }
+        }
     }
 
     /// <summary>Hit count recorded for one (scope type, statement index). 0 if never hit.</summary>
@@ -209,31 +271,119 @@ public static class AlCoverageTracker
 
         foreach (var t in GetHitTrackedTypes())
         {
-            if (Attribute.GetCustomAttribute(t, _tSourceSpansAttr!) is not object srcAttr) continue;
-            if (_piEncodedSpans!.GetValue(srcAttr) is not long[] spans || spans.Length == 0) continue;
-
-            var (label, id) = AlCallStackCapture.ParseObjectTypeAndId(t);
-            if (id == 0) continue;
-            if (!sourceMap.TryGetValue((label, id), out var filePath)) continue;
-
-            // [NavName] on the scope class itself is the AL procedure/trigger/test
-            // method name — the SAME attribute AlValueCapture reads off scope
-            // FIELDS for local names, here read off the TYPE instead (both are
-            // MemberInfo — see AlNavNameReflection). Confirmed via
-            // BCCOMPILER_DUMP_CS=1: `[NavName("Run")] private sealed class
-            // Run_Scope__... : NavMethodScope<...>`.
-            var scopeName = AlNavNameReflection.GetAlName(t) ?? "?";
+            // #2135: resolution chain shared with CollectPerTestStatementTable via
+            // ResolveScopeInfo — see that method's doc comment for why this used to
+            // be inlined here twice (once per caller) and no longer is.
+            if (ResolveScopeInfo(t, sourceMap) is not { } resolved) continue;
 
             var instrumented = AlCoverageInstrumentedStatements.Find(t);
             foreach (var i in instrumented)
             {
-                if (i < 0 || i >= spans.Length) continue; // defensive: BC shape drift
-                var (fromLine, fromColumn, toLine, toColumn) = AlSourceSpanCodec.Decode(spans[i]);
+                if (i < 0 || i >= resolved.Spans.Length) continue; // defensive: BC shape drift
+                var (fromLine, fromColumn, toLine, toColumn) = AlSourceSpanCodec.Decode(resolved.Spans[i]);
                 result.Add(new AlStatementRecord(
-                    filePath, scopeName, i,
+                    resolved.FilePath, resolved.ScopeName, i,
                     fromLine + 1, fromColumn + 1, toLine + 1, toColumn + 1,
                     GetHitCount(t, i)));
             }
+        }
+
+        return result;
+    }
+
+    // Shared by CollectStatementTable AND CollectPerTestStatementTable (#2135) —
+    // originally two independent copies of this exact chain (SourceSpans attribute,
+    // EncodedSpans, ParseObjectTypeAndId, the id==0 guard, the sourceMap lookup,
+    // GetAlName), which is exactly the kind of duplication that drifts: a future fix
+    // to how any of those five steps resolves would silently reach only whichever
+    // copy got edited. Consolidated into one helper instead of leaving the aggregate
+    // path's inline version as-is. [NavName] on the scope class itself is the AL
+    // procedure/trigger/test method name — the SAME attribute AlValueCapture reads
+    // off scope FIELDS for local names, here read off the TYPE instead (both are
+    // MemberInfo — see AlNavNameReflection). Confirmed via BCCOMPILER_DUMP_CS=1:
+    // `[NavName("Run")] private sealed class Run_Scope__... : NavMethodScope<...>`.
+    //
+    // CollectPerTestStatementTable additionally MEMOIZES this per scope Type across
+    // every test whose bucket touched it — the file/scope/position identity of a
+    // given (Type, statementId) pair does not vary per test, only the hit count
+    // does, so re-running this chain once per (type, test) pair the way
+    // CollectStatementTable's single-pass loop does (once per type, since
+    // GetHitTrackedTypes() already de-duplicates) would be wasted repeat work
+    // across a suite with many tests hitting the SAME codeunit. Null means "not a
+    // coverable, mapped AL scope" (framework type, or owning object outside
+    // sourceMap) — CollectPerTestStatementTable's memo caches null too, so a miss
+    // is not re-attempted per test either.
+    private static (string FilePath, string ScopeName, long[] Spans)? ResolveScopeInfo(
+        Type type, IReadOnlyDictionary<(string Label, int Id), string> sourceMap)
+    {
+        if (Attribute.GetCustomAttribute(type, _tSourceSpansAttr!) is not object srcAttr) return null;
+        if (_piEncodedSpans!.GetValue(srcAttr) is not long[] spans || spans.Length == 0) return null;
+        var (label, id) = AlCallStackCapture.ParseObjectTypeAndId(type);
+        if (id == 0) return null;
+        if (!sourceMap.TryGetValue((label, id), out var filePath)) return null;
+        var scopeName = AlNavNameReflection.GetAlName(type) ?? "?";
+        return (filePath, scopeName, spans);
+    }
+
+    /// <summary>
+    /// Per-test statement attribution (#2135) — full per-statement hit counts grouped
+    /// by the test whose execution window recorded them, keyed by the SAME
+    /// "{Codeunit}.{Method}" string TestEvent/ToWire(TestResult) already put on the
+    /// wire as `name` (see BeginTest's doc comment). Only populated while
+    /// <see cref="PerTestEnabled"/> was true during the run — reads
+    /// <see cref="_perTestHits"/> rather than the aggregate <see cref="_hits"/>
+    /// dictionary <see cref="CollectStatementTable"/> uses, so `perTestCoverage:true`
+    /// works independently of `coverage:true` (and vice versa).
+    ///
+    /// A test with an EMPTY entry (declared but recorded zero hits — e.g. every
+    /// statement it touched belonged to a scope Type outside <paramref
+    /// name="sourceMap"/>, such as a framework codeunit) is OMITTED from the
+    /// returned dictionary entirely, matching the "positive list of what a test
+    /// touched" shape: a mutation-testing consumer wants "which tests could possibly
+    /// kill this mutant", and a test that touched nothing mappable can never answer
+    /// yes for any mutant — recording it as `[]` would only cost the caller a
+    /// pointless lookup.
+    ///
+    /// This is a NARROWER membership than <see cref="CollectStatementTable"/>'s own
+    /// list, deliberately: that one walks every instrumented statement (via <see
+    /// cref="AlCoverageInstrumentedStatements"/>) and emits a hits:0 record for ones
+    /// no test ever hit, because "instrumented but never covered" is a fact its
+    /// callers need. This method never emits a hits:0 record for anything — a
+    /// statement absent from a given test's list means "this test didn't execute
+    /// it", not "it wasn't instrumented"; a caller that needs to tell those two
+    /// apart has to cross-reference <see cref="CollectStatementTable"/>'s own
+    /// output (i.e. request `coverage:true` alongside `perTestCoverage:true`).
+    /// </summary>
+    public static Dictionary<string, List<AlStatementRecord>> CollectPerTestStatementTable(
+        IReadOnlyDictionary<(string Label, int Id), string> sourceMap)
+    {
+        EnsureReflInit();
+        AlNavNameReflection.EnsureInit();
+        var result = new Dictionary<string, List<AlStatementRecord>>();
+        var typeInfo = new Dictionary<Type, (string FilePath, string ScopeName, long[] Spans)?>();
+
+        foreach (var testEntry in _perTestHits)
+        {
+            List<AlStatementRecord>? list = null;
+            foreach (var stmtEntry in testEntry.Value)
+            {
+                var type = stmtEntry.Key.ScopeType;
+                if (!typeInfo.TryGetValue(type, out var info))
+                {
+                    info = ResolveScopeInfo(type, sourceMap);
+                    typeInfo[type] = info;
+                }
+                if (info is not { } resolved) continue;
+
+                var stmtId = stmtEntry.Key.Stmt;
+                if (stmtId < 0 || stmtId >= resolved.Spans.Length) continue; // defensive: BC shape drift
+                var (fromLine, fromColumn, toLine, toColumn) = AlSourceSpanCodec.Decode(resolved.Spans[stmtId]);
+                (list ??= new List<AlStatementRecord>()).Add(new AlStatementRecord(
+                    resolved.FilePath, resolved.ScopeName, stmtId,
+                    fromLine + 1, fromColumn + 1, toLine + 1, toColumn + 1,
+                    stmtEntry.Value));
+            }
+            if (list is { Count: > 0 }) result[testEntry.Key] = list;
         }
 
         return result;
