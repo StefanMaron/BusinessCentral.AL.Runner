@@ -1482,8 +1482,15 @@ public sealed partial class BcCompiler
         // ControlAddIn resource path (Scripts/StartupScript/StyleSheets/Images) and raises
         // AL0327 "Missing file" for every declaration, even when the file exists exactly
         // where declared. RelativeFileSystem is a public BC API — no new dependency.
-        if (appRootDir != null && Directory.Exists(appRootDir))
-            compilation = compilation.WithFileSystem(new NavCA.RelativeFileSystem(appRootDir));
+        //
+        // #2151: a report's LayoutFile can ALSO be declared file-relative ("./Foo.rdlc"),
+        // which real BC resolves against the declaring .al file's own directory, not the app
+        // root — see ReportLayoutFileSystem's header for the full investigation. Compute the
+        // file system ONCE here so every retry compile below (--tdd generation, EMIT-EXCLUDED
+        // retry) reuses the identical override table instead of re-scanning alFiles each time.
+        var compileFileSystem = ReportLayoutFileSystem.Build(alFiles, appRootDir);
+        if (compileFileSystem != null)
+            compilation = compilation.WithFileSystem(compileFileSystem);
 
         // Suite-local .alpackages (rare in v2's corpus today, but cheap to honour).
         var bundleAlpackages = dirs
@@ -1594,8 +1601,8 @@ public sealed partial class BcCompiler
                     moduleName: moduleName, publisher: _currentPublisher ?? "AlRunner",
                     version: _currentVersion ?? new Version(1, 0, 0, 0), appId: appId,
                     syntaxTrees: trees, options: compOpts);
-                if (appRootDir != null && Directory.Exists(appRootDir))
-                    genCompilation = genCompilation.WithFileSystem(new NavCA.RelativeFileSystem(appRootDir));
+                if (compileFileSystem != null)
+                    genCompilation = genCompilation.WithFileSystem(compileFileSystem);
                 if (refLoader != null)
                 {
                     genCompilation = genCompilation.WithReferenceLoader(refLoader);
@@ -1746,8 +1753,8 @@ public sealed partial class BcCompiler
                 // #1899: same file system as the primary compile above — without it, a
                 // retry after excluding an unrelated broken object would still raise AL0327
                 // for a perfectly-resolvable ControlAddIn resource and could exclude it too.
-                if (appRootDir != null && Directory.Exists(appRootDir))
-                    retryCompilation = retryCompilation.WithFileSystem(new NavCA.RelativeFileSystem(appRootDir));
+                if (compileFileSystem != null)
+                    retryCompilation = retryCompilation.WithFileSystem(compileFileSystem);
                 if (refLoader != null)
                 {
                     retryCompilation = retryCompilation.WithReferenceLoader(refLoader);
@@ -2154,9 +2161,12 @@ public sealed partial class BcCompiler
         // ControlAddIn inside a source dependency raises AL0327 for every resource path.
         // Falls back to the directory the manifest was already found in (foundAppJson)
         // when the caller didn't pass one explicitly.
+        // #2151: same file-relative LayoutFile override as Emit's compileFileSystem — a
+        // source-dependency report can live in a subdirectory too.
         var effectiveAppRoot = appRootDir ?? (foundAppJson != null ? Path.GetDirectoryName(foundAppJson) : null);
-        if (effectiveAppRoot != null && Directory.Exists(effectiveAppRoot))
-            compilation = compilation.WithFileSystem(new NavCA.RelativeFileSystem(effectiveAppRoot));
+        var depCompileFileSystem = ReportLayoutFileSystem.Build(alFiles, effectiveAppRoot);
+        if (depCompileFileSystem != null)
+            compilation = compilation.WithFileSystem(depCompileFileSystem);
 
         var bundleAlpackages = dirs
             .SelectMany(d => Directory.EnumerateDirectories(d, ".alpackages", SearchOption.AllDirectories))
@@ -2612,11 +2622,18 @@ public sealed partial class BcCompiler
         }
 
         /// <summary>
-        /// Turn the layout's app-root-relative <c>LayoutFile</c> into an absolute path by
-        /// walking up from the declaring .al file to the directory holding app.json (the
-        /// AL project root, which is what LayoutFile is relative to). Returns "" when the
-        /// file cannot be located — the layout is still registered, and the consumer
-        /// decides how to fail if content is ever demanded.
+        /// Turn the layout's <c>LayoutFile</c> into an absolute path. #2151: a value marked
+        /// explicitly file-relative (a leading "./" or "../" — see
+        /// <see cref="ReportLayoutFileSystem.IsFileRelativeMarker"/>) is tried FIRST against
+        /// the DECLARING .al file's own directory, matching what real BC's compiler itself now
+        /// resolves against (see ReportLayoutFileSystem's header) — this registry used to
+        /// assume every LayoutFile was app-root-relative and silently came back empty for
+        /// these same six corpus reports even once the compile-time fix landed, because this
+        /// is a SEPARATE hand-rolled resolution that never went through the compile's
+        /// IFileSystem. Falls back to the original app-root walk for anything that isn't
+        /// file-relative, or where the file-relative candidate doesn't exist. Returns "" when
+        /// the file cannot be located either way — the layout is still registered, and the
+        /// consumer decides how to fail if content is ever demanded.
         /// </summary>
         private static string ResolveLayoutFilePath(object layoutSymbol, string layoutFile)
         {
@@ -2629,8 +2646,16 @@ public sealed partial class BcCompiler
                     : null);
                 if (string.IsNullOrEmpty(declPath)) return string.Empty;
 
+                var declDir = Path.GetDirectoryName(Path.GetFullPath(declPath));
+                if (declDir != null && ReportLayoutFileSystem.IsFileRelativeMarker(layoutFile))
+                {
+                    var fileRelativeCandidate = Path.GetFullPath(
+                        Path.Combine(declDir, layoutFile.Replace('/', Path.DirectorySeparatorChar)));
+                    if (File.Exists(fileRelativeCandidate)) return fileRelativeCandidate;
+                }
+
                 var rel = layoutFile.Replace('\\', '/').TrimStart('.', '/');
-                var dir = Path.GetDirectoryName(Path.GetFullPath(declPath));
+                var dir = declDir;
                 while (!string.IsNullOrEmpty(dir))
                 {
                     if (File.Exists(Path.Combine(dir, "app.json")))

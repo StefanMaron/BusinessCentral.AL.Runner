@@ -2583,41 +2583,22 @@ foreach (var bundle in bundles)
             // fail the same way — a real service tier would reject this module outright.
             // Skip when EMIT-EXCLUDED already handled it (that branch empties `sources`).
             //
-            // AL1081 carve-out (#2151): turning this guard on for the first time surfaced 6
-            // PRE-EXISTING AL1081 diagnostics in the al-language corpus ("Unable to update
-            // report layout ... Could not find file"), all one root cause — the runner's
-            // Tier-3 source compile resolves a report's LayoutFile relative to the app root
-            // instead of the .al file's own directory, which is what real BC does and what
-            // the corpus's own upstream CI (a real service tier) confirms works. That is a
-            // genuine, separately-tracked runner gap (#2151), not new AL invalidity #2150
-            // needs to enforce.
-            //
-            // The carve-out is scoped to the SPECIFIC condition #2151 describes, not the bare
-            // error code: IsKnownLayoutPathResolutionBug only tolerates an AL1081 whose named
-            // file genuinely EXISTS somewhere else under this app's own directory tree — i.e.
-            // BC found the right file at the wrong (app-root-relative) path, which is exactly
-            // our bug. An AL1081 naming a file that does not exist ANYWHERE under the app — a
-            // real "your report names a layout that was never shipped" mistake — does NOT
-            // match and stays blocking. Silently swallowing every AL1081 regardless of cause
-            // would hide a genuinely broken report the same way #2150 itself needs fixing;
-            // loud-failures.md requires saying so, not going quiet for one error code.
-            //
-            // #2152: this classification (and the AL1081-TOLERATED print above the fail
-            // check) is shared with --per-suite/--server/--precompile via
-            // ClassifyBlockingAlDiagnostics — see that function's doc comment for why a
-            // fourth independent copy of this filter would be the wrong call.
-            var blockingAlDiagnostics = ClassifyBlockingAlDiagnostics(
-                alDiagnostics, appGroup.SuiteDir, "<bundled>", moduleName);
-            if (sources.Count > 0 && blockingAlDiagnostics.Count > 0)
+            // #2151 fixed the runner's Tier-3 source compile so it resolves a report's
+            // LayoutFile relative to the DECLARING .al file's own directory when the value is
+            // explicitly file-relative ("./" / "../"), matching what real BC's compiler does
+            // (see ReportLayoutFileSystem) — the six al-language corpus reports that used to
+            // need an AL1081 carve-out here now compile clean, so every AL error diagnostic
+            // blocks unconditionally, with no per-error-code exception.
+            if (sources.Count > 0 && alDiagnostics.Count > 0)
             {
                 Console.Error.WriteLine(
                     $"<bundled>: AL-DIAGNOSTIC-FAIL — {moduleName}: {sources.Count} object(s) emitted but " +
-                    $"{blockingAlDiagnostics.Count} AL error(s) were reported by BC's own compiler; a real " +
+                    $"{alDiagnostics.Count} AL error(s) were reported by BC's own compiler; a real " +
                     $"service tier would refuse to publish this module:");
-                foreach (var d in blockingAlDiagnostics)
+                foreach (var d in alDiagnostics)
                     Console.Error.WriteLine($"  {d}");
                 bundleErrors.Add(
-                    $"<bundled>: AL-DIAGNOSTIC-FAIL for {moduleName}: {blockingAlDiagnostics.Count} AL error(s) " +
+                    $"<bundled>: AL-DIAGNOSTIC-FAIL for {moduleName}: {alDiagnostics.Count} AL error(s) " +
                     $"reported even though {sources.Count} object(s) emitted.");
                 sources = Array.Empty<EmittedSource>(); // do not run a module BC would refuse to publish
             }
@@ -2903,22 +2884,18 @@ foreach (var bundle in bundles)
             // ContinueBuildOnError shape: `sources` can come back non-empty (a broken
             // object's sibling still emitted) at the same time `suiteAlDiagnostics` is also
             // non-empty. Real BC would refuse to publish this suite regardless, so
-            // --per-suite must fail here too — classification shared via
-            // ClassifyBlockingAlDiagnostics (see its doc comment) so this predicate can't
-            // drift from bundled mode's.
-            var blockingSuiteAlDiagnostics = ClassifyBlockingAlDiagnostics(
-                suiteAlDiagnostics, suite, suiteName, suiteName);
-            if (sources.Count > 0 && blockingSuiteAlDiagnostics.Count > 0)
+            // --per-suite must fail here too.
+            if (sources.Count > 0 && suiteAlDiagnostics.Count > 0)
             {
                 Console.Error.WriteLine(
                     $"{suiteName}: AL-DIAGNOSTIC-FAIL — {sources.Count} object(s) emitted but " +
-                    $"{blockingSuiteAlDiagnostics.Count} AL error(s) were reported by BC's own compiler; " +
+                    $"{suiteAlDiagnostics.Count} AL error(s) were reported by BC's own compiler; " +
                     $"a real service tier would refuse to publish this module:");
-                foreach (var d in blockingSuiteAlDiagnostics)
+                foreach (var d in suiteAlDiagnostics)
                     Console.Error.WriteLine($"  {d}");
                 bundleErrors.Add(
-                    $"{suiteName}: AL-DIAGNOSTIC-FAIL ({blockingSuiteAlDiagnostics.Count}): " +
-                    $"{blockingSuiteAlDiagnostics.FirstOrDefault()?.Split('\n')[0]}");
+                    $"{suiteName}: AL-DIAGNOSTIC-FAIL ({suiteAlDiagnostics.Count}): " +
+                    $"{suiteAlDiagnostics.FirstOrDefault()?.Split('\n')[0]}");
                 continue; // do not compile/run a suite BC would refuse to publish
             }
 
@@ -3647,17 +3624,15 @@ return strictExitCode ? computedExitCode : 0;
                 // compile failure in this method already uses (EMIT-EXCLUDED, EMIT-ZERO,
                 // COMPILE-FAIL just below) — there is no separate protocol shape to invent,
                 // and the client already has to handle non-empty compilationErrors.
-                var blockingAlDiagnostics = ClassifyBlockingAlDiagnostics(
-                    alDiagnostics, bundleAbs, "[server]", moduleName);
-                if (blockingAlDiagnostics.Count > 0)
+                if (alDiagnostics.Count > 0)
                 {
                     Console.Error.WriteLine(
                         $"[server] {moduleName}: AL-DIAGNOSTIC-FAIL — {sources.Count} object(s) emitted but " +
-                        $"{blockingAlDiagnostics.Count} AL error(s) were reported by BC's own compiler; a real " +
+                        $"{alDiagnostics.Count} AL error(s) were reported by BC's own compiler; a real " +
                         $"service tier would refuse to publish this module:");
-                    foreach (var d in blockingAlDiagnostics)
+                    foreach (var d in alDiagnostics)
                         Console.Error.WriteLine($"  {d}");
-                    compileErrors.AddRange(blockingAlDiagnostics);
+                    compileErrors.AddRange(alDiagnostics);
                     return new ServerRunResult(Array.Empty<TestResult>(), 3, false,
                         new List<CompilationErrorGroup> { new(moduleName, compileErrors) }, fileHashes);
                 }
@@ -4867,69 +4842,12 @@ static List<string> DiffServerFiles(Dictionary<string, string>? prev, Dictionary
 // local functions declared here cannot be unit-tested, and the arm-before-announce
 // ordering contract needed a deterministic test.
 
-// #2151 / #2150: an AL1081 ("Unable to update report layout ... Reason: Could not find
-// file '<path>'") gets tolerated by the AL-diagnostic compile-failure guard ONLY when the
-// named file genuinely exists somewhere else under this app's own directory tree — i.e.
-// BC found the right file at the wrong (app-root-relative, rather than .al-file-relative)
-// path, which is our Tier-3 LayoutFile resolution bug, not invalid AL. Any other AL1081 —
-// a different "Reason", or a file that truly does not exist anywhere under the app — does
-// NOT match and must stay blocking, or a genuinely broken report (a layout that was never
-// shipped) would go silently unreported exactly like #2150 itself.
-static bool IsKnownLayoutPathResolutionBug(string diagnostic, string? appRootDir)
-{
-    if (string.IsNullOrEmpty(appRootDir) || !Directory.Exists(appRootDir))
-        return false;
-    var match = System.Text.RegularExpressions.Regex.Match(
-        diagnostic, @": error AL1081: .*Could not find file '([^']+)'");
-    if (!match.Success)
-        return false;
-    var missingFileName = Path.GetFileName(match.Groups[1].Value);
-    if (string.IsNullOrEmpty(missingFileName))
-        return false;
-    try
-    {
-        return Directory.EnumerateFiles(appRootDir, missingFileName, SearchOption.AllDirectories).Any();
-    }
-    catch (IOException) { return false; }
-    catch (UnauthorizedAccessException) { return false; }
-}
-
-// #2152: the AL-diagnostic compile-failure gate itself (#2150) — "any Error-severity AL
-// diagnostic BC's own compiler reported for this module blocks the run, regardless of how
-// many objects still emitted, because a real service tier would refuse to publish it" —
-// plus the #2151 AL1081 carve-out, factored out ONCE so bundled mode, --per-suite,
-// --server, and --precompile all classify identically. Before this, only bundled mode had
-// the gate at all (#2150 shipped scoped to the one path CI's corpus/runner-extras legs
-// actually exercise); copying its `alDiagnostics.Where(d => IsKnownLayoutPathResolution-
-// Bug(...))` filter into three more call sites verbatim is exactly the kind of duplication
-// that drifts the moment one copy gets touched and the others don't — see #2152's own
-// writeup, and it already happened twice in this repo in one day for unrelated rules.
-//
-// Prints the AL1081-TOLERATED explanation (never silent — loud-failures.md) for whatever
-// gets carved out, tagged with <paramref name="logPrefix"/> so the four callers' console
-// output stays distinguishable (`&lt;bundled&gt;`, a suite name, `[server]`, `--precompile`),
-// and returns only the diagnostics that still block. Callers keep their own idiom for
-// WHAT to do with a non-empty result (bundleErrors.Add + zero out sources, a
-// ServerRunResult/CompilationErrorGroup, or an early `return 3`) — only the classification
-// is shared, not each path's independently-evolved failure-reporting shape.
-static IReadOnlyList<string> ClassifyBlockingAlDiagnostics(
-    IReadOnlyList<string> alDiagnostics, string? appRootDir, string logPrefix, string moduleName)
-{
-    if (alDiagnostics.Count == 0) return alDiagnostics;
-    var tolerated = alDiagnostics.Where(d => IsKnownLayoutPathResolutionBug(d, appRootDir)).ToList();
-    if (tolerated.Count == 0) return alDiagnostics;
-    var blocking = alDiagnostics.Where(d => !IsKnownLayoutPathResolutionBug(d, appRootDir)).ToList();
-    Console.Error.WriteLine(
-        $"{logPrefix}: AL1081-TOLERATED — {moduleName}: {tolerated.Count} report-layout " +
-        $"diagnostic(s) tolerated as a KNOWN RUNNER BUG, not invalid AL (see " +
-        $"https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2151 — the runner's " +
-        $"Tier-3 source compile resolves a report's LayoutFile relative to the app root instead " +
-        $"of the .al file's own directory). The named file genuinely exists elsewhere under this " +
-        $"app, so this is OUR path-resolution defect, not yours:");
-    foreach (var d in tolerated)
-        Console.Error.WriteLine($"  {d}");
-    return blocking;
-}
+// #2151 removed the AL1081 carve-out that used to live here (IsKnownLayoutPathResolution-
+// Bug / ClassifyBlockingAlDiagnostics): the runner's Tier-3 source compile now resolves a
+// report's file-relative LayoutFile against the declaring .al file's own directory (see
+// ReportLayoutFileSystem), matching real BC, so the six al-language corpus reports that
+// needed tolerating compile clean and every AL-diagnostic compile-failure guard below can
+// go back to "any Error-severity AL diagnostic blocks", with no per-error-code exception.
 
 static void DumpCsharpSources(string dir, string moduleName, IReadOnlyList<EmittedSource> sources)
 {
@@ -5764,15 +5682,13 @@ static int RunPrecompile(string[] subArgs)
     // a DLL another bundle run trusts as a precompiled dependency (see
     // precompiled-dll-respect.md), so a silently-accepted compile error here would poison
     // every bundle that later depends on this output.
-    var precompileBlockingDiagnostics = ClassifyBlockingAlDiagnostics(
-        emitOut.Diagnostics, tempDir, "--precompile", $"{manifest.Publisher}_{manifest.Name}");
-    if (precompileBlockingDiagnostics.Count > 0)
+    if (emitOut.Diagnostics.Count > 0)
     {
         Console.Error.WriteLine(
             $"--precompile: AL-DIAGNOSTIC-FAIL for {manifest.Publisher}_{manifest.Name} v{manifest.Version}: " +
-            $"{emitted.Count} object(s) emitted but {precompileBlockingDiagnostics.Count} AL error(s) were " +
+            $"{emitted.Count} object(s) emitted but {emitOut.Diagnostics.Count} AL error(s) were " +
             $"reported by BC's own compiler; a real service tier would refuse to publish this module:");
-        foreach (var d in precompileBlockingDiagnostics)
+        foreach (var d in emitOut.Diagnostics)
             Console.Error.WriteLine($"  {d}");
         return 3;
     }

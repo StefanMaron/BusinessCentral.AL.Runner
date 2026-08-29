@@ -556,8 +556,12 @@ public sealed partial class BcCompiler
             fallbackReason = $"CreateForRad threw: {ex.GetType().Name}: {ex.Message}";
             return null;
         }
-        if (appRootDir != null && Directory.Exists(appRootDir))
-            radComp = radComp.WithFileSystem(new NavCA.RelativeFileSystem(appRootDir));
+        // #2151: same file-relative LayoutFile override Emit() applies — scanned against the
+        // FULL alFiles list (not just this cycle's changedTrees) so an incremental cycle
+        // resolves identically to a from-scratch Emit() of the same bundle.
+        var radFileSystem = ReportLayoutFileSystem.Build(alFiles, appRootDir);
+        if (radFileSystem != null)
+            radComp = radComp.WithFileSystem(radFileSystem);
         radComp = radComp.WithDotNetResolverFactory(GetOrCreateDotNetFactory());
 
         var radOut = new CaptureOutputter();
