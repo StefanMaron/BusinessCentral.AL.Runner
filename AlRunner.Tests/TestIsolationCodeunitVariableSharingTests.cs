@@ -13,13 +13,16 @@
 // passes. That asymmetry is the whole proof, and it is built on a plain Integer that
 // never touches a Record, so the database reset cannot be what makes it pass or fail.
 //
-// #2160, on what this file may and may not claim: it asserts what the RUNNER's two
-// modes do, which is a runner-specific claim and belongs here. It deliberately does not
-// assert that real BC shares one instance across a codeunit's tests. #2144 did make that
-// claim, citing a BC codeunit 130452 that does not exist, and the sibling claim it made
-// about the database was measured against a real service tier and found backwards. The
-// instance question is being measured the same way, in al-language corpus PR #73; until
-// that returns a verdict, no comment here should state BC's answer to it.
+// On what this file claims: it asserts what the RUNNER's two modes do, which is a
+// runner-specific claim and belongs here. The matching claim about BC is proved where
+// it has to be, against a real service tier — corpus codeunit 60898
+// "Test Isolation Global Var" raises a global in one [Test] and reads it in the next,
+// and is green on BC 27.5 and 28.3. So sharing the instance under `codeunit` is
+// faithful to BC, and this file's asymmetry is the runner-side proof of it.
+//
+// #2144 asserted the same thing from a BC codeunit 130452 that does not exist, and its
+// sibling claim about the database turned out backwards when a service tier was finally
+// asked (#2160). The conclusion happened to survive; the way it was reached did not.
 using System.Diagnostics;
 using System.Text;
 using Xunit;

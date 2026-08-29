@@ -421,12 +421,13 @@ public sealed class TestExecutor
         // Codeunit/Disabled keep ONE instance for every test in the codeunit, so AL
         // global variables persist across a codeunit's tests.
         //
-        // #2160: whether real BC shares one instance across a codeunit's tests is being
-        // measured upstream (al-language corpus PR #73). The runner has always shared it,
-        // and this line does not change that; if the service tier says BC constructs a
-        // fresh instance per test, Codeunit isolation follows the measurement then. What
-        // #2160 corrected is the DATABASE half, which is settled: BC rolls back per
-        // codeunit, so that reset is back at the codeunit boundary above.
+        // Both halves are now measured against a real service tier, not inferred.
+        // BC runs every [Test] in a codeunit on the SAME codeunit instance, so its AL
+        // global variables persist across them — corpus test 60898
+        // "Test Isolation Global Var", green on BC 27.5 and 28.3. The database half is
+        // in 60897 and resets per codeunit (see the boundary above). Sharing the
+        // instance under Codeunit isolation is therefore faithful, and Test isolation's
+        // fresh instance per test is AL's TestIsolation = Function.
         var perTestInstance = Isolation == TestIsolation.Test;
         foreach (var t in types)
         {

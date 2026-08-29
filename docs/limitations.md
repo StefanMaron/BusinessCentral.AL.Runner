@@ -86,10 +86,13 @@ They are AL's own `TestIsolation` values: reading the strings out of
 | `test` (alias `method`) | `Function` | none — no shipped BC runner declares `Function` | Rolls back before every `[Test]` procedure | **Not** shared — every `[Test]` runs on a brand-new codeunit instance |
 | `disabled` | `Disabled` | 130451 "Test Runner - Isol. Disabled" | Never rolls back — suite-long sharing | Shared for the whole suite |
 
-The database column is measured, not inferred. `TestIsolationRollbackScope` (60897) in
-the [al-language corpus](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests)
-writes an uncommitted row in one `[Test]` and reads it back in the next `[Test]` of the
-same codeunit; it is green on real BC 27.5 and 28.3.
+Both of the last two columns are measured against a real service tier, not inferred.
+In the [al-language corpus](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests),
+`TestIsolationRollbackScope` (60897) writes an uncommitted row in one `[Test]` and reads
+it back in the next `[Test]` of the same codeunit, and `Test Isolation Global Var`
+(60898) does the same with a global Integer and a global Text. Both are green on BC 27.5
+and 28.3: the row survives and so do the globals, which is what "rolls back after each
+test codeunit" and "one codeunit instance runs them all" mean in practice.
 
 #### A correction worth recording (#2160)
 
