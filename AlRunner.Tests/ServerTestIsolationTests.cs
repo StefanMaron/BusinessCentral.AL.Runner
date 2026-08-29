@@ -40,21 +40,11 @@ public class ServerTestIsolationTests : IClassFixture<SharedCliServer>
 
     public ServerTestIsolationTests(SharedCliServer fixture) => _fixture = fixture;
 
-    // Two [Test] procs in the SAME codeunit share an AL GLOBAL VARIABLE (an Integer
-    // counter, never a Record — see #2132). Under TestIsolation.Codeunit (the
-    // default), every test in the codeunit runs on the SAME codeunit instance, so
-    // the second test sees the first's increment and its unconditional "must still
-    // be 0" assertion fails. Under TestIsolation.Test ("test"/"method"), every test
-    // gets a BRAND NEW instance, so the second test sees the freshly-constructed
-    // default and both pass.
-    //
-    // #2132 rationale for using a variable instead of a duplicate-key Insert (the
-    // original discriminator here): real BC's 130450 "Test Runner - Isol. Codeunit"
-    // rolls the DATABASE back between tests inside the codeunit too, so a duplicate
-    // Insert of the same key no longer fails under Codeunit isolation once the
-    // runner matches that — it stopped discriminating the two modes. AL global
-    // variables are the one thing 130450 still shares that 130452 does not, so they
-    // are what a default-vs-explicit-mode probe has to be built on now.
+    // Two [Test] procs in the SAME codeunit both insert a row with the SAME primary
+    // key. Under TestIsolation.Codeunit (the default — no reset between methods
+    // inside one codeunit), the second Insert must fail with a duplicate-key error.
+    // Under TestIsolation.Test ("test"/"method"), state resets before every [Test]
+    // proc, so both Insert calls succeed independently.
     //
     // `variant` gives each call site its own AppId (last hex digit) and its own
     // object-ID range (offset by variant*10 from the base 60170) — see the class
@@ -78,25 +68,39 @@ public class ServerTestIsolationTests : IClassFixture<SharedCliServer>
           "runtime": "14.0"
         }
         """);
+        File.WriteAllText(Path.Combine(dir, "IsoTable.Table.al"), $$"""
+        table {{baseId}} "Server Isolation Probe Tbl {{variant}}"
+        {
+            fields
+            {
+                field(1; "Code"; Code[20]) { }
+            }
+            keys { key(PK; "Code") { Clustered = true; } }
+        }
+        """);
         File.WriteAllText(Path.Combine(dir, "IsoTest.Codeunit.al"), $$"""
         codeunit {{baseId}} "Server Isolation Probe SX {{variant}}"
         {
             Subtype = Test;
 
-            var
-                Counter: Integer;
-
             [Test]
-            procedure IncrementsCounter_First()
+            procedure InsertsFixedKey_First()
+            var
+                Rec: Record "Server Isolation Probe Tbl {{variant}}";
             begin
-                Counter += 1;
+                Rec.Init();
+                Rec."Code" := 'FIXED';
+                Rec.Insert();
             end;
 
             [Test]
-            procedure ExpectsFreshCounter_Second()
+            procedure InsertsFixedKey_Second()
+            var
+                Rec: Record "Server Isolation Probe Tbl {{variant}}";
             begin
-                if Counter <> 0 then
-                    Error('expected a fresh Counter=0 (per-test instance), got %1 (shared with a previous test)', Counter);
+                Rec.Init();
+                Rec."Code" := 'FIXED';
+                Rec.Insert();
             end;
         }
         """);
@@ -113,7 +117,7 @@ public class ServerTestIsolationTests : IClassFixture<SharedCliServer>
         });
 
     [SkippableFact]
-    public async Task RunTests_NoTestIsolationField_DefaultsToCodeunit_SharesVariableSoSecondTestFails()
+    public async Task RunTests_NoTestIsolationField_DefaultsToCodeunit_SecondInsertFails()
     {
         TestArtifacts.SkipIfMissing();
 
@@ -129,7 +133,7 @@ public class ServerTestIsolationTests : IClassFixture<SharedCliServer>
     }
 
     [SkippableFact]
-    public async Task RunTests_TestIsolationMethod_FreshInstancePerTestBothPass()
+    public async Task RunTests_TestIsolationMethod_BothInsertsSucceed()
     {
         TestArtifacts.SkipIfMissing();
 

@@ -1,28 +1,25 @@
-// TestIsolationCodeunitVariableSharingTests — RED->GREEN guard for issue #2132.
+// TestIsolationCodeunitVariableSharingTests — proves that `--isolation codeunit` and
+// `--isolation test` are genuinely different modes, on the half that is about the
+// codeunit INSTANCE rather than the database.
 //
-// BC's "Test Runner - Isol. Codeunit" 130450 shares AL GLOBAL VARIABLE state across
-// every [Test] procedure in one codeunit but still rolls the DATABASE back between
-// them; "Test Runner - Isol. Test" 130452 gives every [Test] a fully fresh codeunit
-// instance (neither the database nor a global variable survives). Before #2132 the
-// runner's `--isolation codeunit` shared BOTH database rows and global variables
-// (TestIsolationMethodAliasTests carried the now-retired database-row proof of that);
-// the fix in TestExecutor.cs makes `codeunit` roll the database back per test exactly
-// like `test` already did, which raises a real question this file answers: once BOTH
-// modes reset the database identically, is there anything left that still tells them
-// apart? Yes — this file is that proof, built on a plain AL Integer global variable
-// (never touches a Record, so RestoreInstallBaseline()'s database reset can't be the
-// thing making it pass or fail either way).
+// Under `codeunit` every [Test] in one codeunit runs on the SAME codeunit instance, so
+// an AL global variable one test sets is visible to the next. Under `test` every [Test]
+// gets a brand new instance, so it is not.
 //
-// The fixture below has two [Test] procedures declared in this order:
+// The fixture has two [Test] procedures declared in this order:
 //   Step1_IncrementsCounter increments a global Integer from its default (0) to 1.
 //   Step2_ExpectsFreshCounter asserts the counter is UNCONDITIONALLY 0.
-// Under `codeunit` isolation the SAME codeunit instance runs both tests, so Step2
-// sees Counter = 1 (Step1's increment survived) and the assertion FAILS — the
-// ghost-test trap this mirrors: a no-op fix that (wrongly) also resets AL globals
-// under `codeunit` isolation would make this test vacuously pass instead of proving
-// variable state is genuinely shared. Under `test`/`method` isolation every [Test]
-// gets a brand new codeunit instance, so Step2 sees the freshly-constructed default
-// (0) and the assertion holds.
+// So under `codeunit` Step2 sees 1 and FAILS; under `test`/`method` it sees 0 and
+// passes. That asymmetry is the whole proof, and it is built on a plain Integer that
+// never touches a Record, so the database reset cannot be what makes it pass or fail.
+//
+// #2160, on what this file may and may not claim: it asserts what the RUNNER's two
+// modes do, which is a runner-specific claim and belongs here. It deliberately does not
+// assert that real BC shares one instance across a codeunit's tests. #2144 did make that
+// claim, citing a BC codeunit 130452 that does not exist, and the sibling claim it made
+// about the database was measured against a real service tier and found backwards. The
+// instance question is being measured the same way, in al-language corpus PR #73; until
+// that returns a verdict, no comment here should state BC's answer to it.
 using System.Diagnostics;
 using System.Text;
 using Xunit;

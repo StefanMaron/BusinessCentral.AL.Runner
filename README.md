@@ -82,11 +82,11 @@ al-runner ./app1 ./app2
 # Specify package caches for dependency resolution (repeatable)
 al-runner --package-cache "$HOME/.al-runner/platform-apps" tests/al-language/tests/al-language
 
-# Choose test isolation — each mode matches a real BC "Test Runner" codeunit;
+# Choose test isolation — the modes are AL's own TestIsolation values;
 # see docs/limitations.md's "Test isolation modes" section for the full mapping
-al-runner --isolation codeunit ./my-bundle  # default — matches BC's 130450 "Test Runner - Isol. Codeunit"
-al-runner --isolation test     ./my-bundle  # matches BC's 130452 "Test Runner - Isol. Test"
-al-runner --isolation disabled ./my-bundle  # matches BC's 130453
+al-runner --isolation codeunit ./my-bundle  # default — AL TestIsolation = Codeunit (BC's 130450)
+al-runner --isolation test     ./my-bundle  # AL TestIsolation = Function
+al-runner --isolation disabled ./my-bundle  # AL TestIsolation = Disabled (BC's 130451)
 
 # Cache compiled AL output between invocations
 al-runner --cache ~/.cache/al-runner/al-out ./my-bundle
@@ -180,7 +180,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md#dev-loop) for provisioning them as a separ
 | `--out PATH` | Write classification JSON to PATH (default `v2-classification.json`). |
 | `--package-cache PATH` | Extra `.app`-package cache directory. Repeatable. |
 | `--cache PATH` | Cache compiled AL output keyed on source + dep set + runner mtime. |
-| `--isolation codeunit\|test\|disabled` | Test isolation mode. Default `codeunit`. See docs/limitations.md's "Test isolation modes" section for the BC codeunit each one matches. |
+| `--isolation codeunit\|test\|disabled` | Test isolation mode. Default `codeunit`. See docs/limitations.md's "Test isolation modes" section for the AL `TestIsolation` value each one matches. |
 | `--watch` | Stay resident with warm dependencies; on every `.al` change reset + re-emit + run **in-process** (~seconds/save). Debounces on quiescence (default 250ms of no further `.al` event, capped at 10s) so a bulk multi-file rewrite — a branch switch, a rebase, a formatter run — settles before a cycle starts, instead of firing mid-checkout. Tune with `AL_RUNNER_WATCH_QUIET_MS` / `AL_RUNNER_WATCH_MAX_WAIT_MS`. |
 | `--server` | Long-running JSON-RPC daemon over stdin/stdout (warm deps → ~19s→~4s/run). See [docs/server-mode.md](docs/server-mode.md). |
 | `--dap [PORT]` | Debug Adapter Protocol server (default port 4711): set AL breakpoints, pause execution, inspect locals. Requires exactly one bundle path. See [docs/dap-mode.md](docs/dap-mode.md). |

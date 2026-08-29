@@ -73,30 +73,38 @@ Separately, and unrelated to rollback: the isolation between a "worker session"
 and its caller does not exist. `StartSession` runs synchronously, inline, sharing
 the same record store as the caller — see "No parallel session execution" below.
 
-### Test isolation modes — mapping to BC's Test Runner codeunits
+### Test isolation modes — mapping to AL's `TestIsolation` values
 
-The `--isolation` (alias `--test-isolation`) flag picks one of three granularities,
-each named after — and, since #2132, behaviourally matched to — a real BC "Test
-Runner" codeunit:
+The `--isolation` (alias `--test-isolation`) flag picks one of three granularities.
+They are AL's own `TestIsolation` values: reading the strings out of
+`Microsoft.Dynamics.Nav.CodeAnalysis.dll` shows the property accepts `Disabled`,
+`Codeunit` and `Function`.
 
-| `--isolation` value | BC codeunit it matches | Database (record store) | AL global variables |
-|---|---|---|---|
-| `codeunit` (default) | 130450 "Test Runner - Isol. Codeunit" | Rolls back before **every** `[Test]` procedure | Shared across every `[Test]` in the same codeunit — one codeunit instance runs them all |
-| `test` (alias `method`) | 130452 "Test Runner - Isol. Test" | Rolls back before every `[Test]` procedure | **Not** shared — every `[Test]` runs on a brand-new codeunit instance |
-| `disabled` | BC's 130453 (isolation disabled) | Never rolls back — suite-long sharing | Shared for the whole suite — one instance per codeunit, reused across the whole run |
+| `--isolation` value | AL `TestIsolation` | BC test runner codeunit | Database (record store) | AL global variables |
+|---|---|---|---|---|
+| `codeunit` (default) | `Codeunit` | 130450 "Test Runner - Isol. Codeunit" | Rolls back after each test **codeunit**. A row one `[Test]` writes without committing is still visible to the next `[Test]` in the same codeunit. | Shared across every `[Test]` in the same codeunit — one codeunit instance runs them all |
+| `test` (alias `method`) | `Function` | none — no shipped BC runner declares `Function` | Rolls back before every `[Test]` procedure | **Not** shared — every `[Test]` runs on a brand-new codeunit instance |
+| `disabled` | `Disabled` | 130451 "Test Runner - Isol. Disabled" | Never rolls back — suite-long sharing | Shared for the whole suite |
 
-Before #2132, `codeunit` shared both the database and AL global variables across
-every test in a codeunit — looser than real BC's 130450, which rolls the database
-back per test but keeps global variables shared. A suite ported from BC could pass
-locally against the old `codeunit` default and then hit an order-dependent false
-failure the moment a test happened to count rows a sibling test had left behind,
-with the failure surfacing in the counting test rather than the one that wrote the
-rows. `codeunit` and `test` now agree on database behaviour; the codeunit-instance
-identity (shared vs. fresh) is the only thing that still tells them apart, matching
-the one property that actually distinguishes 130450 from 130452 on real BC.
+The database column is measured, not inferred. `TestIsolationRollbackScope` (60897) in
+the [al-language corpus](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests)
+writes an uncommitted row in one `[Test]` and reads it back in the next `[Test]` of the
+same codeunit; it is green on real BC 27.5 and 28.3.
 
-A real BC 28 service-tier measurement (not a guess) is what surfaced the gap —
-see #2132.
+#### A correction worth recording (#2160)
+
+Between #2144 and #2160 this table said something different and wrong: that `codeunit`
+rolls the database back before *every test*, that `test` matches a BC codeunit 130452
+"Test Runner - Isol. Test", and that `disabled` matches 130453. Extracting the shipped
+`Microsoft_Test Runner.app` shows 130452 is "Test Runner - Get Methods" and 130453 is
+"ALTestRunner Reset Environment". Neither is an isolation runner, and no
+"Test Runner - Isol. Test" codeunit exists in BC at all.
+
+The database claim came from a differential measurement against a BC container, taken
+through a harness that invokes tests one at a time. Such a harness cannot distinguish
+"the platform rolled back" from "the harness opened a new transaction", and it reported
+the first when the truth was the second. The corpus test above is what settled it,
+because a real service tier ran the two tests inside one codeunit the way BC runs them.
 
 ### No parallel session execution
 

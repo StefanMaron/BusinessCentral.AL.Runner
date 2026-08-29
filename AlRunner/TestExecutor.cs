@@ -11,20 +11,28 @@ namespace AlRunner;
 public enum TestOutcome { Pass, Fail, Error, Skipped }
 
 /// <summary>
-/// Test-isolation granularity. Mirrors the BC "Test Runner" codeunits:
-///   Codeunit (default, matches 130450 "Test Runner - Isol. Codeunit") — the
-///     DATABASE rolls back before every [Test] procedure, same as Test below, but
-///     every [Test] in the codeunit runs on the SAME codeunit instance, so AL
-///     GLOBAL VARIABLES stay shared across the whole codeunit (#2132 — a real BC
-///     28 container measurement showed 130450 rolling the database back per test,
-///     which the runner's `codeunit` mode did not do before this fix; only the
-///     variable-state half of "codeunit" isolation is now what distinguishes it
-///     from Test).
-///   Test  (matches 130452 "Test Runner - Isol. Test") — every [Test] gets a
-///     brand new codeunit instance AND a database rollback: neither AL global
-///     variables nor database rows survive from one [Test] to the next.
-///   Disabled (matches 130453) — no state reset at all; suite-long sharing of
-///     both the database and the one shared codeunit instance.
+/// Test-isolation granularity. These are AL's own TestIsolation values — reading the
+/// strings out of Microsoft.Dynamics.Nav.CodeAnalysis.dll shows the property accepts
+/// Disabled, Codeunit and Function, in that vocabulary:
+///   Codeunit (default) — AL `TestIsolation = Codeunit`, which BC's shipped test
+///     runner codeunit 130450 "Test Runner - Isol. Codeunit" declares. The DATABASE
+///     rolls back after each test CODEUNIT, not between the tests inside one: a row
+///     one [Test] writes without committing is still visible to the next [Test] in
+///     the same codeunit. Measured on real BC 27.5 and 28.3 — see
+///     TestIsolationRollbackScope (60897) in the al-language corpus.
+///   Test — AL `TestIsolation = Function`: the database rolls back before every
+///     [Test] procedure. No shipped BC test runner codeunit declares Function, so
+///     this mode has no 130xxx counterpart; the AL property is the reference.
+///   Disabled — AL `TestIsolation = Disabled`, which BC's 130451 "Test Runner -
+///     Isol. Disabled" declares. No reset at all; suite-long sharing.
+///
+/// #2160: this comment previously mapped Test onto 130452 and Disabled onto 130453
+/// and said Codeunit rolled the database back per test. All three were wrong. 130452
+/// is "Test Runner - Get Methods" and 130453 is "ALTestRunner Reset Environment" —
+/// neither is an isolation runner, and no "Test Runner - Isol. Test" codeunit exists
+/// in BC. Both facts came from extracting the shipped Microsoft_Test Runner.app and
+/// from a real-service-tier corpus test, not from reasoning about the names.
+///
 /// See "Test isolation modes" in docs/limitations.md for the full mapping table.
 /// </summary>
 public enum TestIsolation { Codeunit, Test, Disabled }
@@ -145,13 +153,10 @@ public sealed class TestExecutor
     // RecordLink / IsolatedStorage entries stashed outside a table row — would not be
     // reproduced on a HIT. That would be a real gap.
     //
-    // It isn't one, because every test boundary in this run — INCLUDING the app
-    // group's very first test — calls RecordPatches.RestoreInstallBaseline() under both
-    // TestIsolation.Codeunit and TestIsolation.Test (see RunOne further down in this
-    // file — #2132 made this call fire per TEST rather than per codeunit under Codeunit
-    // isolation too, so this invariant now holds even more often than when this comment
-    // was first written), and that call begins with ResetPerTestState() (RecordPatches.cs),
-    // which unconditionally
+    // It isn't one, because every codeunit boundary in this run — INCLUDING the app
+    // group's very first codeunit — calls RecordPatches.RestoreInstallBaseline() (see the
+    // TestIsolation.Codeunit / TestIsolation.Test branches further down in this file), and
+    // that call begins with ResetPerTestState() (RecordPatches.cs), which unconditionally
     // wipes exactly those things: _dataAccessByTable per-table rows,
     // RecordLinkPatches.ResetForTest(), TenantStoragePatches.ResetForTest(),
     // MediaSetPatches.ResetForTest(), ALDatabasePatches.ResetWriteTransactionState(),
@@ -409,23 +414,19 @@ public sealed class TestExecutor
         PerfTrace.Log($"TestExecutor.InitialInstallSeed {seedSw.ElapsedMilliseconds}ms");
 
         long scanMs = 0, instMs = 0, dispMs = 0, methodsMs = 0, disposeMs = 0, methodLoopMs = 0;   // PERF attribution accumulators
-        long injectMs = 0;   // #1861 app-stage accumulator, same shape as the above
-        // #2132: the reset that used to happen HERE (once per codeunit, Codeunit
-        // isolation only) now happens per TEST inside RunOne for both Codeunit and
-        // Test isolation, so its cost is folded into methodsMs/"run-test-methods"
-        // below instead of being separately attributable at the codeunit boundary.
-        // The "codeunit-reset" stage mark stays wired at a constant zero (rather than
-        // being deleted) so PhaseLogIntegrationTests' fixed stage-name list — which
-        // exists to catch a stage mark silently disappearing — does not have to change
-        // shape for a mark that still fires, just no longer carries a distinct cost.
-        const long resetMs = 0;
+        long injectMs = 0, resetMs = 0;   // #1861 app-stage accumulators, same shape as the above
         var stageSw = new System.Diagnostics.Stopwatch();
-        // #2132: TestIsolation.Test gives every [Test] a BRAND NEW codeunit instance
-        // (matches BC's 130452 "Test Runner - Isol. Test" — neither AL globals nor the
-        // database survive from one test to the next). Codeunit/Disabled keep ONE
-        // instance for every test in the codeunit, which is what still lets AL global
-        // variables persist across tests under Codeunit isolation now that the database
-        // reset (below, in RunOne) fires under both modes alike.
+        // TestIsolation.Test gives every [Test] a brand new codeunit instance, so neither
+        // AL global variables nor database rows survive from one test to the next.
+        // Codeunit/Disabled keep ONE instance for every test in the codeunit, so AL
+        // global variables persist across a codeunit's tests.
+        //
+        // #2160: whether real BC shares one instance across a codeunit's tests is being
+        // measured upstream (al-language corpus PR #73). The runner has always shared it,
+        // and this line does not change that; if the service tier says BC constructs a
+        // fresh instance per test, Codeunit isolation follows the measurement then. What
+        // #2160 corrected is the DATABASE half, which is settled: BC rolls back per
+        // codeunit, so that reset is back at the codeunit boundary above.
         var perTestInstance = Isolation == TestIsolation.Test;
         foreach (var t in types)
         {
@@ -449,14 +450,21 @@ public sealed class TestExecutor
             injectMs += injectSw.ElapsedMilliseconds;
             PerfTrace.Log($"EventSubscriber.InjectAllUsingStoredLookup {t.Name} {injectSw.ElapsedMilliseconds}ms");
 
-            // The database reset that used to happen HERE, once per codeunit under
-            // TestIsolation.Codeunit, now happens per TEST inside RunOne (for both
-            // Codeunit and Test isolation — see RunOne further down) so it fires before
-            // every [Test] procedure, matching real BC's 130450/130452 both rolling the
-            // database back per test. This first instantiation still needs to happen
-            // before the reset can run (the reset lives inside RunOne, after a test
-            // method — and, for Test isolation, an instance — is already selected), so
-            // there is nothing left to do at the codeunit boundary itself.
+            // Per-codeunit reset: AL's `TestIsolation = Codeunit`, which BC's 130450
+            // "Test Runner - Isol. Codeunit" declares, wraps the whole codeunit in one
+            // transaction. Tests inside it share database state — a row one [Test]
+            // writes without committing is visible to the next — and each NEW codeunit
+            // starts fresh. Measured on real BC 27.5 and 28.3; see #2160 and the corpus
+            // test TestIsolationRollbackScope (60897).
+            if (Isolation == TestIsolation.Codeunit)
+            {
+                var resetSw = System.Diagnostics.Stopwatch.StartNew();
+                AlRunner.Patches.RecordPatches.RestoreInstallBaseline();
+                resetSw.Stop();
+                resetMs += resetSw.ElapsedMilliseconds;
+                PerfTrace.Log($"TestExecutor.CodeunitBoundary {t.Name} restore={resetSw.ElapsedMilliseconds}ms t={totalSw.ElapsedMilliseconds}ms");
+            }
+
             object? instance;
             PerfTrace.Log($"TestExecutor.Instantiate START {t.Name}");
             stageSw.Restart();
@@ -834,15 +842,18 @@ public sealed class TestExecutor
     {
         var sw = System.Diagnostics.Stopwatch.StartNew();
         PerfTrace.Log($"TestExecutor.RunOne START {codeunit}.{m.Name}");
-        // #2132: the database rolls back before EVERY test under both Codeunit and
-        // Test isolation, matching real BC's 130450 "Test Runner - Isol. Codeunit" and
-        // 130452 "Test Runner - Isol. Test" (both were measured against a real BC 28
-        // container rolling the database back per test; a real BC container measurement
-        // is what surfaced this — see issue #2132). Disabled never resets — that mode
-        // exists specifically to opt OUT of isolation for the whole suite. The half
-        // that still tells Codeunit and Test apart is which codeunit INSTANCE runs this
-        // test — see the perTestInstance branch in Run() — not this reset.
-        if (Isolation is TestIsolation.Test or TestIsolation.Codeunit)
+        // Per-test reset only under Test isolation, which is AL's `TestIsolation =
+        // Function`. Codeunit isolation resets at the CODEUNIT boundary instead (see
+        // Run()), and Disabled never resets.
+        //
+        // #2160: #2132/#2144 briefly reset here under Codeunit isolation too, believing
+        // BC's 130450 rolled the database back per test. It does not — a row one [Test]
+        // writes without committing is still visible to the next [Test] in the same
+        // codeunit on real BC 27.5 and 28.3. The corpus test that settles it is
+        // TestIsolationRollbackScope (60897). The measurement that suggested otherwise
+        // was taken through a harness invoking tests one at a time, which cannot tell
+        // "the platform rolled back" apart from "the harness opened a new transaction".
+        if (Isolation == TestIsolation.Test)
         {
             AlRunner.Patches.RecordPatches.RestoreInstallBaseline();
         }
