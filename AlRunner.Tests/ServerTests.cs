@@ -403,7 +403,13 @@ public class ServerTests : IClassFixture<SharedCliServer>
         {
             command = "execute",
             code = "report 60184 \"Inline Full Report SX\" { dataset { } } " +
-                   "codeunit 60185 \"Inline Full Report Companion SX\" { trigger OnRun() begin " +
+                   // #2152: this codeunit name was 32 characters ("...Companion SX") — over
+                   // AL's 30-character object-identifier limit (AL0305) — invalid AL real BC
+                   // has always rejected. It compiled here regardless because --server's
+                   // compile path (unlike the default bundled CLI path #2154 already fixed)
+                   // did not check post-emit AL error diagnostics; #2152 closed that gap and
+                   // this surfaced immediately. Shortened, not worked around.
+                   "codeunit 60185 \"Inline Report Companion SX\" { trigger OnRun() begin " +
                    "Error('report-companion-ran %1', 400 + 1); end; }"
         }));
         var d = JsonSerializer.Deserialize<JsonElement>(r);
@@ -517,6 +523,17 @@ public class ServerTests : IClassFixture<SharedCliServer>
     // depends on the app and asserts the procedure's return value, so a green
     // result here PROVES the test bundle actually compiled against the app's
     // real symbols, not just that some non-empty test list came back.
+    //
+    // #2152: the App bundle's object ID range was 60150-60159, which collides on
+    // the ACTUAL object id (60150) with RecordTriggerXRec's own fixture ("xRec
+    // Assert RXT", codeunit 60150) — both loaded into the SAME shared server
+    // process across different requests in this class. BC's process-global
+    // metadata registry reports the second declaration as AL0264 ("already
+    // declared by the extension ..."), a real diagnostic that was already firing
+    // and being silently ignored before --server checked post-emit AL error
+    // diagnostics; #2152 made it a hard failure and surfaced this pre-existing ID
+    // collision immediately. Moved to 60350-60359, well clear of every other
+    // idRange in this file (60100-60199, 60120-60129, 60160-60169).
     private static string MakeAppTestPair(out string appDir, out string testDir)
     {
         var root = Path.Combine(Path.GetTempPath(), "al-runner-server-multi", Guid.NewGuid().ToString("N"));
@@ -535,12 +552,12 @@ public class ServerTests : IClassFixture<SharedCliServer>
           "dependencies": [],
           "platform": "1.0.0.0",
           "application": "1.0.0.0",
-          "idRanges": [ { "from": 60150, "to": 60159 } ],
+          "idRanges": [ { "from": 60350, "to": 60359 } ],
           "runtime": "14.0"
         }
         """);
         File.WriteAllText(Path.Combine(appDir, "AppLogic.Codeunit.al"), """
-        codeunit 60150 "Server Multi App Logic SX"
+        codeunit 60350 "Server Multi App Logic SX"
         {
             procedure Answer(): Integer
             begin

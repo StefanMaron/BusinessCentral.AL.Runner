@@ -2601,22 +2601,13 @@ foreach (var bundle in bundles)
             // match and stays blocking. Silently swallowing every AL1081 regardless of cause
             // would hide a genuinely broken report the same way #2150 itself needs fixing;
             // loud-failures.md requires saying so, not going quiet for one error code.
-            var toleratedAl1081 = alDiagnostics
-                .Where(d => IsKnownLayoutPathResolutionBug(d, appGroup.SuiteDir)).ToList();
-            var blockingAlDiagnostics = alDiagnostics
-                .Where(d => !IsKnownLayoutPathResolutionBug(d, appGroup.SuiteDir)).ToList();
-            if (toleratedAl1081.Count > 0)
-            {
-                Console.Error.WriteLine(
-                    $"<bundled>: AL1081-TOLERATED — {moduleName}: {toleratedAl1081.Count} report-layout " +
-                    $"diagnostic(s) tolerated as a KNOWN RUNNER BUG, not invalid AL (see " +
-                    $"https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2151 — the runner's " +
-                    $"Tier-3 source compile resolves a report's LayoutFile relative to the app root instead " +
-                    $"of the .al file's own directory). The named file genuinely exists elsewhere under this " +
-                    $"app, so this is OUR path-resolution defect, not yours:");
-                foreach (var d in toleratedAl1081)
-                    Console.Error.WriteLine($"  {d}");
-            }
+            //
+            // #2152: this classification (and the AL1081-TOLERATED print above the fail
+            // check) is shared with --per-suite/--server/--precompile via
+            // ClassifyBlockingAlDiagnostics — see that function's doc comment for why a
+            // fourth independent copy of this filter would be the wrong call.
+            var blockingAlDiagnostics = ClassifyBlockingAlDiagnostics(
+                alDiagnostics, appGroup.SuiteDir, "<bundled>", moduleName);
             if (sources.Count > 0 && blockingAlDiagnostics.Count > 0)
             {
                 Console.Error.WriteLine(
@@ -2904,6 +2895,32 @@ foreach (var bundle in bundles)
             }
             et.Stop(); bundleEmit += et.Elapsed;
             AlRunner.Infrastructure.PhaseLog.AddAppEmit(et.Elapsed);
+
+            // AL-diagnostic compile-failure guard (#2150), extended to --per-suite (#2152).
+            // Bundled mode got this gate first because it's the only path CI's corpus/
+            // runner-extras legs actually exercise (see #2154) — but --per-suite compiles
+            // one module per SUITE instead of per app-group and hits the exact same BC
+            // ContinueBuildOnError shape: `sources` can come back non-empty (a broken
+            // object's sibling still emitted) at the same time `suiteAlDiagnostics` is also
+            // non-empty. Real BC would refuse to publish this suite regardless, so
+            // --per-suite must fail here too — classification shared via
+            // ClassifyBlockingAlDiagnostics (see its doc comment) so this predicate can't
+            // drift from bundled mode's.
+            var blockingSuiteAlDiagnostics = ClassifyBlockingAlDiagnostics(
+                suiteAlDiagnostics, suite, suiteName, suiteName);
+            if (sources.Count > 0 && blockingSuiteAlDiagnostics.Count > 0)
+            {
+                Console.Error.WriteLine(
+                    $"{suiteName}: AL-DIAGNOSTIC-FAIL — {sources.Count} object(s) emitted but " +
+                    $"{blockingSuiteAlDiagnostics.Count} AL error(s) were reported by BC's own compiler; " +
+                    $"a real service tier would refuse to publish this module:");
+                foreach (var d in blockingSuiteAlDiagnostics)
+                    Console.Error.WriteLine($"  {d}");
+                bundleErrors.Add(
+                    $"{suiteName}: AL-DIAGNOSTIC-FAIL ({blockingSuiteAlDiagnostics.Count}): " +
+                    $"{blockingSuiteAlDiagnostics.FirstOrDefault()?.Split('\n')[0]}");
+                continue; // do not compile/run a suite BC would refuse to publish
+            }
 
             var ct = System.Diagnostics.Stopwatch.StartNew();
             var compile = assembler.Compile($"V2_{Path.GetFileName(suite)}", sources);
@@ -3616,6 +3633,31 @@ return strictExitCode ? computedExitCode : 0;
                 {
                     foreach (var d in alDiagnostics) compileErrors.Add(d);
                     if (compileErrors.Count == 0) compileErrors.Add("EMIT-ZERO: 0 sources emitted");
+                    return new ServerRunResult(Array.Empty<TestResult>(), 3, false,
+                        new List<CompilationErrorGroup> { new(moduleName, compileErrors) }, fileHashes);
+                }
+                // AL-diagnostic compile-failure guard (#2150), extended to --server (#2152).
+                // The most important of the three follow-up paths: this is what an editor
+                // integration drives on every save, so a false green here reaches a
+                // developer's inner loop with nothing telling them their AL would not build
+                // against real BC. Same BC ContinueBuildOnError shape as bundled mode —
+                // `sources` non-empty at the same time `alDiagnostics` is non-empty means a
+                // real service tier would still refuse to publish this module. Surfaced over
+                // the wire via the SAME compilationErrors/exitCode:3 convention every other
+                // compile failure in this method already uses (EMIT-EXCLUDED, EMIT-ZERO,
+                // COMPILE-FAIL just below) — there is no separate protocol shape to invent,
+                // and the client already has to handle non-empty compilationErrors.
+                var blockingAlDiagnostics = ClassifyBlockingAlDiagnostics(
+                    alDiagnostics, bundleAbs, "[server]", moduleName);
+                if (blockingAlDiagnostics.Count > 0)
+                {
+                    Console.Error.WriteLine(
+                        $"[server] {moduleName}: AL-DIAGNOSTIC-FAIL — {sources.Count} object(s) emitted but " +
+                        $"{blockingAlDiagnostics.Count} AL error(s) were reported by BC's own compiler; a real " +
+                        $"service tier would refuse to publish this module:");
+                    foreach (var d in blockingAlDiagnostics)
+                        Console.Error.WriteLine($"  {d}");
+                    compileErrors.AddRange(blockingAlDiagnostics);
                     return new ServerRunResult(Array.Empty<TestResult>(), 3, false,
                         new List<CompilationErrorGroup> { new(moduleName, compileErrors) }, fileHashes);
                 }
@@ -4852,6 +4894,43 @@ static bool IsKnownLayoutPathResolutionBug(string diagnostic, string? appRootDir
     catch (UnauthorizedAccessException) { return false; }
 }
 
+// #2152: the AL-diagnostic compile-failure gate itself (#2150) — "any Error-severity AL
+// diagnostic BC's own compiler reported for this module blocks the run, regardless of how
+// many objects still emitted, because a real service tier would refuse to publish it" —
+// plus the #2151 AL1081 carve-out, factored out ONCE so bundled mode, --per-suite,
+// --server, and --precompile all classify identically. Before this, only bundled mode had
+// the gate at all (#2150 shipped scoped to the one path CI's corpus/runner-extras legs
+// actually exercise); copying its `alDiagnostics.Where(d => IsKnownLayoutPathResolution-
+// Bug(...))` filter into three more call sites verbatim is exactly the kind of duplication
+// that drifts the moment one copy gets touched and the others don't — see #2152's own
+// writeup, and it already happened twice in this repo in one day for unrelated rules.
+//
+// Prints the AL1081-TOLERATED explanation (never silent — loud-failures.md) for whatever
+// gets carved out, tagged with <paramref name="logPrefix"/> so the four callers' console
+// output stays distinguishable (`&lt;bundled&gt;`, a suite name, `[server]`, `--precompile`),
+// and returns only the diagnostics that still block. Callers keep their own idiom for
+// WHAT to do with a non-empty result (bundleErrors.Add + zero out sources, a
+// ServerRunResult/CompilationErrorGroup, or an early `return 3`) — only the classification
+// is shared, not each path's independently-evolved failure-reporting shape.
+static IReadOnlyList<string> ClassifyBlockingAlDiagnostics(
+    IReadOnlyList<string> alDiagnostics, string? appRootDir, string logPrefix, string moduleName)
+{
+    if (alDiagnostics.Count == 0) return alDiagnostics;
+    var tolerated = alDiagnostics.Where(d => IsKnownLayoutPathResolutionBug(d, appRootDir)).ToList();
+    if (tolerated.Count == 0) return alDiagnostics;
+    var blocking = alDiagnostics.Where(d => !IsKnownLayoutPathResolutionBug(d, appRootDir)).ToList();
+    Console.Error.WriteLine(
+        $"{logPrefix}: AL1081-TOLERATED — {moduleName}: {tolerated.Count} report-layout " +
+        $"diagnostic(s) tolerated as a KNOWN RUNNER BUG, not invalid AL (see " +
+        $"https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2151 — the runner's " +
+        $"Tier-3 source compile resolves a report's LayoutFile relative to the app root instead " +
+        $"of the .al file's own directory). The named file genuinely exists elsewhere under this " +
+        $"app, so this is OUR path-resolution defect, not yours:");
+    foreach (var d in tolerated)
+        Console.Error.WriteLine($"  {d}");
+    return blocking;
+}
+
 static void DumpCsharpSources(string dir, string moduleName, IReadOnlyList<EmittedSource> sources)
 {
     var bundleDir = Path.Combine(dir, SanitiseFilename(moduleName));
@@ -5560,6 +5639,44 @@ static int RunPrecompile(string[] subArgs)
         AlRunner.Infrastructure.BcArtifacts.ArtifactsRootDir,
         AlRunner.Infrastructure.BcArtifacts.SelectedVersion.ToString());
 
+    // #2156 (found while adding #2152's proving test for this subcommand): --precompile
+    // dispatches before the main run flow's own "Cecil-rewrite Ncl.dll in place" step ever
+    // runs (that block lives much further down in Main, past the `--precompile` early
+    // return), so on a genuinely cold environment — nothing has yet forced a fresh Cecil
+    // rewrite of the bin-directory Ncl.dll for the selected BC version — NavEnvironment's
+    // real, unpatched static constructor runs for the first time inside
+    // BcRuntime.ApplyAllPatches and calls WindowsIdentity.GetCurrent() unconditionally,
+    // which throws PlatformNotSupportedException on Linux before a single AL object is
+    // even read. Mirror the main flow's own sequence here: rewrite, then re-exec once IF
+    // this rewrite was the fresh one — loading a byte-identical freshly-rewritten Ncl in
+    // the SAME process that wrote it can intermittently throw BadImageFormatException (see
+    // the main flow's own comment on this exact hazard), so a fresh rewrite always re-execs
+    // rather than continuing in this process. AL_RUNNER_REEXECED (shared with the main
+    // flow's guard) prevents an infinite loop if the child somehow rewrites again.
+    {
+        var srcDir = AlRunner.Infrastructure.BcArtifacts.ServiceTierDir;
+        var binNcl = Path.Combine(AppContext.BaseDirectory, "Microsoft.Dynamics.Nav.Ncl.dll");
+        var didFreshRewrite = AlRunner.Infrastructure.NclCecilRewrite.RewriteInPlace(srcDir, binNcl);
+        if (didFreshRewrite && Environment.GetEnvironmentVariable("AL_RUNNER_REEXECED") != "1")
+        {
+            var psi = new System.Diagnostics.ProcessStartInfo(Environment.ProcessPath!)
+            {
+                UseShellExecute = false,
+            };
+            var argv = Environment.GetCommandLineArgs();
+            var underDotnet = Path.GetFileNameWithoutExtension(Environment.ProcessPath!)
+                .Equals("dotnet", StringComparison.OrdinalIgnoreCase);
+            var userArgs = underDotnet ? argv : argv.Skip(1);
+            foreach (var a in userArgs)
+                psi.ArgumentList.Add(a);
+            psi.Environment["AL_RUNNER_REEXECED"] = "1";
+            Console.Error.WriteLine("[reexec] --precompile: fresh Ncl rewrite done — re-execing for a clean load");
+            using var child = System.Diagnostics.Process.Start(psi)!;
+            child.WaitForExit();
+            return child.ExitCode;
+        }
+    }
+
     // Apply BC patches before any BC type is touched (BcCompiler uses BC types).
     BcRuntime.EnsureApplied();
 
@@ -5636,6 +5753,27 @@ static int RunPrecompile(string[] subArgs)
             if (diags.Count > cap)
                 Console.Error.WriteLine($"    ... and {diags.Count - cap} more");
         }
+        return 3;
+    }
+    // AL-diagnostic compile-failure guard (#2150), extended to --precompile (#2152). Same
+    // BC ContinueBuildOnError shape as the other three paths: `emitted` can come back
+    // non-empty (a broken object's sibling still emitted) at the same time
+    // emitOut.Diagnostics also carries an Error-severity diagnostic for the broken one — a
+    // real service tier would refuse to publish this dependency app regardless. Failing
+    // loudly here matters more than it might look: --precompile's whole point is producing
+    // a DLL another bundle run trusts as a precompiled dependency (see
+    // precompiled-dll-respect.md), so a silently-accepted compile error here would poison
+    // every bundle that later depends on this output.
+    var precompileBlockingDiagnostics = ClassifyBlockingAlDiagnostics(
+        emitOut.Diagnostics, tempDir, "--precompile", $"{manifest.Publisher}_{manifest.Name}");
+    if (precompileBlockingDiagnostics.Count > 0)
+    {
+        Console.Error.WriteLine(
+            $"--precompile: AL-DIAGNOSTIC-FAIL for {manifest.Publisher}_{manifest.Name} v{manifest.Version}: " +
+            $"{emitted.Count} object(s) emitted but {precompileBlockingDiagnostics.Count} AL error(s) were " +
+            $"reported by BC's own compiler; a real service tier would refuse to publish this module:");
+        foreach (var d in precompileBlockingDiagnostics)
+            Console.Error.WriteLine($"  {d}");
         return 3;
     }
     var asmName = $"Dep_{Sanitize(manifest.Publisher)}_{Sanitize(manifest.Name)}_{manifest.Version.ToString().Replace('.', '_')}";
