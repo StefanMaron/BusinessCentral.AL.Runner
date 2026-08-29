@@ -22,10 +22,29 @@ public class ReportLayoutFileResolutionTests
         Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
     private static readonly string ProjectPath = Path.Combine(RepoRoot, "AlRunner");
 
+    // #2151 CI investigation: CI's unit-test step (bc-tests.yml) never populates any of
+    // the well-known directories BcCompiler's own DefaultPackageCacheDirs() auto-scans
+    // (~/.bcartifacts.cache/sandbox, ~/.local/share/al-runner/symbols, …) — it downloads
+    // straight into $HOME/.al-runner/platform-apps for the CORPUS/runner-extras run steps,
+    // which pass it via an explicit --package-cache flag. This test's temp apps have empty
+    // "dependencies": [] but still need the runner's own IMPLICIT first-party dependency
+    // resolution (Base Application etc.) to compile at all — invisible on a dev machine
+    // that happens to already carry a populated sandbox/symbols cache from other local
+    // usage (auto-discovered with no flag needed), but on CI with none of those present the
+    // implicit deps fail to resolve and BOTH tests failed with an unrelated exit 3, on every
+    // BC version in the matrix. Same fix as ManifestFeaturesSubprocessTests.
+    private static string[] ExtraPackageCacheArgs()
+    {
+        var platformApps = TestArtifacts.PlatformAppsDir();
+        return Directory.Exists(platformApps) ? new[] { "--package-cache", platformApps } : Array.Empty<string>();
+    }
+
     private static (string output, int exit) RunRunner(string bundle)
     {
         var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
         args.Append(TestBuildConfig.BcVersionArg);
+        foreach (var arg in ExtraPackageCacheArgs())
+            args.Append(" \"").Append(arg).Append('"');
         args.Append(" \"").Append(bundle).Append('"');
         var psi = new ProcessStartInfo
         {
@@ -113,10 +132,10 @@ public class ReportLayoutFileResolutionTests
 
         var (output, exitCode) = RunRunner(root);
 
-        Assert.Equal(0, exitCode);
-        Assert.DoesNotContain("AL1081", output);
-        Assert.DoesNotContain("AL1081-TOLERATED", output);
-        Assert.DoesNotContain("AL-DIAGNOSTIC-FAIL", output);
+        Assert.True(exitCode == 0, $"expected exit 0, got {exitCode}. Full runner output:\n{output}");
+        Assert.True(!output.Contains("AL1081"), $"expected no AL1081 in output. Full runner output:\n{output}");
+        Assert.True(!output.Contains("AL1081-TOLERATED"), $"expected no AL1081-TOLERATED in output. Full runner output:\n{output}");
+        Assert.True(!output.Contains("AL-DIAGNOSTIC-FAIL"), $"expected no AL-DIAGNOSTIC-FAIL in output. Full runner output:\n{output}");
     }
 
     /// <summary>
@@ -162,9 +181,9 @@ public class ReportLayoutFileResolutionTests
 
         var (output, exitCode) = RunRunner(root);
 
-        Assert.NotEqual(0, exitCode);
-        Assert.Contains("AL1081", output);
-        Assert.Contains("AL-DIAGNOSTIC-FAIL", output);
-        Assert.DoesNotContain("AL1081-TOLERATED", output);
+        Assert.True(exitCode != 0, $"expected a non-zero exit. Full runner output:\n{output}");
+        Assert.True(output.Contains("AL1081"), $"expected AL1081 in output. Full runner output:\n{output}");
+        Assert.True(output.Contains("AL-DIAGNOSTIC-FAIL"), $"expected AL-DIAGNOSTIC-FAIL in output. Full runner output:\n{output}");
+        Assert.True(!output.Contains("AL1081-TOLERATED"), $"expected no AL1081-TOLERATED in output. Full runner output:\n{output}");
     }
 }
