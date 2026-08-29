@@ -186,4 +186,100 @@ public class ReportLayoutFileResolutionTests
         Assert.True(output.Contains("AL-DIAGNOSTIC-FAIL"), $"expected AL-DIAGNOSTIC-FAIL in output. Full runner output:\n{output}");
         Assert.True(!output.Contains("AL1081-TOLERATED"), $"expected no AL1081-TOLERATED in output. Full runner output:\n{output}");
     }
+
+    /// <summary>
+    /// Two reports in DIFFERENT directories declaring the IDENTICAL file-relative
+    /// LayoutFile literal ('./Layout.rdl'), each with its own real, distinguishable layout
+    /// file next to it, and neither resolving from the app root. BC's own
+    /// Compilation.WriteReportLayout reads a report's LayoutFile with NO caller context
+    /// (FileSystem.ReadBytes(current.LayoutFile) and nothing else — see
+    /// ReportLayoutFileSystem's header), so the override table this fix builds cannot tell
+    /// the two reports apart by literal text alone. Before the collision guard, the SECOND
+    /// report scanned silently inherited the FIRST report's resolved file — a silent wrong
+    /// answer .claude/rules/loud-failures.md rules out. Must fail LOUDLY instead, naming
+    /// both declaring files and the shared literal, never silently pick a winner.
+    /// </summary>
+    [SkippableFact]
+    public void TwoReportsShareTheSameFileRelativeLiteral_DifferentDirectories_FailsLoudlyNotSilentlyPicksAWinner()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        var baseId = 62380;
+        var root = WriteApp("collision", "f9999999-9999-9999-9999-999999999999", baseId);
+        var dirA = Path.Combine(root, "dirA");
+        var dirB = Path.Combine(root, "dirB");
+        Directory.CreateDirectory(dirA);
+        Directory.CreateDirectory(dirB);
+
+        // Same literal, different directories, DIFFERENT actual bytes — neither exists at
+        // the app root, so both would need the file-relative override, and both map to the
+        // SAME override key ('./Layout.rdl').
+        File.WriteAllText(Path.Combine(dirA, "Layout.rdl"), "<Report>MARKER_AAA</Report>");
+        File.WriteAllText(Path.Combine(dirB, "Layout.rdl"), "<Report>MARKER_BBB</Report>");
+
+        File.WriteAllText(Path.Combine(dirA, "ReportA.Report.al"), $$"""
+        report {{baseId + 1}} "RLR Collision Report A"
+        {
+            UsageCategory = None;
+            ProcessingOnly = false;
+            DefaultRenderingLayout = CollisionLayoutA;
+
+            dataset
+            {
+                dataitem(Dummy; Integer)
+                {
+                    DataItemTableView = sorting(Number) where(Number = const(1));
+                    column(N; Number) { }
+                }
+            }
+
+            rendering
+            {
+                layout(CollisionLayoutA)
+                {
+                    Type = RDLC;
+                    LayoutFile = './Layout.rdl';
+                }
+            }
+        }
+        """);
+        File.WriteAllText(Path.Combine(dirB, "ReportB.Report.al"), $$"""
+        report {{baseId + 2}} "RLR Collision Report B"
+        {
+            UsageCategory = None;
+            ProcessingOnly = false;
+            DefaultRenderingLayout = CollisionLayoutB;
+
+            dataset
+            {
+                dataitem(Dummy; Integer)
+                {
+                    DataItemTableView = sorting(Number) where(Number = const(1));
+                    column(N; Number) { }
+                }
+            }
+
+            rendering
+            {
+                layout(CollisionLayoutB)
+                {
+                    Type = RDLC;
+                    LayoutFile = './Layout.rdl';
+                }
+            }
+        }
+        """);
+
+        var (output, exitCode) = RunRunner(root);
+
+        Assert.True(exitCode != 0,
+            $"expected a non-zero exit — a silent first-writer-wins pick is exactly the bug " +
+            $"this test exists to catch. Full runner output:\n{output}");
+        Assert.True(output.Contains("RunnerOutOfScopeException"),
+            $"expected a loud RunnerOutOfScopeException naming the collision. Full runner output:\n{output}");
+        Assert.True(output.Contains("./Layout.rdl"),
+            $"expected the shared literal named in the failure. Full runner output:\n{output}");
+        Assert.True(output.Contains("ReportA.Report.al") && output.Contains("ReportB.Report.al"),
+            $"expected BOTH declaring files named in the failure. Full runner output:\n{output}");
+    }
 }

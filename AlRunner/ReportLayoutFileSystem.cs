@@ -18,6 +18,7 @@
 // declarations and building a small override table this file-relative wrapper consults
 // before falling through to the untouched, still-working RelativeFileSystem underneath.
 using System.Text.RegularExpressions;
+using AlRunner.Infrastructure;
 using NavCA = Microsoft.Dynamics.Nav.CodeAnalysis;
 
 namespace AlRunner;
@@ -141,11 +142,32 @@ internal sealed class ReportLayoutFileSystem : NavCA.IFileSystem
     /// DECLARING FILE's own directory does, map the literal declared text to that resolved
     /// absolute path. A value that already resolves at the app root is left alone — this
     /// never touches anything that isn't #2151's exact failure shape.
+    ///
+    /// The override key is the bare literal text BC itself reads — decompiling
+    /// <c>Compilation.WriteReportLayout</c> shows it calls
+    /// <c>FileSystem.ReadBytes(current.LayoutFile)</c> with nothing else, no caller/
+    /// declaring-file identity reaches the file system at all. Two reports in DIFFERENT
+    /// directories that declare the IDENTICAL file-relative literal (e.g. both write
+    /// <c>LayoutFile = './Layout.rdl'</c>) are therefore indistinguishable to BC's own read
+    /// call: whichever resolution this method installed under that key answers for BOTH
+    /// reports. There is no way to give BC's read a per-report-unique path without
+    /// rewriting the LayoutFile text itself — but that text is ALSO what
+    /// <c>WriteReportLayout</c> embeds verbatim as the layout's file name
+    /// (<c>outputter.AddReportLayout(..., current.LayoutFile, ...)</c>, and what
+    /// <c>AlReportLayoutInfo.LayoutFile</c> later reports through the "Report Layout List"
+    /// virtual table) — rewriting it to disambiguate would silently swap one wrong answer
+    /// (the wrong file's bytes) for another (a LayoutFile value the AL source never
+    /// declared). So a genuine collision — same literal, two DIFFERENT resolved files —
+    /// throws <see cref="RunnerOutOfScopeException"/> naming both declaring files and the
+    /// shared literal rather than picking a winner. Two objects that share the same literal
+    /// AND resolve to the SAME actual file (e.g. two reports in one directory both using
+    /// <c>'./Shared.rdlc'</c>) are not ambiguous and are left alone.
     /// </summary>
     internal static IReadOnlyDictionary<string, string>? BuildLayoutFileOverrides(
         IReadOnlyList<string> alFiles, string appRootDir)
     {
         Dictionary<string, string>? overrides = null;
+        Dictionary<string, string>? declaredBy = null; // raw literal -> the .al file that first resolved it (for the collision message)
         foreach (var alFile in alFiles)
         {
             string src;
@@ -157,7 +179,6 @@ internal sealed class ReportLayoutFileSystem : NavCA.IFileSystem
             {
                 var raw = m.Groups[1].Value.Replace("''", "'");
                 if (!IsFileRelativeMarker(raw)) continue;
-                if (overrides != null && overrides.ContainsKey(raw)) continue;
 
                 var rootRelativeAbs = SafeCombine(appRootDir, raw);
                 if (rootRelativeAbs != null && File.Exists(rootRelativeAbs)) continue; // already resolves — leave it alone
@@ -167,8 +188,25 @@ internal sealed class ReportLayoutFileSystem : NavCA.IFileSystem
                 var fileRelativeAbs = SafeCombine(declaringDir, raw);
                 if (fileRelativeAbs == null || !File.Exists(fileRelativeAbs)) continue;
 
+                if (overrides != null && overrides.TryGetValue(raw, out var existing))
+                {
+                    if (string.Equals(existing, fileRelativeAbs, StringComparison.Ordinal))
+                        continue; // same literal, same actual file — not ambiguous
+
+                    throw new RunnerOutOfScopeException(
+                        "BcCompiler.ReportLayoutFileResolution",
+                        $"two reports declare the identical file-relative LayoutFile '{raw}' " +
+                        $"from different directories, so BC's compiler (which reads a report's " +
+                        $"LayoutFile with no caller context) cannot tell which one a given " +
+                        $"report meant: '{declaredBy![raw]}' resolves it to '{existing}', " +
+                        $"'{alFile}' resolves it to '{fileRelativeAbs}'. Rename one of the two " +
+                        "layout files so the LayoutFile values are distinct.");
+                }
+
                 overrides ??= new Dictionary<string, string>();
+                declaredBy ??= new Dictionary<string, string>();
                 overrides[raw] = fileRelativeAbs;
+                declaredBy[raw] = alFile;
             }
         }
         return overrides;
