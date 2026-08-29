@@ -2570,6 +2570,45 @@ foreach (var bundle in bundles)
                     Console.Error.WriteLine($"  {d}");
                 bundleErrors.Add($"<bundled>: EMIT-ZERO ({alDiagnostics.Count} AL error(s))");
             }
+            // AL-diagnostic compile-failure guard (#2150). BC's ContinueBuildOnError keeps
+            // compiling an object's SIBLINGS after a declaration-stage error on one object
+            // (e.g. a query column declaring both a data source AND `Method = Count`, AL0353)
+            // — the broken object's metadata can still emit alongside everything else, so
+            // `sources` comes back non-empty even though `alDiagnostics` (built from
+            // GetDeclarationDiagnostics()/emitResult.Diagnostics, always Error-severity only,
+            // see BcCompiler.Emit) is also non-empty. Neither guard above catches this: it
+            // isn't PARTIAL-EMIT-DROP (there ARE diagnostics explaining the gap) and it isn't
+            // EMIT-ZERO (sources isn't empty). Real BC never publishes an app with ANY error
+            // diagnostic regardless of how many other objects compiled clean, so this must
+            // fail the same way — a real service tier would reject this module outright.
+            // Skip when EMIT-EXCLUDED already handled it (that branch empties `sources`).
+            //
+            // AL1081 carve-out (#2151): turning this guard on for the first time surfaced 6
+            // PRE-EXISTING AL1081 diagnostics in the al-language corpus ("Unable to update
+            // report layout ... Could not find file"), all one root cause — the runner's
+            // Tier-3 source compile resolves a report's LayoutFile relative to the app root
+            // instead of the .al file's own directory, which is what real BC does and what
+            // the corpus's own upstream CI (a real service tier) confirms works. That is a
+            // genuine, separately-tracked runner gap (#2151), not new AL invalidity #2150
+            // needs to enforce, and BcCompiler.cs already documented tolerating it (see its
+            // "the al-language corpus emits all 355 of its objects and still reports
+            // Success=false purely because 7 reports fail AL1081" comment) before this guard
+            // existed. Excluding it here keeps that pre-existing behaviour unchanged while
+            // still catching genuinely new AL the runner has no business accepting.
+            var blockingAlDiagnostics = alDiagnostics.Where(d => !d.Contains(": error AL1081:")).ToList();
+            if (sources.Count > 0 && blockingAlDiagnostics.Count > 0)
+            {
+                Console.Error.WriteLine(
+                    $"<bundled>: AL-DIAGNOSTIC-FAIL — {moduleName}: {sources.Count} object(s) emitted but " +
+                    $"{blockingAlDiagnostics.Count} AL error(s) were reported by BC's own compiler; a real " +
+                    $"service tier would refuse to publish this module:");
+                foreach (var d in blockingAlDiagnostics)
+                    Console.Error.WriteLine($"  {d}");
+                bundleErrors.Add(
+                    $"<bundled>: AL-DIAGNOSTIC-FAIL for {moduleName}: {blockingAlDiagnostics.Count} AL error(s) " +
+                    $"reported even though {sources.Count} object(s) emitted.");
+                sources = Array.Empty<EmittedSource>(); // do not run a module BC would refuse to publish
+            }
             if (sources.Count > 0)
             {
                 var ct = System.Diagnostics.Stopwatch.StartNew();

@@ -77,7 +77,7 @@ public sealed class TestIsolationCodeunitVariableSharingTests : IDisposable
         """);
 
         File.WriteAllText(Path.Combine(dir, "IsolationTest.Codeunit.al"), """
-        codeunit 62132 "Isolation Variable Sharing Tests"
+        codeunit 62132 "Isolation Var Sharing Tests"
         {
             Subtype = Test;
 

@@ -6,6 +6,7 @@ report 60702 "RSS Fixture Report"
 {
     UsageCategory = None;
     ProcessingOnly = false;
+    DefaultRenderingLayout = RdlcFixture;
 
     dataset
     {

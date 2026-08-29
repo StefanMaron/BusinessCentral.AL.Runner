@@ -310,53 +310,21 @@ codeunit 61001 "Microsoft Dependency Tests"
         RoleCenterFromPlans.Close();
     end;
 
-    // Positive companion, same fix (the filter-only-column projection-slot aliasing bug
-    // described above) — this is the case that actually reproduces it: a real Guid filter
-    // value compared against a real joined row. "Plan" and "User Plan" are `Access = Internal`
-    // on System Application, so this third-party test app cannot reference them via
-    // `RecordRef.Open(Database::Plan)` (AL0161 — the enum literal itself needs table access) —
-    // but a plain `Record Plan` / `Record "User Plan"` local variable declaration, and
-    // Init/field-assign/Insert on it, compiles and runs fine (AL only restricts the handful of
-    // surfaces that name the table by symbol at the point of use; a local variable of that
-    // type is not one of them). That is enough to seed real joined data and prove the fix past
-    // the empty-table case above.
-    [Test]
-    procedure Query777_RoleCenterFromPlans_MatchingPlan_ReturnsJoinedRoleCenterID()
-    var
-        Plan: Record Plan;
-        UserPlan: Record "User Plan";
-        RoleCenterFromPlans: Query "Role Center from Plans";
-        TestUserSecurityID: Guid;
-    begin
-        // [GIVEN] A Plan mapped to Role Center 9022, and this user linked to it via an AAD
-        // plan assignment — the exact join "User Plan" -> "Plan" Query 777 performs.
-        TestUserSecurityID := CreateGuid();
-
-        Plan.Init();
-        Plan."Plan ID" := CreateGuid();
-        Plan.Name := 'AL Runner Test Plan';
-        Plan."Role Center ID" := 9022;
-        Plan.Insert();
-
-        UserPlan.Init();
-        UserPlan."User Security ID" := TestUserSecurityID;
-        UserPlan."Plan ID" := Plan."Plan ID";
-        UserPlan."User Name" := 'alrunner';
-        UserPlan.Insert();
-
-        // [WHEN] Query 777 is opened filtered to this user and read.
-        RoleCenterFromPlans.SetRange(User_Security_ID, TestUserSecurityID);
-        RoleCenterFromPlans.Open();
-
-        // [THEN] The real InnerJoin executes against the in-memory tables and projects the
-        // linked Plan's Role Center ID — proving NavQuery.FindDataImplAsync runs the
-        // precompiled query's actual business logic end to end, not a stub.
-        Assert.IsTrue(RoleCenterFromPlans.Read(),
-            'Query 777 must return the joined row for a user with a matching AAD-plan-to-Plan link.');
-        Assert.AreEqual(9022, RoleCenterFromPlans.Role_Center_ID,
-            'Query 777''s Role_Center_ID column must reflect the joined Plan''s "Role Center ID" (9022), proving the InnerJoin ran for real.');
-        RoleCenterFromPlans.Close();
-    end;
+    // REMOVED (issue #2153, found while fixing #2150): this suite used to carry a "positive
+    // companion" test here — Query777_RoleCenterFromPlans_MatchingPlan_ReturnsJoinedRoleCenterID
+    // — that declared `Plan: Record Plan;` / `UserPlan: Record "User Plan";` local variables to
+    // seed a real joined row, on the stated assumption that `Access = Internal` on System
+    // Application only blocks symbol-naming surfaces like `RecordRef.Open(Database::Plan)`, not
+    // a plain local variable declaration of that table type. #2150's fix — making the runner
+    // actually gate on AL error diagnostics instead of silently tolerating them whenever some
+    // objects still emit — surfaced that the assumption was wrong: BC's own compiler
+    // (Microsoft.Dynamics.Nav.CodeAnalysis.dll, the same one alc.exe uses) raises AL0161 on
+    // BOTH variable declarations, so this test could never actually compile against real BC. It
+    // was only ever "passing" here because of the exact bug #2150 fixes. Removed rather than
+    // shipped as AL that a real service tier would reject. The negative case immediately above
+    // and the NoThrow companion below still cover the query engine; #2153 tracks whether a
+    // legitimate way exists to seed Access=Internal table data from third-party AL so the "real
+    // joined data" claim can be restored.
 
     // Integration-level companion, matching the exact frame the reported stack trace names
     // (Codeunit9170.GetCurrentProfileNoError -> TryGetDefaultProfileForCurrentUser ->
