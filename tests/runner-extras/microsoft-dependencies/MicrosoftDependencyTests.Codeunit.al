@@ -278,21 +278,51 @@ codeunit 61001 "Microsoft Dependency Tests"
     // ("Unable to compare operands of type NavInteger with NavGuid") instead of ever being
     // evaluated as the filter it actually was.
     //
-    // Both tests below drive Query 777 directly (bypassing Codeunit 9170's business logic)
-    // so the assertion is squarely about the query engine itself: does the real InnerJoin
-    // between "User Plan" and "Plan" execute against the in-memory provider for real Guid
-    // filter values, or does it throw resolving the precompiled query's metadata.
+    // WHAT THIS FILE PROVES ABOUT QUERY 777, AND WHAT IT NO LONGER CLAIMS (issue #2153):
     //
-    // RED (before fix): the positive test (seeded matching row) throws
-    // NavNCLInvalidComparisonException the moment the aliased Guid-vs-Integer comparison runs.
-    // The negative test (no seeded rows at all) happens not to reproduce the bug on its own —
-    // an empty in-memory join never enumerates a row to compare against — so it is kept here
-    // as the literal "faithful expected behavior" acceptance criterion from the reported issue,
-    // not as independent proof of the fix.
-    // GREEN (after fix): both tests pass — filter-only columns get their own dedicated
-    // projection slot (see JoinExecutor.BuildJoinProjectionPlan /
-    // QueryProjection.ComputeJoinColumnSlotMap), so the Guid filter is evaluated against the
-    // real filtered value instead of an unrelated column.
+    // A prior version of this suite carried a "positive companion" test right here —
+    // Query777_RoleCenterFromPlans_MatchingPlan_ReturnsJoinedRoleCenterID — that declared
+    // `Plan: Record Plan;` / `UserPlan: Record "User Plan";` local variables to seed a real
+    // joined row, on the stated assumption that `Access = Internal` on System Application only
+    // blocks symbol-naming surfaces like `RecordRef.Open(Database::Plan)`, not a plain local
+    // variable declaration of that table type. #2150's fix — making the runner actually gate on
+    // AL error diagnostics instead of silently tolerating them whenever some objects still emit
+    // — surfaced that the assumption was wrong: BC's own compiler
+    // (Microsoft.Dynamics.Nav.CodeAnalysis.dll, the same one alc.exe uses) raises AL0161 on BOTH
+    // variable declarations, so that test could never actually compile against real BC. It was
+    // only ever "passing" here because of the exact bug #2150 fixes. It was removed rather than
+    // shipped as AL a real service tier would reject.
+    //
+    // #2153 investigated whether a legitimate way exists to seed Plan/User Plan data from
+    // third-party AL without tripping AL0161, by decompiling the shipped System Application
+    // Test Library app. It does: Codeunit 132916 "Azure AD Plan Test Library" (ships since BC
+    // 27.0) exposes `CreatePlan(Guid, Text, Integer, Guid)` and `AssignUserToPlan(Guid, Guid)`
+    // — both take only Guid/Text/Integer parameters, so a caller never declares a local
+    // `Record Plan` / `Record "User Plan"` and never trips AL0161. Seeding a joined row this
+    // way is possible, and the resulting assertion — "Query 777 correctly inner-joins Plan onto
+    // a seeded User Plan row and projects the joined Role Center ID" — is a plain statement
+    // about what BC's own precompiled query does, independent of AL Runner's existence, so that
+    // restored positive coverage belongs in the upstream al-language corpus (see
+    // bc-behavior-tests-go-upstream.md), not here. It does not live in this file.
+    //
+    // What DOES still live in this file, and what each test actually proves:
+    //
+    //   - Query777_RoleCenterFromPlans_NoMatchingPlan_ReturnsNoRows (below): with zero seeded
+    //     rows, reading the query must faithfully report "no rows", never NRE while resolving
+    //     the precompiled query's metadata. This is a runner-specific claim — it is squarely
+    //     about whether AL Runner's own query engine (AlRunner.QueryJoin.JoinExecutor /
+    //     RecordPatches.QueryProjection) resolves a precompiled System Application query's
+    //     metadata without throwing, not about what BC does (an empty result on an empty table
+    //     is not an interesting BC-behaviour claim on its own).
+    //   - BaseAppCodeunit_ConfPersonalizationMgt_GetCurrentProfileNoError_NoThrow (below): drives
+    //     the same query indirectly through Base App's Codeunit 9170, proving the runner's
+    //     dispatch into a precompiled dependency's query does not NRE.
+    //
+    // Neither remaining test seeds a real joined row, so neither proves the InnerJoin executes
+    // against non-empty data or that filter-only-column aliasing (NCLMetaQueryColumn.ColumnIndex
+    // defaulting to 0 for a column that is only ever a `filter(...)`, not a projected `column(...)`
+    // — see the original bug narrative above) stays fixed once real rows are involved. That
+    // regression coverage now depends on the upstream corpus test landing (issue #2153).
     [Test]
     procedure Query777_RoleCenterFromPlans_NoMatchingPlan_ReturnsNoRows()
     var
@@ -309,22 +339,6 @@ codeunit 61001 "Microsoft Dependency Tests"
             'Query 777 ("Role Center from Plans") must return zero rows when no AAD plan links this user to a Plan, not throw a NullReferenceException in NavQuery.FindDataImplAsync.');
         RoleCenterFromPlans.Close();
     end;
-
-    // REMOVED (issue #2153, found while fixing #2150): this suite used to carry a "positive
-    // companion" test here — Query777_RoleCenterFromPlans_MatchingPlan_ReturnsJoinedRoleCenterID
-    // — that declared `Plan: Record Plan;` / `UserPlan: Record "User Plan";` local variables to
-    // seed a real joined row, on the stated assumption that `Access = Internal` on System
-    // Application only blocks symbol-naming surfaces like `RecordRef.Open(Database::Plan)`, not
-    // a plain local variable declaration of that table type. #2150's fix — making the runner
-    // actually gate on AL error diagnostics instead of silently tolerating them whenever some
-    // objects still emit — surfaced that the assumption was wrong: BC's own compiler
-    // (Microsoft.Dynamics.Nav.CodeAnalysis.dll, the same one alc.exe uses) raises AL0161 on
-    // BOTH variable declarations, so this test could never actually compile against real BC. It
-    // was only ever "passing" here because of the exact bug #2150 fixes. Removed rather than
-    // shipped as AL that a real service tier would reject. The negative case immediately above
-    // and the NoThrow companion below still cover the query engine; #2153 tracks whether a
-    // legitimate way exists to seed Access=Internal table data from third-party AL so the "real
-    // joined data" claim can be restored.
 
     // Integration-level companion, matching the exact frame the reported stack trace names
     // (Codeunit9170.GetCurrentProfileNoError -> TryGetDefaultProfileForCurrentUser ->
