@@ -349,6 +349,7 @@ jobs:
           dotnet run --no-build --project AlRunner -c Release --framework net8.0 -- \
               tests/al-language/tests/al-language \
               --package-cache "$HOME/.al-runner/platform-apps" \
+              --package-cache "$HOME/.al-runner/test-apps" \
               --strict \
               --count-baseline tests/expectations/count-baseline/test-count-baseline.json \
               --out al-language-results.json || rc=$?
