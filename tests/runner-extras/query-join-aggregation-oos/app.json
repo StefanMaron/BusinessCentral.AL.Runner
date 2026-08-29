@@ -1,0 +1,19 @@
+{
+  "id": "9d1e4f7a-6b2c-4a8d-9e0f-3c5b7a9d1f64",
+  "name": "Runner Extras - Query Join Aggregation OOS",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Regression for issue #2137: a query column with Method = Sum/Count/Average/Min/Max used to silently return unaggregated, ungrouped rows instead of aggregating or throwing. This suite pins the two runner-specific surfaces that still cannot aggregate correctly and must throw loudly instead of returning a wrong answer (tracked by follow-up issue #2146): a multi-dataitem JOIN query with an aggregated column, and a runtime SetFilter/SetRange on an aggregated column (a HAVING-clause filter).",
+  "description": "The general BC-language claim this fix makes — a single-dataitem query with Method = Sum/Count/Average/Min/Max implicitly groups by its other (non-aggregated) columns and computes the aggregate per group, exactly like the SQL SELECT ... GROUP BY the real service tier compiles — is plain BC behaviour and belongs upstream in the al-language corpus (see the runner repo's bc-behavior-tests-go-upstream.md); a corpus PR was prepared alongside this fix. This suite is the runner-repo-local claim that is NOT plain BC behaviour: it proves the two surfaces the fix could not implement (a multi-dataitem JOIN combined with GROUP BY, and a HAVING-style runtime filter on an aggregated column) now fail loudly with a named RunnerOutOfScopeException instead of silently returning the exact wrong-rows bug #2137 reported, just reached through a different code path. Once #2146 implements either surface for real, the matching test here is replaced with a positive one.",
+  "dependencies": [],
+  "idRanges": [
+    {
+      "from": 64530,
+      "to": 64539
+    }
+  ],
+  "platform": "27.0.0.0",
+  "application": "27.0.0.0",
+  "runtime": "15.0",
+  "target": "Cloud"
+}

@@ -30,13 +30,39 @@
 //   definition with >1 included table; the temp provider already cannot serve that
 //   (DataAccessSource.GetDataAccessForQuery throws QueriesBetweenDataSourcesNotSupported
 //   when the included tables map to different DataAccess instances), so join handling
-//   stays a follow-up. An aggregate / const / non-source column has no SourceTableField
+//   stays a follow-up. A const (ColumnType.ConstValue) column has no SourceTableField
 //   and is left at its slot default rather than faked — surfaced as a follow-up, never
 //   silently wrong for source columns.
+//
+// AGGREGATION (Method = Sum/Count/Average/Min/Max — issue #2137):
+//   NCLMetaQueryColumn.AggregationType is BC's own per-column aggregation method. A query
+//   with at least one aggregated column has an IMPLICIT GROUP BY over every OTHER Normal
+//   (non-aggregated, non-const, non-filter-only) column — exactly what BC's compiled SQL
+//   SELECT ... GROUP BY does. ProjectQueryRows detects that case (ProjectionPlan.HasAggregate)
+//   and groups the already-filtered/sorted raw rows by the non-aggregate columns' source
+//   field values (GroupKey, using NavValue's own IEquatable<NavValue>/GetHashCode — the same
+//   equality BC's record buffers already trust), then computes each aggregate column's value
+//   over its group via BuildAggregateRow/ComputeAggregate. A query with ONLY aggregate columns
+//   (no grouping column at all) is BC's scalar-aggregate case — one output row always, even
+//   over zero matched source rows (SUM/COUNT/AVERAGE default to 0, MIN/MAX to the column's
+//   typed default via FlowFieldPatches.TypedDefaultForField) — matching SQL's "GROUP BY ()"
+//   always producing exactly one group. TOP is applied AFTER aggregation now (previously it
+//   capped the RAW rows before projection, which is only correct when there's no grouping —
+//   capping raw rows first would silently drop rows out of a group before they're summed).
+//
+//   Runtime SetRange/SetFilter on an AGGREGATED column is a HAVING-clause filter (evaluated
+//   against the aggregated result, not the raw row), which TranslateQueryFilters' WHERE-style
+//   per-row pushdown cannot express — it throws RunnerOutOfScopeException rather than
+//   silently filtering raw rows by the source field instead (see #2146). A multi-dataitem
+//   JOIN with any aggregated column also throws: the isolated JoinExecutor (QueryJoin.cs)
+//   has no GROUP BY of its own, so letting it through would silently return unaggregated
+//   joined rows — the exact bug #2137 reports, just downstream of a join instead of a plain
+//   scan (see #2146 for both follow-ups: HAVING-style filters and join+aggregate).
 using System.Collections;
 using System.Collections.Generic;
 using System.Reflection;
 using Microsoft.Dynamics.Nav.Runtime;
+using Microsoft.Dynamics.Nav.Types;
 
 namespace AlRunner.Patches;
 
@@ -384,6 +410,20 @@ public static partial class RecordPatches
             var expr = item.GetType().GetProperty("Item2")!.GetValue(item);
             if (key != null && _tNCLMetaQueryColumn != null && _tNCLMetaQueryColumn.IsInstanceOfType(key))
             {
+                // #2137/#2146: a runtime SetRange/SetFilter on an AGGREGATED column (Method =
+                // Sum/Count/Average/Min/Max) is a HAVING-clause filter — evaluated against the
+                // per-group aggregated RESULT, not the raw row. Retargeting it to the source
+                // table field the way an ordinary column's filter is retargeted below would
+                // silently filter raw rows by the unaggregated value instead — a different
+                // silently-wrong answer than #2137, but the same class of bug. Throw rather
+                // than guess; see #2146 for the follow-up to implement real HAVING semantics.
+                if (((NCLMetaQueryColumn)key).AggregationType != AggregationType.None)
+                    throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+                        "NavQuery.SetRange/SetFilter on an aggregated (Method=Sum/Count/Average/Min/Max) column",
+                        "query-having-filter-not-supported — a runtime filter on an aggregated column is a " +
+                        "HAVING-clause filter (evaluated against the aggregated result, not the raw row), which " +
+                        "is not yet implemented; see docs/scope.md and issue #2146");
+
                 var srcField = key.GetType().GetProperty("SourceTableField", BindingFlags.Public | BindingFlags.Instance)!.GetValue(key);
                 if (srcField != null && expr != null)
                 {
@@ -532,6 +572,19 @@ public static partial class RecordPatches
             .GetValue(metaAppObj);
         if (queryDef != null && IsMultiDataItemQuery(queryDef))
         {
+            // #2137/#2146: a JOIN with an aggregated column needs GROUP BY over the
+            // joined+projected rows, which JoinExecutor does not implement (join+project
+            // only). Letting it through would silently return unaggregated joined rows —
+            // exactly the bug #2137 reports, just downstream of a join. Throw rather than
+            // guess; see #2146 for the follow-up to implement this for real.
+            var qd = (NCLMetaQueryDefinition)queryDef;
+            if (qd.Columns.Any(c => c.AggregationType != AggregationType.None))
+                throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+                    "NavQuery (multi-dataitem join with Method=Sum/Count/Average/Min/Max)",
+                    "query-join-aggregation-not-supported — a multi-dataitem JOIN query has an " +
+                    "aggregated column; the in-memory join executor has no GROUP BY of its own, " +
+                    "so this would return unaggregated joined rows; see docs/scope.md and issue #2146");
+
             // The isolated executor returns boxed ReadOnlyRecordBuffers (non-generic
             // IEnumerable) so its assembly carries no Ncl type in its public surface; cast
             // back here, where QueryProjection.cs already (necessarily) references the type.
@@ -551,13 +604,14 @@ public static partial class RecordPatches
         // Query.TopNumberOfRowsToReturn caps the dataset. NavQuery passes it through the
         // request's TopNumberOfRowsToReturn; the temp provider's Find only honours
         // FindType.FirstOnly (Take(1)), never the Top cap — that's a query concept the SQL
-        // provider would enforce via TOP. Apply it here, scoped to query requests so
-        // ordinary table reads keep BC's exact (uncapped) behaviour.
+        // provider would enforce via TOP. Applied AFTER projection (not on the raw `rows`
+        // here) so an aggregate query's TOP caps the number of GROUPS, matching SQL's
+        // TOP-after-GROUP-BY — capping the raw rows first would silently drop rows out of
+        // a group before they're ever summed/counted/averaged.
         var top = _pReqTopNumberOfRows!.GetValue(request);
         int topN = top == null ? 0 : Convert.ToInt32(top);
-        if (topN > 0) rows = rows.Take(topN);
-
-        return ProjectQueryRows(metaAppObj, rows);
+        var projected = ProjectQueryRows(metaAppObj, rows);
+        return topN > 0 ? projected.Take(topN) : projected;
     }
 
     private static MethodInfo? _mFilterExprEvaluate;
@@ -675,32 +729,200 @@ public static partial class RecordPatches
         catch { return null; }
     }
 
-    // Cached per NCLMetaQuery: the (queryColumnIndex -> tableFieldColumnIndex) projection map
-    // and the result slot count.
+    // Cached per NCLMetaQuery: which column goes in which result slot, whether it's backed
+    // by a source table field, and (issue #2137) its aggregation method.
     private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<object, ProjectionPlan> _projectionPlans = new();
+
+    private sealed class ColumnPlan
+    {
+        public int QuerySlot;
+        // -1 means "no source table field to read" (a ConstValue column, or a column whose
+        // SourceTableField resolution failed) → leave the slot at its NavValue default.
+        public int TableSlot;
+        public AggregationType Aggregation;
+        // The implicit GROUP BY key: a genuinely-projected (Normal), non-aggregated column.
+        public bool IsGroupKey;
+        // The NCLMetaQueryColumn itself — also an INavValueMetadata, so it can be handed
+        // straight to NavValue.CreateNavValueFromObject / FlowFieldPatches.TypedDefaultForField
+        // to produce a value of the COLUMN's own declared type, not the source field's.
+        public NCLMetaQueryColumn Column = null!;
+    }
 
     private sealed class ProjectionPlan
     {
         public int SlotCount;
-        // map[i] = (queryResultSlot, tableFieldSlot); a value of -1 tableFieldSlot means
-        // the column has no NCLMetaField source (aggregate/const) → leave at default.
-        public (int querySlot, int tableSlot)[] Map = Array.Empty<(int, int)>();
+        public ColumnPlan[] Columns = Array.Empty<ColumnPlan>();
+        // True when at least one column has Method = Sum/Count/Average/Min/Max, i.e. this
+        // query has an implicit GROUP BY over its other (non-aggregated) Normal columns.
+        public bool HasAggregate;
     }
 
     private static IEnumerable<ReadOnlyRecordBuffer> ProjectQueryRows(object nclMetaQuery, IEnumerable<ReadOnlyRecordBuffer> rows)
     {
         var plan = _projectionPlans.GetValue(nclMetaQuery, BuildProjectionPlan);
-        foreach (var row in rows)
+
+        if (!plan.HasAggregate)
         {
-            var fields = new object?[plan.SlotCount];
-            foreach (var (querySlot, tableSlot) in plan.Map)
+            // No Method column anywhere in this query → every row projects independently,
+            // exactly as before #2137 (this is the 99% case: a plain, non-aggregated query).
+            foreach (var row in rows)
+                yield return BuildRow(nclMetaQuery, plan, new[] { row });
+            yield break;
+        }
+
+        // #2137: at least one aggregated column → an implicit GROUP BY over every OTHER
+        // Normal (non-aggregated) column, mirroring BC's compiled SQL SELECT ... GROUP BY.
+        // Grouping needs to see every candidate row before it can know the groups, so the
+        // filtered/sorted source rows are materialised once here.
+        var sourceRows = rows as IReadOnlyList<ReadOnlyRecordBuffer> ?? rows.ToList();
+        var groupKeyColumns = plan.Columns.Where(c => c.IsGroupKey).ToArray();
+
+        if (groupKeyColumns.Length == 0)
+        {
+            // Scalar aggregate (no non-aggregated column at all) — SQL's "GROUP BY ()" always
+            // produces exactly one group, even over zero source rows (SUM/COUNT/AVERAGE then
+            // default to 0; MIN/MAX to the column's own typed default — see ComputeAggregate).
+            yield return BuildRow(nclMetaQuery, plan, sourceRows);
+            yield break;
+        }
+
+        // Group by the group-key columns' source values, preserving first-seen order (the
+        // filtered/sorted row order the temp provider already produced — the closest faithful
+        // approximation available without a real SQL engine's own GROUP BY ordering).
+        var groups = new Dictionary<GroupKey, List<ReadOnlyRecordBuffer>>();
+        var groupOrder = new List<GroupKey>();
+        foreach (var row in sourceRows)
+        {
+            var key = new GroupKey(groupKeyColumns.Select(c =>
+                c.TableSlot >= 0 && c.TableSlot < row.FieldCount ? row[c.TableSlot] : null).ToArray());
+            if (!groups.TryGetValue(key, out var groupRows))
             {
-                if (tableSlot < 0 || tableSlot >= row.FieldCount) continue; // unsupported column → default
-                fields[querySlot] = row[tableSlot];
+                groupRows = new List<ReadOnlyRecordBuffer>();
+                groups[key] = groupRows;
+                groupOrder.Add(key);
             }
-            // ReadOnlyRecordBuffer(NCLMetaApplicationObject, params NavValue[])
-            yield return (ReadOnlyRecordBuffer)_ctorReadOnlyRecordBuffer!.Invoke(
-                new object?[] { nclMetaQuery, ToNavValueArray(fields) });
+            groupRows.Add(row);
+        }
+
+        foreach (var key in groupOrder)
+            yield return BuildRow(nclMetaQuery, plan, groups[key]);
+    }
+
+    /// <summary>
+    /// The implicit GROUP BY key: the group-key columns' source NavValues, compared by
+    /// NavValue's own IEquatable&lt;NavValue&gt;/GetHashCode — the same value equality BC's
+    /// record buffers already trust, not a re-derived one.
+    /// </summary>
+    private readonly struct GroupKey : IEquatable<GroupKey>
+    {
+        private readonly NavValue?[] _values;
+        public GroupKey(NavValue?[] values) => _values = values;
+
+        public bool Equals(GroupKey other)
+        {
+            if (_values.Length != other._values.Length) return false;
+            for (int i = 0; i < _values.Length; i++)
+            {
+                var a = _values[i]; var b = other._values[i];
+                if (ReferenceEquals(a, b)) continue;
+                if (a is null || b is null) return false;
+                if (!a.Equals(b)) return false;
+            }
+            return true;
+        }
+
+        public override bool Equals(object? obj) => obj is GroupKey other && Equals(other);
+
+        public override int GetHashCode()
+        {
+            var hash = new HashCode();
+            foreach (var v in _values) hash.Add(v?.GetHashCode() ?? 0);
+            return hash.ToHashCode();
+        }
+    }
+
+    /// <summary>
+    /// Project one output row from <paramref name="groupRows"/> — either a single raw row
+    /// (the non-aggregate path calls this with a one-row "group") or every row sharing one
+    /// GROUP BY key (the aggregate path). Non-aggregated columns read the first row's source
+    /// value (every row in a real group shares it by construction); aggregated columns compute
+    /// over the whole group via ComputeAggregate.
+    /// </summary>
+    private static ReadOnlyRecordBuffer BuildRow(object nclMetaQuery, ProjectionPlan plan, IReadOnlyList<ReadOnlyRecordBuffer> groupRows)
+    {
+        var fields = new object?[plan.SlotCount];
+        foreach (var c in plan.Columns)
+        {
+            if (c.Aggregation != AggregationType.None)
+            {
+                fields[c.QuerySlot] = ComputeAggregate(c, groupRows);
+                continue;
+            }
+            if (c.TableSlot < 0 || groupRows.Count == 0 || c.TableSlot >= groupRows[0].FieldCount)
+                continue; // unsupported column (ConstValue) → leave at NavValue default
+            fields[c.QuerySlot] = groupRows[0][c.TableSlot];
+        }
+        // ReadOnlyRecordBuffer(NCLMetaApplicationObject, params NavValue[])
+        return (ReadOnlyRecordBuffer)_ctorReadOnlyRecordBuffer!.Invoke(
+            new object?[] { nclMetaQuery, ToNavValueArray(fields) })!;
+    }
+
+    /// <summary>
+    /// Compute one aggregated column's value over its group, using BC's own NavValue
+    /// factory/comparison so the result carries the COLUMN's declared type (which can differ
+    /// from the source field's — e.g. an Average over an Integer field is typically Decimal).
+    /// Sum/Average mirror RecordPatches.cs's TempTableDataProvider_CalcNumeric (Decimal18
+    /// checked-arithmetic, no manual int/long coercion — the same FlowField aggregation
+    /// pattern, just over query rows instead of a CalcFormula source table). Min/Max reuse
+    /// FlowFieldPatches.NavValueCompare/TypedDefaultForField rather than re-deriving
+    /// comparison/default semantics a second time.
+    /// </summary>
+    private static NavValue? ComputeAggregate(ColumnPlan c, IReadOnlyList<ReadOnlyRecordBuffer> groupRows)
+    {
+        switch (c.Aggregation)
+        {
+            case AggregationType.Count:
+                return NavValue.CreateNavValueFromObject(c.Column, groupRows.Count);
+
+            case AggregationType.Sum:
+            case AggregationType.Average:
+            {
+                Decimal18 sum = default;
+                int n = 0;
+                foreach (var row in groupRows)
+                {
+                    if (c.TableSlot < 0 || c.TableSlot >= row.FieldCount) continue;
+                    var v = row[c.TableSlot];
+                    if (v == null) continue;
+                    sum = checked(sum + v.ToDecimal());
+                    n++;
+                }
+                return c.Aggregation == AggregationType.Average
+                    ? NavValue.CreateNavValueFromObject(c.Column, n > 0 ? sum / n : (Decimal18)0m)
+                    : NavValue.CreateNavValueFromObject(c.Column, sum);
+            }
+
+            case AggregationType.Min:
+            case AggregationType.Max:
+            {
+                NavValue? best = null;
+                foreach (var row in groupRows)
+                {
+                    if (c.TableSlot < 0 || c.TableSlot >= row.FieldCount) continue;
+                    var v = row[c.TableSlot];
+                    if (v == null) continue;
+                    if (best == null
+                        || (c.Aggregation == AggregationType.Min && FlowFieldPatches.NavValueCompare(v, best) < 0)
+                        || (c.Aggregation == AggregationType.Max && FlowFieldPatches.NavValueCompare(v, best) > 0))
+                        best = v;
+                }
+                // No row in the group (only reachable via the zero-row scalar-aggregate case)
+                // → the column's own typed default (0 / '' / 0D / …), never a bare literal.
+                return best ?? FlowFieldPatches.TypedDefaultForField(c.Column);
+            }
+
+            default:
+                return null; // AggregationType.None is handled by the caller, not here.
         }
     }
 
@@ -715,33 +937,43 @@ public static partial class RecordPatches
 
     private static ProjectionPlan BuildProjectionPlan(object nclMetaQuery)
     {
-        // queryDef = nclMetaQuery.QueryDefinition; columns = queryDef.Columns
-        var queryDef = _tNCLMetaQuery!.GetProperty("QueryDefinition", BindingFlags.Public | BindingFlags.Instance)!
+        var queryDef = (NCLMetaQueryDefinition)_tNCLMetaQuery!.GetProperty("QueryDefinition", BindingFlags.Public | BindingFlags.Instance)!
             .GetValue(nclMetaQuery)!;
-        var columns = (IEnumerable)queryDef.GetType()
-            .GetProperty("Columns", BindingFlags.Public | BindingFlags.Instance)!
-            .GetValue(queryDef)!;
 
-        var map = new List<(int, int)>();
+        var columnPlans = new List<ColumnPlan>();
         int maxSlot = -1;
-        foreach (var col in columns)
+        bool hasAggregate = false;
+        foreach (var col in queryDef.Columns) // excludes FilterOnly columns already
         {
-            var ct = col.GetType(); // NCLMetaQueryColumn
-            int querySlot = (int)ct.GetProperty("ColumnIndex", BindingFlags.Public | BindingFlags.Instance)!.GetValue(col)!;
+            int querySlot = col.ColumnIndex;
             if (querySlot > maxSlot) maxSlot = querySlot;
 
             int tableSlot = -1;
-            // SourceTableField is the NCLMetaField backing this column (null/throws for
-            // aggregate/const columns — treat those as unsupported → leave default).
+            // SourceTableField throws NotSupportedException for a ConstValue column (no
+            // source field at all — pre-existing, documented follow-up, unrelated to #2137);
+            // treat that as "unsupported → leave at default", same as before this fix.
             try
             {
-                var srcField = ct.GetProperty("SourceTableField", BindingFlags.Public | BindingFlags.Instance)!.GetValue(col);
-                if (srcField != null)
-                    tableSlot = (int)srcField.GetType().GetProperty("ColumnIndex", BindingFlags.Public | BindingFlags.Instance)!.GetValue(srcField)!;
+                if (col.ColumnType != QueryColumnType.ConstValue)
+                {
+                    var srcField = col.SourceTableField;
+                    if (srcField != null) tableSlot = srcField.ColumnIndex;
+                }
             }
             catch { tableSlot = -1; }
-            map.Add((querySlot, tableSlot));
+
+            var aggregation = col.AggregationType;
+            if (aggregation != AggregationType.None) hasAggregate = true;
+
+            columnPlans.Add(new ColumnPlan
+            {
+                QuerySlot = querySlot,
+                TableSlot = tableSlot,
+                Aggregation = aggregation,
+                IsGroupKey = aggregation == AggregationType.None && col.ColumnType == QueryColumnType.Normal,
+                Column = col,
+            });
         }
-        return new ProjectionPlan { SlotCount = maxSlot + 1, Map = map.ToArray() };
+        return new ProjectionPlan { SlotCount = maxSlot + 1, Columns = columnPlans.ToArray(), HasAggregate = hasAggregate };
     }
 }

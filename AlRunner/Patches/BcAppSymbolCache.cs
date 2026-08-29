@@ -54,7 +54,15 @@ internal static partial class BcAppSymbolCache
     // table has no card page at all — a real behavioral divergence, not a display nit),
     // and the Page Control Field provider would read as "no controls" — silent wrong
     // answers, not a cache miss, hence the bump.
-    private const int CacheVersion = 13;
+    // v14: QueryColumnSymbol gained Method (issue #2137 — a query column's Method =
+    // Sum/Count/Average/Min/Max property). A v13 payload deserialises with Method null,
+    // which RecordPatches.NclMetaQueryBuilder.AddColumn already treats as "no aggregation
+    // method declared" (skips setting FieldTotalingMethod, leaving AggregationType at its
+    // default None) — so a v13 cache entry would silently make ProjectQueryRows treat an
+    // aggregated column as an ordinary one again, returning raw ungrouped rows: the exact
+    // #2137 bug reintroduced on any machine whose symbol cache predates this change, not a
+    // cache miss, hence the bump.
+    private const int CacheVersion = 14;
     private static readonly ConcurrentDictionary<string, AppSymbols> ProcessCache = new(StringComparer.OrdinalIgnoreCase);
     // Issue #1820 — path -> content-hash memo. ComputeAppContentHash needs to read the
     // WHOLE .app to hash it (unlike the FileInfo.Length/LastWriteTimeUtc stat it replaced,
@@ -221,7 +229,12 @@ internal static partial class BcAppSymbolCache
         List<QueryDataItemSymbol> DataItems);
 
     // SourceColumn is the field NAME on RelatedTable; Id is the BC column id; Caption optional.
-    internal sealed record QueryColumnSymbol(int Id, string Name, string SourceColumn, string? Caption);
+    // Method (issue #2137) is the AL `Method = Sum/Count/Average/Min/Max` property, carried
+    // verbatim from the column's Properties bag — "Sum"/"Count"/"Average"/"Min"/"Max", or null
+    // for an unaggregated column. Names match Microsoft.Dynamics.Nav.Types.AggregationType's
+    // member names exactly, so RecordPatches.NclMetaQueryBuilder.AddColumn can hand it straight
+    // to SetProp's Enum.Parse without translation.
+    internal sealed record QueryColumnSymbol(int Id, string Name, string SourceColumn, string? Caption, string? Method);
 
     // #1820: ContentHash replaces Length/LastWriteUtcTicks. The KEY (below, in Get) already
     // switched from mtime to a content hash, so an old Length/LastWriteUtcTicks payload can
@@ -278,6 +291,24 @@ internal static partial class BcAppSymbolCache
         ProcessCache[key] = parsed;
         return parsed;
     }
+
+    // Test seam: mirrors Get()'s own key-string format and delegates to the SAME private
+    // CachePath hashing formula, so a test that needs to know where an OLDER (or a
+    // deliberately different) CacheVersion's entry lives on disk never duplicates that
+    // formula itself. A hand-rolled copy of CachePath in a test would silently stop
+    // testing anything the moment CachePath's hashing/layout changes — the copy would
+    // still compute A path, just not the one Get() actually consults, and the test would
+    // pass for the wrong reason (see BcAppSymbolCacheQueryMethodVersionTests, added for
+    // issue #2137's CacheVersion bump, where exactly this drift risk was caught in
+    // review). Exposing this one seam instead makes that drift impossible rather than
+    // merely documented.
+    internal static string CachePathForVersionForTests(string appPath, string contentHash, int cacheVersion)
+        => CachePath($"{Path.GetFullPath(appPath)}|hash:{contentHash}|v{cacheVersion}");
+
+    // The CURRENT CacheVersion, for a test that wants to prove a fresh entry landed at
+    // exactly the path Get() would consult, without hardcoding the number (which would
+    // then need updating every time an unrelated future field bump moves it).
+    internal static int CacheVersionForTests => CacheVersion;
 
     /// <summary>
     /// Content hash (hex SHA-256) of a .app file's bytes — the cache-key component that
@@ -698,7 +729,8 @@ internal static partial class BcAppSymbolCache
             var sourceColumn = col.TryGetProperty("SourceColumn", out var scProp) ? scProp.GetString() ?? string.Empty : string.Empty;
             var props = SymbolProperties(col);
             props.TryGetValue("Caption", out var caption);
-            result.Add(new QueryColumnSymbol(id, name, sourceColumn, caption));
+            props.TryGetValue("Method", out var method); // issue #2137 — Method = Sum/Count/Average/Min/Max
+            result.Add(new QueryColumnSymbol(id, name, sourceColumn, caption, method));
         }
         return result;
     }

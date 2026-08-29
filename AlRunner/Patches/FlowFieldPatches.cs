@@ -1026,8 +1026,14 @@ public static class FlowFieldPatches
     // field, since "" doesn't evaluate to Integer either). GetDefaultNavValue always returns
     // the field's OWN type's default, so this is correct for every field type, not just the
     // one the original hardcoded literal happened to match.
+    //
+    // internal (not private): RecordPatches.QueryProjection.cs's Min/Max query-column
+    // aggregation (issue #2137) reuses this same factory for its own "no source row in the
+    // group" case — NCLMetaQueryColumn is also an INavValueMetadata, so the exact same call
+    // works unchanged. Kept here rather than duplicated, per the sister-drift concern noted
+    // elsewhere in this codebase (ComputeJoinColumnSlotMap's comment).
     private static MethodInfo? _mFlowFieldGetDefaultNavValue;
-    private static NavValue? TypedDefaultForField(object fieldObj)
+    internal static NavValue? TypedDefaultForField(object fieldObj)
     {
         try
         {
@@ -1052,8 +1058,12 @@ public static class FlowFieldPatches
     // RecordBufferEvaluatorVisitor decides which rows match, so the hand-rolled
     // Equals/decimal/ToString ladder that used to stand in for BC's comparison semantics has
     // no callers — and no chance of disagreeing with them.
+    //
+    // internal (not private): reused by RecordPatches.QueryProjection.cs's query-column
+    // Min/Max aggregation (issue #2137) for the exact same "which of these NavValues wins"
+    // comparison, rather than re-deriving comparison semantics a second time.
 
-    private static int NavValueCompare(NavValue a, NavValue b)
+    internal static int NavValueCompare(NavValue a, NavValue b)
     {
         try
         {
