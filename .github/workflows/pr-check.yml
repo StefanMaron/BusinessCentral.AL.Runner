@@ -9,7 +9,17 @@ on:
     # pre-label payload. 'unlabeled' re-asserts the guard when the label is
     # removed, so the bypass cannot be applied and then silently withdrawn while
     # the check still reads green.
-    types: [opened, synchronize, reopened, labeled, unlabeled]
+    #
+    # 'edited' is also required (#2159), and for the same underlying reason:
+    # reject-ci-skip-directives and reject-bad-closing-references both read
+    # PR_TITLE/PR_BODY, and neither is re-evaluated on an event type that
+    # isn't in this list. Without 'edited', a title or body change made after
+    # those two jobs already passed retriggers nothing -- the merge commit
+    # then carries whatever title/body existed at merge time, which may
+    # never have actually been checked. Do not remove this as apparent
+    # noise: check_pr_check_triggers.sh (run by the verify-trigger-list job
+    # below) fails CI if it disappears.
+    types: [opened, synchronize, reopened, labeled, unlabeled, edited]
 
 jobs:
   require-tests:
@@ -197,6 +207,33 @@ jobs:
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_BODY: ${{ github.event.pull_request.body }}
         run: bash .github/scripts/check_closing_reference.sh
+
+  verify-trigger-list:
+    name: pr-check.yml's own pull_request trigger must include 'edited'
+    runs-on: ubuntu-latest
+    # #2159: reject-ci-skip-directives and reject-bad-closing-references
+    # above both read PR_TITLE/PR_BODY, but this workflow's `pull_request`
+    # trigger only reran them on opened/synchronize/reopened/labeled/
+    # unlabeled. Editing a PR's title or body after those two jobs already
+    # passed retriggered nothing, so the squash-merge commit could carry a
+    # title/body that was never actually checked. This job is a
+    # self-referential guard: it fails CI if this workflow's own trigger
+    # list ever drops 'edited' (or one of the pre-existing required types)
+    # again, whether that's a deliberate-looking edit or an accidental one
+    # made while touching the trigger line for something unrelated.
+    #
+    # The actual check logic lives in check_pr_check_triggers.sh, extracted
+    # specifically so it's unit-tested (test_check_pr_check_triggers.sh)
+    # against synthetic fixture workflow files, not provable only by
+    # opening a real PR and editing its body after the fact.
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Run check_pr_check_triggers.sh's own unit tests
+        run: bash .github/scripts/test_check_pr_check_triggers.sh
+
+      - name: Check this workflow's own pull_request trigger list
+        run: bash .github/scripts/check_pr_check_triggers.sh
 
   # validate-coverage (docs/coverage.yaml) removed at the v1->v2 cutover: v1 tracked
   # AL-language coverage in a hand-curated YAML the orchestrator validated on every PR.
