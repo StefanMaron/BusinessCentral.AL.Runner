@@ -7,12 +7,12 @@
     },
     "runner-extras": {
       "tests": {
-        "default": 186,
-        "byBcVersion": { "27.0": 175, "27.3": 175, "27.5": 175 }
+        "default": 190,
+        "byBcVersion": { "27.0": 179, "27.3": 179, "27.5": 179 }
       },
       "appGroups": {
-        "default": 32,
-        "byBcVersion": { "27.0": 27, "27.3": 27, "27.5": 27 }
+        "default": 33,
+        "byBcVersion": { "27.0": 28, "27.3": 28, "27.5": 28 }
       }
     }
   }
