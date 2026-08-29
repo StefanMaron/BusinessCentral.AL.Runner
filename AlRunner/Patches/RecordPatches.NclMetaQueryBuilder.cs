@@ -177,11 +177,35 @@ public static partial class RecordPatches
             // Result columns.
             foreach (var col in diSym.Columns)
             {
-                int fieldNo = ResolveFieldNo(fieldNoByName, col.SourceColumn);
-                if (fieldNo < 0)
+                int fieldNo;
+                if (string.IsNullOrEmpty(col.SourceColumn))
                 {
-                    QLog($"BuildMetaQueryDesign({queryId}): field '{col.SourceColumn}' not found on table {tableNo} ('{diSym.RelatedTable}') — abandoning build");
-                    return null;
+                    // Issue #2137/#2150: real BC's compiler REJECTS a Method=Count column
+                    // that names a source field at all (AL0353) -- the only valid AL is
+                    // `column(X) { Method = Count; }`, with no field. NCLMetaQueryColumn.
+                    // SourceTableField never reads FieldNo for a Count column anyway (BC's
+                    // own Ncl.dll special-cases it to always return the table's OWN primary
+                    // key field, regardless of what FieldNo says) -- the same fact
+                    // ComputeAggregate's Count branch already relies on by never touching
+                    // TableSlot. So a source-less column is legitimate ONLY when it is a
+                    // Count column; abandoning the build for missing a field it was never
+                    // going to use would silently make every Count-only query fail to
+                    // build at all. FieldNo is a placeholder (0) that is never read for it.
+                    if (col.Method != "Count")
+                    {
+                        QLog($"BuildMetaQueryDesign({queryId}): column '{col.Name}' has no SourceColumn and is not Method=Count — abandoning build");
+                        return null;
+                    }
+                    fieldNo = 0;
+                }
+                else
+                {
+                    fieldNo = ResolveFieldNo(fieldNoByName, col.SourceColumn);
+                    if (fieldNo < 0)
+                    {
+                        QLog($"BuildMetaQueryDesign({queryId}): field '{col.SourceColumn}' not found on table {tableNo} ('{diSym.RelatedTable}') — abandoning build");
+                        return null;
+                    }
                 }
                 AddColumn(di, id: col.Id, name: col.Name, fieldNo: fieldNo, index: resultColumnIndex++, caption: col.Caption, method: col.Method);
                 columnIdByName[col.Name] = col.Id;

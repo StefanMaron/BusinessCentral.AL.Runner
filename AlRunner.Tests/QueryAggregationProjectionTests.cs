@@ -100,7 +100,7 @@ public class QueryAggregationProjectionTests
                 {
                     column(CustNo; "Cust No.") { }
                     column(TotalAmount; Amount) { Method = Sum; }
-                    column(CountAmount; Amount) { Method = Count; }
+                    column(CountAmount) { Method = Count; }
                 }
             }
         }
@@ -113,7 +113,7 @@ public class QueryAggregationProjectionTests
                 dataitem(Order; "QAP Order")
                 {
                     column(TotalAmount; Amount) { Method = Sum; }
-                    column(CountAmount; Amount) { Method = Count; }
+                    column(CountAmount) { Method = Count; }
                 }
             }
         }
