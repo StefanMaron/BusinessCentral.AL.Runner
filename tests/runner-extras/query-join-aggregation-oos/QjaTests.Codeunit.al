@@ -10,12 +10,19 @@ codeunit 64535 "Qja Tests"
     //
     // The general BC-language claim ("a Method=Sum column groups by the query's other
     // columns and computes the aggregate per group, across a JOIN and under a HAVING-style
-    // runtime filter, the same way real BC's compiled SQL does") is plain BC behaviour and
-    // belongs upstream in the al-language corpus, not here — an upstream test was prepared
-    // alongside this fix (see the runner repo's bc-behavior-tests-go-upstream.md). This
-    // suite stays as interim, runner-repo-local coverage of the SAME shapes until that
-    // corpus PR merges and the submodule pin moves; once it does, this suite is a candidate
-    // for trimming back down to whatever remains genuinely runner-specific (if anything).
+    // runtime filter, the same way real BC's compiled SQL does") is plain BC behaviour, and
+    // IS NOW COVERED upstream in the al-language corpus: it merged as
+    // StefanMaron/BusinessCentral.AL.Language.Tests#74 (commit 6262dd6506dd20a39ee1626ed6a0ddd24d0685cd)
+    // and passes on both BC 27.5 and BC 28.3; the submodule pin in this repo was bumped to it
+    // alongside the #2146 fix. JoinWithAggregateColumn_GroupsJoinedRowsAndAggregates and
+    // SetFilterOnAggregateColumn_EvaluatesAgainstGroupResult below now duplicate that upstream
+    // coverage and are a TRIMMING CANDIDATE for a follow-up cleanup PR (not trimmed here, to
+    // avoid unrelated count-baseline churn in this PR). JoinWithoutAggregateColumn_StillReturnsJoinedRows
+    // and SetFilterOnNonAggregateColumn_StillWorks are negative siblings that still add
+    // something the corpus does not cover: they pin that the GROUP BY/HAVING code paths this
+    // fix added are correctly SCOPED to queries that actually have an aggregated column, and
+    // do not misfire on an ordinary join or an ordinary WHERE-style filter just because the
+    // query also happens to have an aggregate column somewhere.
     Subtype = Test;
 
     local procedure Initialize()

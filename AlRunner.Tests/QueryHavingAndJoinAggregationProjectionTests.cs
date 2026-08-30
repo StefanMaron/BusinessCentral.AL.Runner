@@ -22,13 +22,19 @@ namespace AlRunner.Tests;
 ///
 /// This is a RUNNER-MECHANISM test, not a claim about what real BC does — same posture as
 /// QueryAggregationProjectionTests.cs for #2137. The BEHAVIORAL claim (what BC itself does
-/// with a HAVING-style runtime filter, and with a JOIN+GROUP BY) needs adjudication by the
-/// al-language corpus's own CI against a real BC service tier
-/// (StefanMaron/BusinessCentral.AL.Language.Tests) — see
-/// .claude/rules/bc-behavior-tests-go-upstream.md. That corpus PR has not been opened yet
-/// (posting to that repo needs approval this agent does not have), so the submodule pin is
-/// NOT bumped in this PR; this test exists so a regression in OUR OWN
-/// filter-extraction/grouping/aggregation pipeline fails loudly here without waiting on it.
+/// with a HAVING-style runtime filter, and with a JOIN+GROUP BY) HAS been adjudicated by the
+/// al-language corpus's own CI against a real BC service tier: it merged as
+/// StefanMaron/BusinessCentral.AL.Language.Tests#74 (commit 6262dd6506dd20a39ee1626ed6a0ddd24d0685cd
+/// on master), and all three corpus tests
+/// (FilterOnAggregatedColumn_EvaluatesAgainstGroupResult_NotRawRow,
+/// FilterOnAggregatedColumn_ExcludingEveryGroup_ReturnsNoRows,
+/// JoinWithAggregatedColumn_GroupsJoinedRows_NotOneRowPerPair) pass on both BC 27.5 and
+/// BC 28.3 — real BC agrees with this implementation. The submodule pin in this repo is bumped
+/// to that commit alongside this fix. This test remains as the RUNNER-MECHANISM regression
+/// guard: it exists so a regression in OUR OWN filter-extraction/grouping/aggregation
+/// pipeline (BcAppSymbolCache → RecordPatches.NclMetaQueryBuilder →
+/// RecordPatches.QueryProjection/AlRunner.QueryJoin.JoinExecutor) fails loudly here, without
+/// needing a full corpus run to notice.
 ///
 /// Both scenarios below are deliberately designed so a NAIVE (wrong) implementation would
 /// produce a DIFFERENT, distinguishable answer from the one asserted:
