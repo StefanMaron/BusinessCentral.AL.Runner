@@ -12,3 +12,8 @@ If the issue body or telemetry payload is too thin to identify the root cause �
 **Why:** assumption-based "fixes" produce ghost tests that pass against a wrong mental model. The patch ships green, the real bug stays, and the test suite gains noise. This has happened before — apply the rule strictly.
 
 **Triggers:** any time an impl agent picks up an issue from telemetry, `coverage-gap`, or auto-generated reports and the body lacks a concrete reproducer.
+
+## Sister rules
+
+- `ask-the-corpus-before-claiming-bc-behavior.md` — the same discipline for a claim
+  about BC's behavior: the corpus CI has probably already measured it

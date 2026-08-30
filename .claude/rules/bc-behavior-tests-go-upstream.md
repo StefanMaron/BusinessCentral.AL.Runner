@@ -68,6 +68,9 @@ may not be provable yet, which is information the reviewer needs.
 
 ## Sister rules
 
+- `ask-the-corpus-before-claiming-bc-behavior.md` — before you act on a belief
+  about what BC does, read the corpus CI's verdict; a green corpus test outranks
+  reading, a container differential, the docs, and a codeunit's name
 - `al-language-submodule.md` — the corpus is read-only here; how to bump the pin
 - `tdd.md` — every fix needs a RED → GREEN, and tests must prove, not just pass
 - `no-assumption-fixes.md` — understand the AL pattern before patching

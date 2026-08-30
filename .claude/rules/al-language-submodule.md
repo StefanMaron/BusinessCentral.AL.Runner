@@ -56,6 +56,9 @@ so a real service tier can adjudicate it. See
 
 ## Sister rules
 
+- `ask-the-corpus-before-claiming-bc-behavior.md` — a corpus test green on real BC is
+  evidence; never declare an `expect-fail-known-gap` for one, and never propose
+  inverting one upstream
 - `bc-behavior-tests-go-upstream.md` — which repo a new test belongs in, and why
 - `precompiled-dll-respect.md` — what we may not rewrite in BC DLLs
 - `loud-failures.md` — when to throw `RunnerOutOfScopeException`
