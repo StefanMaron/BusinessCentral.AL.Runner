@@ -594,6 +594,33 @@ if (tddMode && alCacheDir != null)
         return 2;
     }
 }
+// ── The same directory named twice runs ONCE (#2136) ──────────────────────────
+// Immediately after the existence check above, and deliberately not before it: a
+// mistyped path must still be reported as a mistyped path, never quietly folded into a
+// similar-looking sibling. Dedup is by RESOLVED REAL path (symlinks followed, '..'
+// collapsed, trailing separators trimmed), not by argument string — see
+// BundleRootDeduplication for why identity is not the key and why raw-string Distinct()
+// would fix only the least interesting case.
+//
+// Doing it here rather than inside the bundle loop fixes every downstream consumer at
+// once: PhaseLog.SetBundles, the expectations-directory probe, TryDeriveBcMajorFromProject,
+// CollectBundleAlpackagesDirs, the `bundles.Count > 1` layered pre-pass (which a
+// duplicated single bundle was needlessly triggering), the run banner's bundle count,
+// --watch's bundle name, and --dap's "exactly one bundle path" guard.
+//
+// Printed immediately rather than queued into startupNotices for the same reason the
+// --tdd cache notice above is: several unrelated failure returns still lie between here
+// and the flush, and any of them would discard a queued notice. It duplicates on a
+// stacked re-exec exactly as those lines do; losing it entirely is the worse trade.
+{
+    var deduped = AlRunner.Infrastructure.BundleRootDeduplication.Deduplicate(bundles);
+    var duplicateNotice = AlRunner.Infrastructure.BundleRootDeduplication.DescribeDropped(deduped.Dropped);
+    if (duplicateNotice != null)
+    {
+        Console.Error.WriteLine(duplicateNotice);
+        bundles = deduped.Roots.ToList();
+    }
+}
 // #2041/#2066/#2097: rather than PREDICTING whether this generation will need to
 // re-exec (the #2041 approach — a flag computed from NeedsShadow alone, before either
 // the per-BC-minor variant swap or the Cecil-rewrite cache state is knowable), the
@@ -3316,6 +3343,25 @@ return strictExitCode ? computedExitCode : 0;
         // parsed)" while the identical CLI invocation passed.
         BcRuntime.ResetForNewBundleReload();
 
+        // #2136, same defect as the CLI's positional arguments one call site over: a
+        // `sourcePaths` array naming the same directory twice ran it twice and returned
+        // two ServerRunResults, which HandleRunTests then SelectMany'd into a doubled
+        // test list — the JSON-RPC shape of the exact count inflation the CLI had. Same
+        // resolved-real-path rule, same notice, applied before the sourcePaths.Length > 1
+        // branch below so a duplicated single path no longer drags a request through the
+        // inter-bundle wiring pre-pass either. Server requests have no stderr contract of
+        // their own, so the notice goes to the same place every other server-side
+        // diagnostic does.
+        {
+            var deduped = AlRunner.Infrastructure.BundleRootDeduplication.Deduplicate(sourcePaths);
+            var notice = AlRunner.Infrastructure.BundleRootDeduplication.DescribeDropped(deduped.Dropped);
+            if (notice != null)
+            {
+                Console.Error.WriteLine(notice);
+                sourcePaths = deduped.Roots.ToArray();
+            }
+        }
+
         if (sourcePaths.Length > 1)
         {
             var bundleList = sourcePaths.ToList();
@@ -5191,6 +5237,10 @@ static void PrintHelp(TextWriter w)
     w.WriteLine();
     w.WriteLine("Multiple <bundle-dir> arguments run sequentially and aggregate into one");
     w.WriteLine("summary. Pass --out PATH to also emit a failure-classification JSON.");
+    w.WriteLine("Arguments that name the same directory run ONCE: they are de-duplicated by");
+    w.WriteLine("resolved real path, so `x`, `./x`, `x/` and a symlink to `x` collapse onto one");
+    w.WriteLine("another and the run says which argument it dropped. Two different directories");
+    w.WriteLine("are never merged, even when they declare the same app id.");
     w.WriteLine();
     w.WriteLine("SELECTION");
     w.WriteLine("  --test PATTERN, --filter PATTERN");
