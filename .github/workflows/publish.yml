@@ -207,6 +207,11 @@ jobs:
                      AlRunner.QueryJoin.dll AlRunner.Provisioning.dll AlRunner.Provisioning.pdb; do
               cp "./variant-build-$full/$f" "./variants-staging/$full/$f"
             done
+            # #2168: Win32Stubs/ is the directory-shaped equivalent of the same gap —
+            # Win32Stubs.LocatePrebuiltSo resolves the prebuilt Linux Win32 P/Invoke shim
+            # from AppContext.BaseDirectory/Win32Stubs/ at runtime, so it must ship in
+            # every variant dir too (see NclShadowRuntime.MustCopyDirectoryNames).
+            cp -r "./variant-build-$full/Win32Stubs" "./variants-staging/$full/Win32Stubs"
             rm -rf "./variant-build-$full"
           done
           echo "Staged variants:"

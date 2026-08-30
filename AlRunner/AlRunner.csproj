@@ -106,9 +106,12 @@
        -p:_BCVersion=<full-build>` per .github/bc-versions.txt entry (including the one
        this csproj itself was built with — see the pack job for why that duplication is
        deliberate, not wasted), each copied to
-       $(EngineVariantsStagingDir)/<full-build>/{al-runner.dll,.pdb,.deps.json,.runtimeconfig.json}.
-       %(RecursiveDir) reproduces that per-version subfolder under variants/ in the
-       packed nupkg. -->
+       $(EngineVariantsStagingDir)/<full-build>/{al-runner.dll,.pdb,.deps.json,.runtimeconfig.json,
+       AlRunner.QueryJoin.dll,AlRunner.Provisioning.dll,AlRunner.Provisioning.pdb,Win32Stubs/}
+       (see NclShadowRuntime.MustCopyNames / MustCopyDirectoryNames — #2166/#2168 — for
+       why these load-by-path items need to ship per-variant, not just at the top level).
+       %(RecursiveDir) reproduces that per-version subfolder (including the nested
+       Win32Stubs/ one) under variants/ in the packed nupkg. -->
   <PropertyGroup>
     <EngineVariantsStagingDir Condition="'$(EngineVariantsStagingDir)' == ''"></EngineVariantsStagingDir>
   </PropertyGroup>

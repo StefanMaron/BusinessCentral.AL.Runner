@@ -223,6 +223,100 @@ public sealed class NclShadowRuntimeTests
         }
     }
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // #2168: Win32Stubs/ — a load-by-path DIRECTORY, not a single file
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// <summary>Positive + the #2168 regression pin: <c>Win32Stubs/</c> (the prebuilt
+    /// Linux P/Invoke shim <c>Win32Stubs.LocatePrebuiltSo</c> resolves via
+    /// <c>Path.Combine(AppContext.BaseDirectory, "Win32Stubs", ...)</c>, lazily, the first
+    /// time AL test code reaches a Windows-only Win32 API through BC's runtime — see
+    /// Win32Stubs.cs) must land in the shadow dir as a REAL, independent copy, not a
+    /// directory symlink back to the original install.
+    ///
+    /// Identical shape to <see cref="MirrorInstallDirectory_LoadByPathAssemblies_AreRealCopiesNotSymlinks"/>
+    /// (#2166), except the load-by-path entry here is a DIRECTORY: before this fix it fell
+    /// into the generic "every other entry" bucket (see
+    /// <see cref="MirrorInstallDirectory_OtherDependencyDll_IsSymlinkedNotCopied"/>) and
+    /// <see cref="LinkOrCopy"/> symlinked the whole directory. That only kept working
+    /// because <see cref="EnsureShadowDir"/>'s caller always passes the top-level "any"
+    /// install directory as origDir, which does ship <c>Win32Stubs/</c> — so the symlink
+    /// target resolved. Per-BC-minor engine variant directories do NOT ship their own
+    /// <c>Win32Stubs/</c> (confirmed from the published nupkg), and nothing re-validates
+    /// the symlink once the shadow dir is cached "reusable" — if the original install's
+    /// <c>Win32Stubs/</c> is later removed (tool reinstall/upgrade in place, pruning an
+    /// old version), the dangling symlink only surfaces the first time AL test code
+    /// actually reaches a Win32 API, deep inside <c>Win32Stubs.GetOrBuild</c>.</summary>
+    [Fact]
+    public void MirrorInstallDirectory_Win32StubsDirectory_IsRealCopyNotSymlink()
+    {
+        var origDir = NewTempDir("mirror-win32stubs-orig");
+        var shadowDir = NewTempDir("mirror-win32stubs-shadow");
+        try
+        {
+            var win32Dir = Path.Combine(origDir, "Win32Stubs");
+            Directory.CreateDirectory(win32Dir);
+            var soBytes = new byte[] { 0x7f, 0x45, 0x4c, 0x46, 1, 2, 3 };
+            File.WriteAllBytes(Path.Combine(win32Dir, "libwin32_stubs.linux-x64.so"), soBytes);
+            File.WriteAllText(Path.Combine(win32Dir, "win32_stubs.c"), "int main(void) { return 0; }");
+
+            NclShadowRuntime.MirrorInstallDirectory(origDir, shadowDir);
+
+            var shadowWin32Dir = Path.Combine(shadowDir, "Win32Stubs");
+            var shadowSo = Path.Combine(shadowWin32Dir, "libwin32_stubs.linux-x64.so");
+            var shadowC = Path.Combine(shadowWin32Dir, "win32_stubs.c");
+
+            Assert.False(IsSymlink(shadowWin32Dir), "Win32Stubs must be a real copy of the directory, not a directory symlink");
+            Assert.True(File.Exists(shadowSo));
+            Assert.Equal(soBytes, File.ReadAllBytes(shadowSo));
+            Assert.Equal("int main(void) { return 0; }", File.ReadAllText(shadowC));
+
+            // Independent inode, not just independent path: removing the ENTIRE original
+            // directory after mirroring must not take the shadow copy down with it — the
+            // exact failure mode #2168 reports (a dangling directory symlink surfacing as
+            // a Win32Stubs.GetOrBuild failure deep inside the first AL test that reaches a
+            // Windows-only Win32 API).
+            Directory.Delete(win32Dir, recursive: true);
+
+            Assert.True(File.Exists(shadowSo), "shadow copy of Win32Stubs must survive the original install's directory being removed");
+            Assert.Equal(soBytes, File.ReadAllBytes(shadowSo));
+        }
+        finally
+        {
+            if (Directory.Exists(origDir)) Directory.Delete(origDir, recursive: true);
+            Directory.Delete(shadowDir, recursive: true);
+        }
+    }
+
+    /// <summary>Negative (the cost-control half, mirroring
+    /// <see cref="MirrorInstallDirectory_OtherDependencyDll_IsSymlinkedNotCopied"/> but for
+    /// a directory): a directory that is NOT <c>Win32Stubs/</c> must still be linked, not
+    /// copied, so the general "other directories stay symlinked" contract from
+    /// <see cref="MirrorInstallDirectory_Subdirectory_IsMirroredAndReachable"/> doesn't
+    /// regress into "every directory is now a real copy".</summary>
+    [Fact]
+    public void MirrorInstallDirectory_NonWin32StubsDirectory_StillSymlinked()
+    {
+        var origDir = NewTempDir("mirror-other-dir-orig");
+        var shadowDir = NewTempDir("mirror-other-dir-shadow");
+        try
+        {
+            var subDir = Path.Combine(origDir, "cs");
+            Directory.CreateDirectory(subDir);
+            File.WriteAllText(Path.Combine(subDir, "al-runner.resources.dll"), "fake satellite resource");
+
+            NclShadowRuntime.MirrorInstallDirectory(origDir, shadowDir);
+
+            var shadowSubDir = Path.Combine(shadowDir, "cs");
+            Assert.True(IsSymlink(shadowSubDir), "non-Win32Stubs directories should still be symlinked for near-zero cost");
+        }
+        finally
+        {
+            Directory.Delete(origDir, recursive: true);
+            Directory.Delete(shadowDir, recursive: true);
+        }
+    }
+
     /// <summary>Positive: a subdirectory (e.g. a satellite-resource culture folder, or
     /// runtimes/) is mirrored too, as a directory symlink, and its content is reachable
     /// through it.</summary>

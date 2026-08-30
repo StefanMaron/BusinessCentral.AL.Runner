@@ -592,6 +592,11 @@ jobs:
                      AlRunner.QueryJoin.dll AlRunner.Provisioning.dll AlRunner.Provisioning.pdb; do
               cp "./variant-build-$full/$f" "./variants-staging/$full/$f"
             done
+            # #2168: Win32Stubs/ is the directory-shaped equivalent of the same gap —
+            # Win32Stubs.LocatePrebuiltSo resolves the prebuilt Linux Win32 P/Invoke shim
+            # from AppContext.BaseDirectory/Win32Stubs/ at runtime, so it must ship in
+            # every variant dir too (see NclShadowRuntime.MustCopyDirectoryNames).
+            cp -r "./variant-build-$full/Win32Stubs" "./variants-staging/$full/Win32Stubs"
             rm -rf "./variant-build-$full"
           done
           echo "Staged variants:"
@@ -668,6 +673,24 @@ jobs:
             echo "Packed variant copies of $f: $vcount, expected: $expected"
             if [ "$vcount" -ne "$expected" ]; then
               echo "::error::nupkg contains $vcount variant copy/copies of $f, expected $expected (one per .github/bc-versions.txt entry) — #2166"
+              exit 1
+            fi
+          done
+
+          # #2168: Win32Stubs/ has the identical unpackaged-per-variant fragility, just
+          # as a directory rather than a single file — Win32Stubs.LocatePrebuiltSo
+          # resolves the prebuilt Linux Win32 P/Invoke shim from
+          # AppContext.BaseDirectory/Win32Stubs/<rid-named .so> at runtime (lazily, the
+          # first time AL test code reaches a Windows-only Win32 API through BC's
+          # runtime), and the shadow-dir mirror's fallback-to-origDir directory symlink
+          # masks a missing per-variant copy the same way it masked #2166 — so this is a
+          # deterministic nupkg inspection, not an install-and-run check, same reasoning
+          # as the loop above.
+          for f in win32_stubs.c libwin32_stubs.linux-x64.so libwin32_stubs.linux-arm64.so; do
+            vcount=$(unzip -l ./nupkg/*.nupkg | grep -c "tools/net8.0/any/variants/.*/Win32Stubs/$f\$")
+            echo "Packed variant copies of Win32Stubs/$f: $vcount, expected: $expected"
+            if [ "$vcount" -ne "$expected" ]; then
+              echo "::error::nupkg contains $vcount variant copy/copies of Win32Stubs/$f, expected $expected (one per .github/bc-versions.txt entry) — #2168"
               exit 1
             fi
           done

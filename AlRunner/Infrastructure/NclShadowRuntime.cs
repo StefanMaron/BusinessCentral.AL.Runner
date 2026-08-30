@@ -87,8 +87,27 @@ public static class NclShadowRuntime
         "AlRunner.QueryJoin.dll", "AlRunner.Provisioning.dll", "AlRunner.Provisioning.pdb",
     };
 
+    // #2168: same "load-by-path from AppContext.BaseDirectory, must survive the original
+    // install changing later" reasoning as MustCopyNames above, but for a DIRECTORY rather
+    // than a single file. Win32Stubs.LocatePrebuiltSo resolves the prebuilt Linux Win32
+    // P/Invoke shim via Path.Combine(AppContext.BaseDirectory, "Win32Stubs", <rid-named .so>)
+    // — lazily, the first time AL test code reaches a Windows-only Win32 API through BC's
+    // runtime (see the comment on Win32Stubs.BuildNoCompilerMessage). Per-BC-minor engine
+    // variant directories don't ship their own Win32Stubs/ (confirmed from the published
+    // nupkg), so before this fix Win32Stubs/ fell into the generic "every other directory"
+    // bucket and was symlinked back to origFull by LinkOrCopy. That only kept working
+    // because EnsureShadowDir's caller always passes the top-level "any" install directory
+    // as origDir, which does ship Win32Stubs/ — same masking #2166 found for
+    // AlRunner.QueryJoin.dll/AlRunner.Provisioning.dll, just one level up (a directory
+    // symlink instead of a file symlink). A real, independent copy at shadow-build time
+    // removes the dependency on origFull's Win32Stubs/ surviving.
+    private static readonly string[] MustCopyDirectoryNames = { "Win32Stubs" };
+
     private static bool MustBeRealCopy(string fileName) =>
         MustCopyNames.Contains(fileName, StringComparer.OrdinalIgnoreCase);
+
+    private static bool MustBeRealCopyDirectory(string directoryName) =>
+        MustCopyDirectoryNames.Contains(directoryName, StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// True when this install does not ship Ncl.dll beside the running assembly — i.e.
@@ -251,11 +270,13 @@ public static class NclShadowRuntime
     /// </summary>
     /// <summary>
     /// Mirrors every entry of <paramref name="origFull"/> into <paramref name="shadowDir"/>:
-    /// the entry assembly and its deps/runtimeconfig manifests (<see cref="MustCopyNames"/>)
-    /// as real, independent copies; everything else as a symlink (near-zero cost — these
-    /// are typically dozens of large, numerous dependency DLLs). Internal and side-effect-
-    /// isolated from the Ncl-specific/caching logic above so it's directly testable without
-    /// needing real BC artifact bytes to Cecil-rewrite — see NclShadowRuntimeTests.
+    /// the entry assembly and its deps/runtimeconfig manifests (<see cref="MustCopyNames"/>),
+    /// plus any directory named in <see cref="MustCopyDirectoryNames"/> (currently just
+    /// <c>Win32Stubs/</c> — see #2168), as real, independent copies; everything else as a
+    /// symlink (near-zero cost — these are typically dozens of large, numerous dependency
+    /// DLLs). Internal and side-effect-isolated from the Ncl-specific/caching logic above
+    /// so it's directly testable without needing real BC artifact bytes to Cecil-rewrite —
+    /// see NclShadowRuntimeTests.
     /// </summary>
     /// <param name="origFull">The install directory to mirror (dependency closure,
     /// satellite resource dirs, Win32Stubs, …).</param>
@@ -291,6 +312,14 @@ public static class NclShadowRuntime
                     ? Path.Combine(entrySource, name)
                     : entry;
                 File.Copy(source, target, overwrite: true);
+            }
+            else if (Directory.Exists(entry) && MustBeRealCopyDirectory(name))
+            {
+                // #2168: directory-aware equivalent of the file case above. Win32Stubs/
+                // is shared across every BC-minor engine variant (it's RID-keyed, not
+                // BC-version-keyed), so — unlike the entry assembly — it's always sourced
+                // from origFull, never from entrySource, even during a variant swap.
+                CopyDirectoryRecursive(entry, target);
             }
             else
             {
