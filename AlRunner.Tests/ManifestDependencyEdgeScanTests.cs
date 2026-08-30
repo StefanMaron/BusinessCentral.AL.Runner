@@ -223,6 +223,29 @@ public sealed class ManifestDependencyEdgeScanTests : IDisposable
     }
 
     [Fact]
+    public void ScanDependencyEdges_NestedPackage_IsFoundJustLikeThePresenceChecksFindIt()
+    {
+        // NoFallbackPlatformAppsPresent and TestToolkitPresent both walk the search dirs
+        // with SearchOption.AllDirectories. If this scan looked only at the top level, an
+        // app nested one dir down would read as PRESENT to those two and as EDGE-UNKNOWN
+        // here — two answers about the same packages, from the same dirs, under different
+        // rules. Same rules, or the disagreement is a bug waiting to be reported.
+        var dir = NewDir("nested");
+        var inner = Path.Combine(dir, "Extensions");
+        Directory.CreateDirectory(inner);
+        WriteApp(inner, "Tests-TestLibraries", "Microsoft", "28.3.0.0",
+            ("Application Test Library", "Microsoft"));
+        WriteApp(inner, ProvisioningCheck.TestToolkitSentinelApp, "Microsoft", "28.3.0.0",
+            ("System Application", "Microsoft"), ("Business Foundation", "Microsoft"));
+
+        var scan = ProvisioningCheck.ScanDependencyEdges(new[] { dir });
+
+        Assert.Equal(new[] { "Application Test Library" }, scan.Edges["Tests-TestLibraries"].ToArray());
+        // The sibling presence check finds the same nested tree — same rules, same answer.
+        Assert.True(ProvisioningCheck.TestToolkitPresent(new[] { dir }));
+    }
+
+    [Fact]
     public void ScanDependencyEdges_NonMicrosoftPackage_IsNotRecordedAsAnEdgeSource()
     {
         var dir = NewDir("isv");

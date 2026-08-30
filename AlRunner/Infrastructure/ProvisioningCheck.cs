@@ -509,6 +509,11 @@ public static class ProvisioningCheck
     /// (<see cref="KnownNoFallbackPlatformApps"/>) are Microsoft apps, so admitting
     /// third-party names could only introduce name collisions, never a real path.
     ///
+    /// Each directory is walked RECURSIVELY, matching
+    /// <see cref="NoFallbackPlatformAppsPresent"/> and <see cref="TestToolkitPresent"/> —
+    /// those answer "is this app present" over the same dirs, and the two views must not
+    /// disagree about which packages exist.
+    ///
     /// An app that declares NO dependencies is recorded with an EMPTY list rather than
     /// omitted — "scanned, declares nothing" is a fact, and must not be indistinguishable
     /// from "never looked at". When the same app name appears in more than one directory,
@@ -541,7 +546,14 @@ public static class ProvisioningCheck
             List<string> files;
             try
             {
-                files = Directory.EnumerateFiles(full, "*.app")
+                // SearchOption.AllDirectories, matching NoFallbackPlatformAppsPresent and
+                // TestToolkitPresent above: those two decide "is this app PRESENT" over the
+                // same search dirs, and a scan that saw a narrower set could report an app's
+                // edges as unknown while its sibling reported the app itself as present —
+                // two answers about the same state, from the same dirs, under different
+                // rules. ReadManifest is memo/disk-index cached and the siblings already
+                // walk these trees, so the extra walk is a cache hit, not a re-parse.
+                files = Directory.EnumerateFiles(full, "*.app", SearchOption.AllDirectories)
                     .OrderBy(f => f, StringComparer.Ordinal).ToList();
             }
             catch (Exception)
