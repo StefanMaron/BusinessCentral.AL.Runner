@@ -697,6 +697,57 @@ public sealed partial class BcCompiler
     internal readonly record struct PackageScanEntry(
         string Path, Guid AppId, string Publisher, string Name, Version Version);
 
+    /// <summary>
+    /// One .app that <see cref="DeduplicateAppPackageDirs"/> left OUT of the staging dir
+    /// because it carries no <c>SymbolReference.json</c>, so it cannot supply compile-time
+    /// symbols to anything. See the drop site for why keeping it would fail every compile
+    /// that scans its directory.
+    /// </summary>
+    internal readonly record struct UnstagedPackage(string Path, string Publisher, string Name, Version Version);
+
+    /// <summary>
+    /// What a deduplicated staging directory stands for: the original package dirs it was
+    /// built from, and the packages that were dropped on the way in.
+    ///
+    /// #2178 (and #2108 before it): BC's own AL1022 text names the folders it searched, and
+    /// once the scan set has been collapsed that is one content-addressed path under
+    /// <c>al-runner-pkgdedup/</c>. The path is honest — it really is what BC searched — but
+    /// on its own it tells the reader nothing about which of their <c>--package-cache</c>
+    /// directories it represents, and nothing about a package that WAS in one of them and
+    /// was excluded here. <see cref="DescribeStagedSearchSet"/> turns it back into both.
+    /// </summary>
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<
+        string, (IReadOnlyList<string> Origin, IReadOnlyList<UnstagedPackage> Unstaged)> _stageProvenance =
+        new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// An explanatory suffix for a compiler diagnostic that names a pkgdedup staging
+    /// directory, or null when it names none. Never speculates: it reports the dirs the
+    /// staging copy was actually built from and the packages actually dropped from it.
+    /// </summary>
+    internal static string? DescribeStagedSearchSet(string diagnosticText)
+    {
+        foreach (var kv in _stageProvenance)
+        {
+            if (!diagnosticText.Contains(kv.Key, StringComparison.Ordinal)) continue;
+            var sb = new System.Text.StringBuilder();
+            sb.Append(" [al-runner] That folder is a deduplicated staging copy of: ")
+              .Append(string.Join(", ", kv.Value.Origin))
+              .Append('.');
+            if (kv.Value.Unstaged.Count > 0)
+            {
+                sb.Append(" Excluded from it, because they carry no SymbolReference.json and so cannot supply compile-time symbols: ")
+                  .Append(string.Join(", ", kv.Value.Unstaged.Take(10)
+                      .Select(u => $"{u.Publisher}/{u.Name} {u.Version} ({u.Path})")));
+                if (kv.Value.Unstaged.Count > 10)
+                    sb.Append($", and {kv.Value.Unstaged.Count - 10} more");
+                sb.Append('.');
+            }
+            return sb.ToString();
+        }
+        return null;
+    }
+
     // Per-file cache of the two zip reads DeduplicateAppPackageDirs performs on every .app
     // it scans (ReadManifest + HasSymbolReference). Both re-read the WHOLE package from
     // disk and unzip it — for a 113-package, 138 MB platform-apps dir that is ~1–2.5 s per
@@ -829,6 +880,11 @@ public sealed partial class BcCompiler
         var seen = new HashSet<(Guid, string)>();
         var picked = new List<string>();
         inventory = new List<PackageScanEntry>();
+        // #2178: remembered, not just counted. When the staging dir is what BC ends up
+        // naming in an AL1022 "could not be found in the package cache folders" message,
+        // a package that was IN one of the caller's dirs and dropped here is precisely the
+        // thing the reader needs told. See DescribeStagedSearchSet.
+        var unstaged = new List<UnstagedPackage>();
         var changed = false;
         foreach (var dir in packageDirs)
         {
@@ -860,7 +916,13 @@ public sealed partial class BcCompiler
                 // paths reach the compiler independently, and BC 27 is far stricter than BC 28
                 // about a malformed package, so a gap here shows up as a version-specific
                 // failure that looks like a runner capability gap and is not one.
-                if (!hasSymbolReference) { changed = true; continue; }
+                if (!hasSymbolReference)
+                {
+                    changed = true;
+                    unstaged.Add(new UnstagedPackage(
+                        Path.GetFullPath(app), m.Publisher, m.Name, m.Version));
+                    continue;
+                }
                 // Normalise to an absolute path BEFORE it is ever used as a symlink target.
                 // `dir` (and therefore `app`) may be a caller-supplied RELATIVE path (e.g. a
                 // relative --package-cache argument, exactly as in issue #1652's repro:
@@ -914,9 +976,11 @@ public sealed partial class BcCompiler
                 // at emit time (#1691). Publish retries, then falls back to the scratch dir —
                 // same staged files, so the compile is unaffected; only the cross-compile
                 // reuse of this key is lost.
-                return new List<string> {
-                    AlRunner.Infrastructure.PkgDedupStaging.Publish(tmp, stage, Console.Error) };
+                var published = AlRunner.Infrastructure.PkgDedupStaging.Publish(tmp, stage, Console.Error);
+                _stageProvenance[published] = (packageDirs.ToList(), unstaged);
+                return new List<string> { published };
             }
+            _stageProvenance[stage] = (packageDirs.ToList(), unstaged);
             return new List<string> { stage };
         }
     }
@@ -2203,9 +2267,16 @@ public sealed partial class BcCompiler
             .Where(d => d.Id != "AL0327" && d.Id != "AL1023")
             .ToList();
         if (errors.Count > 0)
+        {
+            var detail = string.Join("; ", errors.Take(10).Select(d => $"{d.Id} {d.GetMessage()}"));
+            // #2178: an AL1022 here names the dirs BC searched, which after deduplication is
+            // one opaque content-addressed staging path. Say what it stands for, and which
+            // packages were left out of it, rather than leaving the reader to guess whether
+            // their --package-cache reached the compile at all.
+            detail += DescribeStagedSearchSet(detail) ?? string.Empty;
             throw new InvalidOperationException(
-                $"source dependency '{moduleName}' does not compile ({errors.Count} error(s)): " +
-                string.Join("; ", errors.Take(10).Select(d => $"{d.Id} {d.GetMessage()}")));
+                $"source dependency '{moduleName}' does not compile ({errors.Count} error(s)): {detail}");
+        }
 
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(symbolsJsonPath))!);
         using var fs = new FileStream(symbolsJsonPath, FileMode.Create, FileAccess.Write, FileShare.None);
