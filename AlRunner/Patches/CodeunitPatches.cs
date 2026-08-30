@@ -71,6 +71,13 @@ public static partial class BcRuntime
         Microsoft.Dynamics.Nav.Types.DataError errorLevel,
         Microsoft.Dynamics.Nav.Runtime.NavRecord? record)
     {
+        // Same branch BC's own DoRunAsync takes: anything other than ThrowError is the guarded
+        // form (the Boolean result is consumed), which needs its own isolated transaction and is
+        // therefore refused while an uncommitted write is pending. See
+        // ALDatabasePatches.ThrowIfWriteTransactionStarted.
+        if (errorLevel != Microsoft.Dynamics.Nav.Types.DataError.ThrowError)
+            ALDatabasePatches.ThrowIfWriteTransactionStarted();
+
         try
         {
             InvokeOnRun(self, record);
@@ -96,6 +103,14 @@ public static partial class BcRuntime
         Microsoft.Dynamics.Nav.Runtime.NavRecord? record)
     {
         bool trap = errorLevel == Microsoft.Dynamics.Nav.Types.DataError.TrapError;
+
+        // Deliberately OUTSIDE the `catch when (trap)` below, exactly as BC places
+        // BeginTransactionWorldAndTransaction outside the try whose catch suppresses the
+        // codeunit's own errors: a refusal must reach the AL caller as an error, never be
+        // converted into a `false` return. See ALDatabasePatches.ThrowIfWriteTransactionStarted.
+        if (errorLevel != Microsoft.Dynamics.Nav.Types.DataError.ThrowError)
+            ALDatabasePatches.ThrowIfWriteTransactionStarted();
+
         try
         {
             var handle = CreateCodeunitHandle(objectId);

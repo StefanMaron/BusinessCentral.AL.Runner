@@ -71,6 +71,158 @@ public static class ALDatabasePatches
         RecordPatches.MarkCommitPoint();
     }
 
+    /// <summary>
+    /// BC's TransactionManager.ThrowIfWriteTransactionStarted(), reproduced for the AL
+    /// surfaces whose Ncl bodies the runner replaces outright (so BC's own copy of this
+    /// check never runs for them).
+    ///
+    /// BC reaches it from TransactionManager.BeginTransactionWorld, which is what
+    /// SessionTransactionExtensions.BeginTransactionWorldAndTransaction calls, which is what
+    /// NavCodeunit.DoRunAsync calls on the `errorLevel != DataError.ThrowError` branch — the
+    /// branch AL's compiler selects when the Boolean result of `Codeunit.Run` is CONSUMED.
+    /// A "transaction world" is an isolated transaction that can be rolled back on its own,
+    /// and BC refuses to open one while the caller still has an uncommitted write pending:
+    ///
+    ///     if (IsTransactionOpenForWrites)
+    ///         throw new NavCSideException(PrivacyClassification.SystemMetadata,
+    ///                                     Lang.TransactionWorldWithActiveWriteTransactionError)
+    ///             { DetailedErrorMessage = Lang.TransactionWorldWithActiveWriteTransaction };
+    ///
+    /// The statement form (`Codeunit.Run(...)` with the result discarded, DataError.ThrowError)
+    /// takes BC's other branch — a plain BeginTransaction that joins the caller's transaction —
+    /// and is NOT subject to this check. Whether the return value is consumed is the whole
+    /// distinction; see AlRunner#2133 and the corpus's TestCodeunitRunWriteTransaction.al.
+    ///
+    /// The throw is not trappable by the guarded call's own error trap: in BC's DoRunAsync the
+    /// BeginTransactionWorldAndTransaction call sits OUTSIDE the try whose catch suppresses the
+    /// codeunit's errors, so this error reaches the AL caller instead of turning into `false`.
+    /// Callers must therefore run this check before entering their trap block.
+    /// </summary>
+    public static void ThrowIfWriteTransactionStarted()
+    {
+        if (!HasWriteTransaction(null)) return;
+        throw BuildTransactionWorldWithActiveWriteTransaction();
+    }
+
+    /// <summary>
+    /// Resolve BC's NavCSideException type.
+    ///
+    /// It is DEFINED in Microsoft.Dynamics.Nav.Types as
+    /// Microsoft.Dynamics.Nav.Types.Exceptions.NavCSideException and TYPE-FORWARDED into
+    /// Microsoft.Dynamics.Nav.Ncl as Microsoft.Dynamics.Nav.Runtime.NavCSideException, so
+    /// asking Ncl alone for the Runtime name does not reliably resolve it — measured: it
+    /// returns null inside the AlRunner.Tests host, which silently degraded every caller
+    /// here to a plain InvalidOperationException carrying the right text but the wrong type.
+    /// Scan for either spelling across whatever is loaded instead.
+    /// </summary>
+    private static Type? ResolveNavCSideExceptionType()
+    {
+        foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+        {
+            var t = asm.GetType("Microsoft.Dynamics.Nav.Types.Exceptions.NavCSideException", throwOnError: false)
+                 ?? asm.GetType("Microsoft.Dynamics.Nav.Runtime.NavCSideException", throwOnError: false);
+            if (t != null) return t;
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Read one string out of BC's own resource class.
+    ///
+    /// The <c>Lang</c> that decompiled Ncl bodies reference is
+    /// <c>Microsoft.Dynamics.Nav.Common.Language.Lang</c>, which lives in
+    /// <c>Microsoft.Dynamics.Nav.Language.dll</c> — Ncl.dll declares NO type named
+    /// <c>Lang</c> at all. Scanning Ncl for one (as this file used to) therefore never
+    /// matched, and every caller silently shipped its runner paraphrase instead of BC's
+    /// text. Scan the loaded assemblies for the real class instead.
+    /// </summary>
+    private static string? LangString(string name)
+    {
+        foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+        {
+            var lang = asm.GetType("Microsoft.Dynamics.Nav.Common.Language.Lang", throwOnError: false);
+            var value = lang?.GetProperty(name,
+                            System.Reflection.BindingFlags.Static
+                            | System.Reflection.BindingFlags.Public
+                            | System.Reflection.BindingFlags.NonPublic)
+                        ?.GetValue(null) as string;
+            if (!string.IsNullOrEmpty(value)) return value;
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Build BC's own NavCSideException carrying Lang.TransactionWorldWithActiveWriteTransactionError
+    /// (message) and Lang.TransactionWorldWithActiveWriteTransaction (DetailedErrorMessage), so AL's
+    /// asserterror / GetLastErrorText sees the real platform text rather than a runner paraphrase.
+    /// Both the Lang resource class and the exception type are resolved by reflection because Lang
+    /// lives in Microsoft.Dynamics.Nav.Language.dll, which the runner does not reference directly.
+    /// </summary>
+    private static Exception BuildTransactionWorldWithActiveWriteTransaction()
+    {
+        try
+        {
+            // Fallbacks are BC 28.1's own en-US text (read out of Lang.resources in
+            // Microsoft.Dynamics.Nav.Language.dll), used only if the resource cannot be read.
+            // Note which way round these go: the AL-VISIBLE message is the deliberately generic
+            // "...transaction is stopped" one, and the text that actually names Codeunit.Run is
+            // the DetailedErrorMessage, which BC routes to telemetry rather than to AL. AL test
+            // code therefore has to match on the generic message.
+            var message = LangString("TransactionWorldWithActiveWriteTransactionError")
+                ?? "An error occurred and the transaction is stopped. Contact your administrator "
+                   + "or partner for further assistance.";
+            var detail = LangString("TransactionWorldWithActiveWriteTransaction")
+                ?? "The following AL methods are limited during write transactions because one or "
+                   + "more tables will be locked: Form.RunModal, Codeunit.Run, Report.RunModal, XmlPort.RunModal.";
+
+            var tCSide = ResolveNavCSideExceptionType();
+
+            const System.Reflection.BindingFlags CtorFlags =
+                System.Reflection.BindingFlags.Instance
+                | System.Reflection.BindingFlags.Public
+                | System.Reflection.BindingFlags.NonPublic;
+
+            // BC constructs this one as NavCSideException(PrivacyClassification.SystemMetadata,
+            // message); match that overload when the enum resolves, and fall back to the plain
+            // (string) ctor otherwise so the AL-visible message is right either way.
+            Exception? ex = null;
+            Type? tPrivacy = null;
+            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                tPrivacy = asm.GetType("Microsoft.Dynamics.Nav.Diagnostic.PrivacyClassification", throwOnError: false);
+                if (tPrivacy != null) break;
+            }
+            if (tCSide != null && tPrivacy != null)
+            {
+                var ctorPc = tCSide.GetConstructor(CtorFlags, null, new[] { tPrivacy, typeof(string) }, null);
+                if (ctorPc != null)
+                    ex = (Exception)ctorPc.Invoke(new[] { Enum.ToObject(tPrivacy, 800 /* SystemMetadata */), message });
+            }
+            if (ex == null)
+            {
+                var ctor = tCSide?.GetConstructor(CtorFlags, null, new[] { typeof(string) }, null);
+                if (ctor == null) return new InvalidOperationException(message);
+                ex = (Exception)ctor.Invoke(new object[] { message });
+            }
+
+            tCSide!.GetProperty("DetailedErrorMessage",
+                    System.Reflection.BindingFlags.Instance
+                    | System.Reflection.BindingFlags.Public
+                    | System.Reflection.BindingFlags.NonPublic)
+                ?.SetValue(ex, detail);
+            return ex;
+        }
+        catch (Exception ex)
+        {
+            // Never let the diagnostic construction mask the contract: AL must still see an
+            // error here, because BC would have thrown one.
+            return new InvalidOperationException(
+                "An error occurred and the transaction is stopped. Contact your administrator or "
+                + "partner for further assistance. "
+                + $"(runner could not build BC's own message: {ex.GetType().Name})");
+        }
+    }
+
     /// <summary>Clear write-transaction state at the per-test isolation boundary, so one
     /// test's uncommitted write cannot make the next test start "in a transaction".</summary>
     public static void ResetWriteTransactionState()
@@ -138,23 +290,11 @@ public static class ALDatabasePatches
     {
         try
         {
-            var nclAsm = AppDomain.CurrentDomain.GetAssemblies()
-                .FirstOrDefault(a => a.GetName().Name == "Microsoft.Dynamics.Nav.Ncl");
             var typesAsm = AppDomain.CurrentDomain.GetAssemblies()
                 .FirstOrDefault(a => a.GetName().Name == "Microsoft.Dynamics.Nav.Types");
             var tTransactionType = typesAsm?.GetType("Microsoft.Dynamics.Nav.Types.TransactionType");
 
-            string? format = null;
-            foreach (var t in nclAsm?.GetTypes() ?? Array.Empty<Type>())
-            {
-                if (t.Name != "Lang") continue;
-                format = t.GetProperty("CannotChangeTransactionType",
-                             System.Reflection.BindingFlags.Static
-                             | System.Reflection.BindingFlags.Public
-                             | System.Reflection.BindingFlags.NonPublic)
-                         ?.GetValue(null) as string;
-                if (format != null) break;
-            }
+            var format = LangString("CannotChangeTransactionType");
 
             object Name(int v) => tTransactionType != null
                 ? Enum.ToObject(tTransactionType, v)
@@ -165,7 +305,10 @@ public static class ALDatabasePatches
                 : $"You cannot change the transaction type from {Name(current)} to {Name(value)} " +
                   "after the transaction has started.";
 
-            var tCSide = nclAsm?.GetType("Microsoft.Dynamics.Nav.Runtime.NavCSideException");
+            // Same resolution as the write-transaction refusal below: asking Ncl for the
+            // type-forwarded ...Runtime spelling alone can come back null, which silently
+            // downgraded this to an InvalidOperationException.
+            var tCSide = ResolveNavCSideExceptionType();
             var ctor = tCSide?.GetConstructor(
                 System.Reflection.BindingFlags.Instance
                 | System.Reflection.BindingFlags.Public
