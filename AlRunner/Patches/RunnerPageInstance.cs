@@ -201,6 +201,91 @@ internal sealed class RunnerPageInstance
     }
 
     /// <summary>
+    /// Build and initialise the AL page object for a page that declares NO SourceTable —
+    /// the StandardDialog / Worksheet-header shape, ordinary legal AL, where every control
+    /// is bound to a page global rather than to a Rec field.
+    ///
+    /// <see cref="TryCreate"/> cannot serve this shape: it needs a record for the
+    /// <c>(ITreeObject, NavRecord)</c> ctor and for <c>SetSourceTable</c>, and there is no
+    /// table to build one over. That is why the TestPage construction site in
+    /// <c>CodeunitPatches.CreateTestPageClient</c> used to give up on such a page entirely
+    /// and hand back the blanket navigation mock, whose every member answers a default —
+    /// including <c>GetPart</c>, so a subpage part on a no-SourceTable host reported an
+    /// empty rowset (issue #2090). The handler-driven construction site
+    /// (<c>RunnerTestClientSession.GetPage</c>) has accepted this shape since #2007; the
+    /// two sites now agree.
+    ///
+    /// <para>Construction goes through the one-arg <c>(ITreeObject)</c> ctor — the same one
+    /// <c>BcRuntime.ConstructFormForStaticEntry</c> falls to for a record-less page on the
+    /// <c>Page.RunModal</c> path — followed by <c>EnsureMetadataLoaded</c>, which is the
+    /// step <c>SetSourceTable</c> itself funnels through to reach
+    /// <c>InitializeFromMetadata</c>. Calling it directly is safe here precisely because
+    /// <c>SetSourceTable</c> is NOT called: nothing else has run the registration, so
+    /// there is no double-registration to trip over.</para>
+    /// </summary>
+    internal static RunnerPageInstance? TryCreateRecordless(object parent, int pageId)
+    {
+        if (RecordPatches.EnsureRealPageMetadata(pageId) == null)
+        {
+            if (Environment.GetEnvironmentVariable("AL_RUNNER_TRACE_PAGE_METADATA") == "1")
+                Console.Out.WriteLine(
+                    $"[RunnerPageInstance] page {pageId}: no emit-captured metadata, so no control tree; "
+                    + "a record-less TestPage has nothing left to answer from");
+            return null;
+        }
+
+        var pageType = FindPageType(pageId);
+        if (pageType == null)
+        {
+            Console.Out.WriteLine($"[RunnerPageInstance] page {pageId}: no compiled Page{pageId} type found");
+            return null;
+        }
+
+        var ctor = pageType.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+            .FirstOrDefault(c => c.GetParameters().Length == 1
+                              && typeof(Microsoft.Dynamics.Nav.Runtime.ITreeObject)
+                                     .IsAssignableFrom(c.GetParameters()[0].ParameterType));
+        if (ctor == null)
+        {
+            Console.Out.WriteLine($"[RunnerPageInstance] page {pageId}: Page{pageId} has no (ITreeObject) ctor");
+            return null;
+        }
+
+        try
+        {
+            var form = ctor.Invoke(new object?[] { parent });
+            // Must precede EnsureMetadataLoaded: the guarded NavForm bodies
+            // (GetMasterPage, RegisterSourceExpression, InitializeForm) check this.
+            RunnerFormInit.MarkRealInit(form);
+            Invoke(form, "EnsureMetadataLoaded", Array.Empty<object?>());
+
+            var expressions = ReadProperty(form, "SourceExpressions") as System.Collections.IDictionary;
+            if (expressions == null)
+            {
+                Console.Out.WriteLine(
+                    $"[RunnerPageInstance] page {pageId}: the record-less page object initialised but "
+                    + "published no source-expression table");
+                return null;
+            }
+            if (Environment.GetEnvironmentVariable("AL_RUNNER_TRACE_PAGE_METADATA") == "1")
+                Console.Out.WriteLine(
+                    $"[RunnerPageInstance] page {pageId}: built record-less, {expressions.Count} source expression(s)");
+            return new RunnerPageInstance(form, parent, record: null, pageId, expressions);
+        }
+        catch (Exception ex)
+        {
+            var inner = ex is TargetInvocationException tie ? tie.InnerException ?? ex : ex;
+            // stdout on purpose — see TryCreate's identical reasoning above.
+            Console.Out.WriteLine(
+                $"[RunnerPageInstance] page {pageId}: could not build the record-less AL page object "
+                + $"({inner.GetType().Name}: {inner.Message})");
+            if (Environment.GetEnvironmentVariable("AL_RUNNER_TRACE_PAGE_METADATA") == "1")
+                Console.Out.WriteLine(inner.StackTrace);
+            return null;
+        }
+    }
+
+    /// <summary>
     /// Wrap a NavForm BC already built and initialised — a page opened from AL with
     /// RunModal, which the runner never constructed and so cannot have marked or driven.
     ///

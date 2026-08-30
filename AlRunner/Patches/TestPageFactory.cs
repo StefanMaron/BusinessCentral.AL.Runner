@@ -57,6 +57,29 @@ internal static class TestPageFactory
     }
 
     /// <summary>
+    /// The AL page object for a page that declares NO SourceTable, or null when the runner
+    /// has nothing to build one from.
+    ///
+    /// A page with no SourceTable is ordinary, legal AL — the StandardDialog / Worksheet
+    /// header shape, whose controls bind to page globals rather than to a record. It is NOT
+    /// a page that "cannot be driven live": it has a control tree, a part list and its own
+    /// AL triggers, and everything except record access works on it. Deciding otherwise is
+    /// what made a subpage part on such a host answer an empty rowset under a directly
+    /// opened TestPage (issue #2090).
+    ///
+    /// <para>Deliberately narrow: the caller must have established that the page genuinely
+    /// declares no SourceTable (<c>RecordPatches.PageDeclaresSourceTable</c>). The OTHER
+    /// ways <see cref="TryBuild"/> returns null — a declared source table whose runtime
+    /// record type is missing, a page the parser never saw — are runner gaps, and answering
+    /// them with a record-less page would swap one wrong answer for another.</para>
+    /// </summary>
+    internal static RunnerPageInstance? TryBuildRecordless(object owner, int pageId)
+    {
+        RecordPatches.EnsureRealPageMetadata(pageId);
+        return RunnerPageInstance.TryCreateRecordless(owner, pageId);
+    }
+
+    /// <summary>
     /// A blank (unpositioned) cursor over <paramref name="tableId"/>, owned by
     /// <paramref name="owner"/> — the same shape BC's real page construction binds Rec to
     /// before any row is read. Shared by the TestPage path above and by

@@ -471,14 +471,36 @@ public static partial class BcRuntime
         // through. Null for a page the runner did not compile itself (no captured
         // metadata XML); such a page keeps the record-only behaviour below.
         var built = TestPageFactory.TryBuild(self, pageId, out var why);
-        if (built == null)
+
+        // Which of the three clients this page gets — see TestPageHostConstructionRule for
+        // why "no record" is not the same question as "cannot be driven". A page with no
+        // SourceTable used to land on the navigation mock, every one of whose members
+        // answers a default, so a subpage part on such a host silently reported an empty
+        // rowset under a directly-opened TestPage while the SAME part found its rows under
+        // RunModal + [ModalPageHandler] (issue #2090) — the handler-driven construction
+        // site, RunnerTestClientSession.GetPage, has built a live page over a null record
+        // for this shape since #2007. Both sites now agree.
+        switch (TestPageHostConstructionRule.Resolve(
+                    recordBuilt: built != null,
+                    pageIsParsed: RecordPatches.IsPageParsed(pageId),
+                    pageDeclaresSourceTable: RecordPatches.PageDeclaresSourceTable(pageId)))
         {
-            Console.Error.WriteLine($"[TestPage] {why}; using navigation mock.");
-            return new MockITestPage();
+            case TestPageClientKind.LiveOverRecord:
+                return new LiveNavTestPage(built!.Record, RecordPatches.GetPageControlFieldMap(pageId),
+                    RecordPatches.GetInsertAllowedForPage(pageId), built.Page, self, pageId);
+
+            // LiveNavTestPage over a null record is not a silent fake: every Rec-dependent
+            // member refuses BY NAME through RequireRecord if the AL actually reaches for
+            // one, while parts, page-variable-bound controls, actions and the page's own
+            // triggers — all a no-SourceTable page can legally offer — work.
+            case TestPageClientKind.LiveRecordless
+                when TestPageFactory.TryBuildRecordless(self, pageId) is { } recordless:
+                return new LiveNavTestPage(null, RecordPatches.GetPageControlFieldMap(pageId),
+                    RecordPatches.GetInsertAllowedForPage(pageId), recordless, self, pageId);
         }
 
-        return new LiveNavTestPage(built.Record, RecordPatches.GetPageControlFieldMap(pageId),
-            RecordPatches.GetInsertAllowedForPage(pageId), built.Page, self, pageId);
+        Console.Error.WriteLine($"[TestPage] {why}; using navigation mock.");
+        return new MockITestPage();
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
