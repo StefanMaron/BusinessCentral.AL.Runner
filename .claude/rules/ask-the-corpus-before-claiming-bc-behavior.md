@@ -52,13 +52,33 @@ then a read — and were read as contradictory. All three pass on BC 27.5 and 28
 
 So:
 
-- **Never write an `expect-fail-known-gap` entry for a test that is green upstream.**
-  That records a runner defect as though it were a corpus defect, and
-  `docs/expectations.md` gives the mode a meaning it does not have here.
 - **Never propose inverting an upstream assertion that is green on a service tier.**
   A PR into the corpus that flips a passing test is asking a service tier to disagree
   with itself.
 - Name the mechanism you found, not the symptom you could not explain.
+
+## What an `expect-fail-known-gap` entry may and may not rest on
+
+An earlier version of this rule said never to declare a known gap for a test that is
+green upstream. That was wrong, and it contradicted `docs/expectations.md`: every test
+in the corpus passes on real BC by construction, so *every* known-gap entry is for a
+test green upstream. The mode means exactly "the surface is in scope, real BC does it,
+the runner does not do it yet, and `Issue` tracks the work."
+
+What the two incidents actually got wrong was the **justification**, not the mode:
+
+- **Do not declare a known gap for a failure your own change just introduced.** In
+  #2144 the 20 entries existed only because the same PR had changed the default
+  isolation mode in a way real BC does not; reverting the change made all 20 pass. The
+  fix for a self-inflicted failure is to revert it, not to classify it.
+- **Do not declare a known gap on the strength of an unmeasured claim about BC.** In
+  #2170 the entries were justified by "the corpus contradicts itself," which the corpus
+  CI falsified. An entry whose `Note` asserts something about BC that no service tier
+  has confirmed is a guess wearing a schema.
+
+A known-gap entry is honest when it says: real BC passes this, the runner does not yet,
+here is the issue. It is dishonest when it converts a live question, or a
+self-inflicted regression, into settled classification.
 
 ## When no verdict is available
 
