@@ -685,41 +685,67 @@ public sealed class ProvisioningCheckTests : IDisposable
     }
 
     [Fact]
-    public void DetermineManifestNeeds_TestsTestLibrariesDependency_AlsoNeedsPlatform()
+    public void DetermineManifestNeeds_TestsTestLibrariesDependency_NeedsPlatformOnceItsRealEdgeIsKnown()
     {
         // Issue #2073: a bundle depending on "Tests-TestLibraries" (already recognized as a
         // test-framework root, hence NeedsTestApps) never names "Application Test Library"
-        // directly — but Tests-TestLibraries' OWN manifest declares it as a dependency
-        // (confirmed via the real Microsoft NavxManifest.xml, v28.1.49838.53910:
-        // <Dependency Id="d852d5d2-a39d-4179-baeb-f99a19e32510" Name="Application Test
+        // directly — but on BC 28.x Tests-TestLibraries' OWN manifest declares it
+        // (<Dependency Id="d852d5d2-a39d-4179-baeb-f99a19e32510" Name="Application Test
         // Library" Publisher="Microsoft" .../> — the exact AppId the issue's "Missing:"
-        // error names). Before the fix this root produced NeedsPlatformApps == false, so
+        // error names). Before that fix this root produced NeedsPlatformApps == false, so
         // `provision` reported "already present" and downloaded nothing.
+        //
+        // Issue #2103: that edge is no longer transcribed by hand — it is read from the
+        // package on disk (ProvisioningCheck.ScanDependencyEdges), because the edge is
+        // VERSION-SPECIFIC: on BC 27.x the same app declares Library Variable Storage +
+        // Business Foundation Test Libraries and no Application Test Library at all. So this
+        // test states the walk in both directions: known edge → need; nothing known yet →
+        // no invented need, but still the test-apps download that reveals it. The real
+        // 27-vs-28 shapes are pinned in ManifestDependencyEdgeScanTests.
         var roots = new[]
         {
             new DependencyRef(Guid.NewGuid(), "Tests-TestLibraries", "Microsoft", new Version(28, 1, 0, 0)),
         };
-        var needs = ProvisioningCheck.DetermineManifestNeeds(roots);
-        Assert.True(needs.NeedsPlatformApps);
-        Assert.True(needs.NeedsTestApps);
+        var bc28Edges = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Tests-TestLibraries"] = new[]
+            {
+                "System Application Test Library", "Permissions Mock", "Application Test Library",
+            },
+        };
+
+        var withEdge = ProvisioningCheck.DetermineManifestNeeds(roots, bc28Edges);
+        Assert.True(withEdge.NeedsPlatformApps);
+        Assert.True(withEdge.NeedsTestApps);
+
+        var nothingKnownYet = ProvisioningCheck.DetermineManifestNeeds(roots);
+        Assert.False(nothingKnownYet.NeedsPlatformApps);
+        Assert.True(nothingKnownYet.NeedsTestApps);
     }
 
     [Fact]
-    public void DetermineManifestNeeds_TestsTestLibrariesDependency_ImpliesDownloadWhenAbsent()
+    public void DetermineManifestNeeds_TestsTestLibrariesDependency_EmptyCacheStillDownloadsTheSetThatRevealsTheNeed()
     {
-        // The end-to-end shape of the issue's repro: a bundle naming only
-        // "Tests-TestLibraries", with an empty package cache (nothing provisioned yet).
-        // DecideManifestProvisioning must say a platform-apps download is needed — this is
-        // the pure decision `provision`'s "platform R2R apps already present" message was
-        // wrongly skipping.
+        // The end-to-end shape of #2073's repro: a bundle naming only "Tests-TestLibraries",
+        // with an empty package cache (nothing provisioned yet).
+        //
+        // Issue #2103 changed WHICH download that produces. With nothing on disk there is no
+        // manifest to read, and the runner no longer guesses from a version-blind table — it
+        // asks for the test-apps set, which is the set carrying Tests-TestLibraries' own
+        // manifest. The platform need is then derived from that real manifest on the next
+        // pass (DecideManifestProvisioning_ColdCache_LearnsThePlatformNeedOnceTheTestSetLands
+        // in ManifestDependencyEdgeScanTests proves the second round). One extra round, and
+        // a right answer on every BC version, instead of one round and a wrong answer on 27.x.
         var roots = new[]
         {
             new DependencyRef(Guid.NewGuid(), "Tests-TestLibraries", "Microsoft", new Version(28, 1, 0, 0)),
         };
         var legacyReport = ProvisioningCheck.CheckPlatformApps("28.1.49838.50794", Array.Empty<string>());
         var decision = ProvisioningCheck.DecideManifestProvisioning(roots, legacyReport, Array.Empty<string>());
-        Assert.True(decision.NeedsPlatformApps);
-        Assert.True(decision.ShouldDownloadPlatform);
+        Assert.True(decision.NeedsTestApps);
+        Assert.True(decision.ShouldDownloadTest);
+        Assert.False(decision.NeedsPlatformApps);
+        Assert.False(decision.ShouldDownloadPlatform);
     }
 
     // ── Issue #2087: transitive need must be DERIVED (a closure walk over recorded
@@ -776,11 +802,11 @@ public sealed class ProvisioningCheckTests : IDisposable
     [Fact]
     public void DetermineManifestNeeds_SystemApplicationTestLibraryDependency_NeedsTestNotPlatform()
     {
-        // Real Microsoft app (confirmed via its own NavxManifest.xml, BC 28.3.52162.53954):
-        // "System Application Test Library" depends on "System Application" and "Any" — real
-        // recorded edges in KnownMicrosoftAppDependencyEdges — but NEITHER reaches
-        // "Application Test Library". Proves the closure walk doesn't over-fire just because
-        // an app HAS recorded edges; it must actually reach the target.
+        // Real Microsoft app (confirmed via its own NavxManifest.xml on BC 27.0, 27.5, 28.0,
+        // 28.1 and 28.3 — the same two edges on every one): "System Application Test Library"
+        // depends on "System Application" and "Any", and NEITHER reaches "Application Test
+        // Library". Proves the closure walk doesn't over-fire just because an app HAS edges;
+        // it must actually reach the target.
         var roots = new[]
         {
             new DependencyRef(Guid.NewGuid(), "System Application Test Library", "Microsoft", new Version(28, 1, 0, 0)),

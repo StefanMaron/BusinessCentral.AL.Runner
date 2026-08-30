@@ -446,58 +446,14 @@ public static class ProvisioningCheck
     };
 
     /// <summary>
-    /// Known DIRECT dependency edges among Microsoft apps that participate in the
-    /// platform-apps / test-apps provisioning sets, each one extracted from that app's own
-    /// real NavxManifest.xml &lt;Dependencies&gt; block (BC 28.3.52162.53954, verified against
-    /// the actual downloaded .app files — see the per-entry comment; not invented). This is
-    /// the smallest fact <see cref="DetermineManifestNeeds"/> cannot avoid recording ahead of
-    /// time: it only ever sees a BUNDLE's own declared roots, and it can't download a
-    /// not-yet-fetched dependency's manifest just to learn what THAT app depends on — the
-    /// same chicken-and-egg <see cref="KnownNoFallbackPlatformApps"/>' own doc comment
-    /// describes (issue #2073).
-    ///
-    /// Issue #2087: a PRIOR fix recorded this as a one-entry "known transitive dependents of
-    /// Application Test Library" list — correct for the one app it named
-    /// ("Tests-TestLibraries"), but shaped as a lookup table, not detection: the next
-    /// Microsoft app that reaches "Application Test Library" (directly or through another
-    /// app) would fail exactly the same silent way. Recording actual per-app EDGES here
-    /// instead, and walking them with <see cref="ReachesAnyOf"/>, generalizes: an app that
-    /// reaches a <see cref="KnownNoFallbackPlatformApps"/> member through ANY number of hops
-    /// is caught the moment its OWN direct edge is added here — no second per-shape list to
-    /// keep in sync, and a multi-hop chain composes automatically instead of needing its own
-    /// hand-written entry.
-    /// </summary>
-    public static readonly IReadOnlyDictionary<string, IReadOnlyList<string>> KnownMicrosoftAppDependencyEdges =
-        new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase)
-        {
-            // Microsoft_Tests-TestLibraries.app NavxManifest.xml <Dependencies>: depends
-            // directly on "Application Test Library" (the exact edge issues #2073/#2086
-            // needed — AppId d852d5d2-a39d-4179-baeb-f99a19e32510, the one the "Missing:"
-            // error names), plus "System Application Test Library" and "Permissions Mock".
-            ["Tests-TestLibraries"] = new[]
-            {
-                "System Application Test Library", "Permissions Mock", "Application Test Library",
-            },
-            // Microsoft_System Application Test Library.app NavxManifest.xml: depends on
-            // "System Application" and "Any". Neither reaches a KnownNoFallbackPlatformApps
-            // member today, but recording the real edge means a FUTURE app naming only
-            // "System Application Test Library" still gets the right answer via the same
-            // walk, instead of needing its own bespoke check.
-            ["System Application Test Library"] = new[] { "System Application", "Any" },
-            // Microsoft_Business Foundation Test Libraries.app NavxManifest.xml: depends on
-            // "System Application" and "Business Foundation".
-            ["Business Foundation Test Libraries"] = new[] { "System Application", "Business Foundation" },
-        };
-
-    /// <summary>
     /// True iff <paramref name="appName"/> itself is in <paramref name="targets"/>, or
     /// reaches a member of it by following <paramref name="edges"/> through any number of
     /// hops. Pure graph BFS — the general closure-walk mechanism issue #2087 asked for,
     /// exposed separately from <see cref="DetermineManifestNeeds"/> so the WALK itself (not
-    /// just the specific apps <see cref="KnownMicrosoftAppDependencyEdges"/> happens to
-    /// record today) can be proven against synthetic data. Cycle-safe — a malformed or
-    /// future edge table with a loop terminates instead of hanging — and case-insensitive on
-    /// names, matching every other Microsoft-app-name comparison in this file.
+    /// just the apps whose manifests <see cref="ScanDependencyEdges"/> happens to find on
+    /// this machine) can be proven against synthetic data. Cycle-safe — a real manifest
+    /// graph with a loop terminates instead of hanging — and case-insensitive on names,
+    /// matching every other Microsoft-app-name comparison in this file.
     /// </summary>
     public static bool ReachesAnyOf(
         string appName,
@@ -518,6 +474,109 @@ public static class ProvisioningCheck
                     queue.Enqueue(dep);
         }
         return false;
+    }
+
+    /// <summary>
+    /// The dependency edges read out of the Microsoft `.app` packages found on disk, plus
+    /// every package the scan could NOT read. Both halves matter: an unreadable package is
+    /// an app whose edges are unknown, and silently folding that into "declares nothing"
+    /// is precisely the quiet wrong answer .claude/rules/loud-failures.md exists to stop —
+    /// it reads downstream as "this app needs no provisioning".
+    /// </summary>
+    public sealed record DependencyEdgeScan(
+        IReadOnlyDictionary<string, IReadOnlyList<string>> Edges,
+        IReadOnlyList<string> UnreadablePackages);
+
+    /// <summary>
+    /// Reads the REAL direct dependency edges among Microsoft apps out of the `.app`
+    /// packages present in <paramref name="searchDirs"/> — each app's own
+    /// <c>NavxManifest.xml</c> &lt;Dependencies&gt; block, via
+    /// <see cref="AlRunner.AppLoader.ReadManifest"/> (which is memo- and disk-index-cached,
+    /// so a warm repeat scan is a dictionary lookup rather than a re-parse).
+    ///
+    /// Issue #2103: this replaces a hand-transcribed edge table. A hand table is
+    /// version-blind by construction, and Microsoft moves apps between packages across BC
+    /// releases — measured across the versions in <c>.github/bc-versions.txt</c>:
+    /// <c>Tests-TestLibraries</c> depends on <c>Application Test Library</c> on BC 28.x, and
+    /// does NOT on BC 27.x (where that app is absent from the w1 artifact entirely, and the
+    /// edge is <c>Library Variable Storage</c> + <c>Business Foundation Test Libraries</c>
+    /// instead). A table recording one of those shapes is silently wrong for the other, and
+    /// the resulting failure looks like a runner capability gap rather than a stale table.
+    ///
+    /// Only Microsoft-published packages become edge SOURCES, and only Microsoft-published
+    /// dependencies become edge TARGETS: the graph is keyed by app NAME (matching every
+    /// other Microsoft-app comparison in this file) and the walk's targets
+    /// (<see cref="KnownNoFallbackPlatformApps"/>) are Microsoft apps, so admitting
+    /// third-party names could only introduce name collisions, never a real path.
+    ///
+    /// An app that declares NO dependencies is recorded with an EMPTY list rather than
+    /// omitted — "scanned, declares nothing" is a fact, and must not be indistinguishable
+    /// from "never looked at". When the same app name appears in more than one directory,
+    /// the FIRST directory in <paramref name="searchDirs"/> wins, matching the search-order
+    /// precedence the rest of the package-cache lookups use.
+    /// </summary>
+    /// <summary>&quot;No edges known&quot; — the honest default when nothing has been
+    /// downloaded yet, in place of the version-blind hand-written table issue #2103
+    /// removed.</summary>
+    private static readonly IReadOnlyDictionary<string, IReadOnlyList<string>> EmptyDependencyEdges =
+        new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
+
+    public static DependencyEdgeScan ScanDependencyEdges(IEnumerable<string> searchDirs)
+    {
+        var edges = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
+        var unreadable = new List<string>();
+        var seenDirs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var dir in searchDirs)
+        {
+            if (string.IsNullOrWhiteSpace(dir)) continue;
+            string full;
+            try { full = Path.GetFullPath(dir); } catch { continue; }
+            if (!seenDirs.Add(full)) continue;
+            // A directory that simply does not exist is NOT a failure: the search set
+            // routinely names dirs that only appear once something is provisioned. An
+            // unreadable FILE inside an existing dir is a different thing and is reported.
+            if (!Directory.Exists(full)) continue;
+
+            List<string> files;
+            try
+            {
+                files = Directory.EnumerateFiles(full, "*.app")
+                    .OrderBy(f => f, StringComparer.Ordinal).ToList();
+            }
+            catch (Exception)
+            {
+                continue;
+            }
+
+            foreach (var file in files)
+            {
+                AlRunner.AppManifest? manifest;
+                try { manifest = AlRunner.AppLoader.ReadManifest(file); }
+                catch (Exception) { manifest = null; }
+
+                if (manifest == null || string.IsNullOrWhiteSpace(manifest.Name))
+                {
+                    unreadable.Add(file);
+                    continue;
+                }
+                if (!string.Equals(manifest.Publisher, "Microsoft", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                if (edges.ContainsKey(manifest.Name)) continue;
+
+                var deps = new List<string>();
+                foreach (var d in manifest.Dependencies)
+                {
+                    if (!string.Equals(d.Publisher, "Microsoft", StringComparison.OrdinalIgnoreCase)) continue;
+                    if (string.IsNullOrWhiteSpace(d.Name)) continue;
+                    if (!deps.Any(x => string.Equals(x, d.Name, StringComparison.OrdinalIgnoreCase)))
+                        deps.Add(d.Name);
+                }
+                edges[manifest.Name] = deps;
+            }
+        }
+
+        return new DependencyEdgeScan(edges, unreadable);
     }
 
     /// <summary>
@@ -550,17 +609,21 @@ public static class ProvisioningCheck
     /// </summary>
     /// <param name="roots">The bundle's own unioned dependency roots.</param>
     /// <param name="dependencyEdges">
-    /// Known Microsoft app dependency edges to walk via <see cref="ReachesAnyOf"/> when
-    /// deciding whether a root transitively needs <see cref="KnownNoFallbackPlatformApps"/>.
-    /// Defaults to <see cref="KnownMicrosoftAppDependencyEdges"/>; overridable so tests can
-    /// prove the WALK against synthetic graphs (issue #2087) without needing a real
-    /// not-yet-discovered Microsoft app to exist first.
+    /// Microsoft app dependency edges to walk via <see cref="ReachesAnyOf"/> when deciding
+    /// whether a root transitively needs <see cref="KnownNoFallbackPlatformApps"/>. Supply
+    /// them from <see cref="ScanDependencyEdges"/> — the real
+    /// <c>NavxManifest.xml</c> &lt;Dependencies&gt; of whatever Microsoft packages are on
+    /// disk (issue #2103); <see cref="DecideManifestProvisioning"/> does exactly that.
+    /// Null (the default) means "no edges known", which degrades this to a DIRECT
+    /// membership test rather than inventing a version-blind guess — the honest answer when
+    /// nothing has been downloaded yet. Tests also pass synthetic graphs here to prove the
+    /// WALK itself (issue #2087).
     /// </param>
     public static ManifestNeeds DetermineManifestNeeds(
         IEnumerable<AlRunner.DependencyRef> roots,
         IReadOnlyDictionary<string, IReadOnlyList<string>>? dependencyEdges = null)
     {
-        var edges = dependencyEdges ?? KnownMicrosoftAppDependencyEdges;
+        var edges = dependencyEdges ?? EmptyDependencyEdges;
         bool needsPlatform = false, needsTest = false;
         foreach (var d in roots)
         {
@@ -712,7 +775,8 @@ public static class ProvisioningCheck
         bool PlatformComplete,
         bool TestComplete,
         bool ShouldDownloadPlatform,
-        bool ShouldDownloadTest)
+        bool ShouldDownloadTest,
+        IReadOnlyList<string> UnreadablePackages)
     {
         public bool ShouldDownloadAny => ShouldDownloadPlatform || ShouldDownloadTest;
     }
@@ -740,7 +804,8 @@ public static class ProvisioningCheck
         IReadOnlyList<string> searchDirs)
     {
         var rootsList = manifestRoots as ICollection<AlRunner.DependencyRef> ?? manifestRoots.ToList();
-        var needs = DetermineManifestNeeds(rootsList);
+        var scan = ScanDependencyEdges(searchDirs);
+        var needs = DetermineManifestNeeds(rootsList, scan.Edges);
         var versionFloors = DetermineVersionFloors(rootsList);
         var platformComplete = NoFallbackPlatformAppsPresent(searchDirs, versionFloors);
         var testComplete = TestToolkitPresent(searchDirs, versionFloors);
@@ -748,7 +813,7 @@ public static class ProvisioningCheck
         var shouldDownloadTest = needs.NeedsTestApps && !testComplete;
         return new ManifestProvisionDecision(
             needs.NeedsPlatformApps, needs.NeedsTestApps, platformComplete, testComplete,
-            shouldDownloadPlatform, shouldDownloadTest);
+            shouldDownloadPlatform, shouldDownloadTest, scan.UnreadablePackages);
     }
 
     /// <summary>
