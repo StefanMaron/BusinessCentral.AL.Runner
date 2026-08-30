@@ -1,11 +1,19 @@
 // TestPageNewRowLineRuleTests — the C# gating rules behind the TestPage new-row line (#2089).
 //
-// These pin the RUNNER's own decision logic, not "what BC does": the AL-observable behavior is
-// proved against real BC 27.5/28.3 by corpus codeunit 60743 ("Test Page New Row Line Tests"),
-// which is where the measurement lives — merged upstream as
-// StefanMaron/BusinessCentral.AL.Language.Tests commit a5576344, all nine arms green on both legs. What is provable here without a loaded BC runtime is
-// that the two gates combine the way that measurement requires — including the two arms that
-// were WRONG before this fix and that a runner-side test can catch cheaply:
+// These pin the RUNNER's own decision logic, not "what BC does". The AL-observable behavior is
+// proved against real BC 27.5/28.3 by TWO corpus suites, merged separately, and they measure
+// different halves of it:
+//
+//   * codeunit 60743 "Test Page New Row Line Tests" — what the editability answer DOES to the
+//     new-row line. Merged as StefanMaron/BusinessCentral.AL.Language.Tests commit a5576344
+//     (PR #76); all nine arms green on both legs.
+//   * codeunit 60747 "Test Page Hdlr Editable Tests" — the page-level TestPage.Editable()
+//     answer itself, on a page the test never opened. Merged as commit 72281941 (PR #77); both
+//     arms green on both legs.
+//
+// What is provable here without a loaded BC runtime is that the two gates combine the way those
+// measurements require — including the two arms that were WRONG before this fix and that a
+// runner-side test can catch cheaply:
 //
 //   * a page BC handed to a [ModalPageHandler] has no open mode, so it must fall back to the
 //     page's own Editable rather than to a flat "editable" (the old field default);

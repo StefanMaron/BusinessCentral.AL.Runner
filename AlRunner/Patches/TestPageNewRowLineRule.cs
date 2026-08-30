@@ -16,6 +16,11 @@ namespace AlRunner.Patches;
 ///
 /// Merged upstream as StefanMaron/BusinessCentral.AL.Language.Tests commit a5576344 (PR #76);
 /// all nine arms passed on BOTH service-tier legs, BC 27.5 and BC 28.3.
+///
+/// ResolveStaticEditable's handler-driven case is measured by a DIFFERENT corpus suite in a
+/// different PR, and the two should not be collapsed: codeunit 60743 above pins what the
+/// editability answer DOES to the new-row line, while codeunit 60747 (commit 72281941, PR #77)
+/// pins the page-level <c>TestPage.Editable()</c> answer itself. See ResolveStaticEditable.
 /// </summary>
 internal static class TestPageNewRowLineRule
 {
@@ -27,7 +32,12 @@ internal static class TestPageNewRowLineRule
     /// with the page's own <c>Editable</c>. It is null for every page BC hands to a
     /// [ModalPageHandler] / [PageHandler] and for every subpage part — those used to fall back
     /// to a flat "editable", which is what made an <c>Editable = false</c> page opened through
-    /// RunModal report itself editable.
+    /// RunModal report itself editable. That fallback is measured, not inferred from the rule
+    /// BC applies to a page the test opens: corpus codeunit 60747 (StefanMaron/
+    /// BusinessCentral.AL.Language.Tests commit 72281941, PR #77) reads
+    /// <c>TestPage.Editable()</c> inside a [ModalPageHandler] and passed on BOTH BC 27.5 and
+    /// BC 28.3 — false for a page declaring <c>Editable = false</c>, true for one declaring no
+    /// <c>Editable</c> property at all.
     ///
     /// <paramref name="hostStaticEditable"/> is the host's answer for a subpage part, null for
     /// a top-level page. A part is only editable if the page hosting it is.
