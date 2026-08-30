@@ -138,6 +138,15 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             // while leaving dispatch order exactly as it was, which is the tail the gate
             // exists to prevent. Carry the observed maximum instead.
             ["StartupOutputReexecDedupTests"] = 61,
+            // #2178: 3 tests, each spawning a real runner subprocess over a three-app source
+            // chain (two of them compile all three apps cold). Measured 53.3s (28.3) to
+            // 90.5s (27.5) across the eight legs of its first CI run, where it was absent
+            // from this table, fell back to UnmeasuredWeightSeconds and was dispatched at
+            // t=354s of a 441s run — the #1887 tail again. Carries the observed maximum,
+            // for the same reason StartupOutputReexecDedupTests above does: its low end is
+            // already near enough to the 60s freshness threshold that a rounded-down low
+            // value would satisfy the gate while leaving the tail in place.
+            ["LayeredSourceChainTests"] = 90,
             ["TestFilterFlagTests"] = 99,
             ["PhaseLogIntegrationTests"] = 85,
             // #1922: 6 tests, each spawning a real runner subprocess against an AL fixture
