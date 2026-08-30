@@ -61,6 +61,16 @@
 // dispatched at t=383 s and t=400 s of a 581 s run — a tail on every leg, silently, until
 // someone read a TRX occupancy report by hand.
 //
+// #2175: which number to record when a collection measures differently on every leg.
+// ProvisionExplicitModesTests says round DOWN to the low end, and that is right when the
+// low end still sits well above UnmeasuredWeightSeconds (its low end was 80). It is wrong
+// when the low end is at or near the fallback: StartupOutputReexecDedupTests measured
+// 31.8 s to 61.2 s across eight legs, so recording 31 would have silenced
+// check-collection-weights.py while leaving dispatch order identical to being absent —
+// satisfying the gate without addressing the tail it exists to catch. Record the observed
+// MAXIMUM in that case. The rule is: whichever end you pick, the recorded value must
+// change dispatch order relative to the fallback, or the entry is decoration.
+//
 // scripts/check-collection-weights.py is the loud guard that replaces "someone reads it by
 // hand": run against the same trx/unit-tests.trx the occupancy report already parses, it
 // fails CI when a collection above 2x UnmeasuredWeightSeconds is absent from this table —
@@ -119,6 +129,15 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             // producing a 73s single-threaded tail (it is 3rd-heaviest at ~196s of serial
             // work; see the file header and issue #1887 for the measured timeline).
             ["InstallSeedDepCompanyCacheTests"] = 196,
+            // #2175: measured 31.8s (28.2) to 61.2s (27.5) across the eight legs of one
+            // run — it crosses the 60s freshness threshold only under load, so it failed
+            // whichever leg happened to be slow while being absent here. The low-end rule
+            // ProvisionExplicitModesTests documents does NOT apply: its low end was 80,
+            // comfortably above the fallback, whereas 31 is one second above
+            // UnmeasuredWeightSeconds — rounding down would satisfy check-collection-weights.py
+            // while leaving dispatch order exactly as it was, which is the tail the gate
+            // exists to prevent. Carry the observed maximum instead.
+            ["StartupOutputReexecDedupTests"] = 61,
             ["TestFilterFlagTests"] = 99,
             ["PhaseLogIntegrationTests"] = 85,
             // #1922: 6 tests, each spawning a real runner subprocess against an AL fixture
