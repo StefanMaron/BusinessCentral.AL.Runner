@@ -33,9 +33,22 @@ public sealed class ProvisionExplicitModesTests
     // A real, already-published BC version — this test needs the CDN to actually have it
     // (unlike AutoProvisionDefaultTests's deliberately-nonexistent 1.2.3.4, which exists
     // purely to prove "an attempt was made" via a fast 404). Also the version this repo's
-    // own AlRunner.csproj/AlRunner.Tests.csproj build against by default, so it is already
-    // in wide use and unlikely to be withdrawn from the CDN out from under this test.
+    // own AlRunner.csproj/AlRunner.Tests.csproj build against by DEFAULT (a bare `dotnet
+    // build`/`dotnet test`, no `-p:_BCVersion`) — see Directory.Build.props — so it is
+    // already in wide use and unlikely to be withdrawn from the CDN out from under this
+    // test. Only usable where the version is passed EXPLICITLY (`--bc-version RealVersion`)
+    // — a matrix CI leg builds against a DIFFERENT `-p:_BCVersion`, so any test that
+    // resolves the version IMPLICITLY (no `--bc-version` on the command line) must use
+    // <see cref="ThisBuildsEngineVersion"/> instead, which reads the actual value baked
+    // into THIS test binary rather than assuming the dev-machine default (#2208: a matrix
+    // leg built for 28.1.49838.54044 failed here when this constant was used for that).
     private const string RealVersion = "28.1.49838.53910";
+
+    // The exact BC version THIS test assembly (and the AlRunner binary it spawns, built in
+    // the same `dotnet build AlRunner.slnx -p:_BCVersion=...` invocation) was built
+    // against — see the comment on RealVersion above for why this must NOT be a constant.
+    private static readonly string ThisBuildsEngineVersion =
+        AlRunner.Infrastructure.BcArtifacts.EngineBuiltVersion()?.ToString() ?? RealVersion;
 
     private static (int ExitCode, string StdErr) Run(string isolatedHome, params string[] args)
     {
@@ -84,8 +97,8 @@ public sealed class ProvisionExplicitModesTests
     // bc-tests.yml actually provisions), not spelled out here — TestArtifactsGateTests'
     // OnlyTheSharedHelperNamesTheArtifactCachePathsInCode enforces that only TestArtifacts
     // itself may name the raw ".local/share/al-runner/artifacts" path segments in code.
-    private static string TestAppsDirFor(string home) =>
-        Path.Combine(TestArtifacts.StandardCacheDir(home), RealVersion, "test-apps");
+    private static string TestAppsDirFor(string home, string version = RealVersion) =>
+        Path.Combine(TestArtifacts.StandardCacheDir(home), version, "test-apps");
 
     /// <summary>
     /// Positive direction: `provision --test-apps --bc-version &lt;ver&gt;` downloads the
@@ -270,7 +283,7 @@ public sealed class ProvisionExplicitModesTests
         var home = NewIsolatedHome();
         try
         {
-            var testAppsDir = TestAppsDirFor(home); // RealVersion == this build's _BCVersion
+            var testAppsDir = TestAppsDirFor(home, ThisBuildsEngineVersion);
             Assert.False(Directory.Exists(testAppsDir), "precondition: fresh cache must not already have this dir");
 
             var (exit, stderr) = Run(home, "provision", "--test-apps");
@@ -279,7 +292,7 @@ public sealed class ProvisionExplicitModesTests
                 $"provision --test-apps with no --bc-version must resolve the engine's own build. stderr:\n{stderr}");
             Assert.DoesNotContain("cannot determine which BC version to provision", stderr, StringComparison.Ordinal);
             Assert.True(Directory.Exists(testAppsDir),
-                $"expected {testAppsDir} (this binary's own engine build, {RealVersion}) to exist. stderr:\n{stderr}");
+                $"expected {testAppsDir} (this binary's own engine build, {ThisBuildsEngineVersion}) to exist. stderr:\n{stderr}");
             var apps = Directory.GetFiles(testAppsDir, "*.app");
             Assert.True(apps.Length > 10,
                 $"expected more than 10 .app files, got {apps.Length}: {string.Join(", ", apps.Select(Path.GetFileName))}");
@@ -311,14 +324,14 @@ public sealed class ProvisionExplicitModesTests
             "\"publisher\": \"Fixture\", \"version\": \"1.0.0.0\", \"application\": \"27.0.0.0\" }");
         try
         {
-            var testAppsDir = TestAppsDirFor(home); // RealVersion is major 28 — the ENGINE's major
+            var testAppsDir = TestAppsDirFor(home, ThisBuildsEngineVersion); // the ENGINE's own build, not the bundle's major 27
             Assert.False(Directory.Exists(testAppsDir), "precondition: fresh cache must not already have this dir");
 
             var (exit, stderr) = Run(home, "provision", "--test-apps", "--force", bundleDir);
 
             Assert.True(exit == 0, $"provision --test-apps must exit 0. stderr:\n{stderr}");
             Assert.True(Directory.Exists(testAppsDir),
-                $"expected {testAppsDir} (the engine's own major 28, not the bundle's major 27) to exist. stderr:\n{stderr}");
+                $"expected {testAppsDir} (the engine's own build {ThisBuildsEngineVersion}, not the bundle's major 27) to exist. stderr:\n{stderr}");
             var cacheRoot = TestArtifacts.StandardCacheDir(home);
             var versionDirs = Directory.Exists(cacheRoot)
                 ? Directory.GetDirectories(cacheRoot).Select(Path.GetFileName).ToArray()
