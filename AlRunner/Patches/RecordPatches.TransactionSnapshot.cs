@@ -173,6 +173,15 @@ public static partial class RecordPatches
     }
 
     /// <summary>
+    /// Test-only observability hook for the current scope's pending-insert count — the
+    /// BeginAssertErrorScope/EndAssertErrorScope stack has no other externally-visible
+    /// effect until a real NavRecord reaches ForceDurableFailedInserts, which needs a full
+    /// BC skeleton. Lets AlRunner.Tests pin the scoping (nested Begin/End isolates an inner
+    /// statement's insert attempts from an outer one) with plain dummy objects instead.
+    /// </summary>
+    internal static int PendingInsertsCountForTests => _pendingInsertsInScope?.Count ?? 0;
+
+    /// <summary>
     /// Prepended to SessionTransactionExtensions.EndTransaction(NavSession, bool commit) and
     /// .EndTransactionWorldAndTransaction(NavSession, bool commit) — see AlRunner#1946.
     ///
