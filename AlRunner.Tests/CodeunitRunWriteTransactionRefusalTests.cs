@@ -3,8 +3,9 @@
 // This is a RUNNER-MECHANISM test, not a claim about what real BC does. The BC-observable
 // claim ("a guarded Codeunit.Run — one whose Boolean result is consumed — is refused while
 // the caller has an uncommitted write pending, while the statement form is allowed") is
-// proven upstream against a live BC service tier by
-// StefanMaron/BusinessCentral.AL.Language.Tests' TestCodeunitRunWriteTransaction.al.
+// MEASURED upstream against a live BC service tier: codeunit/TestCodeunitRunWriteTransaction.al
+// in StefanMaron/BusinessCentral.AL.Language.Tests, merged as commit 30d46f95 (corpus PR #75),
+// all three of its assertions green on BC 27.5 and BC 28.3.
 //
 // What THIS test pins is our own wiring, which the corpus cannot see:
 //

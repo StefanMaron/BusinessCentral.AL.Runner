@@ -69,14 +69,22 @@ What this means in practice:
   BC will not open one on top of a pending write and raises "An error occurred and the
   transaction is stopped." The **statement** form, `Codeunit.Run(Codeunit::X);` with the
   result discarded, just joins the caller's transaction and is allowed. `Commit()` before
-  the call clears the refusal. Pinned upstream by
-  `codeunit/TestCodeunitRunWriteTransaction.al`; landed in #2133.
+  the call clears the refusal.
+
+  Confirmed against a real BC service tier, not inferred: all three assertions —
+  guarded form refused, statement form allowed, guarded form allowed after `Commit()` —
+  pass on **BC 27.5 and 28.3** in `codeunit/TestCodeunitRunWriteTransaction.al`, merged
+  upstream as
+  [`30d46f95`](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests/commit/30d46f95665aeed87bff3e14234a521d3232a68d)
+  (corpus PR #75). Runner side landed in #2133.
 
   This rule does **not** generalise to every method BC's own error text names.
   `Result := Page.RunModal(...)` and `Ok := XmlPort.Export(...)` after an uncommitted
   `Insert()` are both green on a real service tier
   (`handlers/TestPageModalHandlerStatic_Tests.al`,
-  `xmlport/TestXmlPortObject.al`), so the runner does not refuse those.
+  `xmlport/TestXmlPortObject.al`), so the runner does not refuse those. What is still
+  unmeasured — `Ok := XmlPort.Import(...)` and `Ok := Report.RunModal(...)` with a
+  pending write — is tracked in issue 2184.
 
 Separately, and unrelated to rollback: the isolation between a "worker session"
 and its caller does not exist. `StartSession` runs synchronously, inline, sharing

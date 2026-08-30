@@ -91,7 +91,9 @@ public static class ALDatabasePatches
     /// The statement form (`Codeunit.Run(...)` with the result discarded, DataError.ThrowError)
     /// takes BC's other branch — a plain BeginTransaction that joins the caller's transaction —
     /// and is NOT subject to this check. Whether the return value is consumed is the whole
-    /// distinction; see AlRunner#2133 and the corpus's TestCodeunitRunWriteTransaction.al.
+    /// distinction; see AlRunner#2133 and the corpus's TestCodeunitRunWriteTransaction.al,
+    /// which measures all three cases (refused / allowed / allowed-after-Commit) on a real
+    /// BC service tier — green on BC 27.5 and 28.3, corpus commit 30d46f95.
     ///
     /// The throw is not trappable by the guarded call's own error trap: in BC's DoRunAsync the
     /// BeginTransactionWorldAndTransaction call sits OUTSIDE the try whose catch suppresses the
