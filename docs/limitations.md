@@ -31,7 +31,7 @@ the BC runtime environment:
 - **Setup tables** — `General Ledger Setup`, `Sales Setup`, etc. are empty.
   Code that reads setup fields gets type defaults.
 
-### Transaction semantics — commit-point rollback is modeled; `Codeunit.Run`'s write-transaction scoping is not
+### Transaction semantics — commit-point rollback and `Codeunit.Run`'s write-transaction scoping are modeled
 
 There is one flat, in-memory record store shared across the entire test run — no
 SQL transaction log, no isolation levels, no `READCOMMITTED`/`REPEATABLEREAD`
@@ -63,11 +63,20 @@ What this means in practice:
   there, but this method's own uncommitted writes get rolled back by my
   `asserterror`" works the same way it does on real BC.
 
-**The residual gap:** `Codeunit.Run` where its `Boolean` return value is consumed
-(e.g. `Ok := MyCodeunit.Run();`) does not scope a write transaction the way real BC
-does — on real BC, that specific calling shape decides whether the codeunit's
-writes get their own transaction boundary, and the runner does not yet reproduce
-that decision. Tracked in #2133.
+- `Codeunit.Run` is refused while a write is still uncommitted, but only in the
+  **guarded** form — the one whose `Boolean` result is consumed, e.g.
+  `Ok := Codeunit.Run(Codeunit::X);`. That form needs its own isolated transaction, so
+  BC will not open one on top of a pending write and raises "An error occurred and the
+  transaction is stopped." The **statement** form, `Codeunit.Run(Codeunit::X);` with the
+  result discarded, just joins the caller's transaction and is allowed. `Commit()` before
+  the call clears the refusal. Pinned upstream by
+  `codeunit/TestCodeunitRunWriteTransaction.al`; landed in #2133.
+
+  This rule does **not** generalise to every method BC's own error text names.
+  `Result := Page.RunModal(...)` and `Ok := XmlPort.Export(...)` after an uncommitted
+  `Insert()` are both green on a real service tier
+  (`handlers/TestPageModalHandlerStatic_Tests.al`,
+  `xmlport/TestXmlPortObject.al`), so the runner does not refuse those.
 
 Separately, and unrelated to rollback: the isolation between a "worker session"
 and its caller does not exist. `StartSession` runs synchronously, inline, sharing
@@ -444,9 +453,6 @@ are listed above. For those, test in the full pipeline:
 
 - Real company or setup data being present
 - Parallel sessions running concurrently
-- `Codeunit.Run`'s write-transaction scoping when its return value is consumed
-  (error-rollback to the last commit point is otherwise modeled — see
-  "Transaction semantics" above)
 - Page or report rendering
 - HTTP calls to external services
 - Permissions or entitlements
