@@ -40,6 +40,15 @@ public sealed class PackageCacheFinalSearchSetTests
     /// packageCacheDirs is visible only in the SEARCH SET this test asserts on, never in a
     /// provisioning decision (which would otherwise try to download real platform/test
     /// apps and make the test depend on network access).
+    ///
+    /// Issue #2205: "nothing Microsoft" now has to mean it literally. These manifests used
+    /// to carry `"application"`/`"platform"`, from which ReadDependencies synthesises
+    /// implicit Microsoft/Application + Microsoft/System roots — a real Microsoft
+    /// dependency the need detection had simply never looked at. Once it does, this fixture
+    /// triggers a genuine 116 MB platform-apps download mid-test, which folds another dir
+    /// into packageCacheDirs and makes the final count neither 0 nor 2. Dropping the two
+    /// fields is what the comment above always claimed; the AL here uses no Microsoft type,
+    /// so nothing else changes.
     /// </summary>
     private static string WriteFixture(string scratchRoot)
     {
@@ -56,8 +65,6 @@ public sealed class PackageCacheFinalSearchSetTests
           "publisher": "Repro2107",
           "version": "1.0.0.0",
           "dependencies": [],
-          "platform": "1.0.0.0",
-          "application": "1.0.0.0",
           "idRanges": [ { "from": 61950, "to": 61959 } ],
           "runtime": "14.0"
         }
@@ -80,8 +87,6 @@ public sealed class PackageCacheFinalSearchSetTests
           "dependencies": [
             { "id": "{{depId}}", "name": "Repro2107 Dep App", "publisher": "Repro2107", "version": "1.0.0.0" }
           ],
-          "platform": "1.0.0.0",
-          "application": "1.0.0.0",
           "idRanges": [ { "from": 61960, "to": 61969 } ],
           "runtime": "14.0"
         }

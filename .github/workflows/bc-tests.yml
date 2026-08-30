@@ -164,6 +164,23 @@ jobs:
           dotnet run --project tools/DownloadArtifacts -- \
             platform-apps ${{ matrix.target.bc-version }} "$HOME/.al-runner/platform-apps"
 
+          # Issue #2205: the same apps, also at the location the runner scans BY DEFAULT
+          # (ProvisioningCheck.PlatformAppsDirFor — <artifacts-root>/<version>/platform-apps),
+          # which is where `provision`/--auto-provision put them on a real machine.
+          #
+          # Every AlRunner.Tests case that spawns the runner as a subprocess runs without
+          # --package-cache, so it only ever sees the default caches. Now that an ordinary
+          # app.json's `application`/`platform` fields are recognised as a real Microsoft
+          # dependency, each of those subprocesses would otherwise decide it needs the
+          # platform set and fetch 116 MB from the CDN — dozens of times, four in parallel,
+          # into the same directory. Hardlinking the already-downloaded set is instant and
+          # makes CI match a developer machine that has provisioned once.
+          DEFAULT_PLATFORM_APPS="$HOME/.local/share/al-runner/artifacts/${{ matrix.target.bc-version }}/platform-apps"
+          mkdir -p "$DEFAULT_PLATFORM_APPS"
+          cp -al "$HOME/.al-runner/platform-apps/." "$DEFAULT_PLATFORM_APPS/" \
+            || cp -a "$HOME/.al-runner/platform-apps/." "$DEFAULT_PLATFORM_APPS/"
+          ls -la "$DEFAULT_PLATFORM_APPS"
+
       - name: Download the Microsoft test toolkit (Any, Library Assert, Test Runner, …)
         run: |
           # tests/runner-extras/microsoft-dependencies depends on Application Test Library
