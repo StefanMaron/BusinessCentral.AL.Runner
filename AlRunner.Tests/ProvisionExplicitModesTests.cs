@@ -316,27 +316,33 @@ public sealed class ProvisionExplicitModesTests
     [Fact]
     public void TestApps_BundleDeclaresOlderMajor_StillTargetsEngineMajor()
     {
+        // The bundle's declared major must genuinely differ from THIS build's engine
+        // major — a CI matrix leg builds against 27.x as often as 28.x (bc-tests.yml), so
+        // a hardcoded "27" collided with the engine's own major on a 27.x leg and made
+        // the negative assertion below fail on real, CORRECT output (#2208 follow-up).
+        var engineMajor = Version.Parse(ThisBuildsEngineVersion).Major;
+        var bundleMajor = engineMajor - 1;
         var home = NewIsolatedHome();
         var bundleDir = Path.Combine(Path.GetTempPath(), "al-runner-provision-explicit-bundle", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(bundleDir);
         File.WriteAllText(Path.Combine(bundleDir, "app.json"),
             "{ \"id\": \"11111111-1111-1111-1111-111111111111\", \"name\": \"Fixture\", " +
-            "\"publisher\": \"Fixture\", \"version\": \"1.0.0.0\", \"application\": \"27.0.0.0\" }");
+            "\"publisher\": \"Fixture\", \"version\": \"1.0.0.0\", \"application\": \"" + bundleMajor + ".0.0.0\" }");
         try
         {
-            var testAppsDir = TestAppsDirFor(home, ThisBuildsEngineVersion); // the ENGINE's own build, not the bundle's major 27
+            var testAppsDir = TestAppsDirFor(home, ThisBuildsEngineVersion); // the ENGINE's own build, not the bundle's major
             Assert.False(Directory.Exists(testAppsDir), "precondition: fresh cache must not already have this dir");
 
             var (exit, stderr) = Run(home, "provision", "--test-apps", "--force", bundleDir);
 
             Assert.True(exit == 0, $"provision --test-apps must exit 0. stderr:\n{stderr}");
             Assert.True(Directory.Exists(testAppsDir),
-                $"expected {testAppsDir} (the engine's own build {ThisBuildsEngineVersion}, not the bundle's major 27) to exist. stderr:\n{stderr}");
+                $"expected {testAppsDir} (the engine's own build {ThisBuildsEngineVersion}, not the bundle's major {bundleMajor}) to exist. stderr:\n{stderr}");
             var cacheRoot = TestArtifacts.StandardCacheDir(home);
             var versionDirs = Directory.Exists(cacheRoot)
                 ? Directory.GetDirectories(cacheRoot).Select(Path.GetFileName).ToArray()
                 : Array.Empty<string?>();
-            Assert.DoesNotContain(versionDirs, d => d != null && d.StartsWith("27.", StringComparison.Ordinal));
+            Assert.DoesNotContain(versionDirs, d => d != null && d.StartsWith(bundleMajor + ".", StringComparison.Ordinal));
         }
         finally
         {
