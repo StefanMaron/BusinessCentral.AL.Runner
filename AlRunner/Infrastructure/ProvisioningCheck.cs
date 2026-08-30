@@ -521,8 +521,33 @@ public static class ProvisioningCheck
         "Application Test Library",
     };
 
-    /// <summary>Which of the platform-apps set a manifest need may be declared for.</summary>
-    private static readonly IReadOnlyList<string> PlatformNeedTargets = KnownNoFallbackPlatformApps;
+    /// <summary>
+    /// Which apps a manifest need may be declared for — the whole contents of the curated
+    /// platform-apps download set (issue #2205), asked one app at a time against what the
+    /// manifests actually name.
+    ///
+    /// It used to be <see cref="KnownNoFallbackPlatformApps"/> alone, on the premise that
+    /// System/Base Application and Business Foundation always have a service-tier DLL
+    /// dispatch fallback, so only PRESENT-but-symbol-only could ever be a gap for them and
+    /// requiring the whole set would regress every corpus bundle (they all carry implicit
+    /// `application`/`platform` roots) into a spurious "needs download".
+    ///
+    /// The premise is false on a cold cache. The DLL fallback serves RUNTIME DISPATCH; it
+    /// does not supply COMPILE-TIME SYMBOLS. With engine-only artifacts on disk an ordinary
+    /// AL app — `"dependencies": []` plus `application`/`platform`, the default shape of
+    /// virtually every real extension — never compiles, so there is no runtime for the
+    /// fallback to serve: the run ended in EMIT-EXCLUDED preceded by two unframed
+    /// `[deps] dependency not found in cache, skipping` lines. CI never saw it because CI
+    /// machines always already have platform-apps/ on disk.
+    ///
+    /// The spurious-download worry the old premise was protecting against does not follow
+    /// from broadening the targets, because the decision is not "is this app named in a
+    /// list" — it is <see cref="FindMissingPlatformApps"/>, "is this app ABSENT from every
+    /// searched cache", asked only of the apps the manifests named. A warm machine has them,
+    /// so a warm bundle still decides "no download"; a cold one does not, which is the whole
+    /// point. And a bundle that names, say, no Business Foundation is never asked for it.
+    /// </summary>
+    private static readonly IReadOnlyList<string> PlatformNeedTargets = PlatformAppSetContents;
 
     /// <summary>
     /// True iff <paramref name="appName"/> itself is in <paramref name="targets"/>, or

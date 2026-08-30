@@ -626,22 +626,28 @@ public sealed class ProvisioningCheckTests : IDisposable
     }
 
     [Fact]
-    public void DetermineManifestNeeds_ImplicitApplicationAndSystemRootsAlone_NeitherFlagSet()
+    public void DetermineManifestNeeds_ImplicitApplicationAndSystemRootsAlone_NeedNoTestApps()
     {
         // Mirrors ReadDependencies' synthesis of implicit `application`/`platform` roots
         // (Guid.Empty, "Application"/"System", "Microsoft", Optional: true) — present on
-        // essentially every AL Runner bundle. These alone must NOT set NeedsPlatformApps:
-        // the apps they represent (System/Base Application, Business Foundation) have a
-        // service-tier DLL dispatch fallback the runner already uses when absent, so
-        // requiring literal presence here would regress nearly the whole corpus into a
-        // spurious "needs download".
+        // essentially every AL Runner bundle.
+        //
+        // This used to assert NeedsPlatformApps == false as well, on the premise that
+        // System/Base Application and Business Foundation have a service-tier DLL dispatch
+        // fallback, so their absence is never a gap. Issue #2205 measured that premise
+        // false on a cold cache: the fallback serves runtime dispatch, not compile-time
+        // symbols, so an ordinary app with exactly these roots and nothing on disk does not
+        // compile at all. The platform half of the claim now lives in
+        // DetermineManifestNeeds_ImplicitMicrosoftRoots_RequireTheAppsTheyName.
+        //
+        // What stays true here, and is the half worth keeping: these roots say nothing
+        // about the MS test toolkit, which is a separate download.
         var roots = new[]
         {
             new DependencyRef(Guid.Empty, "Application", "Microsoft", new Version(28, 1, 0, 0), Optional: true),
             new DependencyRef(Guid.Empty, "System", "Microsoft", new Version(28, 1, 0, 0), Optional: true),
         };
         var needs = ProvisioningCheck.DetermineManifestNeeds(roots);
-        Assert.False(needs.NeedsPlatformApps);
         Assert.False(needs.NeedsTestApps);
     }
 

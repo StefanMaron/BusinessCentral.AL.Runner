@@ -77,14 +77,41 @@ public sealed class ManifestDependencyEdgeScanTests : IDisposable
         File.WriteAllBytes(Path.Combine(dir, $"{publisher}_{name}.app"), WrapNavx(xml));
     }
 
-    private static byte[] WrapNavx(string manifestXml)
+    /// <summary>As <see cref="WriteApp"/>, but the package carries a
+    /// <c>publishedartifacts/</c> entry — i.e. an R2R runtime package rather than a
+    /// symbol-only one, which is what a real provisioned platform-apps dir holds.</summary>
+    private static void WriteR2RApp(
+        string dir, string name, string publisher, string version,
+        params (string Name, string Publisher)[] dependencies)
+    {
+        var deps = string.Concat(dependencies.Select(d =>
+            $"""    <Dependency Id="{Guid.NewGuid()}" Name="{d.Name}" Publisher="{d.Publisher}" MinVersion="{version}" />{"\n"}"""));
+        var xml = $"""
+            <?xml version="1.0" encoding="utf-8"?>
+            <Package xmlns="http://schemas.microsoft.com/navx/2015/manifest">
+              <App Id="{Guid.NewGuid()}" Name="{name}" Publisher="{publisher}" Version="{version}"/>
+              <Dependencies>
+            {deps}  </Dependencies>
+            </Package>
+            """;
+        File.WriteAllBytes(Path.Combine(dir, $"{publisher}_{name}.app"),
+            WrapNavx(xml, includePublishedArtifact: true));
+    }
+
+    private static byte[] WrapNavx(string manifestXml, bool includePublishedArtifact = false)
     {
         using var ms = new MemoryStream();
         using (var zip = new ZipArchive(ms, ZipArchiveMode.Create, leaveOpen: true))
         {
             var entry = zip.CreateEntry("NavxManifest.xml");
-            using var es = entry.Open();
-            es.Write(Encoding.UTF8.GetBytes(manifestXml));
+            using (var es = entry.Open())
+                es.Write(Encoding.UTF8.GetBytes(manifestXml));
+            if (includePublishedArtifact)
+            {
+                var dll = zip.CreateEntry("publishedartifacts/app.dll");
+                using var ds = dll.Open();
+                ds.Write(new byte[] { 0x4D, 0x5A });
+            }
         }
         var zipBytes = ms.ToArray();
         var result = new byte[8 + zipBytes.Length];
@@ -281,17 +308,27 @@ public sealed class ManifestDependencyEdgeScanTests : IDisposable
     // ── the decision that consumes it ────────────────────────────────────────
 
     [Fact]
-    public void DetermineManifestNeeds_Bc27Edges_TestsTestLibraries_DoesNotDemandPlatformApps()
+    public void DetermineManifestNeeds_Bc27Edges_TestsTestLibraries_DoesNotDemandApplicationTestLibrary()
     {
-        // THE version-specific bug the hand table shipped: on BC 27.x this returned
-        // NeedsPlatformApps == true, sending provisioning after an "Application Test
-        // Library" no 27.x artifact contains.
+        // THE version-specific bug the hand table shipped: on BC 27.x this demanded an
+        // "Application Test Library" no 27.x artifact contains, and provisioning then died
+        // with "still missing after download".
+        //
+        // Issue #2205 broadened the need targets from that one app to the whole curated
+        // platform-apps set, so the claim worth pinning is now the precise one, not
+        // NeedsPlatformApps as a blanket. On 27.x the recorded edges reach System
+        // Application (via System Application Test Library) and Business Foundation (via
+        // Business Foundation Test Libraries) — both of which the 27.x w1 artifact really
+        // does ship — and they must NOT reach Application Test Library.
         var edges = ProvisioningCheck.ScanDependencyEdges(new[] { WriteBc27TestToolkit() }).Edges;
 
         var needs = ProvisioningCheck.DetermineManifestNeeds(
             new[] { Root("Tests-TestLibraries", version: "27.5.0.0") }, edges);
 
-        Assert.False(needs.NeedsPlatformApps);
+        Assert.DoesNotContain("Application Test Library", needs.RequiredPlatformApps);
+        Assert.Equal(
+            new[] { "Business Foundation", "System Application" },
+            needs.RequiredPlatformApps.OrderBy(n => n, StringComparer.Ordinal).ToArray());
         Assert.True(needs.NeedsTestApps);
     }
 
@@ -304,21 +341,50 @@ public sealed class ManifestDependencyEdgeScanTests : IDisposable
             new[] { Root("Tests-TestLibraries", version: "28.3.0.0") }, edges);
 
         Assert.True(needs.NeedsPlatformApps);
+        Assert.Contains("Application Test Library", needs.RequiredPlatformApps);
         Assert.True(needs.NeedsTestApps);
     }
 
     [Fact]
     public void DecideManifestProvisioning_Bc27ToolkitOnDisk_DoesNotAskForApplicationTestLibrary()
     {
+        // Only the test-apps set is on disk here, so the platform apps the 27.x edges DO
+        // reach are genuinely absent and a platform fetch is the right answer (issue
+        // #2205). What must never come back is Application Test Library: no 27.x artifact
+        // ships it, so demanding it makes the download unsatisfiable.
         var dir = WriteBc27TestToolkit();
         var legacy = ProvisioningCheck.CheckPlatformApps("27.5.46862.48827", new[] { dir });
 
         var decision = ProvisioningCheck.DecideManifestProvisioning(
             new[] { Root("Tests-TestLibraries", version: "27.5.0.0") }, legacy, new[] { dir });
 
-        Assert.False(decision.NeedsPlatformApps);
-        Assert.False(decision.ShouldDownloadPlatform);
+        Assert.DoesNotContain("Application Test Library", decision.RequiredPlatformApps);
+        Assert.DoesNotContain("Application Test Library", decision.MissingPlatformApps);
         Assert.True(decision.NeedsTestApps);
+    }
+
+    [Fact]
+    public void DecideManifestProvisioning_Bc27ToolkitAndPlatformAppsOnDisk_NoPlatformDownload()
+    {
+        // The warm 27.x machine (what CI's --package-cache gives every leg): the same
+        // roots, with the platform apps the edges reach also present, must still decide
+        // "no download". This is the no-spurious-download arm for the edge-derived half of
+        // the requirement, the counterpart of the manifest-declared half in
+        // ProvisioningCheckTests.DecideManifestProvisioning_WarmCache_OrdinaryAlApp_NoDownload.
+        var toolkit = WriteBc27TestToolkit();
+        var platform = NewDir("platform-apps-27");
+        WriteR2RApp(platform, "System Application", "Microsoft", "27.5.0.0");
+        WriteR2RApp(platform, "Business Foundation", "Microsoft", "27.5.0.0");
+
+        var dirs = new[] { toolkit, platform };
+        var legacy = ProvisioningCheck.CheckPlatformApps("27.5.46862.48827", dirs);
+
+        var decision = ProvisioningCheck.DecideManifestProvisioning(
+            new[] { Root("Tests-TestLibraries", version: "27.5.0.0") }, legacy, dirs);
+
+        Assert.Empty(decision.MissingPlatformApps);
+        Assert.True(decision.PlatformComplete);
+        Assert.False(decision.ShouldDownloadPlatform);
     }
 
     [Fact]
