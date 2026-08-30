@@ -1171,36 +1171,9 @@ deferredStartupLines.Add(() => Console.WriteLine(serverMode
 // entry-assembly manifest set from the SELECTED VARIANT's own directory instead of this
 // process's, so one re-exec covers both "Ncl.dll isn't shipped" and "a different BC-minor
 // engine variant is needed" — see the doc comment on EnsureShadowDir.
-if ((AlRunner.Infrastructure.NclShadowRuntime.NeedsShadow(AppContext.BaseDirectory) || variantSwapDir != null)
-    && Environment.GetEnvironmentVariable("AL_RUNNER_NCL_SHADOW_DONE") != "1")
 {
-    var srcDirForShadow = AlRunner.Infrastructure.BcArtifacts.ServiceTierDir;
-    var shadowDll = AlRunner.Infrastructure.NclShadowRuntime.EnsureShadowDir(
-        AppContext.BaseDirectory, srcDirForShadow, variantSwapDir);
-    var dotnetMuxer = AlRunner.Infrastructure.NclShadowRuntime.FindDotnetMuxer();
-
-    var psi = new System.Diagnostics.ProcessStartInfo(dotnetMuxer) { UseShellExecute = false };
-    psi.ArgumentList.Add("exec");
-    psi.ArgumentList.Add(shadowDll);
-    // argv[0] is THIS process's own entry path (apphost exe, or the dll path the
-    // dotnet muxer forwarded) — never a user arg, and irrelevant here since we've
-    // already picked the child's entry point explicitly above.
-    var argv = RewriteArtifactPathArg(Environment.GetCommandLineArgs());
-    foreach (var a in argv.Skip(1)) psi.ArgumentList.Add(a);
-    psi.Environment["AL_RUNNER_NCL_SHADOW_DONE"] = "1";
-
-    Console.Error.WriteLine(variantSwapDir != null
-        // #2034: this line explains why a second process is about to launch — a
-        // genuinely operational fact, not an internal Cecil-rewrite diagnostic — so it
-        // uses the exempted `[reexec]` tag rather than `[Cecil]`. Under `[Cecil]`, Log's
-        // filter suppressed a real, live re-exec silently: the shadow dir was built, the
-        // child launched, and nothing on stderr said why.
-        ? "[reexec] Re-execing into a shadow runtime dir with the matching BC-minor engine variant"
-        : "[reexec] Ncl.dll not shipped in this install — re-execing into a shadow runtime dir that has it");
-    AlRunner.Infrastructure.PhaseLog.MarkReexecParent();
-    using var shadowChild = System.Diagnostics.Process.Start(psi)!;
-    shadowChild.WaitForExit();
-    return shadowChild.ExitCode;
+    var shadowChildExit = TryShadowReexec(variantSwapDir);
+    if (shadowChildExit.HasValue) return shadowChildExit.Value;
 }
 
 // Cecil-rewrite Ncl.dll IN-PLACE on the bin path BEFORE CoreCLR's TPA probe
@@ -5622,6 +5595,29 @@ static int RunPrecompile(string[] subArgs)
     // the main flow's own comment on this exact hazard), so a fresh rewrite always re-execs
     // rather than continuing in this process. AL_RUNNER_REEXECED (shared with the main
     // flow's guard) prevents an infinite loop if the child somehow rewrites again.
+    //
+    // #2065: "mirror the main flow's own sequence" was only half done — the main flow's
+    // rewrite is unreachable until the SHADOW HOP below has already run, and this one had
+    // no hop in front of it, so on an install that does not ship Ncl.dll the rewrite
+    // CREATED the file in the caller's own directory (measured: a 10.7 MB
+    // Microsoft.Dynamics.Nav.Ncl.dll appearing in AlRunner/bin/Release/net8.0 after one
+    // `--precompile`, which then suppressed the shadow hop for every subsequent invocation
+    // from that directory). Take the same hop first; the child runs from a directory that
+    // legitimately holds Ncl.dll before ITS trusted-platform-assemblies list is computed,
+    // and the rewrite below then replaces a file rather than creating one. See
+    // TryShadowReexec's own comment for the full reasoning, and
+    // AlRunner.Tests/PrecompileNclShadowHopTests.cs for the proof in both directions.
+    //
+    // Deliberately variantSwapDir: null — `--precompile` does not do per-BC-minor engine
+    // variant selection today (the main bundle-run flow computes variantSwapDir from
+    // EngineVariants long after this early dispatch), so passing null keeps this call to
+    // exactly the "Ncl.dll isn't shipped" half of the decision and changes nothing else
+    // about the subcommand's behaviour.
+    {
+        var shadowChildExit = TryShadowReexec(variantSwapDir: null);
+        if (shadowChildExit.HasValue) return shadowChildExit.Value;
+    }
+
     {
         var srcDir = AlRunner.Infrastructure.BcArtifacts.ServiceTierDir;
         var binNcl = Path.Combine(AppContext.BaseDirectory, "Microsoft.Dynamics.Nav.Ncl.dll");
@@ -6538,6 +6534,69 @@ static IEnumerable<string> BcArtifactTestDirs(string cacheDir)
         if (parent == null || parent == dir) yield break;
         dir = parent;
     }
+}
+
+// ── The one shadow-re-exec decision ────────────────────────────────────────────────
+// Returns null when this process may proceed in place, or the child's exit code when it
+// handed off to a shadow-runtime process (in which case the caller must return that code
+// immediately and touch no BC type).
+//
+// #2065: this used to be written out inline at the single call site in the main bundle-run
+// flow, and `--precompile` — which dispatches near the top of Main, LONG before that call
+// site — had no equivalent. It went straight to NclCecilRewrite.RewriteInPlace against
+// `AppContext.BaseDirectory`, which on any install that does not ship Ncl.dll (i.e. every
+// install since #2023/#2026, including AlRunner's own build output, where
+// Directory.Build.targets strips it) CREATES the file instead of replacing one. Two
+// separate costs, and neither is theoretical — both were measured while closing #2065:
+//
+//   * It does not help the process doing the writing. CoreCLR fixes the
+//     trusted-platform-assemblies list in the native host from the literal on-disk contents
+//     of AppContext.BaseDirectory BEFORE any managed code runs (see NclShadowRuntime's class
+//     doc), so a file written a few statements into RunPrecompile is already too late. The
+//     `--precompile` run only worked at all because DependencyLoader's Resolving fallback
+//     then happened to serve the freshly written copy — and on a genuine cache HIT there is
+//     no re-exec to recover, so the whole thing rested on a side effect.
+//   * It permanently changes what NclShadowRuntime.NeedsShadow answers for that directory,
+//     so every LATER invocation from it silently stops taking the hop. The runner then
+//     behaves differently in a used checkout than in a clean one — the exact class of
+//     problem a stale shadow cache caused when it faked a packaging bug here.
+//
+// Two code paths writing the same state where only one held the invariant is the defect, so
+// there is now exactly one place that decides. Any future pre-dispatch subcommand that needs
+// BC types calls this first.
+static int? TryShadowReexec(string? variantSwapDir)
+{
+    if (!(AlRunner.Infrastructure.NclShadowRuntime.NeedsShadow(AppContext.BaseDirectory) || variantSwapDir != null)
+        || Environment.GetEnvironmentVariable("AL_RUNNER_NCL_SHADOW_DONE") == "1")
+        return null;
+
+    var srcDirForShadow = AlRunner.Infrastructure.BcArtifacts.ServiceTierDir;
+    var shadowDll = AlRunner.Infrastructure.NclShadowRuntime.EnsureShadowDir(
+        AppContext.BaseDirectory, srcDirForShadow, variantSwapDir);
+    var dotnetMuxer = AlRunner.Infrastructure.NclShadowRuntime.FindDotnetMuxer();
+
+    var psi = new System.Diagnostics.ProcessStartInfo(dotnetMuxer) { UseShellExecute = false };
+    psi.ArgumentList.Add("exec");
+    psi.ArgumentList.Add(shadowDll);
+    // argv[0] is THIS process's own entry path (apphost exe, or the dll path the
+    // dotnet muxer forwarded) — never a user arg, and irrelevant here since we've
+    // already picked the child's entry point explicitly above.
+    var argv = RewriteArtifactPathArg(Environment.GetCommandLineArgs());
+    foreach (var a in argv.Skip(1)) psi.ArgumentList.Add(a);
+    psi.Environment["AL_RUNNER_NCL_SHADOW_DONE"] = "1";
+
+    Console.Error.WriteLine(variantSwapDir != null
+        // #2034: this line explains why a second process is about to launch — a
+        // genuinely operational fact, not an internal Cecil-rewrite diagnostic — so it
+        // uses the exempted `[reexec]` tag rather than `[Cecil]`. Under `[Cecil]`, Log's
+        // filter suppressed a real, live re-exec silently: the shadow dir was built, the
+        // child launched, and nothing on stderr said why.
+        ? "[reexec] Re-execing into a shadow runtime dir with the matching BC-minor engine variant"
+        : "[reexec] Ncl.dll not shipped in this install — re-execing into a shadow runtime dir that has it");
+    AlRunner.Infrastructure.PhaseLog.MarkReexecParent();
+    using var shadowChild = System.Diagnostics.Process.Start(psi)!;
+    shadowChild.WaitForExit();
+    return shadowChild.ExitCode;
 }
 
 // Rewrite a forwarded argv so that `--artifact-path <dir>` becomes `--bc-version <ver>`
