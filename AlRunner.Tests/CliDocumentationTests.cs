@@ -438,12 +438,20 @@ public sealed class CliDocumentationTests
     /// "subsystem" — and any looser prose comparison is a false-failure generator.
     /// The staleness marker is the property that actually distinguishes the case.
     /// </summary>
+    /// <summary>
+    /// Widened past the reported line: the same defect — a repository path printed by
+    /// the CLI that is not in the repository — was also sitting in --help's EXAMPLES,
+    /// which offered `tests/runner-extras/oos-reports`. That bundle has never existed;
+    /// it was invented in the same v2-cutover commit that left docs/subsystems.md
+    /// advertised as a map. So this checks every docs/, tests/, tools/ and scripts/
+    /// path either surface prints, not just the .md ones.
+    /// </summary>
     [Fact]
-    public void HelpAndGuide_ReferenceOnlyDocsThatExistOnDisk()
+    public void HelpAndGuide_ReferenceOnlyPathsThatExistOnDisk()
     {
         var missing = new List<string>();
-        foreach (var (surface, path) in ReferencedDocPaths())
-            if (!File.Exists(Path.Combine(RepoRoot, path)))
+        foreach (var (surface, path) in ReferencedRepoPaths())
+            if (!File.Exists(Path.Combine(RepoRoot, path)) && !Directory.Exists(Path.Combine(RepoRoot, path)))
                 missing.Add($"{surface} prints '{path}', which does not exist");
 
         Assert.True(missing.Count == 0,
@@ -456,7 +464,7 @@ public sealed class CliDocumentationTests
     public void HelpAndGuide_DoNotAdvertiseHistoricalArtifacts()
     {
         var offenders = new List<string>();
-        foreach (var (surface, path) in ReferencedDocPaths())
+        foreach (var (surface, path) in ReferencedRepoPaths().Where(p => p.Path.EndsWith(".md", StringComparison.Ordinal)))
         {
             var full = Path.Combine(RepoRoot, path);
             if (!File.Exists(full)) continue; // reported by the sibling test
@@ -494,8 +502,12 @@ public sealed class CliDocumentationTests
             + "  --help                       full flag reference\n"
             + "  docs/limitations.md          the real architectural limits\n"
             + "  docs/archive/subsystems.md   subsystem map\n"
-            + "  README.md                    not a docs/ path\n");
-        Assert.Equal(new[] { "docs/archive/subsystems.md", "docs/limitations.md" }, extracted.OrderBy(p => p).ToArray());
+            + "  al-runner tests/runner-extras/oos-reports\n"
+            + "  al-runner tests/al-language/tests/al-language   (submodule, not asserted)\n"
+            + "  README.md                    not a repo-relative path this audit covers\n");
+        Assert.Equal(
+            new[] { "docs/archive/subsystems.md", "docs/limitations.md", "tests/runner-extras/oos-reports" },
+            extracted.OrderBy(p => p, StringComparer.Ordinal).ToArray());
 
         // A docs/archive/ path is rejected on its path alone.
         Assert.StartsWith("docs/archive/", extracted.Single(p => p.Contains("archive")), StringComparison.Ordinal);
@@ -533,21 +545,28 @@ public sealed class CliDocumentationTests
         return HistoricalMarkers.FirstOrDefault(m => header.Contains(m, StringComparison.OrdinalIgnoreCase));
     }
 
+    /// <summary>
+    /// Repository-relative paths in CLI output. Trailing sentence punctuation is
+    /// trimmed; `tests/al-language/...` is dropped because that submodule is legitimately
+    /// absent in a checkout without `git submodule update`, so asserting on it would
+    /// fail for a reason that has nothing to do with the CLI's honesty.
+    /// </summary>
     private static string[] ExtractDocPaths(string cliOutput) =>
-        Regex.Matches(cliOutput, @"\bdocs/[A-Za-z0-9_./-]*\.md\b")
+        Regex.Matches(cliOutput, @"\b(?:docs|tests|tools|scripts)/[A-Za-z0-9_./-]*[A-Za-z0-9_/-]")
              .Select(m => m.Value)
+             .Where(p => !p.StartsWith("tests/al-language/", StringComparison.Ordinal))
              .Distinct(StringComparer.Ordinal)
              .ToArray();
 
-    /// <summary>(surface, path) for every docs/*.md printed by --help or --guide.</summary>
-    private static IEnumerable<(string Surface, string Path)> ReferencedDocPaths()
+    /// <summary>(surface, path) for every repository path printed by --help or --guide.</summary>
+    private static IEnumerable<(string Surface, string Path)> ReferencedRepoPaths()
     {
         foreach (var flag in new[] { "--help", "--guide" })
         {
             var (exit, stdout, _) = RunCli(flag);
             Assert.Equal(0, exit);
             var paths = ExtractDocPaths(stdout);
-            Assert.NotEmpty(paths); // the surfaces DO cite docs; an empty scrape is a broken test
+            Assert.NotEmpty(paths); // the surfaces DO cite paths; an empty scrape is a broken test
             foreach (var p in paths) yield return (flag, p);
         }
     }

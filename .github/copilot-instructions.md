@@ -49,8 +49,8 @@ tests/al-language/             — git submodule, canonical corpus (READ-ONLY)
 tests/expectations/            — JSON manifest declaring expected outcomes for corpus tests
 tests/runner-extras/           — runner-specific positive tests
 tests/archive/                 — v1 buckets and fixtures (frozen, scheduled for deletion)
-docs/                          — expectations.md, scope.md, limitations.md, cecil-migration.md, subsystems.md
-docs/archive/                  — v1-only documents (dap.md, extract-deps.md, coverage.{md,yaml}, etc.)
+docs/                          — expectations.md, scope.md, limitations.md, cecil-migration.md
+docs/archive/                  — v1-only documents (dap.md, extract-deps.md, coverage.{md,yaml}, subsystems.md, etc.)
 tools/                         — DownloadArtifacts (used by AlRunner.csproj), RuntimeApiEnumerator, telemetry-triage
 scripts/                       — al-inventory.py, coverage-gen.js
 ```

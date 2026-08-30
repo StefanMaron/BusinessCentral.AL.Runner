@@ -126,7 +126,6 @@ As of 2026-05-20, new runtime patches go through Cecil IL rewriting (`NclCecilRe
 
 ## Sister docs
 
-- `docs/subsystems.md` — BC subsystem boundary analysis
 - `docs/scope.md` — per-API in/out-of-scope decisions
 - `docs/limitations.md` — hard architectural limits
 - `docs/expectations.md` — expectation-manifest schema

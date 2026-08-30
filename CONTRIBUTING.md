@@ -6,7 +6,7 @@ Thanks for your interest in contributing. This guide covers what every pull requ
 
 ## Before you start
 
-Read `README.md` (architecture overview), [`docs/limitations.md`](docs/limitations.md) (hard architectural limits), [`docs/scope.md`](docs/scope.md) (per-API in/out-of-scope list), [`docs/subsystems.md`](docs/subsystems.md) (subsystem boundary map), and [`docs/expectations.md`](docs/expectations.md) (test-expectation schema). `CLAUDE.md` is the entry point for AI agents working in the repo; it points at the rules in `.claude/rules/` and the on-demand reference in `.claude/skills/`.
+Read `README.md` (architecture overview), [`docs/limitations.md`](docs/limitations.md) (hard architectural limits), [`docs/scope.md`](docs/scope.md) (per-API in/out-of-scope list), and [`docs/expectations.md`](docs/expectations.md) (test-expectation schema). `CLAUDE.md` is the entry point for AI agents working in the repo; it points at the rules in `.claude/rules/` and the on-demand reference in `.claude/skills/`.
 
 The goal is broad AL-language compatibility — any AL code that can run without the BC service tier should compile and execute here. A small number of hard architectural limits exist (parallel sessions, transaction isolation, service-tier rendering, real HTTP), documented in `docs/limitations.md` and `docs/scope.md`. Everything else is a gap to close. Silent workarounds are forbidden: a gap goes to a GitHub issue and (if necessary) a `tests/expectations/` entry, never a quiet patch (`.claude/rules/file-issues-for-gaps.md`, `.claude/rules/loud-failures.md`).
 
@@ -22,7 +22,7 @@ tests/expectations/      — JSON manifest: OOS-by-design, known gaps, disabled 
 tests/runner-extras/     — runner-specific positive tests (e.g. asserts that a
                            given surface throws RunnerOutOfScopeException)
 docs/                    — expectations.md, scope.md, limitations.md,
-                           cecil-migration.md, subsystems.md (+ docs/archive/ for v1)
+                           cecil-migration.md (+ docs/archive/ for v1)
 tools/                   — DownloadArtifacts (auto-used by AlRunner.csproj),
                            RuntimeApiEnumerator, telemetry-triage
 scripts/                 — al-inventory.py, coverage-gen.js (auxiliary)

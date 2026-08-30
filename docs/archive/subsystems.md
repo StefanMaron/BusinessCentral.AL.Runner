@@ -1,5 +1,26 @@
 # BC service-tier subsystem boundary analysis
 
+> **ARCHIVED — 2026-08-30 (#2080).** Moved here from `docs/subsystems.md`, where
+> `--help`, `--guide`, `README.md` and `CONTRIBUTING.md` all advertised it as "the
+> subsystem map". It is not a map of the runner; it is a v1-era spike artifact
+> arguing one architectural decision, and that decision has since gone the other
+> way. Its headline recommendation — "stay with reactive JMP-hooks" — is the
+> opposite of what the runner does now: `JmpHook` is disabled by default and a new
+> `JmpHook` call site is a silent no-op (`docs/cecil-migration.md`,
+> `.claude/rules/precompiled-dll-respect.md`). Its companion spike documents were
+> archived at the v1→v2 cutover; this one was missed.
+>
+> **What is still true:** the decompiled shapes of BC's own types — `NavGlobal` as a
+> pure forwarder, `NavSession` as a god object with no interface boundary, the
+> `NCLMetadata` five-collaborator constructor, the `TreeHandler` parent-non-null
+> check. Those are facts about BC 27.5 and do not rot with our code. Read it for
+> that, not for what the runner does today.
+>
+> For current material: `README.md` (architecture), `docs/cecil-migration.md` (how
+> patches are applied), `docs/limitations.md` and `docs/scope.md` (the limits), and
+> the `al-runner-architecture` skill. There is deliberately no replacement map —
+> `AlRunner/` is ~180 files and ripgrep is exhaustive, instant, and never stale.
+
 > **STATUS UPDATE — 2026-05-07.** This document is preserved as historical analysis.
 > Several specifics are stale:
 >

@@ -5199,7 +5199,6 @@ static void PrintGuide(TextWriter w)
     w.WriteLine("  docs/scope.md                in-scope vs out-of-scope-by-design surfaces");
     w.WriteLine("  docs/server-mode.md          the --server JSON-RPC protocol");
     w.WriteLine("  docs/dap-mode.md             the --dap Debug Adapter Protocol server");
-    w.WriteLine("  docs/subsystems.md           subsystem map");
 }
 
 static void PrintHelp(TextWriter w)
@@ -5272,7 +5271,7 @@ static void PrintHelp(TextWriter w)
     w.WriteLine("  --auto-provision        Download the BC artifacts for the project's version if");
     w.WriteLine("                          they are missing, then continue the run. ON BY DEFAULT");
     w.WriteLine("                          since issue #2024 — this flag is now redundant with a");
-    w.WriteLine("                          plain run, kept for explicit scripts/back-compat. See");
+    w.WriteLine("                          plain run, kept for explicit scripts and back-compat. See");
     w.WriteLine("                          --no-auto-provision to turn it off (or the `provision`");
     w.WriteLine("                          subcommand to provision without running tests).");
     w.WriteLine("  --no-auto-provision     Disable automatic provisioning: a missing/incomplete BC");
@@ -5468,7 +5467,7 @@ static void PrintHelp(TextWriter w)
     w.WriteLine("  al-runner --output-json tests/al-language/tests/al-language");
     w.WriteLine();
     w.WriteLine("  # Dump the C# for a debugging session");
-    w.WriteLine("  al-runner --dump-csharp /tmp/al-csharp tests/runner-extras/oos-reports");
+    w.WriteLine("  al-runner --dump-csharp /tmp/al-csharp tests/runner-extras/query-join-aggregation-oos");
     w.WriteLine();
     w.WriteLine("  # Pre-compile an .app to a managed DLL");
     w.WriteLine("  al-runner --precompile MyExtension_1.0.0.0.app --out MyExtension.dll");
@@ -5490,7 +5489,6 @@ static void PrintHelp(TextWriter w)
     w.WriteLine("  docs/scope.md                runtime scope (in-scope vs OOS-by-design)");
     w.WriteLine("  docs/limitations.md          architectural limits");
     w.WriteLine("  docs/cecil-migration.md      Cecil rewrite strategy");
-    w.WriteLine("  docs/subsystems.md           subsystem map");
 }
 
 // Issue #2085: `provision --help` used to fall through to the generic arg-parser's
