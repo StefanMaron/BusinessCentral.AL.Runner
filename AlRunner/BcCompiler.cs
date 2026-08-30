@@ -83,7 +83,17 @@ public sealed record BcEmitOutput(
     // excluded (a wrong guess still shows up here — see TddGeneration.cs's header for why
     // that's fine: the object's own exclusion is what catches a bad guess, not this list).
     // Null (not merely empty) when not in --tdd mode — same discipline as TddExcludedDetails.
-    IReadOnlyList<TddGeneratedMember>? TddGeneratedMembers = null);
+    IReadOnlyList<TddGeneratedMember>? TddGeneratedMembers = null,
+    // Issue #2207: the AL diagnostics that identified EACH object ExcludedObjects names —
+    // e.g. AL0185 "Codeunit 'X' is missing" — always populated (unlike TddExcludedDetails,
+    // this is NOT gated on --tdd mode). Deliberately separate from `Diagnostics` above,
+    // which reflects only the FINAL (possibly-recovered) compile round and backs the
+    // EMIT-ZERO / AL-DIAGNOSTIC-FAIL guards in Program.cs — folding these into `Diagnostics`
+    // instead made those guards misfire for a successful --tdd exclusion recovery (sources
+    // non-empty by design there, Diagnostics now non-empty too) and wipe the recovered
+    // sources it depends on. This is what the EMIT-EXCLUDED / TDD-EXCLUDED messages'
+    // "re-run with --verbose" promise actually surfaces.
+    IReadOnlyList<string>? ExcludedObjectDiagnostics = null);
 
 public sealed partial class BcCompiler
 {
@@ -1706,6 +1716,17 @@ public sealed partial class BcCompiler
         // BcEmitOutput.TddExcludedDetails is null on the default path exactly as before
         // this issue — no behavioural difference for a non-tdd caller.
         var tddDetails = _tddMode ? new List<TddExcludedObjectDetail>() : null;
+        // Issue #2207: the SAME per-object diagnostics tddDetails captures above, but
+        // ALWAYS collected (not gated on --tdd) and folded into the returned `alDiags`
+        // below. Before this, the non-tdd path's EMIT-EXCLUDED message told the user to
+        // "re-run with --verbose for the AL diagnostics that identified them" — but
+        // nothing ever captured those diagnostics outside --tdd mode: by the time the
+        // retry against the surviving objects succeeds, `compilation`/`emitResult` have
+        // been reassigned to the smaller retry's (clean) result, so the diagnostics that
+        // explained the ORIGINAL failure are gone with no `??` fallback that could
+        // recover them. Re-running with --verbose printed the same summary line again —
+        // this list, and `originalDeclErrors` below, are what make the promise true.
+        var excludedObjectDiagnosticsList = new List<string>();
         {
             const int maxRounds = 10;
             // Indices are always relative to the ORIGINAL alFiles/trees arrays (captured once,
@@ -1713,6 +1734,16 @@ public sealed partial class BcCompiler
             // indexing with original-file indices would silently misalign the two and blow up
             // with an IndexOutOfRangeException on the second round onward.
             var originalTrees = trees;
+            // The declaration diagnostics of the FULL, pre-exclusion compilation — e.g. AL0185
+            // "Codeunit 'X' is missing" for a reference that cannot bind. This is the actual
+            // AL-level cause a developer can act on; the crash-branch fallback below (BC's raw
+            // AggregateException text, e.g. "Unexpected value 'None' of type 'NavTypeKind'")
+            // names an internal emitter detail, not the AL problem. Computed once, up front,
+            // because later rounds reassign `compilation` to the smaller retry compilation,
+            // which no longer contains the excluded file's tree at all.
+            var originalDeclErrors = compilation.GetDeclarationDiagnostics()
+                .Where(d => d.Severity == NavDiag.DiagnosticSeverity.Error && d.Location.IsInSource)
+                .ToList();
             var keepIdx = Enumerable.Range(0, alFiles.Count).ToList();
             var allExcluded = excludedObjects;
             int round = 0;
@@ -1747,13 +1778,21 @@ public sealed partial class BcCompiler
                         {
                             var label = $"{hit.Type} {hit.Namespace}.\"{hit.Name}\"";
                             roundExcluded.Add(label);
-                            // No structured Location for an emitter-crash exclusion — only the
-                            // exception's own message names it. Still useful for a --tdd
-                            // synthetic failure: it says WHICH object and WHY, even without a
-                            // path@line:col anchor.
-                            tddDetails?.Add(new TddExcludedObjectDetail(
-                                alFiles[i], label,
-                                new[] { $"emit-crash: {label} — {caught.Message.Split('\n', 2)[0]}" }));
+                            // Prefer the original compilation's OWN declaration diagnostics for
+                            // this file (e.g. AL0185 "Codeunit 'X' is missing") — a real,
+                            // path@line:col-anchored AL error a developer can act on. Only fall
+                            // back to the emitter-crash exception text (an internal detail, e.g.
+                            // "Unexpected value 'None' of type 'NavTypeKind'") when the crash
+                            // left no corresponding declaration diagnostic behind at all.
+                            var declDiagsForFile = originalDeclErrors
+                                .Where(d => d.Location.SourceTree == originalTrees[i])
+                                .Select(d => $"{d.Location}: error {d.Id}: {d.GetMessage().Split('\n', 2)[0]}")
+                                .ToList();
+                            var diagsForThisObject = declDiagsForFile.Count > 0
+                                ? declDiagsForFile
+                                : new List<string> { $"emit-crash: {label} — {caught.Message.Split('\n', 2)[0]}" };
+                            excludedObjectDiagnosticsList.AddRange(diagsForThisObject);
+                            tddDetails?.Add(new TddExcludedObjectDetail(alFiles[i], label, diagsForThisObject));
                         }
                         else
                             nextKeepIdx.Add(i);
@@ -1781,16 +1820,14 @@ public sealed partial class BcCompiler
                         {
                             var label = Path.GetFileNameWithoutExtension(alFiles[i]);
                             roundExcluded.Add(label);
-                            if (tddDetails != null)
-                            {
-                                var objDiags = emitResult.Diagnostics
-                                    .Where(d => d.Severity == NavDiag.DiagnosticSeverity.Error
-                                        && d.Location.IsInSource
-                                        && d.Location.SourceTree == originalTrees[i])
-                                    .Select(d => $"{d.Location}: error {d.Id}: {d.GetMessage().Split('\n', 2)[0]}")
-                                    .ToList();
-                                tddDetails.Add(new TddExcludedObjectDetail(alFiles[i], label, objDiags));
-                            }
+                            var objDiags = emitResult.Diagnostics
+                                .Where(d => d.Severity == NavDiag.DiagnosticSeverity.Error
+                                    && d.Location.IsInSource
+                                    && d.Location.SourceTree == originalTrees[i])
+                                .Select(d => $"{d.Location}: error {d.Id}: {d.GetMessage().Split('\n', 2)[0]}")
+                                .ToList();
+                            excludedObjectDiagnosticsList.AddRange(objDiags);
+                            tddDetails?.Add(new TddExcludedObjectDetail(alFiles[i], label, objDiags));
                         }
                         else
                             nextKeepIdx.Add(i);
@@ -1961,6 +1998,19 @@ public sealed partial class BcCompiler
                 // No per-object breakdown in the message — surface the raw emit failure.
                 alDiags.Add($"emit-crash: {caught.GetType().Name}: {caught.Message.Split('\n', 2)[0]}");
         }
+        // Issue #2207: deliberately NOT folded into `alDiags` above. `alDiags` feeds the
+        // pre-existing EMIT-ZERO / AL-DIAGNOSTIC-FAIL guards in Program.cs, both gated on
+        // "sources.Count == 0" / "sources.Count > 0" combined with "alDiags.Count > 0" —
+        // guards that must keep meaning exactly what they meant before this issue: whether
+        // the FINAL (possibly-recovered) compile round itself still carries an unexplained
+        // or a ContinueBuildOnError-surviving diagnostic. Mixing the exclusion diagnostics
+        // in unconditionally made AL-DIAGNOSTIC-FAIL fire for every successfully-recovered
+        // --tdd exclusion (sources non-empty by design there, and now alDiags non-empty too)
+        // and wipe the recovered sources it depends on — a real regression caught by
+        // TddModeTests turning exit 1 (red test) into exit 3 (compile failure). Returned as
+        // its own field instead, so a caller that wants "what explained the exclusion" reads
+        // this, and the pre-existing guards keep reading `Diagnostics` exactly as before.
+        var excludedObjectDiagnostics = excludedObjectDiagnosticsList.Distinct().ToList();
 
         // ── Bundle query-symbol registration ────────────────────────────────────
         // Source-compiled queries (no prebuilt .app in the bundle root) have no
@@ -2004,7 +2054,7 @@ public sealed partial class BcCompiler
 
         var emitOutput = new BcEmitOutput(
             outputter.Captured, alDiags, excludedObjects, tddDetails,
-            _tddMode ? tddGeneratedMembers : null);
+            _tddMode ? tddGeneratedMembers : null, excludedObjectDiagnostics);
 
         // #1902: only a CLEAN success (nothing excluded, every source captured) is trustworthy
         // as a RAD baseline — a module that only compiled after dropping broken objects must

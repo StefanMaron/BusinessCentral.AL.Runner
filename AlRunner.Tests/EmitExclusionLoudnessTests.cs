@@ -36,10 +36,11 @@ public sealed class EmitExclusionLoudnessTests
     private static readonly string FixturePath = Path.Combine(
         RepoRoot, "AlRunner.Tests", "Fixtures", "EmitExclusion");
 
-    private static (string Output, int Exit) RunRunner()
+    private static (string Output, int Exit) RunRunner(bool verbose = false)
     {
         var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
         args.Append(TestBuildConfig.BcVersionArg);
+        if (verbose) args.Append(" --verbose");
         args.Append($" \"{FixturePath}\"");
         var psi = new ProcessStartInfo
         {
@@ -86,6 +87,52 @@ public sealed class EmitExclusionLoudnessTests
         // And the report must say that tests went missing, since that is the consequence
         // a reader has to understand.
         Assert.Contains("MISSING", output, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Issue #2207: the EMIT-EXCLUDED message tells the user to "Re-run with --verbose for
+    /// the AL diagnostics that identified them." Passing --verbose must actually produce the
+    /// AL compiler diagnostic (AL0185, "Codeunit '...' is missing") that explains WHY
+    /// "Emit Excl Broken" could not bind — not just the same summary line again. Before the
+    /// fix, BcCompiler's emit-retry loop discarded the identifying diagnostics once the
+    /// retry against the surviving objects succeeded, so re-running with --verbose printed
+    /// nothing new — the exact defect this test proves fixed.
+    /// </summary>
+    [SkippableFact]
+    public void ExcludedObject_Verbose_PrintsTheIdentifyingAlDiagnostic()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        var (output, exit) = RunRunner(verbose: true);
+
+        Assert.True(exit != 0, $"exclusion must still fail the run under --verbose. exit={exit}\n{output}");
+        Assert.Contains("EMIT-EXCLUDED", output, StringComparison.Ordinal);
+
+        // The specific AL diagnostic that caused the exclusion — not just the object's name
+        // (already asserted by the non-verbose test above) and not just the crash's internal
+        // BC-emitter text ("Unexpected value 'None' of type 'NavTypeKind'"), which names an
+        // implementation detail, not the AL-level cause a developer can act on.
+        Assert.Contains("AL0185", output, StringComparison.Ordinal);
+        Assert.Contains("This Codeunit Does Not Exist At All", output, StringComparison.Ordinal);
+        Assert.Contains("BrokenObject.Codeunit.al", output, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Negative direction for the test above: at DEFAULT verbosity the diagnostic must stay
+    /// out of the output (the summary line alone is the promise; printing it unconditionally
+    /// would defeat the point of gating it behind --verbose at all), while the object name
+    /// and "MISSING" framing from the non-verbose test still show up.
+    /// </summary>
+    [SkippableFact]
+    public void ExcludedObject_DefaultVerbosity_OmitsTheAlDiagnostic()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        var (output, exit) = RunRunner(verbose: false);
+
+        Assert.True(exit != 0, $"exit={exit}\n{output}");
+        Assert.Contains("EMIT-EXCLUDED", output, StringComparison.Ordinal);
+        Assert.DoesNotContain("AL0185", output, StringComparison.Ordinal);
     }
 
     /// <summary>

@@ -2506,6 +2506,19 @@ foreach (var bundle in bundles)
                                 $"object(s) could not be compiled: [{names}]. {synthetic.Count} [Test] " +
                                 $"procedure(s) they declare report as FAILED instead of vanishing from the run. " +
                                 $"Re-run with --verbose for the AL diagnostics that identified them.");
+                            // #2207: same fix as the non-tdd branch below — actually print
+                            // them under --verbose. Each synthetic FAILED test already carries
+                            // its own object's diagnostic in its failure message, but that
+                            // requires reading the per-test result; this gives the same
+                            // information right at the summary line the message above points at.
+                            var tddExclDiags = emitOutput.ExcludedObjectDiagnostics ?? Array.Empty<string>();
+                            if (AlRunner.Log.Verbose && tddExclDiags.Count > 0)
+                            {
+                                Console.Error.WriteLine(
+                                    $"<bundled>: AL diagnostics that identified the excluded object(s):");
+                                foreach (var d in tddExclDiags)
+                                    Console.Error.WriteLine($"  {d}");
+                            }
                             bundleTests.AddRange(synthetic);
                             tddExcludedCount = emitOutput.ExcludedObjects.Count;
                             // sources stays as BcCompiler returned it (the recovered set) — do
@@ -2520,6 +2533,24 @@ foreach (var bundle in bundles)
                                 $"could not be compiled and were dropped from the module, so any tests they declare " +
                                 $"are MISSING from this run: [{names}]. Re-run with --verbose for the AL diagnostics " +
                                 $"that identified them.");
+                            // #2207: the message above promises the AL diagnostics under
+                            // --verbose — actually print them, gated on Log.Verbose directly
+                            // (not Console.Error.WriteLine's usual [Component] path) so a
+                            // developer following the instruction gets something, not another
+                            // copy of the same summary line. Deliberately reads
+                            // emitOutput.ExcludedObjectDiagnostics, NOT `alDiagnostics` — the
+                            // latter reflects only the final (recovered) compile round and
+                            // backs the EMIT-ZERO / AL-DIAGNOSTIC-FAIL guards below; it is
+                            // formatted alc-style with no leading `[Tag]`, so it is never eaten
+                            // by Log's filter either way.
+                            var exclDiags = emitOutput.ExcludedObjectDiagnostics ?? Array.Empty<string>();
+                            if (AlRunner.Log.Verbose && exclDiags.Count > 0)
+                            {
+                                Console.Error.WriteLine(
+                                    $"<bundled>: AL diagnostics that identified the excluded object(s):");
+                                foreach (var d in exclDiags)
+                                    Console.Error.WriteLine($"  {d}");
+                            }
                             bundleErrors.Add(
                                 $"<bundled>: EMIT-EXCLUDED for {moduleName}: {emitOutput.ExcludedObjects.Count} " +
                                 $"object(s) dropped from the module — tests they declare are missing: [{names}].");
@@ -3626,6 +3657,7 @@ return strictExitCode ? computedExitCode : 0;
                 IReadOnlyList<EmittedSource> sources;
                 IReadOnlyList<string> alDiagnostics;
                 IReadOnlyList<string> excludedObjects;
+                IReadOnlyList<string> excludedObjectDiagnostics;
                 var et = System.Diagnostics.Stopwatch.StartNew();
                 try
                 {
@@ -3633,6 +3665,7 @@ return strictExitCode ? computedExitCode : 0;
                     sources = emitOutput.Sources;
                     alDiagnostics = emitOutput.Diagnostics;
                     excludedObjects = emitOutput.ExcludedObjects;
+                    excludedObjectDiagnostics = emitOutput.ExcludedObjectDiagnostics ?? Array.Empty<string>();
                 }
                 catch (Exception ex)
                 {
@@ -3653,13 +3686,17 @@ return strictExitCode ? computedExitCode : 0;
                 if (excludedObjects.Count > 0)
                 {
                     var names = string.Join(", ", excludedObjects);
+                    // #2207: read the dedicated ExcludedObjectDiagnostics field, not
+                    // `alDiagnostics` — the latter reflects only the final (recovered)
+                    // compile round, which by construction has none of its own left once
+                    // BcCompiler's retry against the surviving objects has succeeded.
                     compileErrors.Add(
                         $"EMIT-EXCLUDED: {excludedObjects.Count} object(s) dropped from the module — " +
                         $"tests they declare are missing: [{names}]." +
-                        (alDiagnostics.Count > 0
+                        (excludedObjectDiagnostics.Count > 0
                             ? " The AL diagnostics that identified them follow."
                             : " Re-run with --verbose for the AL diagnostics that identified them."));
-                    foreach (var d in alDiagnostics) compileErrors.Add(d);
+                    foreach (var d in excludedObjectDiagnostics) compileErrors.Add(d);
                     return new ServerRunResult(Array.Empty<TestResult>(), 3, false,
                         new List<CompilationErrorGroup> { new(moduleName, compileErrors) }, fileHashes);
                 }
