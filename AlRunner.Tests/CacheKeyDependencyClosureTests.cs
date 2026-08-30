@@ -64,10 +64,13 @@ public sealed class CacheKeyDependencyClosureTests : IDisposable
 
     /// <summary>Spawns the runner with the given extra args against the fixture and returns its combined output.</summary>
     private static string RunRunner(string packageCacheDir, string alCacheDir, string extraArgs)
+        => RunRunner(FixturePath, packageCacheDir, alCacheDir, extraArgs);
+
+    private static string RunRunner(string bundlePath, string packageCacheDir, string alCacheDir, string extraArgs)
     {
         var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
         args.Append(TestBuildConfig.BcVersionArg);
-        args.Append($" \"{FixturePath}\"");
+        args.Append($" \"{bundlePath}\"");
         args.Append($" --package-cache \"{packageCacheDir}\"");
         args.Append($" --cache \"{alCacheDir}\"");
         args.Append(extraArgs);
@@ -95,8 +98,11 @@ public sealed class CacheKeyDependencyClosureTests : IDisposable
     /// the key string, so there is nothing lost by not paying for the compile.
     /// </summary>
     private static string RunAndReadCacheKeyOnly(string packageCacheDir, string alCacheDir)
+        => RunAndReadCacheKeyOnly(FixturePath, packageCacheDir, alCacheDir);
+
+    private static string RunAndReadCacheKeyOnly(string bundlePath, string packageCacheDir, string alCacheDir)
     {
-        var output = RunRunner(packageCacheDir, alCacheDir, " --print-cache-key");
+        var output = RunRunner(bundlePath, packageCacheDir, alCacheDir, " --print-cache-key");
         var m = Regex.Match(output, @"\[cache\]\s+KEY\s+key=([0-9a-f]{64})");
         Assert.True(m.Success, $"could not read a cache key from --print-cache-key output:\n{output}");
         return m.Groups[1].Value;
@@ -119,47 +125,130 @@ public sealed class CacheKeyDependencyClosureTests : IDisposable
     /// Two different dependency closures over byte-identical AL sources must produce two
     /// different keys. Reverting GetOrderedDepIds to resolve without the bundle's
     /// .alpackages makes both keys collapse to the same value and fails this.
+    ///
+    /// The closure is varied with a SYNTHETIC third-party dependency at two different
+    /// versions, and the bundle declares no `application`/`platform` at all, so nothing the
+    /// runner can provision is part of the answer.
+    ///
+    /// It used to vary the closure by copying the real Microsoft platform apps and dropping
+    /// System.app from one side. That has now failed twice for reasons unrelated to the
+    /// cache key, and both times the fix was to pick a different app to drop:
+    /// <list type="number">
+    /// <item>provisioning started fetching Application Test Library, so "the ordinally-first
+    /// .app" became one this fixture never resolves;</item>
+    /// <item>issue #2205 made the platform set a real, detected need, so the runner-owned
+    /// `&lt;artifacts&gt;/&lt;version&gt;/platform-apps` directory folds into the search set
+    /// (and, on a cold machine, gets downloaded) — which supplies System.app right back to
+    /// the "reduced" side.</item>
+    /// </list>
+    /// Both runs then keyed on the same closure and the test failed while the cache key was
+    /// working correctly. Worse, it PASSED on a developer machine for an accidental reason:
+    /// the key stamps each winning `.app`'s mtime+size, and the freshly-copied file and the
+    /// warm provisioned one merely had different timestamps. A test whose verdict depends on
+    /// the machine's provisioning history is not measuring the cache key. This variant
+    /// cannot be restored by any provisioning path, because no artifact Microsoft ships is
+    /// published by "Contoso ISV".
     /// </summary>
     [SkippableFact]
     public void DifferentDependencyClosure_ProducesDifferentCacheKey()
     {
         TestArtifacts.SkipIfMissing();
-        var platformApps = TestArtifacts.PlatformAppsDir();
-        TestArtifacts.SkipIfDirectoryMissing(platformApps, "R2R platform apps");
 
-        var full = Path.Combine(_scratch, "full");
-        var reduced = Path.Combine(_scratch, "reduced");
-        Directory.CreateDirectory(full);
-        Directory.CreateDirectory(reduced);
+        var bundle = WriteIsvDependentFixture(Path.Combine(_scratch, "isv-bundle"));
+        var v1 = Path.Combine(_scratch, "isv-v1");
+        var v2 = Path.Combine(_scratch, "isv-v2");
+        Directory.CreateDirectory(v1);
+        Directory.CreateDirectory(v2);
+        WriteSyntheticApp(v1, IsvDepId, "Contoso Dep", "Contoso ISV", "1.0.0.0");
+        WriteSyntheticApp(v2, IsvDepId, "Contoso Dep", "Contoso ISV", "1.4.0.0");
 
-        var apps = Directory.GetFiles(platformApps, "*.app");
-        TestArtifacts.SkipIf(apps.Length < 2,
-            $"varying the dependency closure needs >= 2 platform apps; '{platformApps}' holds {apps.Length}.");
+        var keyV1 = RunAndReadCacheKeyOnly(bundle, v1, Path.Combine(_scratch, "cache-isv-v1"));
+        var keyV2 = RunAndReadCacheKeyOnly(bundle, v2, Path.Combine(_scratch, "cache-isv-v2"));
 
-        foreach (var a in apps) File.Copy(a, Path.Combine(full, Path.GetFileName(a)));
+        Assert.NotEqual(keyV1, keyV2);
+    }
 
-        // Same closure minus exactly one package — and it has to be a package the bundle
-        // actually RESOLVES, or the two closures come out identical and this asserts nothing.
-        //
-        // Dropping the ordinally-first .app used to satisfy that by accident: the directory
-        // held only the platform apps, so "first" was Microsoft_Application_*. Once
-        // provisioning also fetched Application Test Library, "first" became a package this
-        // fixture never references — both keys matched and the test failed while the cache
-        // key was working correctly. Pick the platform root explicitly instead: every AL app
-        // resolves `System` (the manifest's `platform` root), so removing it is guaranteed to
-        // be a different compile input regardless of what else provisioning drops in here.
-        var platformRoot = apps.FirstOrDefault(
-            a => Path.GetFileName(a).Equals("System.app", StringComparison.OrdinalIgnoreCase));
-        Assert.True(platformRoot != null,
-            $"platform-apps must contain System.app to vary the closure; found: " +
-            string.Join(", ", apps.Select(Path.GetFileName)));
-        foreach (var a in apps.Where(a => a != platformRoot))
-            File.Copy(a, Path.Combine(reduced, Path.GetFileName(a)));
+    /// <summary>
+    /// The companion to the above at the same isolation: the SAME synthetic closure must key
+    /// identically across runs. Without this, "the key changed" above would be satisfied by a
+    /// key that simply varies, which would destroy the cache rather than track the closure.
+    /// </summary>
+    [SkippableFact]
+    public void SameIsvDependencyClosure_ProducesStableCacheKey()
+    {
+        TestArtifacts.SkipIfMissing();
 
-        var keyFull = RunAndReadCacheKeyOnly(full, Path.Combine(_scratch, "cache-full"));
-        var keyReduced = RunAndReadCacheKeyOnly(reduced, Path.Combine(_scratch, "cache-reduced"));
+        var bundle = WriteIsvDependentFixture(Path.Combine(_scratch, "isv-bundle-stable"));
+        var dir = Path.Combine(_scratch, "isv-stable");
+        Directory.CreateDirectory(dir);
+        WriteSyntheticApp(dir, IsvDepId, "Contoso Dep", "Contoso ISV", "1.0.0.0");
 
-        Assert.NotEqual(keyFull, keyReduced);
+        var alCache = Path.Combine(_scratch, "cache-isv-stable");
+        var first = RunAndReadCacheKeyOnly(bundle, dir, alCache);
+        var second = RunAndReadCacheKeyOnly(bundle, dir, alCache);
+
+        Assert.Equal(first, second);
+    }
+
+    private const string IsvDepId = "b7e1c0de-1111-4222-8333-444455556666";
+
+    /// <summary>A one-codeunit bundle declaring exactly one third-party dependency and NO
+    /// `application`/`platform` — so its resolved closure is entirely under this test's
+    /// control and no provisioning decision touches it.</summary>
+    private static string WriteIsvDependentFixture(string dir)
+    {
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Combine(dir, "app.json"), $$"""
+        {
+          "id": "3f9a1c22-5b7d-4e10-9c33-8a0e1d2b4c56",
+          "name": "CacheKey ISV Dep Fixture",
+          "publisher": "AL Runner",
+          "version": "1.0.0.0",
+          "dependencies": [
+            { "id": "{{IsvDepId}}", "name": "Contoso Dep", "publisher": "Contoso ISV", "version": "1.0.0.0" }
+          ],
+          "idRanges": [ { "from": 60700, "to": 60709 } ],
+          "runtime": "14.0"
+        }
+        """);
+        File.WriteAllText(Path.Combine(dir, "CacheKeyIsv.Codeunit.al"), """
+        codeunit 60700 "CacheKey Isv Probe"
+        {
+            procedure Probe(): Integer
+            begin
+                exit(1);
+            end;
+        }
+        """);
+        return dir;
+    }
+
+    /// <summary>Writes a minimal NAVX `.app` — enough for AppLoader.ReadManifest and
+    /// DependencyResolver to see the package and its version.</summary>
+    private static void WriteSyntheticApp(
+        string dir, string appId, string name, string publisher, string version)
+    {
+        var xml = $"""
+            <?xml version="1.0" encoding="utf-8"?>
+            <Package xmlns="http://schemas.microsoft.com/navx/2015/manifest">
+              <App Id="{appId}" Name="{name}" Publisher="{publisher}" Version="{version}"/>
+              <Dependencies />
+            </Package>
+            """;
+        using var ms = new MemoryStream();
+        using (var zip = new System.IO.Compression.ZipArchive(
+                   ms, System.IO.Compression.ZipArchiveMode.Create, leaveOpen: true))
+        {
+            var entry = zip.CreateEntry("NavxManifest.xml");
+            using var es = entry.Open();
+            es.Write(Encoding.UTF8.GetBytes(xml));
+        }
+        var zipBytes = ms.ToArray();
+        var result = new byte[8 + zipBytes.Length];
+        result[0] = (byte)'N'; result[1] = (byte)'A'; result[2] = (byte)'V'; result[3] = (byte)'X';
+        BitConverter.TryWriteBytes(result.AsSpan(4, 4), (uint)8);
+        zipBytes.CopyTo(result, 8);
+        File.WriteAllBytes(Path.Combine(dir, $"{publisher}_{name}_{version}.app"), result);
     }
 
     /// <summary>
