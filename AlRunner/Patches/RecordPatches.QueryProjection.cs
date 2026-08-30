@@ -114,10 +114,10 @@ public static partial class RecordPatches
         object self, object request, Func<bool>? onlyCurrentKeyNeededForNextRow)
     {
         EnsureQueryProjectionReflection(self);
-        var execRequest = TranslateQueryFilters(request);
+        var execRequest = TranslateQueryFilters(request, out var havingFilters);
         var raw = (IEnumerable<ReadOnlyRecordBuffer>)_mTtdpFindImpl!.Invoke(self, new[] { execRequest })!;
         raw = ApplyFirstOnly(request, raw);
-        return ProjectIfQuery(request, raw);
+        return ProjectIfQuery(request, raw, havingFilters);
     }
 
     /// <summary>
@@ -127,10 +127,10 @@ public static partial class RecordPatches
         object self, object request, Func<bool>? onlyCurrentKeyNeededForNextRow)
     {
         EnsureQueryProjectionReflection(self);
-        var execRequest = TranslateQueryFilters(request);
+        var execRequest = TranslateQueryFilters(request, out var havingFilters);
         var raw = (IEnumerable<ReadOnlyRecordBuffer>)_mTtdpFindByPositionImpl!.Invoke(self, new[] { execRequest })!;
         raw = ApplyFirstOnly(request, raw);
-        return ProjectIfQuery(request, raw);
+        return ProjectIfQuery(request, raw, havingFilters);
     }
 
     private static MethodInfo? _mGetDataAccessForTable_Orig;
@@ -381,9 +381,19 @@ public static partial class RecordPatches
     /// filters, returns a clone of the request with those filters re-keyed/re-targeted to
     /// the source table fields so the temp provider can evaluate them. Otherwise returns
     /// the request unchanged.
+    ///
+    /// A runtime SetRange/SetFilter on an AGGREGATED column (Method = Sum/Count/Average/
+    /// Min/Max — #2137/#2146) is a HAVING-clause filter: it must be evaluated against the
+    /// per-GROUP aggregated result, not the raw row, so it is EXCLUDED from the pushed-down
+    /// (WHERE-style) request here — retargeting it to the source table field the way an
+    /// ordinary column's filter is retargeted below would silently filter raw rows by the
+    /// unaggregated value instead, a different silently-wrong answer than #2137 but the same
+    /// class of bug. Such filters are instead returned via <paramref name="havingFilters"/>
+    /// so the caller can apply them AFTER aggregation (see ApplyHavingFilters).
     /// </summary>
-    private static object TranslateQueryFilters(object request)
+    private static object TranslateQueryFilters(object request, out List<(object Column, object Expr)> havingFilters)
     {
+        havingFilters = new List<(object, object)>();
         var metaAppObj = _pReqMetaAppObj!.GetValue(request);
         if (metaAppObj == null || _tNCLMetaQuery == null || !_tNCLMetaQuery.IsInstanceOfType(metaAppObj))
             return request; // ordinary table read — nothing to translate.
@@ -410,19 +420,17 @@ public static partial class RecordPatches
             var expr = item.GetType().GetProperty("Item2")!.GetValue(item);
             if (key != null && _tNCLMetaQueryColumn != null && _tNCLMetaQueryColumn.IsInstanceOfType(key))
             {
-                // #2137/#2146: a runtime SetRange/SetFilter on an AGGREGATED column (Method =
-                // Sum/Count/Average/Min/Max) is a HAVING-clause filter — evaluated against the
-                // per-group aggregated RESULT, not the raw row. Retargeting it to the source
-                // table field the way an ordinary column's filter is retargeted below would
-                // silently filter raw rows by the unaggregated value instead — a different
-                // silently-wrong answer than #2137, but the same class of bug. Throw rather
-                // than guess; see #2146 for the follow-up to implement real HAVING semantics.
                 if (((NCLMetaQueryColumn)key).AggregationType != AggregationType.None)
-                    throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
-                        "NavQuery.SetRange/SetFilter on an aggregated (Method=Sum/Count/Average/Min/Max) column",
-                        "query-having-filter-not-supported — a runtime filter on an aggregated column is a " +
-                        "HAVING-clause filter (evaluated against the aggregated result, not the raw row), which " +
-                        "is not yet implemented; see docs/scope.md and issue #2146");
+                {
+                    // HAVING-clause filter — exclude from the WHERE-style push-down (pushing it
+                    // unchanged would make FindImplementation try to cast this NCLMetaQueryColumn
+                    // key to NCLMetaField and fail; retargeting it to the source field would
+                    // filter raw pre-aggregation rows, which is the #2137-class bug). Hand it
+                    // back for post-aggregation evaluation instead.
+                    havingFilters.Add((key!, expr!));
+                    anyTranslated = true;
+                    continue;
+                }
 
                 var srcField = key.GetType().GetProperty("SourceTableField", BindingFlags.Public | BindingFlags.Instance)!.GetValue(key);
                 if (srcField != null && expr != null)
@@ -559,7 +567,8 @@ public static partial class RecordPatches
         return _firstOnlyOrdinal;
     }
 
-    private static IEnumerable<ReadOnlyRecordBuffer> ProjectIfQuery(object request, IEnumerable<ReadOnlyRecordBuffer> rows)
+    private static IEnumerable<ReadOnlyRecordBuffer> ProjectIfQuery(
+        object request, IEnumerable<ReadOnlyRecordBuffer> rows, List<(object Column, object Expr)> havingFilters)
     {
         var metaAppObj = _pReqMetaAppObj!.GetValue(request);
         if (metaAppObj == null || _tNCLMetaQuery == null || !_tNCLMetaQuery.IsInstanceOfType(metaAppObj))
@@ -572,29 +581,26 @@ public static partial class RecordPatches
             .GetValue(metaAppObj);
         if (queryDef != null && IsMultiDataItemQuery(queryDef))
         {
-            // #2137/#2146: a JOIN with an aggregated column needs GROUP BY over the
-            // joined+projected rows, which JoinExecutor does not implement (join+project
-            // only). Letting it through would silently return unaggregated joined rows —
-            // exactly the bug #2137 reports, just downstream of a join. Throw rather than
-            // guess; see #2146 for the follow-up to implement this for real.
-            var qd = (NCLMetaQueryDefinition)queryDef;
-            if (qd.Columns.Any(c => c.AggregationType != AggregationType.None))
-                throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
-                    "NavQuery (multi-dataitem join with Method=Sum/Count/Average/Min/Max)",
-                    "query-join-aggregation-not-supported — a multi-dataitem JOIN query has an " +
-                    "aggregated column; the in-memory join executor has no GROUP BY of its own, " +
-                    "so this would return unaggregated joined rows; see docs/scope.md and issue #2146");
-
             // The isolated executor returns boxed ReadOnlyRecordBuffers (non-generic
             // IEnumerable) so its assembly carries no Ncl type in its public surface; cast
             // back here, where QueryProjection.cs already (necessarily) references the type.
+            // #2137/#2146: when the query has any aggregated (Method = Sum/Count/Average/
+            // Min/Max) column, ExecuteJoinQuery performs the implicit GROUP BY over the
+            // joined rows itself (mirroring ProjectQueryRows' single-dataitem GROUP BY) —
+            // see AlRunner.QueryJoin.JoinExecutor.BuildGroupedRows.
             var joined = ExecuteJoinQuery(metaAppObj).Cast<ReadOnlyRecordBuffer>();
             // Apply the live NavQuery's runtime filters (SetRange/SetFilter) as a POST-projection
             // pass. The single-dataitem path pushes these into the temp provider's WHERE
             // (TranslateQueryFilters); the join executor reads each dataitem's table with only its
             // STATIC metadata filters, so runtime filters must be evaluated against the projected
-            // rows here. Without this the join returns UNFILTERED rows (a correctness bug). Done
-            // before Top so the cap applies to the filtered set, matching SQL TOP-after-WHERE.
+            // rows here. Without this the join returns UNFILTERED rows (a correctness bug). Because
+            // the join rows are already GROUPED/aggregated by the time they reach here, a filter on
+            // an aggregated column is naturally evaluated against the aggregated RESULT — i.e. this
+            // one pass already gives HAVING semantics for the join path, with no separate throw
+            // needed (unlike the single-dataitem path, which pushes non-aggregated filters into the
+            // WHERE clause BEFORE aggregation and so needs havingFilters kept out of that push-down
+            // — see TranslateQueryFilters/ApplyHavingFilters below). Done before Top so the cap
+            // applies to the filtered set, matching SQL TOP-after-WHERE/HAVING.
             joined = ApplyJoinRuntimeFilters(metaAppObj, queryDef, request, joined);
             var topJ = _pReqTopNumberOfRows!.GetValue(request);
             int topNJ = topJ == null ? 0 : Convert.ToInt32(topJ);
@@ -611,7 +617,45 @@ public static partial class RecordPatches
         var top = _pReqTopNumberOfRows!.GetValue(request);
         int topN = top == null ? 0 : Convert.ToInt32(top);
         var projected = ProjectQueryRows(metaAppObj, rows);
+        // #2146: HAVING-clause filters (runtime SetRange/SetFilter on an aggregated column)
+        // are evaluated here, against the already-aggregated per-group result — never against
+        // the raw pre-aggregation row. Applied AFTER grouping/aggregation, BEFORE Top, matching
+        // SQL's WHERE → GROUP BY → HAVING → TOP order.
+        projected = ApplyHavingFilters(metaAppObj, havingFilters, projected);
         return topN > 0 ? projected.Take(topN) : projected;
+    }
+
+    /// <summary>
+    /// Apply HAVING-clause filters (runtime SetRange/SetFilter on an aggregated column,
+    /// extracted by TranslateQueryFilters) against the already-projected/aggregated rows.
+    /// Each filter's FilterExpression is evaluated with BC's own
+    /// <c>FilterExpression.Evaluate(NavValue, ISortingRulesProvider)</c> against the NavValue
+    /// in the column's OWN result slot (NCLMetaQueryColumn.ColumnIndex) — i.e. the aggregated
+    /// value, not a raw row value. A row (group) failing any filter is dropped, matching SQL's
+    /// "HAVING drops groups that don't satisfy the condition".
+    /// </summary>
+    private static IEnumerable<ReadOnlyRecordBuffer> ApplyHavingFilters(
+        object nclMetaQuery, List<(object Column, object Expr)> havingFilters, IEnumerable<ReadOnlyRecordBuffer> rows)
+    {
+        if (havingFilters.Count == 0) return rows;
+        var session = TryGetCurrentSession(nclMetaQuery);
+        var conds = havingFilters
+            .Select(hf => (slot: ((NCLMetaQueryColumn)hf.Column).ColumnIndex, expr: hf.Expr))
+            .ToList();
+        return rows.Where(row =>
+        {
+            foreach (var (slot, expr) in conds)
+            {
+                if (slot < 0 || slot >= row.FieldCount)
+                    throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+                        "NavQuery.SetRange/SetFilter on an aggregated column",
+                        $"query-having-filter-on-nonprojected-column — filtered slot {slot} is outside the " +
+                        $"projected row (FieldCount {row.FieldCount}); cannot evaluate HAVING; see docs/scope.md");
+                if (!EvaluateFilterExpression(expr, row[slot], session))
+                    return false;
+            }
+            return true;
+        });
     }
 
     private static MethodInfo? _mFilterExprEvaluate;
@@ -868,62 +912,100 @@ public static partial class RecordPatches
     }
 
     /// <summary>
-    /// Compute one aggregated column's value over its group, using BC's own NavValue
-    /// factory/comparison so the result carries the COLUMN's declared type (which can differ
-    /// from the source field's — e.g. an Average over an Integer field is typically Decimal).
+    /// Compute one aggregated column's value over its group (single-dataitem path: a group is
+    /// a set of raw ReadOnlyRecordBuffer rows sharing the GROUP BY key).
+    /// </summary>
+    private static NavValue? ComputeAggregate(ColumnPlan c, IReadOnlyList<ReadOnlyRecordBuffer> groupRows)
+    {
+        IEnumerable<NavValue?> SourceValues()
+        {
+            foreach (var row in groupRows)
+            {
+                if (c.TableSlot < 0 || c.TableSlot >= row.FieldCount) continue;
+                yield return row[c.TableSlot];
+            }
+        }
+        return ComputeAggregateCore(c.Aggregation, c.Column, groupRows.Count, SourceValues());
+    }
+
+    /// <summary>
+    /// Compute one aggregated column's value given its aggregation method, its OWN
+    /// NCLMetaQueryColumn (for CreateNavValueFromObject / TypedDefaultForField, so the result
+    /// carries the column's declared type — which can differ from the source field's, e.g. an
+    /// Average over an Integer field is typically Decimal), the number of raw rows in the group
+    /// (Count's answer — independent of any particular column's value), and the column's own
+    /// SOURCE values across those rows (Sum/Average/Min/Max operate over these; a missing/null
+    /// value is skipped, same as a NULL column value is excluded from a SQL aggregate).
+    ///
+    /// Shared by the single-dataitem path (ComputeAggregate above, over ReadOnlyRecordBuffer
+    /// rows) and the isolated AlRunner.QueryJoin.JoinExecutor (over combo values gathered from
+    /// joined rows, via Join_ComputeAggregate in RecordPatches.QueryJoin.cs) — the join
+    /// executor cannot share IReadOnlyList&lt;ReadOnlyRecordBuffer&gt; across the assembly
+    /// isolation boundary (see RecordPatches.QueryJoin.cs's header comment), so it calls this
+    /// core with an already-extracted value list instead.
+    ///
     /// Sum/Average mirror RecordPatches.cs's TempTableDataProvider_CalcNumeric (Decimal18
     /// checked-arithmetic, no manual int/long coercion — the same FlowField aggregation
     /// pattern, just over query rows instead of a CalcFormula source table). Min/Max reuse
     /// FlowFieldPatches.NavValueCompare/TypedDefaultForField rather than re-deriving
     /// comparison/default semantics a second time.
     /// </summary>
-    private static NavValue? ComputeAggregate(ColumnPlan c, IReadOnlyList<ReadOnlyRecordBuffer> groupRows)
+    private static NavValue? ComputeAggregateCore(AggregationType aggregation, NCLMetaQueryColumn column, int rowCountInGroup, IEnumerable<NavValue?> sourceValues)
     {
-        switch (c.Aggregation)
+        switch (aggregation)
         {
             case AggregationType.Count:
-                return NavValue.CreateNavValueFromObject(c.Column, groupRows.Count);
+                return NavValue.CreateNavValueFromObject(column, rowCountInGroup);
 
             case AggregationType.Sum:
             case AggregationType.Average:
             {
                 Decimal18 sum = default;
                 int n = 0;
-                foreach (var row in groupRows)
+                foreach (var v in sourceValues)
                 {
-                    if (c.TableSlot < 0 || c.TableSlot >= row.FieldCount) continue;
-                    var v = row[c.TableSlot];
                     if (v == null) continue;
                     sum = checked(sum + v.ToDecimal());
                     n++;
                 }
-                return c.Aggregation == AggregationType.Average
-                    ? NavValue.CreateNavValueFromObject(c.Column, n > 0 ? sum / n : (Decimal18)0m)
-                    : NavValue.CreateNavValueFromObject(c.Column, sum);
+                return aggregation == AggregationType.Average
+                    ? NavValue.CreateNavValueFromObject(column, n > 0 ? sum / n : (Decimal18)0m)
+                    : NavValue.CreateNavValueFromObject(column, sum);
             }
 
             case AggregationType.Min:
             case AggregationType.Max:
             {
                 NavValue? best = null;
-                foreach (var row in groupRows)
+                foreach (var v in sourceValues)
                 {
-                    if (c.TableSlot < 0 || c.TableSlot >= row.FieldCount) continue;
-                    var v = row[c.TableSlot];
                     if (v == null) continue;
                     if (best == null
-                        || (c.Aggregation == AggregationType.Min && FlowFieldPatches.NavValueCompare(v, best) < 0)
-                        || (c.Aggregation == AggregationType.Max && FlowFieldPatches.NavValueCompare(v, best) > 0))
+                        || (aggregation == AggregationType.Min && FlowFieldPatches.NavValueCompare(v, best) < 0)
+                        || (aggregation == AggregationType.Max && FlowFieldPatches.NavValueCompare(v, best) > 0))
                         best = v;
                 }
                 // No row in the group (only reachable via the zero-row scalar-aggregate case)
                 // → the column's own typed default (0 / '' / 0D / …), never a bare literal.
-                return best ?? FlowFieldPatches.TypedDefaultForField(c.Column);
+                return best ?? FlowFieldPatches.TypedDefaultForField(column);
             }
 
             default:
                 return null; // AggregationType.None is handled by the caller, not here.
         }
+    }
+
+    /// <summary>
+    /// Adapter for AlRunner.QueryJoin.JoinContext.ComputeAggregate: the isolated JoinExecutor
+    /// gathers one raw NavValue (boxed, or null) per row in the group and calls this so the
+    /// aggregation math itself is not duplicated across the assembly boundary. See
+    /// ComputeAggregateCore for the shared logic.
+    /// </summary>
+    private static object? Join_ComputeAggregate(object columnObj, object?[] rawValues)
+    {
+        var column = (NCLMetaQueryColumn)columnObj;
+        var values = rawValues.Select(v => (NavValue?)v);
+        return ComputeAggregateCore(column.AggregationType, column, rawValues.Length, values);
     }
 
     private static Type? _tNavValue;

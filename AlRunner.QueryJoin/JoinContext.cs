@@ -41,6 +41,15 @@ public sealed class JoinContext
     /// </summary>
     public required Func<object /*field*/, object?> TypedDefaultForField;
 
+    /// <summary>
+    /// (NCLMetaQueryColumn as object, one raw NavValue-or-null per row in the group) →
+    /// the aggregated NavValue (boxed as object). Used when the query has an implicit
+    /// GROUP BY (issue #2146: a Method = Sum/Count/Average/Min/Max column) — al-runner
+    /// owns the actual aggregation math (shared with the single-dataitem GROUP BY path)
+    /// so it is not duplicated across this assembly-isolation boundary.
+    /// </summary>
+    public required Func<object /*column*/, object?[] /*rawValues*/, object?> ComputeAggregate;
+
     /// <summary>Diagnostic log sink (al-runner's QLog).</summary>
     public required Action<string> Log;
 

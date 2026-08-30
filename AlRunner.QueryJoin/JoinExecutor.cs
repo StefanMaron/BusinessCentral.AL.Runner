@@ -41,6 +41,7 @@ public static class JoinExecutor
     private static PropertyInfo? _pColSourceTableField;
     private static PropertyInfo? _pColColumnIndex;
     private static PropertyInfo? _pColColumnType;
+    private static PropertyInfo? _pColAggregationType;
     private static PropertyInfo? _pColParentDataItem;
     private static PropertyInfo? _pFieldColumnIndex;
     private static PropertyInfo? _pFieldFieldClass;
@@ -82,6 +83,10 @@ public static class JoinExecutor
         // ColumnIndex is left at its CLR default (0) — indistinguishable from a real slot-0
         // column by value alone. See BuildJoinProjectionPlan below.
         _pColColumnType = tCol.GetProperty("ColumnType", F);
+        // NCLMetaQueryColumn.AggregationType (Microsoft.Dynamics.Nav.Types.AggregationType:
+        // None/Sum/Count/Average/Min/Max) — issue #2146. Read by .ToString() rather than a
+        // typed enum since this assembly touches no Ncl type directly.
+        _pColAggregationType = tCol.GetProperty("AggregationType", F);
         _pColParentDataItem = tCol.GetProperty("ParentDataItem", F)!;
         _pFieldColumnIndex = tField.GetProperty("ColumnIndex", F)!;
         _pFieldFieldClass = tField.GetProperty("FieldClass", F);
@@ -204,26 +209,40 @@ public static class JoinExecutor
 
         // 3. Project each combo into the query result slots.
         var plan = BuildJoinProjectionPlan(ctx, queryDef);
-        var projected = new List<object?[]>(combos.Count);
-        foreach (var combo in combos)
+        bool hasAggregate = plan.Columns.Any(c => c.Aggregation != "None");
+        List<object?[]> projected;
+        if (!hasAggregate)
         {
-            var fields = new object?[plan.SlotCount];
-            foreach (var col in plan.Columns)
+            projected = new List<object?[]>(combos.Count);
+            foreach (var combo in combos)
             {
-                if (col.TableSlot < 0) continue; // unsupported column → default
-                if (!combo.TryGetValue(col.OwnerName, out var buf) || buf == null)
+                var fields = new object?[plan.SlotCount];
+                foreach (var col in plan.Columns)
                 {
-                    // LeftOuterJoin unmatched child → fill the slot with the child field's
-                    // TYPED default NavValue (BC's SQL NULL projects to the column's typed
-                    // default), not a null slot. A null slot NREs NavQuery.GetColumnValue.
-                    if (col.SourceField != null)
-                        fields[col.QuerySlot] = ctx.TypedDefaultForField(col.SourceField);
-                    continue;
+                    if (col.TableSlot < 0) continue; // unsupported column → default
+                    if (!combo.TryGetValue(col.OwnerName, out var buf) || buf == null)
+                    {
+                        // LeftOuterJoin unmatched child → fill the slot with the child field's
+                        // TYPED default NavValue (BC's SQL NULL projects to the column's typed
+                        // default), not a null slot. A null slot NREs NavQuery.GetColumnValue.
+                        if (col.SourceField != null)
+                            fields[col.QuerySlot] = ctx.TypedDefaultForField(col.SourceField);
+                        continue;
+                    }
+                    if (col.TableSlot < BufFieldCount(buf))
+                        fields[col.QuerySlot] = BufGet(buf, col.TableSlot);
                 }
-                if (col.TableSlot < BufFieldCount(buf))
-                    fields[col.QuerySlot] = BufGet(buf, col.TableSlot);
+                projected.Add(fields);
             }
-            projected.Add(fields);
+        }
+        else
+        {
+            // Issue #2146: at least one aggregated (Method = Sum/Count/Average/Min/Max) column
+            // across the join's dataitems → an implicit GROUP BY over every OTHER Normal column,
+            // computed over the JOINED rows — mirrors RecordPatches.QueryProjection.cs's
+            // single-dataitem GROUP BY (#2137), just fed by `combos` (this executor's own join
+            // output) instead of a plain table scan.
+            projected = BuildGroupedRows(ctx, plan, combos);
         }
 
         // 4. OrderBy over the projected result slots (top-level ordering).
@@ -334,6 +353,117 @@ public static class JoinExecutor
         return a.Equals(b);
     }
 
+    // ── GROUP BY over joined rows (issue #2146) ─────────────────────────────────────
+    //
+    // The implicit GROUP BY key: the group-key columns' resolved combo values, compared with
+    // the same NavValue equality NavValuesEqual/the join's own link-matching already trusts —
+    // not a re-derived one. Mirrors RecordPatches.QueryProjection.cs's single-dataitem GroupKey.
+    private readonly struct JoinGroupKey : IEquatable<JoinGroupKey>
+    {
+        private readonly object?[] _values;
+        public JoinGroupKey(object?[] values) => _values = values;
+
+        public bool Equals(JoinGroupKey other)
+        {
+            if (_values.Length != other._values.Length) return false;
+            for (int i = 0; i < _values.Length; i++)
+                if (!NavValuesEqual(_values[i], other._values[i])) return false;
+            return true;
+        }
+
+        public override bool Equals(object? obj) => obj is JoinGroupKey k && Equals(k);
+
+        public override int GetHashCode()
+        {
+            var hash = new HashCode();
+            foreach (var v in _values) hash.Add(v?.GetHashCode() ?? 0);
+            return hash.ToHashCode();
+        }
+    }
+
+    /// <summary>
+    /// A non-aggregated column's value for one combo (row) — the same value it would get in
+    /// the ungrouped per-combo projection above: the owning dataitem's buffer value at the
+    /// column's TableSlot, or the child field's typed default for an unmatched LeftOuterJoin
+    /// combo, or null if unsupported (ConstValue/no source field).
+    /// </summary>
+    private static object? ResolveComboValue(JoinContext ctx, JoinColumn col, Dictionary<string, object?> combo)
+    {
+        if (!combo.TryGetValue(col.OwnerName, out var buf) || buf == null)
+            return col.SourceField != null ? ctx.TypedDefaultForField(col.SourceField) : null;
+        if (col.TableSlot < 0 || col.TableSlot >= BufFieldCount(buf)) return null;
+        return BufGet(buf, col.TableSlot);
+    }
+
+    /// <summary>
+    /// Group <paramref name="combos"/> (the joined, pre-projection rows) by their GROUP BY
+    /// key — every non-aggregated column in <paramref name="plan"/> — and build one output
+    /// row per group. A query with NO non-aggregated column at all is BC's scalar-aggregate
+    /// case (SQL's "GROUP BY ()"): exactly one output row always, even over zero joined combos.
+    /// </summary>
+    private static List<object?[]> BuildGroupedRows(JoinContext ctx, JoinProjectionPlan plan, List<Dictionary<string, object?>> combos)
+    {
+        var groupKeyCols = plan.Columns.Where(c => c.Aggregation == "None").ToList();
+        if (groupKeyCols.Count == 0)
+            return new List<object?[]> { BuildAggregateRow(ctx, plan, combos) };
+
+        var groups = new Dictionary<JoinGroupKey, List<Dictionary<string, object?>>>();
+        var order = new List<JoinGroupKey>();
+        foreach (var combo in combos)
+        {
+            var keyValues = new object?[groupKeyCols.Count];
+            for (int i = 0; i < groupKeyCols.Count; i++)
+                keyValues[i] = ResolveComboValue(ctx, groupKeyCols[i], combo);
+            var key = new JoinGroupKey(keyValues);
+            if (!groups.TryGetValue(key, out var list))
+            {
+                list = new List<Dictionary<string, object?>>();
+                groups[key] = list;
+                order.Add(key);
+            }
+            list.Add(combo);
+        }
+
+        var result = new List<object?[]>(order.Count);
+        foreach (var key in order)
+            result.Add(BuildAggregateRow(ctx, plan, groups[key]));
+        return result;
+    }
+
+    /// <summary>
+    /// Project one output row from <paramref name="groupCombos"/> — either every combo sharing
+    /// one GROUP BY key, or (the scalar-aggregate case) every joined combo. Non-aggregated
+    /// columns read the first combo's resolved value (every combo in a real group shares it by
+    /// construction); aggregated columns gather ONE raw value per combo in the group (null for
+    /// a combo where the owning dataitem's buffer/slot is unavailable, so Count still sees the
+    /// true combo count and Sum/Average/Min/Max skip exactly the missing ones) and hand them to
+    /// ctx.ComputeAggregate — al-runner's own aggregation math, not re-derived here.
+    /// </summary>
+    private static object?[] BuildAggregateRow(JoinContext ctx, JoinProjectionPlan plan, IReadOnlyList<Dictionary<string, object?>> groupCombos)
+    {
+        var fields = new object?[plan.SlotCount];
+        foreach (var col in plan.Columns)
+        {
+            if (col.Aggregation != "None")
+            {
+                var rawValues = new object?[groupCombos.Count];
+                for (int i = 0; i < groupCombos.Count; i++)
+                {
+                    var combo = groupCombos[i];
+                    rawValues[i] = combo.TryGetValue(col.OwnerName, out var buf) && buf != null
+                        && col.TableSlot >= 0 && col.TableSlot < BufFieldCount(buf)
+                        ? BufGet(buf, col.TableSlot)
+                        : null;
+                }
+                fields[col.QuerySlot] = ctx.ComputeAggregate(col.ColumnObj, rawValues);
+                continue;
+            }
+            if (groupCombos.Count > 0)
+                fields[col.QuerySlot] = ResolveComboValue(ctx, col, groupCombos[0]);
+        }
+        return fields;
+    }
+
     // Read all rows of a dataitem's table (honouring its own table filters) as table-shaped
     // buffers, via the provider's genuine FindImplementation (no projection).
     private static List<object> ReadDataItemRows(JoinContext ctx, object dataAccessSource, object dataItem, object table)
@@ -357,6 +487,10 @@ public static class JoinExecutor
         public string OwnerName = "";
         public int TableSlot = -1;
         public object? SourceField; // NCLMetaField (object) — for typed left-outer defaults
+        public object ColumnObj = null!; // NCLMetaQueryColumn (object) — for ctx.ComputeAggregate
+        // "None" unless Method = Sum/Count/Average/Min/Max (issue #2146). Every non-filter-only
+        // column is either a GROUP BY key (Aggregation == "None") or aggregated — never both.
+        public string Aggregation = "None";
     }
     private sealed class JoinProjectionPlan
     {
@@ -372,6 +506,12 @@ public static class JoinExecutor
     /// this property.</summary>
     private static bool IsFilterOnlyColumn(object col)
         => _pColColumnType?.GetValue(col)?.ToString() == "FilterOnly";
+
+    // Issue #2146: AggregationType.None serializes as "None" — a column with any OTHER
+    // value (Sum/Count/Average/Min/Max) is aggregated and implicitly GROUPs the join's
+    // result by every other Normal column, mirroring RecordPatches.QueryProjection.cs's
+    // single-dataitem GROUP BY.
+    private static string AggregationOf(object col) => _pColAggregationType?.GetValue(col)?.ToString() ?? "None";
 
     private static JoinProjectionPlan BuildJoinProjectionPlan(JoinContext ctx, object queryDef)
     {
@@ -390,7 +530,7 @@ public static class JoinExecutor
                 int querySlot = (int)_pColColumnIndex!.GetValue(col)!;
                 if (querySlot < 0) continue; // defensive: shouldn't happen for a non-filter-only column.
                 if (querySlot > maxSlot) maxSlot = querySlot;
-                plan.Columns.Add(new JoinColumn { QuerySlot = querySlot, OwnerName = name, TableSlot = ResolveTableSlot(col, out var srcField), SourceField = srcField });
+                plan.Columns.Add(new JoinColumn { QuerySlot = querySlot, OwnerName = name, TableSlot = ResolveTableSlot(col, out var srcField), SourceField = srcField, ColumnObj = col, Aggregation = AggregationOf(col) });
             }
         }
 
@@ -413,7 +553,7 @@ public static class JoinExecutor
             foreach (var col in cols)
             {
                 if (!IsFilterOnlyColumn(col)) continue;
-                plan.Columns.Add(new JoinColumn { QuerySlot = nextExtraSlot++, OwnerName = name, TableSlot = ResolveTableSlot(col, out var srcField), SourceField = srcField });
+                plan.Columns.Add(new JoinColumn { QuerySlot = nextExtraSlot++, OwnerName = name, TableSlot = ResolveTableSlot(col, out var srcField), SourceField = srcField, ColumnObj = col });
             }
         }
 

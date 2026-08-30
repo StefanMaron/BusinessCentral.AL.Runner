@@ -20,6 +20,15 @@
 //
 //   This shim and the executor are OUR OWN assemblies (precompiled-dll-respect allows us
 //   to change them freely); we touch no BC-DLL method body.
+//
+// JOIN + GROUP BY (issue #2146): a multi-dataitem JOIN query with any aggregated
+// (Method = Sum/Count/Average/Min/Max) column implicitly groups the JOINED rows by every
+// OTHER Normal column — mirroring RecordPatches.QueryProjection.cs's single-dataitem GROUP
+// BY (#2137), just fed by the executor's own join output instead of a plain table scan. The
+// aggregation MATH itself is not duplicated across the assembly boundary: the executor
+// gathers one raw NavValue (boxed as object, or null) per row in the group and calls back
+// into al-runner via JoinContext.ComputeAggregate (Join_ComputeAggregate below), which
+// forwards to the same ComputeAggregateCore the single-dataitem path uses.
 using System.Collections;
 using System.Reflection;
 
@@ -85,6 +94,7 @@ public static partial class RecordPatches
         Set("MakeReadOnlyRecordBuffer", FieldType("MakeReadOnlyRecordBuffer"), nameof(Join_MakeReadOnlyRecordBuffer));
         Set("ToNavValueArray", FieldType("ToNavValueArray"), nameof(Join_ToNavValueArray));
         Set("TypedDefaultForField", FieldType("TypedDefaultForField"), nameof(Join_TypedDefaultForField));
+        Set("ComputeAggregate", FieldType("ComputeAggregate"), nameof(Join_ComputeAggregate));
         Set("Log", FieldType("Log"), nameof(Join_Log));
         Set("OutOfScope", FieldType("OutOfScope"), nameof(Join_OutOfScope));
         return ctx;
@@ -148,6 +158,11 @@ public static partial class RecordPatches
         // projection for a non-nullable query column.
         return _mGetDefaultNavValue.Invoke(null, new object?[] { field, false });
     }
+
+    // JoinContext.ComputeAggregate (#2146) is wired straight to Join_ComputeAggregate, defined
+    // in RecordPatches.QueryProjection.cs (this is the same partial class) — no separate
+    // adapter needed, it already shares ComputeAggregateCore with the single-dataitem GROUP
+    // BY path rather than re-deriving the Sum/Count/Average/Min/Max math here.
 
     /// <summary>True iff this query definition has more than one (flat) dataitem — i.e. a join.</summary>
     private static bool IsMultiDataItemQuery(object queryDefinition)
