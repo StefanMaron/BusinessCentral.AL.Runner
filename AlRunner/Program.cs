@@ -7092,6 +7092,11 @@ static string? TryDeriveBcMajorFromProject(IEnumerable<string> bundlePaths)
 static int RunExplicitProvisionModes(string? bcVersionArg, List<string> bundles,
     bool platformApps, bool testApps, bool serviceTier, bool force, string? resolveVersionPrefix)
 {
+    // #2208: every failure return below is 2 ("execution error"), never 1. `provision`
+    // does not run a single test, so 1 — the documented exit ladder's "at least one test
+    // failed or errored" — would be a lie about what happened here; 2 is what every other
+    // "couldn't get to a run at all" path in this file already uses (e.g. "BC version
+    // selection failed: ..." further up).
     if (resolveVersionPrefix != null)
     {
         var resolved = AlRunner.Provisioning.ArtifactDownloader.ResolveVersion(
@@ -7099,7 +7104,7 @@ static int RunExplicitProvisionModes(string? bcVersionArg, List<string> bundles,
         if (resolved == null)
         {
             Console.Error.WriteLine($"[provision] could not resolve a full BC version for prefix '{resolveVersionPrefix}'.");
-            return 1;
+            return 2;
         }
         Console.WriteLine(resolved); // stdout for script/agent consumption, mirrors tools/DownloadArtifacts
         return 0;
@@ -7107,7 +7112,7 @@ static int RunExplicitProvisionModes(string? bcVersionArg, List<string> bundles,
 
     var full = ResolveFullVersionForExplicitProvision(bcVersionArg, bundles);
     if (full == null)
-        return 1; // the resolver already printed a loud, named reason
+        return 2; // the resolver already printed a loud, named reason
 
     bool anyFailed = false;
     if (serviceTier)
@@ -7129,7 +7134,7 @@ static int RunExplicitProvisionModes(string? bcVersionArg, List<string> bundles,
         anyFailed |= ForceProvisionMode("Microsoft test-toolkit apps", dir, full, force, "*.app",
             (v, d, log) => AlRunner.Provisioning.ArtifactDownloader.TestApps(v, d, log)) != 0;
     }
-    return anyFailed ? 1 : 0;
+    return anyFailed ? 2 : 0;
 }
 
 // Shared by every explicit provision mode: skip the download when the canonical directory
@@ -7160,27 +7165,83 @@ static int ForceProvisionMode(string label, string outputDir, string fullVersion
     }
 }
 
+// Issue #2208: shared by ResolveFullVersionForExplicitProvision and RunProvisioning's own
+// no-`--bc-version` branch. Resolves the version to target from the ENGINE's own build —
+// matching the run path's default selection (#2077) — rather than the project's app.json,
+// which states a floor ("application": "27.0.0.0") and not the version to provision
+// against. `BcArtifacts.EngineMajor(AppContext.BaseDirectory)` (the OLD source both call
+// sites used) requires `Microsoft.Dynamics.Nav.Ncl.dll` to be physically present in bin/,
+// which is FALSE in the ordinary shadow-copy/re-exec install layout — so it silently
+// returned null and both callers fell through past the engine entirely, either giving up
+// ("cannot determine which BC version to provision" despite the binary printing the exact
+// build on every other code path) or deriving the major from whichever bundle happened to
+// be on the command line, downloading a completely different major's artifact set.
+// `BcArtifacts.EngineBuiltVersion()` is baked in at compile time (an AssemblyMetadata
+// attribute) and needs nothing on disk, so it answers the question unconditionally.
+// Returns null only when the engine's build version is genuinely unknown (a stripped/older
+// binary with neither the attribute nor a shipped Ncl.dll) or the artifacts root itself
+// can't be resolved — the caller falls back to prefix-based resolution in that case.
+static string? ResolveDefaultProvisionVersion(List<string> bundles, Action<string> log)
+{
+    var engineVersion = AlRunner.Infrastructure.BcArtifacts.EngineBuiltVersion()
+        ?? AlRunner.Infrastructure.BcArtifacts.EngineVersion(AppContext.BaseDirectory);
+    if (engineVersion == null)
+        return null;
+
+    string full;
+    string tier;
+    try
+    {
+        full = AlRunner.Infrastructure.BcArtifacts.DefaultProvisionTarget(
+            engineVersion, AlRunner.Infrastructure.BcArtifacts.ArtifactsRootDir, out tier, log);
+    }
+    catch (InvalidOperationException)
+    {
+        return null; // ArtifactsRootDir unresolvable — caller falls back to prefix-based resolution
+    }
+    log($"no --bc-version given — targeting BC {full} (this binary's own engine build is " +
+        $"{engineVersion}; tier '{tier}'). Override with --bc-version.");
+
+    // The project's app.json is a CROSS-CHECK only, never the source of the answer — see
+    // the doc comment above. A mismatch is surfaced as a warning, not acted on.
+    var projMajor = TryDeriveBcMajorFromProject(bundles);
+    if (projMajor != null && projMajor != engineVersion.Major.ToString())
+        log($"warning: project app.json targets BC major {projMajor} but this runner build's " +
+            $"engine is major {engineVersion.Major} (cross-major needs a matching runner build).");
+    return full;
+}
+
 // Resolves the full 4-part BC version to target for an EXPLICIT provision mode
 // (--platform-apps/--test-apps/--service-tier). Deliberately mirrors RunProvisioning's own
-// resolution (explicit --bc-version, else the engine's own major, else the target bundle's
-// app.json major; prefer an already-cached matching version, else resolve the latest full
-// version from the CDN) — kept as a separate small function rather than sharing
-// RunProvisioning's inline block because that block's own success message ("verifying
-// completeness") describes what RunProvisioning does NEXT (an engine-closure completeness
-// check), which does not apply here.
+// resolution (explicit --bc-version, else the engine's own build via
+// ResolveDefaultProvisionVersion, else the target bundle's app.json major as a last
+// resort; prefer an already-cached matching version, else resolve the latest full version
+// from the CDN) — kept as a separate small function rather than sharing RunProvisioning's
+// inline block because that block's own success message ("verifying completeness")
+// describes what RunProvisioning does NEXT (an engine-closure completeness check), which
+// does not apply here.
 static string? ResolveFullVersionForExplicitProvision(string? bcVersionArg, List<string> bundles)
 {
     if (bcVersionArg != null && System.Version.TryParse(bcVersionArg, out var maybeFull) && maybeFull.Revision >= 0
         && bcVersionArg.Split('.').Length == 4)
         return bcVersionArg; // an explicit 4-part version — target exactly that
 
-    var prefix = bcVersionArg
-        ?? AlRunner.Infrastructure.BcArtifacts.EngineMajor(AppContext.BaseDirectory)?.ToString()
-        ?? TryDeriveBcMajorFromProject(bundles);
+    void Log(string m) => Console.Error.WriteLine($"[provision] {m}");
+
+    if (bcVersionArg == null)
+    {
+        var fromEngine = ResolveDefaultProvisionVersion(bundles, Log);
+        if (fromEngine != null)
+            return fromEngine;
+    }
+
+    // Last resort: the engine's build version is genuinely unknown — fall back to the
+    // project's app.json major (or an explicit bare-major --bc-version).
+    var prefix = bcVersionArg ?? TryDeriveBcMajorFromProject(bundles);
     if (prefix == null)
     {
-        Console.Error.WriteLine("[provision] cannot determine which BC version to provision — pass " +
-            "--bc-version <ver> (no --bc-version, no engine in bin, and no readable project app.json).");
+        Log("cannot determine which BC version to provision — pass --bc-version <ver> " +
+            "(no --bc-version, no engine build info, and no readable project app.json).");
         return null;
     }
     try
@@ -7188,15 +7249,15 @@ static string? ResolveFullVersionForExplicitProvision(string? bcVersionArg, List
         var cachedDir = AlRunner.Infrastructure.BcArtifacts.SelectArtifactVersionDir(
             AlRunner.Infrastructure.BcArtifacts.ArtifactsRootDir, prefix);
         var full = Path.GetFileName(cachedDir);
-        Console.Error.WriteLine($"[provision] found cached BC {full} for prefix '{prefix}'.");
+        Log($"found cached BC {full} for prefix '{prefix}'.");
         return full;
     }
     catch (InvalidOperationException)
     {
-        Console.Error.WriteLine($"[provision] no cached BC {prefix}.x — resolving latest full version from the CDN...");
+        Log($"no cached BC {prefix}.x — resolving latest full version from the CDN...");
         var full = AlRunner.Provisioning.ArtifactDownloader.ResolveVersion(prefix);
         if (full == null)
-            Console.Error.WriteLine($"[provision] could not resolve a full BC version for prefix '{prefix}'.");
+            Log($"could not resolve a full BC version for prefix '{prefix}'.");
         return full;
     }
 }
@@ -7245,14 +7306,21 @@ static int RunProvisioning(string? bcVersionArg, string? artifactPathArg,
     }
     else
     {
+        // #2208: EngineMajor(AppContext.BaseDirectory) requires Ncl.dll to be physically
+        // present in bin/, which is false in the ordinary shadow-copy/re-exec layout — use
+        // the compile-time-baked EngineBuiltVersion() (falling back to EngineVersion, same
+        // as the run path's own default selection, #2077) so this branch answers the same
+        // question the same way instead of falling straight through to the project's
+        // app.json, which states a floor, not the version to provision against.
         var prefix = bcVersionArg
-            ?? AlRunner.Infrastructure.BcArtifacts.EngineMajor(AppContext.BaseDirectory)?.ToString()
+            ?? (AlRunner.Infrastructure.BcArtifacts.EngineBuiltVersion()
+                ?? AlRunner.Infrastructure.BcArtifacts.EngineVersion(AppContext.BaseDirectory))?.Major.ToString()
             ?? TryDeriveBcMajorFromProject(bundles);
         if (prefix == null)
         {
             Console.Error.WriteLine("[provision] cannot determine which BC version to provision — pass " +
-                "--bc-version <ver> (no --bc-version, no engine in bin, and no readable project app.json).");
-            return 1;
+                "--bc-version <ver> (no --bc-version, no engine build info, and no readable project app.json).");
+            return 2; // execution error, not "test failure" — no tests ran (#2208)
         }
         // Prefer an already-cached version matching the prefix (completes a partial one);
         // otherwise resolve the latest full version from the public CDN index.
@@ -7276,7 +7344,7 @@ static int RunProvisioning(string? bcVersionArg, string? artifactPathArg,
             if (full == null)
             {
                 Console.Error.WriteLine($"[provision] could not resolve a full BC version for prefix '{prefix}'.");
-                return 1;
+                return 2; // execution error, not "test failure" — no tests ran (#2208)
             }
         }
     }
