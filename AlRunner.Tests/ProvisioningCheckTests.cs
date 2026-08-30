@@ -1537,6 +1537,21 @@ public sealed class ProvisioningCheckTests : IDisposable
         Assert.Contains("/cache/a", msg);
     }
 
+    [Fact]
+    public void BuildManifestNeedsMissingMessage_NoSearchedDirs_SaysSoRatherThanTrailingOff()
+    {
+        // On a genuinely cold cache there is no package cache directory at all, and the
+        // line used to render as a bare "  Searched: " — which reads as a value the runner
+        // failed to fill in, not as the fact that nothing exists to search yet.
+        var msg = ProvisioningCheck.BuildManifestNeedsMissingMessage(
+            needsPlatform: true, needsTest: false,
+            searchedDirs: Array.Empty<string>(),
+            missingPlatformApps: new[] { "Application" });
+
+        Assert.DoesNotContain("Searched: \n", msg);
+        Assert.Contains("no package cache directory exists yet", msg);
+    }
+
     // ── FindMissingPlatformApps: absent vs present, in isolation ──────────────
 
     [Fact]

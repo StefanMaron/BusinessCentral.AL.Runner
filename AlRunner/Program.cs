@@ -7463,6 +7463,34 @@ static void EnsurePlatformAppsProvisioned(string engineVersion, List<string> bun
         if (skewNote != null)
             Console.Error.WriteLine(skewNote);
     }
+
+    // Reuse-first, the same check the --auto-provision path in the main flow already does
+    // (FindWarmProvisionedVersion) and this one never did. It did not matter while the need
+    // was almost never detected here — `provision` simply printed "nothing to provision" and
+    // stopped. Once issue #2205 made the need real for ordinary bundles, its absence meant
+    // every single `al-runner provision` re-fetched the full 116 MB platform set over a
+    // complete one already on disk. Skipped when the bundle's OWN package cache holds a
+    // symbol-only platform app (issue #1678): that is a known-bad package a warm set
+    // elsewhere does not repair.
+    var provisionFloors = AlRunner.Infrastructure.ProvisioningCheck.DetermineVersionFloors(manifestDependencyRoots);
+    var warmVersion = platformReport.Ok
+        ? FindWarmProvisionedVersion(
+            AlRunner.Infrastructure.BcArtifacts.ArtifactsRootDir, mm,
+            decision.RequiredPlatformApps, needTest: false,
+            provisionFloors, m => Console.Error.WriteLine(m))
+        : null;
+    if (warmVersion != null)
+    {
+        Console.Error.WriteLine(AlRunner.Infrastructure.ProvisioningCheck.BuildPlatformProvisionSkippedMessage(
+            decision.RequiredPlatformApps,
+            new[]
+            {
+                AlRunner.Infrastructure.ProvisioningCheck.PlatformAppsDirFor(
+                    AlRunner.Infrastructure.BcArtifacts.ArtifactsRootDir, warmVersion),
+            }));
+        return;
+    }
+
     var platformFull = AlRunner.Provisioning.ArtifactDownloader.ResolveVersion(
         mm, m => Console.Error.WriteLine($"[provision] {m}"));
     if (platformFull == null)

@@ -1067,7 +1067,12 @@ public static class ProvisioningCheck
             lines.Add("  Needs: the Microsoft test-toolkit set (Business Foundation Test Libraries / " +
                 "Library Assert / Test Runner / …).");
         lines.Add("");
-        lines.Add($"  Searched: {string.Join(", ", searchedDirs)}");
+        // "Searched: " followed by nothing reads as a missing value rather than as the
+        // fact it is — on a genuinely cold cache there is no package cache directory yet,
+        // and that is precisely the thing the reader needs told (issue #2205).
+        lines.Add(searchedDirs.Count > 0
+            ? $"  Searched: {string.Join(", ", searchedDirs)}"
+            : "  Searched: nothing — no package cache directory exists yet on this machine.");
         lines.Add("");
         lines.Add("  Resolve it ONE of these ways:");
         lines.Add("");
