@@ -221,15 +221,32 @@ internal class LiveNavTestPage : MockITestPage
         // whose controls bind to page globals — the info-box shape, ordinary legal AL) was
         // refused out-of-scope the moment a test touched it (issue #2195).
         //
-        // The concrete reason a record-less part is safe, which is NOT symmetry with #2090's
-        // host fix: LiveNavTestPart's own added behaviour is the SubPageLink, and a FIELD
-        // SubPageLink names a field of the PART's source table. A part page with no source
-        // table therefore cannot carry one, so `links` is empty and ApplyLink has nothing to
-        // apply — the wrapper degenerates to LiveNavTestPage over a null record, which is the
-        // shape #2007 already established and whose every Rec-dependent member refuses BY NAME
-        // through RequireRecord rather than answering a default. Controls bound to page globals
-        // resolve through RunnerPageInstance's source-expression table and never reach a record
-        // at all, which is the whole point of the shape.
+        // THE REASON A RECORD-LESS PART IS SAFE. It is NOT "symmetric with #2090's host fix" —
+        // that would be an argument from shape, and the host and the part are different
+        // objects with different added behaviour. It is this:
+        //
+        //   The ONLY behaviour LiveNavTestPart adds over LiveNavTestPage is the SubPageLink.
+        //   A FIELD SubPageLink names a field of the PART's OWN source table (link.FieldID is
+        //   resolved against it — see SubPageLinks below). A part page that declares no source
+        //   table therefore cannot express one, so `links` is necessarily EMPTY, ApplyLink has
+        //   nothing to apply, and the wrapper degenerates to exactly LiveNavTestPage over a
+        //   null record — the shape #2007 established, where every Rec-dependent member
+        //   refuses BY NAME through RequireRecord instead of answering a default.
+        //
+        // "Necessarily", not "in the cases we tried": it is a property of what a SubPageLink
+        // can refer to, which is why this does not need a per-part audit. Controls bound to
+        // page globals resolve through RunnerPageInstance's source-expression table and never
+        // reach a record at all, which is the whole point of the shape.
+        //
+        // Measured on real BC by corpus codeunit 60803 "Test Page NoSrc Part Tests"
+        // (StefanMaron/BusinessCentral.AL.Language.Tests commit ef52b7e9, PR #80), all eight
+        // arms green on BC 27.5 and BC 28.3.
+        //
+        // CAVEAT worth knowing before extending this: the part page object built here is a
+        // FRESH RunnerPageInstance, not the subpage object the host's own NavForm owns, so
+        // TestPage.<part> and the host AL's CurrPage.<part>.Page are different instances.
+        // Invisible for a Rec-bound part (its state lives in the record); visible for a
+        // globals-bound one. Tracked as issue 2201.
         NavRecord? partRecord;
         RunnerPageInstance? partPage;
         switch (TestPageClientConstructionRule.Resolve(
@@ -277,18 +294,33 @@ internal class LiveNavTestPage : MockITestPage
         // host's already-resolved editability standing in for the open mode.
         part.MarkPartOf(this);
 
-        // OnOpenPage on the PART. BC opens a subpage with its host, and OnOpenPage is where a
-        // page establishes what it is showing. The runner builds a part LAZILY, on the first
-        // AL access, so this is the moment — and the part is not observable before it, which
-        // is what makes the later moment indistinguishable from BC's.
+        // OnOpenPage on the PART, and WHY IT IS RAISED HERE rather than anywhere more obvious.
         //
-        // Skipping it was invisible while every part had a source table, because such a
-        // part's observable state lives in the record and the rowset is there with or without
-        // the trigger. It stops being invisible the moment a part page has NO source table
-        // (issue #2195): every one of its controls is bound to a page global, and its own AL
-        // is the only thing that ever puts a value in one. Lifting the out-of-scope refusal
-        // without this would have swapped a loud refusal for a part whose every control reads
-        // blank — the silent default `.claude/rules/loud-failures.md` exists to prevent.
+        // The obvious place is RunnerTestPageState.MarkOpened, which is where a top-level
+        // page's OnOpenPage is raised, and where anyone looking for this will look first. It
+        // cannot go there: MarkOpened runs when BC opens the HOST, and at that moment no part
+        // exists — the runner builds parts LAZILY, on the first AL access, which is this
+        // method. So this is the earliest moment a part's trigger CAN run, and since the part
+        // is not observable before it, running it here is indistinguishable from BC's
+        // "the subpage opens with its host".
+        //
+        // WHY IT IS PART OF THE #2195 FIX AND NOT A SEPARATE CONCERN. No part has ever had its
+        // OnOpenPage raised, and that was invisible while every part had a source table: such
+        // a part's observable state lives in the record, and the rowset is there with or
+        // without the trigger. A part page with NO source table has no record — every one of
+        // its controls is bound to a page global, and the part page's own AL is the ONLY thing
+        // that ever puts a value in one. So lifting the out-of-scope refusal WITHOUT this
+        // would have replaced a loud failure with a part whose every control reads blank, and
+        // blank is indistinguishable from a legitimately empty value: the test goes green, or
+        // fails one assertion later against a value it was never told was never computed.
+        // That is precisely the silent default `.claude/rules/loud-failures.md` exists to
+        // prevent, and it is why removing the throw without this line would have made the
+        // runner LESS honest, not more.
+        //
+        // The corpus arms that read a specific value rather than merely "not refused" are what
+        // pin it: codeunit 60803's controls read 'Hello', which only its OnOpenPage can set
+        // (StefanMaron/BusinessCentral.AL.Language.Tests commit ef52b7e9, green on BC 27.5 and
+        // BC 28.3).
         //
         // Raised BEFORE the part is cached so a re-entrant GetPart during the trigger cannot
         // observe a half-built part; raised after MarkPartOf so the trigger sees the
@@ -2057,11 +2089,12 @@ internal sealed class LiveNavTestPart : LiveNavTestPage, ITestPart
 
     /// <param name="record">The part page's own source-table cursor, or null when the part
     /// page declares NO SourceTable (issue #2195) — a CardPart bound to page globals, the
-    /// info-box shape. Nothing in THIS class needs it in that case: the only behaviour it
-    /// adds over LiveNavTestPage is the SubPageLink, and a FIELD SubPageLink names a field of
-    /// the part's own source table, so a part with no source table cannot declare one and
-    /// <see cref="_links"/> is necessarily empty. Everything else is the base class's
-    /// null-record path, where each Rec-dependent member refuses by name.</param>
+    /// info-box shape. Nothing in THIS class needs it in that case, and the reason is a
+    /// property of SubPageLink rather than an observation about the parts seen so far: the
+    /// only behaviour this class adds over LiveNavTestPage is the link, a FIELD SubPageLink
+    /// names a field of the part's OWN source table, so a part with no source table cannot
+    /// express one and <see cref="_links"/> is necessarily empty. Everything else is the base
+    /// class's null-record path, where each Rec-dependent member refuses by name.</param>
     public LiveNavTestPart(NavRecord? record, IReadOnlyDictionary<int, int> controlIdToFieldNo, bool creatable,
         RunnerPageInstance? page, object owner, int pageId,
         NavRecord? parentRecord, (int PartFieldNo, int ParentFieldNo)[] links)

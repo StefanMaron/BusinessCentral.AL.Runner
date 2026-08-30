@@ -3,7 +3,9 @@
 // Named "…Host…" when it landed, because the only caller was the construction site for the
 // page a TestPage handle is over. #2195 added the second caller —
 // LiveNavTestPage.GetPart, classifying the PART's own page — and the question is the same
-// one there, so the name no longer says "host".
+// one there, so the name no longer says "host". Both callers' AL-observable behaviour is
+// measured on real BC: the host half by corpus codeunit 60763 (commit 2ddd9715), the part
+// half by codeunit 60803 (commit ef52b7e9), both green on BC 27.5 and BC 28.3.
 //
 // NavTestPageHandle.CreateTarget has to hand BC's NavTestPage an ITestPage. There are three
 // possible answers and the choice is not obvious, which is how the wrong one shipped: any

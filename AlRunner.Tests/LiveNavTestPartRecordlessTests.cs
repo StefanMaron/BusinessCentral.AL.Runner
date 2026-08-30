@@ -3,8 +3,10 @@
 //
 // The AL-observable claim — that a globals-bound CardPart is reachable from a TestPage, its
 // controls read what its OnOpenPage set, and writes through them run its OnValidate — is a
-// claim about BC, so it is measured on a real service tier by corpus codeunit 60803
-// "Test Page NoSrc Part Tests" and does not belong here.
+// claim about BC, so it does not belong here. It is measured on a real service tier by corpus
+// codeunit 60803 "Test Page NoSrc Part Tests", merged as
+// StefanMaron/BusinessCentral.AL.Language.Tests commit ef52b7e9 (PR #80), all eight arms green
+// on both BC 27.5 and BC 28.3.
 //
 // What is provable without a loaded BC runtime is the piece of the fix that made the AL
 // possible: LiveNavTestPart accepting a NULL record. Before #2195 it did not, and the reason
