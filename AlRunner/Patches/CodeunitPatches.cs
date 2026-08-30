@@ -43,6 +43,48 @@ public static partial class BcRuntime
     // long as the cache entry does.
     private static readonly ConcurrentDictionary<int, Microsoft.Dynamics.Nav.Runtime.NavCodeunitHandle> _singleInstanceKeepAlive = new();
 
+    // Every AL variable handle that has already resolved a SingleInstance codeunit through
+    // NavCodeunitHandle_CreateTarget, held WEAKLY so a handle whose AL scope has gone can
+    // still be collected.
+    //
+    // _singleInstanceCache above is NOT the only place recording "which object is the
+    // instance of codeunit N". NavApplicationObjectBaseHandle<T>.get_Target is unmodified
+    // BC code and reads, in IL:
+    //
+    //     target = Tree.GetReferenceTarget();
+    //     if (target == null && !Tree.IsDisposed) {
+    //         target = CreateTarget();            // our replacement, consults the cache
+    //         Tree.SetReferenceTarget(target);    // the SECOND copy of the answer
+    //     }
+    //     return target;
+    //
+    // so a handle calls CreateTarget exactly ONCE and then answers from its own tree for as
+    // long as the AL variable holding it lives. Clearing only the cache left those handles
+    // returning the instance the reset had dropped, while any handle resolving afterwards
+    // got a new one — two live "single" instances, and AL writing through one could not be
+    // read through the other. That is issue #2143: it cost 15 corpus tests under #2144's
+    // per-test reset (where the test codeunit instance, and therefore its global Codeunit
+    // variables' handles, is shared by every test in the codeunit), and #2161 moved the
+    // reset rather than fixing it. Registering here and invalidating below keeps the two
+    // records in step whenever the reset fires, not only where it happens to fire today.
+    private static readonly List<WeakReference<Microsoft.Dynamics.Nav.Runtime.NavCodeunitHandle>>
+        _singleInstanceBoundHandles = new();
+    private static readonly object _singleInstanceBoundHandlesLock = new();
+
+    /// <summary>
+    /// Remember that <paramref name="handle"/> is about to cache a SingleInstance codeunit
+    /// instance of its own, so <see cref="ResetSingleInstanceCache"/> can make it re-resolve.
+    /// Called from NavCodeunitHandle_CreateTarget on every path that hands a SingleInstance
+    /// instance back — including the cache-hit path, because the handle receiving the hit is
+    /// a DIFFERENT handle each time and each one caches the answer independently.
+    /// </summary>
+    private static void TrackSingleInstanceBinding(Microsoft.Dynamics.Nav.Runtime.NavCodeunitHandle handle)
+    {
+        lock (_singleInstanceBoundHandlesLock)
+            _singleInstanceBoundHandles.Add(
+                new WeakReference<Microsoft.Dynamics.Nav.Runtime.NavCodeunitHandle>(handle));
+    }
+
     /// <summary>
     /// Drop every cached SingleInstance codeunit instance. Must run at the per-test-isolation
     /// boundary (see RecordPatches.ResetPerTestState) so SingleInstance field state does not
@@ -50,10 +92,45 @@ public static partial class BcRuntime
     /// </summary>
     public static void ResetSingleInstanceCache()
     {
+        // Invalidate the per-handle copies FIRST — see _singleInstanceBoundHandles. Doing it
+        // before the dictionaries are cleared matters only for readability; what matters for
+        // correctness is that no handle is left holding an instance the cache no longer has.
+        InvalidateBoundSingleInstanceHandles();
         // Release the keep-alive references first: dropping them is what lets BC's refcount
         // fall to zero and dispose the instances, which is the per-test cleanup real BC does.
         _singleInstanceKeepAlive.Clear();
         _singleInstanceCache.Clear();
+    }
+
+    /// <summary>
+    /// Clear the cached target of every handle that resolved a SingleInstance codeunit, so
+    /// its next <c>Target</c> read goes back through CreateTarget and picks up the instance
+    /// everyone else is using.
+    ///
+    /// NavCodeunitHandle.ClearReference() is BC's own public API for exactly this — it is
+    /// <c>set_Target(null)</c>, i.e. <c>Tree.SetReferenceTarget(null)</c>, which is the only
+    /// state get_Target consults before rebuilding. It also drops the handle's reference on
+    /// the instance, but that cannot dispose the instance here: the session-rooted keep-alive
+    /// handle (see _singleInstanceKeepAlive) is still holding one at this point, so the
+    /// refcount cannot reach zero while this loop runs.
+    /// </summary>
+    private static void InvalidateBoundSingleInstanceHandles()
+    {
+        lock (_singleInstanceBoundHandlesLock)
+        {
+            foreach (var weak in _singleInstanceBoundHandles)
+            {
+                if (!weak.TryGetTarget(out var handle))
+                    continue;   // the AL scope holding it is gone; nothing can read it again
+                // A disposed handle's tree already refuses to rebuild (get_Target returns
+                // whatever GetReferenceTarget gives and skips CreateTarget when IsDisposed),
+                // and touching it would only risk an ObjectDisposedException for no gain.
+                if (handle.IsDisposed || !handle.HasTarget)
+                    continue;
+                handle.ClearReference();
+            }
+            _singleInstanceBoundHandles.Clear();
+        }
     }
 
     // Fallback cache: report ID → skeleton NCLMetaReport built via CreateEmptyNCLMetaReport
@@ -267,7 +344,11 @@ public static partial class BcRuntime
         // its instance fields keep whatever state prior calls left in them. See the handle/
         // parent note below for why reusing the first caller's tree-parent is correct here.
         if (_singleInstanceCache.TryGetValue(id, out var cachedInstance))
+        {
+            // `self` is about to store this in its own tree (see TrackSingleInstanceBinding).
+            TrackSingleInstanceBinding(self);
             return cachedInstance;
+        }
 
         var codeunitType = _codeunitTypeCache.GetOrAdd(id, FindCodeunitType);
         if (codeunitType == null)
@@ -321,6 +402,7 @@ public static partial class BcRuntime
 
             _singleInstanceCache[id] = instance;
             KeepSingleInstanceAlive(id, instance);
+            TrackSingleInstanceBinding(self);
         }
 
         return instance;
