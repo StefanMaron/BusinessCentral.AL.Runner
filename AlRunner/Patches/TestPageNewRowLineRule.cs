@@ -1,0 +1,41 @@
+namespace AlRunner.Patches;
+
+/// <summary>
+/// The two gating rules behind the TestPage new-row line (issue #2089), kept apart from
+/// LiveNavTestPage so they can be exercised without a loaded BC runtime.
+///
+/// An editable, insert-allowed repeater carries a trailing BLANK line past its data — the
+/// line a user types into to create a record. BC's client appends it in
+/// <c>DraftLinePattern.MakeDraftLines</c>, and it is part of the rowset the client hands the
+/// test framework, so <c>TestPage.Next()</c> walks onto it and answers true.
+///
+/// Both rules are measured against a real service tier by corpus codeunit 60743, not derived:
+/// a page opened with OpenView, a page declaring <c>Editable = false</c>, and a page declaring
+/// <c>InsertAllowed = false</c> all answer false to that last <c>Next()</c>, and a part on a
+/// read-only host does too.
+/// </summary>
+internal static class TestPageNewRowLineRule
+{
+    /// <summary>
+    /// A page's STATIC editability.
+    ///
+    /// <paramref name="openModeEditable"/> is non-null only for a page the TEST opened, where
+    /// the open mode (OpenEdit vs OpenView) decides the answer and has already been combined
+    /// with the page's own <c>Editable</c>. It is null for every page BC hands to a
+    /// [ModalPageHandler] / [PageHandler] and for every subpage part — those used to fall back
+    /// to a flat "editable", which is what made an <c>Editable = false</c> page opened through
+    /// RunModal report itself editable.
+    ///
+    /// <paramref name="hostStaticEditable"/> is the host's answer for a subpage part, null for
+    /// a top-level page. A part is only editable if the page hosting it is.
+    /// </summary>
+    internal static bool ResolveStaticEditable(bool? openModeEditable, bool? hostStaticEditable, bool pageEditable)
+        => openModeEditable ?? ((hostStaticEditable ?? true) && pageEditable);
+
+    /// <summary>
+    /// Whether the page shows the implicit new-row line. BOTH conditions gate it, and each was
+    /// measured separately — neither alone reproduces real BC's answers.
+    /// </summary>
+    internal static bool ShowsNewRowLine(bool staticEditable, bool insertAllowed)
+        => staticEditable && insertAllowed;
+}

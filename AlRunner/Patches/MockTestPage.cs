@@ -438,8 +438,8 @@ internal class LiveNavTestPage : MockITestPage
     /// nothing orders that against its host being opened.
     /// </summary>
     private bool _staticEditable
-        => _staticEditableOverride
-           ?? ((_editabilityHost?._staticEditable ?? true) && (_page?.PageEditable ?? true));
+        => TestPageNewRowLineRule.ResolveStaticEditable(
+            _staticEditableOverride, _editabilityHost?._staticEditable, _page?.PageEditable ?? true);
 
     /// <summary>
     /// Bind a subpage part to its host for editability. Deliberately does NOT touch _opened:
@@ -1033,7 +1033,7 @@ internal class LiveNavTestPage : MockITestPage
     /// _creatable is the page's declared InsertAllowed — so the two flags the client gates
     /// the draft line on are exactly the two this class already tracks.
     /// </summary>
-    private bool ShowsNewRowLine => _staticEditable && _creatable;
+    private bool ShowsNewRowLine => TestPageNewRowLineRule.ShowsNewRowLine(_staticEditable, _creatable);
 
     // Set while the cursor sits on the new-row line, with the position of the data row it
     // walked on from — the blank line is a buffer, so the real cursor has to be remembered
