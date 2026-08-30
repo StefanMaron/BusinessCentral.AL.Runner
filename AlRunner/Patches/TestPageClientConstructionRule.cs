@@ -1,4 +1,9 @@
-// TestPageHostConstructionRule — which client a TestPage over page N gets (#2090).
+// TestPageClientConstructionRule — which client a TestPage over page N gets (#2090, #2195).
+//
+// Named "…Host…" when it landed, because the only caller was the construction site for the
+// page a TestPage handle is over. #2195 added the second caller —
+// LiveNavTestPage.GetPart, classifying the PART's own page — and the question is the same
+// one there, so the name no longer says "host".
 //
 // NavTestPageHandle.CreateTarget has to hand BC's NavTestPage an ITestPage. There are three
 // possible answers and the choice is not obvious, which is how the wrong one shipped: any
@@ -34,11 +39,16 @@ internal enum TestPageClientKind
 
     /// <summary>The runner cannot drive this page at all — it was never parsed, or it
     /// declares a source table the runner has no runtime record type for. Both are runner
-    /// gaps and are reported on stderr at the construction site.</summary>
+    /// gaps. How they are REPORTED is the call site's choice, not this enum's: the TestPage
+    /// handle site degrades to MockITestPage and says so on stderr (BC constructs that page
+    /// eagerly, whether or not the test ever touches it, so throwing there would fail tests
+    /// that never used the page); LiveNavTestPage.GetPart throws RunnerOutOfScopeException,
+    /// because a part is only built when AL asks for it and an empty MockITestPart answers
+    /// "no rows, no inserts" to a question the test did ask.</summary>
     NavigationMock,
 }
 
-internal static class TestPageHostConstructionRule
+internal static class TestPageClientConstructionRule
 {
     /// <param name="recordBuilt">Whether TestPageFactory.TryBuild produced a record cursor.</param>
     /// <param name="pageIsParsed">Whether the runner AL-source-parsed this page, so "declares

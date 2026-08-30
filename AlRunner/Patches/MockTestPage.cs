@@ -205,12 +205,59 @@ internal class LiveNavTestPage : MockITestPage
                 + ". See docs/scope.md");
 
         var partPageId = definition.PagePartID;
-        var built = _owner == null ? null : TestPageFactory.TryBuild(_owner, partPageId, out _);
-        if (built == null)
+        if (_owner == null)
             throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
                 $"TestPage part {controlId} → page {partPageId}",
-                "testpage-part — the part's own page could not be driven live "
-                + "(no source table, or no runtime record type for it). See docs/scope.md");
+                "testpage-part — the hosting page was built without an ITreeObject owner, so "
+                + "the runner has nothing to construct the part's own page under. "
+                + "See docs/scope.md");
+
+        var built = TestPageFactory.TryBuild(_owner, partPageId, out var why);
+
+        // A PART is a page, so it gets the same three-way classification the TestPage handle
+        // site gives a top-level page — see TestPageClientConstructionRule. This used to
+        // collapse the first two answers: "TryBuild produced no record" was read as "this page
+        // cannot be driven", and a part page that simply declares no SourceTable (a CardPart
+        // whose controls bind to page globals — the info-box shape, ordinary legal AL) was
+        // refused out-of-scope the moment a test touched it (issue #2195).
+        //
+        // The concrete reason a record-less part is safe, which is NOT symmetry with #2090's
+        // host fix: LiveNavTestPart's own added behaviour is the SubPageLink, and a FIELD
+        // SubPageLink names a field of the PART's source table. A part page with no source
+        // table therefore cannot carry one, so `links` is empty and ApplyLink has nothing to
+        // apply — the wrapper degenerates to LiveNavTestPage over a null record, which is the
+        // shape #2007 already established and whose every Rec-dependent member refuses BY NAME
+        // through RequireRecord rather than answering a default. Controls bound to page globals
+        // resolve through RunnerPageInstance's source-expression table and never reach a record
+        // at all, which is the whole point of the shape.
+        NavRecord? partRecord;
+        RunnerPageInstance? partPage;
+        switch (TestPageClientConstructionRule.Resolve(
+                    recordBuilt: built != null,
+                    pageIsParsed: RecordPatches.IsPageParsed(partPageId),
+                    pageDeclaresSourceTable: RecordPatches.PageDeclaresSourceTable(partPageId)))
+        {
+            case TestPageClientKind.LiveOverRecord:
+                partRecord = built!.Record;
+                partPage = built.Page;
+                break;
+
+            // No record and none needed. TryBuildRecordless answering null is a different
+            // failure — the runner has no metadata to build the part page object from, so
+            // there would be no control tree either — and falls through to the refusal.
+            case TestPageClientKind.LiveRecordless
+                when TestPageFactory.TryBuildRecordless(_owner, partPageId) is { } recordless:
+                partRecord = null;
+                partPage = recordless;
+                break;
+
+            default:
+                throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+                    $"TestPage part {controlId} → page {partPageId}",
+                    "testpage-part — the part's own page could not be driven live"
+                    + (why == null ? string.Empty : $" ({why})")
+                    + ". See docs/scope.md");
+        }
 
         // The parent record is only needed to evaluate SubPageLink pairs (issue #2053). A
         // part with no links never reads it — and a FIELD link can only be declared against
@@ -219,8 +266,8 @@ internal class LiveNavTestPage : MockITestPage
         // every part access on such a host into a refusal the operation never required.
         var links = SubPageLinks(definition, partPageId);
         var part = new LiveNavTestPart(
-            built.Record, RecordPatches.GetPageControlFieldMap(partPageId),
-            RecordPatches.GetInsertAllowedForPage(partPageId), built.Page, _owner!, partPageId,
+            partRecord, RecordPatches.GetPageControlFieldMap(partPageId),
+            RecordPatches.GetInsertAllowedForPage(partPageId), partPage, _owner, partPageId,
             parentRecord: links.Length == 0 ? null : RequireRecord($"subpage part {controlId}"), links: links);
         // A part is never MarkOpened — BC opens the HOST, and the part comes up inside it —
         // so _staticEditable sat at its constructor default of true for every part, whatever
@@ -229,6 +276,25 @@ internal class LiveNavTestPage : MockITestPage
         // with OpenView. Apply the same rule MarkOpened applies to a top-level page, with the
         // host's already-resolved editability standing in for the open mode.
         part.MarkPartOf(this);
+
+        // OnOpenPage on the PART. BC opens a subpage with its host, and OnOpenPage is where a
+        // page establishes what it is showing. The runner builds a part LAZILY, on the first
+        // AL access, so this is the moment — and the part is not observable before it, which
+        // is what makes the later moment indistinguishable from BC's.
+        //
+        // Skipping it was invisible while every part had a source table, because such a
+        // part's observable state lives in the record and the rowset is there with or without
+        // the trigger. It stops being invisible the moment a part page has NO source table
+        // (issue #2195): every one of its controls is bound to a page global, and its own AL
+        // is the only thing that ever puts a value in one. Lifting the out-of-scope refusal
+        // without this would have swapped a loud refusal for a part whose every control reads
+        // blank — the silent default `.claude/rules/loud-failures.md` exists to prevent.
+        //
+        // Raised BEFORE the part is cached so a re-entrant GetPart during the trigger cannot
+        // observe a half-built part; raised after MarkPartOf so the trigger sees the
+        // editability the host resolved.
+        part.RaiseOnOpenPage();
+
         _parts[controlId] = part;
         return part;
     }
@@ -1989,7 +2055,14 @@ internal sealed class LiveNavTestPart : LiveNavTestPage, ITestPart
     private readonly NavRecord? _parentRecord;
     private readonly (int PartFieldNo, int ParentFieldNo)[] _links;
 
-    public LiveNavTestPart(NavRecord record, IReadOnlyDictionary<int, int> controlIdToFieldNo, bool creatable,
+    /// <param name="record">The part page's own source-table cursor, or null when the part
+    /// page declares NO SourceTable (issue #2195) — a CardPart bound to page globals, the
+    /// info-box shape. Nothing in THIS class needs it in that case: the only behaviour it
+    /// adds over LiveNavTestPage is the SubPageLink, and a FIELD SubPageLink names a field of
+    /// the part's own source table, so a part with no source table cannot declare one and
+    /// <see cref="_links"/> is necessarily empty. Everything else is the base class's
+    /// null-record path, where each Rec-dependent member refuses by name.</param>
+    public LiveNavTestPart(NavRecord? record, IReadOnlyDictionary<int, int> controlIdToFieldNo, bool creatable,
         RunnerPageInstance? page, object owner, int pageId,
         NavRecord? parentRecord, (int PartFieldNo, int ParentFieldNo)[] links)
         : base(record, controlIdToFieldNo, creatable, page, owner, pageId)
@@ -2004,9 +2077,18 @@ internal sealed class LiveNavTestPart : LiveNavTestPage, ITestPart
     /// <summary>Filter the part's rowset to the parent's current row.</summary>
     private void ApplyLink()
     {
-        // A part always has its own SourceTable (it is a subpage over a table), so this is
-        // never the null-record case RequireRecord exists to catch — it is a guaranteed hit,
-        // used here for its record rather than for its refusal.
+        // Nothing to apply, and nothing to demand: an unlinked part shows its own table's
+        // full rowset. The early return is what lets a part page with NO SourceTable exist
+        // at all (issue #2195) — such a part cannot carry a FIELD SubPageLink, so it always
+        // lands here, and without the return the RequireRecord below would refuse EVERY
+        // cursor move on it naming "subpage link", a link the part does not have. The move
+        // itself still refuses by its own name through the base class when the AL genuinely
+        // asks a record-less part to navigate.
+        if (_links.Length == 0) return;
+
+        // Past this point the part is linked, which is only expressible against the part's
+        // own source table — so it has one, and this is a guaranteed hit used for its record
+        // rather than for its refusal.
         var record = RequireRecord("subpage link");
         foreach (var (partFieldNo, parentFieldNo) in _links)
         {
@@ -2035,6 +2117,7 @@ internal sealed class LiveNavTestPart : LiveNavTestPage, ITestPart
     {
         ApplyLink();
         base.InsertEmptyRow(beforeCurrent);
+        if (_links.Length == 0) return;
         var record = RequireRecord("subpage link");
         foreach (var (partFieldNo, parentFieldNo) in _links)
             record.SetFieldValue(partFieldNo, _parentRecord!.GetFieldValue(parentFieldNo));

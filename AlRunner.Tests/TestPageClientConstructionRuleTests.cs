@@ -1,4 +1,4 @@
-// TestPageHostConstructionRuleTests — the C# gating rule behind which ITestPage a TestPage
+// TestPageClientConstructionRuleTests — the C# gating rule behind which ITestPage a TestPage
 // gets (#2090).
 //
 // This pins the RUNNER's own decision, not "what BC does". The AL-observable behavior — that
@@ -19,7 +19,7 @@ using Xunit;
 
 namespace AlRunner.Tests;
 
-public sealed class TestPageHostConstructionRuleTests
+public sealed class TestPageClientConstructionRuleTests
 {
     // A record was built: nothing else matters, the page is driven over its own cursor.
     [Theory]
@@ -28,7 +28,7 @@ public sealed class TestPageHostConstructionRuleTests
     [InlineData(false, false)]
     public void RecordBuilt_AlwaysDrivesOverTheRecord(bool pageIsParsed, bool declaresSourceTable)
         => Assert.Equal(TestPageClientKind.LiveOverRecord,
-            TestPageHostConstructionRule.Resolve(
+            TestPageClientConstructionRule.Resolve(
                 recordBuilt: true, pageIsParsed, pageDeclaresSourceTable: declaresSourceTable));
 
     // THE REGRESSION ROW. A parsed page that declares no SourceTable has no record to build
@@ -37,7 +37,7 @@ public sealed class TestPageHostConstructionRuleTests
     [Fact]
     public void NoRecord_ParsedPageWithoutSourceTable_IsDrivenRecordless()
         => Assert.Equal(TestPageClientKind.LiveRecordless,
-            TestPageHostConstructionRule.Resolve(
+            TestPageClientConstructionRule.Resolve(
                 recordBuilt: false, pageIsParsed: true, pageDeclaresSourceTable: false));
 
     // A page that DOES declare a source table but whose record could not be built is a runner
@@ -46,7 +46,7 @@ public sealed class TestPageHostConstructionRuleTests
     [Fact]
     public void NoRecord_ParsedPageWithASourceTable_StaysOnTheNavigationMock()
         => Assert.Equal(TestPageClientKind.NavigationMock,
-            TestPageHostConstructionRule.Resolve(
+            TestPageClientConstructionRule.Resolve(
                 recordBuilt: false, pageIsParsed: true, pageDeclaresSourceTable: true));
 
     // A page the parser never saw: "declares no SourceTable" is then a fact about the runner's
@@ -56,6 +56,6 @@ public sealed class TestPageHostConstructionRuleTests
     [InlineData(true)]
     public void NoRecord_UnparsedPage_StaysOnTheNavigationMock(bool declaresSourceTable)
         => Assert.Equal(TestPageClientKind.NavigationMock,
-            TestPageHostConstructionRule.Resolve(
+            TestPageClientConstructionRule.Resolve(
                 recordBuilt: false, pageIsParsed: false, pageDeclaresSourceTable: declaresSourceTable));
 }

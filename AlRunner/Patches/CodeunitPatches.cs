@@ -472,7 +472,7 @@ public static partial class BcRuntime
         // metadata XML); such a page keeps the record-only behaviour below.
         var built = TestPageFactory.TryBuild(self, pageId, out var why);
 
-        // Which of the three clients this page gets — see TestPageHostConstructionRule for
+        // Which of the three clients this page gets — see TestPageClientConstructionRule for
         // why "no record" is not the same question as "cannot be driven". A page with no
         // SourceTable used to land on the navigation mock, every one of whose members
         // answers a default, so a subpage part on such a host silently reported an empty
@@ -480,7 +480,7 @@ public static partial class BcRuntime
         // RunModal + [ModalPageHandler] (issue #2090) — the handler-driven construction
         // site, RunnerTestClientSession.GetPage, has built a live page over a null record
         // for this shape since #2007. Both sites now agree.
-        switch (TestPageHostConstructionRule.Resolve(
+        switch (TestPageClientConstructionRule.Resolve(
                     recordBuilt: built != null,
                     pageIsParsed: RecordPatches.IsPageParsed(pageId),
                     pageDeclaresSourceTable: RecordPatches.PageDeclaresSourceTable(pageId)))
