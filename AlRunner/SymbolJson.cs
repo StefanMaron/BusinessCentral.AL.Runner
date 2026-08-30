@@ -497,7 +497,7 @@ public sealed class JsonSymbolReferenceLoader : ISymbolReferenceLoader
     private void IndexModules()
     {
         if (!Directory.Exists(_rootDirectory)) return;
-        foreach (var file in Directory.EnumerateFiles(_rootDirectory, "*.symbols.json", SearchOption.AllDirectories))
+        foreach (var file in AlRunner.Infrastructure.SafeDirectoryScan.Files(_rootDirectory, "*.symbols.json"))
         {
             try
             {
@@ -526,7 +526,7 @@ public sealed class JsonSymbolReferenceLoader : ISymbolReferenceLoader
     private void IndexDependencySidecars()
     {
         if (!Directory.Exists(_rootDirectory)) return;
-        foreach (var file in Directory.EnumerateFiles(_rootDirectory, "*.symbols.deps.json", SearchOption.AllDirectories))
+        foreach (var file in AlRunner.Infrastructure.SafeDirectoryScan.Files(_rootDirectory, "*.symbols.deps.json"))
         {
             try
             {

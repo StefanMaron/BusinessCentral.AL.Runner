@@ -247,7 +247,7 @@ public static partial class RecordPatches
     private static void ParseAllRegisteredSourceFiles()
     {
         foreach (var dir in _sourceDirs)
-            foreach (var file in Directory.GetFiles(dir, "*.al", SearchOption.AllDirectories))
+            foreach (var file in AlRunner.Infrastructure.SafeDirectoryScan.Files(dir, "*.al"))
                 ParseSourceFileIntoAllExtractors(File.ReadAllText(file));
     }
 
@@ -300,7 +300,7 @@ public static partial class RecordPatches
             // (#1903) — see ParseSourceFileIntoAllExtractors.
             if (_registered)
             {
-                foreach (var file in Directory.GetFiles(dir, "*.al", SearchOption.AllDirectories))
+                foreach (var file in AlRunner.Infrastructure.SafeDirectoryScan.Files(dir, "*.al"))
                     ParseSourceFileIntoAllExtractors(File.ReadAllText(file));
                 parsedAny = true;
             }

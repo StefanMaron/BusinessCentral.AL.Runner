@@ -139,20 +139,78 @@ public static class ProvisioningCheck
     /// Pure filesystem scan — no network, no manifest parsing.
     /// </summary>
     public static IReadOnlyList<string> CollectBundleAlpackagesDirs(IEnumerable<string> bundlePaths)
+        => CollectBundleAlpackagesDirs(bundlePaths, out _);
+
+    /// <inheritdoc cref="CollectBundleAlpackagesDirs(IEnumerable{string})"/>
+    /// <param name="inaccessiblePaths">
+    /// Every directory under a bundle whose contents could not be read. Reported rather than
+    /// swallowed (issue #2206): an unreadable directory could be hiding an `.alpackages` the
+    /// user expects to be found, and staying silent about it turns a permissions problem into
+    /// a mysterious missing-dependency error much later in the run. Feed this to
+    /// <see cref="FormatInaccessibleScanWarning"/> to produce the message.
+    /// </param>
+    public static IReadOnlyList<string> CollectBundleAlpackagesDirs(
+        IEnumerable<string> bundlePaths, out IReadOnlyList<string> inaccessiblePaths)
     {
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var result = new List<string>();
+        var denied = new List<string>();
         foreach (var bundle in bundlePaths)
         {
             if (string.IsNullOrEmpty(bundle) || !Directory.Exists(bundle)) continue;
-            IEnumerable<string> found;
-            try { found = Directory.EnumerateDirectories(bundle, ".alpackages", SearchOption.AllDirectories); }
-            catch { continue; }
+            // SafeDirectoryScan, not Directory.EnumerateDirectories(..., AllDirectories):
+            // the latter is lazy, so the try/catch that used to sit around it guarded only
+            // the enumerator's CONSTRUCTION and never its iteration — an unreadable
+            // subdirectory anywhere under `bundle` escaped to Main and killed the process
+            // with exit 134 (issue #2206). It also gives no way to report what was skipped.
+            var found = AlRunner.Infrastructure.SafeDirectoryScan.Directories(
+                bundle, ".alpackages", out var bundleDenied);
             foreach (var dir in found)
                 if (seen.Add(dir))
                     result.Add(dir);
+            foreach (var d in bundleDenied)
+                denied.Add(d);
         }
+        inaccessiblePaths = denied;
         return result;
+    }
+
+    /// <summary>
+    /// The warning shown when the `.alpackages` scan could not read some directories, or
+    /// <c>null</c> when it read everything.
+    ///
+    /// <para>Warning rather than staying silent is a measured choice (issue #2206). On the
+    /// trees people actually point the runner at, this never fires: a real AL repository
+    /// checkout (94,740 directories) and a whole workspace root (307,833 directories) both
+    /// contain ZERO unreadable directories. The trees where it does fire are exactly the ones
+    /// where an unreadable directory is the explanation the reader needs — <c>/tmp</c>, with
+    /// its five <c>systemd-private-*</c> directories, is the case reported in the issue.
+    /// So the warning costs nothing in the common case and supplies the missing diagnostic in
+    /// the uncommon one; silence would instead convert a permissions problem into a
+    /// missing-dependency mystery later in the run.</para>
+    /// </summary>
+    /// <param name="inaccessiblePaths">Paths reported by <see cref="CollectBundleAlpackagesDirs(IEnumerable{string}, out IReadOnlyList{string})"/>.</param>
+    /// <param name="maxListed">
+    /// How many paths to name before summarising the rest. Bounded so a tree with hundreds of
+    /// unreadable directories cannot bury the run's real output; the remainder is counted
+    /// rather than silently dropped.
+    /// </param>
+    public static string? FormatInaccessibleScanWarning(
+        IReadOnlyList<string> inaccessiblePaths, int maxListed = 5)
+    {
+        if (inaccessiblePaths == null || inaccessiblePaths.Count == 0) return null;
+
+        var lines = new List<string>
+        {
+            $"[warn] skipped {inaccessiblePaths.Count} unreadable director{(inaccessiblePaths.Count == 1 ? "y" : "ies")} while searching for `.alpackages`:",
+        };
+        foreach (var p in inaccessiblePaths.Take(maxListed))
+            lines.Add($"         {p}");
+        if (inaccessiblePaths.Count > maxListed)
+            lines.Add($"         … and {inaccessiblePaths.Count - maxListed} more");
+        lines.Add("       If a package cache you expected the runner to find lives under one of these,");
+        lines.Add("       fix its permissions or point the runner directly at the app directory.");
+        return string.Join(Environment.NewLine, lines);
     }
 
     /// <summary>
@@ -175,7 +233,7 @@ public static class ProvisioningCheck
             foreach (var dir in packageCacheDirs)
             {
                 if (!Directory.Exists(dir)) continue;
-                foreach (var appFile in Directory.EnumerateFiles(dir, "*.app", SearchOption.AllDirectories))
+                foreach (var appFile in AlRunner.Infrastructure.SafeDirectoryScan.Files(dir, "*.app"))
                 {
                     var m = AlRunner.AppLoader.ReadManifest(appFile);
                     if (m == null) continue;
@@ -329,7 +387,7 @@ public static class ProvisioningCheck
         foreach (var dir in packageCacheDirs)
         {
             if (!Directory.Exists(dir)) continue;
-            foreach (var appFile in Directory.EnumerateFiles(dir, "*.app", SearchOption.AllDirectories))
+            foreach (var appFile in AlRunner.Infrastructure.SafeDirectoryScan.Files(dir, "*.app"))
             {
                 var m = AlRunner.AppLoader.ReadManifest(appFile);
                 if (m == null) continue;
@@ -368,7 +426,7 @@ public static class ProvisioningCheck
         foreach (var dir in packageCacheDirs)
         {
             if (!Directory.Exists(dir)) continue;
-            foreach (var appFile in Directory.EnumerateFiles(dir, "*.app", SearchOption.AllDirectories))
+            foreach (var appFile in AlRunner.Infrastructure.SafeDirectoryScan.Files(dir, "*.app"))
             {
                 var m = AlRunner.AppLoader.ReadManifest(appFile);
                 if (m == null) continue;
@@ -553,7 +611,7 @@ public static class ProvisioningCheck
                 // two answers about the same state, from the same dirs, under different
                 // rules. ReadManifest is memo/disk-index cached and the siblings already
                 // walk these trees, so the extra walk is a cache hit, not a re-parse.
-                files = Directory.EnumerateFiles(full, "*.app", SearchOption.AllDirectories)
+                files = AlRunner.Infrastructure.SafeDirectoryScan.Files(full, "*.app")
                     .OrderBy(f => f, StringComparer.Ordinal).ToList();
             }
             catch (Exception)
@@ -724,7 +782,7 @@ public static class ProvisioningCheck
             foreach (var dir in packageCacheDirs)
             {
                 if (!Directory.Exists(dir)) continue;
-                foreach (var appFile in Directory.EnumerateFiles(dir, "*.app", SearchOption.AllDirectories))
+                foreach (var appFile in AlRunner.Infrastructure.SafeDirectoryScan.Files(dir, "*.app"))
                 {
                     var m = AlRunner.AppLoader.ReadManifest(appFile);
                     if (m == null) continue;
@@ -759,7 +817,7 @@ public static class ProvisioningCheck
             foreach (var dir in packageCacheDirs)
             {
                 if (!Directory.Exists(dir)) continue;
-                foreach (var appFile in Directory.EnumerateFiles(dir, "*.app", SearchOption.AllDirectories))
+                foreach (var appFile in AlRunner.Infrastructure.SafeDirectoryScan.Files(dir, "*.app"))
                 {
                     var m = AlRunner.AppLoader.ReadManifest(appFile);
                     if (m == null) continue;

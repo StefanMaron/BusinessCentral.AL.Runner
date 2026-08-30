@@ -629,29 +629,27 @@ public sealed partial class BcCompiler
         foreach (var root in roots)
         {
             // ServiceTier Add-ins/* (PermissionTestHelper et al.).
-            IEnumerable<string> addins;
-            try { addins = Directory.EnumerateDirectories(root, "Add-ins", SearchOption.AllDirectories); }
-            catch { addins = Array.Empty<string>(); }
+            // SafeDirectoryScan, not a try around Directory.EnumerateDirectories: the
+            // latter is lazy, so the catch guarded only the enumerator's construction and
+            // an unreadable directory under `root` threw out of the foreach below. #2206.
+            var addins = AlRunner.Infrastructure.SafeDirectoryScan.Directories(root, "Add-ins");
             foreach (var addinRoot in addins)
             {
                 yield return addinRoot;
-                IEnumerable<string> subs;
-                try { subs = Directory.EnumerateDirectories(addinRoot); }
-                catch { continue; }
-                foreach (var sub in subs) yield return sub;
+                foreach (var sub in AlRunner.Infrastructure.SafeDirectoryScan.Directories(
+                             addinRoot, "*", SearchOption.TopDirectoryOnly))
+                    yield return sub;
             }
             // Test Assemblies/* (MockTest.dll — in-process test mocks such as the mock
             // Azure Key Vault secret provider the System App Test Library aliases).
-            IEnumerable<string> testAsm;
-            try { testAsm = Directory.EnumerateDirectories(root, "Test Assemblies", SearchOption.AllDirectories); }
-            catch { testAsm = Array.Empty<string>(); }
+            // Same lazy-enumerator defect as the Add-ins scan above. #2206.
+            var testAsm = AlRunner.Infrastructure.SafeDirectoryScan.Directories(root, "Test Assemblies");
             foreach (var taRoot in testAsm)
             {
                 yield return taRoot;
-                IEnumerable<string> subs;
-                try { subs = Directory.EnumerateDirectories(taRoot); }
-                catch { continue; }
-                foreach (var sub in subs) yield return sub;
+                foreach (var sub in AlRunner.Infrastructure.SafeDirectoryScan.Directories(
+                             taRoot, "*", SearchOption.TopDirectoryOnly))
+                    yield return sub;
             }
         }
     }
@@ -888,9 +886,12 @@ public sealed partial class BcCompiler
         var changed = false;
         foreach (var dir in packageDirs)
         {
-            IEnumerable<FileInfo> apps;
-            try { apps = new DirectoryInfo(dir).EnumerateFiles("*.app", SearchOption.AllDirectories).ToList(); }
-            catch { continue; }
+            // This one already materialised INSIDE the try (the .ToList()), so unlike its five
+            // siblings it never threw — but `catch { continue; }` still dropped EVERY package
+            // under `dir` on the first unreadable subdirectory. Same input, same silent loss
+            // of packages, so it gets the same per-directory tolerance. #2206.
+            IEnumerable<FileInfo> apps = AlRunner.Infrastructure.SafeDirectoryScan
+                .Files(dir, "*.app").Select(p => new FileInfo(p)).ToList();
             foreach (var appInfo in apps)
             {
                 var app = appInfo.FullName;
@@ -1232,7 +1233,7 @@ public sealed partial class BcCompiler
                 foreach (var dir in loaderPackageDirs)
                 {
                     if (!Directory.Exists(dir)) continue;
-                    foreach (var appFile in Directory.EnumerateFiles(dir, "*.app", SearchOption.AllDirectories))
+                    foreach (var appFile in AlRunner.Infrastructure.SafeDirectoryScan.Files(dir, "*.app"))
                     {
                         var m = AppLoader.ReadManifest(appFile);
                         if (m == null || byId.ContainsKey(m.AppId)) continue;
@@ -1470,7 +1471,7 @@ public sealed partial class BcCompiler
             throw new InvalidOperationException("BcCompiler.Emit: no source folders");
 
         var alFiles = dirs
-            .SelectMany(d => Directory.EnumerateFiles(d, "*.al", SearchOption.AllDirectories))
+            .SelectMany(d => AlRunner.Infrastructure.SafeDirectoryScan.Files(d, "*.al"))
             .Distinct()
             .ToList();
         if (alFiles.Count == 0)
@@ -1558,7 +1559,7 @@ public sealed partial class BcCompiler
 
         // Suite-local .alpackages (rare in v2's corpus today, but cheap to honour).
         var bundleAlpackages = dirs
-            .SelectMany(d => Directory.EnumerateDirectories(d, ".alpackages", SearchOption.AllDirectories))
+            .SelectMany(d => AlRunner.Infrastructure.SafeDirectoryScan.Directories(d, ".alpackages"))
             .Distinct();
         var (refLoader, specs) = GetSharedReferences(bundleAlpackages);
         _mark($"GetSharedReferences ({specs.Length} specs)");
@@ -2058,7 +2059,7 @@ public sealed partial class BcCompiler
             {
                 if (Directory.Exists(p))
                 {
-                    foreach (var f in Directory.EnumerateFiles(p, "*.al", SearchOption.AllDirectories))
+                    foreach (var f in AlRunner.Infrastructure.SafeDirectoryScan.Files(p, "*.al"))
                         if (rx.IsMatch(File.ReadAllText(f))) return true;
                 }
                 else if (File.Exists(p) && rx.IsMatch(File.ReadAllText(p)))
@@ -2157,7 +2158,7 @@ public sealed partial class BcCompiler
     {
         var dirs = alFolders.Where(Directory.Exists).Distinct().ToList();
         var alFiles = dirs
-            .SelectMany(d => Directory.EnumerateFiles(d, "*.al", SearchOption.AllDirectories))
+            .SelectMany(d => AlRunner.Infrastructure.SafeDirectoryScan.Files(d, "*.al"))
             .Distinct().ToList();
         if (alFiles.Count == 0)
             throw new InvalidOperationException(
@@ -2233,7 +2234,7 @@ public sealed partial class BcCompiler
             compilation = compilation.WithFileSystem(depCompileFileSystem);
 
         var bundleAlpackages = dirs
-            .SelectMany(d => Directory.EnumerateDirectories(d, ".alpackages", SearchOption.AllDirectories))
+            .SelectMany(d => AlRunner.Infrastructure.SafeDirectoryScan.Directories(d, ".alpackages"))
             .Distinct();
         var (refLoader, specs) = GetSharedReferences(bundleAlpackages);
         if (refLoader != null)

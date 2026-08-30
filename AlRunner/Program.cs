@@ -1255,7 +1255,16 @@ AlRunner.Infrastructure.PhaseLog.SetBundles(bundles);
 // instead of hitting either remediation the "[provision-gap]" message promises. Fold the
 // bundles' own .alpackages into the dirs the gate scans (recomputed via PlatformCheckDirs
 // below so it picks up anything --auto-provision adds to packageCacheDirs afterward).
-var bundleAlpackagesDirs = AlRunner.Infrastructure.ProvisioningCheck.CollectBundleAlpackagesDirs(bundles);
+var bundleAlpackagesDirs = AlRunner.Infrastructure.ProvisioningCheck.CollectBundleAlpackagesDirs(
+    bundles, out var inaccessibleBundleDirs);
+// Issue #2206: an unreadable subdirectory used to abort this scan with an unhandled
+// UnauthorizedAccessException (exit 134). It is now skipped — but skipping SILENTLY would
+// hide the case where the `.alpackages` the user expected lives under one of these, turning
+// a permissions problem into a missing-dependency mystery later. Measured: real repo and
+// workspace roots hit zero of these, so this stays quiet on the trees people actually use.
+var inaccessibleScanWarning =
+    AlRunner.Infrastructure.ProvisioningCheck.FormatInaccessibleScanWarning(inaccessibleBundleDirs);
+if (inaccessibleScanWarning != null) Console.WriteLine(inaccessibleScanWarning);
 
 // Issue #1996 (AC #3/#4): the runner-owned versioned destination(s) from a PRIOR
 // --auto-provision / `provision` run — checked BEFORE any network attempt, and BEFORE any
@@ -1878,8 +1887,7 @@ foreach (var bundle in bundles)
                 // runtime still comes from the service-tier DLLs, not a .app source-compile.
                 List<string> bundlePkgDirs;
                 using (AlRunner.Infrastructure.PhaseLog.Stage("alpackages-scan"))
-                    bundlePkgDirs = Directory
-                        .EnumerateDirectories(depRootDir, ".alpackages", SearchOption.AllDirectories)
+                    bundlePkgDirs = AlRunner.Infrastructure.SafeDirectoryScan.Directories(depRootDir, ".alpackages")
                         .ToList();
                 var resolverDirs = bundlePkgDirs.Concat(packageCacheDirs).Distinct().ToList();
                 var resolver = new DependencyResolver(resolverDirs);
@@ -2557,7 +2565,7 @@ foreach (var bundle in bundles)
                 var declaredObjects = allPaths
                     .Where(File.Exists)
                     .Concat(allPaths.Where(Directory.Exists)
-                        .SelectMany(d => Directory.EnumerateFiles(d, "*.al", SearchOption.AllDirectories)))
+                        .SelectMany(d => AlRunner.Infrastructure.SafeDirectoryScan.Files(d, "*.al")))
                     .Distinct()
                     .SelectMany(f => System.Text.RegularExpressions.Regex.Matches(
                         File.ReadAllText(f),
@@ -3453,8 +3461,7 @@ return strictExitCode ? computedExitCode : 0;
             try
             {
                 var roots = ReadDependencies(appJsonPath);
-                var bundlePkgDirs = Directory
-                    .EnumerateDirectories(bucketRoot, ".alpackages", SearchOption.AllDirectories)
+                var bundlePkgDirs = AlRunner.Infrastructure.SafeDirectoryScan.Directories(bucketRoot, ".alpackages")
                     .ToList();
                 var resolverDirs = bundlePkgDirs.Concat(effectivePkgDirs).Distinct().ToList();
                 var resolver = new DependencyResolver(resolverDirs);
@@ -4850,7 +4857,7 @@ static Dictionary<string, string> ComputeServerFileHashes(IReadOnlyList<string> 
     using var sha = System.Security.Cryptography.SHA256.Create();
     foreach (var f in folders
         .Where(Directory.Exists)
-        .SelectMany(d => Directory.EnumerateFiles(Path.GetFullPath(d), "*.al", SearchOption.AllDirectories))
+        .SelectMany(d => AlRunner.Infrastructure.SafeDirectoryScan.Files(Path.GetFullPath(d), "*.al"))
         .Distinct())
     {
         try
@@ -5895,7 +5902,7 @@ static List<string> RunLayeredPrePass(List<string> bundles, List<string> package
         if (!idByKey.TryGetValue(implPath, out var implId)) continue;
         var prebuilt = packageCacheDirs
             .Where(Directory.Exists)
-            .SelectMany(d => Directory.EnumerateFiles(d, "*.app", SearchOption.AllDirectories))
+            .SelectMany(d => AlRunner.Infrastructure.SafeDirectoryScan.Files(d, "*.app"))
             .FirstOrDefault(f =>
             {
                 var m = AppLoader.ReadManifest(f);
@@ -5965,8 +5972,7 @@ static List<string> RunLayeredPrePass(List<string> bundles, List<string> package
         // The impl bundle's own .alpackages (same dirs the main per-bundle compile scans),
         // reused for both this impl's symbol-emit and the dependent-visible caches below.
         var implBucketRootForPkgs = FindBucketRoot(implPath) ?? implPath;
-        var thisImplAlpackages = Directory
-            .EnumerateDirectories(implBucketRootForPkgs, ".alpackages", SearchOption.AllDirectories)
+        var thisImplAlpackages = AlRunner.Infrastructure.SafeDirectoryScan.Directories(implBucketRootForPkgs, ".alpackages")
             .ToList();
         foreach (var d in thisImplAlpackages)
             if (!implAlpackagesDirs.Contains(d, StringComparer.OrdinalIgnoreCase))
@@ -6213,7 +6219,7 @@ static List<string> BuildSiblingSourceDeps(List<string> bundles, List<string> pa
     if (sourceApps.Count == 0) return packageCacheDirs;
 
     var existingPackageDirs = bundleRoots
-        .SelectMany(root => Directory.EnumerateDirectories(root, ".alpackages", SearchOption.AllDirectories))
+        .SelectMany(root => AlRunner.Infrastructure.SafeDirectoryScan.Directories(root, ".alpackages"))
         .Concat(packageCacheDirs)
         .Distinct(StringComparer.OrdinalIgnoreCase)
         .ToList();
@@ -6289,7 +6295,7 @@ static List<string> BuildSiblingSourceDeps(List<string> bundles, List<string> pa
     // these for the source-dep dependency resolution + symbol loader below.
     var bundleAlpackagesDirs = bundles
         .Where(Directory.Exists)
-        .SelectMany(b => Directory.EnumerateDirectories(b, ".alpackages", SearchOption.AllDirectories))
+        .SelectMany(b => AlRunner.Infrastructure.SafeDirectoryScan.Directories(b, ".alpackages"))
         .Distinct()
         .ToList();
     var resolveDirs = bundleAlpackagesDirs.Concat(packageCacheDirs).Distinct().ToList();
@@ -6381,8 +6387,8 @@ static List<string> BuildSiblingSourceDeps(List<string> bundles, List<string> pa
                 // impl-bundle site above and #1546. Filtering to non-Optional declared deps
                 // would drop the implicit platform roots whose types appear in this dep's
                 // public surface, yielding __MissingTypeSymbol__ in the dependent compile.
-                var depOwnAlpackages = Directory.EnumerateDirectories(
-                    FindBucketRoot(dir) ?? dir, ".alpackages", SearchOption.AllDirectories);
+                var depOwnAlpackages = AlRunner.Infrastructure.SafeDirectoryScan.Directories(
+                    FindBucketRoot(dir) ?? dir, ".alpackages");
                 DepsSidecarWriter.Write(
                     depsPath, sid.Publisher, sid.Name, sid.Version, sid.AppId,
                     DepsSidecarWriter.BuildClosure(
@@ -6414,7 +6420,7 @@ static bool IsDependencyPackageAvailable(DependencyRef dep, IReadOnlyList<string
     foreach (var dir in packageDirs)
     {
         if (!Directory.Exists(dir)) continue;
-        foreach (var file in Directory.EnumerateFiles(dir, "*.app", SearchOption.AllDirectories))
+        foreach (var file in AlRunner.Infrastructure.SafeDirectoryScan.Files(dir, "*.app"))
         {
             var manifest = AlRunner.AppLoader.ReadManifest(file);
             if (manifest == null || manifest.Version < dep.Version)
@@ -6456,7 +6462,7 @@ static string ComputeSourceWorkspaceKey(
         WriteLine($"app:{id.AppId}:{id.Publisher}:{id.Name}:{id.Version}");
         foreach (var dep in id.Dependencies.OrderBy(d => $"{d.Publisher}/{d.Name}/{d.Version}/{d.AppId}", StringComparer.OrdinalIgnoreCase))
             WriteLine($"dep:{dep.AppId}:{dep.Publisher}:{dep.Name}:{dep.Version}");
-        var files = Directory.EnumerateFiles(dir, "*.al", SearchOption.AllDirectories)
+        var files = AlRunner.Infrastructure.SafeDirectoryScan.Files(dir, "*.al")
             .Append(Path.Combine(dir, "app.json"))
             .Where(File.Exists)
             .OrderBy(f => f, StringComparer.OrdinalIgnoreCase);
@@ -6866,7 +6872,7 @@ static void EmitSiblingSymbols(
                     bundleResolvedDeps.Select(d => new DepsSidecarWriter.DepEntry(
                         d.Manifest.Publisher, d.Manifest.Name, d.Manifest.Version, d.Manifest.AppId)),
                     ScanVendoredPlatformApps(
-                        Directory.EnumerateDirectories(bundleAbs, ".alpackages", SearchOption.AllDirectories)),
+                        AlRunner.Infrastructure.SafeDirectoryScan.Directories(bundleAbs, ".alpackages")),
                     group.AppId.Value));
             // Re-index in place so the NEXT app in this loop — and every app group compiled
             // below — sees it, without rebuilding the expensive shared reference loader.
@@ -7022,9 +7028,10 @@ static IEnumerable<DepsSidecarWriter.DepEntry> ScanVendoredPlatformApps(IEnumera
     foreach (var dir in dirs)
     {
         if (!Directory.Exists(dir)) continue;
-        IEnumerable<string> apps;
-        try { apps = Directory.EnumerateFiles(dir, "*.app", SearchOption.AllDirectories); }
-        catch { continue; }
+        // SafeDirectoryScan, not a try around Directory.EnumerateFiles: the latter is lazy,
+        // so the catch guarded only the enumerator's construction and an unreadable
+        // subdirectory threw out of the foreach below. #2206.
+        var apps = AlRunner.Infrastructure.SafeDirectoryScan.Files(dir, "*.app");
         foreach (var app in apps)
         {
             var m = AppLoader.ReadManifest(app);
@@ -7328,7 +7335,12 @@ static void EnsurePlatformAppsProvisioned(string engineVersion, List<string> bun
     // alone can never see a manifest need for an app (Application Test Library) that has no
     // service-tier DLL fallback and is therefore simply absent, not symbol-only. Consult the
     // manifest directly — same decision engine the main --auto-provision gate uses.
-    var bundleAlpackagesDirs = AlRunner.Infrastructure.ProvisioningCheck.CollectBundleAlpackagesDirs(bundles);
+    var bundleAlpackagesDirs = AlRunner.Infrastructure.ProvisioningCheck.CollectBundleAlpackagesDirs(
+        bundles, out var inaccessibleBundleDirs);
+    // Issue #2206 — same reasoning as the main gate: skipped, but named.
+    var inaccessibleWarning =
+        AlRunner.Infrastructure.ProvisioningCheck.FormatInaccessibleScanWarning(inaccessibleBundleDirs);
+    if (inaccessibleWarning != null) Console.WriteLine(inaccessibleWarning);
     var platformReport = AlRunner.Infrastructure.ProvisioningCheck.CheckPlatformApps(
         engineVersion, bundleAlpackagesDirs);
     var manifestDependencyRoots = ScanManifestDependencyRoots(bundles);
@@ -7618,7 +7630,7 @@ static List<string> CollectSuitePaths(string suite, string? bucketRoot = null)
     if (Directory.Exists(t)) all.Add(t);
     // Flat bundle: if neither src/ nor test/ exist, include the suite root so
     // the emitter can recurse into it and find all .al files.
-    if (all.Count == 0 && Directory.EnumerateFiles(suite, "*.al", SearchOption.AllDirectories).Any())
+    if (all.Count == 0 && AlRunner.Infrastructure.SafeDirectoryScan.Files(suite, "*.al").Any())
         all.Add(suite);
     if (bucketRoot != null)
     {
@@ -7732,7 +7744,7 @@ static string ComputeAlCacheKey(
     // same bundle from a different current directory does not force a rebuild.
     var alFiles = alFolders
         .Where(Directory.Exists)
-        .SelectMany(d => Directory.EnumerateFiles(Path.GetFullPath(d), "*.al", SearchOption.AllDirectories))
+        .SelectMany(d => AlRunner.Infrastructure.SafeDirectoryScan.Files(Path.GetFullPath(d), "*.al"))
         .Distinct()
         .OrderBy(p => p, StringComparer.Ordinal)
         .ToList();
@@ -7959,8 +7971,7 @@ static IReadOnlyList<string> GetOrderedDepIds(
     try
     {
         var roots = ReadBundleDependencyRoots(manifests);
-        var bundlePkgDirs = Directory
-            .EnumerateDirectories(depRootDir, ".alpackages", SearchOption.AllDirectories)
+        var bundlePkgDirs = AlRunner.Infrastructure.SafeDirectoryScan.Directories(depRootDir, ".alpackages")
             .ToList();
         var resolver = new AlRunner.DependencyResolver(
             bundlePkgDirs.Concat(packageCacheDirs).Distinct().ToList());
@@ -8031,7 +8042,9 @@ static IEnumerable<string> EnumerateSuites(string root)
 
     // Flat bundle: no app.json and no src//test/ anywhere, but .al files exist.
     // Treat the whole root as one compilation + test unit.
-    if (!found && Directory.EnumerateFiles(root, "*.al", SearchOption.AllDirectories).Any())
+    // SafeDirectoryScan: an unreadable subdirectory anywhere below `root` used to throw
+    // out of this lazy .Any() and take the process down with exit 134 (#2206).
+    if (!found && AlRunner.Infrastructure.SafeDirectoryScan.Files(root, "*.al").Count > 0)
         yield return Path.GetFullPath(root);
 }
 
@@ -8041,7 +8054,13 @@ static IEnumerable<string> EnumerateSuitesBelow(string dir)
     // and it also recurses into directories that may disappear mid-walk.
     if (!Directory.Exists(dir)) yield break;
 
-    foreach (var child in Directory.EnumerateDirectories(dir))
+    // #1713 guarded the directory that VANISHES; #2206 is the directory that is merely
+    // UNREADABLE, which reached exactly the same `foreach` and produced exactly the same
+    // exit 134 out of Main. Directory.EnumerateDirectories is lazy, so no try around the
+    // call could have caught it either — the listing has to be materialised under the
+    // guard, which is what SafeDirectoryScan does.
+    foreach (var child in AlRunner.Infrastructure.SafeDirectoryScan.Directories(
+                 dir, "*", SearchOption.TopDirectoryOnly))
     {
         if (LooksLikeSuite(child))
             yield return Path.GetFullPath(child);

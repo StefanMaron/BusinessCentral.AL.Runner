@@ -206,9 +206,10 @@ public sealed class DependencyLoader
     /// </summary>
     private static IEnumerable<string> SafeEnumerateFiles(string root, string fileName)
     {
-        IEnumerable<string> depsBinDirs;
-        try { depsBinDirs = Directory.EnumerateDirectories(root, ".deps-bin", SearchOption.AllDirectories); }
-        catch { yield break; }
+        // SafeDirectoryScan, not a try around Directory.EnumerateDirectories: the latter is
+        // lazy, so `catch { yield break; }` guarded only the enumerator's construction — an
+        // unreadable directory under `root` threw out of the foreach below instead. #2206.
+        var depsBinDirs = AlRunner.Infrastructure.SafeDirectoryScan.Directories(root, ".deps-bin");
         foreach (var dir in depsBinDirs.OrderBy(d => d, StringComparer.Ordinal))
         {
             var candidate = Path.Combine(dir, fileName);

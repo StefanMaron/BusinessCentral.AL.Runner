@@ -314,7 +314,12 @@ public sealed class DependencyResolver
         foreach (var dir in _cacheDirs)
         {
             if (!Directory.Exists(dir)) continue;
-            foreach (var file in Directory.EnumerateFiles(dir, "*.app", SearchOption.AllDirectories))
+            // SafeDirectoryScan: one unreadable subdirectory under a package-cache root used
+            // to throw out of this lazy enumeration and fail dependency resolution for the
+            // WHOLE bundle — the "mysterious missing-dependency error" #2206 warns about,
+            // reached even after the crash itself was fixed. Skip what cannot be read and
+            // index the rest.
+            foreach (var file in AlRunner.Infrastructure.SafeDirectoryScan.Files(dir, "*.app"))
             {
                 var m = AppLoader.ReadManifest(file);
                 if (m == null) continue;

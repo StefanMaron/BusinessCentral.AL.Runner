@@ -170,7 +170,7 @@ public static class InProcessAppPackager
         byte[]? symbolReferenceJson = null)
     {
         // Collect AL files.
-        var alFiles = Directory.EnumerateFiles(bundleDir, "*.al", SearchOption.AllDirectories)
+        var alFiles = AlRunner.Infrastructure.SafeDirectoryScan.Files(bundleDir, "*.al")
             .OrderBy(f => f, StringComparer.Ordinal)
             .ToList();
         if (alFiles.Count == 0)

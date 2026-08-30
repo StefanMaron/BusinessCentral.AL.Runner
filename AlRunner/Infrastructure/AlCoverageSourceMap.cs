@@ -42,7 +42,7 @@ public static class AlCoverageSourceMap
         foreach (var root in roots)
         {
             if (!Directory.Exists(root)) continue;
-            foreach (var file in Directory.EnumerateFiles(root, "*.al", SearchOption.AllDirectories))
+            foreach (var file in AlRunner.Infrastructure.SafeDirectoryScan.Files(root, "*.al"))
             {
                 string content;
                 try { content = File.ReadAllText(file); }

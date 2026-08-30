@@ -339,7 +339,7 @@ public sealed partial class BcCompiler
         }
 
         var dirs = alFolders.Where(Directory.Exists).Distinct().ToList();
-        var alFiles = dirs.SelectMany(d => Directory.EnumerateFiles(d, "*.al", SearchOption.AllDirectories)).Distinct().ToList();
+        var alFiles = dirs.SelectMany(d => AlRunner.Infrastructure.SafeDirectoryScan.Files(d, "*.al")).Distinct().ToList();
 
         var manifestAppJsonPath = (appRootDir != null && File.Exists(Path.Combine(appRootDir, "app.json")))
             ? Path.Combine(appRootDir, "app.json")
@@ -355,7 +355,7 @@ public sealed partial class BcCompiler
             return null;
         }
 
-        var bundleAlpackages = dirs.SelectMany(d => Directory.EnumerateDirectories(d, ".alpackages", SearchOption.AllDirectories)).Distinct();
+        var bundleAlpackages = dirs.SelectMany(d => AlRunner.Infrastructure.SafeDirectoryScan.Directories(d, ".alpackages")).Distinct();
         // Same BCCOMPILER_TIMING=1 diagnostic convention Emit() uses (see its own
         // GetSharedReferences _mark call) — WatchTests' warm-vs-cold regression guard scrapes
         // this exact "[emit-timing] GetSharedReferences (...): <n>ms" shape on stderr, and this

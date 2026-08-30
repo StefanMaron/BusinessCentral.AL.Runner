@@ -33,7 +33,7 @@ internal static class PrebuiltShadowCheck
             if (!Directory.Exists(bundleDir)) return DateTime.MinValue;
 
             var newest = DateTime.MinValue;
-            foreach (var file in Directory.EnumerateFiles(bundleDir, "*.al", SearchOption.AllDirectories))
+            foreach (var file in AlRunner.Infrastructure.SafeDirectoryScan.Files(bundleDir, "*.al"))
             {
                 var t = File.GetLastWriteTimeUtc(file);
                 if (t > newest) newest = t;
