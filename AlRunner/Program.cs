@@ -1329,7 +1329,8 @@ if (!provisionSubcommand)
         Console.Error.WriteLine(!platformReport.Ok
             ? platformReport.ToDetailedMessage()
             : AlRunner.Infrastructure.ProvisioningCheck.BuildManifestNeedsMissingMessage(
-                decision.ShouldDownloadPlatform, decision.ShouldDownloadTest, PlatformCheckDirs()));
+                decision.ShouldDownloadPlatform, decision.ShouldDownloadTest, PlatformCheckDirs(),
+                decision.MissingPlatformApps));
         return 2;
     }
 
@@ -1377,7 +1378,7 @@ if (!provisionSubcommand)
         var full = (platformReport.Ok
                 ? FindWarmProvisionedVersion(
                     AlRunner.Infrastructure.BcArtifacts.ArtifactsRootDir, mm,
-                    decision.NeedsPlatformApps, decision.ShouldDownloadTest,
+                    decision.RequiredPlatformApps, decision.ShouldDownloadTest,
                     versionFloors, m => Console.Error.WriteLine(m))
                 : null)
             ?? AlRunner.Provisioning.ArtifactDownloader.ResolveVersion(
@@ -1489,14 +1490,18 @@ if (!provisionSubcommand)
                 Console.Error.WriteLine($"[provision] platform apps still symbol-only after download: {stillMissing}");
                 return 2;
             }
-            // Only demand literal Application Test Library presence when the MANIFEST
-            // actually declared a need for it — some BC versions never ship it at all, so
-            // requiring it unconditionally would fail every platform-apps download
-            // triggered solely by the legacy symbol-only gap (e.g. corpus bundles on BC 27.x).
-            if (decision.NeedsPlatformApps
-                && !AlRunner.Infrastructure.ProvisioningCheck.NoFallbackPlatformAppsPresent(PlatformCheckDirs()))
+            // Only demand the apps the MANIFEST actually named — some BC versions never
+            // ship some of them at all (Application Test Library does not exist on 27.x),
+            // so a fixed list would fail every platform-apps download triggered by a bundle
+            // that never needed that app. Issue #2205: this used to hardcode Application
+            // Test Library, which the broadened need-detection would have made fatal for
+            // every ordinary bundle on 27.x.
+            var stillAbsent = AlRunner.Infrastructure.ProvisioningCheck.FindMissingPlatformApps(
+                decision.RequiredPlatformApps, PlatformCheckDirs());
+            if (stillAbsent.Count > 0)
             {
-                Console.Error.WriteLine("[provision] platform apps (Application Test Library) still missing after download.");
+                Console.Error.WriteLine(
+                    $"[provision] platform apps still missing after download: {string.Join(", ", stillAbsent)}.");
                 return 2;
             }
         }
@@ -6738,7 +6743,8 @@ static string? SelectVersionDirOrNull(string root, string versionPrefix)
 /// presence-only behavior verbatim (AC #4).
 /// </summary>
 static string? FindWarmProvisionedVersion(
-    string artifactsRootDir, string majorMinorPrefix, bool needPlatform, bool needTest,
+    string artifactsRootDir, string majorMinorPrefix,
+    IReadOnlyList<string> requiredPlatformApps, bool needTest,
     IReadOnlyDictionary<string, Version>? versionFloors = null,
     Action<string>? onRejected = null)
 {
@@ -6756,8 +6762,10 @@ static string? FindWarmProvisionedVersion(
     {
         var platformDir = AlRunner.Infrastructure.ProvisioningCheck.PlatformAppsDirFor(artifactsRootDir, name);
         var testDir = AlRunner.Infrastructure.ProvisioningCheck.TestAppsDirFor(artifactsRootDir, name);
-        var platformOk = !needPlatform || AlRunner.Infrastructure.ProvisioningCheck.NoFallbackPlatformAppsPresent(
-            new[] { platformDir }, versionFloors);
+        // Issue #2205: "is this warm set usable" asks for the apps this bundle actually
+        // requires, not a fixed one-element list. An empty requirement is vacuously ok.
+        var platformOk = AlRunner.Infrastructure.ProvisioningCheck.FindMissingPlatformApps(
+            requiredPlatformApps, new[] { platformDir }, versionFloors).Count == 0;
         var testOk = !needTest || AlRunner.Infrastructure.ProvisioningCheck.TestToolkitPresent(
             new[] { testDir }, versionFloors);
         if (platformOk && testOk) return name;
@@ -7430,12 +7438,12 @@ static void EnsurePlatformAppsProvisioned(string engineVersion, List<string> bun
     if (!decision.ShouldDownloadPlatform)
     {
         // Issue #2073: "already present" is only true when something was actually VERIFIED
-        // present — a bundle that was simply determined not to need the set at all (the
-        // manifest names nothing platform-only) never checked presence, so claiming
-        // presence for it is a silent wrong answer under .claude/rules/loud-failures.md.
-        Console.Error.WriteLine(decision.NeedsPlatformApps
-            ? "[provision] platform R2R apps already present for the target bundle(s)."
-            : "[provision] target bundle(s) do not need the platform R2R apps set — nothing to provision.");
+        // present. Issue #2205: and "do not need the platform R2R apps set" was equally
+        // unverified — it was printed for a bundle whose implicit Microsoft roots the need
+        // detection simply never looked at. The message now states what was checked and
+        // what was found there; see BuildPlatformProvisionSkippedMessage.
+        Console.Error.WriteLine(AlRunner.Infrastructure.ProvisioningCheck.BuildPlatformProvisionSkippedMessage(
+            decision.RequiredPlatformApps, edgeSearchDirs));
         return;
     }
 

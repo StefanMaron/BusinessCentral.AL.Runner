@@ -1287,4 +1287,271 @@ public sealed class ProvisioningCheckTests : IDisposable
         var note = ProvisioningCheck.BuildProvisionVersionSkewNote("28.4", "28.4", "x");
         Assert.Null(note);
     }
+
+    // ── Issue #2205: cold cache + an ordinary AL app ──────────────────────────
+    // Every real AL extension declares its Microsoft roots through app.json's
+    // `application`/`platform` fields, not the `dependencies` array — ReadDependencies
+    // synthesises them as Optional Microsoft/Application + Microsoft/System roots. The
+    // need-detection above used to ignore those roots entirely, on the premise that
+    // System/Base Application and Business Foundation have a service-tier DLL dispatch
+    // fallback so their ABSENCE is never a gap (only PRESENT-but-symbol-only is).
+    //
+    // That premise is false on a cold cache: the DLL fallback serves RUNTIME DISPATCH, it
+    // does not supply COMPILE-TIME SYMBOLS. With engine-only artifacts on disk the app
+    // never compiles, so there is no runtime for the fallback to serve — the run died with
+    // EMIT-EXCLUDED and two unframed `[deps] dependency not found in cache, skipping`
+    // lines, and `provision` reported "nothing to provision" and exited 0.
+    //
+    // The distinction these pin is ABSENT vs PRESENT-BUT-SYMBOL-ONLY, asked of whatever
+    // the manifest actually names — not membership of a hardcoded exemption list. The
+    // warm arms are the constraint that matters most: a warm cache must keep deciding
+    // "no download", or every bundle in the corpus starts claiming it needs one.
+
+    /// <summary>The implicit roots ReadDependencies synthesises for an ordinary AL app
+    /// whose app.json carries `"application"` + `"platform"` and `"dependencies": []`.</summary>
+    private static DependencyRef[] ImplicitMicrosoftRoots(string version = "27.0.0.0") => new[]
+    {
+        new DependencyRef(Guid.Empty, "Application", "Microsoft", Version.Parse(version), Optional: true),
+        new DependencyRef(Guid.Empty, "System", "Microsoft", Version.Parse(version), Optional: true),
+    };
+
+    [Fact]
+    public void DetermineManifestNeeds_ImplicitMicrosoftRoots_RequireTheAppsTheyName()
+    {
+        var needs = ProvisioningCheck.DetermineManifestNeeds(ImplicitMicrosoftRoots());
+
+        Assert.True(needs.NeedsPlatformApps);
+        // Exactly the two apps the manifest named — NOT the whole downloadable set. A
+        // bundle that never mentions Business Foundation must not be told it needs it.
+        Assert.Equal(new[] { "Application", "System" }, needs.RequiredPlatformApps.OrderBy(n => n).ToArray());
+        // The test-apps set is a SEPARATE 20 MB download and these roots say nothing about
+        // it. Broadening the platform need must not drag the toolkit along.
+        Assert.False(needs.NeedsTestApps);
+    }
+
+    [Fact]
+    public void DecideManifestProvisioning_ColdCache_OrdinaryAlApp_NeedsPlatformApps()
+    {
+        // Issue #2205's exact repro shape: engine artifacts on disk, nothing else. The
+        // legacy symbol-only check reports Ok vacuously (nothing found = nothing broken),
+        // so the decision must come from the manifest.
+        var legacyReport = ProvisioningCheck.CheckPlatformApps("28.1.49838.53910", Array.Empty<string>());
+        Assert.True(legacyReport.Ok);
+
+        var decision = ProvisioningCheck.DecideManifestProvisioning(
+            ImplicitMicrosoftRoots(), legacyReport, Array.Empty<string>());
+
+        Assert.True(decision.NeedsPlatformApps);
+        Assert.False(decision.PlatformComplete);
+        Assert.True(decision.ShouldDownloadPlatform);
+        Assert.Equal(new[] { "Application", "System" }, decision.MissingPlatformApps.OrderBy(n => n).ToArray());
+        Assert.False(decision.ShouldDownloadTest);
+    }
+
+    [Fact]
+    public void DecideManifestProvisioning_WarmCache_OrdinaryAlApp_NoDownload()
+    {
+        // THE no-spurious-download constraint. Same bundle, same roots, platform apps
+        // already on disk: the decision must be identical to what it was before #2205 —
+        // nothing to download. A regression here makes every warm corpus bundle start
+        // claiming it needs a 120 MB fetch on every single run.
+        var dir = Path.Combine(_dir, "warm-ordinary");
+        Directory.CreateDirectory(dir);
+        WriteR2RApp(dir, "application.app", Guid.NewGuid().ToString(), "Application", "Microsoft", "28.1.49838.53910");
+        WriteR2RApp(dir, "system.app", Guid.NewGuid().ToString(), "System", "Microsoft", "28.0.53872.0");
+
+        var legacyReport = ProvisioningCheck.CheckPlatformApps("28.1.49838.53910", new[] { dir });
+        var decision = ProvisioningCheck.DecideManifestProvisioning(
+            ImplicitMicrosoftRoots(), legacyReport, new[] { dir });
+
+        Assert.True(decision.NeedsPlatformApps);
+        Assert.True(decision.PlatformComplete);
+        Assert.Empty(decision.MissingPlatformApps);
+        Assert.False(decision.ShouldDownloadPlatform);
+        Assert.False(decision.ShouldDownloadTest);
+    }
+
+    [Fact]
+    public void DecideManifestProvisioning_OrdinaryAlApp_PresentButSymbolOnly_StillADownload()
+    {
+        // The other side of the absent/symbol-only distinction, unchanged by #2205: an app
+        // that IS on disk but only as a symbol package cannot execute, so it stays a gap.
+        // Proving both states here is what makes "absent" a real classification rather
+        // than a synonym for "not R2R".
+        var dir = Path.Combine(_dir, "symbolonly-ordinary");
+        Directory.CreateDirectory(dir);
+        WriteR2RApp(dir, "application.app", Guid.NewGuid().ToString(), "Application", "Microsoft", "28.1.49838.53910");
+        WriteR2RApp(dir, "system.app", Guid.NewGuid().ToString(), "System", "Microsoft", "28.0.53872.0");
+        WriteSymbolOnlyApp(dir, "sysapp.app", Guid.NewGuid().ToString(), "System Application", "Microsoft", "28.1.49838.53910");
+
+        var legacyReport = ProvisioningCheck.CheckPlatformApps("28.1.49838.53910", new[] { dir });
+        Assert.False(legacyReport.Ok);
+
+        var decision = ProvisioningCheck.DecideManifestProvisioning(
+            ImplicitMicrosoftRoots(), legacyReport, new[] { dir });
+
+        // The two apps the manifest named ARE present, so nothing is "missing"...
+        Assert.Empty(decision.MissingPlatformApps);
+        // ...yet the symbol-only System Application still forces the download.
+        Assert.True(decision.ShouldDownloadPlatform);
+    }
+
+    [Fact]
+    public void DecideManifestProvisioning_ExplicitMicrosoftRoots_RequireExactlyThoseApps()
+    {
+        // The al-language corpus shape: `application`/`platform` PLUS explicit Base/System
+        // Application dependencies at a declared floor. Warm, at or above the floor, this
+        // must still decide "no download".
+        var dir = Path.Combine(_dir, "warm-corpus");
+        Directory.CreateDirectory(dir);
+        WriteR2RApp(dir, "application.app", Guid.NewGuid().ToString(), "Application", "Microsoft", "27.5.46862.53931");
+        WriteR2RApp(dir, "system.app", Guid.NewGuid().ToString(), "System", "Microsoft", "27.5.46862.0");
+        WriteR2RApp(dir, "sysapp.app", Guid.NewGuid().ToString(), "System Application", "Microsoft", "27.5.46862.53931");
+        WriteR2RApp(dir, "baseapp.app", Guid.NewGuid().ToString(), "Base Application", "Microsoft", "27.5.46862.53931");
+
+        var roots = ImplicitMicrosoftRoots().Concat(new[]
+        {
+            new DependencyRef(Guid.NewGuid(), "System Application", "Microsoft", new Version(27, 5, 0, 0)),
+            new DependencyRef(Guid.NewGuid(), "Base Application", "Microsoft", new Version(27, 5, 0, 0)),
+        }).ToArray();
+
+        var needs = ProvisioningCheck.DetermineManifestNeeds(roots);
+        Assert.Equal(
+            new[] { "Application", "Base Application", "System", "System Application" },
+            needs.RequiredPlatformApps.OrderBy(n => n, StringComparer.Ordinal).ToArray());
+        // Business Foundation and Application Test Library are in the downloadable set but
+        // this manifest names neither — they must not be demanded, and their absence from
+        // the warm dir above must not make it look incomplete.
+        Assert.DoesNotContain("Business Foundation", needs.RequiredPlatformApps);
+        Assert.DoesNotContain("Application Test Library", needs.RequiredPlatformApps);
+
+        var legacyReport = ProvisioningCheck.CheckPlatformApps("27.5.46862.53931", new[] { dir });
+        var decision = ProvisioningCheck.DecideManifestProvisioning(roots, legacyReport, new[] { dir });
+        Assert.True(decision.PlatformComplete);
+        Assert.False(decision.ShouldDownloadPlatform);
+    }
+
+    [Fact]
+    public void DecideManifestProvisioning_ExplicitMicrosoftRootBelowFloor_IsNotPresent()
+    {
+        // Negative arm of the floor rule at the broadened set: a Base Application found
+        // BELOW the floor the manifest declares reads as missing, not present.
+        var dir = Path.Combine(_dir, "stale-baseapp");
+        Directory.CreateDirectory(dir);
+        WriteR2RApp(dir, "application.app", Guid.NewGuid().ToString(), "Application", "Microsoft", "27.5.46862.53931");
+        WriteR2RApp(dir, "system.app", Guid.NewGuid().ToString(), "System", "Microsoft", "27.5.46862.0");
+        WriteR2RApp(dir, "baseapp.app", Guid.NewGuid().ToString(), "Base Application", "Microsoft", "27.0.0.0");
+
+        var roots = ImplicitMicrosoftRoots().Concat(new[]
+        {
+            new DependencyRef(Guid.NewGuid(), "Base Application", "Microsoft", new Version(27, 5, 0, 0)),
+        }).ToArray();
+
+        var legacyReport = ProvisioningCheck.CheckPlatformApps("27.5.46862.53931", new[] { dir });
+        var decision = ProvisioningCheck.DecideManifestProvisioning(roots, legacyReport, new[] { dir });
+
+        Assert.Equal(new[] { "Base Application" }, decision.MissingPlatformApps.ToArray());
+        Assert.True(decision.ShouldDownloadPlatform);
+    }
+
+    [Fact]
+    public void DetermineManifestNeeds_NoMicrosoftRootsAtAll_RequiresNothing()
+    {
+        // A bundle with no `application`/`platform` fields and no Microsoft dependency (the
+        // al-language-internals-fixture shape) must still require nothing — the broadened
+        // rule keys off what the manifest NAMES, so naming nothing demands nothing.
+        var roots = new[]
+        {
+            new DependencyRef(Guid.NewGuid(), "AL Internals Test Fixture", "AL Language", new Version(1, 0, 0, 0)),
+        };
+        var needs = ProvisioningCheck.DetermineManifestNeeds(roots);
+
+        Assert.False(needs.NeedsPlatformApps);
+        Assert.Empty(needs.RequiredPlatformApps);
+        Assert.False(needs.NeedsTestApps);
+    }
+
+    [Fact]
+    public void DetermineManifestNeeds_UnrelatedMicrosoftExtension_StillRequiresNothing()
+    {
+        // Unchanged by #2205: a Microsoft app the platform-apps set cannot supply must not
+        // become an unsatisfiable requirement.
+        var roots = new[]
+        {
+            new DependencyRef(Guid.NewGuid(), "Power BI Reports", "Microsoft", new Version(28, 1, 0, 0)),
+        };
+        var needs = ProvisioningCheck.DetermineManifestNeeds(roots);
+
+        Assert.False(needs.NeedsPlatformApps);
+        Assert.Empty(needs.RequiredPlatformApps);
+    }
+
+    // ── Issue #2205, second half: `provision` must not claim a need does not exist ─────
+
+    [Fact]
+    public void BuildPlatformProvisionSkippedMessage_NeedVerifiedPresent_SaysWhatItFound()
+    {
+        var msg = ProvisioningCheck.BuildPlatformProvisionSkippedMessage(
+            new[] { "Application", "System" }, new[] { "/cache/platform-apps" });
+
+        Assert.Contains("Application", msg);
+        Assert.Contains("System", msg);
+        Assert.Contains("/cache/platform-apps", msg);
+        // #2073's intent preserved: presence is claimed only because it was verified.
+        Assert.Contains("already present", msg);
+        Assert.DoesNotContain("do not need", msg);
+    }
+
+    [Fact]
+    public void BuildPlatformProvisionSkippedMessage_NoNeedDeclared_StatesWhatWasChecked()
+    {
+        // The wrong answer #2205 reports: "target bundle(s) do not need the platform R2R
+        // apps set" for a bundle that demonstrably needs it. The honest form states what
+        // was examined and what was found there, and never asserts a need does not exist.
+        var msg = ProvisioningCheck.BuildPlatformProvisionSkippedMessage(
+            Array.Empty<string>(), new[] { "/cache/platform-apps" });
+
+        Assert.DoesNotContain("do not need", msg);
+        Assert.Contains("app.json", msg);
+        Assert.Contains("Microsoft", msg);
+    }
+
+    [Fact]
+    public void BuildManifestNeedsMissingMessage_NamesTheMissingAppsNotJustTheSet()
+    {
+        // The run-path message. Naming "the Microsoft platform-app set" alone told the
+        // reader nothing about which app was actually absent.
+        var msg = ProvisioningCheck.BuildManifestNeedsMissingMessage(
+            needsPlatform: true, needsTest: false,
+            searchedDirs: new[] { "/cache/a" },
+            missingPlatformApps: new[] { "Application", "System" });
+
+        Assert.Contains("Application", msg);
+        Assert.Contains("System", msg);
+        Assert.Contains("/cache/a", msg);
+    }
+
+    // ── FindMissingPlatformApps: absent vs present, in isolation ──────────────
+
+    [Fact]
+    public void FindMissingPlatformApps_NamesOnlyTheAbsentOnes()
+    {
+        var dir = Path.Combine(_dir, "partial-set");
+        Directory.CreateDirectory(dir);
+        WriteR2RApp(dir, "application.app", Guid.NewGuid().ToString(), "Application", "Microsoft", "28.1.0.0");
+
+        var missing = ProvisioningCheck.FindMissingPlatformApps(
+            new[] { "Application", "System", "Base Application" }, new[] { dir });
+
+        Assert.Equal(new[] { "Base Application", "System" }, missing.OrderBy(n => n, StringComparer.Ordinal).ToArray());
+    }
+
+    [Fact]
+    public void FindMissingPlatformApps_EmptyRequirement_FindsNothingMissing()
+    {
+        var missing = ProvisioningCheck.FindMissingPlatformApps(
+            Array.Empty<string>(), new[] { Path.Combine(_dir, "does-not-exist") });
+
+        Assert.Empty(missing);
+    }
 }
