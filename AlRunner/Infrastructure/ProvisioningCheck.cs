@@ -831,6 +831,45 @@ public static class ProvisioningCheck
         return floors;
     }
 
+    /// <summary>
+    /// <paramref name="versionFloors"/> minus every floor that <paramref name="provisionableVersion"/>
+    /// could not possibly satisfy — a floor whose major.minor is ABOVE the BC version being
+    /// provisioned.
+    ///
+    /// Issue #2003's floor rule was measured on a stale PATCH: 28.0 present, 28.1 declared,
+    /// a newer build obtainable — so "found but too old" is a real gap a download fixes.
+    /// A floor above the selected version is a different thing entirely and no download can
+    /// ever clear it. The al-language corpus declares System Application / Base Application
+    /// &gt;= 27.5.0.0 and is nonetheless run — green — on the BC 27.0 and 27.3 legs, because
+    /// the runner tolerates that gap deliberately (<c>BcFloorGate</c> owns the case where it
+    /// is genuinely incompatible). Counting it as "absent" once issue #2205 made these apps
+    /// a real requirement would have turned both legs into "platform apps still missing
+    /// after download", exit 2, on every cold run.
+    ///
+    /// An unparseable <paramref name="provisionableVersion"/> rules nothing out: every floor
+    /// is kept, because "we cannot tell" must not read as "relax them all". Pure.
+    /// </summary>
+    public static IReadOnlyDictionary<string, Version> DropUnsatisfiableFloors(
+        IReadOnlyDictionary<string, Version>? versionFloors, string? provisionableVersion)
+    {
+        var empty = new Dictionary<string, Version>(StringComparer.OrdinalIgnoreCase);
+        if (versionFloors == null || versionFloors.Count == 0) return empty;
+        if (string.IsNullOrWhiteSpace(provisionableVersion)) return versionFloors;
+
+        var parts = provisionableVersion.Split('.');
+        if (parts.Length < 2 || !int.TryParse(parts[0], out var major) || !int.TryParse(parts[1], out var minor))
+            return versionFloors;
+
+        var kept = new Dictionary<string, Version>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (name, floor) in versionFloors)
+        {
+            var floorMinor = floor.Minor < 0 ? 0 : floor.Minor;
+            if (floor.Major > major || (floor.Major == major && floorMinor > minor)) continue;
+            kept[name] = floor;
+        }
+        return kept;
+    }
+
     /// <summary>One app found below the version floor its manifests declared for it.</summary>
     public sealed record VersionFloorViolation(string AppName, Version FoundVersion, Version RequiredVersion);
 
@@ -966,7 +1005,11 @@ public static class ProvisioningCheck
         var rootsList = manifestRoots as ICollection<AlRunner.DependencyRef> ?? manifestRoots.ToList();
         var scan = ScanDependencyEdges(searchDirs);
         var needs = DetermineManifestNeeds(rootsList, scan.Edges);
-        var versionFloors = DetermineVersionFloors(rootsList);
+        // A floor the BC version under provision could never supply must not create a
+        // demand no download can clear — see DropUnsatisfiableFloors. The report carries
+        // the selected version, which is exactly the version a download would target.
+        var versionFloors = DropUnsatisfiableFloors(
+            DetermineVersionFloors(rootsList), legacySymbolOnlyReport.Version);
         // Presence is asked of exactly the apps the manifests required — so an app the
         // bundle never names cannot make the set look incomplete, and an app it DOES name
         // cannot be silently exempted from the check.

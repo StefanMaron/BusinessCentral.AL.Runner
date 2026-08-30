@@ -1461,6 +1461,88 @@ public sealed class ProvisioningCheckTests : IDisposable
     }
 
     [Fact]
+    public void DecideManifestProvisioning_FloorAboveTheSelectedBcVersion_IsNotADownloadDemand()
+    {
+        // The al-language corpus on the BC 27.0 leg, exactly. Its app.json declares
+        // System Application / Base Application >= 27.5.0.0 while the leg provisions 27.0 —
+        // and it passes there, because the runner deliberately tolerates a bundle whose
+        // declared floor sits above the selected BC version (BcFloorGate owns the case
+        // where that is genuinely incompatible).
+        //
+        // #2003's floor rule was measured on a STALE PATCH — 28.0 present, 28.1 wanted,
+        // a newer one obtainable. A floor above the version being provisioned is a
+        // different thing: no download can ever clear it, so treating it as "absent" turns
+        // every 27.0/27.3 leg into "platform apps still missing after download", exit 2.
+        // A floor may only make an app absent when satisfying it is possible.
+        var dir = Path.Combine(_dir, "bc27-leg");
+        Directory.CreateDirectory(dir);
+        WriteR2RApp(dir, "application.app", Guid.NewGuid().ToString(), "Application", "Microsoft", "27.0.38460.53260");
+        WriteR2RApp(dir, "system.app", Guid.NewGuid().ToString(), "System", "Microsoft", "27.0.38460.0");
+        WriteR2RApp(dir, "sysapp.app", Guid.NewGuid().ToString(), "System Application", "Microsoft", "27.0.38460.53260");
+        WriteR2RApp(dir, "baseapp.app", Guid.NewGuid().ToString(), "Base Application", "Microsoft", "27.0.38460.53260");
+
+        var roots = ImplicitMicrosoftRoots().Concat(new[]
+        {
+            new DependencyRef(Guid.NewGuid(), "System Application", "Microsoft", new Version(27, 5, 0, 0)),
+            new DependencyRef(Guid.NewGuid(), "Base Application", "Microsoft", new Version(27, 5, 0, 0)),
+        }).ToArray();
+
+        var legacyReport = ProvisioningCheck.CheckPlatformApps("27.0.38460.53260", new[] { dir });
+        var decision = ProvisioningCheck.DecideManifestProvisioning(roots, legacyReport, new[] { dir });
+
+        Assert.Empty(decision.MissingPlatformApps);
+        Assert.True(decision.PlatformComplete);
+        Assert.False(decision.ShouldDownloadPlatform);
+    }
+
+    [Fact]
+    public void DecideManifestProvisioning_FloorWithinTheSelectedBcVersion_StillADownloadDemand()
+    {
+        // The negative arm: a floor the selected version CAN satisfy keeps #2003's
+        // behavior — a stale patch is still a gap, and dropping unsatisfiable floors must
+        // not become a licence to ignore satisfiable ones.
+        var dir = Path.Combine(_dir, "bc275-stale");
+        Directory.CreateDirectory(dir);
+        WriteR2RApp(dir, "application.app", Guid.NewGuid().ToString(), "Application", "Microsoft", "27.5.46862.53931");
+        WriteR2RApp(dir, "system.app", Guid.NewGuid().ToString(), "System", "Microsoft", "27.5.46862.0");
+        WriteR2RApp(dir, "baseapp.app", Guid.NewGuid().ToString(), "Base Application", "Microsoft", "27.5.1.0");
+
+        var roots = ImplicitMicrosoftRoots().Concat(new[]
+        {
+            new DependencyRef(Guid.NewGuid(), "Base Application", "Microsoft", new Version(27, 5, 46862, 53931)),
+        }).ToArray();
+
+        var legacyReport = ProvisioningCheck.CheckPlatformApps("27.5.46862.53931", new[] { dir });
+        var decision = ProvisioningCheck.DecideManifestProvisioning(roots, legacyReport, new[] { dir });
+
+        Assert.Equal(new[] { "Base Application" }, decision.MissingPlatformApps.ToArray());
+        Assert.True(decision.ShouldDownloadPlatform);
+    }
+
+    [Fact]
+    public void DropUnsatisfiableFloors_KeepsWhatTheVersionCanSupply_DropsWhatItCannot()
+    {
+        var floors = new Dictionary<string, Version>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Base Application"] = new Version(27, 5, 0, 0),
+            ["Application Test Library"] = new Version(27, 0, 0, 0),
+        };
+
+        var on27_0 = ProvisioningCheck.DropUnsatisfiableFloors(floors, "27.0.38460.53260");
+        Assert.False(on27_0.ContainsKey("Base Application"));
+        Assert.Equal(new Version(27, 0, 0, 0), on27_0["Application Test Library"]);
+
+        var on28_1 = ProvisioningCheck.DropUnsatisfiableFloors(floors, "28.1.49838.53910");
+        Assert.Equal(new Version(27, 5, 0, 0), on28_1["Base Application"]);
+        Assert.Equal(new Version(27, 0, 0, 0), on28_1["Application Test Library"]);
+
+        // An unparseable/absent version cannot rule anything out — keep every floor rather
+        // than silently relax them all.
+        var unknown = ProvisioningCheck.DropUnsatisfiableFloors(floors, "not-a-version");
+        Assert.Equal(2, unknown.Count);
+    }
+
+    [Fact]
     public void DetermineManifestNeeds_NoMicrosoftRootsAtAll_RequiresNothing()
     {
         // A bundle with no `application`/`platform` fields and no Microsoft dependency (the

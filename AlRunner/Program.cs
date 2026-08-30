@@ -1374,7 +1374,11 @@ if (!provisionSubcommand)
         // app.json manifests declare, not just be present — versionFloors carries that
         // (derived from the SAME manifestDependencyRoots DetermineManifestNeeds already
         // read above), so a stale warm set is skipped rather than silently reused.
-        var versionFloors = AlRunner.Infrastructure.ProvisioningCheck.DetermineVersionFloors(manifestDependencyRoots);
+        // Same rule DecideManifestProvisioning applies: a floor above the version being
+        // provisioned is not something a download can fix, so it must not reject a warm
+        // set (see ProvisioningCheck.DropUnsatisfiableFloors).
+        var versionFloors = AlRunner.Infrastructure.ProvisioningCheck.DropUnsatisfiableFloors(
+            AlRunner.Infrastructure.ProvisioningCheck.DetermineVersionFloors(manifestDependencyRoots), version);
         var full = (platformReport.Ok
                 ? FindWarmProvisionedVersion(
                     AlRunner.Infrastructure.BcArtifacts.ArtifactsRootDir, mm,
@@ -7472,7 +7476,8 @@ static void EnsurePlatformAppsProvisioned(string engineVersion, List<string> bun
     // complete one already on disk. Skipped when the bundle's OWN package cache holds a
     // symbol-only platform app (issue #1678): that is a known-bad package a warm set
     // elsewhere does not repair.
-    var provisionFloors = AlRunner.Infrastructure.ProvisioningCheck.DetermineVersionFloors(manifestDependencyRoots);
+    var provisionFloors = AlRunner.Infrastructure.ProvisioningCheck.DropUnsatisfiableFloors(
+        AlRunner.Infrastructure.ProvisioningCheck.DetermineVersionFloors(manifestDependencyRoots), engineVersion);
     var warmVersion = platformReport.Ok
         ? FindWarmProvisionedVersion(
             AlRunner.Infrastructure.BcArtifacts.ArtifactsRootDir, mm,
