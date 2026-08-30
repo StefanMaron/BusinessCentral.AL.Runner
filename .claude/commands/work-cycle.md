@@ -28,6 +28,7 @@ Report the triager's summary numbers (ready / needs-input / closed / left-alone)
 
 Settings:
 - **Concurrency**: up to 2 implementation agents in parallel (identities `impl-1`, `impl-2`).
+- **Identities are a reusable pool, not a counter.** `impl-1` and `impl-2` are the only two, for every cycle. A finished agent frees its name immediately; the next task reuses it and resets that worktree. Never allocate `impl-3` or higher to "keep them separate" — separation is what the two names already provide, and every extra identity leaves a permanent multi-hundred-megabyte checkout under `.claude/worktrees/`.
 - **Isolation**: each impl agent runs with `isolation: "worktree"` so it has its own checkout and branch.
 - **Background**: impl agents run with `run_in_background: true` so the orchestrator pass can run alongside them.
 
@@ -104,5 +105,5 @@ Print to the user:
 - **You don't do the work.** Triage, implementation, and PR review all happen inside sub-agents. Your only direct `gh` calls are the read-only state reads in Step A.
 - **Don't deep-poll.** When background agents are running, wait for the runtime's notification rather than busy-checking.
 - **Don't re-run the triager mid-loop.** It runs once at the start of the cycle. New issues that arrive mid-cycle will be picked up by the next `/work-cycle` invocation.
-- **Don't escalate concurrency past 2** without an explicit user instruction — the conventional impl identities are `impl-1` and `impl-2`, and going higher means inventing new identities and reasoning about queue contention.
+- **Don't escalate concurrency past 2** without an explicit user instruction, and don't invent identities past the pool even then. The identities are `impl-1` and `impl-2`, reused every cycle. Raising concurrency means reasoning about queue contention; inventing names means accumulating worktrees. If the user does raise the limit, extend the pool to exactly the new limit (`impl-3` only if three run at once) — never one name per task.
 - **Stop when the terminal condition holds.** Do not invent more work to do; report and exit.

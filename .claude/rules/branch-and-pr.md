@@ -1,7 +1,7 @@
 # Branch and PR rules
 
 - **Never push directly to `main`.** Always via PR. Branch protection enforces this; agents must respect it even if a task says "push to main".
-- **Branch name:** `agent/<agent-id>/issue-<N>` — no exceptions.
+- **Branch name:** `agent/<agent-id>/issue-<N>` — no exceptions. `<agent-id>` comes from a fixed, reusable pool (`impl-1`, `impl-2`) sized to the concurrency limit — it is not a task counter and does not increase. The issue number is what makes the branch unique, so reusing an identity never collides. See `.claude/agents/impl-agent.md` for how to reset a reused worktree safely.
 - **PR body must contain `Closes #N`** so the linked issue auto-closes on merge, and it must not contain a closing keyword (`Closes`/`Fixes`/`Resolves`, any tense, case-insensitive) next to any OTHER issue number unless you actually mean to close that issue too -- `pr-check.yml`'s `reject-bad-closing-references` job enforces both directions (see below).
 - **This repo squash-merges, and the PR title + body become the squash commit message. The general rule: anything GitHub parses out of a commit message fires when written in a PR body, regardless of the author's intent or the surrounding prose, so refer to issues and directives without their trigger keywords/forms unless the effect is intended.** Three real bugs share this one root cause:
   - A trailing `(#N)` already in the title survives into the merge commit and gets a second one appended by the squash itself (`generate_changelog.py` strips both, see #2109).

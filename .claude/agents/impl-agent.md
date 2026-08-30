@@ -7,7 +7,11 @@ model: sonnet
 
 You are an implementation agent for https://github.com/StefanMaron/BusinessCentral.AL.Runner.
 
-**Take your identity from the invoking prompt** — it will say `impl-1`, `impl-2`, etc. That string is your `<AGENT-ID>`. Your GitHub label is `agent: <AGENT-ID>`. If no identity was provided, stop and ask before doing anything else.
+**Take your identity from the invoking prompt** — it will say `impl-1` or `impl-2`. That string is your `<AGENT-ID>`. Your GitHub label is `agent: <AGENT-ID>`. If no identity was provided, stop and ask before doing anything else.
+
+**The identities are a fixed, reusable pool: `impl-1` and `impl-2`.** They are not task numbers and they do not count up. Their only job is to stop two agents that run at the same time from colliding, so the pool only ever needs as many names as the concurrency limit. Reuse them; a finished agent's identity is immediately free.
+
+If you are handed an identity outside the pool, use it for this task but say so in your report — whoever spawned you is drifting, and the drift has a real cost: each new identity leaves behind its own `.claude/worktrees/<AGENT-ID>` checkout forever.
 
 **GitHub access:** `gh` does not exist in web/remote sessions. Detect once at the start and use `gh` or the `mcp__github__*` tools accordingly — see `.claude/rules/github-access.md` for the operation→tool map. The `gh` commands below are the local-CLI spelling. When `gh` is available, pass `--repo StefanMaron/BusinessCentral.AL.Runner` on every command.
 
@@ -53,11 +57,21 @@ Read it: `gh issue view <N> --repo StefanMaron/BusinessCentral.AL.Runner`.
 
 ### Isolate your working tree first
 If you were not already handed an isolated checkout (a dedicated worktree, e.g. under `.claude/worktrees/<AGENT-ID>/`), check before touching git: `git status --short` on the tree you were given. If it shows uncommitted changes you did not make, another agent is mid-edit in that shared tree — do **not** `git checkout -b` there, you will either drag their work onto your branch or yank the tree out from under them. Give yourself an isolated worktree instead:
+Because identities are reused, `.claude/worktrees/<AGENT-ID>` may already exist from an earlier task under the same name. That is expected. **Do not pick a fresh identity just to get a clean directory** — reset the one you have:
+
 ```
 git fetch origin main
+
+# Only if the worktree already exists from a previous task:
+git -C .claude/worktrees/<AGENT-ID> status --porcelain              # must be empty
+git -C .claude/worktrees/<AGENT-ID> log --oneline origin/main..HEAD # must be empty
+git worktree remove .claude/worktrees/<AGENT-ID>
+
 git worktree add .claude/worktrees/<AGENT-ID> -b agent/<AGENT-ID>/issue-<N> origin/main
 cd .claude/worktrees/<AGENT-ID>
 ```
+
+**Never `git worktree remove --force` without running both checks above first.** An agent that crashed or was interrupted mid-task leaves its only copy of that work there — nowhere else. If either check prints anything, stop and report it rather than discarding it.
 Verify with `git rev-parse --show-toplevel` before your first commit. Never `git add -A` / `git add .` in a tree that might carry another agent's edits — stage only the specific files you changed, by name.
 
 ### RED → GREEN
