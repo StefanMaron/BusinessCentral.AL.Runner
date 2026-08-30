@@ -213,10 +213,12 @@ public static class ALDatabasePatches
     /// TestAssertErrorRollback.al), PLUS a note of the attempt for
     /// <see cref="RecordPatches.ForceDurableFailedInserts"/>: measured real BC keeps an
     /// inserted row durable even when THAT SAME Insert() statement's own OnInsert trigger
-    /// throws (OnInsert runs after the physical write on real BC — this runner's write only
-    /// lands once ALInsertAsync returns without throwing, so without the force-durable step
-    /// the row is simply never written at all). See the long comment atop
-    /// RecordPatches.TransactionSnapshot.cs.</summary>
+    /// throws. Decompiling NavRecord.InsertAsync shows OnInsert runs BEFORE the only call
+    /// that physically writes anything, with no surrounding try/catch, identically in this
+    /// runner and (presumably) real BC — so the row genuinely is never written when OnInsert
+    /// throws, in either. The force-durable step reproduces real BC's OBSERVED outcome
+    /// without claiming to model how real BC reaches it; see the long comment atop
+    /// RecordPatches.TransactionSnapshot.cs and AlRunner#2167.</summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static void NoteRecordInsertWrite(object? record)
     {

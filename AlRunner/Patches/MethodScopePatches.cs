@@ -304,7 +304,9 @@ public static partial class BcRuntime
             AlRunner.Patches.RecordPatches.RollbackToCommitPoint(_skeletonSession);
             // AFTER the rollback above (AlRunner#2142): an Insert() this SAME statement
             // attempted may not have actually landed in the table yet (OnInsert runs before
-            // this runner's physical write completes), so there's nothing for the rollback
+            // the physical write completes, in this runner AND in real BC's own decompiled
+            // NavRecord.InsertAsync — see RecordPatches.TransactionSnapshot.cs's file header
+            // for what that does and does not explain), so there's nothing for the rollback
             // to have undone — but real BC keeps the row anyway. Force it durable now, once
             // any Modify/Delete rollback for this table has already settled.
             AlRunner.Patches.RecordPatches.ForceDurableFailedInserts();

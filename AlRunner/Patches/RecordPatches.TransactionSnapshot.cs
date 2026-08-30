@@ -7,29 +7,48 @@
 //   error and calls session.Rollback().
 //
 //   That is observable, and the corpus pins it:
-//     * TestAssertErrorRollback.al (Codeunit 60943) — an uncommitted write DOES roll back on
-//       a LATER, textually UNRELATED asserterror'd statement (a bare Error() call with no
-//       write of its own); an intervening Commit() moves the surviving boundary forward, and
-//       only writes since that Commit() are undone. This is the general "roll back to the
-//       last commit point" rule and it stays exactly as it always has — the fixes below are
-//       narrow exceptions to it, not a replacement for it. (AlRunner#2142's own examples,
-//       TestScopeIsolationContracts.Test04 and TestTransactionContracts
-//       .Error_After_Insert_Before_Commit_RecordPersists, assert the OPPOSITE of this
-//       codeunit for the exact same shape — an uncommitted, untriggered Insert() surviving a
-//       later unrelated Error() — and are the stale corpus tests here: Codeunit 60943 is the
-//       newer, more careful measurement and both those two are superseded by it. This is a
-//       genuine corpus inconsistency, not a runner gap; that correction belongs upstream.)
 //     * TestTriggerRollback.OnModify_Throws_ValueNotModified — an explicit Commit() before
 //       the asserterror, precisely so the Insert above it survives the rollback.
 //     * TestTriggerRollback.OnDelete_Throws_RecordStillExists — Insert() (no error, no
 //       Commit()) then `asserterror Delete()` whose OnDelete trigger throws: the Insert must
-//       survive. Unlike Codeunit 60943's "unrelated" shape, the LATER statement here is
-//       ITSELF a write attempt against the SAME table — see the "always re-baseline on the
-//       next write" fix below.
+//       survive. The LATER statement here is ITSELF a write attempt against the SAME table
+//       — see the "always re-baseline on the next write" fix below.
 //     * TestTriggerRollback.OnInsert_Throws_RecordNotInserted — asserterror wraps the Insert
-//       call itself, and OnInsert's trigger throws. Real BC (Cloud, measured) keeps the row:
-//       OnInsert runs AFTER the physical write on real BC, so the write is already durable
-//       by the time the trigger can object. See the Insert force-durable fix below.
+//       call itself, and OnInsert's own trigger throws; real BC (measured) keeps the row.
+//       See ForceDurableFailedInserts below, and AlRunner#2142/#2167 for the open question
+//       of WHY real BC keeps it — decompiling NavRecord.InsertAsync (Ncl.dll) shows OnInsert
+//       runs BEFORE recordImplementation.InsertRecordAsync (the only call that physically
+//       writes anything) with no surrounding try/catch, identically for RunTrigger=true and
+//       false, in BOTH this runner (which reuses that method unmodified — see
+//       RecordWritePatches.cs's own note that the trigger-bypass replacement is NOT
+//       installed) and, presumably, real BC. That DISPROVES this file's earlier claim that
+//       real BC runs OnInsert after the physical write — there is no ordering discrepancy to
+//       fix, because the ordering was never the actual explanation. The mechanism that lets
+//       BC's Count() see a row that was never handed to recordImplementation.InsertRecordAsync
+//       remains unidentified; ForceDurableFailedInserts reproduces the OBSERVED outcome
+//       without claiming to model how real BC gets there. Narrowly scoped to the exact
+//       asserterror'd statement doing the inserting (see BeginAssertErrorScope), so it does
+//       not reach into an unrelated, already-returned Insert() from an earlier statement —
+//       but a genuinely different unwind path (an OnInsert failure that propagates past
+//       asserterror, e.g. into Codeunit.Run()'s own trap) is NOT covered by this mechanism,
+//       since ForceDurableFailedInserts is only ever called from the asserterror catch
+//       handler. If BC's real mechanism turns out to apply on those paths too, this fix is
+//       incomplete there — flagged in #2167 rather than silently assumed away.
+//
+//   AlRunner#2142 also originally cited TestScopeIsolationContracts.Test04 and
+//   TestTransactionContracts.Error_After_Insert_Before_Commit_RecordPersists as examples of
+//   the same bug — both assert the OPPOSITE of TestAssertErrorRollback.al (Codeunit 60943)
+//   Record_Insert_UnrelatedAssertError_NoCommit_RowIsRolledBack for what looks like the
+//   identical shape (an uncommitted, untriggered Insert() then a later, unrelated Error()).
+//   Real BC passes all three (confirmed against CI run 33273501078, BC 27.5 and 28.3) — they
+//   are NOT contradictory, so whatever distinguishes them is a real BC mechanism this runner
+//   does not yet reproduce, not a corpus defect to invert. See #2167 for what's been ruled
+//   in/out so far (a per-session primary-key read cache in Ncl.dll's TransactionalDataCache
+//   that Get()-by-key can be satisfied from without invalidating on a local rollback, versus
+//   TryGetCount's unconditional EnsureReadTransactionStarted — plausible, decompiled, but not
+//   confirmed as the complete answer). This runner currently does NOT special-case that
+//   shape at all — Test04 and Error_After_Insert_Before_Commit_RecordPersists both fail here,
+//   openly, with no known-gaps entry masking it, exactly as on unmodified main.
 //
 //   Without any of this the runner either never rolled anything back (silently wrong for a
 //   test that checks the table afterwards) or rolled back to the wrong boundary.
@@ -57,18 +76,29 @@
 //   same table twice without an intervening Commit(), so there's only ever one baseline to
 //   refresh into.
 //
-//   Insert() is excluded from the ABOVE mechanism's protection in one specific way: measured
-//   real BC keeps an Insert() row durable even when THAT SAME Insert() statement's own
-//   OnInsert trigger throws (TestTriggerRollback.OnInsert_Throws_RecordNotInserted) — but
-//   this runner's physical write for Insert only actually lands once NavRecord.ALInsertAsync
-//   returns without throwing (OnInsert runs BEFORE that completes here, the opposite of the
-//   documented real-BC order), so RollbackToCommitPoint has nothing to undo AND the row was
-//   simply never written. ForceDurableFailedInserts (see below) makes it durable directly,
-//   but ONLY for Insert() attempts made during the statement asserterror is CURRENTLY
-//   wrapping (BeginAssertErrorScope/EndAssertErrorScope) — an Insert() from an EARLIER,
+//   Insert() gets one further, narrower exception: measured real BC keeps an Insert() row
+//   durable even when THAT SAME Insert() statement's own OnInsert trigger throws
+//   (TestTriggerRollback.OnInsert_Throws_RecordNotInserted). This is NOT because OnInsert
+//   runs after the physical write on real BC — decompiling NavRecord.InsertAsync in Ncl.dll
+//   shows OnInsert runs BEFORE recordImplementation.InsertRecordAsync (the only call that
+//   physically writes anything) with no surrounding try/catch, and this runner reuses that
+//   exact method unmodified (RecordWritePatches.cs's own comment confirms the bypass
+//   replacement that would have skipped trigger dispatch is NOT installed). So in this
+//   runner, exactly as in the decompiled real-BC code path, a throwing OnInsert means
+//   InsertRecordAsync is never reached and the row is never written — RollbackToCommitPoint
+//   has nothing to undo, because there was nothing to undo. The row still needs to end up in
+//   the table to match real BC's measured outcome, and ForceDurableFailedInserts (below)
+//   does that directly, reusing the record's own live field buffer — but WHY real BC's
+//   Count() sees a row that its own InsertRecordAsync-equivalent was never called for is not
+//   established here; see the WHAT AL PROMISES section and #2167. Scoped to Insert()
+//   attempts made during the statement asserterror is CURRENTLY wrapping
+//   (BeginAssertErrorScope/EndAssertErrorScope) — an Insert() from an EARLIER,
 //   already-returned statement must stay fully subject to the general "unrelated error rolls
 //   back everything since commit" rule above (that's the Codeunit 60943 case), so it must
-//   NOT be in scope for a later, different asserterror's force-durable step.
+//   NOT be in scope for a later, different asserterror's force-durable step. That scoping
+//   also means an OnInsert failure that unwinds past asserterror entirely (never reaching
+//   this catch handler) is NOT compensated for — if real BC's mechanism turns out to apply
+//   there too, this fix does not cover it.
 //
 //   Restore is IN PLACE — the provider object is kept and its trees are rebuilt — because
 //   unlike the codeunit-boundary install-baseline restore, a rollback happens mid-test with
@@ -263,13 +293,18 @@ public static partial class RecordPatches
     /// from an earlier, different statement must NOT be forced durable here), forces the row
     /// durable if it isn't already there. Real BC's measured behaviour
     /// (TestTriggerRollback.OnInsert_Throws_RecordNotInserted) is that the row survives even
-    /// OnInsert's own trigger throwing; this runner's physical write only actually lands once
-    /// NavRecord.ALInsertAsync returns without throwing (OnInsert runs before that write
-    /// completes here — the opposite order from the real BC trigger-dispatch path this
-    /// runner otherwise reuses unmodified), so without this the row is simply never written.
-    /// Reusing the record's own live <c>RecordImplementation.mutableRecordBuffer</c> (rather
-    /// than re-deriving field values ourselves) means the values inserted are exactly what
-    /// BC's own precompiled Insert() populated onto the record before OnInsert ran.
+    /// OnInsert's own trigger throwing. This is NOT because OnInsert runs after the physical
+    /// write on real BC — decompiled NavRecord.InsertAsync (Ncl.dll) runs OnInsert BEFORE
+    /// recordImplementation.InsertRecordAsync with no surrounding try/catch, identically in
+    /// this runner (which reuses that exact method unmodified) and, presumably, real BC — so
+    /// a throwing OnInsert means the physical write genuinely never happens in EITHER. This
+    /// method exists because real BC's row shows up anyway (see the file header and #2167
+    /// for what's confirmed vs. still open about why), and RollbackToCommitPoint has nothing
+    /// to roll back to reproduce that with. Reusing the record's own live
+    /// <c>RecordImplementation.mutableRecordBuffer</c> (rather than re-deriving field values
+    /// ourselves) means the values inserted are exactly what BC's own precompiled Insert()
+    /// populated onto the record before OnInsert ran — faithful to the DATA even though the
+    /// mechanism that makes real BC durable here is not modelled.
     ///
     /// A record that already made it into the table (OnInsert succeeded, or a previous
     /// force-insert already ran) throws a duplicate-key error from the provider's own Insert
