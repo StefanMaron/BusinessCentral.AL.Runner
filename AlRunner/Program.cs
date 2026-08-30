@@ -5906,6 +5906,18 @@ static List<string> RunLayeredPrePass(List<string> bundles, List<string> package
             if (!implAlpackagesDirs.Contains(d, StringComparer.OrdinalIgnoreCase))
                 implAlpackagesDirs.Add(d);
 
+        // The workspace dirs of the impls ALREADY built by this loop, snapshotted before
+        // this impl's own dir joins the list. sortedImpls is topologically ordered, so an
+        // impl that this one depends on has necessarily been written by now — and #2178 was
+        // that this snapshot was never taken, so every impl resolved against the same list
+        // computed before the loop and could not see any of its siblings' output. A chain
+        // three apps deep (test -> middle -> base, middle and base BOTH compiled from
+        // source) therefore failed on the middle app with "Dependency not found:
+        // <publisher>/<base app>" — naming a package the runner had written itself one
+        // line earlier. Two apps never reproduced it: the single impl in a two-app bundle
+        // has no impl dependency of its own.
+        var priorImplDirs = implDirs.ToList();
+
         var implKey = ComputeSourceWorkspaceKey(new[] { implPath }, idByKey);
         var wsDir = Path.Combine(workspaceRoot, implKey[..12]);
         Directory.CreateDirectory(wsDir);
@@ -5972,9 +5984,34 @@ static List<string> RunLayeredPrePass(List<string> bundles, List<string> package
                 // ORIGINAL package cache dirs + the impl's .alpackages (NOT extendedCaches,
                 // which includes wsDir — wsDir has no valid .app yet at this point anyway).
                 var implSymbolDirs = thisImplAlpackages.Concat(packageCacheDirs).Distinct().ToList();
-                var implResolver = new DependencyResolver(implSymbolDirs);
+                // RESOLUTION set (#2178): the compile set above, PLUS the workspace dirs of
+                // the impls already built by this loop and their .alpackages. This is what
+                // lets an impl declare a dependency on ANOTHER impl in the same invocation —
+                // the synthetic .app the earlier iteration wrote lives only in its workspace
+                // dir, which is otherwise not visible until this whole function returns
+                // extendedCaches to the per-bundle compiles below.
+                //
+                // Deliberately kept SEPARATE from implSymbolDirs, which is what
+                // SetResolvedDeps hands to BC's own .app scanner: a synthetic workspace .app
+                // carries no SymbolReference.json and makes that scanner report AL1023
+                // "package not valid" for the whole compilation. The compile-time half of an
+                // earlier impl travels through its *.symbols.json sidecar instead, via
+                // SetExtraSymbolDirs below — exactly the split the per-bundle compile in Main
+                // already uses (see the SetExtraSymbolDirs(layeredWorkspaceDirs) call sites).
+                var implResolveDirs = implSymbolDirs
+                    .Concat(priorImplDirs)
+                    .Concat(implAlpackagesDirs)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                var implResolver = new DependencyResolver(implResolveDirs);
                 var implDeps = implResolver.Resolve(implId.Dependencies);
                 BcCompiler.SetResolvedDeps(implDeps, implSymbolDirs);
+                // AFTER SetResolvedDeps, which resets _extraSymbolDirs. Passing an empty
+                // list is not the same as not calling it at all — the previous impl's call
+                // has already been cleared by SetResolvedDeps, so this is a no-op either way
+                // and the guard is only here to avoid churning the loader signature.
+                if (priorImplDirs.Count > 0)
+                    BcCompiler.SetExtraSymbolDirs(priorImplDirs);
                 using (BcCompiler.ScopeCurrentAppIdentity(implId.AppId, implId.Publisher, implId.Version))
                     new BcCompiler().EmitDepSymbols(new[] { implPath }, implId.Name, implId.AppId, implId.Publisher, implId.Version, symbolsPath, implPath);
                 // Declare the FULL compile closure — the resolved deps (real AppIds/versions)
@@ -6120,9 +6157,21 @@ static List<string> BuildSiblingSourceDeps(List<string> bundles, List<string> pa
     // keep a packaged copy under .alpackages; that package has authoritative symbols
     // (including tableextension field merging) while the sibling source is only needed
     // as a fallback when no package exists.
+    // #2178: worklist, not a single pass over the bundles' own declared deps. A sibling
+    // source app that gets BUILT here brings its own declared dependencies into scope, and
+    // those may themselves only exist as sibling source apps. Matching one level deep left
+    // the second level undiscovered entirely, so the chain failed inside this function's
+    // own per-dep resolve below with "Dependency not found" / a provisioning-gap report for
+    // an app sitting right next to the one being built. Only deps of apps we are actually
+    // going to build are enqueued: a dep already satisfied by a real .app package resolves
+    // through that package's own closure, exactly as before.
     var toBuild = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-    foreach (var dep in neededDeps)
+    var depQueue = new Queue<DependencyRef>(neededDeps);
+    var seenDeps = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    while (depQueue.Count > 0)
     {
+        var dep = depQueue.Dequeue();
+        if (!seenDeps.Add($"{dep.AppId:N}|{dep.Publisher}/{dep.Name}")) continue;
         var packageAvailable = IsDependencyPackageAvailable(dep, existingPackageDirs);
         foreach (var (dir, sid) in sourceApps)
         {
@@ -6136,7 +6185,11 @@ static List<string> BuildSiblingSourceDeps(List<string> bundles, List<string> pa
             // workspace-deps .app (which carries no /resources/ part).
             AlRunner.Patches.NavAppResourcePatches.RegisterSourceDirForApp(sid.AppId, dir);
             if (!packageAvailable)
+            {
                 toBuild.Add(dir);
+                foreach (var transitive in sid.Dependencies.Where(d => !d.Optional))
+                    depQueue.Enqueue(transitive);
+            }
         }
     }
     if (toBuild.Count == 0) return packageCacheDirs;
@@ -6178,6 +6231,11 @@ static List<string> BuildSiblingSourceDeps(List<string> bundles, List<string> pa
     foreach (var dir in sorted)
     {
         if (!sourceApps.TryGetValue(dir, out var sid)) continue;
+        // The workspace dirs of the source deps already built by this loop, snapshotted
+        // before this dep's own dir joins the list. `sorted` is topological, so a dep this
+        // one depends on has necessarily been written by now — see the identical snapshot
+        // in RunLayeredPrePass and #2178.
+        var priorDepDirs = depDirs.ToList();
         // Per-dep cache dir keyed on THIS dep's own sources + dep identities.
         var depKey = ComputeSourceWorkspaceKey(new[] { dir }, sourceApps);
         var wsDir = Path.Combine(workspaceRoot, depKey[..12]);
@@ -6227,9 +6285,22 @@ static List<string> BuildSiblingSourceDeps(List<string> bundles, List<string> pa
         // Resolve pulls only this dep's declared closure (BaseApp / System App / …).
         // ScopeCurrentAppIdentity sets _currentAppId so GetSharedReferences excludes the dep
         // from its own specs (self-ref guard). Reset by the per-bundle SetResolvedDeps below.
-        var depResolver = new DependencyResolver(resolveDirs);
+        // #2178: resolve against the workspace dirs written for the source deps BUILT
+        // BEFORE this one as well, so a source dep may itself depend on another source dep.
+        // As in RunLayeredPrePass, those dirs are kept out of the set handed to
+        // SetResolvedDeps — BC's .app scanner reports AL1023 on a synthetic .app with no
+        // SymbolReference.json — and reach the compiler as *.symbols.json through
+        // SetExtraSymbolDirs instead.
+        var depResolveDirs = resolveDirs
+            .Concat(priorDepDirs)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var depResolver = new DependencyResolver(depResolveDirs);
         var resolvedDepDeps = depResolver.Resolve(sid.Dependencies);
         BcCompiler.SetResolvedDeps(resolvedDepDeps, resolveDirs);
+        // AFTER SetResolvedDeps, which resets _extraSymbolDirs.
+        if (priorDepDirs.Count > 0)
+            BcCompiler.SetExtraSymbolDirs(priorDepDirs);
         var symBase = Path.Combine(wsDir, $"{Sanitize(sid.Publisher)}_{Sanitize(sid.Name)}_{sid.Version.ToString().Replace('.', '_')}");
         var symbolsPath = symBase + ".symbols.json";
         var depsPath = symBase + ".symbols.deps.json";
