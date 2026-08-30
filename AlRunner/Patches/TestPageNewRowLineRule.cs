@@ -13,6 +13,9 @@ namespace AlRunner.Patches;
 /// a page opened with OpenView, a page declaring <c>Editable = false</c>, and a page declaring
 /// <c>InsertAllowed = false</c> all answer false to that last <c>Next()</c>, and a part on a
 /// read-only host does too.
+///
+/// Merged upstream as StefanMaron/BusinessCentral.AL.Language.Tests commit a5576344 (PR #76);
+/// all nine arms passed on BOTH service-tier legs, BC 27.5 and BC 28.3.
 /// </summary>
 internal static class TestPageNewRowLineRule
 {

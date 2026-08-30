@@ -2,7 +2,8 @@
 //
 // These pin the RUNNER's own decision logic, not "what BC does": the AL-observable behavior is
 // proved against real BC 27.5/28.3 by corpus codeunit 60743 ("Test Page New Row Line Tests"),
-// which is where the measurement lives. What is provable here without a loaded BC runtime is
+// which is where the measurement lives — merged upstream as
+// StefanMaron/BusinessCentral.AL.Language.Tests commit a5576344, all nine arms green on both legs. What is provable here without a loaded BC runtime is
 // that the two gates combine the way that measurement requires — including the two arms that
 // were WRONG before this fix and that a runner-side test can catch cheaply:
 //
