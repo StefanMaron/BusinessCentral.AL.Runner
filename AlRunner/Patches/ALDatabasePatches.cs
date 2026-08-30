@@ -187,8 +187,10 @@ public static class ALDatabasePatches
     }
 
     /// <summary>Record an AL-visible row write. Called from the AL write entry points via
-    /// Cecil prepend, so every write moves the row-version counter exactly as a SQL write
-    /// moves @@DBTS, and opens the write transaction exactly as BC's first write does.
+    /// Cecil prepend (Modify/Delete/Rename/DeleteAll/ModifyAll — see
+    /// <see cref="NoteRecordInsertWrite"/> for Insert's own, deliberately extended, prepend),
+    /// so every write moves the row-version counter exactly as a SQL write moves @@DBTS, and
+    /// opens the write transaction exactly as BC's first write does.
     ///
     /// Temporary records are excluded from both: a temp-table write touches no database,
     /// so it neither advances @@DBTS nor starts a write transaction on real BC.</summary>
@@ -198,9 +200,31 @@ public static class ALDatabasePatches
         if (record is Microsoft.Dynamics.Nav.Runtime.NavRecord { IsTemporary: true }) return;
         System.Threading.Interlocked.Increment(ref _rowVersion);
         System.Threading.Volatile.Write(ref _inWriteTransaction, true);
-        // First write since the last commit point: take the rollback snapshot now, before
-        // this write lands. Deferring it to here is what keeps a read-only test free.
+        // Take the rollback snapshot now, before this write lands — refreshed on EVERY
+        // write, not just the first since the last commit point (AlRunner#2142; see
+        // RecordPatches.NoteTransactionWrite's doc for why the refresh can't be skipped).
         RecordPatches.NoteTransactionWrite(record);
+    }
+
+    /// <summary>Record an AL-visible Insert. Prepended to NavRecord.ALInsertAsync only
+    /// (AlRunner#2142) — identical to <see cref="NoteRecordWrite"/> (same rowversion /
+    /// write-transaction bookkeeping, same rollback-snapshot refresh, so an uncommitted
+    /// Insert() still rolls back normally when a LATER, unrelated statement fails — see
+    /// TestAssertErrorRollback.al), PLUS a note of the attempt for
+    /// <see cref="RecordPatches.ForceDurableFailedInserts"/>: measured real BC keeps an
+    /// inserted row durable even when THAT SAME Insert() statement's own OnInsert trigger
+    /// throws (OnInsert runs after the physical write on real BC — this runner's write only
+    /// lands once ALInsertAsync returns without throwing, so without the force-durable step
+    /// the row is simply never written at all). See the long comment atop
+    /// RecordPatches.TransactionSnapshot.cs.</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static void NoteRecordInsertWrite(object? record)
+    {
+        if (record is Microsoft.Dynamics.Nav.Runtime.NavRecord { IsTemporary: true }) return;
+        System.Threading.Interlocked.Increment(ref _rowVersion);
+        System.Threading.Volatile.Write(ref _inWriteTransaction, true);
+        RecordPatches.NoteTransactionWrite(record);
+        RecordPatches.NoteInsertAttempt(record);
     }
 
     /// <summary>Replacement for ALDatabase.ALLastUsedRowVersion() — the runner's

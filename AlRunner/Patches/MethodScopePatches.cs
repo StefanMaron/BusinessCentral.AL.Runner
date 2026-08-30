@@ -242,6 +242,26 @@ public static partial class BcRuntime
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static void NavMethodScope_AssertError(object self, Action body)
     {
+        // AlRunner#2142: track Insert() attempts made by `body` — the compiled form of the
+        // one statement `asserterror` wraps — separately from any made by earlier,
+        // already-returned statements, so ForceDurableFailedInserts below only ever forces
+        // durable an Insert() this SAME statement made. See
+        // RecordPatches.BeginAssertErrorScope's doc and the file header on
+        // RecordPatches.TransactionSnapshot.cs.
+        AlRunner.Patches.RecordPatches.BeginAssertErrorScope();
+        try
+        {
+            NavMethodScope_AssertErrorCore(self, body);
+        }
+        finally
+        {
+            AlRunner.Patches.RecordPatches.EndAssertErrorScope();
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void NavMethodScope_AssertErrorCore(object self, Action body)
+    {
         try { body(); }
         catch (Exception ex)
         {
@@ -282,6 +302,12 @@ public static partial class BcRuntime
             // real body's rollback path NREs on the skeleton session, not because the
             // rollback itself is out of scope — see RecordPatches.TransactionSnapshot.
             AlRunner.Patches.RecordPatches.RollbackToCommitPoint(_skeletonSession);
+            // AFTER the rollback above (AlRunner#2142): an Insert() this SAME statement
+            // attempted may not have actually landed in the table yet (OnInsert runs before
+            // this runner's physical write completes), so there's nothing for the rollback
+            // to have undone — but real BC keeps the row anyway. Force it durable now, once
+            // any Modify/Delete rollback for this table has already settled.
+            AlRunner.Patches.RecordPatches.ForceDurableFailedInserts();
             return; /* asserterror passed: body threw something */
         }
         throw new Microsoft.Dynamics.Nav.Types.Exceptions.NavNCLAssertErrorException();

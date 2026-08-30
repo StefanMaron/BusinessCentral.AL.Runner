@@ -4398,6 +4398,15 @@ public static class NclCecilRewrite
                 BindingFlags.Public | BindingFlags.Static)
                 ?? throw new InvalidOperationException("ALDatabasePatches.NoteRecordWrite not found");
             var bumpRef = asm.MainModule.ImportReference(bumpMi);
+            // ALInsertAsync gets its OWN prepend target (AlRunner#2142): identical
+            // rowversion/write-transaction/rollback-snapshot bookkeeping to NoteRecordWrite,
+            // plus a note of the attempt for RecordPatches.ForceDurableFailedInserts — see
+            // ALDatabasePatches.NoteRecordInsertWrite's doc.
+            var insertBumpMi = typeof(AlRunner.Patches.ALDatabasePatches).GetMethod(
+                nameof(AlRunner.Patches.ALDatabasePatches.NoteRecordInsertWrite),
+                BindingFlags.Public | BindingFlags.Static)
+                ?? throw new InvalidOperationException("ALDatabasePatches.NoteRecordInsertWrite not found");
+            var insertBumpRef = asm.MainModule.ImportReference(insertBumpMi);
 
             // The bulk forms count too: BC's DeleteAll/ModifyAll write rows, so they advance
             // @@DBTS and open a write transaction exactly like the single-row forms — and the
@@ -4429,21 +4438,23 @@ public static class NclCecilRewrite
             // DeleteAll()/ModifyAll() statement regardless of which surface form the AL
             // compiler chose — no double-count risk from a forwarding overload also being
             // in this list.
+            var insertEntries = new[] { "ALInsertAsync" };
             var writeEntries = new[]
             {
-                "ALInsertAsync", "ALModifyAsync", "ALDeleteAsync", "ALRenameAsync",
+                "ALModifyAsync", "ALDeleteAsync", "ALRenameAsync",
                 "DeleteAllAsync", "ModifyAllAsync",
             };
             int bumped = 0;
             foreach (var m in navRecord.Methods.Where(
-                         x => writeEntries.Contains(x.Name) && x.HasBody && x.Body.Instructions.Count > 0))
+                         x => (insertEntries.Contains(x.Name) || writeEntries.Contains(x.Name))
+                              && x.HasBody && x.Body.Instructions.Count > 0))
             {
                 var il = m.Body.GetILProcessor();
                 var first = m.Body.Instructions[0];
                 // Pass `this` so the helper can exclude temporary records, which touch no
                 // database and therefore neither advance @@DBTS nor open a write transaction.
                 il.InsertBefore(first, il.Create(OpCodes.Ldarg_0));
-                il.InsertBefore(first, il.Create(OpCodes.Call, bumpRef));
+                il.InsertBefore(first, il.Create(OpCodes.Call, insertEntries.Contains(m.Name) ? insertBumpRef : bumpRef));
                 bumped++;
             }
             if (bumped == 0)
@@ -4451,7 +4462,7 @@ public static class NclCecilRewrite
                     "[Cecil] no NavRecord AL write entry points found for the write-note prepend — " +
                     "Database.LastUsedRowVersion would stop advancing silently.");
             Console.Error.WriteLine(
-                $"[Cecil] Prepended NoteRecordWrite → {bumped} NavRecord AL write entry point(s)");
+                $"[Cecil] Prepended NoteRecordWrite/NoteRecordInsertWrite → {bumped} NavRecord AL write entry point(s)");
         }
 
 
