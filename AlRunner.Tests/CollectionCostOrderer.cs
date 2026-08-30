@@ -163,6 +163,30 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             // 83-125s across the four legs that first ran it. Round down to the low end so
             // a fast run still ranks it above the freshness threshold rather than have it
             // fall back to UnmeasuredWeightSeconds and reproduce the #1887 tail pattern.
+            // #2205: these six became visible to this gate together, and all six are
+            // subprocess-heavy collections. The cause is not the tests: once CI provisions
+            // the Microsoft platform apps into the runner-owned
+            // `<artifacts>/<version>/platform-apps` — the location DefaultPackageCacheDirs
+            // and the #2067 fold-in both read — every spawned runner resolves and LOADS the
+            // real Base Application / System Application closure that its app.json's
+            // `application` field always declared, where before it silently resolved
+            // nothing. Measured locally on the same two collections: 21s with no
+            // platform-apps on disk, 79s with them (pre-#2205 need detection, so the load
+            // is the whole difference), 98s with #2205's detection on top. Any developer
+            // machine that has ever run `al-runner provision` was already paying it; CI was
+            // not, because it only ever put the apps where --package-cache pointed.
+            // Follow-up on the load cost itself, which is pre-existing and stays open: #2223.
+            //
+            // Values are the observed MAXIMUM across all eight BC legs of one run (the
+            // spread is ~1.5x, e.g. DapServerTests 112.2s on 28.2 to 170.1s on 28.3), for
+            // the reason StartupOutputReexecDedupTests documents: rounding to the low end
+            // of a wide spread satisfies the gate while leaving the tail in place.
+            ["DapServerTests"] = 170,
+            ["TddModeTests"] = 141,
+            ["ServerCrossAppStaleGenerationTests"] = 130,
+            ["DapStdioServerTests"] = 101,
+            ["CacheRootsIsolationTests"] = 83,
+            ["ServerDuplicateSourcePathTests"] = 73,
             ["ProvisionExplicitModesTests"] = 80,
             // #1940/#1941/#1943: 4 tests, each spawning a real runner subprocess (two
             // single-bundle, two layered two-bundle dep compiles) — needed because
