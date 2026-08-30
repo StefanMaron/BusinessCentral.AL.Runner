@@ -74,7 +74,8 @@ public static partial class RecordPatches
                 // value: Base App "Page Management".GetDefaultCardPageID reads it to decide
                 // whether a table has a card page at all).
                 CardPageName: PageRefText(PropValue(props, "CardPageId")),
-                MemberIdToName: ParseMemberNames(id, p));
+                MemberIdToName: ParseMemberNames(id, p),
+                MemberIdToActionRefTarget: ParseActionRefTargets(id, p));
         }
 
         foreach (var obj in objects)
@@ -95,7 +96,8 @@ public static partial class RecordPatches
                 InsertAllowed: !PropIs(pe.PropertyList, "InsertAllowed", "false"),
                 BaseName: Unquote(pe.BaseObject?.ToString()?.Trim() ?? ""),
                 Controls: extControls,
-                MemberIdToName: ParseMemberNames(id, pe));
+                MemberIdToName: ParseMemberNames(id, pe),
+                MemberIdToActionRefTarget: ParseActionRefTargets(id, pe));
         }
     }
 
@@ -129,6 +131,58 @@ public static partial class RecordPatches
         foreach (var action in obj.DescendantNodes().OfType<NavSyntax.PageActionSyntax>())
             Add(IdentText(action.Name));
         return map;
+    }
+
+    /// <summary>
+    /// Member id → the NAME of the action an <c>actionref</c> points at, for every actionref
+    /// this page or pageextension declares, in the DECLARING object's own id space.
+    ///
+    /// <para>Issue #2113. An <c>actionref(X_Promoted; X)</c> is a delegating REFERENCE: on real
+    /// BC invoking it is the same command as invoking <c>X</c>. It carries no
+    /// <c>trigger OnAction</c> of its own — the AL grammar gives it nowhere to put one
+    /// (<c>PageActionRefSyntax</c> has <c>Name</c>, <c>Target</c> and a property list, and
+    /// unlike <c>PageActionSyntax</c> it does NOT derive from
+    /// <c>PageActionWithTriggersBaseSyntax</c>) — so the emitted <c>*_OnAction</c> method
+    /// belongs to the TARGET action and hashes from the TARGET's name. Without this map a
+    /// TestPage <c>Invoke()</c> on the actionref found no method whose member id matched the
+    /// actionref's own id and reported the page as "declaring no OnAction trigger" for an
+    /// action that plainly declares one.</para>
+    ///
+    /// <para>The target is stored by NAME rather than by id because the two may live in
+    /// DIFFERENT id spaces: a pageextension's <c>addlast(Promoted)</c> actionref can point at
+    /// an action declared on the BASE page, whose member id hashes from the base page's object
+    /// id, not the extension's. Resolution therefore has to re-derive the id per candidate
+    /// declaring object — see RunnerPageInstance.FindTriggerByName.</para>
+    /// </summary>
+    private static Dictionary<int, string> ParseActionRefTargets(int declaringObjectId, SyntaxNode obj)
+    {
+        var map = new Dictionary<int, string>();
+        foreach (var actionRef in obj.DescendantNodes().OfType<NavSyntax.PageActionRefSyntax>())
+        {
+            var name = IdentText(actionRef.Name);
+            var target = IdentText(actionRef.Target);
+            if (name.Length == 0 || target.Length == 0) continue;
+            // TryAdd, not the indexer: two actionrefs of the same name cannot legally coexist
+            // on one object, so a duplicate here would be a parse artifact — keeping the first
+            // is at worst what the pre-#2113 behaviour already was for both.
+            map.TryAdd(IdSpace.GetMemberId(declaringObjectId, name), target);
+        }
+        return map;
+    }
+
+    /// <summary>
+    /// The NAME of the action the <c>actionref</c> <paramref name="memberId"/> delegates to on
+    /// the page or pageextension <paramref name="declaringObjectId"/>, or null when that member
+    /// is not an actionref (or the object was never AL-source-parsed). See
+    /// <see cref="ParseActionRefTargets"/>.
+    /// </summary>
+    internal static string? TryGetActionRefTarget(int declaringObjectId, int memberId, bool isExtension)
+    {
+        var dict = isExtension ? _parsedPageExtensions : _parsedPages;
+        return dict.TryGetValue(declaringObjectId, out var parsed)
+               && parsed.MemberIdToActionRefTarget.TryGetValue(memberId, out var target)
+            ? target
+            : null;
     }
 
     /// <summary>
@@ -452,7 +506,10 @@ internal record ParsedPage(
     string? CardPageName = null,
     /// <summary>Member id → declared AL name for every named field control and action of this
     /// object, in its own id space — see <see cref="RecordPatches"/>.ParseMemberNames (#1968).</summary>
-    IReadOnlyDictionary<int, string>? MemberIdToName = null)
+    IReadOnlyDictionary<int, string>? MemberIdToName = null,
+    /// <summary>Member id of every <c>actionref</c> this object declares → the NAME of the
+    /// action it points at — see <see cref="RecordPatches"/>.ParseActionRefTargets (#2113).</summary>
+    IReadOnlyDictionary<int, string>? MemberIdToActionRefTarget = null)
 {
     // Positional records can't give a collection parameter a literal default that isn't a
     // constant, so a null Controls (constructed via the shorter historical call sites/tests,
@@ -460,4 +517,6 @@ internal record ParsedPage(
     public IReadOnlyList<PageControlRow> Controls { get; init; } = Controls ?? Array.Empty<PageControlRow>();
     public IReadOnlyDictionary<int, string> MemberIdToName { get; init; }
         = MemberIdToName ?? new Dictionary<int, string>();
+    public IReadOnlyDictionary<int, string> MemberIdToActionRefTarget { get; init; }
+        = MemberIdToActionRefTarget ?? new Dictionary<int, string>();
 }

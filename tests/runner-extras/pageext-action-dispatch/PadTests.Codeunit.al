@@ -13,6 +13,12 @@
 ///
 /// GREEN (with the fix): all three log their own tag, and only their own tag — proving each
 /// arm's OnAction genuinely ran, not merely that Invoke() returned without throwing.
+///
+/// CORRECTION, measured 2026-08-30 (#2113): the third RED line above is stale. Page 7500
+/// resolves a live RunnerPageInstance today, so that arm goes through RaiseOnAction and an
+/// unresolvable action there THROWS rather than no-opping. See PadItemAttrExt.PageExt.al for
+/// the measurement. The assertion below is unchanged and still correct — only the description
+/// of which failure mode it guards against was.
 codeunit 64524 "Pad Tests"
 {
     Subtype = Test;
@@ -84,11 +90,12 @@ codeunit 64524 "Pad Tests"
             'Invoke() must have run the pageextension''s OnAction trigger for an action added to a source-compiled page');
     end;
 
-    // Positive, arm 3 — the dangerous half: a pageextension's action on a page that ships
-    // PRECOMPILED inside Base Application (Item Attributes) must dispatch its OnAction too.
-    // Before the fix this raised NOTHING at Invoke() time; only this assert on the concrete
-    // effect (the logged row) catches the miss, exactly like it would silently do on real AL
-    // test code whose first step is such an action.
+    // Positive, arm 3: a pageextension's action on a page that ships PRECOMPILED inside Base
+    // Application (Item Attributes) must dispatch its OnAction too — dispatch must not quietly
+    // depend on the base page having been compiled from source in this bundle. Asserting the
+    // concrete effect (the logged row) rather than "Invoke() did not throw" is still the right
+    // shape, but see the CORRECTION in this file's header: as of 2026-08-30 this arm no longer
+    // exercises the silent-no-op path it was written for.
     [Test]
     procedure ExtActionOnBaseAppPageRuns()
     var

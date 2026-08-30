@@ -660,16 +660,135 @@ internal sealed class RunnerPageInstance
     /// RunnerOutOfScopeException (a real, dispatchable action reported as unsupported
     /// RunObject); a precompiled base page's extension action reached nowhere to throw
     /// against at all — Invoke() silently did nothing, in violation of loud-failures.md.
+    /// (That second half no longer describes a Base App page: measured 2026-08-30, "Item
+    /// Attributes" (7500) DOES resolve a live RunnerPageInstance and therefore arrives here and
+    /// throws. TryRaiseExtensionOnlyAction is now reached only by a base page with no compiled
+    /// type anywhere.)
+    ///
+    /// Issue #2113: an <c>actionref</c> — the standard promotion pattern
+    /// (<c>actionref(X_Promoted; X)</c> in <c>area(Promoted)</c>) — is a delegating REFERENCE
+    /// and carries no trigger of its own, so the id-keyed search above can never match it and
+    /// every promoted <c>Invoke()</c> was refused as "declares no OnAction trigger" for an
+    /// action that plainly declares one. <see cref="FindTriggerThroughActionRef"/> follows the
+    /// reference to its target before the refusal is raised.
     /// </summary>
     internal void RaiseOnAction(int actionId)
     {
+        // The action itself first — an ordinary action carries its own trigger, and an
+        // actionref never does, so the ordinary case never pays for the actionref lookup.
         var trigger = FindTrigger(actionId, "_OnAction", "OnAction")
-            ?? throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+            ?? FindTriggerThroughActionRef(actionId);
+        if (trigger == null)
+        {
+            // Naming the actionref's TARGET matters: without it the message blames the
+            // actionref for "declaring no trigger", which is true of every actionref by
+            // construction and tells the reader nothing about why nothing ran.
+            var target = TryResolveActionRef(actionId);
+            throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
                 $"TestPage action {actionId} on page {_pageId}",
-                "testpage-action — the page declares no OnAction trigger for this action. An "
-                + "action whose effect is RunObject (opening another page or report) cannot be "
+                (target == null
+                    ? "testpage-action — the page declares no OnAction trigger for this action. "
+                    : $"testpage-action — this action is an actionref delegating to '{target.Value.TargetName}', "
+                      + "and neither the page nor any pageextension of it declares an OnAction "
+                      + "trigger for that action. ")
+                + "An action whose effect is RunObject (opening another page or report) cannot be "
                 + "performed here. See docs/scope.md");
-        Invoke(trigger);
+        }
+        Invoke(trigger.Value);
+    }
+
+    /// <summary>
+    /// The OnAction trigger of the action an <c>actionref</c> DELEGATES to, or null when
+    /// <paramref name="actionId"/> is not an actionref (or its target declares no trigger).
+    ///
+    /// <para>Issue #2113. <c>actionref(X_Promoted; X)</c> in a page's own <c>area(Promoted)</c>
+    /// — the standard promotion pattern — is a reference, not an action: on real BC invoking
+    /// the promoted ref and invoking <c>X</c> are the same command. The AL grammar gives an
+    /// actionref nowhere to put a trigger, so the emitted <c>*_OnAction</c> method carries the
+    /// TARGET's name and hashes from the TARGET's member id. Asking
+    /// <see cref="FindTrigger"/> about the actionref's OWN id therefore always came up empty,
+    /// and a promoted <c>Invoke()</c> was refused as "the page declares no OnAction trigger"
+    /// while invoking the same action directly worked.</para>
+    ///
+    /// <para>The target is followed by NAME across id spaces, because an actionref and its
+    /// target need not be declared by the same object: a pageextension's
+    /// <c>addlast(Promoted) { actionref(R; BaseAction) }</c> points at an action on the BASE
+    /// page, whose member id hashes from the base page's object id. All four observed shapes —
+    /// page-own flat ref, page-own ref inside a promoted <c>group</c>, extension ref to an
+    /// extension action, extension ref to a base-page action — go through here.</para>
+    ///
+    /// <para>A ref chain (a target that is itself an actionref) is followed too, with a
+    /// visited set so a malformed cycle terminates instead of hanging.</para>
+    /// </summary>
+    private TriggerMatch? FindTriggerThroughActionRef(int actionId)
+    {
+        var visited = new HashSet<(int, int)>();
+        var resolved = TryResolveActionRef(actionId);
+        while (resolved is { } step && visited.Add((step.DeclaringObjectId, actionId)))
+        {
+            var match = FindTriggerByName(step.TargetName, step.DeclaringObjectId, "_OnAction", "OnAction");
+            if (match != null) return match;
+
+            // The target names an actionref rather than an action — keep following. Legal AL
+            // rarely does this, but a chain that silently stopped here would report the same
+            // misleading "declares no trigger" the whole fix exists to remove.
+            actionId = MemberId(step.DeclaringObjectId, step.TargetName);
+            resolved = TryResolveActionRef(actionId);
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// The object that declares the <c>actionref</c> <paramref name="memberId"/> and the NAME
+    /// of the action it points at, or null when the member is not an actionref of this page or
+    /// of any pageextension that extends it.
+    /// </summary>
+    private (int DeclaringObjectId, string TargetName)? TryResolveActionRef(int memberId)
+    {
+        var own = RecordPatches.TryGetActionRefTarget(_pageId, memberId, isExtension: false);
+        if (own != null) return (_pageId, own);
+
+        foreach (var extensionId in RecordPatches.GetPageExtensionIdsForPage(_pageId))
+        {
+            var target = RecordPatches.TryGetActionRefTarget(extensionId, memberId, isExtension: true);
+            if (target != null) return (extensionId, target);
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// <see cref="FindTrigger"/> driven by a member NAME instead of a member id, for a target
+    /// reached through an <c>actionref</c> (#2113). The id cannot be pre-computed by the
+    /// caller because it depends on WHICH object turns out to declare the target: the same
+    /// name hashes to a different member id in the base page's id space than in a
+    /// pageextension's.
+    ///
+    /// <para><paramref name="preferredObjectId"/> — the object that declared the actionref —
+    /// is searched first, mirroring AL's own scoping: a pageextension's actionref may target
+    /// either its own action or a base-page action, and its own is the nearer binding.</para>
+    /// </summary>
+    private TriggerMatch? FindTriggerByName(string name, int preferredObjectId, string suffix, string surface,
+        int arity = 0)
+    {
+        foreach (var objectId in CandidateDeclaringObjectIds(preferredObjectId))
+        {
+            var instance = objectId == _pageId ? _form : GetOrCreateExtensionInstance(objectId);
+            if (instance == null) continue;
+            var match = FindTriggerOnTarget(instance, objectId, MemberId(objectId, name),
+                suffix, surface, arity, name);
+            if (match != null) return match;
+        }
+        return null;
+    }
+
+    /// <summary>Preferred object, then the base page, then every pageextension — deduped.</summary>
+    private IEnumerable<int> CandidateDeclaringObjectIds(int preferredObjectId)
+    {
+        var seen = new HashSet<int> { preferredObjectId };
+        yield return preferredObjectId;
+        if (seen.Add(_pageId)) yield return _pageId;
+        foreach (var extensionId in RecordPatches.GetPageExtensionIdsForPage(_pageId))
+            if (seen.Add(extensionId)) yield return extensionId;
     }
 
     /// <summary>
@@ -1183,7 +1302,23 @@ internal sealed class RunnerPageInstance
             // faithfully; one that reads Rec/CurrPage NREs, which surfaces as a genuine
             // runner-internal error rather than a silently wrong answer.
             var match = FindTriggerOnTarget(instance, extensionId, actionId, "_OnAction", "OnAction", arity: 0,
-                RecordPatches.TryGetPageMemberName(extensionId, actionId, isExtension: true));
+                RecordPatches.TryGetPageMemberName(extensionId, actionId, isExtension: true))
+                // #2113's sibling on this path. This method is the fallback for a base page the
+                // runner could build NO instance for at all (no compiled type anywhere), and it
+                // made exactly the same assumption RaiseOnAction did: an `actionref` this
+                // extension contributes carries no trigger of its own, so the id-based scan above
+                // can never match it. The scan is retried against the TARGET action's name, in
+                // this extension's own id space. Only same-extension targets are reachable here by
+                // construction — a ref pointing at an action of the unbuildable base page has no
+                // base page object to dispatch against, which is the pre-existing gap this method
+                // already documents above. NOTE: unlike the RaiseOnAction path this branch is not
+                // covered by an end-to-end arm in tests/runner-extras/testpage-promoted-actionref
+                // — a precompiled Base App base page (Item Attributes) still resolves a live
+                // RunnerPageInstance and therefore goes through RaiseOnAction. It is fixed here
+                // because leaving one of two paths with the blind spot is a defect whether or not
+                // anything currently reaches it, and its failure mode is the worse one: this
+                // method returns false and the caller then does nothing at all, silently.
+                ?? TryFindActionRefTargetTriggerOnExtension(instance, extensionId, actionId);
             if (match == null) continue;
 
             try { match.Value.Method.Invoke(match.Value.Target, null); }
@@ -1194,6 +1329,23 @@ internal sealed class RunnerPageInstance
             return true;
         }
         return false;
+    }
+
+    /// <summary>
+    /// The OnAction trigger of the action an <c>actionref</c> declared by pageextension
+    /// <paramref name="extensionId"/> points at, when that target action is declared by the
+    /// same extension. Null when <paramref name="actionId"/> is not one of that extension's
+    /// actionrefs, or its target declares no trigger there. See #2113 and
+    /// <see cref="FindTriggerThroughActionRef"/>, which is the same resolution on the normal
+    /// (live base page) path.
+    /// </summary>
+    private static TriggerMatch? TryFindActionRefTargetTriggerOnExtension(
+        object instance, int extensionId, int actionId)
+    {
+        var target = RecordPatches.TryGetActionRefTarget(extensionId, actionId, isExtension: true);
+        if (target == null) return null;
+        return FindTriggerOnTarget(instance, extensionId, MemberId(extensionId, target),
+            "_OnAction", "OnAction", arity: 0, target);
     }
 
     private void Invoke(TriggerMatch trigger)

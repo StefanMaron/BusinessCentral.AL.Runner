@@ -1,0 +1,19 @@
+{
+  "id": "3d5f7a91-8c2e-4b06-9a4d-6e1f8b03c5d7",
+  "name": "Runner Extras - TestPage Promoted Actionref",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Regression for issue #2113: TestPage Invoke() of an actionref refused to follow the reference to its target action's OnAction trigger.",
+  "description": "The general BC-language claim these tests exercise - invoking an actionref runs the OnAction trigger of the action it points at, exactly as invoking that action directly does - is plain BC behaviour and belongs upstream in the al-language corpus (see bc-behavior-tests-go-upstream.md), and IS covered there: it merged as StefanMaron/BusinessCentral.AL.Language.Tests#79, commit c98be5488f07cd0fb63d3fa731055e9698f018ae, green on real BC 27.5 and BC 28.3, and the submodule pin in this repo was bumped to it in the same PR as this fix. The eight arms there duplicate the first eight below. This suite is the runner-repo-local companion that pins the runner-INTERNAL defect directly rather than through BC-observable behaviour, and gates it on every BC version in this repo's own matrix rather than the corpus's two. The defect: RecordPatches.ParseMemberNames walked only PageActionSyntax nodes, and an actionref parses as PageActionRefSyntax - a sibling under ActionBaseSyntax that, unlike PageActionSyntax, does not derive from PageActionWithTriggersBaseSyntax because the AL grammar gives an actionref nowhere to put a trigger. RunnerPageInstance.RaiseOnAction then searched for an emitted *_OnAction method whose member id equalled the ACTIONREF's own id, while the emitted trigger belongs to the TARGET action and hashes from the TARGET's name, so nothing ever matched and the runner refused with RunnerOutOfScopeException 'the page declares no OnAction trigger for this action' for an action that plainly declares one. The last test is the one claim that is genuinely runner-specific and could not go upstream at all - on real BC a RunObject action's Invoke() opens the page, so BC cannot adjudicate the refusal: an actionref pointing at a triggerless RunObject action must still raise the loud testpage-action refusal, and that refusal must now name the TARGET rather than blaming the actionref for carrying no trigger of its own.",
+  "dependencies": [],
+  "idRanges": [
+    {
+      "from": 64540,
+      "to": 64559
+    }
+  ],
+  "platform": "27.0.0.0",
+  "application": "27.0.0.0",
+  "runtime": "15.0",
+  "target": "Cloud"
+}
