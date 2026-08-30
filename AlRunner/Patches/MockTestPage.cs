@@ -222,6 +222,13 @@ internal class LiveNavTestPage : MockITestPage
             built.Record, RecordPatches.GetPageControlFieldMap(partPageId),
             RecordPatches.GetInsertAllowedForPage(partPageId), built.Page, _owner!, partPageId,
             parentRecord: links.Length == 0 ? null : RequireRecord($"subpage part {controlId}"), links: links);
+        // A part is never MarkOpened — BC opens the HOST, and the part comes up inside it —
+        // so _staticEditable sat at its constructor default of true for every part, whatever
+        // the host was opened as. That made a part of a read-only page report itself editable,
+        // and (once the new-row line landed) would have offered a blank line on a page opened
+        // with OpenView. Apply the same rule MarkOpened applies to a top-level page, with the
+        // host's already-resolved editability standing in for the open mode.
+        part.MarkPartOf(this);
         _parts[controlId] = part;
         return part;
     }
@@ -403,11 +410,42 @@ internal class LiveNavTestPage : MockITestPage
     internal void MarkOpened(Microsoft.Dynamics.Nav.Types.Metadata.ViewMode viewMode)
     {
         _opened = true;
-        _staticEditable = viewMode != Microsoft.Dynamics.Nav.Types.Metadata.ViewMode.View
-                          && (_page?.PageEditable ?? true);
+        _staticEditableOverride = viewMode != Microsoft.Dynamics.Nav.Types.Metadata.ViewMode.View
+                                  && (_page?.PageEditable ?? true);
     }
 
-    private bool _staticEditable = true;
+    // Set only by MarkOpened — i.e. only for a page the TEST opened, where the open MODE is
+    // what decides editability. Null everywhere else, which is why _staticEditable below has
+    // to have an answer of its own rather than a default.
+    private bool? _staticEditableOverride;
+
+    // The host, for a subpage part. A part is reached through its host and is editable only
+    // if the host is; see _staticEditable.
+    private LiveNavTestPage? _editabilityHost;
+
+    /// <summary>
+    /// The page's STATIC editability: the open mode (when the test opened it), narrowed by the
+    /// page's own declared <c>Editable</c>, and by its host's when it is a part.
+    ///
+    /// This used to be a plain field defaulting to true, written only by MarkOpened — and
+    /// MarkOpened only ever runs for a page the test opens ITSELF. Every page BC hands to a
+    /// [ModalPageHandler] / [PageHandler], and every subpage part, therefore reported itself
+    /// editable no matter what it declared: an <c>Editable = false</c> page opened through
+    /// RunModal answered TestPage.Editable() = true, and (once the new-row line landed) would
+    /// have offered a blank line to type into on a page nobody can type into.
+    ///
+    /// Computed rather than snapshotted because a part is built lazily, on first access, and
+    /// nothing orders that against its host being opened.
+    /// </summary>
+    private bool _staticEditable
+        => _staticEditableOverride
+           ?? ((_editabilityHost?._staticEditable ?? true) && (_page?.PageEditable ?? true));
+
+    /// <summary>
+    /// Bind a subpage part to its host for editability. Deliberately does NOT touch _opened:
+    /// that flag drives BC's Open/Close guards, and a part is opened and closed with its host.
+    /// </summary>
+    internal void MarkPartOf(LiveNavTestPage host) => _editabilityHost = host;
 
     /// <summary>Run the page's OnOpenPage — see RunnerTestPageState.MarkOpened.</summary>
     internal void RaiseOnOpenPage() => _page?.RaiseOnOpenPage();
@@ -426,6 +464,12 @@ internal class LiveNavTestPage : MockITestPage
         // A page with no SourceTable has no rowset to insert into at all — refuse by name
         // before touching any of the state below, rather than NRE-ing inside CaptureInsertPosition.
         RequireRecord("New()");
+
+        // New() from the new-row line starts the row explicitly; the draft bookkeeping is
+        // superseded by the CaptureInsertPosition below, and its saved return position must
+        // not survive to drag the cursor back off the row being created.
+        _onNewRowLine = false;
+        _newRowLineReturnPosition = null;
 
         FlushPendingNewRow();   // starting a second row persists the first
 
@@ -482,7 +526,8 @@ internal class LiveNavTestPage : MockITestPage
     }
 
     /// <summary>Abandon an in-progress new row without writing it — how Cancel closes.</summary>
-    internal void DiscardPendingNewRow() { _pendingNewRow = false; _pendingModify = false; }
+    internal void DiscardPendingNewRow()
+    { _pendingNewRow = false; _pendingModify = false; _onNewRowLine = false; _newRowLineReturnPosition = null; }
 
     // BC's AutoSplitKey increment. Named NavForm.AutoSplitKeyIncrement there, and the same
     // literal in the client's AutoKeyGenerator — both sides of the wire agree on 10000.
@@ -755,6 +800,19 @@ internal class LiveNavTestPage : MockITestPage
     /// <summary>A control wrote to the record. Called by the field, which owns no page state.</summary>
     internal void MarkEdited()
     {
+        // Typing into the new-row line is exactly what turns it into a record — it is how a
+        // user creates a row without ever invoking New(). Promote it to the pending-insert
+        // the flush path already knows how to finish (EnterNewRowLine has already done the
+        // CaptureInsertPosition that ProposeAutoSplitKey needs). Falling through to
+        // _pendingModify instead would try to Modify a row that has no row in the table.
+        if (_onNewRowLine)
+        {
+            _onNewRowLine = false;
+            _newRowLineReturnPosition = null;
+            _pendingNewRow = true;
+            return;
+        }
+
         // A new row is already going to be written by FlushPendingNewRow; marking it modified
         // as well would try to Modify a row that does not exist yet.
         if (!_pendingNewRow) _pendingModify = true;
@@ -904,10 +962,139 @@ internal class LiveNavTestPage : MockITestPage
     // otherwise navigating away from a New() silently discards it. Parts flush too: moving
     // the parent re-links every part to a different row, so a row started in a part must be
     // persisted while the link that stamped its key is still the current one.
-    public override bool MoveFirst() { var record = RequireRecord("MoveFirst()"); FlushParts(); FlushRow(); return Loaded(record.ALFindFirstAsync(DataError.TrapError).GetAwaiter().GetResult()); }
-    public override bool MoveLast() { var record = RequireRecord("MoveLast()"); FlushParts(); FlushRow(); return Loaded(record.ALFindLastAsync(DataError.TrapError).GetAwaiter().GetResult()); }
-    public override bool MoveNext() { var record = RequireRecord("MoveNext()"); FlushParts(); FlushRow(); return Loaded(record.ALNextAsync().GetAwaiter().GetResult() != 0); }
-    public override bool MovePrevious() { var record = RequireRecord("MovePrevious()"); FlushParts(); FlushRow(); return Loaded(record.ALNextAsync(-1).GetAwaiter().GetResult() != 0); }
+    public override bool MoveFirst() { var record = RequireRecord("MoveFirst()"); FlushParts(); FlushRow(); LeaveNewRowLine(); return Loaded(record.ALFindFirstAsync(DataError.TrapError).GetAwaiter().GetResult()); }
+    public override bool MoveLast() { var record = RequireRecord("MoveLast()"); FlushParts(); FlushRow(); LeaveNewRowLine(); return Loaded(record.ALFindLastAsync(DataError.TrapError).GetAwaiter().GetResult()); }
+
+    /// <summary>
+    /// Advance to the next row the CLIENT has, which past the last data row of an editable,
+    /// insert-allowed repeater is the implicit new-row line — see EnterNewRowLine.
+    /// </summary>
+    public override bool MoveNext()
+    {
+        var record = RequireRecord("MoveNext()");
+        FlushParts(); FlushRow();
+
+        // Already parked on the new-row line: it is the LAST row of the rowset, so this is
+        // where the walk ends. Restore the cursor to the data row it came from first, so a
+        // page left at the end is still positioned on a real record rather than on the
+        // blank buffer EnterNewRowLine installed.
+        if (_onNewRowLine) { LeaveNewRowLine(); return false; }
+
+        if (record.ALNextAsync().GetAwaiter().GetResult() != 0) return Loaded(true);
+        return EnterNewRowLine(record);
+    }
+
+    public override bool MovePrevious()
+    {
+        var record = RequireRecord("MovePrevious()");
+        FlushParts(); FlushRow();
+
+        // Stepping back off the new-row line lands on the last data row — the row the cursor
+        // was on when it walked onto the blank line. It is restored rather than re-sought
+        // because ALNextAsync(-1) has nothing to step back FROM: the record buffer holds an
+        // Init()ed row that is not in the table.
+        if (_onNewRowLine) { LeaveNewRowLine(); return Loaded(true); }
+
+        return Loaded(record.ALNextAsync(-1).GetAwaiter().GetResult() != 0);
+    }
+
+    /// <summary>
+    /// Advance to the next DATA row only, never onto the new-row line.
+    ///
+    /// The blank line belongs to the client's presentation of the rowset, so it is what
+    /// TestPage.Next() must walk onto — but it is not a record, and every INTERNAL scan
+    /// wants rows that exist. Sharing MoveNext() for both would let a search match the blank
+    /// line on any field the caller happened to be looking for an empty value in, and report
+    /// a row that is not in the table.
+    /// </summary>
+    private bool MoveNextDataRow()
+    {
+        var record = RequireRecord("MoveNext()");
+        FlushParts(); FlushRow();
+        if (_onNewRowLine) { LeaveNewRowLine(); return false; }
+        return Loaded(record.ALNextAsync().GetAwaiter().GetResult() != 0);
+    }
+
+    /// <summary>
+    /// Whether this page shows the implicit new-row line: the trailing blank row an editable,
+    /// insert-allowed repeater always carries past its data, which is what a user types into
+    /// to create a record.
+    ///
+    /// BC's client appends it in <c>DraftLinePattern.MakeDraftLines</c> — the same trailing
+    /// draft row CaptureInsertPosition already has to account for when it computes an
+    /// AutoSplitKey. It is part of the rowset the client hands the test framework, so
+    /// <c>TestPage.Next()</c> walks onto it and answers true; the controls there read blank
+    /// because the line is an Init()ed buffer, not a record.
+    ///
+    /// The gating is BOTH conditions, and each one was measured on a real service tier
+    /// (corpus CU60743): a page opened with OpenView, a page with Editable = false, and a
+    /// page with InsertAllowed = false all answer false to that last Next(). _staticEditable
+    /// already combines the open mode with the page's declared Editable (see MarkOpened), and
+    /// _creatable is the page's declared InsertAllowed — so the two flags the client gates
+    /// the draft line on are exactly the two this class already tracks.
+    /// </summary>
+    private bool ShowsNewRowLine => _staticEditable && _creatable;
+
+    // Set while the cursor sits on the new-row line, with the position of the data row it
+    // walked on from — the blank line is a buffer, so the real cursor has to be remembered
+    // somewhere in order to be restored when the walk steps off it.
+    private bool _onNewRowLine;
+    private string? _newRowLineReturnPosition;
+
+    /// <summary>
+    /// Park the cursor on the new-row line: blank the record buffer so every control reads
+    /// empty, having first saved the position of the data row being left.
+    ///
+    /// Deliberately NOT Loaded(): no row was fetched, so there is no OnAfterGetRecord to
+    /// raise and no before-image to snapshot. Deliberately NOT _pendingNewRow either — the
+    /// client only turns the draft line into a record once someone types into it, so merely
+    /// walking a page must not insert a blank row (corpus CU60743
+    /// NewRowLine_LeftUntouched_InsertsNothing). MarkEdited is where typing promotes it.
+    /// </summary>
+    private bool EnterNewRowLine(NavRecord record)
+    {
+        if (!ShowsNewRowLine) return false;
+
+        _newRowLineReturnPosition = record.ALGetPosition();
+
+        // The rows either side of the insertion point decide the AutoSplitKey number, and
+        // ALInit is about to wipe the row the cursor is on — so the position is captured
+        // now, exactly as InsertEmptyRow does, in case a SetValue promotes this line into a
+        // real insert later.
+        CaptureInsertPosition();
+
+        // ALInit is AL's Init(), which deliberately PRESERVES the primary key — so on its own
+        // it left the key fields reading the row that was just walked off (the new-row line
+        // reported the last row's "No."). The draft line is blank in every column, so the key
+        // fields are cleared too.
+        //
+        // ClearFieldValue per key field rather than NavRecord.Clear(): Clear() is AL's
+        // Clear(Rec), which also drops filters and the current key — and the page's filters
+        // are what make the rowset the page's own (a part's SubPageLink above all). Blanking
+        // the buffer must not silently widen what the page is showing.
+        record.ALInit();
+        var primaryKey = record.MetaTable?.PrimaryKey;
+        if (primaryKey != null)
+            for (var i = 0; i < primaryKey.KeyFieldCount; i++)
+                record.ClearFieldValue(primaryKey.KeyFieldsList[i].FieldNo);
+
+        _onNewRowLine = true;
+        return true;
+    }
+
+    /// <summary>
+    /// Step off the new-row line, putting the record buffer back on the data row the cursor
+    /// came from. Every cursor move that is not "advance onto the blank line" goes through
+    /// here, so the blank buffer can never outlive the one position it is valid at.
+    /// </summary>
+    private void LeaveNewRowLine()
+    {
+        if (!_onNewRowLine) return;
+        _onNewRowLine = false;
+        var position = _newRowLineReturnPosition;
+        _newRowLineReturnPosition = null;
+        if (!string.IsNullOrEmpty(position)) _record!.ALSetPosition(position);
+    }
 
     /// <summary>
     /// A row just became the page's current row — run the page's OnAfterGetRecord, exactly
@@ -951,6 +1138,10 @@ internal class LiveNavTestPage : MockITestPage
     public override bool GoToBookmark(object bookmark)
     {
         if (bookmark is not string position || string.IsNullOrEmpty(position)) return false;
+        // Jumping to a bookmark is a cursor move like any other, so it steps off the blank
+        // line first — otherwise the flag would survive onto a real row and the NEXT
+        // MoveNext() would end the walk early.
+        LeaveNewRowLine();
         RequireRecord("GoToBookmark()").ALSetPosition(position);
         return Loaded(true);
     }
@@ -981,7 +1172,10 @@ internal class LiveNavTestPage : MockITestPage
         while (hasRow)
         {
             if (Matches(fieldNos, values)) return true;
-            hasRow = forward ? MoveNext() : MovePrevious();
+            // MoveNextDataRow, not MoveNext: a search wants rows that EXIST. Walking the
+            // scan onto the new-row line would let any request for an empty value "find"
+            // the blank line and report a row that is not in the table.
+            hasRow = forward ? MoveNextDataRow() : MovePrevious();
         }
 
         if (hasCurrent) { record.ALSetPosition(original); Loaded(true); }
