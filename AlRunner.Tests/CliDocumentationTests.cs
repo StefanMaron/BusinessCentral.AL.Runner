@@ -417,4 +417,138 @@ public sealed class CliDocumentationTests
             + "checkout a `dotnet tool install` user never has:\n  "
             + string.Join("\n  ", offenders));
     }
+
+    /// <summary>
+    /// Issue #2080: --help and --guide listed `docs/subsystems.md` as the "subsystem
+    /// map". It is a v1-era spike artifact that says so in its own second line
+    /// ("preserved as historical analysis"), recommends the JmpHook strategy the
+    /// runner has since abandoned, and cross-references files that no longer exist.
+    /// An agent told by CLAUDE.md to read --guide first was routed straight into it.
+    ///
+    /// The pre-existing drift tests only assert that referenced strings are PRESENT,
+    /// so a pointer can be present and false at the same time. These two tests close
+    /// the mechanically-checkable half of that gap:
+    ///
+    ///   1. every docs/*.md path the CLI prints resolves on disk, and
+    ///   2. none of them is a self-declared historical/archived artifact.
+    ///
+    /// Deliberately NOT asserted: that the printed label matches the document's H1.
+    /// That check would not have caught this bug — the label was "subsystem map" and
+    /// the H1 is "BC service-tier subsystem boundary analysis", which share the word
+    /// "subsystem" — and any looser prose comparison is a false-failure generator.
+    /// The staleness marker is the property that actually distinguishes the case.
+    /// </summary>
+    [Fact]
+    public void HelpAndGuide_ReferenceOnlyDocsThatExistOnDisk()
+    {
+        var missing = new List<string>();
+        foreach (var (surface, path) in ReferencedDocPaths())
+            if (!File.Exists(Path.Combine(RepoRoot, path)))
+                missing.Add($"{surface} prints '{path}', which does not exist");
+
+        Assert.True(missing.Count == 0,
+            "The CLI's own documentation lists paths that are not in the repository. "
+            + "A caller with nothing but the binary follows these:\n  "
+            + string.Join("\n  ", missing));
+    }
+
+    [Fact]
+    public void HelpAndGuide_DoNotAdvertiseHistoricalArtifacts()
+    {
+        var offenders = new List<string>();
+        foreach (var (surface, path) in ReferencedDocPaths())
+        {
+            var full = Path.Combine(RepoRoot, path);
+            if (!File.Exists(full)) continue; // reported by the sibling test
+
+            if (path.StartsWith("docs/archive/", StringComparison.Ordinal))
+            {
+                offenders.Add($"{surface} prints '{path}', which lives under docs/archive/");
+                continue;
+            }
+
+            var marker = HistoricalMarkerIn(File.ReadAllText(full));
+            if (marker != null)
+                offenders.Add($"{surface} prints '{path}', whose header declares itself historical (\"{marker}\")");
+        }
+
+        Assert.True(offenders.Count == 0,
+            "--help / --guide are read by agents as the current operating manual, so every "
+            + "document they name must be current. Move the document out of the list (or out "
+            + "of docs/archive/) rather than leaving the pointer:\n  "
+            + string.Join("\n  ", offenders));
+    }
+
+    /// <summary>
+    /// The negative direction for the two tests above: prove the audit actually
+    /// rejects a bad reference instead of passing because it found nothing to check.
+    /// Without this, both tests would still be green if the extraction regex silently
+    /// matched zero paths.
+    /// </summary>
+    [Fact]
+    public void DocReferenceAudit_RejectsArchivedAndHistoricalReferences()
+    {
+        // Extraction finds every docs/*.md path in CLI-shaped output, and nothing else.
+        var extracted = ExtractDocPaths(
+            "FURTHER READING\n"
+            + "  --help                       full flag reference\n"
+            + "  docs/limitations.md          the real architectural limits\n"
+            + "  docs/archive/subsystems.md   subsystem map\n"
+            + "  README.md                    not a docs/ path\n");
+        Assert.Equal(new[] { "docs/archive/subsystems.md", "docs/limitations.md" }, extracted.OrderBy(p => p).ToArray());
+
+        // A docs/archive/ path is rejected on its path alone.
+        Assert.StartsWith("docs/archive/", extracted.Single(p => p.Contains("archive")), StringComparison.Ordinal);
+
+        // The historical-marker scan fires on the exact header shape that caused #2080 ...
+        Assert.Equal("preserved as historical analysis", HistoricalMarkerIn(
+            "# BC service-tier subsystem boundary analysis\n\n"
+            + "> **STATUS UPDATE — 2026-05-07.** This document is preserved as historical analysis.\n"));
+        Assert.Equal("spike artifact", HistoricalMarkerIn("# Something\n\n**Status:** spike artifact, architectural analysis only.\n"));
+
+        // ... and not on a current document's header, nor on a late mention in the body.
+        Assert.Null(HistoricalMarkerIn("# Cecil migration — architecture decision\n\n**Status:** approved 2026-05-20.\n"));
+        Assert.Null(HistoricalMarkerIn("# Current doc\n" + string.Join("\n", Enumerable.Repeat("body", 200))
+            + "\nthis spike artifact is only discussed here, far below the header\n"));
+    }
+
+    /// <summary>Phrases a document uses to declare itself superseded.</summary>
+    private static readonly string[] HistoricalMarkers =
+    {
+        "preserved as historical analysis",
+        "historical analysis only",
+        "spike artifact",
+        "superseded by",
+        "no longer accurate",
+    };
+
+    /// <summary>
+    /// Scans only the document header (first 60 lines). A current document may
+    /// legitimately discuss a superseded spike in its body; what disqualifies it from
+    /// the CLI's reading list is declaring ITSELF historical up front.
+    /// </summary>
+    private static string? HistoricalMarkerIn(string docText)
+    {
+        var header = string.Join("\n", docText.Split('\n').Take(60));
+        return HistoricalMarkers.FirstOrDefault(m => header.Contains(m, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static string[] ExtractDocPaths(string cliOutput) =>
+        Regex.Matches(cliOutput, @"\bdocs/[A-Za-z0-9_./-]*\.md\b")
+             .Select(m => m.Value)
+             .Distinct(StringComparer.Ordinal)
+             .ToArray();
+
+    /// <summary>(surface, path) for every docs/*.md printed by --help or --guide.</summary>
+    private static IEnumerable<(string Surface, string Path)> ReferencedDocPaths()
+    {
+        foreach (var flag in new[] { "--help", "--guide" })
+        {
+            var (exit, stdout, _) = RunCli(flag);
+            Assert.Equal(0, exit);
+            var paths = ExtractDocPaths(stdout);
+            Assert.NotEmpty(paths); // the surfaces DO cite docs; an empty scrape is a broken test
+            foreach (var p in paths) yield return (flag, p);
+        }
+    }
 }
