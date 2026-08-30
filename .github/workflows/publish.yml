@@ -197,7 +197,14 @@ jobs:
               -p:_BCVersion="$full" -p:AllowBcArtifactDownload=true \
               -o "./variant-build-$full"
             mkdir -p "./variants-staging/$full"
-            for f in al-runner.dll al-runner.pdb al-runner.deps.json al-runner.runtimeconfig.json; do
+            # #2166: AlRunner.QueryJoin.dll and AlRunner.Provisioning.dll are load-by-path
+            # assemblies (see NclShadowRuntime.MustCopyNames) that al-runner.dll resolves
+            # from its own directory at runtime — they must ship in every variant dir the
+            # same as the top-level "any" folder already ships them, not be left for the
+            # shadow-dir mirror to symlink in from origDir (see NclShadowRuntime.cs's
+            # #2166 comment for why relying on that symlink surviving is fragile).
+            for f in al-runner.dll al-runner.pdb al-runner.deps.json al-runner.runtimeconfig.json \
+                     AlRunner.QueryJoin.dll AlRunner.Provisioning.dll AlRunner.Provisioning.pdb; do
               cp "./variant-build-$full/$f" "./variants-staging/$full/$f"
             done
             rm -rf "./variant-build-$full"

@@ -52,10 +52,39 @@ public static class NclShadowRuntime
     // The entry assembly and the small manifests hostfxr reads to launch it — these
     // must be real, independent files in the shadow dir, not symlinks. See the comment
     // at the call site in EnsureShadowDir for why.
+    //
+    // #2166: AlRunner.QueryJoin.dll and AlRunner.Provisioning.dll join this list for a
+    // DIFFERENT reason — they are load-by-path assemblies, not entry-assembly manifests.
+    // AlRunner.QueryJoin.dll is loaded explicitly via Assembly.LoadFrom(AppContext.
+    // BaseDirectory + name) — see RecordPatches.QueryJoin.cs — lazily, on the first
+    // multi-dataitem query JOIN a test actually runs. AlRunner.Provisioning.dll is
+    // resolved implicitly by the CLR (a normal compiled-in reference, probed relative to
+    // the entry assembly's own directory) from --auto-provision / ProvisioningCheck code
+    // that runs AFTER the shadow-hop — confirmed by reading Program.cs: those call sites
+    // sit past both re-exec decision points, so they execute in whatever directory this
+    // method built.
+    //
+    // Before this fix both fell into the generic "every other dependency DLL" bucket
+    // below and were symlinked back to origDir. That happened to keep working ONLY
+    // because EnsureShadowDir's caller always passes the top-level "tools/.../any"
+    // install directory as origDir, which does ship both files — so the symlink target
+    // resolved. But nothing re-validates that symlink once the shadow dir is cached:
+    // EnsureShadowDir's "reusable" check only looks at the marker file plus the entry
+    // assembly and Ncl.dll, never at the rest of what it once linked. If the file a
+    // symlink points to is later removed from the original install — a tool reinstall/
+    // upgrade in place, `mise`/`dotnet tool` pruning an old version, disk cleanup — the
+    // shadow dir is still reported "reusable", and the dangling symlink only surfaces
+    // the next time something tries to load it. For AlRunner.QueryJoin.dll that is
+    // deep inside the FIRST join test that happens to run, long after the shadow dir was
+    // validated — reproduced empirically: deleting the original install's copy of
+    // AlRunner.QueryJoin.dll out from under an already-built, already-"reusable" shadow
+    // dir reliably reproduces the exact FileNotFoundException #2166 reports. A real,
+    // independent copy at shadow-build time removes the dependency on origDir surviving.
     private static readonly string[] MustCopyNames =
     {
         "al-runner.dll", "al-runner.pdb", "al-runner.deps.json",
         "al-runner.runtimeconfig.json", "al-runner.runtimeconfig.dev.json",
+        "AlRunner.QueryJoin.dll", "AlRunner.Provisioning.dll", "AlRunner.Provisioning.pdb",
     };
 
     private static bool MustBeRealCopy(string fileName) =>

@@ -582,7 +582,14 @@ jobs:
               -p:_BCVersion="$full" -p:AllowBcArtifactDownload=true \
               -o "./variant-build-$full"
             mkdir -p "./variants-staging/$full"
-            for f in al-runner.dll al-runner.pdb al-runner.deps.json al-runner.runtimeconfig.json; do
+            # #2166: AlRunner.QueryJoin.dll and AlRunner.Provisioning.dll are load-by-path
+            # assemblies (see NclShadowRuntime.MustCopyNames) that al-runner.dll resolves
+            # from its own directory at runtime — they must ship in every variant dir the
+            # same as the top-level "any" folder already ships them, not be left for the
+            # shadow-dir mirror to symlink in from origDir (see NclShadowRuntime.cs's
+            # #2166 comment for why relying on that symlink surviving is fragile).
+            for f in al-runner.dll al-runner.pdb al-runner.deps.json al-runner.runtimeconfig.json \
+                     AlRunner.QueryJoin.dll AlRunner.Provisioning.dll AlRunner.Provisioning.pdb; do
               cp "./variant-build-$full/$f" "./variants-staging/$full/$f"
             done
             rm -rf "./variant-build-$full"
@@ -648,3 +655,19 @@ jobs:
             echo "::error::nupkg contains $count engine variant(s), expected $expected (one per .github/bc-versions.txt entry)"
             exit 1
           fi
+
+          # #2166: variant directories are ALSO the runtime shadow-dir mirror's origDir
+          # substitute for the entry-assembly manifest set (see NclShadowRuntime), so
+          # every load-by-path assembly al-runner.dll resolves from its own directory at
+          # runtime must ship here too — not just the top-level "any" folder. This nupkg
+          # inspection is deterministic (unlike an install-and-run check, which the
+          # shadow-dir's fallback-to-origDir symlinking can mask — see the PR for #2166)
+          # and is the check that would have caught the regression in CI before release.
+          for f in AlRunner.QueryJoin.dll AlRunner.Provisioning.dll AlRunner.Provisioning.pdb; do
+            vcount=$(unzip -l ./nupkg/*.nupkg | grep -c "tools/net8.0/any/variants/.*/$f\$")
+            echo "Packed variant copies of $f: $vcount, expected: $expected"
+            if [ "$vcount" -ne "$expected" ]; then
+              echo "::error::nupkg contains $vcount variant copy/copies of $f, expected $expected (one per .github/bc-versions.txt entry) — #2166"
+              exit 1
+            fi
+          done

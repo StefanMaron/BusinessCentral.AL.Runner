@@ -119,6 +119,80 @@ public sealed class NclShadowRuntimeTests
         }
     }
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // #2166: load-by-path assemblies (AlRunner.QueryJoin.dll, AlRunner.Provisioning.dll)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// <summary>Positive + the #2166 regression pin: AlRunner.QueryJoin.dll and
+    /// AlRunner.Provisioning.dll must land in the shadow dir as REAL, independent copies,
+    /// not symlinks back to the original install directory.
+    ///
+    /// Before this fix they fell into the generic "every other dependency DLL" bucket
+    /// (see <see cref="MirrorInstallDirectory_OtherDependencyDll_IsSymlinkedNotCopied"/>)
+    /// and were symlinked. That happened to keep working ONLY because
+    /// <see cref="EnsureShadowDir"/>'s caller always passes the top-level "any" install
+    /// directory as origDir — which does ship both files — so the symlink target
+    /// resolved. But nothing re-validates that symlink once the shadow dir is cached:
+    /// EnsureShadowDir's "reusable" check only looks at the marker file plus the entry
+    /// assembly and Ncl.dll, never at every other file it once linked. If the file the
+    /// symlink points to is later removed from the original install (a tool
+    /// reinstall/upgrade in place, `mise`/`dotnet tool` pruning an old version, disk
+    /// cleanup) the shadow dir is still reported "reusable", and the dangling symlink
+    /// only surfaces when <c>RecordPatches.EnsureJoinExecutorLoaded</c> lazily
+    /// <c>Assembly.LoadFrom</c>s it on the FIRST multi-dataitem query JOIN test that
+    /// actually runs — reproduced empirically against the published 2.8.0 package: a
+    /// shadow dir built while the install was intact keeps working right up until the
+    /// original install's AlRunner.QueryJoin.dll is deleted, at which point every JOIN
+    /// test in that process starts failing with exactly the FileNotFoundException #2166
+    /// reports, even though nothing about the shadow dir itself changed.
+    ///
+    /// AlRunner.Provisioning.dll is resolved differently (implicit CLR probing off a
+    /// compiled-in reference, not an explicit LoadFrom — see ProvisioningCheck.cs) but
+    /// off the exact same AppContext.BaseDirectory, post-shadow-hop, so it inherits the
+    /// identical fragility and gets the identical fix.</summary>
+    [Fact]
+    public void MirrorInstallDirectory_LoadByPathAssemblies_AreRealCopiesNotSymlinks()
+    {
+        var origDir = NewTempDir("mirror-loadbypath-orig");
+        var shadowDir = NewTempDir("mirror-loadbypath-shadow");
+        try
+        {
+            var queryJoinBytes = new byte[] { 0x4D, 0x5A, 1, 2, 3 };
+            var provisioningDllBytes = new byte[] { 0x4D, 0x5A, 4, 5, 6 };
+            var provisioningPdbBytes = new byte[] { 7, 8, 9 };
+            File.WriteAllBytes(Path.Combine(origDir, "AlRunner.QueryJoin.dll"), queryJoinBytes);
+            File.WriteAllBytes(Path.Combine(origDir, "AlRunner.Provisioning.dll"), provisioningDllBytes);
+            File.WriteAllBytes(Path.Combine(origDir, "AlRunner.Provisioning.pdb"), provisioningPdbBytes);
+
+            NclShadowRuntime.MirrorInstallDirectory(origDir, shadowDir);
+
+            var shadowQueryJoin = Path.Combine(shadowDir, "AlRunner.QueryJoin.dll");
+            var shadowProvisioningDll = Path.Combine(shadowDir, "AlRunner.Provisioning.dll");
+            var shadowProvisioningPdb = Path.Combine(shadowDir, "AlRunner.Provisioning.pdb");
+
+            Assert.False(IsSymlink(shadowQueryJoin), "AlRunner.QueryJoin.dll must be a real copy, not a symlink");
+            Assert.False(IsSymlink(shadowProvisioningDll), "AlRunner.Provisioning.dll must be a real copy, not a symlink");
+            Assert.False(IsSymlink(shadowProvisioningPdb), "AlRunner.Provisioning.pdb must be a real copy, not a symlink");
+
+            // Independent inode, not just independent path: deleting the source AFTER
+            // mirroring must not take the shadow copy down with it — that is the exact
+            // failure mode #2166 reports (a dangling symlink surfacing as
+            // FileNotFoundException deep inside a lazily-loaded join test).
+            File.Delete(Path.Combine(origDir, "AlRunner.QueryJoin.dll"));
+            File.Delete(Path.Combine(origDir, "AlRunner.Provisioning.dll"));
+
+            Assert.True(File.Exists(shadowQueryJoin), "shadow copy must survive the original install's file being removed");
+            Assert.Equal(queryJoinBytes, File.ReadAllBytes(shadowQueryJoin));
+            Assert.True(File.Exists(shadowProvisioningDll), "shadow copy must survive the original install's file being removed");
+            Assert.Equal(provisioningDllBytes, File.ReadAllBytes(shadowProvisioningDll));
+        }
+        finally
+        {
+            Directory.Delete(origDir, recursive: true);
+            Directory.Delete(shadowDir, recursive: true);
+        }
+    }
+
     /// <summary>Negative (the cost-control half of the same design): every OTHER file —
     /// the large, numerous dependency DLLs that are NOT the entry assembly or its
     /// manifests — must be linked, not copied, so building/rebuilding the shadow dir
