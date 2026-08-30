@@ -3,9 +3,11 @@
 //
 // This pins the RUNNER's own decision, not "what BC does". The AL-observable behavior — that
 // a subpage part on a host with NO SourceTable answers the same rowset however the host was
-// opened — is a claim about BC and is proved against a real service tier by corpus codeunit
-// 60763 "Test Page Direct Part Tests", the direct-open sibling of the already-merged
-// handler-driven suite 60734.
+// opened — is a claim about BC, and it is measured on a real service tier by corpus codeunit
+// 60763 "Test Page Direct Part Tests": merged as
+// StefanMaron/BusinessCentral.AL.Language.Tests commit 2ddd9715 (PR #78), all five arms green
+// on both BC 27.5 and BC 28.3. It is the direct-open sibling of suite 60734, which pinned the
+// same shape driven through RunModal + a [ModalPageHandler] and whose fixtures it reuses.
 //
 // What is provable here without a loaded BC runtime is the classification itself, and it is
 // exactly where the bug lived: the old call site collapsed "TryBuild produced no record" into
