@@ -192,8 +192,32 @@ jobs:
           # than silently skipping on every fresh CI runner.
           # Must be a REAL run: --version/--help return long before the Cecil bootstrap.
           # The RecordTriggerXRec fixture is the smallest bundle in the repo.
-          ./AlRunner/bin/Release/net8.0/al-runner --quiet AlRunner.Tests/Fixtures/RecordTriggerXRec || true
-          ls -la ~/.cache/al-runner/ncl-cecil/ || echo "WARNING: Cecil cache still cold"
+          #
+          # #2065: this used to end in `|| true`. A warm step that cannot fail is the exact
+          # failure mode this job's own header records twice (#1976: 47 engine tests silently
+          # skipped, two releases in a row) — a run that behaved differently from what the
+          # comments below assert left no signal at all. It is not a lenient guard either: the
+          # `cp` at the end of this step already fails hard when the cache is still cold, just
+          # with a confusing "cp: missing destination file operand" instead of the runner's own
+          # error. Let the runner's exit code speak.
+          ./AlRunner/bin/Release/net8.0/al-runner --quiet AlRunner.Tests/Fixtures/RecordTriggerXRec
+          ls -la ~/.cache/al-runner/ncl-cecil/
+
+          # #2065, the invariant the comment block below depends on, now checked instead of
+          # assumed. The run above must have written its rewritten Ncl.dll into a runner-owned
+          # SHADOW dir (see NclShadowRuntime.cs), never back into AlRunner's own build output —
+          # AlRunner is stripped of Ncl.dll by Directory.Build.targets and
+          # NclShadowRuntime.NeedsShadow reads that directory to decide whether a re-exec is
+          # required, so a stray copy here silently changes the runner's behaviour for every
+          # later invocation in this job. It appeared for real on the BC 27.3 leg of PR #2063,
+          # where it broke five StartupOutputReexecDedupTests, and nothing reported it.
+          stray_ncl=AlRunner/bin/Release/net8.0/Microsoft.Dynamics.Nav.Ncl.dll
+          if [ -e "$stray_ncl" ]; then
+            echo "ERROR: $stray_ncl exists after the warm run." >&2
+            echo "Something rewrote Ncl.dll into AlRunner's build output instead of a shadow dir." >&2
+            echo "See issue #2065 and AlRunner.Tests/PrecompileNclShadowHopTests.cs." >&2
+            exit 1
+          fi
 
           # AlRunner.Tests ships its OWN bin-deployed copy of Microsoft.Dynamics.Nav.Ncl.dll (it
           # references Nav.Ncl directly — see AlRunner.Tests.csproj — and, unlike AlRunner
