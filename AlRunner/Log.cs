@@ -47,8 +47,17 @@ public static class Log
     // `[bc]`/`[reexec]` above. Caught by DapClient's own test harness timing out waiting
     // for a line that was actually printed, just silently dropped before reaching
     // stdout — the same failure shape the `[bc]` comment above describes.
+    // `[warn]` was added for #2206. The fix for that issue prints a warning naming any
+    // directory it could not read while searching for `.alpackages` — the diagnostic whose
+    // ABSENCE is the whole complaint, since silently skipping an unreadable directory turns
+    // a permissions problem into a missing-dependency mystery later. Tagged `[warn]` it
+    // matched this pattern and was dropped before reaching the terminal, making the fix a
+    // no-op at default verbosity: the fourth instance of exactly the bug the `[bc]`,
+    // `[expectations]`, `[reexec]` and `[dap]` notes above each describe. A severity tag is
+    // never an internal diagnostic — if something is worth calling a warning, it is worth
+    // the user seeing it.
     private static readonly Regex ComponentTag =
-        new(@"^\[(?!(?:layered|watch|provision|bc|dep|expectations|reexec|dap)\])[A-Za-z][A-Za-z0-9._+]*\]",
+        new(@"^\[(?!(?:layered|watch|provision|bc|dep|expectations|reexec|dap|warn)\])[A-Za-z][A-Za-z0-9._+]*\]",
             RegexOptions.Compiled);
 
     public static void Install()

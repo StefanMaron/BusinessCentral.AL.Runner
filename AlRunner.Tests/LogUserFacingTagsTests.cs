@@ -66,6 +66,11 @@ public sealed class LogUserFacingTagsTests
     // printed, just silently dropped before reaching stdout (same failure shape as the
     // [bc] swallow above).
     [InlineData("[dap] listening on 127.0.0.1:4711 — waiting for a debug client to connect...")]
+    // #2206: the warning naming a directory the .alpackages scan could not read. Its whole
+    // purpose is to stop a permissions problem from surfacing later as a mysterious missing
+    // dependency, so being eaten here makes the fix a no-op at default verbosity — the same
+    // shape as the [bc] and [expectations] swallows above.
+    [InlineData("[warn] skipped 1 unreadable directory while searching for `.alpackages`:")]
     public void UserFacingTags_SurviveTheDefaultFilter(string line)
     {
         Assert.Contains(line, FilterOnce(line, verbose: false));
