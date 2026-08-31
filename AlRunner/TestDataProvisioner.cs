@@ -27,12 +27,17 @@
 //   1. Table-extension data. BC splits an extended table across the base table and a `$ext`
 //      companion whose columns carry no AL field id, so an AL record cannot be rebuilt from
 //      them. A base table WITH `$ext` rows is skipped whole rather than hydrated with a
-//      knowingly incomplete row set.
+//      knowingly incomplete row set. #2261 lifts this: the reader can now resolve extension
+//      fields to their real AL field ids and join them in. Note when doing so that the
+//      request key is `merge-extensions`, hyphenated — the camelCase spelling is accepted and
+//      SILENTLY IGNORED, which would hydrate Source Code Setup with one of its ~50 fields and
+//      report success, so the test for it must assert an extension field's VALUE.
 //   2. Tables whose AL name is ambiguous in the backup — two installed apps may each declare
 //      a table of the same name (namespaces make that legal; Base Application's
 //      "Dimension Set Entry" and Power BI Report embeddings' are the shipped example). The
 //      reader refuses the name, and so does this: picking whichever candidate has rows would
-//      be exactly the silent guess this feature exists to prevent.
+//      be exactly the silent guess this feature exists to prevent. #2264 resolves it properly,
+//      by naming the owning app the runner's own closure already resolved.
 //   3. Value types this runner build cannot rebuild yet (dates, times, BLOBs, media, …) —
 //      refused per table by the mechanism, counted and reported here.
 using AlRunner.Infrastructure;

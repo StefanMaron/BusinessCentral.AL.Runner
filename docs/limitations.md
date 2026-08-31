@@ -464,7 +464,8 @@ https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
   - BC's system columns (`SystemId`, `SystemCreatedAt`, …) are not hydrated —
     [#2260](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2260).
   - A table whose AL name is declared by two installed apps in the same company is refused
-    rather than guessed at.
+    rather than guessed at —
+    [#2264](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2264).
 
   Measured on BC 28.1's W1 CRONUS backup with the Base Application / System Application /
   Business Foundation closure: 7,233 rows across 189 tables hydrated; 68 tables skipped for

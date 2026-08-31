@@ -1,6 +1,12 @@
 // BackupReaderTool — the process boundary between the runner and `bcbak`, the reader that
 // decodes a BC SQL Server `.bak` directly (no SQL Server, no restore, no container).
 //
+// TRANSPORT IS INTERIM: one process per command. The reader has a serve mode that opens the
+// backup once and answers newline-delimited JSON on stdin — measured at 317 ms of startup
+// plus 1.5-15 ms per warm small table, against ~0.7-2.3 s for every invocation here (all 456
+// CRONUS tables: 1.76 s vs 2m13s). #2263 swaps it. This file is the whole surface that has to
+// change: everything else goes through Run(...) and knows nothing about the transport.
+//
 // WHY A SUBPROCESS AND NOT A PACKAGE REFERENCE
 //   The reader is a separate project that knows nothing about AL Runner, and it must stay
 //   that way: it is a general-purpose BC backup reader, not a runner component. Coupling at
