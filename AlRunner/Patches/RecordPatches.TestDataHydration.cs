@@ -57,10 +57,12 @@
 //      table: a bare unresolvable name could equally be a schema mismatch, and the two must
 //      not be confused.
 //
-//   b) The merge can fail to happen at all without failing. Measured on the shipped reader:
-//      `--mergeExtensions` (camelCase) is accepted by the CLI, ignored, and exits 0 — which
-//      would hydrate `Source Code Setup` with its ONE own field, ~50 blanks, and no error
-//      anywhere. That guard is NOT here, deliberately: this metatable cannot answer "is this
+//   b) The merge can fail to happen at all without failing. Measured on reader builds up to
+//      9701b04: `--mergeExtensions` (camelCase) was accepted by the CLI, ignored, and exited
+//      0 — which would hydrate `Source Code Setup` with its ONE own field, ~50 blanks, and no
+//      error anywhere. Reader a431ee4 refuses an unaccepted option (BakReader#18), but the
+//      runner pins no reader version and cannot control the binary on a user's PATH, so the
+//      guard stays. That guard is NOT here, deliberately: this metatable cannot answer "is this
 //      field stored in the companion". Measured on `Return Reason` (6635), whose
 //      `Default Location Code` lives in `Return Reason$ext` in the backup — the runner's
 //      NCLMetaField for it reports IsCompanionTableField = false, because BC only sets that

@@ -34,12 +34,21 @@
 //   passes `--merge-extensions`, so the base and companion rows arrive joined, and a table
 //   with extension data is no longer skipped whole.
 //
-//   The request key is `merge-extensions`, HYPHENATED. The camelCase spelling is accepted by
-//   the reader's CLI, ignored, and exits 0 — measured, not assumed — which would hydrate
-//   Source Code Setup with one of its ~50 fields and report success, and 68 CRONUS tables
-//   with it. AssertMergeIsHonoured() below reads one extended table BOTH ways before anything
-//   is hydrated and requires the merged read to return strictly more columns, so a merge that
-//   is not happening fails the run instead of emptying 68 tables quietly.
+//   The request key is `merge-extensions`, HYPHENATED. On reader builds up to and including
+//   9701b04 the camelCase spelling `--mergeExtensions` was accepted by the CLI, ignored, and
+//   exited 0 — measured, not assumed — which would hydrate Source Code Setup with one of its
+//   ~50 fields and report success, and 68 CRONUS tables with it. Reader a431ee4 (BakReader#18)
+//   refuses an option the command does not accept, so that specific spelling now exits 1
+//   naming the accepted options. Stated as history, not as current reader behaviour.
+//
+//   AssertMergeIsHonoured() below stays, and the upstream fix is not a reason to remove it.
+//   It removed the reason the probe was WRITTEN, not the reason it should remain: the runner
+//   does not pin a reader version, and it cannot control which binary is on a user's PATH or
+//   on AL_RUNNER_BCBAK. An older reader that silently ignores the flag is still a reachable
+//   configuration, and this probe is the only thing that catches it. It reads one extended
+//   table BOTH ways before anything is hydrated and requires the merged read to return
+//   strictly more columns, so a merge that is not happening fails the run instead of emptying
+//   68 tables quietly.
 //
 //   That check is once per run, not per table, and it has to be: whether the flag is honoured
 //   is a property of the reader, not of a table. The per-table form was tried and is wrong —
@@ -237,7 +246,7 @@ internal static class TestDataProvisioner
             + $"whose '$ext' companion holds rows, returned {merged.Count} column(s) with the flag and "
             + $"{plain.Count} without, so every table-extension field would hydrate blank while the run "
             + "reported success. Check the reader build (AL_RUNNER_BCBAK); the request key is hyphenated, "
-            + "and the camelCase spelling is accepted, ignored, and exits 0.");
+            + "and reader builds before a431ee4 accept the camelCase spelling, ignore it, and exit 0.");
     }
 
     /// <summary>
