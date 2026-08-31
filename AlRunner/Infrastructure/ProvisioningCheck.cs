@@ -465,6 +465,66 @@ public static class ProvisioningCheck
     public static string TestAppsDirFor(string artifactsRootDir, string fullVersion)
         => Path.Combine(artifactsRootDir, fullVersion, "test-apps");
 
+    /// <summary>
+    /// Every version directory directly under <paramref name="artifactsRootDir"/> whose
+    /// name is exactly <paramref name="majorMinorPrefix"/> or starts with
+    /// <c>"&lt;majorMinorPrefix&gt;."</c> — i.e. every provisioned patch of the same
+    /// major.minor line — ordered by descending <see cref="Version"/> (newest first,
+    /// matching the order the warm-reuse scan in Program.cs's FindWarmProvisionedVersion
+    /// already uses). Pure directory-name scan; a missing root yields no candidates
+    /// rather than throwing.
+    /// </summary>
+    public static IReadOnlyList<string> EnumerateVersionDirNames(
+        string artifactsRootDir, string majorMinorPrefix)
+    {
+        if (!Directory.Exists(artifactsRootDir)) return Array.Empty<string>();
+        return Directory.EnumerateDirectories(artifactsRootDir)
+            .Select(Path.GetFileName)
+            .Where(n => !string.IsNullOrEmpty(n)
+                && (n == majorMinorPrefix || n!.StartsWith(majorMinorPrefix + ".", StringComparison.Ordinal)))
+            .Select(n => (Name: n!, Ver: Version.TryParse(n, out var v) ? v : null))
+            .Where(t => t.Ver != null)
+            .OrderByDescending(t => t.Ver)
+            .Select(t => t.Name)
+            .ToList();
+    }
+
+    /// <summary>
+    /// Every runner-owned platform-apps/test-apps directory that ACTUALLY EXISTS ON DISK
+    /// for any patch version sharing <paramref name="majorMinorPrefix"/> with the selected
+    /// engine version — not just the engine's own exact patch (issue #2234).
+    ///
+    /// Issue #2226 (a separate, still-open defect) can make `provision`'s platform-app and
+    /// test-app sub-steps land under DIFFERENT patch directories of the same major.minor —
+    /// one resolved from the engine's own exact build, the other from the CDN's "latest"
+    /// for the major.minor. Need detection used to build its search set from the SELECTED
+    /// engine version alone (<see cref="PlatformAppsDirFor"/>/<see cref="TestAppsDirFor"/>
+    /// called with just that one version), so an app provisioned under a sibling patch
+    /// directory read as absent even though it was present and usable — the run path found
+    /// it only as an incidental side effect of the reuse scan (FindWarmProvisionedVersion)
+    /// that runs solely inside the auto-provision download branch, so `--no-auto-provision`
+    /// never benefited from it and reported the identical "missing" diagnostic forever,
+    /// even immediately after `provision` had just completed successfully.
+    ///
+    /// This is the single source of truth both the run path and need detection now share,
+    /// so they can no longer independently drift onto different search sets. Pure
+    /// filesystem existence scan — no network — and it can only ADD directories that exist
+    /// on disk, never remove or fabricate one.
+    /// </summary>
+    public static IReadOnlyList<string> CollectRunnerOwnedProvisionDirs(
+        string artifactsRootDir, string majorMinorPrefix)
+    {
+        var dirs = new List<string>();
+        foreach (var name in EnumerateVersionDirNames(artifactsRootDir, majorMinorPrefix))
+        {
+            var platformDir = PlatformAppsDirFor(artifactsRootDir, name);
+            if (Directory.Exists(platformDir)) dirs.Add(platformDir);
+            var testDir = TestAppsDirFor(artifactsRootDir, name);
+            if (Directory.Exists(testDir)) dirs.Add(testDir);
+        }
+        return dirs;
+    }
+
     // ── Issue #1996: manifest-driven need detection ──────────────────────────
     // CheckPlatformApps / TestToolkitPresent above are REACTIVE: they can only report a
     // gap for an app that is already PRESENT (as symbol-only) in the cache. An empty

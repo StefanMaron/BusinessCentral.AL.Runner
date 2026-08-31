@@ -1290,21 +1290,25 @@ if (inaccessibleScanWarning != null) Console.WriteLine(inaccessibleScanWarning);
 // empty/nonexistent --package-cache, as issue #1996's own repro does) never re-hits the
 // CDN. Populated once the selected BC version is known (already true at this point).
 var selectedVersionForProvisioning = AlRunner.Infrastructure.BcArtifacts.SelectedVersion.ToString();
-var runnerOwnedPlatformAppsDir = AlRunner.Infrastructure.ProvisioningCheck.PlatformAppsDirFor(
-    AlRunner.Infrastructure.BcArtifacts.ArtifactsRootDir, selectedVersionForProvisioning);
-var runnerOwnedTestAppsDir = AlRunner.Infrastructure.ProvisioningCheck.TestAppsDirFor(
-    AlRunner.Infrastructure.BcArtifacts.ArtifactsRootDir, selectedVersionForProvisioning);
-var extraProvisionSearchDirs = new List<string>();
-if (Directory.Exists(runnerOwnedPlatformAppsDir)) extraProvisionSearchDirs.Add(runnerOwnedPlatformAppsDir);
-if (Directory.Exists(runnerOwnedTestAppsDir)) extraProvisionSearchDirs.Add(runnerOwnedTestAppsDir);
+// Issue #2234: scan every patch directory sharing the selected engine's major.minor, not
+// just its own exact patch — #2226 (separate, still open) can leave `provision`'s
+// platform-app and test-app sub-steps under DIFFERENT patch directories of the same
+// major.minor, and need detection used to look only at the engine's own patch, missing a
+// sibling directory the run path found (as an incidental side effect of the auto-provision
+// reuse scan) and reporting "missing" forever even right after `provision` succeeded.
+var extraProvisionSearchDirsMajorMinor = AlRunner.Infrastructure.ProvisioningCheck.ResolveProvisionMajorMinor(
+    selectedVersionForProvisioning);
+var extraProvisionSearchDirs = AlRunner.Infrastructure.ProvisioningCheck.CollectRunnerOwnedProvisionDirs(
+    AlRunner.Infrastructure.BcArtifacts.ArtifactsRootDir, extraProvisionSearchDirsMajorMinor).ToList();
 List<string> PlatformCheckDirs() =>
     packageCacheDirs.Concat(bundleAlpackagesDirs).Concat(extraProvisionSearchDirs).Distinct().ToList();
-// These are read-only, already-on-disk runner-owned dirs for the SELECTED version — fold
-// them into the set dependency resolution actually uses too (mirrors what
-// DefaultPackageCacheDirs already does automatically when no explicit --package-cache is
-// given; this closes the same gap for an EXPLICIT --package-cache, e.g. this exact
-// invocation's own CLI flags). Without this, a prior run's warm test-apps/platform-apps
-// stay invisible to compilation even though the provisioning DECISION already sees them.
+// These are read-only, already-on-disk runner-owned dirs for the SELECTED version's
+// major.minor line — fold them into the set dependency resolution actually uses too
+// (mirrors what DefaultPackageCacheDirs already does automatically when no explicit
+// --package-cache is given; this closes the same gap for an EXPLICIT --package-cache,
+// e.g. this exact invocation's own CLI flags). Without this, a prior run's warm
+// test-apps/platform-apps stay invisible to compilation even though the provisioning
+// DECISION already sees them.
 foreach (var d in extraProvisionSearchDirs)
     if (!packageCacheDirs.Contains(d))
         packageCacheDirs.Add(d);
@@ -6770,19 +6774,22 @@ static IEnumerable<string> DefaultPackageCacheDirs()
     var symLatest = SelectVersionDirOrNull(symRoot, mmPrefix);
     if (symLatest != null) yield return symLatest;
 
-    // The provisioned MS test toolkit for the SELECTED version (see
-    // EnsureTestToolkitProvisioned). Scanned by default so a test bundle whose app.json
-    // depends on Library Assert / Test Runner / Any resolves them without --package-cache.
-    var testApps = AlRunner.Infrastructure.ProvisioningCheck.TestAppsDirFor(
-        AlRunner.Infrastructure.BcArtifacts.ArtifactsRootDir, sel.ToString());
-    if (Directory.Exists(testApps)) yield return testApps;
-
-    // The provisioned Microsoft platform R2R runtime apps for the SELECTED version (see
-    // --auto-provision, issue #1653). Scanned by default so a --auto-provision run on one
-    // invocation is visible on a later run that omits --auto-provision.
-    var platformApps = AlRunner.Infrastructure.ProvisioningCheck.PlatformAppsDirFor(
-        AlRunner.Infrastructure.BcArtifacts.ArtifactsRootDir, sel.ToString());
-    if (Directory.Exists(platformApps)) yield return platformApps;
+    // The provisioned MS test toolkit / platform R2R runtime apps (see
+    // EnsureTestToolkitProvisioned / --auto-provision, issue #1653). Scanned by default so
+    // a test bundle whose app.json depends on Library Assert / Test Runner / Any / System
+    // Application resolves them without --package-cache, and so a --auto-provision run on
+    // one invocation is visible on a later run that omits --auto-provision.
+    //
+    // Issue #2234: scan every patch directory sharing this major.minor, not just `sel`'s
+    // own exact patch — #2226 (separate, still open) can leave `provision`'s platform-app
+    // and test-app sub-steps under DIFFERENT patch directories of the same major.minor,
+    // and this used to look only at `sel`'s own patch, missing a sibling directory the
+    // auto-provision reuse scan (FindWarmProvisionedVersion) found and reporting
+    // "missing" on every subsequent --no-auto-provision run even right after `provision`
+    // had just completed successfully.
+    foreach (var dir in AlRunner.Infrastructure.ProvisioningCheck.CollectRunnerOwnedProvisionDirs(
+        AlRunner.Infrastructure.BcArtifacts.ArtifactsRootDir, mmPrefix))
+        yield return dir;
 }
 
 // Highest version-named child of <root> matching <versionPrefix> (System.Version sort),

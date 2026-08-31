@@ -1657,4 +1657,94 @@ public sealed class ProvisioningCheckTests : IDisposable
 
         Assert.Empty(missing);
     }
+
+    // ── Issue #2234: need detection must consult the run path's FULL search set ──
+    // #2226 (separate, still open) can leave `provision`'s platform-app and test-app
+    // sub-steps under DIFFERENT patch directories of the same major.minor — the engine's
+    // own exact build for one sub-step, the CDN's "latest" for the major.minor for the
+    // other. Need detection used to build its search set from the SELECTED engine
+    // version's own exact patch directory alone, so an app provisioned under a sibling
+    // patch directory read as absent even though it was present and usable — the run
+    // path found it only as an incidental side effect of the auto-provision reuse scan
+    // (FindWarmProvisionedVersion), so `--no-auto-provision` reported the identical
+    // "missing" diagnostic on every subsequent run, even immediately after `provision`
+    // had just completed successfully (an unbreakable loop: the tool's own advice was to
+    // run the command that had just run).
+
+    [Fact]
+    public void CollectRunnerOwnedProvisionDirs_FindsDirsAcrossDifferentPatchVersions()
+    {
+        var root = Path.Combine(_dir, "artifacts-root-2234-collect");
+        var enginePatchTestApps = Path.Combine(root, "28.1.49838.53910", "test-apps");
+        var laterPatchPlatformApps = Path.Combine(root, "28.1.49838.54044", "platform-apps");
+        Directory.CreateDirectory(enginePatchTestApps);
+        Directory.CreateDirectory(laterPatchPlatformApps);
+        // A DIFFERENT major.minor must never be picked up, even though "28.2" sorts
+        // higher than "28.1" — only patches sharing the requested major.minor qualify.
+        Directory.CreateDirectory(Path.Combine(root, "28.2.50931.53737", "platform-apps"));
+
+        var dirs = ProvisioningCheck.CollectRunnerOwnedProvisionDirs(root, "28.1");
+
+        Assert.Contains(enginePatchTestApps, dirs);
+        Assert.Contains(laterPatchPlatformApps, dirs);
+        Assert.DoesNotContain(dirs, d => d.Contains("28.2.50931.53737"));
+    }
+
+    [Fact]
+    public void CollectRunnerOwnedProvisionDirs_MissingRoot_ReturnsEmpty()
+    {
+        var dirs = ProvisioningCheck.CollectRunnerOwnedProvisionDirs(
+            Path.Combine(_dir, "does-not-exist-2234"), "28.1");
+
+        Assert.Empty(dirs);
+    }
+
+    [Fact]
+    public void NeedDetection_PlatformAppsUnderADifferentPatchThanSelectedEngine_AreNotReportedMissing()
+    {
+        // The exact #2234 repro shape: the platform apps live under a DIFFERENT patch
+        // directory than the engine's own selected build, and NOTHING at all exists under
+        // the engine's own patch directory except the (unrelated) test toolkit. This test
+        // would still pass if #2226 were fixed by making both directories always land on
+        // the SAME version — the point is it must ALSO pass when they genuinely differ,
+        // which is exactly the case a fix to #2226 would stop exercising, leaving this
+        // disagreement live and undetected the next time the two steps diverge for any
+        // other reason.
+        var root = Path.Combine(_dir, "artifacts-root-2234-present-elsewhere");
+        const string selectedEngineVersion = "28.1.49838.53910";
+        const string differentPatchVersion = "28.1.49838.54044";
+        var platformAppsDir = Path.Combine(root, differentPatchVersion, "platform-apps");
+        Directory.CreateDirectory(platformAppsDir);
+        WriteR2RApp(platformAppsDir, "application.app", Guid.NewGuid().ToString(), "Application", "Microsoft", "28.1.0.0");
+        WriteR2RApp(platformAppsDir, "system.app", Guid.NewGuid().ToString(), "System", "Microsoft", "28.1.0.0");
+        // Nothing under the engine's OWN patch directory but the unrelated test toolkit —
+        // matches the repro's "provision downloaded the test toolkit to the engine's own
+        // version, the platform apps to a different one" split exactly.
+        Directory.CreateDirectory(Path.Combine(root, selectedEngineVersion, "test-apps"));
+
+        var searchDirs = ProvisioningCheck.CollectRunnerOwnedProvisionDirs(
+            root, ProvisioningCheck.ResolveProvisionMajorMinor(selectedEngineVersion));
+        var missing = ProvisioningCheck.FindMissingPlatformApps(
+            new[] { "Application", "System" }, searchDirs);
+
+        Assert.Empty(missing);
+    }
+
+    [Fact]
+    public void NeedDetection_PlatformAppsGenuinelyAbsentEverywhere_AreStillReportedMissing()
+    {
+        // The negative direction: the widened search must not turn "genuinely absent"
+        // into a false "present" — regression guard for #2205/#2220's good diagnostic.
+        var root = Path.Combine(_dir, "artifacts-root-2234-genuinely-absent");
+        Directory.CreateDirectory(Path.Combine(root, "28.1.49838.53910", "test-apps"));
+        Directory.CreateDirectory(Path.Combine(root, "28.1.49838.54044")); // no platform-apps subdir at all
+
+        var searchDirs = ProvisioningCheck.CollectRunnerOwnedProvisionDirs(root, "28.1");
+        var missing = ProvisioningCheck.FindMissingPlatformApps(
+            new[] { "Application", "System" }, searchDirs);
+
+        Assert.Equal(
+            new[] { "Application", "System" },
+            missing.OrderBy(n => n, StringComparer.Ordinal).ToArray());
+    }
 }
