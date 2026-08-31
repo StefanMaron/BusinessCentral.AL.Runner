@@ -786,46 +786,6 @@ public static class ProvisioningCheck
     public sealed record ManifestNeeds(
         bool NeedsPlatformApps, bool NeedsTestApps, IReadOnlyList<string> RequiredPlatformApps);
 
-    // Issue #2229: the earliest AL-extensible Business Central platform release ("NAV
-    // 2018") was versioned 10.0 — no shipped platform build has ever carried a lower
-    // major. That makes a major below this sentinel a reliable tell that a version wasn't
-    // really chosen: it is the literal fallback this codebase's own JSON readers already
-    // use everywhere a real value is missing (ReadDependencies' `?? "1.0.0.0"`,
-    // InProcessAppPackager's `?? "1.0.0.0"`), not a stated compatibility requirement.
-    private const int LowestRealPlatformMajor = 10;
-
-    /// <summary>
-    /// True iff <paramref name="d"/> is one of the two AUTO-SYNTHESIZED umbrella roots
-    /// (<c>Microsoft/Application</c>, <c>Microsoft/System</c> — see
-    /// <c>Program.ReadDependencies</c>' implicit `application`/`platform` field synthesis)
-    /// carrying a version below <see cref="LowestRealPlatformMajor"/>.
-    ///
-    /// Issue #2229: #2205 made these two roots ALWAYS count as a genuine platform-app
-    /// requirement — correct for the shape it measured (an app that actually resolves
-    /// Base/System Application record names), but every AL project's app.json carries
-    /// `application`/`platform` REGARDLESS of whether its code references anything
-    /// Microsoft, because that is how <c>al</c> synthesises them, not a statement of real
-    /// need. A project that never set a real floor (or a test fixture that has no BC
-    /// version to target) ends up with the literal placeholder `1.0.0.0` — no real BC
-    /// build has ever shipped at that version — and #2205's blanket rule turned that
-    /// placeholder into a mandatory 116 MB download on every cold machine, for bundles
-    /// that use nothing Microsoft at all. 14 of this repo's own AlRunner.Tests fixtures
-    /// hit exactly this (verified: none reference a Microsoft type).
-    ///
-    /// Deliberately scoped to ONLY the two umbrella names: an EXPLICIT `dependencies[]`
-    /// entry naming a real platform app (Base Application, System Application, Business
-    /// Foundation, Application Test Library) by name is a deliberate act regardless of
-    /// what version it declares, and must never be filtered out by this check — proven by
-    /// ProvisioningCheckTests.DetermineManifestNeeds_ExplicitDependencyAtPlaceholderFloor_StillRequired.
-    /// </summary>
-    private static bool IsPlaceholderImplicitFloor(AlRunner.DependencyRef d)
-    {
-        bool isUmbrellaRoot =
-            string.Equals(d.Name, "Application", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(d.Name, "System", StringComparison.OrdinalIgnoreCase);
-        return isUmbrellaRoot && d.Version.Major < LowestRealPlatformMajor;
-    }
-
     /// <summary>
     /// Classifies a bundle's unioned dependency roots (see Program.ReadBundleDependencyRoots)
     /// into which curated download set(s) — if any — the bundle needs. Pure — does no I/O.
@@ -861,7 +821,6 @@ public static class ProvisioningCheck
             foreach (var d in rootList)
             {
                 if (!string.Equals(d.Publisher, "Microsoft", StringComparison.OrdinalIgnoreCase)) continue;
-                if (IsPlaceholderImplicitFloor(d)) continue;
                 if (!ReachesAnyOf(d.Name, edges, single)) continue;
                 requiredPlatformApps.Add(candidate);
                 break;

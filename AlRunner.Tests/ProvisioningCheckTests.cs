@@ -1335,80 +1335,45 @@ public sealed class ProvisioningCheckTests : IDisposable
         Assert.False(needs.NeedsTestApps);
     }
 
-    // ── Issue #2229: a placeholder floor is not a real requirement ────────────
-    // #2205 made the two implicit `Application`/`System` roots ALWAYS a real requirement —
-    // right for the shape it measured (tests/runner-extras/microsoft-dependencies, which
-    // genuinely resolves Base/System Application record names). But every AlRunner.Tests
-    // fixture that carries no real BC-version floor writes literally `"application":
-    // "1.0.0.0"` / `"platform": "1.0.0.0"` (the same fallback this codebase's own
-    // ReadDependencies/InProcessAppPackager use whenever no real version was supplied) —
-    // 14 fixtures do this, none of them referencing anything Microsoft. Treating that
-    // placeholder identically to a real floor (e.g. 27.0.0.0) makes literally any first
-    // cold run of "install, execute, done" against ANY of them download 116 MB.
-    //
-    // No shipped Business Central platform build has ever been versioned below 10.0 (the
-    // earliest AL-extensible release, "NAV 2018", was 10.0) — so a major below that on
-    // ONLY the two auto-synthesized umbrella roots can never be a genuine compatibility
-    // floor, just the unset default. An EXPLICIT dependency entry naming a real platform
-    // app (Base Application, System Application, Business Foundation, Application Test
-    // Library) is untouched by this — listing one by name is a deliberate act regardless
-    // of what version it names.
-
+    // ── Issue #2229 (regression, not a fix here) ──────────────────────────────
+    // The FIRST attempt at #2229 filtered the implicit Application/System roots out of
+    // the platform-app requirement whenever their floor's major was below 10 (a
+    // "no real BC build has ever shipped below 10.0" placeholder heuristic). That is
+    // wrong: a `1.0.0.0` floor and genuine Base/System Application usage are NOT
+    // mutually exclusive. Measured directly — an ordinary app, `"dependencies": []`,
+    // `application`/`platform` of `1.0.0.0`, one test using `Codeunit "Environment
+    // Information"` (System Application) — regressed from `2P/0F/0E` on main to
+    // `EMIT-ZERO`/AL0185 "Codeunit 'Environment Information' is missing" on that attempt,
+    // because the placeholder-floor heuristic can't see what the AL source references —
+    // only the manifest, which is IDENTICAL for "never touches Microsoft" and "touches
+    // Microsoft AND set no real floor". #2232 already reaches this for the mirror shape:
+    // separating "declared" from "actually used" needs a compile attempt, not a version
+    // sentinel. These two pin the correct, unconditional behavior permanently.
     [Fact]
-    public void DetermineManifestNeeds_ImplicitRootsAtPlaceholderFloor_DoNotRequirePlatformApps()
+    public void DetermineManifestNeeds_ImplicitMicrosoftRootsAtPlaceholderFloor_StillRequireTheAppsTheyName()
     {
         var needs = ProvisioningCheck.DetermineManifestNeeds(ImplicitMicrosoftRoots("1.0.0.0"));
 
-        Assert.False(needs.NeedsPlatformApps);
-        Assert.Empty(needs.RequiredPlatformApps);
-        Assert.False(needs.NeedsTestApps);
-    }
-
-    [Fact]
-    public void DetermineManifestNeeds_ImplicitRootsAtRealPlatformFloor_StillRequirePlatformApps()
-    {
-        // The boundary itself: major 10 is the earliest real BC platform build, so it must
-        // NOT be swept up as a placeholder the way 9.x and below are.
-        var needs = ProvisioningCheck.DetermineManifestNeeds(ImplicitMicrosoftRoots("10.0.0.0"));
-
+        // The floor value must never launder away a real requirement — only the AL
+        // source (unavailable here) could ever tell "unused" apart from "used", and the
+        // manifest alone can't see it. So absent that information, over-including (this)
+        // is the only safe default; under-including regressed a real, minimal repro.
         Assert.True(needs.NeedsPlatformApps);
         Assert.Equal(new[] { "Application", "System" }, needs.RequiredPlatformApps.OrderBy(n => n).ToArray());
     }
 
     [Fact]
-    public void DetermineManifestNeeds_ExplicitDependencyAtPlaceholderFloor_StillRequired()
+    public void DecideManifestProvisioning_ColdCache_PlaceholderFloorApp_StillNeedsDownload()
     {
-        // The narrow carve-out is for the two AUTO-SYNTHESIZED umbrella roots only. An
-        // explicit `dependencies[]` entry that names a real platform app by name is a
-        // deliberate statement of need — the low version on it must not launder it away.
-        var roots = new[]
-        {
-            new DependencyRef(Guid.NewGuid(), "System Application", "Microsoft", new Version(1, 0, 0, 0)),
-        };
-        var needs = ProvisioningCheck.DetermineManifestNeeds(roots);
-
-        Assert.True(needs.NeedsPlatformApps);
-        Assert.Equal(new[] { "System Application" }, needs.RequiredPlatformApps.ToArray());
-    }
-
-    [Fact]
-    public void DecideManifestProvisioning_ColdCache_PlaceholderFloorOrdinaryApp_NoDownload()
-    {
-        // The end-to-end claim issue #2229 is about: this is the EXACT decision Program.cs
-        // consults to choose between "proceed straight to compile" and "refuse (or
-        // download 116 MB) before ever reaching it". A regression here (the network
-        // dependency "coming back") flips ShouldDownloadAny back to true for every
-        // placeholder-floor fixture in this repo, and for the equivalent shape in any real
-        // AL project that never touches Base/System Application.
         var legacyReport = ProvisioningCheck.CheckPlatformApps("28.1.49838.53910", Array.Empty<string>());
 
         var decision = ProvisioningCheck.DecideManifestProvisioning(
             ImplicitMicrosoftRoots("1.0.0.0"), legacyReport, Array.Empty<string>());
 
-        Assert.False(decision.NeedsPlatformApps);
-        Assert.False(decision.ShouldDownloadPlatform);
-        Assert.False(decision.ShouldDownloadAny);
-        Assert.Empty(decision.MissingPlatformApps);
+        Assert.True(decision.NeedsPlatformApps);
+        Assert.True(decision.ShouldDownloadPlatform);
+        Assert.True(decision.ShouldDownloadAny);
+        Assert.Equal(new[] { "Application", "System" }, decision.MissingPlatformApps.OrderBy(n => n).ToArray());
     }
 
     [Fact]
