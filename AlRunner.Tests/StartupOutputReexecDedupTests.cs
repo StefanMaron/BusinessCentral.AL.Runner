@@ -24,9 +24,12 @@
 // and flushed only once a generation clears EVERY re-exec decision point in the
 // function — a generation that re-execs further never reaches the flush and its queue is
 // simply discarded, so this now generalizes to however many generations stack, not just
-// the one #2041 anticipated. The `[reexec]` explanation itself (#2034/#2038) is
-// untouched: it still prints unconditionally from whichever generation decides to hand
-// off, at default verbosity.
+// the one #2041 anticipated. The `[reexec]` explanation itself (#2034/#2038) is a
+// SEPARATE print entirely, from whichever generation decides to hand off — untouched by
+// the dedup mechanism this file is about, though issue #2239 later moved both it and the
+// `[provision] BC ... already complete` line behind --verbose (a clean run's default
+// output does not need its own process topology to read its test results). This file's
+// helper spawns pass --verbose accordingly — see BuildPsiCore's own comment.
 //
 // Issue #2061 — shared mutable state between this class's tests, round 2
 // -------------------------------------------------------------------------------------
@@ -90,9 +93,12 @@ public sealed class StartupOutputReexecDedupTests
     /// shape of the issue's own repro, "two execve calls") against an explicit
     /// --bc-version prints the provisioning line, the `[bc] selected BC` line and the
     /// banner exactly once each, and the `[reexec]` explanation still fires from the
-    /// parent — all at DEFAULT verbosity (no AL_RUNNER_VERBOSE), since #2038 already
-    /// made `[provision]`/`[bc]`/`[reexec]` survive the default-verbosity filter and
-    /// this is what a real user actually sees.
+    /// parent — under --verbose (see BuildPsiCore's comment: issue #2239 moved
+    /// `[provision]`/`[reexec]` behind --verbose, reversing part of #2038's decision —
+    /// a clean run's default output no longer needs its own process topology to read
+    /// its test results). `[bc] selected BC` and the banner stay visible at default
+    /// verbosity too either way, so this class's blanket --verbose does not mask a
+    /// regression in either of those two.
     ///
     /// Unlike its two siblings below, this test does not need Ncl.dll's presence/absence
     /// pinned to a specific value — either a genuine re-exec (trio suppressed once,
@@ -561,10 +567,12 @@ public sealed class StartupOutputReexecDedupTests
         SpawnAssembly(Path.Combine(
             ProjectPath, "bin", TestBuildConfig.Configuration, TestBuildConfig.Framework, "al-runner.dll"));
 
-    /// <summary>Same spawn as <see cref="SpawnAssembly"/>, but AL_RUNNER_VERBOSE=1 so the
-    /// `[Cecil]`-tagged shadow-dir marker line (suppressed by default — see Log.cs) is
-    /// observable, purely for path discovery. Not used for any of the count assertions,
-    /// which must stay at default verbosity to prove what a real user actually sees.
+    /// <summary>Same spawn as <see cref="SpawnAssembly"/> — BuildPsiCore already sets
+    /// AL_RUNNER_VERBOSE=1 (see its own comment, issue #2239), so the `[Cecil]`-tagged
+    /// shadow-dir marker line this method exists to read (suppressed by default — see
+    /// Log.cs) is already observable via <see cref="BuildPsi"/> alone. Kept as a distinct
+    /// name/call site purely for path-discovery readability, not because it still adds
+    /// anything BuildPsi doesn't.
     /// </summary>
     private (string Output, int Exit) SpawnVerboseAssembly(string dllPath)
     {
@@ -599,10 +607,16 @@ public sealed class StartupOutputReexecDedupTests
             CreateNoWindow = true,
             WorkingDirectory = RepoRoot,
         };
-        // Deliberately default verbosity — no AL_RUNNER_VERBOSE — this test is about
-        // what a real user sees by default, and #2038 already made every line asserted
-        // on here (`[provision]`, `[bc]`, `[reexec]`) survive that filter.
-        psi.Environment.Remove("AL_RUNNER_VERBOSE");
+        // Issue #2239 reversed part of #2038's decision: `[provision]` (the steady-state
+        // "already complete" line) and `[reexec]` are no longer printed unconditionally —
+        // a clean run does not need its own process topology to read its test results,
+        // so they now require --verbose. This class's tests are specifically about that
+        // re-exec/provisioning plumbing (dedup across process generations), which is
+        // exactly the detail --verbose exists to surface, so AL_RUNNER_VERBOSE=1 here
+        // rather than removed. `[bc] selected BC ...` and the `al-runner — running ...`
+        // banner (also asserted on below) are unaffected either way — #2239 kept them
+        // visible at default verbosity too, as the one line naming which BC version ran.
+        psi.Environment["AL_RUNNER_VERBOSE"] = "1";
         psi.Environment.Remove("AL_RUNNER_NCL_SHADOW_DONE");
         psi.Environment.Remove("AL_RUNNER_REEXECED");
         return psi;

@@ -852,9 +852,15 @@ if (bcVersionArg == null && artifactPathArg == null)
             // if/else branch over. Staying immediate accepts the same "duplicates 3x on
             // a stacked re-exec" cost the no-variants-shipped switch's KNOWN-DEGRADED
             // branches also still pay, for the same reason.
-            Console.Error.WriteLine($"[bc] no --bc-version given — selecting BC {bcVersionArg}, the latest " +
-                $"cached artifact ({shippedVariantsForDefault.Count} engine variant(s) shipped; the matching " +
-                $"one is selected automatically below). Override with --bc-version.");
+            //
+            // Issue #2239: this is the "which artifact was selected and why" reasoning a
+            // clean run does not need to see — the outcome is already named once, later,
+            // by the unconditional `[bc] selected BC ...` line. Gated on --verbose like
+            // its siblings below rather than printed unconditionally.
+            if (AlRunner.Log.Verbose)
+                Console.Error.WriteLine($"[bc] no --bc-version given — selecting BC {bcVersionArg}, the latest " +
+                    $"cached artifact ({shippedVariantsForDefault.Count} engine variant(s) shipped; the matching " +
+                    $"one is selected automatically below). Override with --bc-version.");
         }
         catch (InvalidOperationException)
         {
@@ -862,8 +868,14 @@ if (bcVersionArg == null && artifactPathArg == null)
             // throws the loud, path-naming "no artifacts" error users already see today.
         }
 
+        // Issue #2239: same shape as #2210's DescribeCrossMajorNote gate a few dozen
+        // lines below (the no-variants-shipped half of this if/else) — a project
+        // declaring an older major floor than what got selected is the expected case
+        // (application/platform are minima, not pins), not a risk this branch's
+        // sibling warning below is exempt from just because it lives in a different
+        // half of the if/else. Gated the same way for the same reason.
         var projMajorV = TryDeriveBcMajorFromProject(bundles);
-        if (projMajorV != null && bcVersionArg != null
+        if (AlRunner.Log.Verbose && projMajorV != null && bcVersionArg != null
             && Version.TryParse(bcVersionArg, out var selV) && selV.Major.ToString() != projMajorV)
             Console.Error.WriteLine($"[bc] warning: project app.json targets BC major {projMajorV} but the " +
                 $"latest cached artifact is {bcVersionArg} (major {selV.Major}).");
@@ -954,9 +966,17 @@ if (bcVersionArg == null && artifactPathArg == null)
             switch (tier)
             {
                 case "cached-exact":
-                    deferredStartupLines.Add(() => Console.Error.WriteLine(
-                        $"[bc] no --bc-version given — selecting BC {engineVersion}, the exact " +
-                        $"build this binary was compiled against. Override with --bc-version."));
+                    // Issue #2239: normal-path reasoning, no risk — the outcome is
+                    // already named once, unconditionally, by the `[bc] selected BC
+                    // ...` line further down. Gated behind --verbose like its sibling
+                    // above (the shipped-variants branch's own auto-select line).
+                    deferredStartupLines.Add(() =>
+                    {
+                        if (AlRunner.Log.Verbose)
+                            Console.Error.WriteLine(
+                                $"[bc] no --bc-version given — selecting BC {engineVersion}, the exact " +
+                                $"build this binary was compiled against. Override with --bc-version.");
+                    });
                     break;
                 case "cdn-exact":
                     Console.Error.WriteLine($"[bc] no --bc-version given — provisioning BC {engineVersion}, the exact " +
@@ -1159,9 +1179,15 @@ string? variantSwapDir = null;
         if (runningBuild != variant.BuildVersion)
         {
             variantSwapDir = variant.Dir;
-            Console.Error.WriteLine(
-                $"[bc] selecting engine variant {variant.BuildVersion} for BC {selected} (this process is " +
-                $"currently running the {(runningBuild?.ToString() ?? "unknown")} variant) — re-execing.");
+            // Issue #2239: engine-variant selection mechanics — a diagnostic, not the
+            // result. The `[reexec] Re-execing into a shadow runtime dir with the
+            // matching BC-minor engine variant` line right after this decision already
+            // explains that a hand-off is happening; this line is the WHY, gated the
+            // same way.
+            if (AlRunner.Log.Verbose)
+                Console.Error.WriteLine(
+                    $"[bc] selecting engine variant {variant.BuildVersion} for BC {selected} (this process is " +
+                    $"currently running the {(runningBuild?.ToString() ?? "unknown")} variant) — re-execing.");
         }
     }
 }
@@ -1250,7 +1276,10 @@ deferredStartupLines.Add(() => Console.WriteLine(serverMode
         // #2034 audit: this is the SAME class of silently-swallowed re-exec explanation
         // (a fresh Cecil IL rewrite forces one more relaunch so the child loads the
         // now-cached bytes cleanly) — also retagged so it survives the default filter.
-        Console.Error.WriteLine("[reexec] Fresh rewrite done — re-execing for a clean Ncl load");
+        // #2239: gated behind --verbose, same as the other re-exec notices — see
+        // TryShadowReexec's own comment for why.
+        if (AlRunner.Log.Verbose)
+            Console.Error.WriteLine("[reexec] Fresh rewrite done — re-execing for a clean Ncl load");
         // This process waits for the child below, so its wall clock CONTAINS the
         // child's entire run. Re-label the row so aggregates that sum `kind=="process"`
         // do not double-count it.
@@ -1281,8 +1310,12 @@ var packageCacheDirs = packageCacheArgs.Count > 0
 // line (the provisioning block between it and the final count can print a multi-minute
 // download) could reasonably conclude nothing was searched — exactly backwards from
 // what #2067 needed. SourceDepSymbolsWithoutPackageCacheTests/SourceDepCacheEnumMetadataTests
-// pin this exact label + count as a precondition on the explicit-arg branch.
-Console.WriteLine($"  package caches (requested): {packageCacheDirs.Count} dir(s)");
+// pin this exact label + count as a precondition on the explicit-arg branch (both now
+// pass --verbose to see it).
+// Issue #2239: package-cache directory counts are diagnostic detail, not a result —
+// gated behind --verbose like the rest of this file's startup bookkeeping.
+if (AlRunner.Log.Verbose)
+    Console.WriteLine($"  package caches (requested): {packageCacheDirs.Count} dir(s)");
 AlRunner.Infrastructure.PhaseLog.SetBundles(bundles);
 
 // Issue #1678: the platform-app R2R gate below used to scan ONLY packageCacheDirs
@@ -1562,7 +1595,9 @@ if (!provisionSubcommand)
 // dependency resolution (PlatformCheckDirs, DependencyResolver's resolverDirs) actually
 // searches — the "(requested)" line above is scoped to before these folds by its label.
 AlRunner.Infrastructure.PhaseLog.SetPackageCacheDirs(packageCacheDirs.Count);
-Console.WriteLine($"  package caches (final search set): {packageCacheDirs.Count} dir(s)");
+// Issue #2239: same as the "(requested)" line above — gated behind --verbose.
+if (AlRunner.Log.Verbose)
+    Console.WriteLine($"  package caches (final search set): {packageCacheDirs.Count} dir(s)");
 // --verbose: name the directories themselves, not just the count. The count alone was
 // exactly what made #2067 hard to read — "0" on a machine that went on to search several
 // dirs — so the natural companion to the --verbose "[dep] Publisher/Name" line below (which
@@ -1612,7 +1647,9 @@ if (Environment.GetEnvironmentVariable("AL_RUNNER_DIAG_FCE") is "1" or "2")
 }
 var t0 = System.Diagnostics.Stopwatch.StartNew();
 BcRuntime.EnsureApplied();
-Console.WriteLine($"BC runtime patches applied ({t0.ElapsedMilliseconds}ms)");
+// Issue #2239: patch-apply timing is diagnostic, not a result — gated behind --verbose.
+if (AlRunner.Log.Verbose)
+    Console.WriteLine($"BC runtime patches applied ({t0.ElapsedMilliseconds}ms)");
 AlRunner.Infrastructure.PhaseLog.SetPatchesMs(t0.ElapsedMilliseconds);
 AlRunner.PerfTrace.Log($"BcRuntime.EnsureApplied {t0.ElapsedMilliseconds}ms");
 
@@ -1948,7 +1985,10 @@ foreach (var bundle in bundles)
                 using (AlRunner.Infrastructure.PhaseLog.Stage("dep-resolve"))
                     ordered = resolver.Resolve(roots);
                 bundleResolvedDeps = ordered;
-                Console.WriteLine($"  [{rel}] resolved {ordered.Count} dep(s)");
+                // Issue #2239: per-bundle dep counts are diagnostic detail — gated behind
+                // --verbose.
+                if (AlRunner.Log.Verbose)
+                    Console.WriteLine($"  [{rel}] resolved {ordered.Count} dep(s)");
                 AlRunner.Infrastructure.PhaseLog.NoteDepsResolved(ordered.Count);
                 // Under --verbose, name the package that actually WON for each
                 // dependency, with the file it came from. Resolution picks by highest
@@ -2008,7 +2048,9 @@ foreach (var bundle in bundles)
                 // as `dep-load:<Name>` (see DependencyLoader.LoadAll). Wrapping it here too
                 // would nest, and nested stages double-count — see PhaseLog.Stage.
                 var loaded = depLoader.LoadAll(ordered, depRootDir);
-                Console.WriteLine($"  [{rel}] loaded {loaded.Count} dep assembl(ies)");
+                // Issue #2239: same as "resolved N dep(s)" above — gated behind --verbose.
+                if (AlRunner.Log.Verbose)
+                    Console.WriteLine($"  [{rel}] loaded {loaded.Count} dep assembl(ies)");
                 AlRunner.Infrastructure.PhaseLog.NoteDepAssembliesLoaded(loaded.Count);
                 // Register dep assemblies (dependency order) so their Subtype=Install
                 // codeunit lifecycle triggers fire before this bundle's tests run.
@@ -2397,7 +2439,10 @@ foreach (var bundle in bundles)
             }
             if (cachedBytes != null)
             {
-                Console.Error.WriteLine($"  [cache] HIT  key={cacheKey} path={cachePath} ({cachedBytes.Length} bytes, {replayed} enum entries replayed) — skipping Emit+Compile");
+                // Issue #2239: cache HIT/MISS classification is diagnostic detail, not a
+                // result — gated behind --verbose.
+                if (AlRunner.Log.Verbose)
+                    Console.Error.WriteLine($"  [cache] HIT  key={cacheKey} path={cachePath} ({cachedBytes.Length} bytes, {replayed} enum entries replayed) — skipping Emit+Compile");
                 AlRunner.Infrastructure.PhaseLog.NoteCacheHit();
                 assemblyBytes = cachedBytes;
             }
@@ -2406,7 +2451,8 @@ foreach (var bundle in bundles)
         {
             if (alCacheDir != null)
             {
-                Console.Error.WriteLine($"  [cache] MISS key={cacheKey} — running Emit+Compile");
+                if (AlRunner.Log.Verbose)
+                    Console.Error.WriteLine($"  [cache] MISS key={cacheKey} — running Emit+Compile");
                 AlRunner.Infrastructure.PhaseLog.NoteCacheMiss();
             }
             var et = System.Diagnostics.Stopwatch.StartNew();
@@ -2798,7 +2844,13 @@ foreach (var bundle in bundles)
                                     querySidecarPath!, tmp => File.Copy(qsrc, tmp, overwrite: true));
                             AlRunner.Infrastructure.AlCacheWriter.AtomicPublish(
                                 cachePath, tmp => File.WriteAllBytes(tmp, assemblyBytes));
-                            Console.Error.WriteLine($"  [cache] WROTE key={cacheKey} path={cachePath} ({assemblyBytes.Length} bytes, {written} enum entries → sidecar)");
+                            // Issue #2239: same category as [cache] HIT/MISS above — cache
+                            // population detail, not a result. Observed printing
+                            // unconditionally on every cold run while verifying that fix
+                            // (a clean run wrote this line even with HIT/MISS gated), the
+                            // same sibling-defect shape — gated the same way.
+                            if (AlRunner.Log.Verbose)
+                                Console.Error.WriteLine($"  [cache] WROTE key={cacheKey} path={cachePath} ({assemblyBytes.Length} bytes, {written} enum entries → sidecar)");
                         }
                         catch (Exception ex)
                         {
@@ -6778,14 +6830,21 @@ static int? TryShadowReexec(string? variantSwapDir)
     foreach (var a in argv.Skip(1)) psi.ArgumentList.Add(a);
     psi.Environment["AL_RUNNER_NCL_SHADOW_DONE"] = "1";
 
-    Console.Error.WriteLine(variantSwapDir != null
-        // #2034: this line explains why a second process is about to launch — a
-        // genuinely operational fact, not an internal Cecil-rewrite diagnostic — so it
-        // uses the exempted `[reexec]` tag rather than `[Cecil]`. Under `[Cecil]`, Log's
-        // filter suppressed a real, live re-exec silently: the shadow dir was built, the
-        // child launched, and nothing on stderr said why.
-        ? "[reexec] Re-execing into a shadow runtime dir with the matching BC-minor engine variant"
-        : "[reexec] Ncl.dll not shipped in this install — re-execing into a shadow runtime dir that has it");
+    // #2034: this line explains why a second process is about to launch — a
+    // genuinely operational fact, not an internal Cecil-rewrite diagnostic — so it
+    // uses the exempted `[reexec]` tag rather than `[Cecil]`. Under `[Cecil]`, Log's
+    // filter suppressed a real, live re-exec silently: the shadow dir was built, the
+    // child launched, and nothing on stderr said why.
+    //
+    // #2239: that reasoning still holds for someone debugging a re-exec — hence
+    // `[reexec]`, not a plain internal tag, so --verbose still surfaces it — but a
+    // clean run does not need to know its own process topology to read its test
+    // results, so this is now gated behind --verbose like the rest of this file's
+    // startup bookkeeping.
+    if (AlRunner.Log.Verbose)
+        Console.Error.WriteLine(variantSwapDir != null
+            ? "[reexec] Re-execing into a shadow runtime dir with the matching BC-minor engine variant"
+            : "[reexec] Ncl.dll not shipped in this install — re-execing into a shadow runtime dir that has it");
     AlRunner.Infrastructure.PhaseLog.MarkReexecParent();
     using var shadowChild = System.Diagnostics.Process.Start(psi)!;
     shadowChild.WaitForExit();
@@ -7551,10 +7610,18 @@ static int RunProvisioning(string? bcVersionArg, string? artifactPathArg,
         var fullForPrint = full;
         var serviceTierDirForPrint = serviceTierDir;
         if (deferredLines == null)
+            // The `provision` subcommand's own report — this line IS its deliverable
+            // (there is no test run after it to summarize instead), so it always prints.
             Console.Error.WriteLine($"[provision] BC {fullForPrint} engine artifacts already complete at {serviceTierDirForPrint}.");
         else
-            deferredLines.Add(() => Console.Error.WriteLine(
-                $"[provision] BC {fullForPrint} engine artifacts already complete at {serviceTierDirForPrint}."));
+            // Issue #2239: on a normal continuing run, "nothing to provision" is
+            // startup bookkeeping, not a result — gated behind --verbose.
+            deferredLines.Add(() =>
+            {
+                if (AlRunner.Log.Verbose)
+                    Console.Error.WriteLine(
+                        $"[provision] BC {fullForPrint} engine artifacts already complete at {serviceTierDirForPrint}.");
+            });
     }
     else if (!AlRunner.Infrastructure.ProvisioningCheck.AutoProvision(full, serviceTierDir))
         return 1;

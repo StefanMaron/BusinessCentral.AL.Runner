@@ -102,18 +102,34 @@ internal sealed class AssemblyTypeIndex
                 // Not a silent default: the fallback below is the pre-existing, correct
                 // path, and the reason it was taken is on the record (bracket-tagged, so
                 // visible under --verbose / AL_RUNNER_VERBOSE=1).
-                Console.Error.WriteLine(
-                    $"[type-index] metadata unreadable for {asm.GetName().Name}: " +
-                    $"{ex.GetType().Name}: {ex.Message} — falling back to Assembly.GetTypes()");
+                //
+                // Issue #2239: this comment already claimed the `[type-index]` tag was
+                // suppressed by default and only surfaced under --verbose, but Log.cs's
+                // ComponentTag regex only matches letters/digits (`[A-Za-z0-9._+]`) — the
+                // hyphen in `type-index` never matched it, so the tag fell through the
+                // pattern entirely and printed unconditionally on every run, not only
+                // under --verbose. Explicit gate below now makes the comment's original
+                // intent actually true, without touching Log's allowlist regex (see
+                // .claude/rules/loud-failures.md and issue #2221's own trap about that
+                // regex hiding fixes rather than reviving them). The same hyphenated-tag
+                // shape recurs across ~30 other tags in this codebase (bc-floor,
+                // hook-audit, source-dep, ...) — out of scope here, filed separately.
+                if (AlRunner.Log.Verbose)
+                    Console.Error.WriteLine(
+                        $"[type-index] metadata unreadable for {asm.GetName().Name}: " +
+                        $"{ex.GetType().Name}: {ex.Message} — falling back to Assembly.GetTypes()");
                 _mr = null;
                 _byName = null;
             }
         }
         else
         {
-            Console.Error.WriteLine(
-                $"[type-index] no raw metadata for {asm.GetName().Name} " +
-                "(dynamic assembly?) — falling back to Assembly.GetTypes()");
+            // Issue #2239: see the comment on the sibling catch block above — this line
+            // has the same hyphenated-tag gap and now gets the same explicit gate.
+            if (AlRunner.Log.Verbose)
+                Console.Error.WriteLine(
+                    $"[type-index] no raw metadata for {asm.GetName().Name} " +
+                    "(dynamic assembly?) — falling back to Assembly.GetTypes()");
         }
 
         try { _fallbackTypes = asm.GetTypes(); }

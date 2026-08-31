@@ -137,9 +137,17 @@ public sealed class PrecompileNclShadowHopTests
             CreateNoWindow = true,
             WorkingDirectory = RepoRoot,
         };
-        // Default verbosity: `[reexec]` survives Log's default filter (#2038), and what a
-        // real user sees is exactly what this asserts on.
-        psi.Environment.Remove("AL_RUNNER_VERBOSE");
+        // Issue #2239 reversed part of #2038's decision: `[reexec]` no longer survives
+        // Log's default filter unconditionally — a clean run does not need its own
+        // process topology to read its results, so it now requires --verbose. This
+        // class is specifically about the re-exec hop (whether it fires, exactly once,
+        // idempotently), which is exactly the detail --verbose exists to surface. Set
+        // via the AL_RUNNER_VERBOSE env var, not a `--verbose` CLI arg: `--precompile`
+        // dispatches through RunPrecompile's own minimal sub-arg parser (`--out` and
+        // `--package-cache` only, everything else silently ignored) rather than the
+        // main flag parser that recognises `--verbose`, so passing it on the command
+        // line here would do nothing.
+        psi.Environment["AL_RUNNER_VERBOSE"] = "1";
         psi.Environment.Remove("AL_RUNNER_NCL_SHADOW_DONE");
         psi.Environment.Remove("AL_RUNNER_REEXECED");
 

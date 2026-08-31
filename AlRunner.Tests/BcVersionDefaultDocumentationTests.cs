@@ -116,7 +116,10 @@ public sealed class BcVersionDefaultDocumentationTests
         var isolatedHome = BuildIsolatedHomeWithEngineVersionAndAFakeHigherOne(engineVersion!);
         try
         {
-            var (exit, _, stderr) = Run(isolatedHome, "--no-auto-provision", $"\"{MinimalBundle}\"");
+            // Issue #2239: the "[bc] no --bc-version given — selecting BC ..., the exact
+            // build ..." reasoning line this test also asserts on moved behind --verbose
+            // (the outcome is already named, unconditionally, by "[bc] selected BC ...").
+            var (exit, _, stderr) = Run(isolatedHome, "--no-auto-provision", "--verbose", $"\"{MinimalBundle}\"");
 
             Assert.True(exit == 0, $"expected a clean run against the engine's own (real, symlinked) " +
                 $"artifact; a nonzero exit means something else got selected instead. exit={exit}\n{stderr}");

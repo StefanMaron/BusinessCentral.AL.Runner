@@ -145,6 +145,10 @@ public sealed class PackageCacheFinalSearchSetTests
         // "package caches (requested): 0 dir(s)" precondition
         // SourceDepSymbolsWithoutPackageCacheTests relies on.
         args.Append($" --package-cache \"{absentPackageCache}\"");
+        // Issue #2239: both "package caches" lines this class asserts on moved behind
+        // --verbose (diagnostic detail, not a test result) — pass it explicitly so this
+        // test still observes what it is actually testing.
+        args.Append(" --verbose");
         var psi = new ProcessStartInfo
         {
             FileName = "dotnet",

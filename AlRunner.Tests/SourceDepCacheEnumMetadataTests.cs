@@ -74,6 +74,9 @@ public class SourceDepCacheEnumMetadataTests
         // the bundle emitted zero sources. Green locally, red on all 8 BC legs. Pinning
         // it means the harder configuration is the one that is always tested.
         args.Append($" --package-cache \"{absentPackageCache}\"");
+        // Issue #2239: "package caches (requested): N dir(s)" moved behind --verbose —
+        // this class pins that exact line, so it needs the flag to observe it.
+        args.Append(" --verbose");
         var psi = new ProcessStartInfo
         {
             FileName = "dotnet", Arguments = args.ToString(),

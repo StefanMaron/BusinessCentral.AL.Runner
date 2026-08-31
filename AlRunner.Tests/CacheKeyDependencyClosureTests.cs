@@ -115,7 +115,10 @@ public sealed class CacheKeyDependencyClosureTests : IDisposable
     /// </summary>
     private static string RunFullAndReadCacheKey(string packageCacheDir, string alCacheDir)
     {
-        var output = RunRunner(packageCacheDir, alCacheDir, "");
+        // Issue #2239: "[cache] MISS/HIT key=..." moved behind --verbose (diagnostic
+        // detail, not a test result) — this is the one caller that still needs to read
+        // it back off real output, so it passes the flag explicitly.
+        var output = RunRunner(packageCacheDir, alCacheDir, " --verbose");
         var m = Regex.Match(output, @"\[cache\]\s+(?:MISS|HIT)\s+key=([0-9a-f]{64})");
         Assert.True(m.Success, $"could not read a cache key from the runner output:\n{output}");
         return m.Groups[1].Value;
