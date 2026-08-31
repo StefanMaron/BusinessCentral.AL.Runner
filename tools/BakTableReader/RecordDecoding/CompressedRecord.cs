@@ -1,8 +1,24 @@
 // CompressedRecord — the "CD" row format SQL Server uses for ROW- and
 // PAGE-compressed tables (sysrowsets.cmprlevel 1 and 2). Ported from OrcaMDF's
-// CompressedRecord.cs (github.com/improvedk/OrcaMDF, MIT-licensed), WITH ONE
-// CORRECTION -- see below -- found while decoding a real 81-field BC table
-// for AL Runner issue #2241.
+// CompressedRecord.cs (github.com/improvedk/OrcaMDF), WITH ONE CORRECTION --
+// see below -- found while decoding a real 81-field BC table for AL Runner
+// issue #2241.
+//
+// LICENSE STATUS -- UNRESOLVED, flagging rather than guessing
+//   OrcaMDF is GPL-3.0 licensed, not MIT. An earlier version of this file's
+//   header said "MIT-licensed"; that was wrong and was never actually
+//   verified against OrcaMDF's own License.txt before being written. This
+//   file is the one in this directory that tracks OrcaMDF's specific
+//   algorithm most closely -- the CD/compressed row format is not documented
+//   anywhere else this spike found (unlike the plain page header or the
+//   uncompressed FixedVar row format, both independently documented
+//   elsewhere), so "ported... WITH ONE CORRECTION" above is an accurate,
+//   not a loose, description. Combining GPL-3.0-derived code into this
+//   MIT-licensed repository without further action (proper GPL-3.0
+//   attribution and compliance, a clean-room rewrite from spec only, or
+//   permission from OrcaMDF's author) is a real licensing question, not a
+//   missing-notice detail solved by copying in an MIT notice -- see PR #2243
+//   for the decision this is waiting on.
 //
 // THE CORRECTION (short-data-region cluster pointers)
 //   Columns are grouped into "clusters" of 30 for the short (<=8-byte) data

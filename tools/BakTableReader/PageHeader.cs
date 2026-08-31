@@ -1,11 +1,16 @@
 // PageHeader — the 96-byte SQL Server page header, present at the start of every
 // 8192-byte page in the demo .bak that ships inside a BC sandbox artifact.
 //
-// Byte layout ported from OrcaMDF (github.com/improvedk/OrcaMDF, MIT-licensed)
-// PageHeader.cs, which documents the same offsets used by DBCC PAGE. See
-// AL Runner issue #2241 for how this was cross-checked against real BC data
-// (the page's own self-reported PageId/FileId round-tripping against the
-// logical address used to read it).
+// Byte layout ported from OrcaMDF (github.com/improvedk/OrcaMDF, GPL-3.0
+// licensed -- NOT MIT; an earlier version of this comment said MIT, which was
+// wrong and unverified) PageHeader.cs, which documents the same offsets used
+// by DBCC PAGE. This specific 96-byte layout is also independently documented
+// in Microsoft's own DBCC PAGE output and multiple third-party SQL Server
+// internals references, and was cross-checked here against real BC data (the
+// page's own self-reported PageId/FileId round-tripping against the logical
+// address used to read it) -- see AL Runner issue #2241 and PR #2243 for the
+// unresolved GPL-3.0/MIT licensing question this raises for the files in this
+// directory that track OrcaMDF's algorithm more closely (CompressedRecord.cs).
 namespace BakTableReader;
 
 public readonly record struct PagePointer(short FileId, int PageId)

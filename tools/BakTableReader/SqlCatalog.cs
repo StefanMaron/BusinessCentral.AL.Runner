@@ -1,13 +1,16 @@
 // SqlCatalog — walks the SQL Server system catalog (sysallocunits / sysrowsets
 // / sysschobjs) far enough to turn a table's SQL object name into the first
 // data page of its row storage. Byte offsets ported from OrcaMDF's BaseTables
-// schemas (github.com/improvedk/OrcaMDF, MIT-licensed), each RE-VERIFIED
+// schemas (github.com/improvedk/OrcaMDF, GPL-3.0 licensed -- an earlier
+// version of this comment said MIT, which was wrong and unverified; see PR
+// #2243 for the unresolved licensing question this raises), each RE-VERIFIED
 // against real BC demo data for AL Runner #2241 because the underlying SQL
 // Server engine has drifted since OrcaMDF was written (~2011): several
 // catalog rows here carry one more hidden fixed-length column than OrcaMDF's
 // schema documents (e.g. sysschobj: 44 fixed bytes / 12 columns here, not
 // OrcaMDF's 40 bytes / 11). The system object ids themselves (5, 7, 34, 41 --
-// SystemObject enum in OrcaMDF) are stable and matched real data exactly.
+// SystemObject enum in OrcaMDF) are stable and matched real data exactly;
+// those small integer ids are facts about SQL Server, not expression.
 //
 // SCOPE: catalog rows are read here using FixedVarRecord (the uncompressed
 // format) -- every system catalog table observed in the #2241 measurement was

@@ -1,6 +1,11 @@
 // FixedVarRecord — the uncompressed "primary record" row format (status byte
 // 0x10/0x20/0x30 in the AL Runner #2241 measurement). Ported from OrcaMDF's
-// Record.cs / PrimaryRecord.cs (github.com/improvedk/OrcaMDF, MIT-licensed).
+// Record.cs / PrimaryRecord.cs (github.com/improvedk/OrcaMDF, GPL-3.0
+// licensed -- an earlier version of this comment said MIT, which was wrong
+// and unverified). This uncompressed row format is also independently
+// documented in Microsoft's own "Anatomy of a Record" material and other
+// public SQL Server internals references -- see PR #2243 for the unresolved
+// GPL-3.0/MIT licensing question this raises for this directory.
 //
 // Only the shapes this spike actually needed are implemented: Primary rows
 // with a null bitmap and/or variable-length columns. Ghost records, forwarded
