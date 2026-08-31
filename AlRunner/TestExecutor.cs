@@ -233,27 +233,6 @@ public sealed class TestExecutor
     }
 
     /// <summary>
-    /// Runs every [Test] method in <paramref name="assembly"/>. When
-    /// <paramref name="onTestComplete"/> is supplied it fires synchronously right
-    /// after each <see cref="TestResult"/> is appended to the returned list — the
-    /// hook <c>--server</c>'s streaming <c>runTests</c> uses to emit one NDJSON
-    /// <c>test</c> line per completed test instead of waiting for the whole
-    /// bundle (see #1641). Null (the CLI's default) is a no-op; behaviour and the
-    /// returned list are otherwise unchanged either way.
-    ///
-    /// <paramref name="cancellationToken"/> is checked cooperatively BETWEEN
-    /// tests — before instantiating the next test codeunit and before running the
-    /// next [Test] method inside an already-instantiated codeunit — never mid-test
-    /// (a test's own AL body is never interrupted). Matches v1's `cancel` command
-    /// (#1613): "stop before running the next test," not preemptive abort. The
-    /// caller (the <c>--server</c> `runtests` handler) owns the
-    /// <see cref="System.Threading.CancellationTokenSource"/> and inspects
-    /// <c>IsCancellationRequested</c> after <c>Run</c> returns to decide whether
-    /// the summary carries `cancelled:true` — this method does not report that
-    /// itself, it only obeys the token. Default is <c>default</c> (never
-    /// cancellable), so every existing CLI/non-server caller is unaffected.
-    /// </summary>
-    /// <summary>
     /// The key BOTH install-baseline cache tiers are consulted by: the in-memory
     /// <c>_depCompanyBaselineCache</c> directly, and the disk tier via
     /// <c>InstallBaselineDiskCache.BuildKeyText(depKey, schemaVersion)</c>.
@@ -276,6 +255,27 @@ public sealed class TestExecutor
         => InstallTriggerRunner.CurrentDependencySetKey()
          + AlRunner.Infrastructure.TestDataOptions.CacheIdentity();
 
+    /// <summary>
+    /// Runs every [Test] method in <paramref name="assembly"/>. When
+    /// <paramref name="onTestComplete"/> is supplied it fires synchronously right
+    /// after each <see cref="TestResult"/> is appended to the returned list — the
+    /// hook <c>--server</c>'s streaming <c>runTests</c> uses to emit one NDJSON
+    /// <c>test</c> line per completed test instead of waiting for the whole
+    /// bundle (see #1641). Null (the CLI's default) is a no-op; behaviour and the
+    /// returned list are otherwise unchanged either way.
+    ///
+    /// <paramref name="cancellationToken"/> is checked cooperatively BETWEEN
+    /// tests — before instantiating the next test codeunit and before running the
+    /// next [Test] method inside an already-instantiated codeunit — never mid-test
+    /// (a test's own AL body is never interrupted). Matches v1's `cancel` command
+    /// (#1613): "stop before running the next test," not preemptive abort. The
+    /// caller (the <c>--server</c> `runtests` handler) owns the
+    /// <see cref="System.Threading.CancellationTokenSource"/> and inspects
+    /// <c>IsCancellationRequested</c> after <c>Run</c> returns to decide whether
+    /// the summary carries `cancelled:true` — this method does not report that
+    /// itself, it only obeys the token. Default is <c>default</c> (never
+    /// cancellable), so every existing CLI/non-server caller is unaffected.
+    /// </summary>
     public IReadOnlyList<TestResult> Run(Assembly assembly, Action<TestResult>? onTestComplete = null,
         System.Threading.CancellationToken cancellationToken = default)
     {
