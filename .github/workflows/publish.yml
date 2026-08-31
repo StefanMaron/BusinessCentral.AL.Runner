@@ -373,6 +373,28 @@ jobs:
           }
           "count=$count" >> $env:GITHUB_OUTPUT
 
+      - name: Fetch a federated OIDC token for Azure AD token exchange
+        # azure/artifact-signing-action passes azure-tenant-id/azure-client-id straight into
+        # Azure.Identity's WorkloadIdentityCredentialOptions, but that credential ALSO needs
+        # AZURE_FEDERATED_TOKEN_FILE -- a file holding a GitHub Actions OIDC token requested
+        # with audience api://AzureADTokenExchange (Azure AD's federated-credential audience) --
+        # and nothing populates that file on its own. Fetching it here with the officially
+        # supported actions/core API (core.getIDToken, which is what `permissions: id-token:
+        # write` on this job authorizes) is what makes the federated-credential subject
+        # (repo:StefanMaron/BusinessCentral.AL.Runner:environment:release) resolvable without a
+        # client secret anywhere in this job. Confirmed by reproduction: omitting this step
+        # fails with "WorkloadIdentityCredential authentication unavailable. The workload
+        # options are not fully configured."
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const token = await core.getIDToken('api://AzureADTokenExchange');
+            const tokenPath = path.join(process.env.RUNNER_TEMP, 'azure-federated-token.txt');
+            fs.writeFileSync(tokenPath, token);
+            core.exportVariable('AZURE_FEDERATED_TOKEN_FILE', tokenPath);
+
       - name: Sign unsigned PE files with Azure Artifact Signing (#2248)
         uses: azure/artifact-signing-action@v2
         with:
