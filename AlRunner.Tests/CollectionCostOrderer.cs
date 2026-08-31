@@ -147,6 +147,15 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             // already near enough to the 60s freshness threshold that a rounded-down low
             // value would satisfy the gate while leaving the tail in place.
             ["LayeredSourceChainTests"] = 90,
+            // #2239: 6 tests, several spawning 2 real runner subprocesses each (a cold +
+            // warm pair, for the HIT/MISS gating proof) against RecordTriggerXRec — each
+            // spawn pays a full cold AL emit+compile. Absent from this table on its first
+            // CI run, fell back to UnmeasuredWeightSeconds and became the critical-path
+            // tail on every one of the eight legs (measured 126.5s-155.3s, always
+            // dispatched past t=598s of a ~700-900s run). Carries the observed maximum,
+            // for the same reason StartupOutputReexecDedupTests/LayeredSourceChainTests
+            // above do.
+            ["CleanRunStartupVerbosityTests"] = 155,
             ["TestFilterFlagTests"] = 99,
             ["PhaseLogIntegrationTests"] = 85,
             // #1922: 6 tests, each spawning a real runner subprocess against an AL fixture
