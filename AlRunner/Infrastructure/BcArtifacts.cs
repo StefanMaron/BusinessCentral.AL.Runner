@@ -78,6 +78,28 @@ public static class BcArtifacts
     /// the process to latest-in-cache).</summary>
     public static bool IsSelected => _selectedVersion != null;
 
+    private static string _selectedCountry = "w1";
+
+    /// <summary>
+    /// The single BC artifact country/localization channel selected for this process
+    /// (issue #2236) — "w1" (worldwide, the default) or a two/three-letter BC country
+    /// code such as "us", "de", "gb". Set once at startup from <c>--country</c>
+    /// (Program.cs); every resolver that needs a country-keyed directory or CDN channel
+    /// reads this instead of taking the value as a parameter, so <c>--country</c> does
+    /// not have to be threaded through every call site individually — the same pattern
+    /// <see cref="SelectedVersion"/> already uses for the BC version. Deliberately a
+    /// plain mutable property, not lock-guarded like <see cref="SelectVersion"/>: unlike
+    /// version selection there is no directory to probe and no "already selected,
+    /// conflicting re-select" hazard — it is just a string the download/path helpers
+    /// read, validated lazily by whether the resulting CDN URL 404s (see
+    /// ArtifactDownloader.PlatformApps), not by an allowlist here.
+    /// </summary>
+    public static string SelectedCountry
+    {
+        get => _selectedCountry;
+        set => _selectedCountry = string.IsNullOrWhiteSpace(value) ? "w1" : value.Trim().ToLowerInvariant();
+    }
+
     private static readonly object _lock = new();
 
     // AlRunnerPaths.UserHome throws loudly (issue #2114) rather than silently handing back

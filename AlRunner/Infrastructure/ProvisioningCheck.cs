@@ -454,9 +454,28 @@ public static class ProvisioningCheck
     /// Runner-owned directory to download Microsoft platform R2R runtime apps (System
     /// Application, Base Application, Business Foundation) into. Sibling of
     /// <see cref="TestAppsDirFor"/> under the same per-version artifact root.
+    ///
+    /// Issue #2236: keyed by <paramref name="country"/> (default = <see
+    /// cref="BcArtifacts.SelectedCountry"/>, "w1" unless <c>--country</c> was passed) so a
+    /// w1 set and a country-localized set for the SAME BC build never collide — a country
+    /// artifact's Base Application is a genuinely different file, not a superset of w1's
+    /// (see ArtifactDownloader.PlatformApps). "w1" keeps the pre-#2236 bare directory name
+    /// (no migration needed for existing caches / test fixtures); any other country gets
+    /// its own "platform-apps-&lt;country&gt;" sibling, so provisioning both leaves both
+    /// usable side by side instead of one silently overwriting the other.
     /// </summary>
-    public static string PlatformAppsDirFor(string artifactsRootDir, string fullVersion)
-        => Path.Combine(artifactsRootDir, fullVersion, "platform-apps");
+    public static string PlatformAppsDirFor(string artifactsRootDir, string fullVersion, string? country = null)
+    {
+        var c = NormalizeCountry(country);
+        return c == "w1"
+            ? Path.Combine(artifactsRootDir, fullVersion, "platform-apps")
+            : Path.Combine(artifactsRootDir, fullVersion, $"platform-apps-{c}");
+    }
+
+    /// <summary>null → <see cref="BcArtifacts.SelectedCountry"/> (the process-wide default);
+    /// otherwise trim + lowercase the explicit value the same way SelectedCountry does.</summary>
+    private static string NormalizeCountry(string? country)
+        => string.IsNullOrWhiteSpace(country) ? BcArtifacts.SelectedCountry : country.Trim().ToLowerInvariant();
 
     /// <summary>
     /// Runner-owned directory to download the Microsoft test toolkit (Business Foundation
@@ -777,6 +796,31 @@ public static class ProvisioningCheck
     };
 
     /// <summary>
+    /// Every Microsoft app name the w1 (worldwide) artifact download commands
+    /// (`al-runner provision` / `--auto-provision`, and their `--platform-apps` /
+    /// `--test-apps` narrower forms) can ever actually fetch: <see
+    /// cref="KnownPlatformRuntimeApps"/> (System Application, Base Application, Business
+    /// Foundation) + the two curated w1/Extensions apps ArtifactDownloader.PlatformApps
+    /// also downloads by name ("Application", "Application Test Library") + the platform
+    /// symbol app "System" (ArtifactDownloader.SystemApp) + <see
+    /// cref="KnownTestFrameworkAppNames"/>.
+    ///
+    /// Issue #2236: MissingDependencyException.ToDetailedMessage uses this to decide
+    /// whether "re-run with --auto-provision" is actually true advice for a given
+    /// Microsoft-publisher dependency, or whether it is dead advice a user could follow
+    /// forever without result — a country-localization app such as "IRS Forms" is
+    /// Microsoft-published but is not in this list, because it ships only in a
+    /// country-specific artifact channel (see ArtifactDownloader.PlatformApps'
+    /// country-aware download), not the w1 one these two commands always fetch.
+    /// </summary>
+    public static bool IsKnownW1DownloadableAppName(string appName)
+        => IsKnownPlatformRuntimeApp(appName)
+           || string.Equals(appName, "Application", StringComparison.OrdinalIgnoreCase)
+           || string.Equals(appName, "Application Test Library", StringComparison.OrdinalIgnoreCase)
+           || string.Equals(appName, "System", StringComparison.OrdinalIgnoreCase)
+           || KnownTestFrameworkAppNames.Any(n => string.Equals(n, appName, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
     /// Manifest-derived provisioning need, independent of what's currently on disk.
     /// <paramref name="RequiredPlatformApps"/> names the individual apps out of the curated
     /// platform-apps set that these manifests actually require, so callers can check
@@ -802,20 +846,41 @@ public static class ProvisioningCheck
     /// nothing has been downloaded yet. Tests also pass synthetic graphs here to prove the
     /// WALK itself (issue #2087).
     /// </param>
+    /// <param name="extraPlatformNeedCandidates">
+    /// Issue #2236: additional app names to ask "do these manifests require this" for,
+    /// beyond <see cref="PlatformNeedTargets"/> (the fixed w1-curated set). Pass null for
+    /// an ordinary w1 run — widening the candidate set there would invent an unsatisfiable
+    /// requirement for any Microsoft app outside the w1 download's actual contents (the
+    /// bug MissingDependencyException.ToDetailedMessage's #2236 fix addresses on the
+    /// message side; doing it here too would instead spend a real download attempt trying
+    /// and still failing). Only the caller's own <c>--country</c> selection knows whether
+    /// widening is safe: when a NON-w1 country is selected, ArtifactDownloader.PlatformApps
+    /// fetches every Microsoft app under Extensions/, not just the curated five, so a
+    /// direct Microsoft-publisher root the bundle declares (e.g. "IRS Forms") IS something
+    /// that download can satisfy and belongs in the candidate set too.
+    /// </param>
     public static ManifestNeeds DetermineManifestNeeds(
         IEnumerable<AlRunner.DependencyRef> roots,
-        IReadOnlyDictionary<string, IReadOnlyList<string>>? dependencyEdges = null)
+        IReadOnlyDictionary<string, IReadOnlyList<string>>? dependencyEdges = null,
+        IReadOnlyList<string>? extraPlatformNeedCandidates = null)
     {
         var edges = dependencyEdges ?? EmptyDependencyEdges;
         var rootList = roots as IReadOnlyCollection<AlRunner.DependencyRef> ?? roots.ToList();
         bool needsTest = false;
 
-        // Which apps out of the curated platform-apps set do these manifests require?
-        // Asked per-app, over whatever the manifests NAME (directly, or reach through
-        // recorded edges) — never a fixed exemption list. Iterating the set in its declared
-        // order keeps the result deterministic for messages and tests.
+        // Which apps out of the curated platform-apps set (plus, for a non-w1 country, any
+        // extra candidate the caller supplied) do these manifests require? Asked per-app,
+        // over whatever the manifests NAME (directly, or reach through recorded edges) —
+        // never a fixed exemption list. Iterating in declared order keeps the result
+        // deterministic for messages and tests; Distinct guards against a candidate
+        // appearing in both lists (harmless either way, but avoids a duplicate entry in
+        // RequiredPlatformApps/the eventual message).
+        var candidates = extraPlatformNeedCandidates == null
+            ? PlatformNeedTargets
+            : PlatformNeedTargets.Concat(extraPlatformNeedCandidates)
+                .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         var requiredPlatformApps = new List<string>();
-        foreach (var candidate in PlatformNeedTargets)
+        foreach (var candidate in candidates)
         {
             var single = new[] { candidate };
             foreach (var d in rootList)
@@ -1057,14 +1122,34 @@ public static class ProvisioningCheck
     /// --auto-provision download decision) just as much as it was in the warm-reuse scan
     /// this issue's repro pointed at.
     /// </summary>
+    /// <param name="country">
+    /// BC artifact country channel — null (the default) reads <see
+    /// cref="BcArtifacts.SelectedCountry"/>, same pattern as <see cref="PlatformAppsDirFor"/>.
+    /// Issue #2236: when this resolves to anything other than "w1", every direct
+    /// Microsoft-publisher root dependency the manifests declare becomes an extra platform-
+    /// need candidate (see DetermineManifestNeeds' extraPlatformNeedCandidates) — a
+    /// country-selected download can satisfy any Microsoft app under Extensions/, not just
+    /// the w1-curated five, so a bundle depending on e.g. "IRS Forms" now actually triggers
+    /// the download that can supply it, instead of needs-detection staying blind to an app
+    /// it has never heard of and never downloading anything.
+    /// </param>
     public static ManifestProvisionDecision DecideManifestProvisioning(
         IEnumerable<AlRunner.DependencyRef> manifestRoots,
         PlatformAppsReport legacySymbolOnlyReport,
-        IReadOnlyList<string> searchDirs)
+        IReadOnlyList<string> searchDirs,
+        string? country = null)
     {
         var rootsList = manifestRoots as ICollection<AlRunner.DependencyRef> ?? manifestRoots.ToList();
         var scan = ScanDependencyEdges(searchDirs);
-        var needs = DetermineManifestNeeds(rootsList, scan.Edges);
+        var countryNormalized = NormalizeCountry(country);
+        IReadOnlyList<string>? extraPlatformNeedCandidates = countryNormalized == "w1"
+            ? null
+            : rootsList
+                .Where(d => string.Equals(d.Publisher, "Microsoft", StringComparison.OrdinalIgnoreCase))
+                .Select(d => d.Name)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        var needs = DetermineManifestNeeds(rootsList, scan.Edges, extraPlatformNeedCandidates);
         // A floor the BC version under provision could never supply must not create a
         // demand no download can clear — see DropUnsatisfiableFloors. The report carries
         // the selected version, which is exactly the version a download would target.

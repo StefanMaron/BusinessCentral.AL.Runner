@@ -366,6 +366,13 @@ bool provisionServiceTier = false;
 bool provisionForce = false;
 string? provisionResolveVersionPrefix = null;
 bool provisionHelp = false;
+// Issue #2236: BC artifact country/localization channel — "w1" (worldwide, default) or a
+// country code such as "us"/"de"/"gb". Not validated against a hardcoded allowlist here
+// (Microsoft adds codes on its own schedule); an unresolvable code fails loud, naming the
+// exact CDN URL that 404'd, the first time provisioning actually needs it (see
+// ArtifactDownloader.PlatformApps / TryHeadContentLength). Applies to BOTH a normal run's
+// --auto-provision AND the `provision` subcommand (including `provision --platform-apps`).
+string countryArg = "w1";
 for (int i = 0; i < args.Length; i++)
 {
     if (i == 0 && args[i] == "provision") { continue; } // consumed as subcommand
@@ -377,6 +384,7 @@ for (int i = 0; i < args.Length; i++)
     if (args[i] == "--resolve-version" && i + 1 < args.Length) { provisionResolveVersionPrefix = args[++i]; continue; }
     if (args[i] == "--auto-provision") { autoProvision = true; continue; }
     if (args[i] == "--no-auto-provision") { autoProvision = false; continue; }
+    if (args[i] == "--country" && i + 1 < args.Length) { countryArg = args[++i]; continue; }
     if (args[i] == "--bc-version" && i + 1 < args.Length) { bcVersionArg = args[++i]; continue; }
     if (args[i] == "--artifact-path" && i + 1 < args.Length) { artifactPathArg = args[++i]; continue; }
     if (args[i] == "--out" && i + 1 < args.Length) { outPath = args[++i]; printClassification = true; continue; }
@@ -475,6 +483,11 @@ for (int i = 0; i < args.Length; i++)
     }
     bundles.Add(args[i]);
 }
+// Issue #2236: set the process-wide selected country as early as possible — before
+// RunExplicitProvisionModes, PlatformCheckDirs, DefaultPackageCacheDirs, or any other
+// resolver that reads AlRunner.Infrastructure.BcArtifacts.SelectedCountry gets a chance
+// to run. The setter itself normalizes (trim + lowercase, empty/whitespace -> "w1").
+AlRunner.Infrastructure.BcArtifacts.SelectedCountry = countryArg;
 if (serverMode && watchMode)
 {
     Console.Error.WriteLine("--server and --watch are mutually exclusive (both stay warm in-process; pick one).");
@@ -1076,8 +1089,16 @@ try
     // BcArtifacts state happens to hold whenever the list is eventually flushed.
     var selectedVersionForPrint = AlRunner.Infrastructure.BcArtifacts.SelectedVersion;
     var serviceTierDirForPrint = AlRunner.Infrastructure.BcArtifacts.ServiceTierDir;
+    // Issue #2236: name the selected country whenever it is not the (invisible, so far
+    // unremarkable) w1 default — a --country run producing the byte-identical "[bc]
+    // selected BC ..." line as a w1 run would leave no visible trace that --country was
+    // even recognized, which is exactly the kind of silent-no-op this repo's
+    // loud-failures.md rule exists to prevent for a flag that changes what gets downloaded.
+    var selectedCountryForPrint = AlRunner.Infrastructure.BcArtifacts.SelectedCountry;
     deferredStartupLines.Add(() => Console.Error.WriteLine(
-        $"[bc] selected BC {selectedVersionForPrint} ({serviceTierDirForPrint})"));
+        selectedCountryForPrint == "w1"
+            ? $"[bc] selected BC {selectedVersionForPrint} ({serviceTierDirForPrint})"
+            : $"[bc] selected BC {selectedVersionForPrint} ({serviceTierDirForPrint}) [country: {selectedCountryForPrint}]"));
 }
 catch (InvalidOperationException ex)
 {
@@ -1500,7 +1521,8 @@ if (!provisionSubcommand)
             {
                 Console.Error.WriteLine("[provision] platform R2R apps missing — downloading...");
                 var rc = AlRunner.Provisioning.ArtifactDownloader.PlatformApps(
-                    full, platformAppsOut, m => Console.Error.WriteLine($"[provision] {m}"));
+                    full, platformAppsOut, AlRunner.Infrastructure.BcArtifacts.SelectedCountry,
+                    m => Console.Error.WriteLine($"[provision] {m}"));
                 if (rc != 0)
                 {
                     Console.Error.WriteLine("[provision] platform-apps download failed; cannot continue.");
@@ -5128,6 +5150,15 @@ static void PrintGuide(TextWriter w)
     w.WriteLine("    al-runner provision <bundle-dir>        # provision for that project's version, then exit");
     w.WriteLine("    al-runner --auto-provision <dirs>       # same as the default, explicit for scripts");
     w.WriteLine("    al-runner --no-auto-provision <dirs>    # fail loud instead of reaching the network");
+    w.WriteLine();
+    w.WriteLine("  Auto-provisioning only ever fetches the w1 (worldwide) artifact by default. A");
+    w.WriteLine("  project depending on a country-localization Microsoft app (e.g. \"IRS Forms\") can");
+    w.WriteLine("  NEVER be satisfied that way, no matter how many times `provision`/");
+    w.WriteLine("  --auto-provision is re-run — the \"Missing: Microsoft/...\" message says so and");
+    w.WriteLine("  names --country as the fix when that looks like the cause:");
+    w.WriteLine("    al-runner --auto-provision --country us <bundle-dir>");
+    w.WriteLine("  A country set is provisioned into its own \"platform-apps-<code>\" cache directory,");
+    w.WriteLine("  separate from w1's, so provisioning both leaves both usable.");
     w.WriteLine("  If a provisioning-gap message names a specific missing set, force just that one");
     w.WriteLine("  (bypasses need-detection entirely — useful when the default `provision` mis-detects,");
     w.WriteLine("  issue #2085):");
@@ -5364,6 +5395,18 @@ static void PrintHelp(TextWriter w)
     w.WriteLine("                          platform/ + w1/), bypassing the cache scan. Its version");
     w.WriteLine("                          is read from the dir name or the contained Ncl.dll.");
     w.WriteLine("                          Mutually exclusive with --bc-version.");
+    w.WriteLine("  --country CODE          BC artifact country/localization channel to provision from");
+    w.WriteLine("                          — \"w1\" (worldwide, default) or a country code such as");
+    w.WriteLine("                          \"us\"/\"de\"/\"gb\". A project depending on a country-");
+    w.WriteLine("                          localization Microsoft app (e.g. \"IRS Forms\") cannot be");
+    w.WriteLine("                          provisioned from w1 at all — the \"Missing: Microsoft/...\"");
+    w.WriteLine("                          message names this flag when that is the likely cause.");
+    w.WriteLine("                          Not validated against a hardcoded list of codes: an");
+    w.WriteLine("                          unresolvable one fails loud, naming the exact CDN URL that");
+    w.WriteLine("                          404'd. Provisioned country sets live in their own");
+    w.WriteLine("                          \"platform-apps-<code>\" cache directory, separate from the");
+    w.WriteLine("                          w1 \"platform-apps\" one, so provisioning both leaves both");
+    w.WriteLine("                          usable.");
     w.WriteLine("  --auto-provision        Download the BC artifacts for the project's version if");
     w.WriteLine("                          they are missing, then continue the run. ON BY DEFAULT");
     w.WriteLine("                          since issue #2024 — this flag is now redundant with a");
@@ -6759,8 +6802,18 @@ static IEnumerable<string> DefaultPackageCacheDirs()
     var bcLatest = SelectVersionDirOrNull(bcRoot, mmPrefix);
     if (bcLatest != null)
     {
-        var w1Ext = Path.Combine(bcLatest, "w1", "Extensions");
-        if (Directory.Exists(w1Ext)) yield return w1Ext;
+        // Issue #2236: this tree is VS Code's AL-extension symbol cache, not ours — we only
+        // read it, never download into it — but it uses the SAME sandbox/<ver>/<channel>/
+        // layout our own artifact CDN does, one channel folder per country. A machine that
+        // already has a country-localized project's symbols downloaded there (VS Code's own
+        // "AL: Download Symbols" honors app.json/the workspace's own settings, which can
+        // target a country other than w1) would never be found by a hardcoded "w1" lookup —
+        // the exact shape of gap this issue exists to close, one directory over. Scan the
+        // SELECTED country's own channel folder, not both: mixing w1 and a country's folder
+        // here would risk the identical "which duplicate basename wins" ambiguity #2236's
+        // own Extensions/-vs-Applications.<CC>/ fix exists to avoid for our own cache.
+        var localizedExt = Path.Combine(bcLatest, AlRunner.Infrastructure.BcArtifacts.SelectedCountry, "Extensions");
+        if (Directory.Exists(localizedExt)) yield return localizedExt;
         var platApps = Path.Combine(bcLatest, "platform", "Applications");
         if (Directory.Exists(platApps)) yield return platApps;
         // The `System` platform-symbols app (Microsoft/System) ships here, not in
@@ -7223,7 +7276,8 @@ static int RunExplicitProvisionModes(string? bcVersionArg, List<string> bundles,
         var dir = AlRunner.Infrastructure.ProvisioningCheck.PlatformAppsDirFor(
             AlRunner.Infrastructure.BcArtifacts.ArtifactsRootDir, full);
         anyFailed |= ForceProvisionMode("Microsoft platform apps", dir, full, force, "*.app",
-            (v, d, log) => AlRunner.Provisioning.ArtifactDownloader.PlatformApps(v, d, log)) != 0;
+            (v, d, log) => AlRunner.Provisioning.ArtifactDownloader.PlatformApps(
+                v, d, AlRunner.Infrastructure.BcArtifacts.SelectedCountry, log)) != 0;
     }
     if (testApps)
     {
@@ -7601,7 +7655,8 @@ static void EnsurePlatformAppsProvisioned(string engineVersion, List<string> bun
     try
     {
         var rc = AlRunner.Provisioning.ArtifactDownloader.PlatformApps(
-            platformFull, platformAppsOut, m => Console.Error.WriteLine($"[provision] {m}"));
+            platformFull, platformAppsOut, AlRunner.Infrastructure.BcArtifacts.SelectedCountry,
+            m => Console.Error.WriteLine($"[provision] {m}"));
         if (rc != 0)
             Console.Error.WriteLine(
                 $"[provision] warning: could not fetch platform apps for BC {platformFull}. " +

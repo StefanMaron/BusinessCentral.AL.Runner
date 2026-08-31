@@ -490,6 +490,75 @@ public sealed class ProvisioningCheckTests : IDisposable
         Assert.Equal(Path.GetDirectoryName(platform), Path.GetDirectoryName(testApps));
     }
 
+    // ── Issue #2236: country-keyed platform-apps directory ───────────────────
+    // A w1 set and a country-localized set for the SAME BC build must not collide — a
+    // country artifact's Base Application is a genuinely different file, not a superset of
+    // w1's. These pass the country explicitly (never mutate the global
+    // BcArtifacts.SelectedCountry) so they cannot race other tests under
+    // parallelizeTestCollections=true (see xunit.runner.json).
+
+    [Fact]
+    public void PlatformAppsDirFor_ExplicitW1_KeepsThePreExistingBareDirectoryName()
+    {
+        var artifactsRoot = Path.Combine(_dir, "artifacts");
+
+        var dir = ProvisioningCheck.PlatformAppsDirFor(artifactsRoot, "28.4.53241.53989", "w1");
+
+        // No migration needed for existing caches: identical to the no-country-arg overload.
+        Assert.Equal(Path.Combine(artifactsRoot, "28.4.53241.53989", "platform-apps"), dir);
+    }
+
+    [Fact]
+    public void PlatformAppsDirFor_ExplicitCountry_GetsItsOwnSiblingDirectory()
+    {
+        var artifactsRoot = Path.Combine(_dir, "artifacts");
+
+        var us = ProvisioningCheck.PlatformAppsDirFor(artifactsRoot, "28.4.53241.53989", "us");
+
+        Assert.Equal(Path.Combine(artifactsRoot, "28.4.53241.53989", "platform-apps-us"), us);
+    }
+
+    [Fact]
+    public void PlatformAppsDirFor_W1AndCountry_AreDistinctAndBothCoexist()
+    {
+        // The acceptance bar from #2236: a user who provisions BOTH w1 and us for the same
+        // build must end up with both usable — not one silently overwriting the other.
+        var artifactsRoot = Path.Combine(_dir, "artifacts");
+        const string version = "28.4.53241.53989";
+
+        var w1 = ProvisioningCheck.PlatformAppsDirFor(artifactsRoot, version, "w1");
+        var us = ProvisioningCheck.PlatformAppsDirFor(artifactsRoot, version, "us");
+        var de = ProvisioningCheck.PlatformAppsDirFor(artifactsRoot, version, "de");
+
+        Assert.NotEqual(w1, us);
+        Assert.NotEqual(w1, de);
+        Assert.NotEqual(us, de);
+
+        Directory.CreateDirectory(w1);
+        File.WriteAllText(Path.Combine(w1, "Microsoft_Base Application_28.4.53241.53989.app"), "w1-marker");
+        Directory.CreateDirectory(us);
+        File.WriteAllText(Path.Combine(us, "Microsoft_Base Application_28.4.53241.53989.app"), "us-marker");
+
+        // Each set kept its own distinct content — neither overwrote the other.
+        Assert.Equal("w1-marker",
+            File.ReadAllText(Path.Combine(w1, "Microsoft_Base Application_28.4.53241.53989.app")));
+        Assert.Equal("us-marker",
+            File.ReadAllText(Path.Combine(us, "Microsoft_Base Application_28.4.53241.53989.app")));
+    }
+
+    [Fact]
+    public void PlatformAppsDirFor_CountryIsCaseInsensitiveAndTrimmed()
+    {
+        var artifactsRoot = Path.Combine(_dir, "artifacts");
+
+        var upper = ProvisioningCheck.PlatformAppsDirFor(artifactsRoot, "28.4.53241.53989", "US");
+        var padded = ProvisioningCheck.PlatformAppsDirFor(artifactsRoot, "28.4.53241.53989", " us ");
+        var lower = ProvisioningCheck.PlatformAppsDirFor(artifactsRoot, "28.4.53241.53989", "us");
+
+        Assert.Equal(lower, upper);
+        Assert.Equal(lower, padded);
+    }
+
     // ── CollectBundleAlpackagesDirs (issue #1678) ─────────────────────────────
     // The startup gate that decides whether --auto-provision fires (or the run fails
     // loud without it) used to scan ONLY the home-rooted default package caches, never
@@ -688,6 +757,109 @@ public sealed class ProvisioningCheckTests : IDisposable
         var needs = ProvisioningCheck.DetermineManifestNeeds(roots);
         Assert.False(needs.NeedsPlatformApps);
         Assert.False(needs.NeedsTestApps);
+    }
+
+    // ── Issue #2236: country-widened platform need ────────────────────────────
+    // The real repro: a bundle depends on "IRS Forms" (Microsoft-published, a country-
+    // localization app), which is neither in the w1-curated set NOR reachable via any
+    // recorded edge (nothing has ever been downloaded, so ScanDependencyEdges knows
+    // nothing). Without extraPlatformNeedCandidates this reads exactly like
+    // "Power BI Reports" above — an unknown Microsoft extension, triggers nothing — and
+    // --auto-provision --country us would silently download NOTHING at all, leaving the
+    // exact same "Missing: Microsoft/IRS Forms" failure the country flag was supposed to
+    // fix. Widening the candidate set is what makes the download actually fire.
+
+    [Fact]
+    public void DetermineManifestNeeds_CountrySpecificApp_WithoutExtraCandidates_TriggersNeither()
+    {
+        // Baseline: identical shape to DetermineManifestNeeds_UnknownMicrosoftExtension_
+        // TriggersNeither, pinned explicitly for "IRS Forms" so the country-widening test
+        // right below it has an unwidened baseline to contrast against.
+        var roots = new[]
+        {
+            new DependencyRef(Guid.NewGuid(), "IRS Forms", "Microsoft", new Version(27, 5, 0, 0)),
+        };
+        var needs = ProvisioningCheck.DetermineManifestNeeds(roots);
+        Assert.False(needs.NeedsPlatformApps);
+    }
+
+    [Fact]
+    public void DetermineManifestNeeds_CountrySpecificApp_WithExtraCandidate_NeedsPlatformApps()
+    {
+        var roots = new[]
+        {
+            new DependencyRef(Guid.NewGuid(), "IRS Forms", "Microsoft", new Version(27, 5, 0, 0)),
+        };
+        var needs = ProvisioningCheck.DetermineManifestNeeds(
+            roots, dependencyEdges: null, extraPlatformNeedCandidates: new[] { "IRS Forms" });
+
+        Assert.True(needs.NeedsPlatformApps);
+        Assert.Contains("IRS Forms", needs.RequiredPlatformApps);
+    }
+
+    [Fact]
+    public void DecideManifestProvisioning_W1Country_DoesNotWidenBeyondTheCuratedSet()
+    {
+        // The safety rail: an ordinary (w1) run must NEVER widen — that would invent an
+        // unsatisfiable download demand for a country app the w1 set can never supply
+        // (exactly the bug the message-side #2236 fix addresses; doing it here too would
+        // instead waste a real w1 download attempt and still fail).
+        var roots = new[]
+        {
+            new DependencyRef(Guid.NewGuid(), "IRS Forms", "Microsoft", new Version(27, 5, 0, 0)),
+        };
+        var legacyReport = new ProvisioningCheck.PlatformAppsReport(
+            "27.5.53238.55217", Array.Empty<(string, string, string)>(), Array.Empty<string>());
+
+        var decision = ProvisioningCheck.DecideManifestProvisioning(
+            roots, legacyReport, Array.Empty<string>(), country: "w1");
+
+        Assert.False(decision.ShouldDownloadPlatform);
+    }
+
+    [Fact]
+    public void DecideManifestProvisioning_NonW1Country_WidensAndTriggersDownload()
+    {
+        var roots = new[]
+        {
+            new DependencyRef(Guid.NewGuid(), "IRS Forms", "Microsoft", new Version(27, 5, 0, 0)),
+        };
+        var legacyReport = new ProvisioningCheck.PlatformAppsReport(
+            "27.5.53238.55217", Array.Empty<(string, string, string)>(), Array.Empty<string>());
+
+        // No search dirs at all — nothing is on disk, matching the real repro's cold cache.
+        var decision = ProvisioningCheck.DecideManifestProvisioning(
+            roots, legacyReport, Array.Empty<string>(), country: "us");
+
+        Assert.True(decision.NeedsPlatformApps);
+        Assert.True(decision.ShouldDownloadPlatform);
+        Assert.Contains("IRS Forms", decision.RequiredPlatformApps);
+    }
+
+    [Fact]
+    public void DecideManifestProvisioning_NonW1Country_AlreadyPresent_DoesNotRedownload()
+    {
+        // Once the country-specific app IS present on disk (e.g. a prior --country us
+        // download already fetched it), the widened candidate must not force a spurious
+        // re-download every subsequent run.
+        var artifactsRoot = Path.Combine(_dir, "artifacts");
+        var usPlatformDir = ProvisioningCheck.PlatformAppsDirFor(artifactsRoot, "27.5.53238.55217", "us");
+        Directory.CreateDirectory(usPlatformDir);
+        WriteSymbolOnlyApp(usPlatformDir, "microsoft_irs forms_27.5.53238.55217.app",
+            "b696b4c9-637c-49d1-a806-763ff8f0a20e", "IRS Forms", "Microsoft", "27.5.53238.55217");
+
+        var roots = new[]
+        {
+            new DependencyRef(Guid.NewGuid(), "IRS Forms", "Microsoft", new Version(27, 5, 0, 0)),
+        };
+        var legacyReport = new ProvisioningCheck.PlatformAppsReport(
+            "27.5.53238.55217", Array.Empty<(string, string, string)>(), Array.Empty<string>());
+
+        var decision = ProvisioningCheck.DecideManifestProvisioning(
+            roots, legacyReport, new[] { usPlatformDir }, country: "us");
+
+        Assert.True(decision.NeedsPlatformApps);
+        Assert.False(decision.ShouldDownloadPlatform);
     }
 
     [Fact]

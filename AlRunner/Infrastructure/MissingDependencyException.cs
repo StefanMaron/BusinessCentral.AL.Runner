@@ -57,6 +57,15 @@ public sealed class MissingDependencyException : Exception, IDependencyProvision
     {
         var versionHint = bcVersion ?? "28.x";
         bool isMicrosoft = string.Equals(DepPublisher, "Microsoft", StringComparison.OrdinalIgnoreCase);
+        // Issue #2236: "Microsoft-published" alone does not mean `provision`/
+        // `--auto-provision` can ever fetch it — those two commands (and their narrower
+        // --platform-apps/--test-apps forms) only ever download the w1 (worldwide)
+        // artifact's curated app set. A Microsoft app outside that set (most commonly a
+        // country-localization app like "IRS Forms") is not something a repeated
+        // `al-runner provision` will ever produce, no matter how many times it is re-run
+        // — the repo owner hit exactly that: byte-identical advice, twice, no progress.
+        bool isKnownW1Downloadable = isMicrosoft
+            && AlRunner.Infrastructure.ProvisioningCheck.IsKnownW1DownloadableAppName(DepName);
 
         var lines = new List<string>
         {
@@ -74,7 +83,7 @@ public sealed class MissingDependencyException : Exception, IDependencyProvision
         lines.Add("");
         lines.Add("  Resolve it:");
         lines.Add("");
-        if (isMicrosoft)
+        if (isKnownW1Downloadable)
         {
             lines.Add("  (a) One command (recommended) — provisions all missing Microsoft artifacts:");
             lines.Add("        al-runner provision");
@@ -85,6 +94,25 @@ public sealed class MissingDependencyException : Exception, IDependencyProvision
             lines.Add("");
             lines.Add("  (c) Force-download Microsoft platform apps only:");
             lines.Add($"        al-runner provision --platform-apps --bc-version {versionHint}");
+        }
+        else if (isMicrosoft)
+        {
+            // Not one of the apps the w1 download path can ever produce. Re-running
+            // `provision`/`--auto-provision` cannot fix this — say so, and name the
+            // likely reason instead of repeating advice already proven not to work.
+            lines.Add($"  '{DepName}' is not part of the w1 (worldwide) artifact set that");
+            lines.Add("  `al-runner provision` / `--auto-provision` download — running either");
+            lines.Add("  again changes nothing here, no matter how many times you try.");
+            lines.Add("");
+            lines.Add("  This usually means it is a country/regional localization app (Microsoft");
+            lines.Add("  ships those in a separate, per-country artifact channel, not w1).");
+            lines.Add("");
+            lines.Add("  (a) If you know the target country, re-run with --country to fetch the");
+            lines.Add("      localized artifact set instead of w1, e.g.:");
+            lines.Add($"        al-runner --auto-provision --country us --bc-version {versionHint} <bundle>");
+            lines.Add("");
+            lines.Add("  (b) Otherwise, add the package to your --package-cache <dir> by hand");
+            lines.Add("      (usually your project's .alpackages).");
         }
         else
         {

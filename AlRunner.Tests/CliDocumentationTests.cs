@@ -289,6 +289,10 @@ public sealed class CliDocumentationTests
     private static readonly string[] BehaviorChangingFlags =
     {
         "--tdd", "--watch", "--server", "--define", "--auto-provision", "--no-auto-provision", "--no-cache",
+        // Issue #2236: --country selects a DIFFERENT CDN artifact channel — a different
+        // Base/System Application file entirely, not just an extra flag on the same w1
+        // download — so it belongs here by this list's own "which code path" test.
+        "--country",
     };
 
     /// <summary>Negative: an unknown documentation flag must not be silently accepted.</summary>

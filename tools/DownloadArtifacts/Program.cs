@@ -6,11 +6,16 @@
 //   dotnet run --project tools/DownloadArtifacts -- <mode> <version> <output-dir>
 //
 // Modes:
-//   service-tier    <bc-version> <output-dir>   ~55 Nav DLLs (/service/ closure)
-//   platform-apps   <bc-version> <output-dir>   MS Base/System/BF/Application .app files
-//   test-apps       <bc-version> <output-dir>   test-toolkit .app files
-//   al-compiler     <tool-version> <output-dir> AL compiler DLLs (RID-aware NuGet pkg)
-//   resolve-version <bc-prefix>                 latest full version → stdout
+//   service-tier    <bc-version> <output-dir>              ~55 Nav DLLs (/service/ closure)
+//   platform-apps   <bc-version> <output-dir> [country]     MS Base/System/BF/Application .app
+//                                                            files. Optional 4th arg (issue
+//                                                            #2236): "w1" (default) or a country
+//                                                            code such as "us" — purely additive,
+//                                                            the stable 3-arg CI invocation is
+//                                                            unaffected.
+//   test-apps       <bc-version> <output-dir>              test-toolkit .app files
+//   al-compiler     <tool-version> <output-dir>             AL compiler DLLs (RID-aware NuGet pkg)
+//   resolve-version <bc-prefix>                             latest full version → stdout
 
 using AlRunner.Provisioning;
 
@@ -31,7 +36,11 @@ var outputDir = args.Length >= 3 ? args[2] : "";
 switch (mode)
 {
     case "service-tier": return ArtifactDownloader.ServiceTier(version, outputDir);
-    case "platform-apps": return ArtifactDownloader.PlatformApps(version, outputDir);
+    case "platform-apps":
+        // Optional 4th positional arg (issue #2236): country code, "w1" if omitted — additive
+        // only, so the stable 3-arg CI invocation (bc-tests.yml/AlRunner.csproj) is unaffected.
+        var country = args.Length >= 4 ? args[3] : "w1";
+        return ArtifactDownloader.PlatformApps(version, outputDir, country);
     case "test-apps": return ArtifactDownloader.TestApps(version, outputDir);
     case "al-compiler": return ArtifactDownloader.AlCompiler(version, outputDir);
     case "resolve-version":

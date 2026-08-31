@@ -49,11 +49,36 @@ public sealed class ArtifactDownloader404Tests
 
         Assert.False(ok);
         Assert.Equal(0, size);
-        Assert.Contains(logs, l => l == "Error: no BC artifact published for 28.0.46665.47126 (w1).");
+        // Issue #2236: the message now names the exact URL that 404'd, not just the
+        // version/channel — that is what tells the reader which country/version to check.
+        Assert.Contains(logs, l => l == "Error: no BC artifact published for 28.0.46665.47126 (w1): " +
+            "https://bcartifacts.example/sandbox/28.0.46665.47126/w1");
         // Issue #2085: this hint must be tool-install-valid — `dotnet run --project` requires
         // a source checkout a `dotnet tool install -g` user never has.
         Assert.Contains(logs, l => l.Contains("al-runner provision --resolve-version 28.0"));
         Assert.DoesNotContain(logs, l => l.Contains("dotnet run --project"));
+        // w1 is not a country code — no --country spelling hint for it.
+        Assert.DoesNotContain(logs, l => l.Contains("--country code"));
+    }
+
+    [Fact]
+    public void TryHeadContentLength_404_WithCountryChannel_NamesUrlAndSuggestsCountrySpellingCheck()
+    {
+        using var http = new HttpClient(new StubHandler(HttpStatusCode.NotFound));
+        var logs = new List<string>();
+
+        // A country channel that does not exist on the CDN (typo'd or unsupported) — the
+        // message must point at the country, not repeat the generic "check the version" text
+        // as though the version itself were the problem.
+        var ok = ArtifactDownloader.TryHeadContentLength(
+            http, "https://bcartifacts.example/sandbox/28.4.53241.53989/xx",
+            "28.4.53241.53989", "xx", logs.Add, out long size);
+
+        Assert.False(ok);
+        Assert.Equal(0, size);
+        Assert.Contains(logs, l => l == "Error: no BC artifact published for 28.4.53241.53989 (xx): " +
+            "https://bcartifacts.example/sandbox/28.4.53241.53989/xx");
+        Assert.Contains(logs, l => l.Contains("--country code") && l.Contains("'xx'"));
     }
 
     [Fact]

@@ -223,39 +223,99 @@ public static class ArtifactDownloader
 
     // -----------------------------------------------------------------------
     // Platform Apps: Microsoft Base/System/BusinessFoundation/Application .app files
-    // from the w1 artifact's Extensions/ folder.
+    // from the w1 (or, since #2236, a country-localized) artifact's Extensions/ folder.
     // -----------------------------------------------------------------------
-    public static int PlatformApps(string version, string outputDir, Action<string>? log = null)
+    /// <param name="country">
+    /// BC artifact country/localization channel — "w1" (worldwide, default) or a
+    /// country code such as "us"/"de"/"gb" (issue #2236). Not validated against an
+    /// allowlist here: an unresolvable code 404s against the CDN and
+    /// <see cref="TryHeadContentLength"/> reports the exact URL that failed, which is
+    /// the only "maintainable" validation for a set of codes Microsoft adds to on its
+    /// own schedule.
+    /// </param>
+    // w1 (the default): the curated 5-app core set, unchanged since #1653/#2210 — narrow
+    // on purpose so the default download stays ~135 MB for the overwhelming majority of
+    // projects, which need nothing country-specific.
+    internal static readonly string[] W1PlatformAppPrefixes =
+    {
+        "microsoft_base application_",
+        "microsoft_system application_",
+        "microsoft_business foundation_",
+        "microsoft_application_",
+        // Ships in w1/Extensions like the four above, NOT in the platform artifact the
+        // `test-apps` command streams — so `test-apps` cannot supply it however it is
+        // filtered. A test bundle depending on it (tests/runner-extras/microsoft-dependencies)
+        // was therefore unresolvable on any machine without a full BC sandbox artifact,
+        // which is every CI runner: the leg aborted with the provisioning-gap message
+        // before running a test, while passing locally off a multi-GB sandbox download.
+        "microsoft_application test library_",
+    };
+
+    /// <summary>
+    /// Normalizes a <c>--country</c> value the same way every entry point does: trim,
+    /// lowercase, empty/whitespace -> "w1". Pulled out as its own testable function so the
+    /// normalization rule is pinned once instead of copy-pasted at each call site.
+    /// </summary>
+    internal static string NormalizeCountry(string? country)
+        => string.IsNullOrWhiteSpace(country) ? "w1" : country.Trim().ToLowerInvariant();
+
+    /// <summary>The CDN URL PlatformApps/TestApps/ServiceTier download from for a given
+    /// version + channel ("w1", a country code, or "platform"). Pure string composition —
+    /// no I/O — so URL construction is directly testable without a network round trip.</summary>
+    internal static string BuildArtifactUrl(string version, string channel)
+        => $"{CdnBase}/{version}/{channel}";
+
+    /// <summary>
+    /// Whether a ZIP central-directory entry name is one PlatformApps should download for
+    /// the given country (issue #2236). Pure over the entry name alone — no I/O — so the
+    /// selection rule (including the Extensions/-vs-Applications.&lt;CC&gt;/ trap and the
+    /// w1-curated-list-vs-country-broad-match split) is directly unit-testable without
+    /// faking a ZIP central directory or an HTTP round trip.
+    /// </summary>
+    /// <param name="entryName">Raw ZIP entry name (any case, either slash style).</param>
+    /// <param name="isW1">True for the w1 (worldwide) channel; false for any country code.</param>
+    internal static bool IsWantedPlatformAppEntry(string entryName, bool isW1)
+    {
+        var lower = entryName.ToLowerInvariant();
+        // Anchor on Extensions/ specifically: a country artifact ALSO carries an
+        // Applications.<CC>/ folder holding a DIFFERENT, smaller file with the identical
+        // basename (e.g. Applications.US/Microsoft_Base Application_...app, 48.7 MB, vs
+        // the 110.6 MB localized one under Extensions/) — a basename-only match would
+        // silently pick the non-localized one from the wrong folder.
+        if (!lower.StartsWith("extensions/") || !lower.EndsWith(".app")) return false;
+        var bn = Path.GetFileName(lower);
+        // Any other country (#2236): a country artifact is not "w1 plus extras" — its
+        // Base/System Application etc. are DIFFERENT FILES from w1's (measured: the US
+        // Base Application is 110.6 MB vs w1's 98.6 MB for the same build), and a project
+        // depending on a country-specific Microsoft app (e.g. "IRS Forms") needs an app
+        // the curated w1 list above has never heard of and never will, by name, for every
+        // country Microsoft ships. Rather than hand-maintain a second curated list per
+        // country, fetch every Microsoft-published app the country artifact ships under
+        // Extensions/ — this naturally covers the localized core set AND whatever
+        // country-specific app(s) a project actually depends on, with nothing to guess.
+        return isW1
+            ? Array.Exists(W1PlatformAppPrefixes, p => bn.StartsWith(p))
+            : bn.StartsWith("microsoft_");
+    }
+
+    public static int PlatformApps(string version, string outputDir, string country = "w1", Action<string>? log = null)
     {
         var logf = L(log);
-        var artifactUrl = $"{CdnBase}/{version}/w1";
+        var countryLower = NormalizeCountry(country);
+        bool isW1 = countryLower == "w1";
+        var artifactUrl = BuildArtifactUrl(version, countryLower);
         Directory.CreateDirectory(outputDir);
 
         using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
 
-        logf($"Resolving artifact size for BC {version} (w1)...");
-        if (!TryHeadContentLength(http, artifactUrl, version, "w1", logf, out long totalSize)) return 1;
+        logf($"Resolving artifact size for BC {version} ({countryLower})...");
+        if (!TryHeadContentLength(http, artifactUrl, version, countryLower, logf, out long totalSize)) return 1;
         if (totalSize == 0) { logf("Error: unknown size"); return 1; }
-        logf($"w1 artifact: {totalSize / 1048576} MB");
+        logf($"{countryLower} artifact: {totalSize / 1048576} MB");
 
         logf("Downloading ZIP directory...");
         if (!TryReadCentralDirectory(http, artifactUrl, totalSize, logf, out var cdData, out var cdStart, out var entryCount))
             return 1;
-
-        var wantedPrefixes = new[]
-        {
-            "microsoft_base application_",
-            "microsoft_system application_",
-            "microsoft_business foundation_",
-            "microsoft_application_",
-            // Ships in w1/Extensions like the four above, NOT in the platform artifact the
-            // `test-apps` command streams — so `test-apps` cannot supply it however it is
-            // filtered. A test bundle depending on it (tests/runner-extras/microsoft-dependencies)
-            // was therefore unresolvable on any machine without a full BC sandbox artifact,
-            // which is every CI runner: the leg aborted with the provisioning-gap message
-            // before running a test, while passing locally off a multi-GB sandbox download.
-            "microsoft_application test library_",
-        };
 
         var matching = new List<(string Name, int Method, long CompSize, long Offset)>();
         int pos = cdStart;
@@ -263,16 +323,13 @@ public static class ArtifactDownloader
         {
             if (!IsCentralHeader(cdData, pos)) break;
             var (cm, cs, nl, el, cl, lo, name) = ReadCentralEntry(cdData, pos);
-            var lower = name.ToLowerInvariant();
-            var bn = Path.GetFileName(lower);
-            if (lower.StartsWith("extensions/") && lower.EndsWith(".app") && cs > 0
-                && Array.Exists(wantedPrefixes, p => bn.StartsWith(p)))
+            if (cs > 0 && IsWantedPlatformAppEntry(name, isW1))
                 matching.Add((name, cm, cs, lo));
             pos += 46 + nl + el + cl;
         }
 
         if (matching.Count == 0) { logf("Error: no platform .app files found"); return 1; }
-        logf($"Found {matching.Count} platform app(s):");
+        logf($"Found {matching.Count} platform app(s) for country '{countryLower}':");
         foreach (var (name, _, compSize, _) in matching)
             logf($"  {Path.GetFileName(name)}  ({compSize / 1048576} MB compressed)");
 
@@ -460,7 +517,11 @@ public static class ArtifactDownloader
         catch (HttpRequestException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
         {
             var prefix = string.Join(".", version.Split('.').Take(2));
-            logf($"Error: no BC artifact published for {version} ({channel}).");
+            // Issue #2236: name the exact URL that 404'd, not just the version/channel —
+            // this is the only channel this method has (w1, platform, or a country code
+            // like "us"), so when the country is wrong the URL is what tells the reader
+            // which one to check.
+            logf($"Error: no BC artifact published for {version} ({channel}): {url}");
             logf("       Check the version, or resolve the latest for a prefix:");
             // Issue #2085: this fires both from the standalone tools/DownloadArtifacts CLI
             // (repo-checkout only) AND in-process from the shipped `al-runner` binary's own
@@ -468,6 +529,10 @@ public static class ArtifactDownloader
             // here would be a dead end for anyone using the latter, which is the common
             // case. `al-runner provision --resolve-version` works from both.
             logf($"         al-runner provision --resolve-version {prefix}");
+            if (!string.Equals(channel, "w1", StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(channel, "platform", StringComparison.OrdinalIgnoreCase))
+                logf($"       If '{channel}' is a --country code, double-check the spelling — " +
+                     "the runner does not maintain its own list of valid codes.");
             size = 0;
             return false;
         }

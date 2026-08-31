@@ -2512,9 +2512,16 @@ public sealed partial class BcCompiler
             }
             else
             {
-                // bcartifacts.cache/sandbox/<ver>/{w1/Extensions, platform/Applications}
-                var w1Ext = Path.Combine(bestVer, "w1", "Extensions");
-                if (Directory.Exists(w1Ext)) yield return w1Ext;
+                // bcartifacts.cache/sandbox/<ver>/{<country>/Extensions, platform/Applications}
+                // Issue #2236: this is VS Code's AL-extension symbol cache (read-only to us),
+                // using the same sandbox/<ver>/<channel>/ layout as our own artifact CDN — one
+                // channel folder per country. Hardcoding "w1" here missed a machine that
+                // already has a country-localized project's symbols downloaded there. Scan the
+                // SELECTED country's own folder, not both w1 and the country's: mixing them
+                // would risk the same "which duplicate basename wins" ambiguity #2236's
+                // Extensions/-vs-Applications.<CC>/ fix exists to avoid for our own cache.
+                var localizedExt = Path.Combine(bestVer, AlRunner.Infrastructure.BcArtifacts.SelectedCountry, "Extensions");
+                if (Directory.Exists(localizedExt)) yield return localizedExt;
                 var platApps = Path.Combine(bestVer, "platform", "Applications");
                 if (Directory.Exists(platApps)) yield return platApps;
             }
