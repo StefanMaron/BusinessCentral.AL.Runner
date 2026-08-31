@@ -160,7 +160,7 @@ public sealed class TestDataProvisioningTests : IDisposable
         TestDataOptions.ExplicitBackupPath = missing;
 
         var ex = Assert.Throws<TestDataUnavailableException>(() => TestDataOptions.ResolveBackupPath());
-        Assert.Contains(Path.GetFullPath(missing), ex.Message, StringComparison.Ordinal);
+        Assert.Contains(Path.GetFullPath(missing), ex.Message.Split('\n')[0], StringComparison.Ordinal);
     }
 
     [Fact]
@@ -221,6 +221,59 @@ public sealed class TestDataProvisioningTests : IDisposable
         // space-separated value: the bundle path must stay a bundle path.
         Assert.False(TestDataOptions.TryParseArg("--test-database"));
         Assert.False(TestDataOptions.Enabled);
+    }
+
+    // ──────────────────────────────────────── company selection ──
+
+    [Fact]
+    public void MultipleCompaniesAndNoneNamed_FailsRatherThanPickingOne()
+    {
+        // The repo owner's decision, and the reason for it: a BC backup routinely holds
+        // several companies with different data. Picking one silently means every hydrated
+        // row came from a company nobody selected — the same class of silent wrong answer
+        // as restoring an empty snapshot.
+        var companies = new[] { "CRONUS International Ltd_", "My Company" };
+
+        var ex = Assert.Throws<TestDataUnavailableException>(
+            () => TestDataProvisioner.ResolveCompany(companies, null, "/x/BusinessCentral-W1.bak"));
+
+        Assert.Contains("CRONUS International Ltd_", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("My Company", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("--test-data-company", ex.Message, StringComparison.Ordinal);
+
+        // On the FIRST line, not buried below it. Measured during #2258: the bundle reporter
+        // keeps only line 1 of an EXEC-FAIL message, so a message that named the count on
+        // line 1 and the companies on line 3 reached the user as "holds 2 companies" with
+        // nothing to act on.
+        var firstLine = ex.Message.Split('\n')[0];
+        Assert.Contains("CRONUS International Ltd_", firstLine, StringComparison.Ordinal);
+        Assert.Contains("--test-data-company", firstLine, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ASingleCompany_NeedsNoChoice()
+        => Assert.Equal("CRONUS International Ltd_",
+            TestDataProvisioner.ResolveCompany(new[] { "CRONUS International Ltd_" }, null, "/x.bak"));
+
+    [Fact]
+    public void NamedCompany_IsUsed_AndAnUnknownOneFailsNamingWhatTheBackupHolds()
+    {
+        var companies = new[] { "CRONUS International Ltd_", "My Company" };
+
+        Assert.Equal("My Company", TestDataProvisioner.ResolveCompany(companies, "My Company", "/x.bak"));
+
+        var ex = Assert.Throws<TestDataUnavailableException>(
+            () => TestDataProvisioner.ResolveCompany(companies, "Typo Ltd", "/x.bak"));
+        Assert.Contains("Typo Ltd", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("CRONUS International Ltd_", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void NoCompaniesAtAll_FailsRatherThanHydratingNothingQuietly()
+    {
+        var ex = Assert.Throws<TestDataUnavailableException>(
+            () => TestDataProvisioner.ResolveCompany(Array.Empty<string>(), null, "/x/BusinessCentral-W1.bak"));
+        Assert.Contains("no companies", ex.Message, StringComparison.Ordinal);
     }
 
     // ───────────────────────────────────── reader-tool contract ──

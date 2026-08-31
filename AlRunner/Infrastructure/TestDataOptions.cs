@@ -117,7 +117,7 @@ internal static class TestDataOptions
             var explicitPath = Path.GetFullPath(ExplicitBackupPath);
             if (File.Exists(explicitPath)) return explicitPath;
             throw new TestDataUnavailableException(
-                $"--test-data={ExplicitBackupPath}: no such file.\n  Looked for: {explicitPath}");
+                $"--test-data={ExplicitBackupPath}: no such file (looked for '{explicitPath}').");
         }
 
         var version = BcArtifacts.SelectedVersion.ToString();
@@ -130,12 +130,13 @@ internal static class TestDataOptions
             if (File.Exists(candidate))
                 return candidate;
 
+        // Everything actionable on the FIRST line: the bundle reporter keeps only line 1 of
+        // an EXEC-FAIL message, so a "Probed:" list on line 3 never reaches the user.
         throw new TestDataUnavailableException(
-            $"--test-data was requested but no BC backup was found for BC {version} ({country}).\n"
-            + "  Probed:\n    " + string.Join("\n    ", candidates) + "\n"
-            + $"  The backup ships inside the BC sandbox artifact as sandbox/{version}/{country}/"
-            + $"{BackupFileName(country)}.\n"
-            + "  Pass an explicit one with --test-data=/path/to/BusinessCentral-W1.bak.");
+            $"--test-data: no BC backup for BC {version} ({country}) at any of "
+            + string.Join(" or ", candidates.Select(c => $"'{c}'"))
+            + $" — it ships inside the BC sandbox artifact as sandbox/{version}/{country}/{BackupFileName(country)}; "
+            + "pass an explicit one with --test-data=/path/to/BusinessCentral-W1.bak.");
     }
 
     /// <summary>

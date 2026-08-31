@@ -9,11 +9,14 @@
 // call site (RecordPatches.GetDataAccessForTableCore, the choke point the virtual tables
 // already use) would call; HydrateAll() is only the current eager policy on top of it.
 //
-//   NOTE for whoever moves it: RecordPatches.ResetPerTestState() clears EVERY table's data
-//   access, and RestoreInstallBaselineSnapshot re-creates storage only for tables present in
-//   the snapshot. A table hydrated AFTER the baseline was captured is therefore wiped at the
-//   next test boundary and reads empty from then on. Moving the load later needs that solved
-//   first; it is not solved here, which is why the eager policy is what ships.
+// THE EAGER POLICY HERE IS INTERIM. #2262 tracks moving the load to
+// RecordPatches.GetDataAccessForTableCore, the per-table choke point the virtual tables
+// already use, so the baseline stays proportional to what a suite actually touches. That
+// matters because RestoreInstallBaselineSnapshot re-inserts every baseline row at EVERY test
+// boundary, so baseline size is a per-boundary cost, not a per-run one. It is not a pure
+// call-site change — see #2262 for the two lifetime traps that have to be solved first —
+// which is why the eager policy is what ships while it is worked out. Nothing below assumes
+// the eager ordering: HydrateOne() is already the per-table unit such a policy would call.
 //
 // ORDERING (eager policy)
 //   Hydrate, THEN run install triggers, THEN run tests. That is the repo owner's stated
@@ -191,15 +194,43 @@ internal static class TestDataProvisioner
         return new Plan(hydratable, skippedExt, skippedAmbiguous);
     }
 
-    private static string ResolveCompany(string backup)
+    /// <summary>
+    /// The company to hydrate. Repo owner's decision: when the backup holds more than one and
+    /// none was named, FAIL — never pick one. A BC backup routinely carries several companies
+    /// (the shipped demo database has "CRONUS ..." and "My Company"), they hold different
+    /// data, and silently choosing means every row in the run came from a company nobody
+    /// selected. That is the same class of silent wrong answer as restoring an empty snapshot.
+    /// </summary>
+    internal static string ResolveCompany(IReadOnlyList<string> companies, string? overrideName, string backupForDiagnostics)
     {
-        if (TestDataOptions.CompanyOverride != null) return TestDataOptions.CompanyOverride;
-        var companies = BackupCatalog.ParseCompanies(BackupReaderTool.Run(new[] { "companies", backup }));
+        // Everything actionable goes on the FIRST line. Measured: the bundle reporter keeps
+        // only line 1 of an EXEC-FAIL message, so a message that named a count on line 1 and
+        // the companies on line 3 reached the user as "holds 2 companies" with no way to act
+        // on it.
+        var list = string.Join(", ", companies.Select(c => $"'{c}'"));
+        if (overrideName != null)
+        {
+            if (!companies.Contains(overrideName, StringComparer.Ordinal))
+                throw new TestDataUnavailableException(
+                    $"--test-data-company '{overrideName}' is not a company in "
+                    + $"'{Path.GetFileName(backupForDiagnostics)}', which holds {list}.");
+            return overrideName;
+        }
         if (companies.Count == 0)
             throw new TestDataUnavailableException(
-                $"--test-data: the backup '{backup}' reports no companies, so there is nothing to hydrate.");
+                $"--test-data: the backup '{backupForDiagnostics}' reports no companies, so there is nothing to hydrate.");
+        if (companies.Count > 1)
+            throw new TestDataUnavailableException(
+                $"--test-data: '{Path.GetFileName(backupForDiagnostics)}' holds {companies.Count} companies "
+                + $"({list}) and none was named — pick one with --test-data-company \"<name>\". "
+                + "Choosing for you would mean every hydrated row came from a company nobody selected.");
         return companies[0];
     }
+
+    private static string ResolveCompany(string backup)
+        => ResolveCompany(
+            BackupCatalog.ParseCompanies(BackupReaderTool.Run(new[] { "companies", backup })),
+            TestDataOptions.CompanyOverride, backup);
 
     /// <summary>
     /// The .app packages the reader is told the database's schema comes from: exactly the
