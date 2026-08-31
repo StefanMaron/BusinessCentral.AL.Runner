@@ -54,10 +54,14 @@
 //   the field is Compressed, verbatim bytes when it is not. The NavBlob case below quotes the
 //   original and names the measured evidence.
 //
-//   Still refused, and named when they are: Duration and TableFilter (BC's reader has a case
-//   for each, but no CRONUS table exercises either, so the shape the backup reader emits for
-//   them has never been measured here — #2271), and any column name that is not an AL field of
-//   the target table. Removing eight reasons to refuse did not remove the ability to.
+//   Duration came with them, once clearing the four above surfaced the first table that
+//   actually stores one (Job Queue Entry."Job Timeout" = 43200000, a JSON number of
+//   milliseconds).
+//
+//   Still refused, and named when it is: TableFilter (BC's reader has a case — 504 raw bytes —
+//   but no CRONUS table stores one, so the shape the backup reader emits for it has never been
+//   measured here, #2271), and any column name that is not an AL field of the target table.
+//   Removing nine reasons to refuse did not remove the ability to.
 //
 // TABLE-EXTENSION FIELDS (issue #2261)
 //   BC splits an extended table across the base table and a `<table>$ext` companion. The
@@ -566,6 +570,23 @@ public static partial class RecordPatches
                     Refuse);
             }
 
+            case NavNclType.NavDuration:
+            {
+                // BC:
+                //   case NavNclType.NavDuration: return new NavDuration(reader.GetInt64(i));
+                //
+                // A SQL `bigint` of milliseconds, and the reader emits it as a JSON number —
+                // measured on Job Queue Entry."Job Timeout", 43200000 (twelve hours). Kept
+                // separate from the Integer/BigInteger case above rather than folded into it:
+                // that case ends at NavValue.CreateNavValueFromObject, whose NavDuration arm
+                // is NavDuration.CreateFromObject, and this is the constructor BC's own reader
+                // calls.
+                if (json.ValueKind != JsonValueKind.Number || !json.TryGetInt64(out var ms))
+                    throw new TestDataHydrationRefusal(Refuse(
+                        $"expected a duration in whole milliseconds, got {json.ValueKind} '{json}'"));
+                return CreateOrRefuse(() => new NavDuration(ms), Refuse);
+            }
+
             case NavNclType.NavRecordId:
             {
                 // BC:
@@ -590,11 +611,11 @@ public static partial class RecordPatches
             }
 
             default:
-                // Duration/TableFilter/…
-                // Not "unsupported forever" — unproven. BC's reader has a case for both, but
-                // no table in the shipped CRONUS data exercises either, so the shape the
-                // backup reader emits for them has never been measured here and this codec
-                // will not invent one. See #2271.
+                // TableFilter/…
+                // Not "unsupported forever" — unproven. BC's reader has a TableFilter case
+                // (504 raw bytes), but no table in the shipped CRONUS data stores one, so the
+                // shape the backup reader emits for it has never been measured here and this
+                // codec will not invent one. See #2271.
                 throw new TestDataHydrationRefusal(Refuse(
                     "this runner build cannot yet rebuild that AL type from a backup value"));
         }

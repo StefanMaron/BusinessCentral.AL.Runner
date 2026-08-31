@@ -58,6 +58,7 @@ public sealed class TestDataLobValueHydrationTests
     private static readonly ValueMetadata RecordIdField = new(NavNclType.NavRecordId, NavType.RecordID);
     private static readonly ValueMetadata IntegerField = new(NavNclType.NavInteger, NavType.Integer);
     private static readonly ValueMetadata TextField = new(NavNclType.NavText, NavType.Text, 50);
+    private static readonly ValueMetadata DurationField = new(NavNclType.NavDuration, NavType.Duration);
 
     /// <summary>The field facts under test. <paramref name="emptyValue"/> stands in for
     /// NCLMetaField.EmptyValue and <paramref name="compressed"/> for
@@ -351,18 +352,41 @@ public sealed class TestDataLobValueHydrationTests
 
     // ------------------------------------------------ refusal still works --
 
+    // -------------------------------------------------------------- Duration --
+
+    [Fact]
+    public void Duration_HydratesAsThatManyMilliseconds()
+    {
+        // Job Queue Entry."Job Timeout" in the shipped CRONUS backup: 43,200,000 ms = 12h.
+        var duration = Assert.IsType<NavDuration>(Convert(Facts(DurationField), "43200000"));
+        Assert.Equal(43_200_000L, duration.Value);
+        Assert.False(duration.IsZeroOrEmpty);
+
+        Assert.True(Assert.IsType<NavDuration>(Convert(Facts(DurationField), "0")).IsZeroOrEmpty);
+
+        // BC's Duration is signed; a negative one is a real AL value, not a decoding error.
+        Assert.Equal(-1_500L, Assert.IsType<NavDuration>(Convert(Facts(DurationField), "-1500")).Value);
+    }
+
+    [Fact]
+    public void ADurationCellThatIsNotWholeMilliseconds_RefusesTheTable()
+    {
+        foreach (var json in new[] { "\"43200000\"", "1.5", "true", "\"0x0A\"" })
+            Assert.Throws<TestDataHydrationRefusal>(() => Convert(Facts(DurationField), json));
+    }
+
+    // ------------------------------------------------ refusal still works --
+
     [Fact]
     public void TypesThisBuildStillCannotRebuild_KeepRefusing()
     {
-        // Four more reasons to refuse were removed; the ABILITY to refuse was not. Duration
-        // and TableFilter have a case in BC's reader too, but no CRONUS table exercises
-        // either, so the shape the backup reader emits for them has never been measured —
-        // and this codec does not invent one. #2271 tracks it.
-        foreach (var nclType in new[] { NavNclType.NavDuration, NavNclType.NavTableFilter })
-        {
-            var ex = Refusal(Facts(new ValueMetadata(nclType, NavType.Duration)), "\"0xDEADBEEF\"");
-            Assert.Contains(nclType.ToString(), ex.Message, StringComparison.Ordinal);
-            Assert.Contains("Retention Policy Setup Line", ex.Message, StringComparison.Ordinal);
-        }
+        // Five more reasons to refuse were removed; the ABILITY to refuse was not. TableFilter
+        // has a case in BC's reader too — 504 raw bytes — but no CRONUS table stores one, so
+        // the shape the backup reader emits for it has never been measured here, and this
+        // codec does not invent one. #2271 tracks it.
+        var ex = Refusal(
+            Facts(new ValueMetadata(NavNclType.NavTableFilter, NavType.TableFilter)), "\"0xDEADBEEF\"");
+        Assert.Contains(NavNclType.NavTableFilter.ToString(), ex.Message, StringComparison.Ordinal);
+        Assert.Contains("Retention Policy Setup Line", ex.Message, StringComparison.Ordinal);
     }
 }

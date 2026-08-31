@@ -12,9 +12,12 @@
 /// compares it.
 ///
 /// THE SUBJECTS, AND WHY THESE
-///   - `Retention Policy Setup Line` is the only table in the shipped demo data whose Blob
-///     holds readable text, so it is the one Blob whose real value AL can state exactly
-///     rather than by length. 46 stored bytes decompress to 47.
+///   - `Company Information`.`Picture` is the Blob whose two lengths are furthest apart: 12,921
+///     bytes stored, 15,225 after BC's own Deflate is undone. Asserting the decompressed
+///     length AND the JPEG header proves the container was unwrapped rather than stored, in a
+///     way `HasValue` cannot. (`Retention Policy Setup Line`.`Table Filter` holds readable
+///     text and would read better, but the field is `internal` and AL will not let a test
+///     touch it.)
 ///   - `Sales Header` is the table #2268 named. It refused over a NULL `Work Description` —
 ///     nothing about its own data — and it is the table a posting test needs. Both halves are
 ///     asserted: a real field's value (the table is really there) and the NULL blob reading
@@ -22,6 +25,8 @@
 ///   - `Word Template` and `Customer` cover Media, `Item Variant` covers MediaSet. All three
 ///     assert the stored id, which is the whole of what BC's row read puts in the record —
 ///     the bytes behind an id live in Tenant Media, a table like any other.
+///   - `Job Queue Entry` covers Duration, which only became reachable once the types above
+///     stopped refusing the tables ahead of it.
 ///   - `Bank Account` covers RecordId, whose CRONUS value is blank. Paired with a real field
 ///     on the same record so "the table hydrated" is proved separately from "the RecordId is
 ///     blank", which a refused table would also (vacuously) satisfy.
@@ -42,28 +47,45 @@ codeunit 64404 "Test Data LOB Values"
         TdfAssert: Codeunit "TDF Assert";
 
     /// <summary>
-    /// The one that would pass with the container stored verbatim. `Table Filter` is a
-    /// compressed Blob: 46 bytes in the backup, 47 after BC's own Deflate is undone.
+    /// The one that would pass with the container stored verbatim. `Picture` is a compressed
+    /// Blob: 12,921 bytes in the backup, 15,225 after BC's own Deflate is undone. A codec that
+    /// stored the container would give a blob that exists, has a value and has a plausible
+    /// length — every assertion but these two.
     /// </summary>
     [Test]
     procedure BlobContentIsTheDecompressedValue()
     var
-        RetentionPolicySetupLine: Record "Retention Policy Setup Line";
-        FilterStream: InStream;
-        Content: Text;
+        CompanyInformation: Record "Company Information";
+        PictureStream: InStream;
+        FirstByte: Byte;
+        SecondByte: Byte;
+        ThirdByte: Byte;
+        Header: Text;
     begin
-        RetentionPolicySetupLine.Get(405, 10000);
-        RetentionPolicySetupLine.CalcFields("Table Filter");
-        TdfAssert.IsTrue(RetentionPolicySetupLine."Table Filter".HasValue(),
-            'Table Filter should carry the backup bytes');
+        CompanyInformation.Get();
+        CompanyInformation.CalcFields(Picture);
+        TdfAssert.IsTrue(CompanyInformation.Picture.HasValue(),
+            'Picture should carry the backup bytes');
 
-        RetentionPolicySetupLine."Table Filter".CreateInStream(FilterStream, TextEncoding::Windows);
-        FilterStream.ReadText(Content, 45);
+        // 12921 is what the column stores; 15225 is the value. Stated as the expected number
+        // so a failure reads "expected 15225, got 12921" and names the defect outright.
+        TdfAssert.AreEqual(15225, CompanyInformation.Picture.Length(),
+            'the Blob must be BC''s decompressed content, not the 12921-byte stored container');
 
-        // BC's container starts with 02 45 7D 5B, so reading 45 characters off an undecoded
-        // blob cannot produce this string by accident.
-        TdfAssert.AreEqual('VERSION(1) SORTING(Field1) WHERE(Field25=1(1))', Content,
-            'the Blob must read back as its decompressed AL filter text, not as BC''s stored container');
+        CompanyInformation.Picture.CreateInStream(PictureStream);
+        PictureStream.Read(FirstByte, 1);
+        PictureStream.Read(SecondByte, 1);
+        PictureStream.Read(ThirdByte, 1);
+
+        // Widened to Integer before asserting: AL formats a Byte as the CHARACTER it stands
+        // for, so comparing Format(255) against Format(FirstByte) would read
+        // "expected 255, got ÿ" on a passing case.
+        Header := StrSubstNo('%1 %2 %3', FirstByte + 0, SecondByte + 0, ThirdByte + 0);
+
+        // A JPEG starts FF D8 FF. BC's stored container starts 02 45 7D 5B, so this cannot
+        // pass on undecoded bytes even if the length assertion somehow did.
+        TdfAssert.AreEqual('255 216 255', Header,
+            'the decoded Picture must start with a JPEG header');
     end;
 
     /// <summary>
@@ -124,6 +146,26 @@ codeunit 64404 "Test Data LOB Values"
         TdfAssert.AreEqual('EAAD9A16-3132-4C9C-8206-393598E9F1F0',
             UpperCase(DelChr(Format(ItemVariant.Picture.MediaId, 0, 4), '=', '{}')),
             'the MediaSet field must carry the backup''s media-set id');
+    end;
+
+    /// <summary>
+    /// Duration. `Job Queue Entry`.`Job Timeout` is the one table in the shipped demo data
+    /// that stores one, and it only became visible once the four types above stopped refusing
+    /// the tables ahead of it.
+    /// </summary>
+    [Test]
+    procedure DurationHydratesAsThatManyMilliseconds()
+    var
+        JobQueueEntry: Record "Job Queue Entry";
+    begin
+        JobQueueEntry.SetRange("Object ID to Run", 6700);
+        TdfAssert.IsTrue(JobQueueEntry.FindFirst(), 'Job Queue Entry for object 6700 should be hydrated');
+
+        // 43,200,000 ms is twelve hours, BC's shipped default job timeout.
+        TdfAssert.AreEqual(43200000, JobQueueEntry."Job Timeout",
+            'the Duration must read back as the milliseconds the backup stores');
+        TdfAssert.AreEqual(12 * 60 * 60 * 1000, JobQueueEntry."Job Timeout",
+            'and that number must be twelve hours, not a raw bigint that happens to compare equal');
     end;
 
     /// <summary>
