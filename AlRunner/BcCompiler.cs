@@ -687,6 +687,24 @@ public sealed partial class BcCompiler
     }
 
     /// <summary>
+    /// The .app packages resolved for this run, in scan order — the SAME set
+    /// <see cref="SetResolvedDeps"/> was handed, so a caller reading this is looking at the
+    /// closure the run actually compiles and executes against, not a re-derived guess.
+    /// Empty before dep resolution (or when a run has no dependencies at all).
+    ///
+    /// Added for --test-data (issue #2258): the backup reader has to be told which apps the
+    /// database's schema comes from, and "the apps this run resolved" is the only answer that
+    /// cannot drift from what the runner will then build AL records for.
+    /// </summary>
+    public static IReadOnlyList<string> ResolvedDepAppPaths()
+    {
+        lock (_refSync)
+            return _resolvedDeps == null
+                ? Array.Empty<string>()
+                : _resolvedDeps.Select(d => d.AppPath).ToList();
+    }
+
+    /// <summary>
     /// A stable content signature of the inputs the reference loader is built from, so the
     /// loader (and its ~40s warm) is rebuilt only when the dependency closure actually
     /// changes — not on every SetResolvedDeps/SetExtraSymbolDirs call or every bundle.

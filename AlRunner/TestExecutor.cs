@@ -329,7 +329,15 @@ public sealed class TestExecutor
         // exactly matching the order the uncached path always ran in.
         using (AlRunner.Infrastructure.PhaseLog.AppStage("install-seed-dep-company-baseline"))
         {
-            var depKey = InstallTriggerRunner.CurrentDependencySetKey();
+            // #2258: --test-data folds its identity (backup file, company, reader build,
+            // hydration schema) into depKey BEFORE either cache tier is consulted. Neither
+            // tier knows anything about test data on its own, so without this a snapshot
+            // captured from an EMPTY database is restored into a run that asked for the
+            // backup's rows, and that run proceeds against an empty database with no error
+            // anywhere. CacheIdentity() returns "" when --test-data is off, so a default run's
+            // key is byte-identical to what it was before this change.
+            var depKey = InstallTriggerRunner.CurrentDependencySetKey()
+                + AlRunner.Infrastructure.TestDataOptions.CacheIdentity();
             AlRunner.Patches.RecordPatches.InstallBaselineSnapshot? cached;
             // Permanent kill switch (see the field's doc comment above for why it exists):
             // forces every lookup to MISS, as if the cache were never populated, so the
@@ -381,6 +389,13 @@ public sealed class TestExecutor
                 }
                 else
                 {
+                    // #2258: provision from the backup FIRST, then run setup code, then run
+                    // tests — the ordering real BC has, where the database with its data
+                    // exists before any extension is installed. The rows then become part of
+                    // the snapshot captured three lines down, so the per-test restore at each
+                    // codeunit boundary puts them back and InstallBaselineDisk persists them
+                    // across processes for free. No-op unless --test-data was passed.
+                    TestDataProvisioner.HydrateAll();
                     InstallTriggerRunner.RunDependenciesOnly();
                     CompanyInitializer.EnsureCompanyInitialized();
                     var snapshot = AlRunner.Patches.RecordPatches.CaptureInstallBaselineSnapshot();
