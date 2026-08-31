@@ -2,32 +2,67 @@
 // hydrated, from which backup, for which company, and when.
 //
 // The mechanism (decoded value -> NavValue -> in-memory store) lives in
-// RecordPatches.TestDataHydration.cs and knows nothing about any of this. The split is
-// load-bearing: hydrating everything up front is right for a CRONUS-sized demo database and
-// wrong for a customer backup with millions of rows, where the load has to become per-table
-// and on demand. HydrateOne() is already the per-table entry point that a future on-demand
-// call site (RecordPatches.GetDataAccessForTableCore, the choke point the virtual tables
-// already use) would call; HydrateAll() is only the current eager policy on top of it.
+// RecordPatches.TestDataHydration.cs and knows nothing about any of this.
 //
-// THE EAGER POLICY HERE IS INTERIM. #2262 tracks moving the load to
-// RecordPatches.GetDataAccessForTableCore, the per-table choke point the virtual tables
-// already use, so the baseline stays proportional to what a suite actually touches. That
-// matters because RestoreInstallBaselineSnapshot re-inserts every baseline row at EVERY test
-// boundary, so baseline size is a per-boundary cost, not a per-run one.
+// THE POLICY IS ON-DEMAND, PER TABLE (issue #2262)
+//   Arm() builds the plan and installs a loader on RecordPatches.GetDataAccessForTableCore —
+//   the per-table choke point the virtual tables (AllObj, Field, ...) already use. A table's
+//   rows are read out of the backup the first time anything in the run materialises that
+//   table's storage, and not before.
 //
-// There is no "already loaded" flag to maintain, and #2262 has the argument: that choke point
-// only reaches its create-fresh-storage path when the source's perTable lacks the table, and
-// RestoreInstallBaselineSnapshot repopulates perTable from exactly the snapshot it restores
-// (RecordPatches.InstallBaseline.cs, `perTable[table.TableId] = dataAccess`). So "storage is
-// absent" is already, at every instant, the same question as "the snapshot the store was last
-// restored from did not carry this table" — which is precisely when a load is needed.
-// Nothing below assumes the eager ordering: HydrateOne() is already the per-table unit such a
-// policy would call.
+//   #2258 shipped the eager policy that preceded this, and it is worth recording WHY that
+//   was not merely slower. RestoreInstallBaselineSnapshot re-inserts every baseline row at
+//   EVERY test boundary — per codeunit under TestIsolation = Codeunit, per test under
+//   TestIsolation = Test. Baseline size is therefore a cost paid per boundary, not per run.
+//   Measured on the tests/test-data-fixture bundle before this change: hydration put 37,710
+//   rows into a 71,389-row install baseline and each boundary restore cost 105-203 ms. On a
+//   thousand-test suite under Test isolation that is minutes spent re-inserting rows no test
+//   ever reads, which is what made --test-data unusable on a real suite.
 //
-// ORDERING (eager policy)
-//   Hydrate, THEN run install triggers, THEN run tests. That is the repo owner's stated
-//   ordering and it matches real BC, where the database with its data exists before any
-//   extension is installed.
+// THERE IS NO "ALREADY LOADED" FLAG, AND THERE MUST NOT BE ONE
+//   GetDataAccessForTableCore only reaches its create-fresh-storage path when the source's
+//   perTable LACKS the table, and RestoreInstallBaselineSnapshot repopulates perTable from
+//   exactly the snapshot it restores (RecordPatches.InstallBaseline.cs,
+//   `perTable[table.TableId] = dataAccess`). So "storage is absent" is already, at every
+//   instant and with no window, the same question as "the snapshot the store was last
+//   restored from did not carry this table" — which is precisely when a load is needed. A
+//   separate HashSet of loaded table ids would be a second copy of that answer, free to drift
+//   from it; storage presence cannot drift from itself.
+//
+//   The two objections raised against snapshot-membership-as-the-flag both dissolve once the
+//   question is storage presence:
+//     - Pre-capture window. Nothing clears perTable inside RunDependenciesOnly(); the only
+//       reset is ResetPerTestState() at the top of the whole install-seed block, before it.
+//       A table touched during dependency install loads once, perTable holds it for the rest
+//       of the window, and CaptureInstallBaselineSnapshot() picks the rows up by walking the
+//       same store. No snapshot needs to exist yet.
+//     - App-group boundary. _installBaseline outlives an app group, but the loader never
+//       consults it. ResetPerTestState() clears every source's perTable, so group 2's
+//       perTable reflects the dep+company snapshot it was actually restored from: a table
+//       that snapshot lacks is absent, reloads on touch, and is correct.
+//
+// A LOAD OUTSIDE THE CAPTURE WINDOW MUST BE WRITTEN INTO THE BASELINES
+//   A load fired mid-test happens long after CaptureInstallBaselineSnapshot() walked the
+//   store, so the rows are invisible to every snapshot and the very next boundary would drop
+//   them. RecordPatches.AppendBaselineTable puts the PRISTINE rows — deep-copied before the
+//   triggering test can mutate them — into both the per-app-group singleton and the
+//   dep+company snapshot this group is running against. See its doc comment.
+//
+//   NOT into the PERSISTED disk snapshot, deliberately. That artifact is written once, at the
+//   dep+company cache MISS, before any test body runs, so a test-driven load cannot reach it
+//   without new code — and adding that code would reintroduce the eager problem in slow
+//   motion: the file would grow according to whichever suite happened to run first, and a
+//   later, narrower run would inherit rows it never touches and pay to re-insert them at
+//   every boundary. Leaving it out is safe for exactly the reason the whole design is safe:
+//   a table missing from a snapshot loads on touch. Tables the dependency install triggers /
+//   Company-Initialize touch ARE persisted, with no special handling, because they load
+//   inside the capture window and CaptureInstallBaselineSnapshot() walks the same store.
+//
+// ORDERING
+//   Arm() runs where HydrateAll() used to, in front of the dependency install triggers, so a
+//   table an install trigger reads is already backed by the backup's rows when it reads it —
+//   the ordering real BC has, where the database with its data exists before any extension is
+//   installed.
 //
 // TABLE-EXTENSION DATA IS MERGED (issue #2261)
 //   BC splits an extended table across the base table and a `$ext` companion. Every read here
@@ -91,9 +126,13 @@ internal static class TestDataProvisioner
         int TablesSkippedAmbiguous, int TablesRefused, int TablesRefusedByReader,
         int ColumnsFromUninstalledApps)
     {
+        // "the run touched", not "the backup holds": under the on-demand policy (#2262) a
+        // table is only read when something asks for it, so these counts describe what this
+        // suite actually pulled in. A small number here is the feature working, not a gap.
         internal string Describe() =>
-            $"[test-data] {RowsHydrated} row(s) in {TablesHydrated} table(s) from '{Path.GetFileName(BackupPath)}' "
-            + $"company '{Company}'; skipped {TablesSkippedAmbiguous} ambiguous by name, "
+            $"[test-data] loaded {RowsHydrated} row(s) in {TablesHydrated} table(s) this run touched, "
+            + $"from '{Path.GetFileName(BackupPath)}' company '{Company}'; "
+            + $"skipped {TablesSkippedAmbiguous} ambiguous by name, "
             + $"{TablesRefused} refused (unsupported value types or unknown columns), "
             + $"{TablesRefusedByReader} refused by the backup reader, "
             + $"{ColumnsFromUninstalledApps} extension column(s) dropped for apps this run does not install.";
@@ -101,22 +140,64 @@ internal static class TestDataProvisioner
 
     private static Summary? _lastSummary;
 
+    /// <summary>The armed plan: everything the on-demand loader needs, resolved once. Null
+    /// when --test-data is off or Arm() has not run, which is what makes the loader a no-op
+    /// for every default run.</summary>
+    private sealed record ArmedPlan(
+        string Backup, string SymbolKey, IReadOnlyList<string> Symbols, string Company,
+        IReadOnlyDictionary<int, BackupTableEntry> ByTableId, int SkippedAmbiguous);
+
+    private static ArmedPlan? _armed;
+
+    // Running tallies, accumulated across on-demand loads rather than known at Arm() time.
+    private static int _tablesDone, _rowsDone, _refused, _readerRefused, _droppedColumns;
+
     /// <summary>The most recent hydration's outcome — the assertable signal a test uses
-    /// instead of re-deriving what happened from log text.</summary>
+    /// instead of re-deriving what happened from log text. Under the on-demand policy it is
+    /// cumulative: it reflects every table loaded so far, and it stays null until the first
+    /// table actually loads.</summary>
     internal static Summary? LastSummary => _lastSummary;
 
-    internal static void ResetForTests() => _lastSummary = null;
+    /// <summary>Table ids the plan says this run COULD hydrate. The proving test for "a table
+    /// nothing touches is never loaded" needs both halves — that the table was in scope, and
+    /// that its rows are nonetheless absent — or it would pass against a plan that simply
+    /// never knew about the table.</summary>
+    internal static IReadOnlyCollection<int> ArmedTableIds
+        => _armed?.ByTableId.Keys.ToArray() ?? Array.Empty<int>();
+
+    internal static void ResetForTests()
+    {
+        _lastSummary = null;
+        _armed = null;
+        _tablesDone = _rowsDone = _refused = _readerRefused = _droppedColumns = 0;
+        RecordPatches.TestDataOnDemandLoader = null;
+    }
 
     /// <summary>
-    /// The eager policy: hydrate every in-scope table for the selected company. A no-op when
-    /// --test-data was not passed, so nothing about a default run changes.
+    /// Resolve the backup, the company and the table plan, and install the on-demand loader.
+    /// Reads no table rows: the first touch of a table does that. A no-op when --test-data
+    /// was not passed, so nothing about a default run changes.
     /// </summary>
-    internal static void HydrateAll()
+    internal static void Arm()
     {
         if (!TestDataOptions.Enabled) return;
 
         var backup = TestDataOptions.ResolveBackupPath();
         var symbols = ResolveSymbols();
+        // Idempotent per SYMBOL SET, not per process. Arm() is now called once per app group
+        // (it has to be: a run whose first group takes a cache HIT would otherwise never arm
+        // at all), and re-reading the catalog per group would cost three reader invocations
+        // each. Keying on the symbols rather than skipping outright is the correctness half:
+        // which AL table id a backup table maps to is decided by the .app closure the reader
+        // was given, so a group with a different closure needs its own plan.
+        var symbolKey = string.Join('\n', symbols);
+        if (_armed != null && _armed.SymbolKey == symbolKey && _armed.Backup == backup)
+        {
+            // The loader is a static field; re-install it in case something cleared it.
+            RecordPatches.TestDataOnDemandLoader = LoadOnDemand;
+            return;
+        }
+
         var company = ResolveCompany(backup);
 
         var tablesOutput = BackupReaderTool.Run(SymbolArgs(new[] { "tables", backup }, symbols));
@@ -126,49 +207,85 @@ internal static class TestDataProvisioner
         Console.Error.WriteLine(
             $"[test-data] backup '{backup}', company '{company}', {plan.Hydratable.Count} table(s) in scope "
             + $"({plan.ExtendedTableNames.Count} with table-extension data to merge, "
-            + $"{plan.SkippedAmbiguous} ambiguous by name).");
+            + $"{plan.SkippedAmbiguous} ambiguous by name); loading on first touch.");
 
         // BEFORE any hydration: prove the reader is actually merging. A run that got this
         // wrong would hydrate every extended table with its extension fields blank and report
         // success, so this is fatal rather than per-table.
+        //
+        // ONCE PER RUN, not once per table, and the move to on-demand loading does not change
+        // that: whether the reader honours the flag is a property of the READER, not of a
+        // table, so asking it again per table would buy nothing and cost two extra reader
+        // invocations per loaded table. It stays here, at arm time, where it still runs before
+        // any row is hydrated.
         if (plan.ExtendedTableNames.Count > 0)
             AssertMergeIsHonoured(backup, symbols, company,
                 plan.ExtendedTableNames.OrderBy(n => n, StringComparer.Ordinal).First());
 
-        var tablesDone = 0;
-        var rowsDone = 0;
-        var refused = 0;
-        var readerRefused = 0;
-        var droppedColumns = 0;
-        foreach (var entry in plan.Hydratable)
-        {
-            try
-            {
-                var result = HydrateOne(backup, symbols, company, entry);
-                if (result.Rows > 0) tablesDone++;
-                rowsDone += result.Rows;
-                droppedColumns += result.ColumnsFromUninstalledApps;
-            }
-            catch (TestDataHydrationRefusal ex)
-            {
-                refused++;
-                Console.Error.WriteLine($"[test-data] REFUSED {ex.Message}");
-            }
-            catch (BackupReaderException ex)
-            {
-                // The reader failing on ONE table must not cost the run every other table:
-                // that is a table that is unavailable, not a run that is broken. Reported with
-                // the reader's own text IN FULL, because that text is the only diagnosis there
-                // is and the bundle reporter keeps only line 1 of an EXEC-FAIL message.
-                readerRefused++;
-                Console.Error.WriteLine(
-                    $"[test-data] READER REFUSED table '{entry.TableName}': {ex.Message}");
-            }
-        }
+        var byTableId = new Dictionary<int, BackupTableEntry>();
+        foreach (var e in plan.Hydratable)
+            if (e.AlTableId != null)
+                byTableId[e.AlTableId.Value] = e;
 
-        _lastSummary = new Summary(backup, company, tablesDone, rowsDone,
-            plan.SkippedAmbiguous, refused, readerRefused, droppedColumns);
-        Console.Error.WriteLine(_lastSummary.Describe());
+        _armed = new ArmedPlan(backup, symbolKey, symbols, company, byTableId, plan.SkippedAmbiguous);
+        RecordPatches.TestDataOnDemandLoader = LoadOnDemand;
+    }
+
+    /// <summary>
+    /// The on-demand load, called by RecordPatches.GetDataAccessForTableCore the moment it
+    /// creates fresh storage for <paramref name="tableId"/> on <paramref name="source"/> —
+    /// i.e. exactly when the store does not have the table and therefore needs it.
+    ///
+    /// Runs BEFORE the operation that triggered it, so reads and writes alike see the backup's
+    /// rows. That symmetry is the reason the hook is here and not on the read path: an AL
+    /// Insert of a primary key the backup already holds must fail with a duplicate-key error,
+    /// the way it would on real BC with the row present, and a load-on-read design gets that
+    /// case silently wrong.
+    ///
+    /// Never throws. A table this build cannot rebuild is reported and left empty — the same
+    /// per-table refusal the eager policy had, just reported at the moment of the touch.
+    /// </summary>
+    private static void LoadOnDemand(object source, int tableId)
+    {
+        var armed = _armed;
+        if (armed == null) return;
+        if (!armed.ByTableId.TryGetValue(tableId, out var entry)) return;   // not a table this backup offers
+
+        try
+        {
+            var result = HydrateOne(armed.Backup, armed.Symbols, armed.Company, entry, source,
+                out var meta, out var pristineRows);
+            if (result.Rows > 0)
+            {
+                _tablesDone++;
+                // The rows are in the live store now, but no snapshot knows about them: a load
+                // fired mid-test is long past CaptureInstallBaselineSnapshot(). Without this
+                // the very next codeunit/test boundary would wipe them.
+                if (meta != null)
+                    RecordPatches.AppendBaselineTable(source, tableId, meta, pristineRows);
+            }
+            _rowsDone += result.Rows;
+            _droppedColumns += result.ColumnsFromUninstalledApps;
+            PerfTrace.Log(
+                $"TestData.LazyLoad {tableId} '{entry.TableName}' {result.Rows} row(s)");
+        }
+        catch (TestDataHydrationRefusal ex)
+        {
+            _refused++;
+            Console.Error.WriteLine($"[test-data] REFUSED {ex.Message}");
+        }
+        catch (BackupReaderException ex)
+        {
+            // The reader failing on ONE table must not cost the run every other table: that is
+            // a table that is unavailable, not a run that is broken. Reported with the reader's
+            // own text IN FULL, because that text is the only diagnosis there is and the bundle
+            // reporter keeps only line 1 of an EXEC-FAIL message.
+            _readerRefused++;
+            Console.Error.WriteLine(
+                $"[test-data] READER REFUSED table '{entry.TableName}': {ex.Message}");
+        }
+        _lastSummary = new Summary(armed.Backup, armed.Company, _tablesDone, _rowsDone,
+            armed.SkippedAmbiguous, _refused, _readerRefused, _droppedColumns);
     }
 
     /// <summary>
@@ -180,7 +297,16 @@ internal static class TestDataProvisioner
     /// </summary>
     internal static RecordPatches.TestDataTableResult HydrateOne(
         string backup, IReadOnlyList<string> symbols, string company, BackupTableEntry entry)
+        => HydrateOne(backup, symbols, company, entry, null, out _, out _);
+
+    internal static RecordPatches.TestDataTableResult HydrateOne(
+        string backup, IReadOnlyList<string> symbols, string company, BackupTableEntry entry,
+        object? intoSource,
+        out Microsoft.Dynamics.Nav.Runtime.NCLMetaTable? metaTable,
+        out Microsoft.Dynamics.Nav.Runtime.NavValue[][] pristineRows)
     {
+        metaTable = null;
+        pristineRows = Array.Empty<Microsoft.Dynamics.Nav.Runtime.NavValue[]>();
         if (entry.AlTableId == null)
             throw new TestDataHydrationRefusal(
                 $"table '{entry.TableName}': the run's app closure does not define it, so it has no AL table id");
@@ -202,7 +328,8 @@ internal static class TestDataProvisioner
                 $"table '{entry.TableName}': the reader's JSON could not be parsed ({ex.Message})");
         }
 
-        return RecordPatches.HydrateTestDataTable(entry.AlTableId.Value, entry.TableName, rows);
+        return RecordPatches.HydrateTestDataTable(
+            entry.AlTableId.Value, entry.TableName, rows, intoSource, out metaTable, out pristineRows);
     }
 
     /// <summary>

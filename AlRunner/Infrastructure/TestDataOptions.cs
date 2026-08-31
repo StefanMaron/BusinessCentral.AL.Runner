@@ -47,8 +47,13 @@ internal static class TestDataOptions
     ///     be reused.
     /// 3 — #2259, Date/DateTime/Time/DateFormula rebuilt instead of refused. A version-2
     ///     baseline deserialises fine and is silently missing every table one of those types
-    ///     used to veto — 45 of the 54 still refusing after #2261.</summary>
-    internal const int HydrationSchemaVersion = 3;
+    ///     used to veto — 45 of the 54 still refusing after #2261.
+    /// 4 — #2262, tables load ON DEMAND at first touch instead of eagerly before the install
+    ///     triggers. A version-3 baseline holds every hydratable table's rows and would be
+    ///     restored, in full, at every codeunit/test boundary — which is precisely the
+    ///     per-boundary cost this version exists to stop paying. It deserialises fine, so
+    ///     nothing but the version keeps a run from silently inheriting the eager cost.</summary>
+    internal const int HydrationSchemaVersion = 4;
 
     /// <summary>Off unless --test-data was passed. Absent the flag NOTHING here runs: no
     /// backup is opened, no reader is located, and CacheIdentity() returns the empty string

@@ -125,7 +125,32 @@ public static partial class RecordPatches
     internal static TestDataTableResult HydrateTestDataTable(
         int tableId, string tableNameForDiagnostics,
         IReadOnlyList<IReadOnlyDictionary<string, JsonElement>> rows)
+        => HydrateTestDataTable(tableId, tableNameForDiagnostics, rows, null, out _, out _);
+
+    /// <summary>
+    /// The overload the on-demand loader (#2262) uses. Two additions, both about WHERE the
+    /// rows go rather than how they are built:
+    ///
+    /// <paramref name="intoSource"/> — the DataAccessSource to insert into. Null keeps the
+    /// eager path's behaviour (the skeleton session's source). The lazy path passes the very
+    /// source GetDataAccessForTableCore was called on, so the rows land in the storage that
+    /// call is about to hand back rather than in a different source's copy of the table.
+    ///
+    /// <paramref name="pristineRows"/> — the rows as built, BEFORE any AL code can touch
+    /// them. The lazy caller needs them because a load fired mid-test happens long after
+    /// CaptureInstallBaselineSnapshot() walked the store, so the rows have to be handed to
+    /// AppendBaselineTable explicitly or the next boundary drops them. Handing back the live
+    /// arrays would let a test's mutation reach the baseline; AppendBaselineTable deep-copies
+    /// on the way in, which is the same discipline as the capture path.
+    /// </summary>
+    internal static TestDataTableResult HydrateTestDataTable(
+        int tableId, string tableNameForDiagnostics,
+        IReadOnlyList<IReadOnlyDictionary<string, JsonElement>> rows,
+        object? intoSource,
+        out NCLMetaTable? metaTable, out NavValue[][] pristineRows)
     {
+        metaTable = null;
+        pristineRows = Array.Empty<NavValue[]>();
         if (rows.Count == 0) return new TestDataTableResult(0, 0);
 
         var meta = EnsureTableInMetadataCache(tableId)
@@ -133,7 +158,7 @@ public static partial class RecordPatches
                 $"table {tableId} '{tableNameForDiagnostics}': this process has no NCLMetaTable for it, "
                 + "so its rows cannot be turned into AL records");
 
-        var source = ResolveSkeletonDataAccessSource()
+        var source = intoSource ?? ResolveSkeletonDataAccessSource()
             ?? throw new TestDataHydrationRefusal(
                 $"table {tableId} '{tableNameForDiagnostics}': the skeleton session has no DataAccessSource yet");
 
@@ -193,6 +218,10 @@ public static partial class RecordPatches
             var mutable = _ibMutableBufferCtor.Invoke(new object[] { readOnly });
             insert.Invoke(provider, new object?[] { 0, mutable, insertOptions, null });
         }
+        // Handed back only AFTER every row is in the store, so a caller can never see rows
+        // for a table that ended up refused.
+        metaTable = meta;
+        pristineRows = built;
         return new TestDataTableResult(built.Length, droppedColumns.Count);
     }
 

@@ -353,6 +353,19 @@ public sealed class TestExecutor
         using (AlRunner.Infrastructure.PhaseLog.AppStage("install-seed-dep-company-baseline"))
         {
             var depKey = CurrentInstallBaselineCacheKey();
+            // #2262: arm UNCONDITIONALLY, before the cache is consulted. Under the eager
+            // policy this lived in the MISS branch, which was fine because a cached snapshot
+            // already carried every hydrated row. On-demand loading makes that wrong: a
+            // snapshot only carries the tables the install triggers happened to touch, so a
+            // run that takes a HIT still needs the loader installed or every OTHER table
+            // silently stays empty. Arm() reads no rows and is idempotent per symbol set.
+            TestDataProvisioner.Arm();
+            // No baseline is authoritative until this block ends. Leaving the PREVIOUS app
+            // group's snapshot registered would let a load fired during this group's
+            // dependency install triggers append rows to a snapshot cached under a different
+            // dependency key. Anything loaded in that window is picked up by the capture at
+            // the end of the MISS branch anyway, because the capture walks the live store.
+            AlRunner.Patches.RecordPatches.SetActiveDepCompanyBaseline(null);
             AlRunner.Patches.RecordPatches.InstallBaselineSnapshot? cached;
             // Permanent kill switch (see the field's doc comment above for why it exists):
             // forces every lookup to MISS, as if the cache were never populated, so the
@@ -367,6 +380,12 @@ public sealed class TestExecutor
             if (cached != null)
             {
                 AlRunner.Patches.RecordPatches.RestoreInstallBaselineSnapshot(cached);
+                // #2262: this is the snapshot the store now reflects, and the one a lazily
+                // loaded --test-data table has to be written into as well as the per-app-group
+                // singleton — otherwise the next app group on this key restores a snapshot the
+                // table is missing from. Registered at all three branches so the loader never
+                // has to care which tier answered.
+                AlRunner.Patches.RecordPatches.SetActiveDepCompanyBaseline(cached);
                 // #1867 proving-test hook: a stable, directly-assertable signal that this app
                 // group reused a prior computation instead of re-running dependency Install
                 // triggers + Company-Initialize. See InstallSeedDepCompanyCacheTests.
@@ -392,6 +411,7 @@ public sealed class TestExecutor
                     AlRunner.Patches.RecordPatches.RestoreInstallBaselineSnapshot(fromDisk);
                     lock (_depCompanyBaselineCacheLock)
                         _depCompanyBaselineCache[depKey] = fromDisk;
+                    AlRunner.Patches.RecordPatches.SetActiveDepCompanyBaseline(fromDisk);
                     // digest= is the round-trip PROOF, not decoration: the writing process
                     // logs the same digest for the snapshot it captured, so a test comparing
                     // the two strings across processes is asserting that every value in every
@@ -404,18 +424,19 @@ public sealed class TestExecutor
                 }
                 else
                 {
-                    // #2258: provision from the backup FIRST, then run setup code, then run
-                    // tests — the ordering real BC has, where the database with its data
-                    // exists before any extension is installed. The rows then become part of
-                    // the snapshot captured three lines down, so the per-test restore at each
-                    // codeunit boundary puts them back and InstallBaselineDisk persists them
-                    // across processes for free. No-op unless --test-data was passed.
-                    TestDataProvisioner.HydrateAll();
+                    // #2258 / #2262: the backup was armed above, before this block's cache
+                    // lookup, so a table these triggers touch is already backed by the
+                    // backup's rows when they read it — the ordering real BC has, where the
+                    // database with its data exists before any extension is installed. Such a
+                    // table loads INSIDE the capture window, so the capture below picks it up
+                    // by walking the live store and it is persisted with everything else, no
+                    // special handling.
                     InstallTriggerRunner.RunDependenciesOnly();
                     CompanyInitializer.EnsureCompanyInitialized();
                     var snapshot = AlRunner.Patches.RecordPatches.CaptureInstallBaselineSnapshot();
                     lock (_depCompanyBaselineCacheLock)
                         _depCompanyBaselineCache[depKey] = snapshot;
+                    AlRunner.Patches.RecordPatches.SetActiveDepCompanyBaseline(snapshot);
                     PerfTrace.Log($"InstallBaseline.DepCompanyCache MISS {shortKey}");
 
                     // Persist for the next process. Refusals are logged by the codec and cost

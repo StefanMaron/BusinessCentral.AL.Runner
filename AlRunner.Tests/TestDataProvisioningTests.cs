@@ -49,13 +49,13 @@ public sealed class TestDataProvisioningTests : IDisposable
     }
 
     [Fact]
-    public void WithoutTheFlag_HydrateAllDoesNothing()
+    public void WithoutTheFlag_ArmDoesNothing()
     {
         TestDataProvisioner.ResetForTests();
         // No backup is resolved, no reader is located, no exception: the whole path is
-        // skipped. If HydrateAll ever started work before checking the flag, this would throw
+        // skipped. If Arm ever started work before checking the flag, this would throw
         // TestDataUnavailableException or BackupReaderException on a machine without either.
-        TestDataProvisioner.HydrateAll();
+        TestDataProvisioner.Arm();
         Assert.Null(TestDataProvisioner.LastSummary);
     }
 

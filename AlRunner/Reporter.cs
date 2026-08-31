@@ -90,6 +90,14 @@ public static class Reporter
         // former pretending to be the latter.
         var wall = DateTime.Now - System.Diagnostics.Process.GetCurrentProcess().StartTime;
         w.WriteLine($"  wall:        {wall.TotalSeconds:F1}s");
+        // #2262: --test-data loads a table on first touch, so its outcome is only complete
+        // once the run is. Under the eager policy this line was printed by the provisioner
+        // itself, before any test ran; there is no such moment any more. Absent the flag
+        // (or with it, if nothing the suite touched was in the backup) there is no summary
+        // and nothing is printed, so a default run's output is unchanged.
+        var testData = AlRunner.TestDataProvisioner.LastSummary;
+        if (testData != null)
+            w.WriteLine(testData.Describe());
         w.WriteLine("=================================================================");
     }
 

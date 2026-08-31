@@ -449,17 +449,20 @@ https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
   does not aggregate or group rows; it silently returns each row's own unaggregated value.
   Tracked in [#2137](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2137).
 - **`--test-data` hydration coverage** — `--test-data` loads the in-memory database from the
-  BC backup shipped in the artifact cache before install triggers run (issue
-  [#2258](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2258)). The first
-  slice does not cover everything, and what it does not cover it **reports** — a skipped or
-  refused table is named on stderr with the reason, never silently emptied:
+  BC backup shipped in the artifact cache (issue
+  [#2258](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2258)). A table is
+  read the **first time the run touches it**, not up front
+  ([#2262](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2262)), because the
+  install baseline is re-inserted at every test boundary and so its size is a cost paid per
+  boundary rather than per run. Coverage does not extend to everything, and what it does not
+  cover it **reports** — a skipped or refused table is named on stderr with the reason, never
+  silently emptied:
   - Table-extension (`$ext`) fields ARE merged into the base record
     ([#2261](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2261)), with one
     declared exception: a companion column owned by an app **outside this run's app closure**
     has no AL field in this run's schema, so it is dropped and counted in the summary.
-  - Date, DateTime, Time and DateFormula values are refused; the codec will not assert a SQL
-    storage encoding no service tier has confirmed —
-    [#2259](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2259).
+  - Date, DateTime, Time and DateFormula values ARE rebuilt, from BC's own SQL-cell reader
+    ([#2259](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2259)).
   - BLOB, Media and MediaSet values are refused —
     [#2245](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2245).
   - BC's system columns (`SystemId`, `SystemCreatedAt`, …) are not hydrated —

@@ -192,6 +192,7 @@ public static partial class RecordPatches
         _metaXmlPortCache.Clear();
         _sourceDirs.Clear();
         _installBaseline = null;
+        SetActiveDepCompanyBaseline(null);
         _isolatedStorageBaseline = null;
         _recordLinkBaseline = null;
         _autoIncrementBaseline = null;
@@ -1267,6 +1268,34 @@ public static partial class RecordPatches
         AlRunner.BcRuntime.ResetSingleInstanceCache();
     }
 
+    /// <summary>
+    /// The --test-data on-demand load, installed by TestDataProvisioner.Arm() and null for
+    /// every run that did not pass the flag (so a default run pays one null check per
+    /// first-touch of a table). A delegate rather than a direct call because this file is the
+    /// MECHANISM half: which tables a backup offers, and from which backup, is policy, and it
+    /// lives in TestDataProvisioner. Arguments are (DataAccessSource, tableId).
+    /// </summary>
+    internal static Action<object, int>? TestDataOnDemandLoader;
+
+    /// <summary>Re-entrancy depth for the loader — NOT a "which tables are loaded" cache,
+    /// which #2262 rules out on purpose.
+    ///
+    /// Hydrating a table runs BC's own metadata and NavValue construction, and that code can
+    /// reach a Record of ANOTHER table, which lands back in GetDataAccessForTableCore and
+    /// would recurse. Skipping the nested load is safe rather than lossy: the nested table is
+    /// left with empty storage, which is the same state it would have had a moment earlier,
+    /// so the next independent touch of it loads it normally.</summary>
+    [ThreadStatic] private static int _testDataLoadDepth;
+
+    private static void InvokeTestDataOnDemandLoader(object source, int tableId)
+    {
+        var loader = TestDataOnDemandLoader;
+        if (loader == null || _testDataLoadDepth > 0) return;
+        _testDataLoadDepth++;
+        try { loader(source, tableId); }
+        finally { _testDataLoadDepth--; }
+    }
+
     public static object NavDataAccessSource_GetDataAccessForTable(object self, NCLMetaTable table, bool isTemporary)
     {
         var dataAccess = GetDataAccessForTableCore(self, table, isTemporary);
@@ -1496,6 +1525,22 @@ public static partial class RecordPatches
             var result = _mCreateTempDataAccess!.Invoke(self, new object[] { table })!;
             // Race: keep first winner.
             var added = perTable.GetOrAdd(tableId, result);
+            // ── --test-data on-demand load (#2262) ───────────────────────────────────────
+            // Reaching here means the store did NOT have this table, which is exactly when a
+            // --test-data run needs its rows read out of the backup. Same choke point the
+            // virtual tables above use, and for the same reason: it is the only place a
+            // table's storage is materialised, so the load always lands before the operation
+            // that triggered it — a read and a write are equally covered.
+            //
+            // Storage presence IS the "have we loaded this" answer, so there is no flag to
+            // keep in step: RestoreInstallBaselineSnapshot repopulates perTable from exactly
+            // the snapshot it restores, so a table the last restore carried is present and
+            // does not reach this line. See TestDataProvisioner's header.
+            //
+            // Only the GetOrAdd winner loads. A loser would be hydrating into storage it is
+            // about to throw away, and the winner's rows are already in the returned instance.
+            if (TestDataOnDemandLoader != null && ReferenceEquals(added, result))
+                InvokeTestDataOnDemandLoader(self, tableId);
             return added;
         }
         catch (Exception ex)

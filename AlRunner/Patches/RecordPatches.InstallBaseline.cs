@@ -34,7 +34,16 @@ namespace AlRunner.Patches;
 public static partial class RecordPatches
 {
     internal sealed record BaselineTable(int TableId, object MetaTable, NavValue[][] Rows);
-    internal sealed record BaselineSource(object Source, IReadOnlyList<BaselineTable> Tables);
+
+    /// <summary>One DataAccessSource's captured tables.
+    ///
+    /// <c>Tables</c> is a mutable <see cref="List{T}"/> rather than an IReadOnlyList, and that
+    /// is load-bearing rather than sloppy: <see cref="AppendBaselineTable"/> (#2262) adds a
+    /// lazily loaded --test-data table to a baseline that is already being held by other
+    /// references — the per-app-group singleton AND TestExecutor's dep+company cache both
+    /// hand out the same objects — so an append has to be visible through every one of them.
+    /// Replacing the record would only update whichever reference did the replacing.</summary>
+    internal sealed record BaselineSource(object Source, List<BaselineTable> Tables);
 
     /// <summary>An independent, self-contained snapshot of committed install state — the
     /// object-returning counterpart of the CaptureInstallBaseline()/RestoreInstallBaseline()
@@ -47,16 +56,92 @@ public static partial class RecordPatches
     /// Internal, not public: BaselineSource (a private table snapshot shape) is one of its
     /// fields, and the only cross-file consumer is TestExecutor.cs in this same assembly.</summary>
     internal sealed record InstallBaselineSnapshot(
-        IReadOnlyList<BaselineSource> Sources,
+        List<BaselineSource> Sources,
         object? IsolatedStorage,
         object? RecordLinks,
         IReadOnlyDictionary<int, long>? AutoIncrement);
 
-    private static IReadOnlyList<BaselineSource>? _installBaseline;
+    private static List<BaselineSource>? _installBaseline;
     private static object? _isolatedStorageBaseline;
     private static object? _recordLinkBaseline;
     private static IReadOnlyDictionary<int, long>? _autoIncrementBaseline;
     private static ConstructorInfo? _ibMutableBufferCtor;
+
+    /// <summary>The dep+company snapshot THIS app group was restored from (or captured
+    /// into) — the object TestExecutor also holds in its process-lifetime cache, so an append
+    /// here is seen by every later app group that takes a cache HIT on the same key.
+    ///
+    /// Registered by TestExecutor at all three branches of install-seed-dep-company-baseline.
+    /// Null outside that window, and null for every run that never gets there; nothing below
+    /// requires it to be set.</summary>
+    private static InstallBaselineSnapshot? _activeDepCompanyBaseline;
+
+    internal static void SetActiveDepCompanyBaseline(InstallBaselineSnapshot? snapshot)
+        => _activeDepCompanyBaseline = snapshot;
+
+    /// <summary>Test-only seam over the per-app-group baseline. A test exercising
+    /// AppendBaselineTable hands it a synthetic DataAccessSource, and leaving that in a
+    /// baseline some later test restores would hand _mCreateTempDataAccess an object that is
+    /// not a DataAccessSource at all. Save, null, act, restore.</summary>
+    internal static List<BaselineSource>? InstallBaselineForTests
+    {
+        get => _installBaseline;
+        set => _installBaseline = value;
+    }
+
+    /// <summary>
+    /// Record a table that was materialised OUTSIDE the capture window into the baselines the
+    /// store is restored from, so it survives the next codeunit/test boundary instead of
+    /// being wiped by ResetPerTestState and silently reloaded.
+    ///
+    /// This exists for #2262's lazy --test-data load. That load fires from
+    /// GetDataAccessForTableCore, which is reached at any point in a run — including in the
+    /// middle of a test, long after CaptureInstallBaselineSnapshot() walked the store. Rows
+    /// put in the store at that moment are invisible to every snapshot, so the very next
+    /// boundary would drop them.
+    ///
+    /// <paramref name="pristineRows"/> MUST be the rows as loaded, before any AL code could
+    /// touch them; they are deep-copied here exactly like the capture path (CloneValues), so
+    /// a test mutating the live row cannot reach back into a baseline.
+    ///
+    /// Idempotent per (source, tableId): a table already carried by a baseline is left alone
+    /// rather than appended twice. That cannot happen through the lazy loader — a table a
+    /// baseline carries is a table the restore put in the store, so the loader never fires
+    /// for it — but duplicating install-seeded rows is a bad enough outcome to guard rather
+    /// than argue about.
+    /// </summary>
+    internal static void AppendBaselineTable(object source, int tableId, object metaTable, NavValue[][] pristineRows)
+    {
+        var rows = new NavValue[pristineRows.Length][];
+        for (var i = 0; i < pristineRows.Length; i++)
+            rows[i] = CloneValues(pristineRows[i]);
+
+        if (_installBaseline != null)
+            AppendInto(_installBaseline, source, tableId, metaTable, rows);
+        // Both, deliberately (#2262): the per-app-group singleton is what a codeunit/test
+        // boundary restores, and the dep+company snapshot is what the NEXT app group on this
+        // dependency key is restored from before its own capture overwrites the singleton.
+        // Appending to only the first would make the table's presence depend on which app
+        // group happened to touch it.
+        if (_activeDepCompanyBaseline != null)
+            AppendInto(_activeDepCompanyBaseline.Sources, source, tableId, metaTable, rows);
+    }
+
+    private static void AppendInto(
+        List<BaselineSource> sources, object source, int tableId, object metaTable, NavValue[][] rows)
+    {
+        BaselineSource? target = null;
+        foreach (var candidate in sources)
+            if (ReferenceEquals(candidate.Source, source)) { target = candidate; break; }
+        if (target == null)
+        {
+            target = new BaselineSource(source, new List<BaselineTable>());
+            sources.Add(target);
+        }
+        foreach (var existing in target.Tables)
+            if (existing.TableId == tableId) return;   // already carried — see the doc comment
+        target.Tables.Add(new BaselineTable(tableId, metaTable, rows));
+    }
 
     public static void CaptureInstallBaseline()
     {

@@ -459,7 +459,7 @@ public static partial class RecordPatches
             }
 
             return new InstallBaselineSnapshot(
-                new[] { new BaselineSource(sourceObject, baselineTables) },
+                new List<BaselineSource> { new BaselineSource(sourceObject, baselineTables) },
                 isolatedStorage, recordLinks, autoIncrement);
         }
         catch (Exception ex)
