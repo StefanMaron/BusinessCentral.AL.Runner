@@ -16,6 +16,7 @@
 // same reflection path the real Cecil-rewritten NavMediaSet/NavMediaValueBase would.
 using System;
 using AlRunner.Patches;
+using Microsoft.Dynamics.Nav.Runtime;
 using Xunit;
 
 namespace AlRunner.Tests;
@@ -165,44 +166,38 @@ public sealed class MediaSetPatchesTests
     }
 
     /// <summary>
-    /// A SECOND `self` shape in the same process must not break the first.
+    /// A REAL NavMediaValueBase and this class's fake, in the same process, must both work.
     ///
-    /// MediaSetPatches used to cache its reflected NavMediaValueBase members in five plain
-    /// statics, filled from whichever `self` arrived first and reused for every one after.
-    /// One shape per process is the only case that works: with two, every call carrying the
-    /// loser type died with `TargetException: Object does not match target type` from inside a
-    /// reflection Invoke, and which one lost depended on test scheduling. It cost eight cases
-    /// in this class when an unrelated new test class shifted the order (PR #2275).
+    /// MediaSetPatches used to cache its reflected members in five plain statics behind
+    /// `if (_parentRecordProp != null) return;`, filled from whichever `self` arrived first.
+    /// A fake never latched that guard (it has no `ParentRecord`, so the field stayed null and
+    /// every call re-resolved), which is why this class passed for as long as it was the only
+    /// caller in the process. A REAL NavMediaSet does have `ParentRecord`: once one reached the
+    /// patch, the statics were pinned to NavMediaValueBase and every later call with the fake
+    /// died with `TargetException: Object does not match target type` from inside a reflection
+    /// Invoke. Which one lost depended on test scheduling — it cost eight cases in this class
+    /// when an unrelated new test class shifted the order (PR #2275).
     ///
-    /// AnotherFakeMediaValue is a DIFFERENT type exposing the same duck-typed surface, so this
-    /// reproduces the collision without needing a loaded BC runtime — and it asserts the
-    /// FakeMediaValue path still works after, which is the half the old code got wrong.
+    /// The real type first, then the fake, is therefore the order that reproduces it.
     /// </summary>
-    private sealed class AnotherFakeMediaValue
-    {
-        public FakeNavGuid Key { get; private set; } = new FakeNavGuid(Guid.Empty);
-        public void SaveValueToTableField(Guid guid) => Key = new FakeNavGuid(guid);
-    }
-
     [Fact]
-    public void TwoDifferentSelfShapes_InOneProcess_BothWork()
+    public void ARealNavMediaSet_AndTheFake_InOneProcess_BothWork()
     {
-        var other = new AnotherFakeMediaValue();
-        var otherMedia = Guid.NewGuid();
-        Assert.True(MediaSetPatches.NavMediaSet_ALInsert(other, new object(), otherMedia));
-        Assert.NotEqual(Guid.Empty, other.Key.Value);
-        Assert.Equal(1, MediaSetPatches.NavMediaSet_get_ALCount(other));
+        var real = new NavMediaSet(Guid.NewGuid(), -1);
+        var realMedia = Guid.NewGuid();
+        Assert.True(MediaSetPatches.NavMediaSet_ALInsert(real, new object(), realMedia));
+        Assert.Equal(1, MediaSetPatches.NavMediaSet_get_ALCount(real));
 
-        // The shape that arrived SECOND — this is the call that used to throw.
+        // The shape that arrives SECOND — this is the call that used to throw.
         var self = new FakeMediaValue();
         var mediaId = Guid.NewGuid();
         Assert.True(MediaSetPatches.NavMediaSet_ALInsert(self, new object(), mediaId));
         Assert.NotEqual(Guid.Empty, self.Key.Value);
         Assert.Equal(1, MediaSetPatches.NavMediaSet_get_ALCount(self));
 
-        // And the two are separate sets, not one shared by accident.
-        Assert.NotEqual(other.Key.Value, self.Key.Value);
-        Assert.False(MediaSetPatches.NavMediaSet_ALRemove(self, new object(), otherMedia));
+        // Two separate sets, not one shared by accident.
+        Assert.False(MediaSetPatches.NavMediaSet_ALRemove(self, new object(), realMedia));
         Assert.True(MediaSetPatches.NavMediaSet_ALRemove(self, new object(), mediaId));
+        Assert.Equal(1, MediaSetPatches.NavMediaSet_get_ALCount(real));
     }
 }
