@@ -1,0 +1,14 @@
+{
+  "id": "3c2a6d41-95b8-4f0e-9a3c-7d1b5e0f4c28",
+  "name": "Runner Extras - Test Data Hydration (local, needs a BC backup)",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "End-to-end proof that --test-data hydrates real rows from a BC .bak and AL reads them back.",
+  "description": "NOT RUN BY CI — see README.md. This bundle only passes when the runner is invoked with --test-data and a BC sandbox backup is present, which no CI leg has (the artifact is ~1 GB). It lives outside tests/runner-extras/ for exactly that reason: that directory is run wholesale, without the flag, on every matrix leg.",
+  "dependencies": [],
+  "platform": "1.0.0.0",
+  "application": "27.0.0.0",
+  "idRanges": [ { "from": 64400, "to": 64409 } ],
+  "runtime": "14.0",
+  "features": []
+}
