@@ -38,11 +38,26 @@
 //   Evidence: Microsoft.Dynamics.Nav.Ncl.dll from sandbox/28.1.49838.50621 and
 //   sandbox/27.5.46862.48827, decompiled — the read path is identical in both.
 //
-//   Still refused, and named when they are: Blob, Media, MediaSet (#2245), RecordId, Duration,
-//   TableFilter, a DB NULL in a non-string column (#2268 — BC's reader answers that one too,
-//   but it needs the NCLMetaField this method is not handed), and any column name that is not
-//   an AL field of the target table. Removing four reasons to refuse did not remove the
-//   ability to: measured on the shipped CRONUS backup, 41 tables still decline.
+//
+// WHY BLOB / MEDIA / MEDIASET / RECORDID ARE NO LONGER REFUSED (#2270), NOR A DB NULL (#2268)
+//   Same source, same method. Media, MediaSet and RecordId transcribe directly; the DB-NULL
+//   line above the switch — `(field.NclType == NavNclType.NavBlob) ? new NavBLOB(0)
+//   : field.EmptyValue` — is what #2268 asked for, and reaching field.EmptyValue is why this
+//   codec is now handed the field's own facts (TestDataFieldFacts) and not only its
+//   INavValueMetadata.
+//
+//   BLOB IS THE ONE THAT IS NOT A LINE-FOR-LINE COPY, and the deviation is deliberate. BC's
+//   row SELECT renders a Blob column as DATALENGTH(col), so its reader case builds a
+//   LENGTH-ONLY placeholder that a second, lazy query fills in. There is no second query here
+//   — this store IS the database — so the transcription target is that second method,
+//   NavSqlCommand.GetBlobDataFromReader: BC's four magic bytes plus a raw Deflate stream when
+//   the field is Compressed, verbatim bytes when it is not. The NavBlob case below quotes the
+//   original and names the measured evidence.
+//
+//   Still refused, and named when they are: Duration and TableFilter (BC's reader has a case
+//   for each, but no CRONUS table exercises either, so the shape the backup reader emits for
+//   them has never been measured here — #2271), and any column name that is not an AL field of
+//   the target table. Removing eight reasons to refuse did not remove the ability to.
 //
 // TABLE-EXTENSION FIELDS (issue #2261)
 //   BC splits an extended table across the base table and a `<table>$ext` companion. The
@@ -105,6 +120,45 @@ public static partial class RecordPatches
     /// merged columns belonged to an app this run does not have installed. The second number
     /// is reported rather than left implicit — see the file header, case (a).</summary>
     internal readonly record struct TestDataTableResult(int Rows, int ColumnsFromUninstalledApps);
+
+    /// <summary>
+    /// Everything BC's own SQL-cell reader reads off the field it is converting for. There are
+    /// exactly three things, and the last two are the reason this type exists at all:
+    /// <see cref="NCLMetaField.EmptyValue"/> (BC's answer for a DB NULL in ANY column type) and
+    /// <see cref="NCLMetaField.FieldIsCompressed"/> (whether a Blob column's stored bytes are
+    /// BC's compressed container). Neither is on <see cref="INavValueMetadata"/>, which is all
+    /// the codec used to be handed.
+    ///
+    /// It is a struct over an NCLMetaField rather than the NCLMetaField itself so the codec can
+    /// be exercised without a booted engine: BC constructs NCLMetaField only from a MetaField
+    /// plus a parent NCLMetaTable, and the conversion under test is pure over (these facts, the
+    /// JSON cell). <see cref="EmptyValue"/> is a delegate, not a value, because reading it is
+    /// only correct in the NULL branch — for a Blob or an enum Option it ALLOCATES on every
+    /// read, and the overwhelming majority of cells are not NULL.
+    /// </summary>
+    internal readonly struct TestDataFieldFacts
+    {
+        internal TestDataFieldFacts(INavValueMetadata metadata, Func<NavValue> emptyValue, bool storedCompressed)
+        {
+            Metadata = metadata;
+            EmptyValue = emptyValue;
+            StoredCompressed = storedCompressed;
+        }
+
+        internal INavValueMetadata Metadata { get; }
+
+        /// <summary>NCLMetaField.EmptyValue.</summary>
+        internal Func<NavValue> EmptyValue { get; }
+
+        /// <summary>NCLMetaField.FieldIsCompressed — set from the AL field's `Compressed`
+        /// property. Only meaningful for a Blob column.</summary>
+        internal bool StoredCompressed { get; }
+
+        internal NavNclType NclType => Metadata.NclType;
+
+        internal static TestDataFieldFacts For(NCLMetaField field)
+            => new(field, () => field.EmptyValue, field.FieldIsCompressed);
+    }
 
     /// <summary>
     /// Insert <paramref name="rows"/> into <paramref name="tableId"/>'s in-memory store.
@@ -244,7 +298,7 @@ public static partial class RecordPatches
                 continue;
             }
             values[fi] = ConvertTestDataValue(
-                metadata, json, tableId, tableName, field.FieldNo, field.FieldName);
+                TestDataFieldFacts.For(field), json, tableId, tableName, field.FieldNo, field.FieldName);
         }
         return values;
     }
@@ -258,34 +312,33 @@ public static partial class RecordPatches
     /// quoted inline at each case. A type that is not listed is refused, by design.
     /// </summary>
     internal static NavValue ConvertTestDataValue(
-        INavValueMetadata metadata, JsonElement json, int tableId, string tableName, int fieldNo, string columnName)
+        TestDataFieldFacts field, JsonElement json, int tableId, string tableName, int fieldNo, string columnName)
     {
+        var metadata = field.Metadata;
         string Refuse(string why) =>
             $"table {tableId} '{tableName}', column '{columnName}' (AL field {fieldNo}, {metadata.NclType}): {why}";
 
         var nclType = metadata.NclType;
-        var isStringLike = nclType is NavNclType.NavText or NavNclType.NavCode
-            or NavNclType.NavOemText or NavNclType.NavOemCode;
 
         if (json.ValueKind == JsonValueKind.Null)
         {
-            // A DB NULL. Only the string-like types are rebuilt here (the same restriction
-            // BC's own byte codec has — see RecordPatches.InstallBaselineDisk's KindNullString).
-            // BC's SQL READER does have an answer for every type — field.EmptyValue, and
-            // new NavBLOB(0) for a Blob — but reaching it needs the NCLMetaField this method is
-            // not handed. #2268 tracks it; measured, it is 11 of the 41 remaining refusals.
-            // Until then this refuses, which is the safe direction.
-            if (!isStringLike)
-                throw new TestDataHydrationRefusal(Refuse(
-                    "the backup holds a NULL, and this runner build only rebuilds NULLs for "
-                    + "Text/Code (see issue #2268 — BC's own SQL reader answers a NULL for every "
-                    + "type, but doing the same here needs metadata this codec is not handed)"));
-            return nclType switch
-            {
-                NavNclType.NavText or NavNclType.NavOemText =>
-                    new NavText(metadata.NavDefinedLengthMetadata, (string?)null),
-                _ => new NavCode(metadata.NavDefinedLengthMetadata, (string?)null),
-            };
+            // A DB NULL, and BC's reader is the whole answer (#2268):
+            //   if (reader.IsDBNull(columnIndex))
+            //       return (field.NclType == NavNclType.NavBlob) ? new NavBLOB(0) : field.EmptyValue;
+            //
+            // #2258 refused every non-string NULL on the grounds that "only Text/Code have a
+            // NavValue that can represent one". That was untrue of BC, which has an answer for
+            // a NULL in any column type, and it cost 11 of the 41 tables still refusing —
+            // every one of them over a NULL Blob, `Sales Header` among them.
+            //
+            // Note this is NOT a NULL-preserving conversion, in either arm, and it is not
+            // meant to be. `new NavBLOB(0)` is an empty, not-in-memory blob, and EmptyValue for
+            // a Text is NavText.Default(len) — an EMPTY string, not a null one. So BC's own
+            // record buffers never carry a null NavText read out of SQL, and neither do ours
+            // now. The two are indistinguishable from AL (both Value "", both compare equal,
+            // both Format to ''); they differ only in NavValue.IsNull, which nothing on the AL
+            // side reads.
+            return nclType == NavNclType.NavBlob ? new NavBLOB(0) : field.EmptyValue();
         }
 
         switch (nclType)
@@ -453,11 +506,95 @@ public static partial class RecordPatches
                 return CreateOrRefuse(() => new NavDateFormula(text, isTokenString: true), Refuse);
             }
 
+            // The four types below are #2270, and they are transcribed from the same method
+            // as the date/time ones — with ONE structural difference that has to be said out
+            // loud, because it is the only place this codec deliberately does not copy
+            // CreateNavValueFromReader line for line.
+
+            case NavNclType.NavBlob:
+            {
+                // BC's row SELECT does not fetch a Blob's bytes at all. It renders the column
+                // as DATALENGTH(col) (NavSqlStatementHelper.AppendFieldList, column list type
+                // DataLengthInsteadOfBlobs), so its reader case is
+                //     case NavNclType.NavBlob: return new NavBLOB(reader.GetInt32(i));
+                // — a placeholder carrying a LENGTH and no content, which BC fills in later,
+                // lazily, from a second query. There is no second query here: this store IS
+                // the database, and a length-only blob would read back as empty in AL.
+                //
+                // So the transcription target is the method that does the filling,
+                // NavSqlCommand.GetBlobDataFromReader:
+                //     if (isCompressed) {
+                //         byte[] magic = new byte[4];
+                //         if (blobReaderStream.Read(magic, 0, 4) < 4 || !NavBLOB.BlobMagicOk(magic))
+                //             return 22926086;
+                //         using DeflateStream d = new(blobReaderStream, CompressionMode.Decompress);
+                //         d.CopyTo(stream, num - 4);
+                //     } else blobReaderStream.CopyTo(stream);
+                // with isCompressed = blobField.FieldIsCompressed. Measured on the shipped
+                // CRONUS backup: Company Information."Picture" is 12,921 stored bytes that
+                // deflate to a 15,225-byte JPEG, and Retention Policy Setup Line."Table
+                // Filter" to `VERSION(1) SORTING(Field1) WHERE(Field25=1(1))`.
+                var stored = ParseTestDataHexBytes(json, Refuse);
+                if (stored.Length == 0) return NavBLOB.Default();
+                return new NavBLOB(DecodeTestDataBlobBytes(stored, field.StoredCompressed, Refuse));
+            }
+
+            case NavNclType.NavMedia:
+            case NavNclType.NavMediaSet:
+            {
+                // BC:
+                //   case NavNclType.NavMedia:    return new NavMedia(reader.GetGuid(i), parentTableId);
+                //   case NavNclType.NavMediaSet: return new NavMediaSet(reader.GetGuid(i), parentTableId);
+                //
+                // The stored cell is the media (or media-set) id and nothing else — measured,
+                // the reader hands back "57C8E273-1769-4173-AAED-0A56E3ADCB8D" for Word
+                // Template "EVENT".Template. The BYTES behind that id live in Tenant Media,
+                // which is a table like any other; nothing here fabricates them.
+                //
+                // parentTableId is -1 because that is what BC's own row read passes: its
+                // ReaderToRecord calls the three-argument overload, whose default is -1, and
+                // NavRecord.GetFieldValue then COPIES the value and calls
+                // SetOwnerRecordInformation with the real table id before AL ever sees it. So
+                // the id stored in the buffer is never the one read.
+                if (json.ValueKind != JsonValueKind.String || !Guid.TryParse(json.GetString(), out var mediaId))
+                    throw new TestDataHydrationRefusal(Refuse(
+                        $"expected a media id GUID string, got {json.ValueKind} '{json}'"));
+                return CreateOrRefuse(
+                    () => nclType == NavNclType.NavMedia
+                        ? new NavMedia(mediaId, parentId: -1)
+                        : new NavMediaSet(mediaId, parentId: -1),
+                    Refuse);
+            }
+
+            case NavNclType.NavRecordId:
+            {
+                // BC:
+                //   byte[] a = new byte[448];
+                //   reader.GetBytes(columnIndex, 0L, a, 0, a.Length);
+                //   return new NavRecordId(a);
+                //
+                // SqlDataReader.GetBytes copies min(stored, 448) and leaves the rest zero, so
+                // a short cell is legal and the buffer is what makes it so — measured, both
+                // RecordId columns in the shipped CRONUS backup hold six zero bytes. The
+                // buffer is reproduced rather than passing the stored bytes straight through
+                // because NavRecordId's parse walks to a uint16 terminator, and trailing zeros
+                // are what terminates it.
+                var stored = ParseTestDataHexBytes(json, Refuse);
+                if (stored.Length > NavRecordId.MaxByteSize)
+                    throw new TestDataHydrationRefusal(Refuse(
+                        $"the backup holds {stored.Length} bytes, more than the "
+                        + $"{NavRecordId.MaxByteSize} BC reads into a RecordId"));
+                var buffer = new byte[NavRecordId.MaxByteSize];
+                Array.Copy(stored, buffer, stored.Length);
+                return CreateOrRefuse(() => new NavRecordId(buffer), Refuse);
+            }
+
             default:
-                // Duration/Blob/Media/MediaSet/RecordId/TableFilter/…
-                // Not "unsupported forever" — unproven. Rebuilding them needs BC's SQL
-                // storage encoding for that type, and this codec will not assert one it has
-                // not established. LOB/binary is tracked in #2245.
+                // Duration/TableFilter/…
+                // Not "unsupported forever" — unproven. BC's reader has a case for both, but
+                // no table in the shipped CRONUS data exercises either, so the shape the
+                // backup reader emits for them has never been measured here and this codec
+                // will not invent one. See #2271.
                 throw new TestDataHydrationRefusal(Refuse(
                     "this runner build cannot yet rebuild that AL type from a backup value"));
         }
@@ -521,6 +658,93 @@ public static partial class RecordPatches
             $"the backup holds '{value:yyyy-MM-dd HH:mm:ss.fff}', which is earlier than the "
             + $"{TestDataSqlDateFirstValid:yyyy-MM-dd} floor BC will write to a SQL datetime column and is "
             + "not its blank sentinel either, so the reader decoded something BC cannot have stored"));
+    }
+
+    /// <summary>BC's own <c>NavBLOB.BlobMagic</c>, transcribed. A Blob column whose field is
+    /// Compressed stores these four bytes followed by a RAW Deflate stream — that is what
+    /// <c>NavBLOB.GetSqlWritableValue(compressed: true)</c> writes and what
+    /// <c>NavSqlCommand.GetBlobDataFromReader</c> reads back.</summary>
+    private static readonly byte[] TestDataBlobMagic = { 0x02, 0x45, 0x7D, 0x5B };
+
+    /// <summary>
+    /// The one shape the reader emits for every binary column — a JSON string
+    /// <c>0x&lt;hex&gt;</c>, measured across the Blob, Media-less binary and RecordId cells it
+    /// produced for CRONUS from <c>sandbox/28.1.49838.50621/w1/BusinessCentral-W1.bak</c>.
+    /// Anything else refuses: a decoding change this codec silently reinterpreted would put
+    /// wrong bytes in the store with nothing to notice it.
+    /// </summary>
+    private static byte[] ParseTestDataHexBytes(JsonElement json, Func<string, string> refuse)
+    {
+        if (json.ValueKind != JsonValueKind.String)
+            throw new TestDataHydrationRefusal(refuse(
+                $"expected a 0x-prefixed hex string, got {json.ValueKind} '{json}'"));
+        var text = json.GetString() ?? string.Empty;
+        if (!text.StartsWith("0x", StringComparison.Ordinal))
+            throw new TestDataHydrationRefusal(refuse(
+                $"'{text}' is not the 0x-prefixed hex string the reader is known to emit for a "
+                + "binary column"));
+        var hex = text.AsSpan(2);
+        if (hex.Length % 2 != 0)
+            throw new TestDataHydrationRefusal(refuse(
+                $"'{text}' has an odd number of hex digits, so it cannot be a byte sequence"));
+        try { return System.Convert.FromHexString(hex); }
+        catch (FormatException)
+        {
+            throw new TestDataHydrationRefusal(refuse($"'{text}' is not valid hexadecimal"));
+        }
+    }
+
+    /// <summary>
+    /// <c>NavSqlCommand.GetBlobDataFromReader</c>, transcribed: unwrap BC's compressed
+    /// container when the field says it is compressed, and take the bytes verbatim when it
+    /// does not.
+    ///
+    /// Both mismatches refuse rather than fall back to the other branch, and that is the whole
+    /// point of the method. BC's read path returns error 22926086 when a compressed field's
+    /// bytes do not start with the magic — it does not shrug and treat them as content. The
+    /// mirror case (the field says uncompressed, the bytes carry the container) has no BC
+    /// precedent because BC's write path cannot produce it; it means this build's metadata and
+    /// the backup disagree about the field, and storing the container as if it were the value
+    /// would be the silent-wrong outcome .claude/rules/loud-failures.md exists to stop.
+    /// </summary>
+    private static byte[] DecodeTestDataBlobBytes(byte[] stored, bool compressed, Func<string, string> refuse)
+    {
+        var carriesContainer = stored.Length >= TestDataBlobMagic.Length
+            && stored.AsSpan(0, TestDataBlobMagic.Length).SequenceEqual(TestDataBlobMagic);
+
+        if (!compressed)
+        {
+            if (carriesContainer)
+                throw new TestDataHydrationRefusal(refuse(
+                    "this build's field metadata says the column is not compressed, but the "
+                    + "backup's bytes start with BC's compressed-BLOB marker — one of the two is "
+                    + "wrong about the field, and storing the container as the value would be a "
+                    + "silently wrong blob"));
+            return stored;
+        }
+
+        if (!carriesContainer)
+            throw new TestDataHydrationRefusal(refuse(
+                $"this build's field metadata says the column is compressed, but its {stored.Length} "
+                + "stored byte(s) do not start with BC's compressed-BLOB marker (BC's own reader "
+                + "fails with 22926086 here rather than reading them as content)"));
+
+        try
+        {
+            using var source = new MemoryStream(stored, TestDataBlobMagic.Length,
+                stored.Length - TestDataBlobMagic.Length, writable: false);
+            using var deflate = new System.IO.Compression.DeflateStream(
+                source, System.IO.Compression.CompressionMode.Decompress);
+            using var content = new MemoryStream();
+            deflate.CopyTo(content);
+            return content.ToArray();
+        }
+        catch (InvalidDataException ex)
+        {
+            throw new TestDataHydrationRefusal(refuse(
+                $"the column's stored bytes carry BC's compressed-BLOB marker but are not a "
+                + $"Deflate stream ({ex.Message})"));
+        }
     }
 
     /// <summary>

@@ -52,8 +52,12 @@ internal static class TestDataOptions
     ///     triggers. A version-3 baseline holds every hydratable table's rows and would be
     ///     restored, in full, at every codeunit/test boundary — which is precisely the
     ///     per-boundary cost this version exists to stop paying. It deserialises fine, so
-    ///     nothing but the version keeps a run from silently inheriting the eager cost.</summary>
-    internal const int HydrationSchemaVersion = 4;
+    ///     nothing but the version keeps a run from silently inheriting the eager cost.
+    /// 5 — #2270 and #2268: Blob, Media, MediaSet, RecordId and Duration rebuilt, and a DB
+    ///     NULL answered for every column type instead of only Text/Code. A version-4 baseline
+    ///     deserialises fine and is silently missing every table one of those used to veto —
+    ///     29 of the 41 still refusing after #2259.</summary>
+    internal const int HydrationSchemaVersion = 5;
 
     /// <summary>Off unless --test-data was passed. Absent the flag NOTHING here runs: no
     /// backup is opened, no reader is located, and CacheIdentity() returns the empty string
