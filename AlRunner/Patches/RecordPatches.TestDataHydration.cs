@@ -51,15 +51,21 @@ public static partial class RecordPatches
 
     /// <summary>
     /// Insert <paramref name="rows"/> into <paramref name="tableId"/>'s in-memory store.
-    /// <paramref name="rows"/> is one dictionary per row, keyed by AL FIELD ID (not name —
-    /// ids are stable identity, names are not).
-    /// Throws <see cref="TestDataHydrationRefusal"/> before touching the store if any value
+    /// <paramref name="rows"/> is one dictionary per row, keyed by the AL field NAME the
+    /// reader emitted (BC's system columns already dropped by the caller).
+    ///
+    /// Every key must resolve to a field of the target NCLMetaTable — the metatable the row
+    /// is actually inserted into. A key that does not resolve refuses the table rather than
+    /// being dropped: an unresolvable name means the reader decoded a column this runner
+    /// build has no AL field for, and hydrating the rest would ship a knowingly incomplete
+    /// record.
+    ///
+    /// Throws <see cref="TestDataHydrationRefusal"/> BEFORE touching the store if any value
     /// cannot be rebuilt, so a refusal never leaves rows behind.
     /// </summary>
     internal static int HydrateTestDataTable(
         int tableId, string tableNameForDiagnostics,
-        IReadOnlyList<IReadOnlyDictionary<int, JsonElement>> rows,
-        IReadOnlyDictionary<int, string> fieldNamesById)
+        IReadOnlyList<IReadOnlyDictionary<string, JsonElement>> rows)
     {
         if (rows.Count == 0) return 0;
 
@@ -72,10 +78,23 @@ public static partial class RecordPatches
             ?? throw new TestDataHydrationRefusal(
                 $"table {tableId} '{tableNameForDiagnostics}': the skeleton session has no DataAccessSource yet");
 
+        var fieldByName = new Dictionary<string, NCLMetaField>(StringComparer.Ordinal);
+        for (var fi = 0; fi < meta.FieldCount; fi++)
+        {
+            var f = meta.GetFieldByIndex(fi);
+            fieldByName[f.FieldName] = f;
+        }
+        foreach (var name in rows.SelectMany(r => r.Keys).Distinct(StringComparer.Ordinal))
+            if (!fieldByName.ContainsKey(name))
+                throw new TestDataHydrationRefusal(
+                    $"table {tableId} '{tableNameForDiagnostics}': the backup has a column '{name}' that is "
+                    + "not a field of the AL table this runner build would insert into, so the rows cannot "
+                    + "be rebuilt faithfully");
+
         // Build EVERY row first. A refusal in row 900 must not leave rows 1-899 in the store.
         var built = new NavValue[rows.Count][];
         for (var ri = 0; ri < rows.Count; ri++)
-            built[ri] = BuildTestDataRow(meta, tableId, tableNameForDiagnostics, rows[ri], fieldNamesById);
+            built[ri] = BuildTestDataRow(meta, tableId, tableNameForDiagnostics, rows[ri], fieldByName);
 
         var perTable = _dataAccessByTable.GetValue(source,
             static _ => new System.Collections.Concurrent.ConcurrentDictionary<int, object>());
@@ -108,14 +127,14 @@ public static partial class RecordPatches
 
     private static NavValue[] BuildTestDataRow(
         NCLMetaTable meta, int tableId, string tableName,
-        IReadOnlyDictionary<int, JsonElement> row, IReadOnlyDictionary<int, string> fieldNamesById)
+        IReadOnlyDictionary<string, JsonElement> row, IReadOnlyDictionary<string, NCLMetaField> fieldByName)
     {
         var values = new NavValue[meta.FieldCount];
         for (var fi = 0; fi < meta.FieldCount; fi++)
         {
             var field = meta.GetFieldByIndex(fi);
             var metadata = (INavValueMetadata)field;
-            if (!row.TryGetValue(field.FieldNo, out var json))
+            if (!row.TryGetValue(field.FieldName, out var json))
             {
                 // No stored value for this field in the backup: a FlowField, a system column
                 // (see the file header), or a field this app version added. BC's own default
@@ -124,8 +143,8 @@ public static partial class RecordPatches
                 values[fi] = NavValue.CreateNavValueFromObject(metadata, null);
                 continue;
             }
-            var columnName = fieldNamesById.TryGetValue(field.FieldNo, out var n) ? n : field.FieldName;
-            values[fi] = ConvertTestDataValue(metadata, json, tableId, tableName, field.FieldNo, columnName);
+            values[fi] = ConvertTestDataValue(
+                metadata, json, tableId, tableName, field.FieldNo, field.FieldName);
         }
         return values;
     }

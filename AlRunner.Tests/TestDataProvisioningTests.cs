@@ -287,52 +287,6 @@ public sealed class TestDataProvisioningTests : IDisposable
         Assert.Contains("unrecognised", ex.Message, StringComparison.Ordinal);
     }
 
-    private const string DescribeOutput =
-        "Table 308 \"No. Series\" — app \"Business Foundation\" (f3552374-a1f2-4356-848e-196002525837)\n"
-      + "SQL object: CRONUS International Ltd_$No_ Series$f3552374-a1f2-4356-848e-196002525837\n"
-      + "    Id  AL name                                  AL type                      SQL column                               SQL type\n"
-      + "     1  Code                                     Code[20]                     Code                                     nvarchar(20)\n"
-      + "     2  Description                              Text[100]                    Description                              nvarchar(100)\n"
-      + "     3  Default Nos.                             Boolean                      Default Nos_                             tinyint\n"
-      + "     -  -                                        -                            $systemId                                uniqueidentifier (system column)\n";
-
-    [Fact]
-    public void ParseDescribe_MapsAlFieldIdsAndFlagsSystemColumns()
-    {
-        var schema = BackupCatalog.ParseDescribe(DescribeOutput, "No_ Series");
-
-        Assert.Equal(308, schema.AlTableId);
-        Assert.Equal("No. Series", schema.AlTableName);
-        Assert.Equal("Business Foundation", schema.AppName);
-        Assert.Equal(4, schema.Columns.Count);
-
-        Assert.Equal(1, schema.Columns[0].AlFieldId);
-        Assert.Equal("Code", schema.Columns[0].AlName);
-        Assert.Equal("Code[20]", schema.Columns[0].AlType);
-        Assert.Equal("Code", schema.Columns[0].SqlColumn);
-        Assert.Equal("nvarchar(20)", schema.Columns[0].SqlType);
-
-        Assert.Equal(3, schema.Columns[2].AlFieldId);
-        Assert.Equal("Default Nos.", schema.Columns[2].AlName);
-
-        Assert.True(schema.Columns[3].IsSystemColumn);
-        Assert.Equal("$systemId", schema.Columns[3].SqlColumn);
-    }
-
-    [Fact]
-    public void ParseDescribe_RefusesAColumnLineThatOverflowsItsFixedWidthLayout()
-    {
-        // A field name one character too long pushes every later column right. Slicing it
-        // anyway would produce a WRONG AL field id — the one error that would corrupt
-        // hydrated rows without failing anything — so it is refused instead.
-        var header = "    Id  AL name                                  AL type                      SQL column                               SQL type";
-        var overflowing = "     1  " + new string('X', 42) + "Code[20]                     Code                                     nvarchar(20)";
-        var output = "Table 308 \"No. Series\" — app \"Business Foundation\" (x)\n" + header + "\n" + overflowing + "\n";
-
-        var ex = Assert.Throws<BackupReaderException>(() => BackupCatalog.ParseDescribe(output, "No_ Series"));
-        Assert.Contains("overflows", ex.Message, StringComparison.Ordinal);
-    }
-
     // ───────────────────────────────────── exclusion-rule contract ──
 
     [Fact]
@@ -386,23 +340,38 @@ public sealed class TestDataProvisioningTests : IDisposable
     // ───────────────────────────────────────── row projection ──
 
     [Fact]
-    public void ParseRows_KeysValuesByAlFieldIdAndDropsUnmappedColumns()
+    public void ParseRows_KeepsAlColumnsAndDropsBcsOwnBookkeepingColumns()
     {
         const string json =
             "[{\"timestamp\": \"0x01\", \"Code\": \"A-BLK\", \"Description\": \"Assembly Blanket Orders\", "
-          + "\"Default Nos.\": 1, \"$systemId\": \"C749D1DB-D953-F111-8E26-7CED8D9E4094\"}]";
-        var map = new Dictionary<string, int> { ["Code"] = 1, ["Description"] = 2, ["Default Nos."] = 3 };
+          + "\"Default Nos.\": 1, \"$systemId\": \"C749D1DB-D953-F111-8E26-7CED8D9E4094\", "
+          + "\"$systemCreatedAt\": \"2026-05-19 23:24:22.700\"}]";
 
-        var rows = TestDataProvisioner.ParseRows(json, map);
+        var rows = TestDataProvisioner.ParseRows(json);
 
         Assert.Single(rows);
         Assert.Equal(3, rows[0].Count);
-        Assert.Equal("A-BLK", rows[0][1].GetString());
-        Assert.Equal("Assembly Blanket Orders", rows[0][2].GetString());
-        Assert.Equal(1, rows[0][3].GetInt32());
-        // `timestamp` and `$systemId` carry no AL field id, so they are not projected —
-        // see RecordPatches.TestDataHydration's header for why they are excluded rather
-        // than mapped onto AL fields 2000000000-2000000004.
-        Assert.DoesNotContain(0, rows[0].Keys);
+        Assert.Equal("A-BLK", rows[0]["Code"].GetString());
+        Assert.Equal("Assembly Blanket Orders", rows[0]["Description"].GetString());
+        Assert.Equal(1, rows[0]["Default Nos."].GetInt32());
+
+        // `timestamp` and the `$system*` columns are BC's own bookkeeping. Mapping them back
+        // onto AL fields 2000000000-2000000004 would rest on a convention no service tier has
+        // confirmed here, so they are dropped — declared, and stated in the hydration summary,
+        // never silently mixed into a row. See RecordPatches.TestDataHydration's header.
+        Assert.DoesNotContain("timestamp", rows[0].Keys);
+        Assert.DoesNotContain("$systemId", rows[0].Keys);
+        Assert.DoesNotContain("$systemCreatedAt", rows[0].Keys);
+    }
+
+    [Fact]
+    public void SystemColumnNameSet_CoversEveryColumnBcMaintainsItself()
+    {
+        // Pinned as a set rather than left implicit: a `$system*` column that fell out of it
+        // would be offered to the metatable as an AL field name, not match, and refuse the
+        // table — turning a BC bookkeeping column into a whole-table outage.
+        Assert.Equal(
+            new[] { "$systemCreatedAt", "$systemCreatedBy", "$systemId", "$systemModifiedAt", "$systemModifiedBy", "timestamp" },
+            AlRunner.Patches.RecordPatches.TestDataSystemColumnNames.OrderBy(n => n, StringComparer.Ordinal).ToArray());
     }
 }

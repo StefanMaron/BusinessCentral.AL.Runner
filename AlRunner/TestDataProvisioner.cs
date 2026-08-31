@@ -114,39 +114,12 @@ internal static class TestDataProvisioner
             throw new TestDataHydrationRefusal(
                 $"table '{entry.TableName}': the run's app closure does not define it, so it has no AL table id");
 
-        var describeArgs = SymbolArgs(
-            new[] { "describe", backup, "--table", entry.TableName, "--company", company }, symbols);
-        BackupTableSchema schema;
-        try { schema = BackupCatalog.ParseDescribe(BackupReaderTool.Run(describeArgs), entry.TableName); }
-        catch (BackupReaderException ex)
-        {
-            throw new TestDataHydrationRefusal($"table '{entry.TableName}': {ex.Message}");
-        }
-
-        // Cross-check, not decoration: `tables` and `describe` resolve the AL identity through
-        // different paths, and a disagreement means one of them matched a different physical
-        // table than the row count came from.
-        if (schema.AlTableId != entry.AlTableId)
-            throw new TestDataHydrationRefusal(
-                $"table '{entry.TableName}': `tables` reports AL id {entry.AlTableId} but `describe` "
-                + $"reports {schema.AlTableId}; refusing rather than hydrating the wrong table");
-
-        var fieldIdByColumn = new Dictionary<string, int>(StringComparer.Ordinal);
-        var columnByFieldId = new Dictionary<int, string>();
-        foreach (var col in schema.Columns)
-        {
-            if (col.IsSystemColumn) continue;            // declared exclusion — see the mechanism's header
-            if (col.SqlColumn == "-") continue;           // FlowField / not stored
-            fieldIdByColumn[col.AlName] = col.AlFieldId!.Value;
-            columnByFieldId[col.AlFieldId!.Value] = col.AlName;
-        }
-
         var readArgs = SymbolArgs(
             new[] { "read", backup, "--table", entry.TableName, "--company", company, "--format", "json" }, symbols);
         var json = BackupReaderTool.Run(readArgs);
 
-        List<IReadOnlyDictionary<int, JsonElement>> rows;
-        try { rows = ParseRows(json, fieldIdByColumn); }
+        List<IReadOnlyDictionary<string, System.Text.Json.JsonElement>> rows;
+        try { rows = ParseRows(json); }
         catch (JsonException ex)
         {
             throw new TestDataHydrationRefusal(
@@ -154,20 +127,27 @@ internal static class TestDataProvisioner
         }
 
         return RecordPatches.HydrateTestDataTable(
-            entry.AlTableId.Value, entry.TableName, rows, columnByFieldId);
+            entry.AlTableId.Value, entry.TableName, rows);
     }
 
-    internal static List<IReadOnlyDictionary<int, JsonElement>> ParseRows(
-        string json, IReadOnlyDictionary<string, int> fieldIdByColumn)
+    /// <summary>
+    /// Project the reader's JSON array into one dictionary per row, keyed by the AL field
+    /// NAME the reader emitted. BC's own bookkeeping columns are dropped here (they carry no
+    /// AL field the runner will insert into — see RecordPatches.TestDataHydration's header);
+    /// every remaining key must resolve against the target metatable, or the table is refused.
+    /// </summary>
+    internal static List<IReadOnlyDictionary<string, JsonElement>> ParseRows(string json)
     {
         using var doc = JsonDocument.Parse(json);
-        var rows = new List<IReadOnlyDictionary<int, JsonElement>>();
+        var rows = new List<IReadOnlyDictionary<string, JsonElement>>();
         foreach (var element in doc.RootElement.EnumerateArray())
         {
-            var row = new Dictionary<int, JsonElement>();
+            var row = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
             foreach (var prop in element.EnumerateObject())
-                if (fieldIdByColumn.TryGetValue(prop.Name, out var fieldId))
-                    row[fieldId] = prop.Value.Clone();
+            {
+                if (RecordPatches.TestDataSystemColumnNames.Contains(prop.Name)) continue;
+                row[prop.Name] = prop.Value.Clone();
+            }
             rows.Add(row);
         }
         return rows;
