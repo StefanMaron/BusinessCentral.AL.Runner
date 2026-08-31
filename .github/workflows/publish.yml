@@ -290,11 +290,25 @@ jobs:
         # given version, so the ContentHash an end user's run computes from it is stable.
         # Commit-embedding only invalidates caches when the SAME code is rebuilt
         # commit-to-commit — the dev/CI/test-matrix path, never the release path.
+        #
+        # -p:UseAppHost=false: PackAsTool's "any" (portable) moniker never ships a native
+        # apphost anyway — confirmed empirically (tools/net8.0/any/ in a packed nupkg has no
+        # apphost file; `dotnet tool install --global` generates its own launcher from the
+        # SDK's own apphost template at install time, per the issue's own "what this workflow
+        # cannot claim" note). Skipping it here also sidesteps a real cross-platform break:
+        # this job's Linux apphost (ELF, extensionless "al-runner") isn't the Windows-named
+        # "apphost.exe" the sign-and-pack job's `dotnet pack --no-build` looks for when it
+        # re-runs Publish's file-copy phase on a Windows runner (reproduced against a real dry
+        # run) — turning generation off entirely removes that mismatch instead of working
+        # around it. Unrelated to bc-tests.yml's OWN "cold-cache binary smoke test" step, which
+        # does a completely separate `dotnet build AlRunner/` with no property overrides shared
+        # with this workflow, and still gets (and needs) its own Linux apphost.
         run: |
           dotnet publish AlRunner/ -c Release \
             -p:_BCVersion=${{ needs.test.outputs.required-version }} \
             -p:AllowBcArtifactDownload=true -p:Version=${{ inputs.version }} \
-            -p:SuppressImplicitGitSourceLink=false -p:IncludeSourceRevisionInInformationalVersion=true
+            -p:SuppressImplicitGitSourceLink=false -p:IncludeSourceRevisionInInformationalVersion=true \
+            -p:UseAppHost=false
 
       - name: Upload the unsigned build tree
         # The FULL obj/bin tree for all three projects, not just bin/publish/ — see
@@ -442,7 +456,7 @@ jobs:
         # release pays for a BC service-tier download on the Windows runner too, in addition to
         # the one the build job already did on Linux -- accepted cost, not optimized further
         # here.
-        run: dotnet pack AlRunner/ --no-build -c Release -p:_BCVersion=${{ needs.test.outputs.required-version }} -p:AllowBcArtifactDownload=true -p:Version=${{ inputs.version }} -p:SuppressImplicitGitSourceLink=false -p:IncludeSourceRevisionInInformationalVersion=true -p:EngineVariantsStagingDir="${{ github.workspace }}\variants-staging" -o nupkg
+        run: dotnet pack AlRunner/ --no-build -c Release -p:_BCVersion=${{ needs.test.outputs.required-version }} -p:AllowBcArtifactDownload=true -p:Version=${{ inputs.version }} -p:SuppressImplicitGitSourceLink=false -p:IncludeSourceRevisionInInformationalVersion=true -p:UseAppHost=false -p:EngineVariantsStagingDir="${{ github.workspace }}\variants-staging" -o nupkg
 
       - name: Verify every PE in the packed nupkg is signed (pre-upload sanity)
         shell: pwsh
