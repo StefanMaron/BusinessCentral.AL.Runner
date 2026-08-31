@@ -253,6 +253,29 @@ public sealed class TestExecutor
     /// itself, it only obeys the token. Default is <c>default</c> (never
     /// cancellable), so every existing CLI/non-server caller is unaffected.
     /// </summary>
+    /// <summary>
+    /// The key BOTH install-baseline cache tiers are consulted by: the in-memory
+    /// <c>_depCompanyBaselineCache</c> directly, and the disk tier via
+    /// <c>InstallBaselineDiskCache.BuildKeyText(depKey, schemaVersion)</c>.
+    ///
+    /// #2258: the dependency-assembly set alone is NOT a complete identity once --test-data
+    /// exists. Neither tier knows anything about test data, so a key built from the
+    /// dependency set alone lets a snapshot captured from an EMPTY database be restored into
+    /// a run that asked for the backup's rows — and that run then proceeds against an empty
+    /// database with no error anywhere, which is the silent-wrong-answer class
+    /// .claude/rules/loud-failures.md exists to prevent. Folding
+    /// <see cref="AlRunner.Infrastructure.TestDataOptions.CacheIdentity"/> in here makes the
+    /// two runs different cache entries.
+    ///
+    /// A named function rather than an expression inlined at the call site so the claim is
+    /// directly assertable — see TestDataProvisioningTests.
+    /// CacheIdentity() returns the empty string when --test-data is off, so a default run's
+    /// key is byte-identical to what it was before #2258.
+    /// </summary>
+    internal static string CurrentInstallBaselineCacheKey()
+        => InstallTriggerRunner.CurrentDependencySetKey()
+         + AlRunner.Infrastructure.TestDataOptions.CacheIdentity();
+
     public IReadOnlyList<TestResult> Run(Assembly assembly, Action<TestResult>? onTestComplete = null,
         System.Threading.CancellationToken cancellationToken = default)
     {
@@ -329,15 +352,7 @@ public sealed class TestExecutor
         // exactly matching the order the uncached path always ran in.
         using (AlRunner.Infrastructure.PhaseLog.AppStage("install-seed-dep-company-baseline"))
         {
-            // #2258: --test-data folds its identity (backup file, company, reader build,
-            // hydration schema) into depKey BEFORE either cache tier is consulted. Neither
-            // tier knows anything about test data on its own, so without this a snapshot
-            // captured from an EMPTY database is restored into a run that asked for the
-            // backup's rows, and that run proceeds against an empty database with no error
-            // anywhere. CacheIdentity() returns "" when --test-data is off, so a default run's
-            // key is byte-identical to what it was before this change.
-            var depKey = InstallTriggerRunner.CurrentDependencySetKey()
-                + AlRunner.Infrastructure.TestDataOptions.CacheIdentity();
+            var depKey = CurrentInstallBaselineCacheKey();
             AlRunner.Patches.RecordPatches.InstallBaselineSnapshot? cached;
             // Permanent kill switch (see the field's doc comment above for why it exists):
             // forces every lookup to MISS, as if the cache were never populated, so the
