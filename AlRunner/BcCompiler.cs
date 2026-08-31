@@ -2138,15 +2138,44 @@ public sealed partial class BcCompiler
     // object silently fails to match and the retry loop can't identify it (confirmed via a
     // synthetic repro in AlRunner.Tests/BcCompilerEmitRetryTests.cs — the very first version of
     // this regex required a namespace and produced zero matches for a namespace-less crash).
+    //
+    // Issue #2238: a name that is a valid bare AL identifier (no spaces or other characters
+    // that force quoting) is rendered WITHOUT quotes at all, e.g.:
+    //   "Failure while emitting metadata for object:'Profile System.TestTools.TestRunner.
+    //    TestRoleCenter' (Object reference not set to an instance of an object.)"
+    // Here the ENTIRE "<Namespace>.<Name>" (or just "<Name>" with no namespace) run is bare —
+    // BC's own ToDisplayString only adds quotes when the identifier needs them. Group 4 is the
+    // fallback alternative for that shape; when it matches, the LAST dot-separated segment is
+    // the object name and everything before it (if anything) is the namespace. Without this
+    // alternative the regex matched zero objects for exactly this crash — the retry loop broke
+    // immediately (ExtractFailingObjectRefs returned empty) and the crashing Profile took the
+    // whole module down (EMIT-ZERO) instead of being excluded and retried around.
     private static readonly System.Text.RegularExpressions.Regex _failingObjectRx = new(
-        @"[Oo]bject:'(\w+) (?:([\w.]+)\.)?""([^""]+)""'",
+        @"[Oo]bject:'(\w+) (?:(?:([\w.]+)\.)?""([^""]+)""|([\w.]+))'",
         System.Text.RegularExpressions.RegexOptions.Compiled);
 
     private static List<(string Type, string Namespace, string Name)> ExtractFailingObjectRefs(string message)
     {
         var result = new List<(string, string, string)>();
         foreach (System.Text.RegularExpressions.Match mm in _failingObjectRx.Matches(message))
-            result.Add((mm.Groups[1].Value, mm.Groups[2].Value, mm.Groups[3].Value));
+        {
+            if (mm.Groups[3].Success)
+            {
+                // Quoted form — the name needed quoting (e.g. contains a space).
+                result.Add((mm.Groups[1].Value, mm.Groups[2].Value, mm.Groups[3].Value));
+            }
+            else
+            {
+                // Bare form (group 4) — a single valid identifier with no quoting needed.
+                // Split off the LAST dot-separated segment as the name; anything before it
+                // (if present) is the namespace.
+                var full = mm.Groups[4].Value;
+                var lastDot = full.LastIndexOf('.');
+                var ns = lastDot >= 0 ? full.Substring(0, lastDot) : "";
+                var name = lastDot >= 0 ? full.Substring(lastDot + 1) : full;
+                result.Add((mm.Groups[1].Value, ns, name));
+            }
+        }
         return result;
     }
 
@@ -2157,10 +2186,24 @@ public sealed partial class BcCompiler
     // check is skipped rather than requiring a `namespace ...;` line that may not exist.
     // Used to identify exactly which source file(s) to drop from a retry-without-the-broken-
     // object compile.
+    //
+    // Issue #2238: the object ID between the type keyword and the name is OPTIONAL — most
+    // object types always carry one (`codeunit 134688 "Connector Mock"`), but a `profile` never
+    // does (`profile TestRoleCenter { ... }` — profiles are looked up purely by name in AL, no
+    // numeric ID at all). Before this the `\d+` was required, so a crashing profile could be
+    // correctly NAMED by ExtractFailingObjectRefs above but never MAPPED back to its own source
+    // file (this regex never matched profile headers), leaving it stuck in every retry round
+    // with nothing excludable — the loop gave up after round 0 and the whole module still came
+    // back EMIT-ZERO.
     private static bool DeclaresObject(string src, string type, string ns, string name)
     {
+        // Quoted and bare-identifier name forms are separate alternatives (not "optional
+        // quotes on both sides" — that would let `\b` misfire against whatever follows a
+        // matched closing quote, e.g. failing to match "TestRoleCenter"\r\n{ because \b sees
+        // a non-word char on both sides of the position right after the quote).
+        var escName = System.Text.RegularExpressions.Regex.Escape(name);
         var headerRx = new System.Text.RegularExpressions.Regex(
-            $@"(?im)^\s*{System.Text.RegularExpressions.Regex.Escape(type)}\s+\d+\s+""{System.Text.RegularExpressions.Regex.Escape(name)}""");
+            $@"(?im)^\s*{System.Text.RegularExpressions.Regex.Escape(type)}\s+(?:\d+\s+)?(?:""{escName}""|{escName}\b)");
         if (!headerRx.IsMatch(src)) return false;
         if (string.IsNullOrEmpty(ns)) return true;
         var nsRx = new System.Text.RegularExpressions.Regex(

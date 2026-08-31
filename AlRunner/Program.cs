@@ -2570,13 +2570,40 @@ foreach (var bundle in bundles)
                         }
                         else
                         {
+                            // Issue #2238: a `profile` object carries no executable AL at
+                            // all — no procedures, no [Test] attributes, nothing a headless
+                            // run could ever execute or observe. It is role-center
+                            // presentation metadata (Caption/Description/RoleCenter), which
+                            // this runner never renders. So when EVERY excluded object is a
+                            // profile, none of loud-failures.md's concern applies: there is
+                            // no test a profile could have declared to go silently missing.
+                            // (The crash this guards against — BC's own ProfileMetadataEmitter
+                            // throwing a NullReferenceException in SymbolExtensions.
+                            // ShouldBeEmitted when the profile's RoleCenter page reference
+                            // fails to bind — is otherwise atomic-per-module: without this,
+                            // one broken profile took every OTHER object in the same bundle
+                            // down with it, including codeunits that DO declare tests.)
+                            // This check is deliberately narrow and typed to the "Profile "
+                            // label prefix BcCompiler.cs's exclusion loop always writes for a
+                            // profile — not a general "ignore whatever failed to emit", which
+                            // is exactly the mechanism .claude/rules/loud-failures.md forbids.
+                            // A single non-profile object in the excluded set still fails the
+                            // whole bundle via the branch below.
+                            var allProfiles = emitOutput.ExcludedObjects.All(
+                                o => o.StartsWith("Profile ", StringComparison.Ordinal));
+
                             // Untagged on purpose: a `[Component]` prefix would be swallowed by
                             // Log's filter at default verbosity, which is the original defect.
-                            Console.Error.WriteLine(
-                                $"<bundled>: EMIT-EXCLUDED — {moduleName}: {emitOutput.ExcludedObjects.Count} object(s) " +
-                                $"could not be compiled and were dropped from the module, so any tests they declare " +
-                                $"are MISSING from this run: [{names}]. Re-run with --verbose for the AL diagnostics " +
-                                $"that identified them.");
+                            Console.Error.WriteLine(allProfiles
+                                ? $"<bundled>: EMIT-EXCLUDED — {moduleName}: {emitOutput.ExcludedObjects.Count} " +
+                                  $"profile object(s) could not be compiled and were dropped from the module: " +
+                                  $"[{names}]. A profile declares no executable AL and no [Test] procedures, so " +
+                                  $"the module compiles and runs without it. Re-run with --verbose for the AL " +
+                                  $"diagnostics that identified them."
+                                : $"<bundled>: EMIT-EXCLUDED — {moduleName}: {emitOutput.ExcludedObjects.Count} object(s) " +
+                                  $"could not be compiled and were dropped from the module, so any tests they declare " +
+                                  $"are MISSING from this run: [{names}]. Re-run with --verbose for the AL diagnostics " +
+                                  $"that identified them.");
                             // #2207: the message above promises the AL diagnostics under
                             // --verbose — actually print them, gated on Log.Verbose directly
                             // (not Console.Error.WriteLine's usual [Component] path) so a
@@ -2595,10 +2622,16 @@ foreach (var bundle in bundles)
                                 foreach (var d in exclDiags)
                                     Console.Error.WriteLine($"  {d}");
                             }
-                            bundleErrors.Add(
-                                $"<bundled>: EMIT-EXCLUDED for {moduleName}: {emitOutput.ExcludedObjects.Count} " +
-                                $"object(s) dropped from the module — tests they declare are missing: [{names}].");
-                            sources = Array.Empty<EmittedSource>(); // do not run a module that is missing objects
+                            if (!allProfiles)
+                            {
+                                bundleErrors.Add(
+                                    $"<bundled>: EMIT-EXCLUDED for {moduleName}: {emitOutput.ExcludedObjects.Count} " +
+                                    $"object(s) dropped from the module — tests they declare are missing: [{names}].");
+                                sources = Array.Empty<EmittedSource>(); // do not run a module that is missing objects
+                            }
+                            // allProfiles: keep `sources` as BcCompiler returned it (the
+                            // recovered set with only the broken profile(s) dropped) and do
+                            // NOT add to bundleErrors — this is not a compile failure.
                         }
                     }
 
