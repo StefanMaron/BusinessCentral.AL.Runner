@@ -167,16 +167,22 @@ public sealed class TestDataProvisioningTests : IDisposable
     public void MissingShippedBackup_MessageNamesEveryProbedPath()
     {
         // Built through the same function ResolveBackupPath probes with, so the message and
-        // the search can never disagree.
+        // the search can never disagree. The expected paths are composed from
+        // TestArtifacts — the suite's one source of truth for where BC artifacts live — so
+        // this cannot drift into asserting a directory nothing populates (the defect
+        // TestArtifactsGateTests exists to prevent), and it makes the real claim: --test-data
+        // probes the SAME sandbox cache the rest of the suite recognises.
+        const string home = "/home/nobody";
+        var runnerArtifacts = TestArtifacts.StandardCacheDir(home);
         var candidates = TestDataOptions.CandidateBackupPaths(
-            "/home/nobody", "/home/nobody/.local/share/al-runner/artifacts", "28.1.49838.50621", "w1");
+            home, runnerArtifacts, "28.1.49838.50621", "w1");
 
         Assert.Equal(2, candidates.Count);
         Assert.Contains(
-            Path.Combine("/home/nobody", ".bcartifacts.cache", "sandbox", "28.1.49838.50621", "w1", "BusinessCentral-W1.bak"),
+            Path.Combine(TestArtifacts.LegacyCacheDir(home), "28.1.49838.50621", "w1", "BusinessCentral-W1.bak"),
             candidates);
         Assert.Contains(
-            Path.Combine("/home/nobody/.local/share/al-runner/artifacts", "28.1.49838.50621", "w1", "BusinessCentral-W1.bak"),
+            Path.Combine(runnerArtifacts, "28.1.49838.50621", "w1", "BusinessCentral-W1.bak"),
             candidates);
         Assert.All(candidates, c => Assert.False(File.Exists(c)));
     }

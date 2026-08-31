@@ -220,6 +220,10 @@ hitting them files a runner-gap issue rather than silently passing.
 | Manual-binding event subscribers (`BindSubscription`) | Auto-binding subscribers work as of `c4bce11a`; manual-binding wiring deferred | follow-on to W-8b |
 | `NavMethodScope` recursion-depth threshold (currently hard-coded 500) | Make configurable / verify matches real BC's limit precisely | follow-on to `f8367536` |
 | Static `XmlPort.Export(id, stream, record)` / `XmlPort.Import(id, stream, record)` — in-memory xmlport serialization | No dialog involved (unlike static `Run`, §3.4) — a faithful in-process implementation is plausible; not yet built. `NavXmlPort_StaticExport`/`StaticImport` in `XmlPortPatches.cs` throw `not-yet-implemented` today. | HANDOFF.md / SCOPE-AUDIT.md |
+| `--test-data`: Date / DateTime / Time / DateFormula values from a BC backup | In scope; refused today rather than guessed at, because rebuilding them needs BC's SQL storage encoding for the type and no service tier has confirmed one here (see `.claude/rules/ask-the-corpus-before-claiming-bc-behavior.md`). The refusal names the table, column and type. | [#2259](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2259) |
+| `--test-data`: BLOB / Media / MediaSet values from a BC backup | Deferred by decision for the first slice; refused, not defaulted. | [#2245](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2245) |
+| `--test-data`: table-extension (`$ext`) field merging | Base tables with extension rows are skipped whole rather than hydrated incomplete. Blocked on the reader mapping `$ext` columns to AL field ids. | [#2261](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2261) |
+| `--test-data`: BC system columns (`SystemId`, `SystemCreatedAt`, …) | Left at the field's BC default rather than mapped from the backup's `$system*` columns. | [#2260](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2260) |
 
 ---
 

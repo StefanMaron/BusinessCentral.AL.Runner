@@ -448,6 +448,27 @@ https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
 - **Query aggregation** — a query column with `Method = Sum`/`Count`/`Average`/`Min`/`Max`
   does not aggregate or group rows; it silently returns each row's own unaggregated value.
   Tracked in [#2137](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2137).
+- **`--test-data` hydration coverage** — `--test-data` loads the in-memory database from the
+  BC backup shipped in the artifact cache before install triggers run (issue
+  [#2258](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2258)). The first
+  slice does not cover everything, and what it does not cover it **reports** — a skipped or
+  refused table is named on stderr with the reason, never silently emptied:
+  - Tables whose table-extension (`$ext`) companion carries rows are skipped whole rather
+    than hydrated with an incomplete field set —
+    [#2261](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2261).
+  - Date, DateTime, Time and DateFormula values are refused; the codec will not assert a SQL
+    storage encoding no service tier has confirmed —
+    [#2259](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2259).
+  - BLOB, Media and MediaSet values are refused —
+    [#2245](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2245).
+  - BC's system columns (`SystemId`, `SystemCreatedAt`, …) are not hydrated —
+    [#2260](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2260).
+  - A table whose AL name is declared by two installed apps in the same company is refused
+    rather than guessed at.
+
+  Measured on BC 28.1's W1 CRONUS backup with the Base Application / System Application /
+  Business Foundation closure: 7,233 rows across 189 tables hydrated; 68 tables skipped for
+  extension data, 99 refused, 1 ambiguous by name.
 
 ---
 
