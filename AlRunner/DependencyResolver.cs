@@ -218,8 +218,32 @@ public sealed class DependencyResolver
             return r;
         }
 
+        // For Microsoft PLATFORM apps only (System / System Application / Base Application /
+        // Business Foundation / Application — see IsMicrosoftPlatformApp), also track the
+        // highest-version EXECUTABLE candidate found REGARDLESS of dep.Version. These five
+        // ship as one package per exact BC build: an engine running build 27.0 can never
+        // have a real, executable "System Application 27.5", only a symbols-only stand-in
+        // can claim that version (e.g. the al-language corpus's checked-in .alpackages
+        // copy). Enforcing an app.json's declared platform minimum strictly, the way a real
+        // ISV dependency minimum must be enforced, means a bundle whose declared minimum is
+        // higher than the engine it is running under always resolves to that non-executable
+        // stand-in and crashes downstream with "The object with ID 0 does not have a member
+        // with that ID" on the first call into it — see PlatformApp_BelowMinimumR2R_Beats_
+        // AboveMinimumSymbolOnly's header comment in DependencyResolverTests.cs for the
+        // corpus incident (issue #2251) this guards against. Scoped to platform apps only:
+        // NonPlatformApp_BelowMinimumR2R_DoesNotBeat_AboveMinimumSymbolOnly is the control
+        // proving an ordinary dependency's declared minimum still filters strictly.
+        var isPlatformApp = IsMicrosoftPlatformApp(dep.Name, dep.Publisher);
+        (AppManifest Manifest, string Path) bestExecutableAnyVersion = default;
+
         foreach (var c in candidates)
         {
+            if (isPlatformApp && Executable(c.Path)
+                && (bestExecutableAnyVersion.Manifest == null || c.Manifest.Version > bestExecutableAnyVersion.Manifest.Version))
+            {
+                bestExecutableAnyVersion = c;
+            }
+
             if (c.Manifest.Version < dep.Version) continue;
             if (best.Manifest == null) { best = c; continue; }
 
@@ -230,6 +254,39 @@ public sealed class DependencyResolver
                 continue;
             }
             if (c.Manifest.Version > best.Manifest.Version) best = c;
+        }
+
+        // The minimum-satisfying winner (if any) cannot execute, but a below-minimum
+        // candidate can: for a platform app, that below-minimum candidate is the one a
+        // real BC service tier at THIS engine build would actually run — substitute it
+        // rather than binding to a stand-in that crashes the first call it receives.
+        //
+        // Deliberately NOT gated on AppLoader.HasAlSource the way the general symbols-only
+        // diagnostic below is: HasAlSource answers "does this package embed AL text", and a
+        // Microsoft platform app's symbol-only package almost ALWAYS does (it is exactly the
+        // symbol declarations app developers compile against) — but that AL's procedure
+        // bodies are external/native, so Tier-3 can never build a real implementation from
+        // it (see ProvisioningCheck.KnownPlatformRuntimeApps' doc comment: these three MUST
+        // be R2R, full stop). HasAlSource=true here would silently defeat this fallback for
+        // exactly the packages it exists to fix — verified against the real corpus package
+        // (tests/al-language's own .alpackages/System Application.app ships 1264 src/*.al
+        // files despite being symbol-only).
+        if (isPlatformApp
+            && bestExecutableAnyVersion.Manifest != null
+            && (best.Manifest == null || !Executable(best.Path)))
+        {
+            var replaced = best.Manifest;
+            best = bestExecutableAnyVersion;
+            _diagnostics.Add(
+                $"[dep] note: {best.Manifest.Publisher}/{best.Manifest.Name} resolved to the "
+                + $"engine-matching code-bearing package v{best.Manifest.Version}, BELOW the "
+                + $"declared minimum v{dep.Version}"
+                + (replaced != null
+                    ? $" — the minimum-satisfying candidate (v{replaced.Version}, {best.Path}) cannot execute"
+                    : " — no candidate met the declared minimum at all")
+                + ". Microsoft platform apps ship one package per exact BC build, so the "
+                + "declared minimum is treated as advisory rather than enforced for this "
+                + $"app: winner {best.Path}");
         }
 
         if (best.Manifest != null)

@@ -770,4 +770,123 @@ public sealed class DependencyResolverTests : IDisposable
         Assert.Empty(resolver.UnservableDependencies);
         Assert.Contains(resolver.Diagnostics, d => d.Contains("SYMBOLS-ONLY"));
     }
+
+    // ── Issue #2251 pin-bump fallout: Microsoft PLATFORM apps must prefer the
+    //    engine-matching code-bearing build over a declared-minimum-satisfying
+    //    symbol-only one ──────────────────────────────────────────────────────
+    //
+    // Root cause: SelectBestVersion's `< dep.Version` filter is correct for an ordinary
+    // ISV dependency, where the declared minimum really is a compatibility floor. It is
+    // WRONG for the five Microsoft platform apps (System, System Application, Base
+    // Application, Business Foundation, Application, see IsMicrosoftPlatformApp): those
+    // ship as ONE package per exact BC build, so an engine running build 27.0 can never
+    // have a REAL, executable "System Application 27.5" -- only the al-language corpus's
+    // own checked-in .alpackages symbols-only stand-in claims that version. Enforcing the
+    // filter for these five names means a bundle whose app.json declares a platform
+    // minimum higher than the engine it is running under (routine: the corpus targets
+    // 27.5+ APIs but AL Runner's own CI matrix tests down to 27.0) resolves to the
+    // symbols-only stand-in and crashes downstream with "The object with ID 0 does not
+    // have a member with that ID" the first time ANY of its procedures is invoked --
+    // reached for real via Codeunit "Reten. Pol. Allowed Tables" from the System
+    // Application Test Library's OnInstallAppPerCompany trigger, unrelated to whatever
+    // AL the corpus itself declares.
+    //
+    // This was masked for a long time by an ACCIDENT: the al-language corpus's checked-in
+    // "AL Internals Test Fixture" package carried a stale <Dependency Name="Base
+    // Application" MinVersion="27.0.0.0"/> left over from a since-removed app.json
+    // dependency. DependencyResolver.Visit's "already resolved, skip" cache is keyed only
+    // by the target AppId, so THAT weaker, transitively-visited edge (visited first, since
+    // the fixture is the first entry in the corpus's own dependencies array) silently won
+    // and let the real 27.0 platform build resolve -- with the root app's own, stricter
+    // 27.5.0.0 requirement never actually enforced. Refreshing that fixture package to
+    // match its current (dependency-less) app.json removed the accidental weaker edge and
+    // exposed the underlying bug: nothing about it was a fix for THIS class of failure.
+    //
+    // The correct, general fix: for Microsoft platform apps specifically, when the
+    // minimum-satisfying winner cannot execute (neither R2R nor AL source) and a BELOW-
+    // minimum candidate exists that CAN execute, prefer the executable one. Scoped to
+    // IsMicrosoftPlatformApp only -- CodeBearingBelowMinimum_IsNotChosen_OverSymbolOnlyThatMeetsIt
+    // above is the control proving ordinary (non-platform) dependencies keep the strict
+    // minimum-version semantics unchanged.
+
+    /// <summary>
+    /// Positive: "System Application" (a Microsoft platform app) with a below-minimum
+    /// R2R candidate and an above-minimum symbol-only candidate must resolve to the
+    /// R2R one -- the exact shape that crashed the al-language corpus's BC 27.0/27.3
+    /// legs once the fixture's accidental compensating dependency was removed.
+    /// </summary>
+    [Fact]
+    public void PlatformApp_BelowMinimumR2R_Beats_AboveMinimumSymbolOnly()
+    {
+        var appId = "cccccccc-0000-0000-0000-00000000000a";
+        var dir = MakeDir("platform-below-min");
+
+        WriteApp(dir, "SysApp_27_0_r2r.app", appId, "System Application", "Microsoft",
+            "27.0.38460.53934", r2r: true);
+        WriteApp(dir, "SysApp_27_5_sym.app", appId, "System Application", "Microsoft",
+            "27.5.46862.48827", r2r: false);
+
+        var resolver = new DependencyResolver(new[] { dir });
+        var dep = new DependencyRef(Guid.Parse(appId), "System Application", "Microsoft",
+            new Version(27, 5, 0, 0));
+
+        var result = resolver.Resolve(new[] { dep });
+
+        Assert.Single(result);
+        Assert.Equal("SysApp_27_0_r2r.app", Path.GetFileName(result[0].AppPath));
+        Assert.True(AppLoader.IsR2R(result[0].AppPath));
+    }
+
+    /// <summary>
+    /// Same shape again with NOTHING satisfying the declared minimum at all (only the
+    /// below-minimum R2R candidate exists) -- must still resolve to it rather than
+    /// throwing DependencyVersionMismatchException, since a real BC service tier at
+    /// this exact engine build has no other answer for "System Application" either.
+    /// </summary>
+    [Fact]
+    public void PlatformApp_BelowMinimumR2R_ResolvesAlone_WhenNoCandidateMeetsMinimum()
+    {
+        var appId = "cccccccc-0000-0000-0000-00000000000b";
+        var dir = MakeDir("platform-below-min-alone");
+
+        WriteApp(dir, "SysApp_27_0_r2r.app", appId, "System Application", "Microsoft",
+            "27.0.38460.53934", r2r: true);
+
+        var resolver = new DependencyResolver(new[] { dir });
+        var dep = new DependencyRef(Guid.Parse(appId), "System Application", "Microsoft",
+            new Version(27, 5, 0, 0));
+
+        var result = resolver.Resolve(new[] { dep });
+
+        Assert.Single(result);
+        Assert.Equal("SysApp_27_0_r2r.app", Path.GetFileName(result[0].AppPath));
+    }
+
+    /// <summary>
+    /// Negative control: the SAME below-minimum-R2R / above-minimum-symbol-only shape,
+    /// but for an ORDINARY (non-platform) Microsoft-published dependency. This must
+    /// still enforce the declared minimum strictly and pick the symbol-only package --
+    /// the fallback introduced above is scoped to IsMicrosoftPlatformApp and must not
+    /// leak into general dependency resolution.
+    /// </summary>
+    [Fact]
+    public void NonPlatformApp_BelowMinimumR2R_DoesNotBeat_AboveMinimumSymbolOnly()
+    {
+        var appId = "cccccccc-0000-0000-0000-00000000000c";
+        var dir = MakeDir("non-platform-below-min");
+
+        WriteApp(dir, "Lib_v27_r2r.app", appId, "Tests-TestLibraries", "Microsoft",
+            "27.0.0.0", r2r: true);
+        WriteApp(dir, "Lib_v28_sym.app", appId, "Tests-TestLibraries", "Microsoft",
+            "28.0.0.0", r2r: false);
+
+        var resolver = new DependencyResolver(new[] { dir });
+        var dep = new DependencyRef(Guid.Parse(appId), "Tests-TestLibraries", "Microsoft",
+            new Version(28, 0, 0, 0));
+
+        var result = resolver.Resolve(new[] { dep });
+
+        Assert.Single(result);
+        Assert.Equal("Lib_v28_sym.app", Path.GetFileName(result[0].AppPath));
+    }
 }
