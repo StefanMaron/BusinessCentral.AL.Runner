@@ -3,7 +3,7 @@
 // The auto-select default path (no --bc-version/--artifact-path given) used to print a
 // "[bc] warning: ... (cross-major needs a matching runner build)" line whenever the target
 // project's app.json (application/platform) declared a BC major different from the one this
-// engine build actually resolves symbols against. Two problems, proven here:
+// engine build actually resolves symbols against. Three problems, proven here:
 //
 //   1. It printed TWICE per run (once before the Ncl-shadow re-exec, once again in the
 //      child that performs it) — reliably the loudest line in an otherwise all-green run.
@@ -14,6 +14,13 @@
 //      BcArtifacts.DescribeCrossMajorNote's doc comment for the exact measurement). BC's own
 //      application/platform fields are minima, not pins, so this mismatch is not a
 //      degradation to warn users away from.
+//   3. Issue #2210's core question was "decide whether it should refuse or stop warning" —
+//      a line firing on most runs of an affected project, which then pass, teaches users to
+//      skim past everything the runner prints, INCLUDING the warnings that matter. A
+//      condition with no measured divergence risk and no compatibility hazard does not
+//      belong in a normal run's output at all, so it moved behind --verbose entirely: an
+//      ordinary run says nothing about it, and anyone chasing exact-major parity can still
+//      ask for it.
 //
 // This fixture (AlRunner.Tests/Fixtures/CrossMajorNote, application/platform "1.0.0.0")
 // guarantees a mismatch on every host this suite runs on — no shipped runner engine will
@@ -35,13 +42,14 @@ public sealed class CrossMajorNoteTests
     private static readonly string BundlePath = Path.Combine(
         RepoRoot, "AlRunner.Tests", "Fixtures", "CrossMajorNote");
 
-    private static (string StdOut, string StdErr, int Exit) RunRunner()
+    private static (string StdOut, string StdErr, int Exit) RunRunner(bool verbose)
     {
         // Deliberately OMITS TestBuildConfig.BcVersionArg: the cross-major note only fires
         // on the auto-select default path (bcVersionArg == null in Program.cs) — an explicit
         // --bc-version bypasses that branch entirely, which would make this test vacuous.
         var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
         args.Append($" \"{BundlePath}\"");
+        if (verbose) args.Append(" --verbose");
         var psi = new ProcessStartInfo
         {
             FileName = "dotnet", Arguments = args.ToString(),
@@ -66,20 +74,42 @@ public sealed class CrossMajorNoteTests
     }
 
     /// <summary>
-    /// The core #2210 proving case. A declared-major mismatch must not stop the run (no
-    /// refuse — the run must still execute and PASS its one test), and the note describing
-    /// the mismatch must appear EXACTLY ONCE, worded as a measured, non-alarming fact rather
-    /// than an unresolved compatibility warning.
+    /// The core #2210 resolution: at DEFAULT verbosity, a declared-major mismatch must not
+    /// stop the run (no refuse — the run must still execute and PASS its one test) AND must
+    /// say nothing about the mismatch at all. This is the "stop warning on a run that then
+    /// passes" half of the decision.
     /// </summary>
     [Fact]
-    public void MismatchedDeclaredMajor_RunsAndPasses_NotePrintedExactlyOnce()
+    public void MismatchedDeclaredMajor_DefaultVerbosity_RunsAndPasses_SaysNothingAboutIt()
     {
-        var (stdout, stderr, exit) = RunRunner();
+        var (stdout, stderr, exit) = RunRunner(verbose: false);
 
         Assert.Equal(0, exit);
         Assert.Contains("PASS  Codeunit60950.CrossMajorNote_MismatchedDeclaredMajor_StillRunsAndPasses", stdout);
         Assert.Contains("pass:        1", stdout);
         Assert.Contains("fail:        0", stdout);
+
+        // Nothing about the mismatch at all — neither the retired alarming wording nor the
+        // new note. A condition with no measured divergence risk does not belong in an
+        // ordinary run's output.
+        Assert.DoesNotContain("cross major", stderr, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("declares BC major", stderr);
+        Assert.DoesNotContain("needs a matching runner build", stderr);
+    }
+
+    /// <summary>
+    /// Under --verbose, the note is still available (for anyone chasing exact-major
+    /// parity) and must appear EXACTLY ONCE — not the pre-fix duplication (once before the
+    /// Ncl-shadow re-exec, once again in the child that performs it) — worded as a measured,
+    /// non-alarming fact rather than an unresolved compatibility warning.
+    /// </summary>
+    [Fact]
+    public void MismatchedDeclaredMajor_Verbose_NotePrintedExactlyOnce()
+    {
+        var (stdout, stderr, exit) = RunRunner(verbose: true);
+
+        Assert.Equal(0, exit);
+        Assert.Contains("PASS  Codeunit60950.CrossMajorNote_MismatchedDeclaredMajor_StillRunsAndPasses", stdout);
 
         // Exactly once, not twice (the reported duplication) and not a stray third copy from
         // a stacked re-exec either.

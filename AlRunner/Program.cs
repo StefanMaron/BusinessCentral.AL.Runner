@@ -984,24 +984,33 @@ if (bcVersionArg == null && artifactPathArg == null)
                     break;
             }
 
-            // #2210: DEFERRED — unlike the tier switch above, this note does not explain why
-            // a subsequent failure happened (it is not one of the KNOWN-DEGRADED branches;
-            // it fires independently of which tier won), so there is nothing lost by holding
-            // it until the terminal generation. Printing it immediately here was exactly the
-            // reported bug: it duplicated once per generation (before the shadow-hop re-exec
-            // AND again in the child that performs it, sometimes a third time on a stacked
-            // Cecil-fresh-rewrite re-exec too), reliably making it the loudest line in an
-            // otherwise all-green run and training users to skim past every "[bc] warning:"
-            // line — including the ones that actually matter. See BcArtifacts.
-            // DescribeCrossMajorNote for why the wording changed from "warning" to "note":
-            // measured (#2210), this specific mismatch (declared major trailing the engine's
-            // own by one) produced no divergence on AL exercising real Base/System
-            // Application logic, and it is not a compatibility hazard by BC's own design —
-            // application/platform are minima, not pins.
-            var projMajor = TryDeriveBcMajorFromProject(bundles);
-            var crossMajorNote = AlRunner.Infrastructure.BcArtifacts.DescribeCrossMajorNote(projMajor, engineMajor.Value);
-            if (crossMajorNote != null)
-                deferredStartupLines.Add(() => Console.Error.WriteLine(crossMajorNote));
+            // #2210: gated on --verbose, not printed at default verbosity at all. The
+            // issue asked to decide between "refuse" and "stop warning" for a condition
+            // that fires on most runs of an affected project and then passes — training
+            // users to skim past everything the runner prints, including the warnings
+            // that matter. Measured (#2210): this mismatch (declared major trailing the
+            // engine's own by one) produced no divergence on AL exercising real
+            // Base/System Application logic, and BC's own floor semantics say there
+            // should not be one — application/platform are minima, not pins, so an app
+            // declaring an older floor running on a newer major is the expected case,
+            // not a degraded one. A condition that is expected and carries no measured
+            // risk does not belong in a normal run's output; it stays available to
+            // anyone chasing exact-major parity via --verbose. See BcArtifacts.
+            // DescribeCrossMajorNote for the full measurement and wording.
+            //
+            // Still deferred when it DOES print (--verbose): printing it immediately
+            // duplicated once per re-exec generation (before the shadow-hop re-exec AND
+            // again in the child that performs it, sometimes a third time on a stacked
+            // Cecil-fresh-rewrite re-exec) — this note does not explain a subsequent
+            // failure (unlike the KNOWN-DEGRADED tier branches above), so nothing is
+            // lost by holding it to the terminal generation's flush point.
+            if (AlRunner.Log.Verbose)
+            {
+                var projMajor = TryDeriveBcMajorFromProject(bundles);
+                var crossMajorNote = AlRunner.Infrastructure.BcArtifacts.DescribeCrossMajorNote(projMajor, engineMajor.Value);
+                if (crossMajorNote != null)
+                    deferredStartupLines.Add(() => Console.Error.WriteLine($"[bc] note: {crossMajorNote}"));
+            }
         }
     }
 }
@@ -7284,11 +7293,16 @@ static string? ResolveDefaultProvisionVersion(List<string> bundles, Action<strin
         $"{engineVersion}; tier '{tier}'). Override with --bc-version.");
 
     // The project's app.json is a CROSS-CHECK only, never the source of the answer — see
-    // the doc comment above. A mismatch is surfaced as a warning, not acted on.
-    var projMajor = TryDeriveBcMajorFromProject(bundles);
-    if (projMajor != null && projMajor != engineVersion.Major.ToString())
-        log($"warning: project app.json targets BC major {projMajor} but this runner build's " +
-            $"engine is major {engineVersion.Major} (cross-major needs a matching runner build).");
+    // the doc comment above. #2210: same note as the main auto-select path (see
+    // BcArtifacts.DescribeCrossMajorNote and Log.Verbose gating there) — measured no
+    // divergence and no compatibility hazard, so this is --verbose-only here too, not
+    // printed on an ordinary `provision` run.
+    if (AlRunner.Log.Verbose)
+    {
+        var projMajor = TryDeriveBcMajorFromProject(bundles);
+        var crossMajorNote = AlRunner.Infrastructure.BcArtifacts.DescribeCrossMajorNote(projMajor, engineVersion.Major);
+        if (crossMajorNote != null) log($"note: {crossMajorNote}");
+    }
     return full;
 }
 

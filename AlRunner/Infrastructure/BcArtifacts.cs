@@ -500,9 +500,13 @@ public static class BcArtifacts
     }
 
     /// <summary>
-    /// Issue #2210: the auto-select default path's cross-major note — printed when the
-    /// target project's app.json (application/platform) declares a BC major different from
-    /// the one this engine build actually resolves Base/System Application symbols against.
+    /// Issue #2210: the auto-select default path's cross-major note body — describes the
+    /// case where the target project's app.json (application/platform) declares a BC major
+    /// different from the one this engine build actually resolves Base/System Application
+    /// symbols against. Callers prepend their own tag (e.g. "[bc] note: ", "[provision]
+    /// note: ") — this returns only the message body, no tag, so the two call sites (the
+    /// main auto-select path and al-runner provision's ResolveDefaultProvisionVersion) don't
+    /// double-tag it.
     ///
     /// This is NOT the same risk as <see cref="DescribeExplicitEngineMinorMismatch"/> above.
     /// That one is a real engine/artifact DLL-version skew (VerifyEngineConsistency's own
@@ -522,10 +526,16 @@ public static class BcArtifacts
     /// BC-28-built engine (one major ahead of it) — no divergence found. The pre-existing
     /// BcVersionFloorSkipTests healthy-suite fixture (application/platform "1.0.0.0") already
     /// runs this exact declared-vs-actual mismatch on EVERY supported BC major in CI
-    /// (27.0-28.4) continuously, and always passes. There is no live divergence risk to warn
-    /// about here — only a fact worth surfacing for anyone chasing exact-version parity — so
-    /// this reads as an informational note, not an alarm, and never implies the run needs a
-    /// different runner build to be trustworthy.
+    /// (27.0-28.4) continuously, and always passes.
+    ///
+    /// Because there is no measured divergence risk and BC's own floor semantics say this is
+    /// the expected case (not a degraded one), it is NOT printed at default verbosity at all
+    /// — both call sites gate it on Log.Verbose. A condition that fires on most runs of an
+    /// affected project and then passes teaches users to skim past everything the runner
+    /// prints, including the warnings that matter; it stays available, on request, to anyone
+    /// chasing exact-major parity. The message itself stays short because it is no longer
+    /// competing for attention on every run — the full measurement and reasoning live in
+    /// this doc comment instead.
     ///
     /// Returns null when there is nothing to say (no derivable project major, or majors
     /// already match).
@@ -533,13 +543,10 @@ public static class BcArtifacts
     public static string? DescribeCrossMajorNote(string? projMajor, int engineMajor)
     {
         if (projMajor == null || projMajor == engineMajor.ToString()) return null;
-        return $"[bc] note: project app.json declares BC major {projMajor}; this run resolves " +
-            $"Base/System Application symbols against major {engineMajor} instead. Measured " +
-            $"(#2210): AL exercising real Base/System Application logic produced identical " +
-            $"results whether the declared major matched the engine's own major or trailed it " +
-            $"by one — an app.json application/platform version is a MINIMUM, not a pin, so " +
-            $"this is expected, not a compatibility risk. Install a runner build for major " +
-            $"{projMajor} (-p:_BCVersion=...) if you specifically need an exact-major match.";
+        return $"project app.json declares BC major {projMajor}; this run resolves against " +
+            $"major {engineMajor} instead (a minimum, not a pin — measured no behavior " +
+            $"difference for real Base/System Application logic, see #2210). Install a " +
+            $"runner build for major {projMajor} (-p:_BCVersion=...) for an exact match.";
     }
 
     /// <summary>
