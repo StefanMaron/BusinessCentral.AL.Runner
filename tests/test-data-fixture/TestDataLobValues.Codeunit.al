@@ -39,7 +39,7 @@
 ///
 /// NOT RUN BY CI — see README.md in this directory.
 /// </summary>
-codeunit 64404 "Test Data LOB Values"
+codeunit 64407 "Test Data LOB Values"
 {
     Subtype = Test;
 
