@@ -324,7 +324,10 @@ jobs:
     # anywhere in this job; `permissions: id-token: write` plus
     # `exclude-workload-identity-credential: false` on the signing step is the
     # entire authentication story.
-    needs: [plan, build]
+    # Also needs `test` directly (not just transitively through `build`) to read
+    # needs.test.outputs.required-version for the pack step below — a job can only read
+    # another job's outputs if it's a direct entry in its own `needs:` list.
+    needs: [plan, build, test]
     runs-on: windows-latest
     environment: release
     permissions:
@@ -426,7 +429,20 @@ jobs:
         # either already signed in place above, or was never unsigned to begin
         # with (the 84 files this workflow must leave alone). Recompiling here
         # would throw away the signatures and produce an unsigned nupkg again.
-        run: dotnet pack AlRunner/ --no-build -c Release -p:Version=${{ inputs.version }} -p:SuppressImplicitGitSourceLink=false -p:IncludeSourceRevisionInInformationalVersion=true -p:EngineVariantsStagingDir="${{ github.workspace }}\variants-staging" -o nupkg
+        #
+        # -p:_BCVersion / -p:AllowBcArtifactDownload=true are still required here even
+        # though nothing gets recompiled: AlRunner.csproj's EnsureBCServiceTierDlls /
+        # FailIfBCServiceTierDllsMissing targets fire BeforeTargets="DispatchToInnerBuilds;
+        # ResolveAssemblyReferences", and dotnet pack's Publish-target file-list resolution
+        # reaches that BeforeTargets hook regardless of --no-build (confirmed by reproduction
+        # against a real Windows runner: omitting these two properties failed pack with "BC
+        # Service Tier DLLs not found" against AlRunner.csproj's dev-machine-fallback default
+        # version, because this job's Windows filesystem has never downloaded anything -- the
+        # build job's download lives on a different runner's disk entirely). This does mean a
+        # release pays for a BC service-tier download on the Windows runner too, in addition to
+        # the one the build job already did on Linux -- accepted cost, not optimized further
+        # here.
+        run: dotnet pack AlRunner/ --no-build -c Release -p:_BCVersion=${{ needs.test.outputs.required-version }} -p:AllowBcArtifactDownload=true -p:Version=${{ inputs.version }} -p:SuppressImplicitGitSourceLink=false -p:IncludeSourceRevisionInInformationalVersion=true -p:EngineVariantsStagingDir="${{ github.workspace }}\variants-staging" -o nupkg
 
       - name: Verify every PE in the packed nupkg is signed (pre-upload sanity)
         shell: pwsh
