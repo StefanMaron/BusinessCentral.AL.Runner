@@ -314,7 +314,8 @@ public static partial class RecordPatches
                       + $"but the value is {value.GetType().Name}");
                 return null;
             }
-            return new PoolEntry(KindMedia, (int)self.NclType, 0, 0, tableIndex, fieldIndex, media.GetBytes());
+            return new PoolEntry(KindMedia, (int)self.NclType, 0, 0, tableIndex, fieldIndex,
+                EncodeInstallBaselineMedia(media));
         }
 
         var isStringLike = self.NclType is NavNclType.NavText or NavNclType.NavCode;
@@ -495,6 +496,21 @@ public static partial class RecordPatches
         }
     }
 
+    /// <summary>The KindMedia payload: the 16 GUID bytes NavMediaValueBase.GetBytes() produces
+    /// and NavMedia/NavMediaSet.CreateFromBytes consumes. Split out from the encoder so the
+    /// round trip is exercisable without a skeleton session — see
+    /// TestDataLobValueHydrationTests.</summary>
+    internal static byte[] EncodeInstallBaselineMedia(NavMediaValueBase media) => media.GetBytes();
+
+    /// <summary>The other half of <see cref="EncodeInstallBaselineMedia"/>.</summary>
+    internal static NavValue DecodeInstallBaselineMedia(NavNclType nclType, byte[] bytes)
+        => nclType switch
+        {
+            NavNclType.NavMedia => NavMedia.CreateFromBytes(bytes, 0, bytes.Length),
+            NavNclType.NavMediaSet => NavMediaSet.CreateFromBytes(bytes, 0, bytes.Length),
+            _ => throw new InvalidDataException($"{nclType} is not a media kind"),
+        };
+
     private static NavValue DecodeValue(
         byte kind, NavNclType nclType, int definedLength, int flags,
         NCLMetaTable meta, int fieldIndex, byte[] bytes)
@@ -520,12 +536,7 @@ public static partial class RecordPatches
             }
 
             case KindMedia:
-                return nclType switch
-                {
-                    NavNclType.NavMedia => NavMedia.CreateFromBytes(bytes, 0, bytes.Length),
-                    NavNclType.NavMediaSet => NavMediaSet.CreateFromBytes(bytes, 0, bytes.Length),
-                    _ => throw new InvalidDataException($"{nclType} is not a media kind"),
-                };
+                return DecodeInstallBaselineMedia(nclType, bytes);
 
             case KindBytes:
             {

@@ -99,10 +99,12 @@
 //      reader refuses the name, and so does this: picking whichever candidate has rows would
 //      be exactly the silent guess this feature exists to prevent. #2264 resolves it properly,
 //      by naming the owning app the runner's own closure already resolved.
-//   2. Value types this runner build cannot rebuild yet (dates, times, BLOBs, media, …) —
-//      refused per table by the mechanism, counted and reported here. This is what gates how
-//      much of the newly-merged data actually lands: most extended CRONUS tables carry a Date
-//      somewhere. #2259.
+//   2. Value types this runner build cannot rebuild yet — refused per table by the mechanism,
+//      counted and reported here. This used to gate most of the data (every extended CRONUS
+//      table carries a Date somewhere), and no longer does: #2259 took Date/DateTime/Time/
+//      DateFormula, #2270 took Blob/Media/MediaSet/RecordId/Duration and #2268 took a DB NULL
+//      in any column type. Measured on BC 28.1's W1 CRONUS, all 12 remaining refusals are
+//      case 5 below, not a value type at all. TableFilter is the one type left — #2271.
 //   3. Tables the READER itself fails on. Reported per table, with the reader's own text, and
 //      NEVER fatal to the rest of the hydration. No table is currently known to fail this way,
 //      and the tolerance is not speculative: before it existed, one reader exit-1 on a single
@@ -113,6 +115,12 @@
 //      symbols to name them with and passes them through in BC's raw `<name>$<app id>` storage
 //      form; this run's AL record has no such field, so they are dropped and counted. See
 //      RecordPatches.TestDataHydration's header, case (a).
+//   5. A BARE column name the target AL table has no field for. Refused, not dropped, and the
+//      distinction from case 4 is the point: a bare unresolvable name could equally be a
+//      schema mismatch, and hydrating a table against a shape this build does not have is
+//      exactly the silent guess the feature exists to prevent. Measured on BC 28.1's W1
+//      CRONUS this is now the ONLY refusal left, 12 tables of it (Item."Routing No_",
+//      Purchase Line."Prod_ Order No_", …) — #2273.
 using AlRunner.Infrastructure;
 using AlRunner.Patches;
 using System.Text.Json;

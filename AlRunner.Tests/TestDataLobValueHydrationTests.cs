@@ -350,6 +350,36 @@ public sealed class TestDataLobValueHydrationTests
         Assert.Same(emptyRecordId, Convert(Facts(RecordIdField, emptyValue: emptyRecordId), "null"));
     }
 
+    // ------------------------------------- the install-baseline disk codec --
+
+    [Fact]
+    public void AHydratedMediaSurvivesTheInstallBaselineDiskCodec()
+    {
+        // Not an incidental claim. RecordPatches.InstallBaselineDisk had NO encoding for
+        // Media or MediaSet, and ONE unencodable value makes the whole snapshot unpersistable
+        // — so hydrating Customer/Vendor/Item Variant with their Image/Picture would have cost
+        // every --test-data run its disk baseline (a ~4-minute rehydration instead of ~8s),
+        // announced by nothing but a DiskLog line. This goes through the codec's own two
+        // halves rather than re-deriving them here.
+        var media = new NavMedia(Guid.Parse("57C8E273-1769-4173-AAED-0A56E3ADCB8D"), parentId: -1);
+        var restored = Assert.IsType<NavMedia>(RecordPatches.DecodeInstallBaselineMedia(
+            NavNclType.NavMedia, RecordPatches.EncodeInstallBaselineMedia(media)));
+        Assert.Equal(media.ALMediaId, restored.ALMediaId);
+        Assert.NotEqual(Guid.Empty, restored.ALMediaId);
+
+        var set = new NavMediaSet(Guid.Parse("EAAD9A16-3132-4C9C-8206-393598E9F1F0"), parentId: -1);
+        var restoredSet = Assert.IsType<NavMediaSet>(RecordPatches.DecodeInstallBaselineMedia(
+            NavNclType.NavMediaSet, RecordPatches.EncodeInstallBaselineMedia(set)));
+        Assert.Equal(set.ALMediaId, restoredSet.ALMediaId);
+
+        // A Media must not come back as a MediaSet or vice versa — they are different AL
+        // types on different fields, and the kind byte alone does not tell them apart.
+        Assert.IsType<NavMediaSet>(RecordPatches.DecodeInstallBaselineMedia(
+            NavNclType.NavMediaSet, RecordPatches.EncodeInstallBaselineMedia(media)));
+        Assert.Throws<InvalidDataException>(() => RecordPatches.DecodeInstallBaselineMedia(
+            NavNclType.NavGuid, RecordPatches.EncodeInstallBaselineMedia(media)));
+    }
+
     // ------------------------------------------------ refusal still works --
 
     // -------------------------------------------------------------- Duration --

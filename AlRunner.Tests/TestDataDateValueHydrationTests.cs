@@ -262,14 +262,14 @@ public sealed class TestDataDateValueHydrationTests
     [Fact]
     public void TypesThisBuildStillCannotRebuild_KeepRefusing()
     {
-        // #2245 tracks Blob/Media/MediaSet. RecordId is a 448-byte structure with no textual
-        // wire form. None of them acquired a branch here, and the refusal must name the type
-        // so the reason reaches whoever reads the run's output.
-        foreach (var nclType in new[]
-                 { NavNclType.NavBlob, NavNclType.NavMedia, NavNclType.NavMediaSet, NavNclType.NavRecordId })
-        {
-            var ex = Refusal(new ValueMetadata(nclType, NavType.BLOB), "\"1753-01-01 00:00:00.000\"");
-            Assert.Contains(nclType.ToString(), ex.Message, StringComparison.Ordinal);
-        }
+        // Blob, Media, MediaSet, RecordId and Duration acquired branches in #2270 — see
+        // TestDataLobValueHydrationTests. TableFilter did not, because no table in the shipped
+        // demo data stores one and the reader's wire shape for it has never been measured
+        // (#2271). The refusal must name the type so the reason reaches whoever reads the
+        // run's output.
+        var ex = Refusal(
+            new ValueMetadata(NavNclType.NavTableFilter, NavType.TableFilter),
+            "\"1753-01-01 00:00:00.000\"");
+        Assert.Contains(NavNclType.NavTableFilter.ToString(), ex.Message, StringComparison.Ordinal);
     }
 }

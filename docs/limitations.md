@@ -461,10 +461,17 @@ https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
     ([#2261](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2261)), with one
     declared exception: a companion column owned by an app **outside this run's app closure**
     has no AL field in this run's schema, so it is dropped and counted in the summary.
-  - Date, DateTime, Time and DateFormula values ARE rebuilt, from BC's own SQL-cell reader
-    ([#2259](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2259)).
-  - BLOB, Media and MediaSet values are refused —
-    [#2245](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2245).
+  - Date, DateTime, Time and DateFormula values are rebuilt
+    ([#2259](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2259)), as are
+    Blob, Media, MediaSet, RecordId and Duration
+    ([#2270](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2270)) and a DB
+    NULL in any column type
+    ([#2268](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2268)). Each
+    mirrors BC's own SQL-cell reader case for case.
+  - TableFilter values are still refused: BC's reader has a case for them, but no table in the
+    shipped demo data stores one, so the shape the backup reader emits has never been measured
+    and the codec will not invent it —
+    [#2271](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2271).
   - BC's system columns (`SystemId`, `SystemCreatedAt`, …) are not hydrated —
     [#2260](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2260).
   - A table whose AL name is declared by two installed apps in the same company is refused
@@ -472,12 +479,11 @@ https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
     [#2264](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2264).
 
   Measured on BC 28.1's W1 CRONUS backup with the Base Application / System Application /
-  Business Foundation closure: **7,562 rows across 203 tables** hydrated; 153 refused,
-  1 ambiguous by name, 30 companion columns dropped for apps outside the closure. Of the 68
-  tables that #2261 unblocked, 14 (329 rows) land today; the other 54 still refuse, all of
-  them on a value type rather than on the merge — 45 on Date/DateTime/DateFormula (#2259)
-  and 2 on BLOB (#2245). So **#2259 is what gates the rest of this data**, not extension
-  merging.
+  Business Foundation closure: **39,231 rows across 344 tables** hydrated; 12 refused,
+  1 ambiguous by name, 293 companion columns dropped for apps outside the closure. All 12
+  remaining refusals are a bare column the backup holds that this build's AL table has no
+  field for ([#2273](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2273)) —
+  none is a value type any more.
 
 ---
 
