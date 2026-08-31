@@ -44,8 +44,11 @@ internal static class TestDataOptions
     /// 1 — #2258, the first slice: tables with `$ext` rows skipped whole.
     /// 2 — #2261, table-extension fields merged in. A version-1 baseline deserialises fine and
     ///     is silently missing every extension field of every extended table, so it must not
-    ///     be reused.</summary>
-    internal const int HydrationSchemaVersion = 2;
+    ///     be reused.
+    /// 3 — #2259, Date/DateTime/Time/DateFormula rebuilt instead of refused. A version-2
+    ///     baseline deserialises fine and is silently missing every table one of those types
+    ///     used to veto — 45 of the 54 still refusing after #2261.</summary>
+    internal const int HydrationSchemaVersion = 3;
 
     /// <summary>Off unless --test-data was passed. Absent the flag NOTHING here runs: no
     /// backup is opened, no reader is located, and CacheIdentity() returns the empty string

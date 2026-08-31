@@ -15,10 +15,32 @@
 //   RestoreInstallBaselineSnapshot puts a captured baseline back.
 //
 // FAITHFULNESS / REFUSAL (.claude/rules/loud-failures.md)
-//   Values are rebuilt through BC's OWN codec, NavValue.CreateNavValueFromObject, handed the
-//   target field's metadata. Any value this file cannot prove it rebuilds identically aborts
-//   THAT TABLE's hydration with a message naming the table, the column and the type — it
-//   never substitutes a default and never leaves a partially-built row in the store.
+//   Values are rebuilt through BC's OWN code. The scalar types go through
+//   NavValue.CreateNavValueFromObject handed the target field's metadata; the date/time-shaped
+//   types mirror, case for case, BC's own SQL-cell reader
+//   (NavSqlCommand.CreateNavValueFromReader in Microsoft.Dynamics.Nav.Ncl.dll). Any value this
+//   file cannot prove it rebuilds identically aborts THAT TABLE's hydration with a message
+//   naming the table, the column and the type — it never substitutes a default and never leaves
+//   a partially-built row in the store.
+//
+// WHY THE DATE/TIME TYPES ARE NO LONGER REFUSED (issue #2259)
+//   #2258 refused Date, DateTime, Time and DateFormula because BC's SQL storage encoding for
+//   them was not established. It is now, from BC's own assemblies rather than from reasoning:
+//     - The blank marker is 1753-01-01, named per type — NavDate.SqlDateTimeUndefined (Local),
+//       NavDateTime.SqlDateTimeUtcUndefined (Utc), NavTime.SqlTimeUndefined (Local). The two
+//       kinds are NOT interchangeable and are not normalised to one here.
+//     - It is unambiguous, because NavDate.GetSqlWritableValue THROWS for any real date below
+//       1754-01-01 rather than storing one. A column holding both 1753-01-01 and real dates is
+//       holding blanks and real dates, not two meanings of one value.
+//     - DateFormula is stored as BC's TOKEN encoding (measured: Payment Terms."Due Date
+//       Calculation" for "10 DAYS" is "10" + U+0002, not "10D"), which is what the
+//       isTokenString: true constructor consumes.
+//   Evidence: Microsoft.Dynamics.Nav.Ncl.dll from sandbox/28.1.49838.50621 and
+//   sandbox/27.5.46862.48827, decompiled — the read path is identical in both.
+//
+//   Still refused, and named when they are: Blob, Media, MediaSet (#2245), RecordId, Duration,
+//   TableFilter, a DB NULL in a non-string column, and any column name that is not an AL field
+//   of the target table. Removing four reasons to refuse did not remove the ability to.
 //
 // TABLE-EXTENSION FIELDS (issue #2261)
 //   BC splits an extended table across the base table and a `<table>$ext` companion. The
@@ -55,6 +77,7 @@ using AlRunner.Infrastructure;
 using System.Reflection;
 using System.Text.Json;
 using Microsoft.Dynamics.Nav.Runtime;
+using Microsoft.Dynamics.Nav.Types.Exceptions;
 
 namespace AlRunner.Patches;
 
@@ -196,10 +219,10 @@ public static partial class RecordPatches
     /// <summary>
     /// Rebuild one decoded backup value as a NavValue for <paramref name="metadata"/>'s type.
     ///
-    /// Every branch hands a CLR object to BC's own <see cref="NavValue.CreateNavValueFromObject"/>
-    /// — this method never encodes a NavValue itself. A type that is not listed is refused, by
-    /// design: silently guessing an encoding for (say) a DateFormula, whose SQL form is an
-    /// opaque BC-internal string, is exactly the failure this feature exists to avoid.
+    /// This method never invents an encoding. The scalar branches hand a CLR object to BC's own
+    /// <see cref="NavValue.CreateNavValueFromObject"/>; the Date/DateTime/Time/DateFormula
+    /// branches transcribe BC's own SQL reader, <c>NavSqlCommand.CreateNavValueFromReader</c>,
+    /// quoted inline at each case. A type that is not listed is refused, by design.
     /// </summary>
     internal static NavValue ConvertTestDataValue(
         INavValueMetadata metadata, JsonElement json, int tableId, string tableName, int fieldNo, string columnName)
@@ -293,14 +316,187 @@ public static partial class RecordPatches
                 return NavValue.CreateNavValueFromObject(metadata, guid);
             }
 
+            // The four date/time-shaped types below mirror, case for case, BC's OWN
+            // SQL-cell-to-NavValue conversion:
+            // Microsoft.Dynamics.Nav.Runtime.NavSqlCommand.CreateNavValueFromReader(
+            //     SqlDataReader, INavFieldMetadata, int, int)
+            // in Microsoft.Dynamics.Nav.Ncl.dll — identical in the 27.5 and 28.1 artifacts.
+            // Anything that deviates from that method is a bug here, not a design choice.
+
+            case NavNclType.NavTime:
+            {
+                // BC:
+                //   DateTime dt = reader.GetDateTime(i);
+                //   if (dt.Equals(NavTime.SqlTimeUndefined)) return NavTime.Undefined;
+                //   return NavTime.Create(dt.Hour, dt.Minute, dt.Second, dt.Millisecond);
+                //
+                // NavTime has its OWN sentinel. It is the same instant as NavDate's, but a
+                // blank Time and 00:00:00 are different AL values, so the check is what keeps
+                // them apart — real midnight is stored on the 1754-01-01 carrier day.
+                // DateTime.Equals compares ticks and ignores Kind, which is why comparing an
+                // Unspecified-kind parse against a Local-kind constant is BC's own shape too
+                // (SqlDataReader.GetDateTime also returns Unspecified).
+                var cell = ParseTestDataSqlDateTime(json, Refuse);
+                if (cell.Equals(NavTime.SqlTimeUndefined)) return NavTime.Undefined;
+                // Only the time-of-day is part of the AL value; the date half is SQL's carrier
+                // for a `datetime` column and BC discards it.
+                return CreateOrRefuse(
+                    () => NavTime.Create(cell.Hour, cell.Minute, cell.Second, cell.Millisecond), Refuse);
+            }
+
+            case NavNclType.NavDate:
+            {
+                // BC:
+                //   DateTime v = new DateTime(reader.GetDateTime(i).Ticks, DateTimeKind.Local);
+                //   if (v.Equals(NavDate.SqlDateTimeUndefined)) return NavDate.Undefined;
+                //   return NavDate.Create(v);
+                //
+                // The sentinel is 1753-01-01, and it is unambiguous: NavDate.GetSqlWritableValue
+                // writes it for a blank date and THROWS (NavCSideException 22928068) for any
+                // real date outside [1754-01-01, 9999-12-31 23:59:59.997], so no real AL date
+                // can collide with it. Kind must be Local — NavDate's constructor rejects
+                // anything else outright.
+                var cell = ParseTestDataSqlDateTime(json, Refuse);
+                var value = new DateTime(cell.Ticks, DateTimeKind.Local);
+                if (value.Equals(NavDate.SqlDateTimeUndefined)) return NavDate.Undefined;
+                RefuseIfOutsideBcsWritableSqlRange(value, Refuse);
+                return CreateOrRefuse(() => NavDate.Create(value), Refuse);
+            }
+
+            case NavNclType.NavDateTime:
+            {
+                // BC:
+                //   DateTime v = DateTime.SpecifyKind(reader.GetDateTime(i), DateTimeKind.Utc);
+                //   if (v.Equals(NavDateTime.SqlDateTimeUtcUndefined)) return NavDateTime.Undefined;
+                //   return NavDateTime.Create(null, v, DateTimeReferenceFrame.Server,
+                //                             unspecifiedAsLocal: false);
+                //
+                // NOT CreateFromObject. That overload builds with DateTimeReferenceFrame.Client
+                // and unspecifiedAsLocal: true, which sends the value through ConvertToUTc and
+                // shifts it by the machine's UTC offset. Specifying Utc kind takes the verbatim
+                // branch of NavDateTime's constructor instead, which touches neither a session
+                // nor a time zone — that is why a null session is safe here.
+                var cell = ParseTestDataSqlDateTime(json, Refuse);
+                var value = DateTime.SpecifyKind(cell, DateTimeKind.Utc);
+                if (value.Equals(NavDateTime.SqlDateTimeUtcUndefined)) return NavDateTime.Undefined;
+                if (value < NavDateTime.SqlDateTimeUtcFirstValid
+                    || value > NavDateTime.SqlDateTimeUtcLastValid)
+                    throw new TestDataHydrationRefusal(Refuse(
+                        $"the backup holds '{value:yyyy-MM-dd HH:mm:ss.fff}', which is outside the range BC "
+                        + "will write to a SQL datetime column and is not its blank sentinel either, so the "
+                        + "reader decoded something BC cannot have stored"));
+                return CreateOrRefuse(
+                    () => NavDateTime.Create(
+                        (NavSession?)null, value, DateTimeReferenceFrame.Server, unspecifiedAsLocal: false),
+                    Refuse);
+            }
+
+            case NavNclType.NavDateFormula:
+            {
+                // BC:
+                //   string text = reader.GetString(i);
+                //   if (string.IsNullOrEmpty(text)) return field.EmptyValue;
+                //   return new NavDateFormula(text, isTokenString: true);
+                //
+                // The stored value is BC's TOKEN encoding, not readable formula text: measured,
+                // Payment Terms."Due Date Calculation" for "10 DAYS" is "10" + U+0002, and
+                // Company Information."Cal. Convergence Time Frame" is "1" + U+0007. The
+                // single-argument NavDateFormula(string) overload would run that through
+                // NavDateFormulaEvaluator.Parse as formula TEXT and produce a different value;
+                // isTokenString: true is what consumes it as tokens.
+                if (json.ValueKind != JsonValueKind.String)
+                    throw new TestDataHydrationRefusal(Refuse(
+                        $"expected a DateFormula token string, got {json.ValueKind} '{json}'"));
+                var text = json.GetString() ?? string.Empty;
+                // NavDateFormula.Default is the same instance BC's field.EmptyValue resolves to
+                // for a DateFormula field (NCLMetaField.EmptyValue -> NavValue.GetDefaultNavValue
+                // -> NavDateFormula.Default), so this is that branch, not an approximation of it.
+                if (text.Length == 0) return NavDateFormula.Default;
+                return CreateOrRefuse(() => new NavDateFormula(text, isTokenString: true), Refuse);
+            }
+
             default:
-                // Date/DateTime/Time/Duration/DateFormula/Blob/Media/MediaSet/RecordId/…
+                // Duration/Blob/Media/MediaSet/RecordId/TableFilter/…
                 // Not "unsupported forever" — unproven. Rebuilding them needs BC's SQL
-                // storage encoding for that type (e.g. which SQL datetime value AL's blank
-                // date is stored as), and this codec will not assert one that no service tier
-                // has confirmed. See .claude/rules/ask-the-corpus-before-claiming-bc-behavior.md.
+                // storage encoding for that type, and this codec will not assert one it has
+                // not established. LOB/binary is tracked in #2245.
                 throw new TestDataHydrationRefusal(Refuse(
                     "this runner build cannot yet rebuild that AL type from a backup value"));
+        }
+    }
+
+    /// <summary>NavDate's own private <c>SqlDateTimeFirstValid</c>, transcribed. BC's write path
+    /// throws rather than store a Date below it, which is what makes 1753-01-01 an unambiguous
+    /// blank marker rather than one of two meanings sharing a column.</summary>
+    private static readonly DateTime TestDataSqlDateFirstValid =
+        new(1754, 1, 1, 0, 0, 0, 0, DateTimeKind.Local);
+
+    /// <summary>
+    /// The one shape the reader emits for every SQL <c>datetime</c> column, whatever the AL type
+    /// on top of it: a JSON string <c>yyyy-MM-dd HH:mm:ss.fff</c>. Measured across all 4,854
+    /// Date, 503 DateTime and 302 Time cells the reader produced for CRONUS from
+    /// <c>sandbox/28.1.49838.50621/w1/BusinessCentral-W1.bak</c> — one shape, no exceptions.
+    ///
+    /// The three variants after it are not measured; they are the unambiguous renderings a
+    /// reader change could plausibly move to (whole seconds, <c>datetime2</c> precision, an ISO
+    /// separator). Anything else refuses, which is the point: a decoding change that this codec
+    /// silently reinterpreted would put wrong dates in the store with nothing to notice it.
+    /// </summary>
+    private static readonly string[] TestDataSqlDateTimeFormats =
+    {
+        "yyyy-MM-dd HH:mm:ss.fff",
+        "yyyy-MM-dd HH:mm:ss",
+        "yyyy-MM-dd HH:mm:ss.fffffff",
+        "yyyy-MM-ddTHH:mm:ss.fff",
+    };
+
+    private static DateTime ParseTestDataSqlDateTime(JsonElement json, Func<string, string> refuse)
+    {
+        if (json.ValueKind != JsonValueKind.String)
+            throw new TestDataHydrationRefusal(refuse(
+                $"expected a SQL datetime string, got {json.ValueKind} '{json}'"));
+
+        // DateTimeStyles.None yields DateTimeKind.Unspecified — the same kind
+        // SqlDataReader.GetDateTime hands BC, so each branch above applies the kind BC applies
+        // rather than inheriting one from the parse.
+        if (!DateTime.TryParseExact(json.GetString(), TestDataSqlDateTimeFormats,
+                System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.None, out var parsed))
+            throw new TestDataHydrationRefusal(refuse(
+                $"'{json.GetString()}' is not a SQL datetime the reader is known to emit "
+                + $"(expected {TestDataSqlDateTimeFormats[0]})"));
+        return parsed;
+    }
+
+    /// <summary>
+    /// Refuse a Date outside the window BC's own write path will store. BC's READ path does not
+    /// range-check, because SQL already held it to that window on the way in; here the value
+    /// arrived through a third-party backup decoder instead, so the guarantee has to be
+    /// re-checked. A date in 1753 that is not the sentinel cannot have been written by BC, so it
+    /// means the decode was wrong — and a plausible-looking wrong date in the store is exactly
+    /// what .claude/rules/loud-failures.md exists to stop.
+    /// </summary>
+    private static void RefuseIfOutsideBcsWritableSqlRange(DateTime value, Func<string, string> refuse)
+    {
+        if (value >= TestDataSqlDateFirstValid) return;
+        throw new TestDataHydrationRefusal(refuse(
+            $"the backup holds '{value:yyyy-MM-dd HH:mm:ss.fff}', which is earlier than the "
+            + $"{TestDataSqlDateFirstValid:yyyy-MM-dd} floor BC will write to a SQL datetime column and is "
+            + "not its blank sentinel either, so the reader decoded something BC cannot have stored"));
+    }
+
+    /// <summary>
+    /// Run one of BC's own NavValue constructors and turn its rejection into a per-table refusal.
+    /// Without this a NavNCLException would escape past TestDataProvisioner's catch and abort the
+    /// whole run, where the contract is that ONE table declines and the rest still hydrate.
+    /// </summary>
+    private static NavValue CreateOrRefuse(Func<NavValue> create, Func<string, string> refuse)
+    {
+        try { return create(); }
+        catch (NavNCLException ex)
+        {
+            throw new TestDataHydrationRefusal(refuse(
+                $"BC's own value constructor rejected the decoded cell ({ex.GetType().Name}: {ex.Message})"));
         }
     }
 }
