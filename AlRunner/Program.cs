@@ -984,15 +984,24 @@ if (bcVersionArg == null && artifactPathArg == null)
                     break;
             }
 
-            // #2097: NOT deferred — deliberately kept immediate, unlike the cached-tier
-            // branches above. This fires regardless of which tier won, including the two
-            // KNOWN-DEGRADED branches that can precede an immediate failure return in
-            // this same generation — deferring it would risk the same silent-discard-on-
-            // error trap documented on the switch above.
+            // #2210: DEFERRED — unlike the tier switch above, this note does not explain why
+            // a subsequent failure happened (it is not one of the KNOWN-DEGRADED branches;
+            // it fires independently of which tier won), so there is nothing lost by holding
+            // it until the terminal generation. Printing it immediately here was exactly the
+            // reported bug: it duplicated once per generation (before the shadow-hop re-exec
+            // AND again in the child that performs it, sometimes a third time on a stacked
+            // Cecil-fresh-rewrite re-exec too), reliably making it the loudest line in an
+            // otherwise all-green run and training users to skim past every "[bc] warning:"
+            // line — including the ones that actually matter. See BcArtifacts.
+            // DescribeCrossMajorNote for why the wording changed from "warning" to "note":
+            // measured (#2210), this specific mismatch (declared major trailing the engine's
+            // own by one) produced no divergence on AL exercising real Base/System
+            // Application logic, and it is not a compatibility hazard by BC's own design —
+            // application/platform are minima, not pins.
             var projMajor = TryDeriveBcMajorFromProject(bundles);
-            if (projMajor != null && projMajor != engineMajor.Value.ToString())
-                Console.Error.WriteLine($"[bc] warning: project app.json targets BC major {projMajor} but this " +
-                    $"runner build supports major {engineMajor} (cross-major needs a matching runner build).");
+            var crossMajorNote = AlRunner.Infrastructure.BcArtifacts.DescribeCrossMajorNote(projMajor, engineMajor.Value);
+            if (crossMajorNote != null)
+                deferredStartupLines.Add(() => Console.Error.WriteLine(crossMajorNote));
         }
     }
 }

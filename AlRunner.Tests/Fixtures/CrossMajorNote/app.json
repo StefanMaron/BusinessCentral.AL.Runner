@@ -1,0 +1,18 @@
+{
+  "id": "1a6d0f2c-6b3e-4b7a-9d5f-2e8c4a0b9d17",
+  "name": "Cross Major Note Fixture",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Declares a BC major (1) no shipped runner engine will ever be built for, so the cross-major note (issue #2210) is deterministic regardless of which BC major the test host built AlRunner.Tests against.",
+  "dependencies": [],
+  "idRanges": [
+    {
+      "from": 60950,
+      "to": 60959
+    }
+  ],
+  "platform": "1.0.0.0",
+  "application": "1.0.0.0",
+  "runtime": "14.0",
+  "target": "Cloud"
+}

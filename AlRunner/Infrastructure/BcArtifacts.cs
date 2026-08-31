@@ -500,6 +500,49 @@ public static class BcArtifacts
     }
 
     /// <summary>
+    /// Issue #2210: the auto-select default path's cross-major note — printed when the
+    /// target project's app.json (application/platform) declares a BC major different from
+    /// the one this engine build actually resolves Base/System Application symbols against.
+    ///
+    /// This is NOT the same risk as <see cref="DescribeExplicitEngineMinorMismatch"/> above.
+    /// That one is a real engine/artifact DLL-version skew (VerifyEngineConsistency's own
+    /// MAJOR-only check already refuses a genuine cross-major engine/artifact pairing before
+    /// this point ever runs) — a live compatibility hazard, measured at dozens of extra
+    /// failures. This one compares the app's DECLARED MINIMUM version against whatever major
+    /// actually ran it, which are never in tension with each other: AL's `application`/
+    /// `platform` fields are minima, not pins (see BcVersionFloorSkipTests), and BC itself is
+    /// designed so an app declaring an older minimum runs unmodified on a newer major — that
+    /// is the entire point of the floor semantics, not a degraded corner case of them.
+    ///
+    /// Measured directly for #2210: the same AL source (tests/runner-extras/microsoft-
+    /// dependencies, which exercises real Base Application/System Application codeunits —
+    /// No. Series, Environment Information, Workflow Setup, Conf./Personalization Mgt., a
+    /// RecordRef-filtered Base App table read) produced IDENTICAL 14/14 pass results whether
+    /// resolved against a BC-27-built engine (matching the app's declared major) or a
+    /// BC-28-built engine (one major ahead of it) — no divergence found. The pre-existing
+    /// BcVersionFloorSkipTests healthy-suite fixture (application/platform "1.0.0.0") already
+    /// runs this exact declared-vs-actual mismatch on EVERY supported BC major in CI
+    /// (27.0-28.4) continuously, and always passes. There is no live divergence risk to warn
+    /// about here — only a fact worth surfacing for anyone chasing exact-version parity — so
+    /// this reads as an informational note, not an alarm, and never implies the run needs a
+    /// different runner build to be trustworthy.
+    ///
+    /// Returns null when there is nothing to say (no derivable project major, or majors
+    /// already match).
+    /// </summary>
+    public static string? DescribeCrossMajorNote(string? projMajor, int engineMajor)
+    {
+        if (projMajor == null || projMajor == engineMajor.ToString()) return null;
+        return $"[bc] note: project app.json declares BC major {projMajor}; this run resolves " +
+            $"Base/System Application symbols against major {engineMajor} instead. Measured " +
+            $"(#2210): AL exercising real Base/System Application logic produced identical " +
+            $"results whether the declared major matched the engine's own major or trailed it " +
+            $"by one — an app.json application/platform version is a MINIMUM, not a pin, so " +
+            $"this is expected, not a compatibility risk. Install a runner build for major " +
+            $"{projMajor} (-p:_BCVersion=...) if you specifically need an exact-major match.";
+    }
+
+    /// <summary>
     /// Issue #2037: whether Program.cs should even CALL <see cref="WarnIfExplicitEngineMinorMismatch"/>
     /// at all, given how many per-BC-minor engine variants this install ships (see
     /// <see cref="EngineVariants.Discover"/>, called just before the variant-swap block in
