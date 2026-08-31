@@ -39,8 +39,10 @@
 //   sandbox/27.5.46862.48827, decompiled — the read path is identical in both.
 //
 //   Still refused, and named when they are: Blob, Media, MediaSet (#2245), RecordId, Duration,
-//   TableFilter, a DB NULL in a non-string column, and any column name that is not an AL field
-//   of the target table. Removing four reasons to refuse did not remove the ability to.
+//   TableFilter, a DB NULL in a non-string column (#2268 — BC's reader answers that one too,
+//   but it needs the NCLMetaField this method is not handed), and any column name that is not
+//   an AL field of the target table. Removing four reasons to refuse did not remove the
+//   ability to: measured on the shipped CRONUS backup, 41 tables still decline.
 //
 // TABLE-EXTENSION FIELDS (issue #2261)
 //   BC splits an extended table across the base table and a `<table>$ext` companion. The
@@ -236,12 +238,17 @@ public static partial class RecordPatches
 
         if (json.ValueKind == JsonValueKind.Null)
         {
-            // A DB NULL. Only the string-like types have a NavValue that can represent one
-            // (the same restriction BC's own byte codec has — see
-            // RecordPatches.InstallBaselineDisk's KindNullString).
+            // A DB NULL. Only the string-like types are rebuilt here (the same restriction
+            // BC's own byte codec has — see RecordPatches.InstallBaselineDisk's KindNullString).
+            // BC's SQL READER does have an answer for every type — field.EmptyValue, and
+            // new NavBLOB(0) for a Blob — but reaching it needs the NCLMetaField this method is
+            // not handed. #2268 tracks it; measured, it is 11 of the 41 remaining refusals.
+            // Until then this refuses, which is the safe direction.
             if (!isStringLike)
                 throw new TestDataHydrationRefusal(Refuse(
-                    "the backup holds a NULL, and only Text/Code have a NavValue that can represent one"));
+                    "the backup holds a NULL, and this runner build only rebuilds NULLs for "
+                    + "Text/Code (see issue #2268 — BC's own SQL reader answers a NULL for every "
+                    + "type, but doing the same here needs metadata this codec is not handed)"));
             return nclType switch
             {
                 NavNclType.NavText or NavNclType.NavOemText =>
