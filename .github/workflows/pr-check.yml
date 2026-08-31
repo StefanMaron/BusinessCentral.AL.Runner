@@ -137,6 +137,35 @@ jobs:
           git config --global user.name "Test"
           python3 .github/scripts/test_generate_changelog.py
 
+  pe-signing-tests:
+    name: PE Authenticode detection tests
+    runs-on: ubuntu-latest
+    # Gated inside the job (see "Check whether..." below) on whether the PE
+    # signing detector or its tests changed -- see publish.yml's
+    # sign-and-pack job (#2248), which consumes this script to build the
+    # signing catalog and to gate the release on every shipped PE being
+    # Authenticode-signed.
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Check whether pe_signing.py or its tests changed
+        id: changed
+        run: |
+          BASE=${{ github.event.pull_request.base.sha }}
+          HEAD=${{ github.event.pull_request.head.sha }}
+          CHANGED=$(git diff --name-only "$BASE"..."$HEAD")
+          if echo "$CHANGED" | grep -qE '^\.github/scripts/(pe_signing\.py|test_pe_signing\.py)$'; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run pe_signing.py tests
+        if: steps.changed.outputs.run == 'true'
+        run: python3 .github/scripts/test_pe_signing.py
+
   reject-ci-skip-directives:
     name: PR title/body must not contain a CI-skip directive
     runs-on: ubuntu-latest

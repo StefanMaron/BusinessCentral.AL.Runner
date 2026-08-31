@@ -66,6 +66,47 @@ name: Publish to NuGet
 # The release job's checkout uses RELEASE_DEPLOY_KEY (a write-access deploy key) so
 # the git push to the released branch bypasses the branch ruleset ("Deploy keys" ->
 # Always allow).
+#
+# #2248: Authenticode signing split this job in three. The published package used
+# to ship 32 unsigned PE files (our own al-runner.dll/AlRunner.Provisioning.dll/
+# AlRunner.QueryJoin.dll, each shipped 9 times -- once at the package root and once
+# per BC-minor engine variant -- plus Mono.Cecil.* and Spectre.Console.dll), which
+# Windows Smart App Control blocks outright (#2244). Signing needs a Windows runner
+# (azure/artifact-signing-action only runs there) and must happen BEFORE `dotnet
+# pack` (the package embeds these files; signing after packing would mean unpacking
+# and repacking the nupkg itself). So the old single `release` job is now three:
+#
+#   build          (ubuntu-latest) -- builds every BC-minor engine variant plus the
+#                  package-root build, all UNSIGNED, and uploads the whole build
+#                  tree as an artifact.
+#   sign-and-pack  (windows-latest, environment: release) -- downloads that tree,
+#                  signs every currently-unsigned PE file in it, then runs
+#                  `dotnet pack --no-build` against the now-signed tree and
+#                  uploads the resulting nupkg.
+#   release        (ubuntu-latest) -- downloads the signed nupkg, verifies every
+#                  PE inside it is signed, then does the writes (CHANGELOG commit,
+#                  tag, NuGet push, GitHub Release) exactly as before.
+#
+# Why sign-and-pack signs MORE than the 32 files a naive reading suggests: `dotnet
+# pack --no-build` still re-runs the SDK's Publish-target file-copy phase (it is
+# NOT gated on NoBuild), which copies each assembly fresh from wherever it
+# considers the authoritative source -- AlRunner/obj/Release/net8.0/al-runner.dll
+# for the entry assembly, each ProjectReference's own bin/Release/net8.0/ for
+# AlRunner.QueryJoin.dll and AlRunner.Provisioning.dll, and every dependency's
+# resolved bin/Release/net8.0/ copy for the rest -- into bin/Release/net8.0/publish/,
+# which is what actually gets packed (verified empirically: tools/net8.0/any/*.dll
+# in the resulting nupkg is byte-identical to bin/Release/net8.0/publish/*.dll, not
+# to the outer bin/Release/net8.0/*.dll). MSBuild's copy is timestamp-skip, not
+# unconditional, so signing only the publish/ copy happened to survive in a
+# same-machine, same-session test -- but that's exactly the kind of timestamp
+# coincidence an artifact upload/download round-trip must not be trusted to
+# preserve. The robust fix is to sign every physical copy of every affected
+# assembly wherever pe_signing.py's recursive scan finds it (obj/, each project's
+# own bin/, and the root project's bin/ and bin/publish/) so the copy is a no-op
+# regardless of which source MSBuild's Publish target chooses: the bytes are
+# already signed everywhere. variants-staging/ has no such duplication (NuGet
+# packs directly from EngineVariantsStagingDir at pack time, not via a copied
+# build output), so one signed copy per variant file is sufficient there.
 on:
   workflow_dispatch:
     inputs:
@@ -141,30 +182,18 @@ jobs:
     with:
       ref: ${{ needs.plan.outputs.ref }}
 
-  release:
-    # Gated on `test`: this job holds every write this workflow performs — the
-    # CHANGELOG commit, the push to main, the tag, the NuGet push and the GitHub
-    # Release. Nothing above it touches the repository. See #1978.
-    #
-    # WITHIN this job, order matters too (#2010): build-and-pack runs FIRST, before
-    # the commit/tag push, so a build/pack failure (the failure that broke v2.4.0)
-    # leaves no write behind either. See the workflow header for the full guarantee
-    # and its one known gap (a NuGet-push failure).
+  build:
+    # Everything that produces build output, all UNSIGNED — split out of the old
+    # `release` job so signing (which needs a Windows runner) can happen between
+    # this and packing without dragging the whole build onto Windows too. See the
+    # #2248 header comment above for why: BuildWin32PrebuiltStubs (this job) needs
+    # Linux's native `cc`/cross-gcc, which a Windows runner doesn't have.
     needs: [plan, test]
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v6
         with:
-          fetch-depth: 0
           ref: ${{ needs.plan.outputs.ref }}
-          ssh-key: ${{ secrets.RELEASE_DEPLOY_KEY }}
-
-      - name: Configure git
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
 
       - uses: actions/setup-dotnet@v5
         with:
@@ -217,56 +246,242 @@ jobs:
           echo "Staged variants:"
           ls -la ./variants-staging
 
-      - name: Build and pack
-        id: build-and-pack
+      - name: Publish the package-root build (unsigned)
+        # Replaces the old combined "Build and pack" step: packing now happens in a
+        # separate (Windows) job, AFTER signing, so this only publishes — it does not
+        # pack. `dotnet pack` internally re-publishes to bin/<config>/<tfm>/publish/
+        # and packs FROM THERE (verified empirically: tools/net8.0/any/*.dll in a
+        # packed nupkg is byte-identical to bin/Release/net8.0/publish/*.dll, not to
+        # the outer bin/Release/net8.0/*.dll), so publishing here and packing
+        # `--no-build` later against this exact output is equivalent to the old
+        # single build+pack, just with a signing step in between.
+        #
+        # #2010: _BCVersion is passed explicitly here rather than left at
+        # AlRunner.csproj's default. The default is a static pin that Microsoft can
+        # (and did — the v2.4.0 release) withdraw between when it was last bumped
+        # and when a release runs, and nothing exercised that exact value except a
+        # release itself. `needs.test.outputs.required-version` is the live-resolved
+        # 28.1.* build the test matrix THIS RUN just gated on (bc-tests.yml's
+        # resolve-versions job, same resolve-version call bc-tests.yml's other jobs
+        # use) — it cannot be a version Microsoft has withdrawn, because resolving it
+        # is what proved it still exists, in this same run. It's also what the
+        # package is stamped with (AssemblyMetadata BcEngineVersion, AlRunner.csproj)
+        # so a released package still records a single, definite engine version.
+        #
+        # Also runs BuildWin32PrebuiltStubs (see AlRunner.csproj) which ships the
+        # prebuilt libwin32_stubs.linux-{x64,arm64}.so shims in the resulting nupkg.
+        #
+        # #1881's Directory.Build.props turns OFF IncludeSourceRevisionInInformationalVersion
+        # and SuppressImplicitGitSourceLink=true repo-wide, so every dev/CI build of
+        # al-runner.dll is content-addressable (RunnerFingerprint.ContentHash stops
+        # being a hash of the commit). This is the ONE place that must turn them back
+        # ON: `dotnet pack`'s nuspec RepositoryUrl/RepositoryCommit come from
+        # SourceLink's git task, and PackAsTool=true (AlRunner.csproj) ships this to
+        # nuget.org under MSDyn365BC.AL.Runner — losing that would silently strip
+        # commit provenance / source-stepping from every released package. Verified
+        # empirically that BOTH this Publish step and the later `dotnet pack --no-build`
+        # step need these two properties passed again — dropping them from either one
+        # (even though --no-build doesn't recompile) drops the nuspec's `commit`
+        # attribute back to absent, because NuGet's pack-time SourceLink integration
+        # re-reads git state itself rather than trusting whatever the prior Publish
+        # already embedded.
+        #
+        # Safe to override here specifically: a released package's bytes are fixed for a
+        # given version, so the ContentHash an end user's run computes from it is stable.
+        # Commit-embedding only invalidates caches when the SAME code is rebuilt
+        # commit-to-commit — the dev/CI/test-matrix path, never the release path.
         run: |
-          # Packing also needs the BC service tier present (RAR resolves against it),
-          # so the same download switch applies here.
-          #
-          # #2010: _BCVersion is passed explicitly here rather than left at
-          # AlRunner.csproj's default. The default is a static pin that Microsoft can
-          # (and did — the v2.4.0 release) withdraw between when it was last bumped
-          # and when a release runs, and nothing exercised that exact value except a
-          # release itself. `needs.test.outputs.required-version` is the live-resolved
-          # 28.1.* build the test matrix THIS RUN just gated on (bc-tests.yml's
-          # resolve-versions job, same resolve-version call bc-tests.yml's other jobs
-          # use) — it cannot be a version Microsoft has withdrawn, because resolving it
-          # is what proved it still exists, in this same run. It's also what the
-          # package is stamped with (AssemblyMetadata BcEngineVersion, AlRunner.csproj)
-          # so a released package still records a single, definite engine version.
-          #
-          # Also runs BuildWin32PrebuiltStubs (see AlRunner.csproj) which ships the
-          # prebuilt libwin32_stubs.linux-{x64,arm64}.so shims in the resulting nupkg.
-          #
-          # #1881's Directory.Build.props turns OFF IncludeSourceRevisionInInformationalVersion
-          # and SuppressImplicitGitSourceLink=true repo-wide, so every dev/CI build of
-          # al-runner.dll is content-addressable (RunnerFingerprint.ContentHash stops
-          # being a hash of the commit). This is the ONE place that must turn them back
-          # ON: `dotnet pack`'s nuspec RepositoryUrl/RepositoryCommit come from
-          # SourceLink's git task, and PackAsTool=true (AlRunner.csproj) ships this to
-          # nuget.org under MSDyn365BC.AL.Runner — losing that would silently strip
-          # commit provenance / source-stepping from every released package.
-          #
-          # Safe to override here specifically: a released package's bytes are fixed for a
-          # given version, so the ContentHash an end user's run computes from it is stable.
-          # Commit-embedding only invalidates caches when the SAME code is rebuilt
-          # commit-to-commit — the dev/CI/test-matrix path, never the release path.
-          #
-          # This step now runs BEFORE the CHANGELOG commit below (it used to run after),
-          # so the embedded commit SHA is the tested commit, one commit behind the tag
-          # that will point at tested-commit-plus-CHANGELOG. The two commits are
-          # byte-identical in every file that affects the built DLL (CHANGELOG.md isn't
-          # compiled), so this costs nothing but a one-commit-back SourceLink pointer —
-          # a small, known trade for building before writing.
-          dotnet build AlRunner/ \
-            -p:_BCVersion=${{ needs.test.outputs.required-version }} \
-            -p:AllowBcArtifactDownload=true
-          dotnet pack AlRunner/ \
+          dotnet publish AlRunner/ -c Release \
             -p:_BCVersion=${{ needs.test.outputs.required-version }} \
             -p:AllowBcArtifactDownload=true -p:Version=${{ inputs.version }} \
-            -p:SuppressImplicitGitSourceLink=false -p:IncludeSourceRevisionInInformationalVersion=true \
-            -p:EngineVariantsStagingDir="$(pwd)/variants-staging" \
-            -o ./nupkg
+            -p:SuppressImplicitGitSourceLink=false -p:IncludeSourceRevisionInInformationalVersion=true
+
+      - name: Upload the unsigned build tree
+        # The FULL obj/bin tree for all three projects, not just bin/publish/ — see
+        # the #2248 header comment for why: `dotnet pack --no-build` still re-runs
+        # the SDK's Publish-target copy phase, which needs these as copy sources.
+        uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-build
+          path: |
+            AlRunner/bin
+            AlRunner/obj
+            AlRunner.QueryJoin/bin
+            AlRunner.QueryJoin/obj
+            AlRunner.Provisioning/bin
+            AlRunner.Provisioning/obj
+            variants-staging
+          if-no-files-found: error
+          retention-days: 1
+
+  sign-and-pack:
+    # Authenticode-signs every currently-unsigned PE file the `build` job produced,
+    # then packs the nupkg from the now-signed tree. Needs a Windows runner —
+    # azure/artifact-signing-action only runs there (#2248) — and the `release`
+    # environment, whose federated credential subject
+    # (repo:StefanMaron/BusinessCentral.AL.Runner:environment:release) is what
+    # authorizes this job's OIDC token exchange with Entra ID. No client secret
+    # anywhere in this job; `permissions: id-token: write` plus
+    # `exclude-workload-identity-credential: false` on the signing step is the
+    # entire authentication story.
+    needs: [plan, build]
+    runs-on: windows-latest
+    environment: release
+    permissions:
+      id-token: write
+    outputs:
+      unsigned-count: ${{ steps.catalog.outputs.count }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.plan.outputs.ref }}
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '8.0.x'
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Download the unsigned build tree
+        uses: actions/download-artifact@v4
+        with:
+          name: unsigned-build
+          path: .
+
+      - name: Build the signing catalog
+        id: catalog
+        # Scans the FULL obj/bin tree (not just the publish/ folder) so every
+        # physical copy of every unsigned assembly gets signed — see the #2248
+        # header comment for why that's required for `dotnet pack --no-build`
+        # (below) to end up with signed bytes regardless of which copy its
+        # Publish-target re-copy phase treats as the source. Third-party
+        # dependencies (Mono.Cecil.*, Spectre.Console.dll) are picked up by the
+        # same generic scan — nothing here special-cases them by name.
+        run: |
+          python .github/scripts/pe_signing.py list-unsigned AlRunner AlRunner.QueryJoin AlRunner.Provisioning variants-staging --catalog catalog.txt
+          $count = 0
+          if (Test-Path catalog.txt) {
+            $lines = Get-Content catalog.txt | Where-Object { $_.Trim() -ne '' }
+            $count = $lines.Count
+          }
+          Write-Host "Files queued for signing: $count"
+          if ($count -eq 0) {
+            Write-Error "No unsigned PE files found -- expected at least our own al-runner.dll/AlRunner.QueryJoin.dll/AlRunner.Provisioning.dll. Failing loudly instead of silently 'succeeding' at signing nothing."
+            exit 1
+          }
+          "count=$count" >> $env:GITHUB_OUTPUT
+
+      - name: Sign unsigned PE files with Azure Artifact Signing (#2248)
+        uses: azure/artifact-signing-action@v2
+        with:
+          endpoint: ${{ vars.SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.SIGNING_ACCOUNT_NAME }}
+          certificate-profile-name: ${{ vars.SIGNING_CERT_PROFILE_NAME }}
+          azure-tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          azure-client-id: ${{ vars.AZURE_CLIENT_ID }}
+          exclude-workload-identity-credential: false
+          files-catalog: ${{ github.workspace }}\catalog.txt
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Verify the signing step actually signed everything it listed
+        # Fail fast here, on the machine that just did the signing, rather than
+        # discovering a gap only after packing and uploading. The release job
+        # (ubuntu, below) re-runs an equivalent check against the PACKED nupkg —
+        # that one is the authoritative gate this issue asks for; this is belt
+        # and suspenders on the pre-pack tree.
+        run: python .github/scripts/pe_signing.py verify AlRunner AlRunner.QueryJoin AlRunner.Provisioning variants-staging
+
+      - name: Restore
+        run: dotnet restore AlRunner/
+
+      - name: Pack the nupkg from the signed, unrebuilt tree
+        id: pack
+        # --no-build: do NOT recompile. Every PE file this pack step touches was
+        # either already signed in place above, or was never unsigned to begin
+        # with (the 84 files this workflow must leave alone). Recompiling here
+        # would throw away the signatures and produce an unsigned nupkg again.
+        run: dotnet pack AlRunner/ --no-build -c Release -p:Version=${{ inputs.version }} -p:SuppressImplicitGitSourceLink=false -p:IncludeSourceRevisionInInformationalVersion=true -p:EngineVariantsStagingDir="${{ github.workspace }}\variants-staging" -o nupkg
+
+      - name: Verify every PE in the packed nupkg is signed (pre-upload sanity)
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $nupkg = (Get-ChildItem nupkg\*.nupkg | Select-Object -First 1).FullName
+          $extractDir = Join-Path $pwd 'nupkg-extracted'
+          [System.IO.Compression.ZipFile]::ExtractToDirectory($nupkg, $extractDir)
+          python .github/scripts/pe_signing.py verify $extractDir
+
+      - name: Upload the signed nupkg
+        uses: actions/upload-artifact@v4
+        with:
+          name: signed-nupkg
+          path: nupkg/*.nupkg
+          if-no-files-found: error
+          retention-days: 1
+
+  release:
+    # Gated on `sign-and-pack`: this job holds every write this workflow performs —
+    # the CHANGELOG commit, the push to main, the tag, the NuGet push and the GitHub
+    # Release. Nothing above it touches the repository. See #1978.
+    #
+    # WITHIN this job, order matters too (#2010): downloading + verifying the
+    # already-built, already-signed, already-packed nupkg runs FIRST, before the
+    # commit/tag push, so a build/pack/signing failure (the failure that broke
+    # v2.4.0) leaves no write behind either. See the workflow header for the full
+    # guarantee and its one known gap (a NuGet-push failure).
+    needs: [plan, test, sign-and-pack]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.plan.outputs.ref }}
+          ssh-key: ${{ secrets.RELEASE_DEPLOY_KEY }}
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Download the signed nupkg
+        id: download-nupkg
+        uses: actions/download-artifact@v4
+        with:
+          name: signed-nupkg
+          path: ./nupkg
+
+      - name: Assert a package was actually produced
+        run: |
+          shopt -s nullglob
+          pkgs=(./nupkg/*.nupkg)
+          if [ "${#pkgs[@]}" -eq 0 ]; then
+            echo "::error::no .nupkg found in the downloaded signed-nupkg artifact — the release path would ship nothing"
+            exit 1
+          fi
+          echo "Packed: ${pkgs[*]}"
+
+      - name: Verify every PE in the packed package is Authenticode-signed (#2248)
+        id: verify-signed
+        # The authoritative gate: this is the SAME scan (pe_signing.py) that
+        # measured 32 unsigned files in the published 2.9.0 package, run here
+        # against the FINAL packed nupkg contents, right before the writes below.
+        # A regression in sign-and-pack (a missed file, a signing-step failure that
+        # somehow didn't fail the job, a future packaging change that reintroduces
+        # an unsigned copy) fails HERE, before any NuGet push or GitHub Release.
+        run: |
+          mkdir -p ./nupkg-extracted
+          unzip -q ./nupkg/*.nupkg -d ./nupkg-extracted
+          python3 .github/scripts/pe_signing.py verify ./nupkg-extracted
 
       - name: Generate CHANGELOG and push the release commit + tag
         id: changelog
@@ -356,7 +571,9 @@ jobs:
             echo ""
             echo "| Step | Outcome |"
             echo "|---|---|"
-            echo "| Build and pack | ${{ steps.build-and-pack.outcome || 'did not run' }} |"
+            echo "| Signed nupkg downloaded | ${{ steps.download-nupkg.outcome || 'did not run' }} |"
+            echo "| PE files signed this run | ${{ needs.sign-and-pack.outputs.unsigned-count }} |"
+            echo "| All shipped PE files Authenticode-signed | ${{ steps.verify-signed.outcome || 'did not run' }} |"
             echo "| CHANGELOG commit + tag pushed to main | ${{ inputs.dry_run == true && 'skipped (dry_run)' || (steps.changelog.outcome || 'did not run') }} |"
             echo "| Push to NuGet | ${{ inputs.dry_run == true && 'skipped (dry_run)' || (steps.nuget-push.outcome || 'did not run') }} |"
             echo "| Create GitHub Release | ${{ inputs.dry_run == true && 'skipped (dry_run)' || (steps.gh-release.outcome || 'did not run') }} |"
