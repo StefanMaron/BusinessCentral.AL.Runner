@@ -13,10 +13,16 @@
 // RecordPatches.GetDataAccessForTableCore, the per-table choke point the virtual tables
 // already use, so the baseline stays proportional to what a suite actually touches. That
 // matters because RestoreInstallBaselineSnapshot re-inserts every baseline row at EVERY test
-// boundary, so baseline size is a per-boundary cost, not a per-run one. It is not a pure
-// call-site change — see #2262 for the two lifetime traps that have to be solved first —
-// which is why the eager policy is what ships while it is worked out. Nothing below assumes
-// the eager ordering: HydrateOne() is already the per-table unit such a policy would call.
+// boundary, so baseline size is a per-boundary cost, not a per-run one.
+//
+// There is no "already loaded" flag to maintain, and #2262 has the argument: that choke point
+// only reaches its create-fresh-storage path when the source's perTable lacks the table, and
+// RestoreInstallBaselineSnapshot repopulates perTable from exactly the snapshot it restores
+// (RecordPatches.InstallBaseline.cs, `perTable[table.TableId] = dataAccess`). So "storage is
+// absent" is already, at every instant, the same question as "the snapshot the store was last
+// restored from did not carry this table" — which is precisely when a load is needed.
+// Nothing below assumes the eager ordering: HydrateOne() is already the per-table unit such a
+// policy would call.
 //
 // ORDERING (eager policy)
 //   Hydrate, THEN run install triggers, THEN run tests. That is the repo owner's stated
