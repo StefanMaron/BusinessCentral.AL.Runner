@@ -157,15 +157,24 @@ codeunit 64404 "Test Data LOB Values"
     procedure DurationHydratesAsThatManyMilliseconds()
     var
         JobQueueEntry: Record "Job Queue Entry";
+        TwelveHours: Duration;
+        TwelveSeconds: Duration;
     begin
         JobQueueEntry.SetRange("Object ID to Run", 6700);
         TdfAssert.IsTrue(JobQueueEntry.FindFirst(), 'Job Queue Entry for object 6700 should be hydrated');
 
-        // 43,200,000 ms is twelve hours, BC's shipped default job timeout.
-        TdfAssert.AreEqual(43200000, JobQueueEntry."Job Timeout",
+        // The backup stores 43,200,000 — twelve hours in milliseconds, BC's shipped default
+        // job timeout. Compared as a Duration, not as the number, because AL formats a
+        // Duration as "12 hours" and the assert helper compares formatted values.
+        TwelveHours := 12 * 60 * 60 * 1000;
+        TdfAssert.AreEqual(TwelveHours, JobQueueEntry."Job Timeout",
             'the Duration must read back as the milliseconds the backup stores');
-        TdfAssert.AreEqual(12 * 60 * 60 * 1000, JobQueueEntry."Job Timeout",
-            'and that number must be twelve hours, not a raw bigint that happens to compare equal');
+
+        // The unit half of the same claim: a codec reading the bigint as seconds, or dividing
+        // it, would land here instead.
+        TwelveSeconds := 12 * 1000;
+        TdfAssert.IsFalse(JobQueueEntry."Job Timeout" = TwelveSeconds,
+            'the stored bigint is milliseconds, so 43200000 must not read back as twelve seconds');
     end;
 
     /// <summary>
