@@ -5265,9 +5265,10 @@ static void PrintGuide(TextWriter w)
     w.WriteLine("  It needs the `bcbak` backup reader on PATH or at $AL_RUNNER_BCBAK. The first run");
     w.WriteLine("  pays a one-time extraction; the rows then live in the cached install baseline and");
     w.WriteLine("  later runs pay nothing. A missing backup FAILS the run naming every path probed —");
-    w.WriteLine("  it never continues against an empty database. The first slice does not hydrate");
-    w.WriteLine("  everything (table-extension data, dates/times, BLOB/media): every skipped or");
-    w.WriteLine("  refused table is named on stderr with the reason. See docs/limitations.md.");
+    w.WriteLine("  it never continues against an empty database. Table-extension fields are merged");
+    w.WriteLine("  into the base record; date/time and BLOB/media values are NOT yet rebuilt, and a");
+    w.WriteLine("  table carrying one is refused whole. Every skipped or refused table is named on");
+    w.WriteLine("  stderr with the reason. See docs/limitations.md.");
     w.WriteLine("  If a provisioning-gap message names a specific missing set, force just that one");
     w.WriteLine("  (bypasses need-detection entirely — useful when the default `provision` mis-detects,");
     w.WriteLine("  issue #2085):");
@@ -5528,9 +5529,10 @@ static void PrintHelp(TextWriter w)
     w.WriteLine("                          Needs the `bcbak` backup reader on PATH or at");
     w.WriteLine("                          $AL_RUNNER_BCBAK. First use pays a one-time extraction;");
     w.WriteLine("                          the rows then live in the cached install baseline.");
-    w.WriteLine("                          THIS SLICE hydrates tables with no table-extension data");
-    w.WriteLine("                          and no date/time/BLOB/media values; everything else is");
-    w.WriteLine("                          reported as skipped or refused, never silently dropped.");
+    w.WriteLine("                          Table-extension fields are merged in. Tables carrying a");
+    w.WriteLine("                          date/time or BLOB/media value are still refused whole;");
+    w.WriteLine("                          every skipped or refused table is reported with its");
+    w.WriteLine("                          reason, never silently dropped.");
     w.WriteLine("  --test-data=PATH        As --test-data, but from an explicit .bak file.");
     w.WriteLine("  --test-data-company NAME");
     w.WriteLine("                          Company inside the backup to hydrate. Default: the first");

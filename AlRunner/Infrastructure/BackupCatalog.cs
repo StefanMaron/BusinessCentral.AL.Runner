@@ -30,8 +30,9 @@ internal sealed record BackupTableEntry(
     long RowCount, string Kind, string Company, string TableName, int? AlTableId, string? AppName)
 {
     /// <summary>True for BC's table-extension companion (`&lt;table&gt;$ext`), which holds the
-    /// fields contributed by extending apps. Out of scope for the first hydration slice — see
-    /// TestDataProvisioner.</summary>
+    /// fields contributed by extending apps. Never hydrated as a table in its own right — it
+    /// is joined into its base table by the reader's `--merge-extensions`. Its non-zero row
+    /// count is what tells the plan a base table HAS extension data (#2261).</summary>
     internal bool IsExtensionCompanion => TableName.EndsWith("$ext", StringComparison.Ordinal);
 
     /// <summary>The base table an extension companion belongs to.</summary>
@@ -89,4 +90,36 @@ internal static class BackupCatalog
 
     internal static IReadOnlyList<string> ParseCompanies(string stdout)
         => stdout.Split('\n').Select(l => l.TrimEnd('\r')).Where(l => l.Trim().Length > 0).ToList();
+
+    // BC names a table-extension's storage column `<sqlIdentifier(field name)>$<extending app
+    // id>` — the exact expression in NCLMetaField's SQL-column-name property (Ncl.dll:
+    // `IsCompanionTableField ? ConvertToSqlIdentifier(fieldName) + "$" + appOrigin.AppId : ...`).
+    // A merged read leaves a column in that raw form when the app that owns it is NOT among
+    // the `--symbols` the reader was given, because it then has no AL field name or id for it.
+    //
+    // That is not an error: the runner passes its OWN app closure as symbols, so an app the
+    // reader could not resolve is an app this run does not have installed either, and the AL
+    // record this run builds genuinely has no such field. See
+    // RecordPatches.HydrateTestDataTable for what is done with them (dropped, counted, and
+    // reported — never silently, and never confused with a column the runner SHOULD know).
+    private static readonly Regex UnresolvedExtensionColumn = new(
+        @"^(?<sql>.+)\$(?<app>[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$",
+        RegexOptions.Compiled);
+
+    /// <summary>
+    /// True when <paramref name="columnName"/> is a table-extension storage column the reader
+    /// could not map to an AL field, yielding the owning app's id. False for every ordinary AL
+    /// field name — including one that merely contains a '$'.
+    /// </summary>
+    internal static bool TryParseUnresolvedExtensionColumn(
+        string columnName, out string sqlName, out Guid appId)
+    {
+        sqlName = "";
+        appId = Guid.Empty;
+        var m = UnresolvedExtensionColumn.Match(columnName);
+        if (!m.Success) return false;
+        if (!Guid.TryParseExact(m.Groups["app"].Value, "D", out appId)) return false;
+        sqlName = m.Groups["sql"].Value;
+        return true;
+    }
 }

@@ -349,12 +349,18 @@ public sealed class TestDataProvisioningTests : IDisposable
     // ───────────────────────────────────── exclusion-rule contract ──
 
     [Fact]
-    public void BuildPlan_ExcludesExtendedTables_EmptyTables_AmbiguousNames_AndOtherCompanies()
+    public void BuildPlan_IncludesExtendedTables_AndMarksThemAsNeedingTheMerge()
     {
+        // The #2261 change, stated as the plan: a table whose $ext companion carries rows is
+        // no longer skipped whole, it is planned AND flagged. The flag is not bookkeeping —
+        // it is handed to the mechanism as "this merged read must come back with an extension
+        // column", which is the only thing that turns a silently-ignored merge flag into a
+        // failure instead of a table of blanks.
         const string cronus = "CRONUS International Ltd_";
         var entries = new List<BackupTableEntry>
         {
             new(119, "page", cronus, "No_ Series", 308, "Business Foundation"),
+            new(  0, "page", cronus, "No_ Series$ext", null, null),
             new(  1, "page", cronus, "Source Code Setup", 242, "Business Foundation"),
             new(  1, "page", cronus, "Source Code Setup$ext", null, null),
             new(  0, "page", cronus, "ADCS User", 7710, "Base Application"),
@@ -366,35 +372,120 @@ public sealed class TestDataProvisioningTests : IDisposable
 
         var plan = TestDataProvisioner.BuildPlan(entries, cronus);
 
-        Assert.Single(plan.Hydratable);
-        Assert.Equal("No_ Series", plan.Hydratable[0].TableName);
-        Assert.Equal(308, plan.Hydratable[0].AlTableId);
+        Assert.Equal(
+            new[] { "No_ Series", "Source Code Setup" },
+            plan.Hydratable.Select(e => e.TableName).OrderBy(n => n, StringComparer.Ordinal).ToArray());
+        Assert.Equal(242, plan.Hydratable.Single(e => e.TableName == "Source Code Setup").AlTableId);
 
-        // Source Code Setup is excluded because its $ext companion carries rows: hydrating
-        // the base table alone would ship a knowingly incomplete setup record.
-        Assert.Equal(1, plan.SkippedExtensionData);
+        // Exactly the extended one, and NOT the one whose companion is empty. Asserting the
+        // set rather than a count: a flag on the wrong table would still hit a count of 1 and
+        // would then demand extension columns from a table that has none.
+        Assert.Equal(new[] { "Source Code Setup" }, plan.ExtendedTableNames.OrderBy(n => n, StringComparer.Ordinal).ToArray());
+
         // Dimension Set Entry is declared by two installed apps in the same company, so the
         // AL name does not identify one physical table. Picking the candidate that has rows
         // would be exactly the silent guess this feature must not make.
         Assert.Equal(1, plan.SkippedAmbiguous);
+        // ADCS User (0 rows), AIT Test Method Line (no AL id) and My Company's rows stay out.
+        Assert.DoesNotContain("ADCS User", plan.Hydratable.Select(e => e.TableName));
+        Assert.DoesNotContain("AIT Test Method Line", plan.Hydratable.Select(e => e.TableName));
     }
 
     [Fact]
-    public void BuildPlan_KeepsATableWhoseExtensionCompanionIsEmpty()
+    public void BuildPlan_DoesNotDemandAMergeFromATableItIsNotHydrating()
     {
+        // A companion with rows whose base table is excluded (0 rows here, but ambiguity or a
+        // missing AL id do the same) must not leave a requirement behind: ExtendedTableNames
+        // is read per planned table, and a stale entry would be a claim about a table nobody
+        // reads.
         const string cronus = "CRONUS International Ltd_";
         var entries = new List<BackupTableEntry>
         {
+            new(0, "page", cronus, "Company Information", 79, "Base Application"),
+            new(1, "page", cronus, "Company Information$ext", null, null),
             new(5, "page", cronus, "Currency", 4, "Base Application"),
             new(0, "page", cronus, "Currency$ext", null, null),
         };
 
         var plan = TestDataProvisioner.BuildPlan(entries, cronus);
 
-        Assert.Single(plan.Hydratable);
-        Assert.Equal("Currency", plan.Hydratable[0].TableName);
-        Assert.Equal(0, plan.SkippedExtensionData);
+        Assert.Equal(new[] { "Currency" }, plan.Hydratable.Select(e => e.TableName).ToArray());
+        Assert.Empty(plan.ExtendedTableNames);
     }
+
+    // ───────────────────────── the merge-actually-happened probe ──
+
+    /// <summary>
+    /// THE regression #2261 can ship green and silently wrong: the reader accepting the merge
+    /// request, ignoring it, and exiting 0. Every extended table then hydrates with its
+    /// extension fields blank and the run reports success. Measured on the shipped reader —
+    /// `--mergeExtensions` (camelCase) does exactly this.
+    /// </summary>
+    [Fact]
+    public void MergeProbe_FailsWhenTheMergedReadReturnsNoExtraColumns()
+    {
+        // What a silently-ignored flag looks like: `Source Code Setup` has ONE own field, so
+        // both reads come back with just it.
+        var ex = Assert.Throws<TestDataUnavailableException>(
+            () => TestDataProvisioner.CompareMergeProbe(
+                "Source Code Setup", new[] { "Primary Key" }, new[] { "Primary Key" }));
+
+        var firstLine = ex.Message.Split('\n')[0];
+        Assert.Contains("Source Code Setup", firstLine, StringComparison.Ordinal);
+        Assert.Contains("--merge-extensions", firstLine, StringComparison.Ordinal);
+        Assert.Contains("1 column(s) with the flag and 1 without", firstLine, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void MergeProbe_PassesOnlyWhenTheMergedReadIsAStrictSuperset()
+    {
+        // The real shape: the merge adds the companion's fields and keeps the base ones.
+        TestDataProvisioner.CompareMergeProbe(
+            "Source Code Setup",
+            new[] { "Primary Key" },
+            new[] { "Primary Key", "Sales", "Purchases", "General Journal" });
+
+        // A merged read that DROPPED a base column is not a merge either, even though it has
+        // more columns than it started with. Superset, not "bigger".
+        Assert.Throws<TestDataUnavailableException>(
+            () => TestDataProvisioner.CompareMergeProbe(
+                "Source Code Setup",
+                new[] { "Primary Key" },
+                new[] { "Sales", "Purchases" }));
+
+        // And an empty merged read is a failure, not a vacuous pass.
+        Assert.Throws<TestDataUnavailableException>(
+            () => TestDataProvisioner.CompareMergeProbe(
+                "Source Code Setup", new[] { "Primary Key" }, Array.Empty<string>()));
+    }
+
+    // ─────────────────────────── the merged-column shape contract ──
+
+    [Theory]
+    // BC's storage name for a companion field: ConvertToSqlIdentifier(field name) + "$" + app id.
+    [InlineData("Bank Deposit$7a129d06-5fd6-4fb6-b82b-0bf539c779d0", "Bank Deposit", "7a129d06-5fd6-4fb6-b82b-0bf539c779d0")]
+    [InlineData("Wthldg_ Tax Certificate Nos_$c31ee575-3fc7-4388-98ee-d75aa2fc5f87", "Wthldg_ Tax Certificate Nos_", "c31ee575-3fc7-4388-98ee-d75aa2fc5f87")]
+    public void UnresolvedExtensionColumn_YieldsTheOwningApp(string column, string sql, string app)
+    {
+        Assert.True(BackupCatalog.TryParseUnresolvedExtensionColumn(column, out var sqlName, out var appId));
+        Assert.Equal(sql, sqlName);
+        Assert.Equal(Guid.Parse(app), appId);
+    }
+
+    [Theory]
+    // Ordinary AL field names, including ones the reader really emits. None of these may be
+    // mistaken for an extension column: doing so would DROP a column the runner must refuse on,
+    // which is the silent-incomplete-record failure the guard exists to prevent.
+    [InlineData("Invoice Nos.")]
+    [InlineData("Primary Key")]
+    [InlineData("Service Zone Code")]
+    [InlineData("Amount$")]
+    [InlineData("Code$not-a-guid")]
+    [InlineData("Total$1234")]
+    // A $-suffixed name whose tail is GUID-shaped but not a GUID (a letter past 'f').
+    [InlineData("Legacy$7a129d06-5fd6-4fb6-b82b-0bf539c779dz")]
+    public void OrdinaryColumnNames_AreNotMistakenForExtensionColumns(string column)
+        => Assert.False(BackupCatalog.TryParseUnresolvedExtensionColumn(column, out _, out _));
 
     // ───────────────────────────────────────── row projection ──
 

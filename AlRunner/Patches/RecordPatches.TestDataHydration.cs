@@ -20,6 +20,30 @@
 //   THAT TABLE's hydration with a message naming the table, the column and the type — it
 //   never substitutes a default and never leaves a partially-built row in the store.
 //
+// TABLE-EXTENSION FIELDS (issue #2261)
+//   BC splits an extended table across the base table and a `<table>$ext` companion. The
+//   reader joins them on request, and the joined row arrives here keyed by AL field name for
+//   every extending app the reader was given symbols for. Two consequences are handled below,
+//   and neither may be silent:
+//
+//   a) A column for an app OUTSIDE this run's closure arrives in its raw BC storage form,
+//      `<sql name>$<app id>`, because the reader had no symbols to name it with. The AL record
+//      this run builds has no such field — the app is not installed here — so the column is
+//      dropped, counted, and reported. Anything else that fails to resolve still REFUSES the
+//      table: a bare unresolvable name could equally be a schema mismatch, and the two must
+//      not be confused.
+//
+//   b) The merge can fail to happen at all without failing. Measured on the shipped reader:
+//      `--mergeExtensions` (camelCase) is accepted by the CLI, ignored, and exits 0 — which
+//      would hydrate `Source Code Setup` with its ONE own field, ~50 blanks, and no error
+//      anywhere. That guard is NOT here, deliberately: this metatable cannot answer "is this
+//      field stored in the companion". Measured on `Return Reason` (6635), whose
+//      `Default Location Code` lives in `Return Reason$ext` in the backup — the runner's
+//      NCLMetaField for it reports IsCompanionTableField = false, because BC only sets that
+//      flag when SourceExtensionType is ModernDev and the runner's metadata construction
+//      leaves it None. So the guard lives once per run, in TestDataProvisioner, where it is
+//      answered by the reader instead of by our own metadata.
+//
 // WHAT IS DELIBERATELY NOT HYDRATED, AND IS SAID OUT LOUD
 //   BC's system columns (`timestamp`, `$systemId`, `$systemCreatedAt`, `$systemCreatedBy`,
 //   `$systemModifiedAt`, `$systemModifiedBy`) carry no AL field id in the reader's schema
@@ -27,6 +51,7 @@
 //   convention no service tier has confirmed here. They are left at the field's own BC
 //   default (NavValue.CreateNavValueFromObject(field, null), i.e. what Record.Init() gives)
 //   and reported in the hydration summary. See the issue for the follow-up.
+using AlRunner.Infrastructure;
 using System.Reflection;
 using System.Text.Json;
 using Microsoft.Dynamics.Nav.Runtime;
@@ -49,25 +74,32 @@ public static partial class RecordPatches
         new HashSet<string>(StringComparer.Ordinal)
         { "timestamp", "$systemId", "$systemCreatedAt", "$systemCreatedBy", "$systemModifiedAt", "$systemModifiedBy" };
 
+    /// <summary>The outcome of one table's hydration: how many rows landed, and how many
+    /// merged columns belonged to an app this run does not have installed. The second number
+    /// is reported rather than left implicit — see the file header, case (a).</summary>
+    internal readonly record struct TestDataTableResult(int Rows, int ColumnsFromUninstalledApps);
+
     /// <summary>
     /// Insert <paramref name="rows"/> into <paramref name="tableId"/>'s in-memory store.
     /// <paramref name="rows"/> is one dictionary per row, keyed by the AL field NAME the
     /// reader emitted (BC's system columns already dropped by the caller).
     ///
-    /// Every key must resolve to a field of the target NCLMetaTable — the metatable the row
-    /// is actually inserted into. A key that does not resolve refuses the table rather than
-    /// being dropped: an unresolvable name means the reader decoded a column this runner
-    /// build has no AL field for, and hydrating the rest would ship a knowingly incomplete
-    /// record.
+    /// Every key must resolve to a field of the target NCLMetaTable — the metatable the row is
+    /// actually inserted into — with ONE declared exception: a table-extension storage column
+    /// (`&lt;sql name&gt;$&lt;app id&gt;`) owned by an app outside this run's closure is dropped and
+    /// counted, because this run's AL record genuinely has no such field. Any OTHER key that
+    /// does not resolve refuses the table rather than being dropped: an unresolvable bare name
+    /// means the reader decoded a column this runner build has no AL field for, and hydrating
+    /// the rest would ship a knowingly incomplete record.
     ///
     /// Throws <see cref="TestDataHydrationRefusal"/> BEFORE touching the store if any value
     /// cannot be rebuilt, so a refusal never leaves rows behind.
     /// </summary>
-    internal static int HydrateTestDataTable(
+    internal static TestDataTableResult HydrateTestDataTable(
         int tableId, string tableNameForDiagnostics,
         IReadOnlyList<IReadOnlyDictionary<string, JsonElement>> rows)
     {
-        if (rows.Count == 0) return 0;
+        if (rows.Count == 0) return new TestDataTableResult(0, 0);
 
         var meta = EnsureTableInMetadataCache(tableId)
             ?? throw new TestDataHydrationRefusal(
@@ -84,12 +116,24 @@ public static partial class RecordPatches
             var f = meta.GetFieldByIndex(fi);
             fieldByName[f.FieldName] = f;
         }
+
+        var droppedColumns = new HashSet<string>(StringComparer.Ordinal);
         foreach (var name in rows.SelectMany(r => r.Keys).Distinct(StringComparer.Ordinal))
-            if (!fieldByName.ContainsKey(name))
-                throw new TestDataHydrationRefusal(
-                    $"table {tableId} '{tableNameForDiagnostics}': the backup has a column '{name}' that is "
-                    + "not a field of the AL table this runner build would insert into, so the rows cannot "
-                    + "be rebuilt faithfully");
+        {
+            if (fieldByName.ContainsKey(name)) continue;
+            if (BackupCatalog.TryParseUnresolvedExtensionColumn(name, out _, out _))
+            {
+                // Case (a): a companion column for an app outside this run's closure. Dropped
+                // and counted — BuildTestDataRow never looks it up, because it indexes the row
+                // by the metatable's own field names.
+                droppedColumns.Add(name);
+                continue;
+            }
+            throw new TestDataHydrationRefusal(
+                $"table {tableId} '{tableNameForDiagnostics}': the backup has a column '{name}' that is "
+                + "not a field of the AL table this runner build would insert into, so the rows cannot "
+                + "be rebuilt faithfully");
+        }
 
         // Build EVERY row first. A refusal in row 900 must not leave rows 1-899 in the store.
         var built = new NavValue[rows.Count][];
@@ -122,7 +166,7 @@ public static partial class RecordPatches
             var mutable = _ibMutableBufferCtor.Invoke(new object[] { readOnly });
             insert.Invoke(provider, new object?[] { 0, mutable, insertOptions, null });
         }
-        return built.Length;
+        return new TestDataTableResult(built.Length, droppedColumns.Count);
     }
 
     private static NavValue[] BuildTestDataRow(

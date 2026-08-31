@@ -39,8 +39,13 @@ internal static class TestDataOptions
 {
     /// <summary>Bump when the hydration changes which rows or values land in the store. An
     /// old on-disk baseline that still deserialises cleanly under new hydration semantics is
-    /// the one failure mode a cache cannot detect for itself.</summary>
-    internal const int HydrationSchemaVersion = 1;
+    /// the one failure mode a cache cannot detect for itself.
+    ///
+    /// 1 — #2258, the first slice: tables with `$ext` rows skipped whole.
+    /// 2 — #2261, table-extension fields merged in. A version-1 baseline deserialises fine and
+    ///     is silently missing every extension field of every extended table, so it must not
+    ///     be reused.</summary>
+    internal const int HydrationSchemaVersion = 2;
 
     /// <summary>Off unless --test-data was passed. Absent the flag NOTHING here runs: no
     /// backup is opened, no reader is located, and CacheIdentity() returns the empty string

@@ -29,23 +29,46 @@
 //   ordering and it matches real BC, where the database with its data exists before any
 //   extension is installed.
 //
+// TABLE-EXTENSION DATA IS MERGED (issue #2261)
+//   BC splits an extended table across the base table and a `$ext` companion. Every read here
+//   passes `--merge-extensions`, so the base and companion rows arrive joined, and a table
+//   with extension data is no longer skipped whole.
+//
+//   The request key is `merge-extensions`, HYPHENATED. The camelCase spelling is accepted by
+//   the reader's CLI, ignored, and exits 0 — measured, not assumed — which would hydrate
+//   Source Code Setup with one of its ~50 fields and report success, and 68 CRONUS tables
+//   with it. AssertMergeIsHonoured() below reads one extended table BOTH ways before anything
+//   is hydrated and requires the merged read to return strictly more columns, so a merge that
+//   is not happening fails the run instead of emptying 68 tables quietly.
+//
+//   That check is once per run, not per table, and it has to be: whether the flag is honoured
+//   is a property of the reader, not of a table. The per-table form was tried and is wrong —
+//   the runner's own NCLMetaField.IsCompanionTableField is false even for a field the backup
+//   really does store in the companion (measured on `Return Reason`.`Default Location Code`),
+//   so asking our metadata "did an extension column arrive" refuses tables that merged fine.
+//   The end-to-end fixture asserts an extension field's VALUE for the same reason.
+//
 // THIS SLICE'S DECLARED EXCLUSIONS — reported, never silent
-//   1. Table-extension data. BC splits an extended table across the base table and a `$ext`
-//      companion whose columns carry no AL field id, so an AL record cannot be rebuilt from
-//      them. A base table WITH `$ext` rows is skipped whole rather than hydrated with a
-//      knowingly incomplete row set. #2261 lifts this: the reader can now resolve extension
-//      fields to their real AL field ids and join them in. Note when doing so that the
-//      request key is `merge-extensions`, hyphenated — the camelCase spelling is accepted and
-//      SILENTLY IGNORED, which would hydrate Source Code Setup with one of its ~50 fields and
-//      report success, so the test for it must assert an extension field's VALUE.
-//   2. Tables whose AL name is ambiguous in the backup — two installed apps may each declare
+//   1. Tables whose AL name is ambiguous in the backup — two installed apps may each declare
 //      a table of the same name (namespaces make that legal; Base Application's
 //      "Dimension Set Entry" and Power BI Report embeddings' are the shipped example). The
 //      reader refuses the name, and so does this: picking whichever candidate has rows would
 //      be exactly the silent guess this feature exists to prevent. #2264 resolves it properly,
 //      by naming the owning app the runner's own closure already resolved.
-//   3. Value types this runner build cannot rebuild yet (dates, times, BLOBs, media, …) —
-//      refused per table by the mechanism, counted and reported here.
+//   2. Value types this runner build cannot rebuild yet (dates, times, BLOBs, media, …) —
+//      refused per table by the mechanism, counted and reported here. This is what gates how
+//      much of the newly-merged data actually lands: most extended CRONUS tables carry a Date
+//      somewhere. #2259.
+//   3. Tables the READER itself fails on. Reported per table, with the reader's own text, and
+//      NEVER fatal to the rest of the hydration. No table is currently known to fail this way,
+//      and the tolerance is not speculative: before it existed, one reader exit-1 on a single
+//      table aborted the whole hydration and the bundle reported COMPILE FAIL / 0 tests, with
+//      the reader's own diagnosis truncated away by the one-line EXEC-FAIL reporter. One
+//      unavailable table must not cost the run every other table, or the diagnosis.
+//   4. Table-extension columns owned by an app OUTSIDE this run's closure. The reader has no
+//      symbols to name them with and passes them through in BC's raw `<name>$<app id>` storage
+//      form; this run's AL record has no such field, so they are dropped and counted. See
+//      RecordPatches.TestDataHydration's header, case (a).
 using AlRunner.Infrastructure;
 using AlRunner.Patches;
 using System.Text.Json;
@@ -56,12 +79,15 @@ internal static class TestDataProvisioner
 {
     internal sealed record Summary(
         string BackupPath, string Company, int TablesHydrated, int RowsHydrated,
-        int TablesSkippedExtensionData, int TablesSkippedAmbiguous, int TablesRefused)
+        int TablesSkippedAmbiguous, int TablesRefused, int TablesRefusedByReader,
+        int ColumnsFromUninstalledApps)
     {
         internal string Describe() =>
             $"[test-data] {RowsHydrated} row(s) in {TablesHydrated} table(s) from '{Path.GetFileName(BackupPath)}' "
-            + $"company '{Company}'; skipped {TablesSkippedExtensionData} with extension data, "
-            + $"{TablesSkippedAmbiguous} ambiguous by name, {TablesRefused} refused (unsupported value types).";
+            + $"company '{Company}'; skipped {TablesSkippedAmbiguous} ambiguous by name, "
+            + $"{TablesRefused} refused (unsupported value types or unknown columns), "
+            + $"{TablesRefusedByReader} refused by the backup reader, "
+            + $"{ColumnsFromUninstalledApps} extension column(s) dropped for apps this run does not install.";
     }
 
     private static Summary? _lastSummary;
@@ -90,38 +116,60 @@ internal static class TestDataProvisioner
         var plan = BuildPlan(entries, company);
         Console.Error.WriteLine(
             $"[test-data] backup '{backup}', company '{company}', {plan.Hydratable.Count} table(s) in scope "
-            + $"({plan.SkippedExtensionData} with extension data, {plan.SkippedAmbiguous} ambiguous by name).");
+            + $"({plan.ExtendedTableNames.Count} with table-extension data to merge, "
+            + $"{plan.SkippedAmbiguous} ambiguous by name).");
+
+        // BEFORE any hydration: prove the reader is actually merging. A run that got this
+        // wrong would hydrate every extended table with its extension fields blank and report
+        // success, so this is fatal rather than per-table.
+        if (plan.ExtendedTableNames.Count > 0)
+            AssertMergeIsHonoured(backup, symbols, company,
+                plan.ExtendedTableNames.OrderBy(n => n, StringComparer.Ordinal).First());
 
         var tablesDone = 0;
         var rowsDone = 0;
         var refused = 0;
+        var readerRefused = 0;
+        var droppedColumns = 0;
         foreach (var entry in plan.Hydratable)
         {
             try
             {
-                var rows = HydrateOne(backup, symbols, company, entry);
-                if (rows > 0) tablesDone++;
-                rowsDone += rows;
+                var result = HydrateOne(backup, symbols, company, entry);
+                if (result.Rows > 0) tablesDone++;
+                rowsDone += result.Rows;
+                droppedColumns += result.ColumnsFromUninstalledApps;
             }
             catch (TestDataHydrationRefusal ex)
             {
                 refused++;
                 Console.Error.WriteLine($"[test-data] REFUSED {ex.Message}");
             }
+            catch (BackupReaderException ex)
+            {
+                // The reader failing on ONE table must not cost the run every other table:
+                // that is a table that is unavailable, not a run that is broken. Reported with
+                // the reader's own text IN FULL, because that text is the only diagnosis there
+                // is and the bundle reporter keeps only line 1 of an EXEC-FAIL message.
+                readerRefused++;
+                Console.Error.WriteLine(
+                    $"[test-data] READER REFUSED table '{entry.TableName}': {ex.Message}");
+            }
         }
 
         _lastSummary = new Summary(backup, company, tablesDone, rowsDone,
-            plan.SkippedExtensionData, plan.SkippedAmbiguous, refused);
+            plan.SkippedAmbiguous, refused, readerRefused, droppedColumns);
         Console.Error.WriteLine(_lastSummary.Describe());
     }
 
     /// <summary>
     /// Hydrate ONE table. The unit a future on-demand policy would call; the eager loop above
-    /// is only a caller of it. Returns the number of rows inserted, or throws
-    /// <see cref="TestDataHydrationRefusal"/> naming the table, column and type it could not
-    /// rebuild — never a partial table.
+    /// is only a caller of it. Returns the rows inserted and the extension columns dropped, or
+    /// throws <see cref="TestDataHydrationRefusal"/> naming the table, column and type it could
+    /// not rebuild — never a partial table.
+    ///
     /// </summary>
-    internal static int HydrateOne(
+    internal static RecordPatches.TestDataTableResult HydrateOne(
         string backup, IReadOnlyList<string> symbols, string company, BackupTableEntry entry)
     {
         if (entry.AlTableId == null)
@@ -129,7 +177,12 @@ internal static class TestDataProvisioner
                 $"table '{entry.TableName}': the run's app closure does not define it, so it has no AL table id");
 
         var readArgs = SymbolArgs(
-            new[] { "read", backup, "--table", entry.TableName, "--company", company, "--format", "json" }, symbols);
+            new[]
+            {
+                "read", backup, "--table", entry.TableName, "--company", company, "--format", "json",
+                // HYPHENATED. `--mergeExtensions` is accepted, ignored, and exits 0.
+                "--merge-extensions",
+            }, symbols);
         var json = BackupReaderTool.Run(readArgs);
 
         List<IReadOnlyDictionary<string, System.Text.Json.JsonElement>> rows;
@@ -140,8 +193,51 @@ internal static class TestDataProvisioner
                 $"table '{entry.TableName}': the reader's JSON could not be parsed ({ex.Message})");
         }
 
-        return RecordPatches.HydrateTestDataTable(
-            entry.AlTableId.Value, entry.TableName, rows);
+        return RecordPatches.HydrateTestDataTable(entry.AlTableId.Value, entry.TableName, rows);
+    }
+
+    /// <summary>
+    /// Read <paramref name="probeTable"/> both without and with `--merge-extensions` and
+    /// require the merged read to return strictly more columns. Throws
+    /// <see cref="TestDataUnavailableException"/> if it does not.
+    ///
+    /// One extra read per run buys the one thing nothing else can prove: that the reader is
+    /// honouring the flag at all. Getting that wrong is silent by construction — the merged
+    /// read simply returns the base table, every extension field hydrates blank, and the run
+    /// reports success. The probe table is one the catalog says HAS companion rows, so the
+    /// two reads must differ.
+    /// </summary>
+    internal static void AssertMergeIsHonoured(
+        string backup, IReadOnlyList<string> symbols, string company, string probeTable)
+    {
+        var head = new[] { "read", backup, "--table", probeTable, "--company", company, "--format", "json", "--top", "1" };
+        var plain = ParseRows(BackupReaderTool.Run(SymbolArgs(head, symbols)));
+        var merged = ParseRows(BackupReaderTool.Run(
+            SymbolArgs(head.Append("--merge-extensions").ToArray(), symbols)));
+        CompareMergeProbe(
+            probeTable,
+            plain.Count == 0 ? Array.Empty<string>() : plain[0].Keys.ToArray(),
+            merged.Count == 0 ? Array.Empty<string>() : merged[0].Keys.ToArray());
+    }
+
+    /// <summary>
+    /// The verdict half of <see cref="AssertMergeIsHonoured"/>, pure over the two column sets
+    /// so the claim is testable without a 900 MB backup.
+    /// </summary>
+    internal static void CompareMergeProbe(
+        string probeTable, IReadOnlyCollection<string> plainColumns, IReadOnlyCollection<string> mergedColumns)
+    {
+        var plain = plainColumns.ToHashSet(StringComparer.Ordinal);
+        var merged = mergedColumns.ToHashSet(StringComparer.Ordinal);
+        if (merged.IsProperSupersetOf(plain)) return;
+
+        // Everything actionable on the FIRST line: the bundle reporter keeps only line 1.
+        throw new TestDataUnavailableException(
+            $"--test-data: the backup reader is not honouring '--merge-extensions' — reading '{probeTable}', "
+            + $"whose '$ext' companion holds rows, returned {merged.Count} column(s) with the flag and "
+            + $"{plain.Count} without, so every table-extension field would hydrate blank while the run "
+            + "reported success. Check the reader build (AL_RUNNER_BCBAK); the request key is hyphenated, "
+            + "and the camelCase spelling is accepted, ignored, and exits 0.");
     }
 
     /// <summary>
@@ -167,8 +263,14 @@ internal static class TestDataProvisioner
         return rows;
     }
 
+    /// <summary>The tables to hydrate, plus the subset whose `$ext` companion carries rows.
+    /// The second set is not bookkeeping: it is handed to the mechanism per table as the
+    /// requirement "this merged read must come back with an extension column", which is what
+    /// makes a merge that did not happen fail instead of hydrating blanks.</summary>
     internal sealed record Plan(
-        IReadOnlyList<BackupTableEntry> Hydratable, int SkippedExtensionData, int SkippedAmbiguous);
+        IReadOnlyList<BackupTableEntry> Hydratable,
+        IReadOnlySet<string> ExtendedTableNames,
+        int SkippedAmbiguous);
 
     /// <summary>
     /// Decide which tables this slice hydrates. Pure over the catalog so the exclusion rules
@@ -178,31 +280,35 @@ internal static class TestDataProvisioner
     {
         var forCompany = entries.Where(e => string.Equals(e.Company, company, StringComparison.Ordinal)).ToList();
 
-        // Base tables whose $ext companion carries rows: excluded whole (exclusion 1).
+        // Base tables whose $ext companion carries rows. Before #2261 these were excluded
+        // whole; now they are hydrated WITH the companion merged in, and this set is the
+        // per-table assertion that the merge actually ran.
         var extendedBaseNames = forCompany
             .Where(e => e.IsExtensionCompanion && e.RowCount > 0)
             .Select(e => e.BaseTableName)
             .ToHashSet(StringComparer.Ordinal);
 
-        // A (company, table name) appearing more than once is ambiguous (exclusion 2).
+        // A (company, table name) appearing more than once is ambiguous (exclusion 1).
         var nameCounts = forCompany
             .Where(e => !e.IsExtensionCompanion)
             .GroupBy(e => e.TableName, StringComparer.Ordinal)
             .ToDictionary(g => g.Key, g => g.Count(), StringComparer.Ordinal);
 
         var hydratable = new List<BackupTableEntry>();
-        var skippedExt = 0;
         var skippedAmbiguous = 0;
         foreach (var e in forCompany)
         {
             if (e.IsExtensionCompanion) continue;
             if (e.RowCount == 0) continue;
             if (e.AlTableId == null) continue;                 // not defined by this run's app closure
-            if (extendedBaseNames.Contains(e.TableName)) { skippedExt++; continue; }
             if (nameCounts.TryGetValue(e.TableName, out var n) && n > 1) { skippedAmbiguous++; continue; }
             hydratable.Add(e);
         }
-        return new Plan(hydratable, skippedExt, skippedAmbiguous);
+        // Only the tables actually in the plan can carry the requirement; keeping companions of
+        // excluded tables in the set would make it read as a claim about tables nobody reads.
+        var planned = hydratable.Select(e => e.TableName).ToHashSet(StringComparer.Ordinal);
+        extendedBaseNames.IntersectWith(planned);
+        return new Plan(hydratable, extendedBaseNames, skippedAmbiguous);
     }
 
     /// <summary>

@@ -453,9 +453,10 @@ https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
   [#2258](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2258)). The first
   slice does not cover everything, and what it does not cover it **reports** — a skipped or
   refused table is named on stderr with the reason, never silently emptied:
-  - Tables whose table-extension (`$ext`) companion carries rows are skipped whole rather
-    than hydrated with an incomplete field set —
-    [#2261](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2261).
+  - Table-extension (`$ext`) fields ARE merged into the base record
+    ([#2261](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2261)), with one
+    declared exception: a companion column owned by an app **outside this run's app closure**
+    has no AL field in this run's schema, so it is dropped and counted in the summary.
   - Date, DateTime, Time and DateFormula values are refused; the codec will not assert a SQL
     storage encoding no service tier has confirmed —
     [#2259](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2259).
@@ -468,8 +469,12 @@ https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
     [#2264](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2264).
 
   Measured on BC 28.1's W1 CRONUS backup with the Base Application / System Application /
-  Business Foundation closure: 7,233 rows across 189 tables hydrated; 68 tables skipped for
-  extension data, 99 refused, 1 ambiguous by name.
+  Business Foundation closure: **7,562 rows across 203 tables** hydrated; 153 refused,
+  1 ambiguous by name, 30 companion columns dropped for apps outside the closure. Of the 68
+  tables that #2261 unblocked, 14 (329 rows) land today; the other 54 still refuse, all of
+  them on a value type rather than on the merge — 45 on Date/DateTime/DateFormula (#2259)
+  and 2 on BLOB (#2245). So **#2259 is what gates the rest of this data**, not extension
+  merging.
 
 ---
 

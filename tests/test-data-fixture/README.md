@@ -1,7 +1,13 @@
 # `--test-data` hydration fixture
 
-End-to-end proof for issue #2258: rows decoded out of a BC `.bak` land in the in-memory
-store and read back through ordinary AL `Record` calls with the right values.
+End-to-end proof that rows decoded out of a BC `.bak` land in the in-memory store and read
+back through ordinary AL `Record` calls with the right values.
+
+- `TestDataHydration.Codeunit.al` (#2258) — a table with no extension data, "No. Series".
+- `TestDataExtensionFields.Codeunit.al` (#2261) — a table whose fields come from a
+  **tableextension**, "Source Code Setup". Every assertion there is on an extension field's
+  VALUE, because the reader's CLI accepts `--mergeExtensions` (camelCase), ignores it, and
+  exits 0: a test asserting "the record was found" would pass with the merge not happening.
 
 **CI does not run this bundle, and that is deliberate.** It only passes with `--test-data`
 and a BC sandbox backup on the machine (~1 GB, shipped inside the sandbox artifact). CI runs
