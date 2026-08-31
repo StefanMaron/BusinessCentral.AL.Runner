@@ -218,7 +218,13 @@ public sealed class TestDataLobValueHydrationTests
         var media = Assert.IsType<NavMedia>(
             Convert(Facts(MediaField), "\"57C8E273-1769-4173-AAED-0A56E3ADCB8D\""));
 
-        Assert.Equal(Guid.Parse("57C8E273-1769-4173-AAED-0A56E3ADCB8D"), media.ALMediaId);
+        // ToGuid(), NOT ALMediaId. `NavMediaValueBase::get_ALMediaId/0` is one of the members
+        // NclCecilRewrite replaces, and its replacement SYNTHESISES an id when the container
+        // Guid is empty — so reading the stored value back through it would be reading the
+        // runner's media shim, not this codec's output, and would answer differently depending
+        // on whether the Ncl rewrite happens to be installed in the process. ToGuid() is
+        // NavMediaValueBase's own unrewritten `Key.Value`.
+        Assert.Equal(Guid.Parse("57C8E273-1769-4173-AAED-0A56E3ADCB8D"), media.ToGuid());
         Assert.False(media.IsZeroOrEmpty);
 
         // BC's row read passes parentTableId -1 and NavRecord.GetFieldValue overwrites it
@@ -234,7 +240,7 @@ public sealed class TestDataLobValueHydrationTests
         var set = Assert.IsType<NavMediaSet>(
             Convert(Facts(MediaSetField), "\"EAAD9A16-3132-4C9C-8206-393598E9F1F0\""));
 
-        Assert.Equal(Guid.Parse("EAAD9A16-3132-4C9C-8206-393598E9F1F0"), set.ALMediaId);
+        Assert.Equal(Guid.Parse("EAAD9A16-3132-4C9C-8206-393598E9F1F0"), set.ToGuid());
         Assert.False(set.IsZeroOrEmpty);
         Assert.Equal(-1, set.ParentId);
     }
@@ -244,7 +250,7 @@ public sealed class TestDataLobValueHydrationTests
     {
         var media = Assert.IsType<NavMedia>(
             Convert(Facts(MediaField), "\"00000000-0000-0000-0000-000000000000\""));
-        Assert.Equal(Guid.Empty, media.ALMediaId);
+        Assert.Equal(Guid.Empty, media.ToGuid());
         Assert.True(media.IsZeroOrEmpty);
     }
 
@@ -364,13 +370,13 @@ public sealed class TestDataLobValueHydrationTests
         var media = new NavMedia(Guid.Parse("57C8E273-1769-4173-AAED-0A56E3ADCB8D"), parentId: -1);
         var restored = Assert.IsType<NavMedia>(RecordPatches.DecodeInstallBaselineMedia(
             NavNclType.NavMedia, RecordPatches.EncodeInstallBaselineMedia(media)));
-        Assert.Equal(media.ALMediaId, restored.ALMediaId);
-        Assert.NotEqual(Guid.Empty, restored.ALMediaId);
+        Assert.Equal(media.ToGuid(), restored.ToGuid());
+        Assert.NotEqual(Guid.Empty, restored.ToGuid());
 
         var set = new NavMediaSet(Guid.Parse("EAAD9A16-3132-4C9C-8206-393598E9F1F0"), parentId: -1);
         var restoredSet = Assert.IsType<NavMediaSet>(RecordPatches.DecodeInstallBaselineMedia(
             NavNclType.NavMediaSet, RecordPatches.EncodeInstallBaselineMedia(set)));
-        Assert.Equal(set.ALMediaId, restoredSet.ALMediaId);
+        Assert.Equal(set.ToGuid(), restoredSet.ToGuid());
 
         // A Media must not come back as a MediaSet or vice versa — they are different AL
         // types on different fields, and the kind byte alone does not tell them apart.

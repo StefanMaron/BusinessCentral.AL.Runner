@@ -121,46 +121,59 @@ public static class MediaSetPatches
     /// RecordPatches.ResetPerTestState() before every test method.</summary>
     public static void ResetForTest() => _bySetId.Clear();
 
-    // Lazy-initialized reflectors for NavMediaValueBase members.
-    private static PropertyInfo? _parentRecordProp;
-    private static PropertyInfo? _fieldNoProp;
-    private static PropertyInfo? _keyProp;      // NavGuid Key { get; }
-    private static PropertyInfo? _navGuidValueProp; // Guid NavGuid.Value { get; }
-    private static MethodInfo? _saveValueMethod; // void SaveValueToTableField(Guid)
+    /// <summary>
+    /// The reflected NavMediaValueBase members these helpers reach `self` through, cached PER
+    /// TYPE.
+    ///
+    /// Per type, not once: these used to be five plain statics filled from the first `self`
+    /// the process ever handed in, and reused for every `self` after it. That is only correct
+    /// while exactly one type ever arrives. The moment a second one does — a real
+    /// NavMediaValueBase and MediaSetPatchesTests' FakeMediaValue in the same test process —
+    /// every call with the loser type throws `TargetException: Object does not match target
+    /// type` from deep inside a reflection Invoke, and WHICH of the two loses depends on test
+    /// scheduling. Found when an unrelated new test class shifted the schedule and took eight
+    /// MediaSetPatchesTests cases down with it (PR #2275).
+    /// </summary>
+    private sealed record MediaValueReflectors(
+        PropertyInfo? ParentRecord,
+        PropertyInfo? FieldNo,
+        PropertyInfo? Key,
+        PropertyInfo? NavGuidValue,
+        MethodInfo? SaveValueToTableField);
 
-    private static void EnsureReflectors(object self)
-    {
-        if (_parentRecordProp != null) return;
-        var t = self.GetType();
-        _parentRecordProp = t.GetProperty("ParentRecord",
-            BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance | BindingFlags.FlattenHierarchy)
-            ?? t.BaseType?.GetProperty("ParentRecord",
-                BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.FlattenHierarchy);
-        _fieldNoProp = t.GetProperty("FieldNo",
-            BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance | BindingFlags.FlattenHierarchy)
-            ?? t.BaseType?.GetProperty("FieldNo",
-                BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.FlattenHierarchy);
-        var keyProp = t.GetProperty("Key", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.FlattenHierarchy)
-            ?? t.BaseType?.GetProperty("Key", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.FlattenHierarchy);
-        _keyProp = keyProp;
-        if (keyProp != null)
-            _navGuidValueProp = keyProp.PropertyType.GetProperty("Value", BindingFlags.Public | BindingFlags.Instance);
-        _saveValueMethod = t.GetMethod("SaveValueToTableField",
-            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.FlattenHierarchy,
-            binder: null, types: new[] { typeof(Guid) }, modifiers: null)
-            ?? t.BaseType?.GetMethod("SaveValueToTableField",
+    private static readonly ConcurrentDictionary<Type, MediaValueReflectors> _reflectorsByType = new();
+
+    private static MediaValueReflectors Reflectors(object self)
+        => _reflectorsByType.GetOrAdd(self.GetType(), static t =>
+        {
+            var parentRecord = t.GetProperty("ParentRecord",
+                BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance | BindingFlags.FlattenHierarchy)
+                ?? t.BaseType?.GetProperty("ParentRecord",
+                    BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.FlattenHierarchy);
+            var fieldNo = t.GetProperty("FieldNo",
+                BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance | BindingFlags.FlattenHierarchy)
+                ?? t.BaseType?.GetProperty("FieldNo",
+                    BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.FlattenHierarchy);
+            var key = t.GetProperty("Key", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.FlattenHierarchy)
+                ?? t.BaseType?.GetProperty("Key", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.FlattenHierarchy);
+            var navGuidValue = key?.PropertyType.GetProperty("Value", BindingFlags.Public | BindingFlags.Instance);
+            var saveValue = t.GetMethod("SaveValueToTableField",
                 BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.FlattenHierarchy,
-                binder: null, types: new[] { typeof(Guid) }, modifiers: null);
-    }
+                binder: null, types: new[] { typeof(Guid) }, modifiers: null)
+                ?? t.BaseType?.GetMethod("SaveValueToTableField",
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.FlattenHierarchy,
+                    binder: null, types: new[] { typeof(Guid) }, modifiers: null);
+            return new MediaValueReflectors(parentRecord, fieldNo, key, navGuidValue, saveValue);
+        });
 
     /// <summary>The MediaSet field's own real container Guid (NavMediaValueBase.Key.Value),
     /// or Guid.Empty if nothing has ever been added to this field yet.</summary>
     private static Guid GetContainerGuid(object self)
     {
-        EnsureReflectors(self);
-        var key = _keyProp?.GetValue(self);
-        if (key == null || _navGuidValueProp == null) return Guid.Empty;
-        return _navGuidValueProp.GetValue(key) is Guid g ? g : Guid.Empty;
+        var r = Reflectors(self);
+        var key = r.Key?.GetValue(self);
+        if (key == null || r.NavGuidValue == null) return Guid.Empty;
+        return r.NavGuidValue.GetValue(key) is Guid g ? g : Guid.Empty;
     }
 
     /// <summary>Persists a newly established container Guid into the record's own field
@@ -169,8 +182,7 @@ public static class MediaSetPatches
     /// this is BC's own method, not a re-implementation.</summary>
     private static void SaveContainerGuid(object self, Guid guid)
     {
-        EnsureReflectors(self);
-        _saveValueMethod?.Invoke(self, new object[] { guid });
+        Reflectors(self).SaveValueToTableField?.Invoke(self, new object[] { guid });
     }
 
     private static List<Guid> GetOrCreateList(Guid setId) => _bySetId.GetOrAdd(setId, static _ => new List<Guid>());
@@ -390,9 +402,9 @@ public static class MediaSetPatches
         var real = GetContainerGuid(self);
         if (real != Guid.Empty) return real;
 
-        EnsureReflectors(self);
-        var parentRec = _parentRecordProp?.GetValue(self);
-        var fieldNo = _fieldNoProp?.GetValue(self) is int fn ? fn : 0;
+        var r = Reflectors(self);
+        var parentRec = r.ParentRecord?.GetValue(self);
+        var fieldNo = r.FieldNo?.GetValue(self) is int fn ? fn : 0;
         var storeKey = parentRec ?? self;
         var dict = _mediaIds.GetValue(storeKey, _ => new Dictionary<int, Guid>());
         lock (dict)
