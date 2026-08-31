@@ -4,14 +4,24 @@
 // because that step ran AFTER the push, not before it, and the pin it built against was a
 // static value nothing exercised except a release.
 //
+// #2248 split the single `release` job into three (build -> sign-and-pack -> release), so the
+// build/pack failure the invariant guards against now spans job boundaries instead of living
+// inside one job. GitHub Actions' own `needs:` dependency is what enforces "runs before" across
+// jobs, so the invariant below is now: `build` (produces the unsigned tree) must be a `needs`
+// dependency of `sign-and-pack` (which signs and packs), which must be a `needs` dependency of
+// `release` (which does the writes) — and, within `release` itself, downloading + verifying the
+// already-packed nupkg must still precede the CHANGELOG/tag push, which must still precede
+// NuGet push and GitHub Release.
+//
 // Two things this pins down, both as pure functions of the real workflow text so a future
 // reordering (or a reintroduced static pin) fails a normal unit-test run instead of the next
 // release:
 //
-//   1. Within publish.yml's `release` job, "Build and pack" appears BEFORE the step that
+//   1. `build` -> `sign-and-pack` -> `release` via `needs:`, and within `release`, "Download
+//      the signed nupkg" and the PE-signed verification gate appear BEFORE the step that
 //      pushes the CHANGELOG commit and tag to origin, which appears before "Push to NuGet" and
-//      "Create GitHub Release". A build/pack failure must be unreachable-after-a-write.
-//   2. The build/pack step passes `-p:_BCVersion=` a value derived from
+//      "Create GitHub Release". A build/pack/sign failure must be unreachable-after-a-write.
+//   2. The `build` job's publish step passes `-p:_BCVersion=` a value derived from
 //      `needs.test.outputs.required-version` (the live-resolved version the matrix this run
 //      just gated on), not a hardcoded four-part BC build number. bc-tests.yml's
 //      `workflow_call` block actually exposes that output — a caller reading an output the
@@ -161,7 +171,24 @@ public sealed class PublishReleaseOrderingTests
     // ---- wired to the real files on disk ----------------------------------------------
 
     [Fact]
-    public void ReleaseJob_BuildsAndPacks_BeforeItPushesTheCommitAndTag_BeforeNuGetAndGitHubRelease()
+    public void PublishWorkflow_JobGraph_BuildThenSignAndPackThenRelease()
+    {
+        // #2248: the single "Build and pack" step became three jobs. GitHub's own `needs:`
+        // dependency is what now enforces "a build/sign/pack failure leaves no write behind" —
+        // this asserts that chain exists, job by job.
+        var text = Read("publish.yml");
+        var jobs = WorkflowParity.SplitJobs(text);
+
+        Assert.True(jobs.TryGetValue("build", out var buildJob), "publish.yml has no top-level 'build' job");
+        Assert.True(jobs.TryGetValue("sign-and-pack", out var signAndPackJob), "publish.yml has no top-level 'sign-and-pack' job");
+        Assert.True(jobs.TryGetValue("release", out var releaseJob), "publish.yml has no top-level 'release' job");
+
+        Assert.Contains("build", WorkflowParity.NeedsOf(signAndPackJob!));
+        Assert.Contains("sign-and-pack", WorkflowParity.NeedsOf(releaseJob!));
+    }
+
+    [Fact]
+    public void ReleaseJob_DownloadsAndVerifiesTheSignedPackage_BeforeItPushesTheCommitAndTag_BeforeNuGetAndGitHubRelease()
     {
         var text = Read("publish.yml");
         var jobs = WorkflowParity.SplitJobs(text);
@@ -169,7 +196,8 @@ public sealed class PublishReleaseOrderingTests
 
         var markers = new[]
         {
-            "Build and pack",
+            "Download the signed nupkg",
+            "Verify every PE in the packed package is Authenticode-signed",
             "Generate CHANGELOG and push the release commit + tag",
             "Push to NuGet",
             "Create GitHub Release",
@@ -178,23 +206,23 @@ public sealed class PublishReleaseOrderingTests
         var order = PublishOrdering.StepOrder(releaseJob!, markers);
 
         Assert.True(order.Count == markers.Length,
-            $"expected all four release-job steps present in order; found: {string.Join(" -> ", order)}");
+            $"expected all five release-job steps present in order; found: {string.Join(" -> ", order)}");
         Assert.Equal(markers, order);
     }
 
     [Fact]
-    public void ReleaseJob_BuildAndPackStep_ResolvesBcVersionFromTheGatedMatrix_NotAHardcodedPin()
+    public void BuildJob_PublishStep_ResolvesBcVersionFromTheGatedMatrix_NotAHardcodedPin()
     {
         // #2010: the pin that rotted (AlRunner.csproj's static default _BCVersion) is still a
-        // legitimate DEV-MACHINE fallback (see its own comment), but the release job must never
+        // legitimate DEV-MACHINE fallback (see its own comment), but the build job must never
         // read it implicitly — it has to pass a version it can prove, this run, still exists.
         var text = Read("publish.yml");
         var jobs = WorkflowParity.SplitJobs(text);
-        Assert.True(jobs.TryGetValue("release", out var releaseJob), "publish.yml has no top-level 'release' job");
+        Assert.True(jobs.TryGetValue("build", out var buildJob), "publish.yml has no top-level 'build' job");
 
         Assert.True(
-            PublishOrdering.BuildStepResolvesBcVersionFrom(releaseJob!, "Build and pack", "needs.test.outputs.required-version"),
-            "release job's 'Build and pack' step must pass -p:_BCVersion=${{ needs.test.outputs.required-version }}, "
+            PublishOrdering.BuildStepResolvesBcVersionFrom(buildJob!, "Publish the package-root build", "needs.test.outputs.required-version"),
+            "build job's publish step must pass -p:_BCVersion=${{ needs.test.outputs.required-version }}, "
             + "not a hardcoded four-part BC build number — that is exactly what rotted and broke v2.4.0.");
     }
 
@@ -243,6 +271,8 @@ public sealed class PublishReleaseOrderingTests
         Assert.Contains("dry_run:", text, StringComparison.Ordinal);
 
         var jobs = WorkflowParity.SplitJobs(text);
+        Assert.True(jobs.TryGetValue("build", out var buildJob), "publish.yml has no top-level 'build' job");
+        Assert.True(jobs.TryGetValue("sign-and-pack", out var signAndPackJob), "publish.yml has no top-level 'sign-and-pack' job");
         Assert.True(jobs.TryGetValue("release", out var releaseJob), "publish.yml has no top-level 'release' job");
 
         // Exactly the two irreversible/external steps are gated on dry_run being false.
@@ -251,10 +281,12 @@ public sealed class PublishReleaseOrderingTests
         Assert.Contains("inputs.dry_run", pushToNuGet, StringComparison.Ordinal);
         Assert.Contains("inputs.dry_run", createRelease, StringComparison.Ordinal);
 
-        // Build and pack must NOT be skipped in dry_run — it's the step the dry run exists to
-        // exercise.
-        var buildAndPack = ExtractStep(releaseJob!, "Build and pack");
-        Assert.DoesNotContain("if:", buildAndPack, StringComparison.Ordinal);
+        // #2248: build/sign/pack must NOT be skipped in dry_run — exercising them end to end,
+        // without publishing, is the entire point of the dry run. Checked at the JOB level (a
+        // job-level `if:` is indented exactly 4 spaces, distinct from a step-level `if:` nested
+        // under a step) since "Build and pack" is no longer one step but two whole jobs.
+        Assert.DoesNotMatch(new Regex(@"(?m)^ {4}if:"), buildJob!);
+        Assert.DoesNotMatch(new Regex(@"(?m)^ {4}if:"), signAndPackJob!);
     }
 
     private static string ExtractStep(string jobBody, string stepNameMarker)
