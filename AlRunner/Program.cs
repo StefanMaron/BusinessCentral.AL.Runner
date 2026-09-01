@@ -5263,6 +5263,13 @@ static void PrintGuide(TextWriter w)
     w.WriteLine("    al-runner --test-data <bundle-dir>              # the shipped backup for the selected version/country");
     w.WriteLine("    al-runner --test-data=/path/to/X.bak <dirs>     # an explicit backup");
     w.WriteLine("    al-runner --test-data --test-data-company NAME  # a specific company inside it");
+    w.WriteLine("  You do not have to know in advance which failures those are: when a test fails on a");
+    w.WriteLine("  table that has NO rows in this run, the runner prints a one-line [test-data] note");
+    w.WriteLine("  under the failure naming that table. BC's own message is left exactly as it was —");
+    w.WriteLine("  the note sits next to it. It only appears when the failure names a table AND that");
+    w.WriteLine("  table is measurably empty, so a real bug against a populated table is never");
+    w.WriteLine("  mislabelled. With --test-data already on it says instead why the table is still");
+    w.WriteLine("  empty (refused, not in this backup, or empty in it).");
     w.WriteLine("  It needs the `bcbak` backup reader on PATH or at $AL_RUNNER_BCBAK. Each table is");
     w.WriteLine("  read once per process, at first touch, and then lives in the install baseline");
     w.WriteLine("  the runner restores at every test boundary. A missing backup FAILS the run");

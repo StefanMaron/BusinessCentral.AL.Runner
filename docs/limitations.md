@@ -456,7 +456,22 @@ https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
   install baseline is re-inserted at every test boundary and so its size is a cost paid per
   boundary rather than per run. Coverage does not extend to everything, and what it does not
   cover it **reports** — a skipped or refused table is named on stderr with the reason, never
-  silently emptied:
+  silently emptied.
+
+  Independently of the flag, a failure on a table that holds **no rows** gets a one-line
+  `[test-data]` explanation printed under it, naming the table
+  ([#2240](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2240)). Two known
+  limits on when it appears, both deliberate — a wrong explanation is worse than none:
+  - It needs the failure to name a table. `Record.Get` raising, and `TestField` failing, both
+    do; an ordinary `Error(...)` (which is what a failed `Assert` compiles to) does not, and
+    is left alone.
+  - The table has to be genuinely empty. A setup singleton whose row exists but was never
+    configured — `Purchases & Payables Setup` is the shipped example: the install seed inserts
+    one blank row, so `Get()` succeeds and `TestField` then fails — is NOT explained, because
+    "the row is there but blank" is a weaker inference than "there are no rows at all".
+    Tracked in [#2277](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2277).
+
+  What is and is not hydrated by the flag itself:
   - Table-extension (`$ext`) fields ARE merged into the base record
     ([#2261](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2261)), with one
     declared exception: a companion column owned by an app **outside this run's app closure**
