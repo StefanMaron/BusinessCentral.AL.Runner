@@ -114,6 +114,17 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             // from this table, fell back to UnmeasuredWeightSeconds and was dispatched at
             // t=181s of a 309s run — a 77s single-threaded tail, the #1887 pattern again.
             ["InstallBaselineDiskCacheTests"] = 125,
+            // #2272: 3 tests, each spawning a real runner subprocess (the app-group one runs
+            // two bundles in a single invocation), all with AL_RUNNER_NO_DEP_COMPANY_CACHE=1
+            // so every spawn pays the dependency Install triggers + Company-Initialize
+            // uncached — which is the whole point of the test and also what makes it heavy.
+            // Absent from this table on its first CI run: measured 60.9s on the BC 28.3 leg,
+            // which tripped check-collection-weights.py, while staying under the top-15 cut
+            // (~50s) on the BC 27.0 leg. Carries the observed maximum, for the same reason
+            // StartupOutputReexecDedupTests below does: at 60.9s its low end sits right on
+            // the 60s freshness threshold, so rounding down to the low end would satisfy the
+            // gate while leaving dispatch order at the fallback and the tail in place.
+            ["InstallBaselineVirtualTableExclusionTests"] = 61,
             ["ServerCancelTests"] = 285,
             // perf/boot-overhead: 37.8s measured on the same run; below the 60s freshness
             // threshold, listed so it is dispatched by measured cost, not by the fallback.
