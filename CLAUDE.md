@@ -67,18 +67,34 @@ you whether a `Hook(...)` registration or a Cecil rewrite actually fires at runt
 orphaned hook and a live one look identical in it. Use `AL_RUNNER_HOOK_AUDIT=1` for that
 question.
 
-**2. Language server — main session only. A subagent cannot use it.**
+**2. Language server via `tools/lsp-query.py` — works everywhere, subagents included.**
+
+```bash
+tools/lsp-query.py callers <SymbolName>   # what calls it (no line/col needed)
+tools/lsp-query.py symbol  <SymbolName>   # where it is defined
+```
+
+~8.5s per query, one process, no daemon. Exit 0 = answered, 1 = a genuine
+not-found you may rely on, **2 = the server failed and the result means nothing** —
+never read a 2 as "nothing calls this". Full guidance: skill `find-code`.
+
+**2b. The built-in `LSP` tool — main session only.**
 
 The `LSP` tool answers `findReferences`, `incomingCalls`, `goToDefinition` and `workspaceSymbol`
 for `.cs`, and it is the sharpest instrument here: `findReferences` on
 `GetDataAccessForTableCore` returns its three call sites across two partial-class files in one
 call.
 
-**But the harness disables `LSP` inside subagents.** Measured: a subagent calling it gets
-`No such tool available: LSP. LSP is disabled for this session, in subagents as well as here.`
-`LSP` is listed in `impl-agent` / `triager` frontmatter so it works if that restriction is ever
-lifted, but today it is inert there. If you are a subagent, use the graph above — do not spend
-calls discovering this.
+**The harness disables `LSP` inside subagents on this build (v2.1.252).** Measured: a subagent
+calling it gets `No such tool available: LSP. LSP is disabled for this session, in subagents as
+well as here.` Adding `LSP` to the agent's `tools:` frontmatter does not help, and neither does
+`ENABLE_LSP_TOOL=1`. It did work in subagents on v2.1.152
+(anthropics/claude-code#62904), so this is a harness change, not a property of language servers —
+which is why `tools/lsp-query.py` above exists. If you are a subagent, use that script; do not
+spend calls rediscovering this.
+
+When you are the main session briefing a subagent, resolve its symbols first and paste the
+answers into the brief as `# LSP CONTEXT (pre-resolved)`, so it does not have to go looking.
 
 If you are the main session, use it. Setup is in the README's tooling section
 (`mise use -g dotnet:csharp-ls` plus the `csharp-lsp` plugin); if `LSP` reports no server for
