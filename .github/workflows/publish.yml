@@ -314,7 +314,7 @@ jobs:
         # The FULL obj/bin tree for all three projects, not just bin/publish/ — see
         # the #2248 header comment for why: `dotnet pack --no-build` still re-runs
         # the SDK's Publish-target copy phase, which needs these as copy sources.
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: unsigned-build
           path: |
@@ -362,7 +362,7 @@ jobs:
           python-version: '3.x'
 
       - name: Download the unsigned build tree
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: unsigned-build
           path: .
@@ -402,7 +402,7 @@ jobs:
         # client secret anywhere in this job. Confirmed by reproduction: omitting this step
         # fails with "WorkloadIdentityCredential authentication unavailable. The workload
         # options are not fully configured."
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const fs = require('fs');
@@ -502,7 +502,7 @@ jobs:
           python .github/scripts/pe_signing.py verify $extractDir
 
       - name: Upload the signed nupkg
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: signed-nupkg
           path: nupkg/*.nupkg
@@ -541,7 +541,7 @@ jobs:
 
       - name: Download the signed nupkg
         id: download-nupkg
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: signed-nupkg
           path: ./nupkg
