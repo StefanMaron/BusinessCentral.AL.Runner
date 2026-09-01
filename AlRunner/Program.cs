@@ -8210,6 +8210,11 @@ static int SaveEnumRegistrySidecar(string path)
             indexes = e.Indexes,
             implementations = e.Implementations,
             captions = e.Captions,
+            // #2306 — the enum-level DefaultImplementation / UnknownValueImplementation
+            // fallbacks, without which an enum that names no per-value Implementation cannot
+            // be cast to its interface on a cache HIT.
+            defaultImplementations = e.DefaultImplementations,
+            unknownImplementations = e.UnknownImplementations,
         }).ToArray(),
         // v4: per-report runtime metadata XML captured from emit — replayed on
         // cache HIT so NavReportSync builds real MetaReport instances.
@@ -8258,6 +8263,18 @@ static int SaveEnumRegistrySidecar(string path)
 // corrupt JSON; the caller treats any exception as cache MISS and rebuilds.
 static int LoadEnumRegistrySidecar(string path)
 {
+    // A sidecar's optional int-array property, or null when absent/empty — "declares none"
+    // (issue #2306).
+    static int[]? ReadIdList(System.Text.Json.JsonElement parent, string name)
+    {
+        if (!parent.TryGetProperty(name, out var el) || el.ValueKind != System.Text.Json.JsonValueKind.Array)
+            return null;
+        var ids = new int[el.GetArrayLength()];
+        int k = 0;
+        foreach (var v in el.EnumerateArray()) ids[k++] = v.GetInt32();
+        return ids.Length > 0 ? ids : null;
+    }
+
     var json = File.ReadAllText(path);
     using var doc = System.Text.Json.JsonDocument.Parse(json);
     if (!doc.RootElement.TryGetProperty("enums", out var arr)
@@ -8309,7 +8326,8 @@ static int LoadEnumRegistrySidecar(string path)
             foreach (var c in capEl.EnumerateArray())
                 captions[ci++] = c.ValueKind == System.Text.Json.JsonValueKind.Null ? null : c.GetString();
         }
-        AlEnumMetadataRegistry.Register(id, name, opts, idxs, implementations, captions);
+        AlEnumMetadataRegistry.Register(id, name, opts, idxs, implementations, captions,
+            ReadIdList(e, "defaultImplementations"), ReadIdList(e, "unknownImplementations"));
         count++;
     }
     // v4: replay per-report metadata XML (absent in pre-v4 sidecars — fine,

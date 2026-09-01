@@ -2658,7 +2658,11 @@ public sealed partial class BcCompiler
                 }
                 else
                 {
-                    AlEnumMetadataRegistry.Register(enumSym.Id, enumSym.Name, options, indexes, implementations, captions);
+                    // #2306 — the enum-level fallbacks apply to the base enum only; an
+                    // enumextension declares neither, so RegisterExtension takes none.
+                    AlEnumMetadataRegistry.Register(enumSym.Id, enumSym.Name, options, indexes, implementations, captions,
+                        ReadEnumImplementationFallback(enumSym, NavCA.PropertyKind.DefaultImplementation),
+                        ReadEnumImplementationFallback(enumSym, NavCA.PropertyKind.UnknownValueImplementation));
                 }
             }
             // Capture the per-report runtime metadata XML the emit pipeline hands us
@@ -2896,6 +2900,34 @@ public sealed partial class BcCompiler
         /// just for prebuilt MS/ISV apps. Without this the runner returned -1 and
         /// threw "Unable to cast enum '…' to interface at index N".
         /// </summary>
+        /// <summary>
+        /// Read an AL enum's own <c>DefaultImplementation</c> / <c>UnknownImplementation</c>
+        /// property, in the same comma-separated codeunit-id shape as a value's
+        /// <c>Implementation</c> (issue #2306). These are the enum-level fallbacks BC's
+        /// <c>NCLEnumMetadata.GetImplementationCodeunitId</c> uses when a value declares no
+        /// implementation of its own, which is how Base App 205
+        /// "Alt. Cust VAT Reg. Doc." is written — one value, no per-value Implementation.
+        /// Null means the enum declares none.
+        /// </summary>
+        private static int[]? ReadEnumImplementationFallback(NavCA.IEnumBaseTypeSymbol enumSymbol, NavCA.PropertyKind kind)
+        {
+            try
+            {
+                var text = enumSymbol.GetProperty(kind)?.ValueText;
+                if (string.IsNullOrEmpty(text))
+                    return null;
+                var ids = new List<int>();
+                foreach (var part in text.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                    if (int.TryParse(part, out var id))
+                        ids.Add(id);
+                return ids.Count > 0 ? ids.ToArray() : null;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
         private static int[] ReadEnumValueImplementations(NavCA.IEnumValueSymbol value)
         {
             try

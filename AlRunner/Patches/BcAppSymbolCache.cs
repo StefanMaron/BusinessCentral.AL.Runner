@@ -70,7 +70,13 @@ internal static partial class BcAppSymbolCache
     // no option member, and throws NavInvalidFilterExpressionException out of CalcFields or
     // out of the report's first Next() — a wrong answer replayed from cache on any machine
     // whose symbol cache predates this change, not a cache miss.
-    private const int CacheVersion = 15;
+    // v16: EnumSymbol gained DefaultImplementations / UnknownImplementations, the enum-level
+    // fallbacks BC's NCLEnumMetadata.GetImplementationCodeunitId uses when a value declares no
+    // Implementation of its own (issue #2306). A v15 payload deserialises with both null,
+    // which reads as "the enum declares none" — so a cached dependency would keep failing
+    // every enum-to-interface cast with "Unable to cast enum ... to interface at index 0",
+    // the exact #2306 bug, rather than missing the cache.
+    private const int CacheVersion = 16;
     private static readonly ConcurrentDictionary<string, AppSymbols> ProcessCache = new(StringComparer.OrdinalIgnoreCase);
     // Issue #1820 — path -> content-hash memo. ComputeAppContentHash needs to read the
     // WHOLE .app to hash it (unlike the FileInfo.Length/LastWriteTimeUtc stat it replaced,
@@ -221,7 +227,11 @@ internal static partial class BcAppSymbolCache
     // (issue #1775 — Format(<enum value>) must return the Caption, not the member
     // name, for enums coming from a prebuilt dependency .app too, not just enums
     // compiled from this bundle's own source).
-    internal sealed record EnumSymbol(int Id, string Name, List<string> Options, List<int> Indexes, List<List<int>> Implementations, List<string?>? Captions = null);
+    // DefaultImplementations / UnknownImplementations are the ENUM-level fallbacks, one list
+    // per enum (indexed by interface-declaration index), not one per value — see issue #2306
+    // and AlEnumOptionMetadata.GetImplementationCodeunitIdPublic.
+    internal sealed record EnumSymbol(int Id, string Name, List<string> Options, List<int> Indexes, List<List<int>> Implementations, List<string?>? Captions = null,
+        List<int>? DefaultImplementations = null, List<int>? UnknownImplementations = null);
 
     // Parsed query SymbolReference.json shape. A query is a tree of dataitems; the root
     // dataitem(s) live under the query's "Elements", nested dataitems under "DataItems".
@@ -878,7 +888,25 @@ internal static partial class BcAppSymbolCache
                 : null);
             nextOrdinal = ordinal + 1;
         }
-        return new EnumSymbol(id, name, options, indexes, implementations, captions);
+        // Enum-level fallbacks. Both are written the same way a value's Implementation is —
+        // a comma-separated list of codeunit ids, one per interface the enum implements.
+        var enumProps = SymbolProperties(enumType);
+        return new EnumSymbol(id, name, options, indexes, implementations, captions,
+            SymbolCodeunitIdList(enumProps, "DefaultImplementation"),
+            SymbolCodeunitIdList(enumProps, "UnknownValueImplementation"));
+    }
+
+    /// <summary>The named property read as a comma-separated list of codeunit ids, or null
+    /// when it is absent — "declares none", which is how most enums are written.</summary>
+    private static List<int>? SymbolCodeunitIdList(Dictionary<string, string> props, string propertyName)
+    {
+        if (!props.TryGetValue(propertyName, out var text) || string.IsNullOrWhiteSpace(text))
+            return null;
+        var ids = new List<int>();
+        foreach (var part in text.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            if (int.TryParse(part, out var id))
+                ids.Add(id);
+        return ids.Count > 0 ? ids : null;
     }
 
     private static Dictionary<string, string> SymbolProperties(JsonElement element)

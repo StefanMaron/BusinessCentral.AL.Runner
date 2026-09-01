@@ -58,7 +58,12 @@ public static class AlEnumMetadataRegistry
     // for field-level Caption. A null Captions array (not just a null element) means
     // "captured before caption-ingestion existed / caller didn't supply one" and is
     // treated exactly like an array of all-nulls.
-    public sealed record Entry(int Id, string Name, string[] Options, int[] Indexes, int[][] Implementations, string?[]? Captions = null);
+    // DefaultImplementations / UnknownImplementations are the ENUM-level fallbacks, indexed
+    // by interface-declaration index exactly like a value's own Implementations entry (issue
+    // #2306). They are not parallel to Options — one list per enum, not per value. An empty
+    // array means the enum declares none, which is how most enums are written.
+    public sealed record Entry(int Id, string Name, string[] Options, int[] Indexes, int[][] Implementations, string?[]? Captions = null,
+        int[]? DefaultImplementations = null, int[]? UnknownImplementations = null);
 
     // Base-enum registrations, keyed by the enum's own object Id. This also
     // absorbs precompiled-dependency enums (RegisterFromAppPath) and cache
@@ -83,7 +88,8 @@ public static class AlEnumMetadataRegistry
     /// <summary>Last-writer-wins for the base enum itself; bundle-wide enum-id
     /// collisions are quarantined upstream. Enumextension values are tracked
     /// separately — see <see cref="RegisterExtension"/>.</summary>
-    public static void Register(int id, string name, string[] options, int[] indexes, int[][]? implementations = null, string?[]? captions = null)
+    public static void Register(int id, string name, string[] options, int[] indexes, int[][]? implementations = null, string?[]? captions = null,
+        int[]? defaultImplementations = null, int[]? unknownImplementations = null)
     {
         if (options == null || indexes == null) return;
         if (options.Length != indexes.Length) return;
@@ -92,7 +98,8 @@ public static class AlEnumMetadataRegistry
             implementations = Array.Empty<int[]>();
         if (captions != null && captions.Length != options.Length)
             captions = null;
-        _byId[id] = new Entry(id, name ?? string.Empty, options, indexes, implementations, captions);
+        _byId[id] = new Entry(id, name ?? string.Empty, options, indexes, implementations, captions,
+            defaultImplementations, unknownImplementations);
     }
 
     /// <summary>
@@ -109,6 +116,9 @@ public static class AlEnumMetadataRegistry
             implementations = Array.Empty<int[]>();
         if (captions != null && captions.Length != options.Length)
             captions = null;
+        // An enumextension declares no DefaultImplementation/UnknownImplementation of its
+        // own — those are properties of the base enum — so the merge in TryGet takes the
+        // base entry's, and this entry carries none.
         var entry = new Entry(targetId, name ?? string.Empty, options, indexes, implementations, captions);
         _extByTargetId.AddOrUpdate(
             targetId,
@@ -164,7 +174,8 @@ public static class AlEnumMetadataRegistry
         foreach (var ext in extensions)
             AddValues(ext);
 
-        entry = new Entry(id, name, options.ToArray(), indexes.ToArray(), implementations.ToArray(), captions.ToArray());
+        entry = new Entry(id, name, options.ToArray(), indexes.ToArray(), implementations.ToArray(), captions.ToArray(),
+            baseEntry?.DefaultImplementations, baseEntry?.UnknownImplementations);
         return true;
     }
 
@@ -188,7 +199,9 @@ public static class AlEnumMetadataRegistry
                     enumSymbol.Options.ToArray(),
                     enumSymbol.Indexes.ToArray(),
                     enumSymbol.Implementations.Select(i => i.ToArray()).ToArray(),
-                    enumSymbol.Captions?.ToArray());
+                    enumSymbol.Captions?.ToArray(),
+                    enumSymbol.DefaultImplementations?.ToArray(),
+                    enumSymbol.UnknownImplementations?.ToArray());
         }
         catch (Exception ex)
         {
@@ -256,6 +269,13 @@ public static class AlEnumMetadataRegistry
                 indexes = e.Indexes,
                 implementations = e.Implementations,
                 captions = e.Captions,
+                // #2306 — the enum-level Default/UnknownValue implementation fallbacks. Absent
+                // from a sidecar written before this and read back as null, which means
+                // "declares none" and is the pre-#2306 behaviour; the AL-output cache key
+                // hashes the runner assembly's own content, so such a sidecar is unreachable
+                // from this build anyway.
+                defaultImplementations = e.DefaultImplementations,
+                unknownImplementations = e.UnknownImplementations,
             }).ToArray(),
         };
         var json = System.Text.Json.JsonSerializer.Serialize(dto);
@@ -270,6 +290,18 @@ public static class AlEnumMetadataRegistry
     /// how Program.cs's bundle-level sidecar replay works. Throws on corrupt JSON;
     /// callers treat that as a cache MISS and rebuild. Returns replayed entry count.
     /// </summary>
+    /// <summary>A sidecar's optional int-array property, or null when absent/empty —
+    /// "declares none" (issue #2306).</summary>
+    private static int[]? ReadIdList(System.Text.Json.JsonElement parent, string name)
+    {
+        if (!parent.TryGetProperty(name, out var el) || el.ValueKind != System.Text.Json.JsonValueKind.Array)
+            return null;
+        var ids = new int[el.GetArrayLength()];
+        int k = 0;
+        foreach (var v in el.EnumerateArray()) ids[k++] = v.GetInt32();
+        return ids.Length > 0 ? ids : null;
+    }
+
     public static int LoadSidecar(string path)
     {
         var json = File.ReadAllText(path);
@@ -321,7 +353,8 @@ public static class AlEnumMetadataRegistry
                 foreach (var c in capEl.EnumerateArray())
                     captions[ci++] = c.ValueKind == System.Text.Json.JsonValueKind.Null ? null : c.GetString();
             }
-            Register(id, name, opts, idxs, implementations, captions);
+            Register(id, name, opts, idxs, implementations, captions,
+                ReadIdList(e, "defaultImplementations"), ReadIdList(e, "unknownImplementations"));
             count++;
         }
         return count;
@@ -339,13 +372,18 @@ internal sealed class AlEnumOptionMetadata : NCLOptionMetadata
     private readonly NavListInt _ordinals;
     private readonly int[] _ordinalValues;
     private readonly int[][] _implementations;
+    private readonly int[] _defaultImplementations;
+    private readonly int[] _unknownImplementations;
     private readonly string?[] _captions;
     private readonly string _name;
     private readonly int _id;
 
-    public AlEnumOptionMetadata(string name, int id, string[] options, int[] indexes, int[][]? implementations = null, string?[]? captions = null)
+    public AlEnumOptionMetadata(string name, int id, string[] options, int[] indexes, int[][]? implementations = null, string?[]? captions = null,
+        int[]? defaultImplementations = null, int[]? unknownImplementations = null)
         : base(JoinOptions(options))
     {
+        _defaultImplementations = defaultImplementations ?? Array.Empty<int>();
+        _unknownImplementations = unknownImplementations ?? Array.Empty<int>();
         _name = name;
         _id = id;
         _ordinalValues = indexes;
@@ -478,18 +516,47 @@ internal sealed class AlEnumOptionMetadata : NCLOptionMetadata
 
     private readonly string[] _optionNames;
 
+    // #2306 — the same three-step fallback BC's NCLEnumMetadata.GetImplementationCodeunitId
+    // runs: the value's own Implementation, then the enum's DefaultImplementation for a value
+    // the enum declares, then its UnknownImplementation for an ordinal it does not. Only the
+    // first step existed here, so an enum that names ONLY a DefaultImplementation — Base App
+    // 205 "Alt. Cust VAT Reg. Doc." is one, and Codeunit 207.GetAltCustVATRegDocImpl casts it
+    // to an interface on every Sales Header insert — resolved to -1 and threw.
+    //
+    // BC throws NavNCLArgumentOutOfRangeException where the fallback list is missing or too
+    // short; this returns -1 for those, which the single caller
+    // (BcRuntime.ALCompiler_ToInterfaceFromOption) turns into its own throw naming the enum,
+    // the value and the interface index. Same outcome — a loud failure that identifies the
+    // enum — reached one frame later.
+    /// <summary>The AL enum's own object id and name, for diagnostics — the base class's
+    /// Name/Id virtuals are internal, so a failure message cannot otherwise say WHICH enum
+    /// it was looking at.</summary>
+    public (int Id, string Name) IdentityForDiagnostics => (_id, _name);
+
     public int GetImplementationCodeunitIdPublic(int ordinalValue, int interfaceIndex)
     {
-        if (interfaceIndex < 0 || _implementations.Length == 0)
+        if (interfaceIndex < 0)
             return -1;
+
+        var known = false;
         for (int i = 0; i < _ordinalValues.Length; i++)
         {
             if (_ordinalValues[i] != ordinalValue)
                 continue;
-            var implementations = _implementations[i];
-            return interfaceIndex < implementations.Length ? implementations[interfaceIndex] : -1;
+            known = true;
+            var implementations = i < _implementations.Length ? _implementations[i] : Array.Empty<int>();
+            if (interfaceIndex < implementations.Length)
+                return implementations[interfaceIndex];
+            break;
         }
-        return -1;
+
+        var fallback = known ? _defaultImplementations : _unknownImplementations;
+        if (interfaceIndex >= fallback.Length)
+            return -1;
+        // BC reads `if (num <= 0) return -1;` — a declared 0 means "no implementer", never
+        // codeunit 0, which would otherwise build a handle for an object that does not exist.
+        var codeunitId = fallback[interfaceIndex];
+        return codeunitId > 0 ? codeunitId : -1;
     }
 
     // -- reflection cache for NavList<T> internal ctor --
@@ -543,7 +610,8 @@ public static partial class BcRuntime
         {
             try
             {
-                var meta = new AlEnumOptionMetadata(e.Name, e.Id, e.Options, e.Indexes, e.Implementations, e.Captions);
+                var meta = new AlEnumOptionMetadata(e.Name, e.Id, e.Options, e.Indexes, e.Implementations, e.Captions,
+                    e.DefaultImplementations, e.UnknownImplementations);
                 return _alEnumCache.GetOrAdd(id, meta);
             }
             catch
@@ -564,7 +632,8 @@ public static partial class BcRuntime
             : TryGetImplementationCodeunitIdViaReflection(optionValue.NavOptionMetadata, optionValue.Value, interfaceIndex);
         if (implementationCodeunitId < 0)
             throw new InvalidOperationException(
-                $"Unable to cast enum '{optionValue.NavOptionMetadata.OptionString}' value '{optionValue}' to interface at index {interfaceIndex}.");
+                $"Unable to cast enum '{optionValue.NavOptionMetadata.OptionString}' value '{optionValue}' to interface at index {interfaceIndex}. "
+                + $"Metadata: {Describe(optionValue.NavOptionMetadata)}.");
 
         // Build the implementing codeunit handle and wrap its live target in the interface
         // handle. We must NOT dispose `handle` afterwards: disposing the NavCodeunitHandle
@@ -579,6 +648,11 @@ public static partial class BcRuntime
         var handle = new NavCodeunitHandle(parentOfResult, implementationCodeunitId);
         return new NavInterfaceHandle(parentOfResult, handle.Target);
     }
+
+    private static string Describe(NCLOptionMetadata metadata)
+        => metadata is AlEnumOptionMetadata al
+            ? $"{al.GetType().Name} enum {al.IdentityForDiagnostics.Id} '{al.IdentityForDiagnostics.Name}'"
+            : metadata.GetType().Name;
 
     private static readonly MethodInfo? GetImplementationCodeunitIdMethod = typeof(NCLOptionMetadata).GetMethod(
         "GetImplementationCodeunitId",

@@ -67,13 +67,24 @@ public static partial class RecordPatches
             if (!_bcAppPaths.Contains(appPath, StringComparer.OrdinalIgnoreCase))
             {
                 _bcAppPaths.Add(appPath);
+                // This is the ONLY live path by which a precompiled dependency's enums reach
+                // AlEnumMetadataRegistry (AlEnumMetadataRegistry.RegisterFromAppPath, which
+                // looks like it does the same job, has no callers). Every field the symbol
+                // carries has to be passed here or it is simply absent at runtime: the
+                // per-value Captions (#1775) and the enum-level DefaultImplementation /
+                // UnknownValueImplementation fallbacks (#2306) were both being dropped,
+                // which is why Base App enum 205 "Alt. Cust VAT Reg. Doc." could not be cast
+                // to its interface.
                 foreach (var enumSymbol in BcAppSymbolCache.Get(appPath).Enums)
                     AlRunner.AlEnumMetadataRegistry.Register(
                         enumSymbol.Id,
                         enumSymbol.Name,
                         enumSymbol.Options.ToArray(),
                         enumSymbol.Indexes.ToArray(),
-                        enumSymbol.Implementations.Select(i => i.ToArray()).ToArray());
+                        enumSymbol.Implementations.Select(i => i.ToArray()).ToArray(),
+                        enumSymbol.Captions?.ToArray(),
+                        enumSymbol.DefaultImplementations?.ToArray(),
+                        enumSymbol.UnknownImplementations?.ToArray());
                 // Invalidate the indexes so newly-added .app gets picked up on next miss.
                 _bcTableIndex = null;
                 _bcSymbolTableIndex = null;
