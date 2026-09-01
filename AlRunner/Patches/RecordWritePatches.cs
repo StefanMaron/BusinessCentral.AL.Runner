@@ -537,6 +537,76 @@ public static partial class BcRuntime
         => _aiFieldIds[tableId] = fieldNo;
 
     /// <summary>
+    /// <summary>
+    /// Force this table's storage into existence — and therefore, if --test-data is armed,
+    /// force its hydration — on <paramref name="self"/>'s own DataAccessSource, before
+    /// AssignAutoIncrement is allowed to read the table's current high-water mark.
+    ///
+    /// ISSUE #2289, why this call exists and isn't optional: the record actually being
+    /// inserted does NOT reliably reach RecordPatches.GetDataAccessForTableCore itself before
+    /// getting here. Measured on 'Retention Policy Log Entry': the codeunit's own working
+    /// Record variable's first construction (RecordImplementation.InitializeImpl →
+    /// DataAccessSource.GetDataAccessForTable) can precede the FIRST place anything else
+    /// touches that table id at all, so seeding the counter from a scan taken at THAT moment
+    /// sees an empty table — hydration had not fired for this table yet, anywhere, on any
+    /// source. A seed-once-on-first-consult design (the first cut of this fix) is exactly as
+    /// blind as the counter it replaced in that ordering: it locks in "0" before hydration
+    /// ever runs, and every later call just increments from there, walking straight into the
+    /// backup's own row numbers one at a time until a duplicate-key hit downstream (measured:
+    /// the first cut still collided, just later — Entry No. 98 instead of 4 — once the earlier
+    /// fix let more of the install trigger run before hitting the next un-synced instance of
+    /// the same defect).
+    ///
+    /// The fix that actually holds regardless of ordering: don't wait to observe that
+    /// hydration happened — MAKE it happen, from here, before ever reading the table's
+    /// current max. RecordPatches.GetDataAccessForTableCore's own per-(source,tableId) cache
+    /// makes this free after the first call (a dictionary hit), so calling it unconditionally
+    /// on every AutoIncrement assignment costs nothing once the table is already materialised,
+    /// and is the ONLY thing that is correct on the very first call regardless of which AL
+    /// code path got there first.
+    /// </summary>
+    private static void EnsureTableTouchedForAutoIncrement(Microsoft.Dynamics.Nav.Runtime.NavRecord self)
+    {
+        var session = self.ParentSession;
+        if (session == null) return;
+        var dataAccessSource = AlRunner.Patches.RecordPatches.NavSession_get_DataAccessSource(session);
+        if (dataAccessSource == null) return;
+        // Discard the result deliberately: the point is the SIDE EFFECT (this table's
+        // storage — and therefore its --test-data hydration, if armed — now exists in
+        // RecordPatches' per-(source,tableId) store), not the DataAccess instance itself.
+        AlRunner.Patches.RecordPatches.NavDataAccessSource_GetDataAccessForTable(
+            dataAccessSource, self.MetaTable, isTemporary: false);
+    }
+
+    /// <summary>
+    /// The next value for <paramref name="tableId"/>'s AutoIncrement field
+    /// <paramref name="fieldNo"/>, atomically seeded-then-advanced.
+    ///
+    /// ISSUE #2289: <c>_aiCounters</c> used to start every table at an implicit 0/1 and
+    /// advance ONLY through this call — a pure in-memory counter that never consulted actual
+    /// storage. A --test-data hydration inserts rows straight into a table's
+    /// TempTableDataProvider via reflection (RecordPatches.TestDataHydration.cs), bypassing
+    /// NavRecord.ALInsertAsync entirely, so it never advanced this counter either. Result: the
+    /// first AL Insert into a table --test-data had already hydrated computed "1" (or whatever
+    /// the counter's stale start was) while the table already held that primary key, and BC's
+    /// own duplicate-key check caught the collision downstream — measured on 'Retention Policy
+    /// Log Entry' colliding at Entry No. 4 against a 63-row hydrated backup.
+    ///
+    /// The fix: on the FIRST consult for a table (<c>_aiCounters</c> has no entry yet), seed
+    /// from the table's actual current high-water mark (<see
+    /// cref="RecordPatches.TryGetMaxFieldValue"/>) instead of 0. This is safe to do ONLY
+    /// once the caller (AssignAutoIncrement, via EnsureTableTouchedForAutoIncrement above) has
+    /// already forced this table's storage/hydration into existence — see that method's doc
+    /// comment for why merely reaching an Insert does not, on its own, guarantee that. Seeding
+    /// happens only once per table (AddOrUpdate's add-factory branch), so "load once" still
+    /// holds: no table gets re-scanned on every subsequent insert.
+    /// </summary>
+    private static long NextAutoIncrementValue(int tableId, int fieldNo)
+        => _aiCounters.AddOrUpdate(tableId,
+            addValueFactory: id => (AlRunner.Patches.RecordPatches.TryGetMaxFieldValue(id, fieldNo, out var max) ? max : 0L) + 1L,
+            updateValueFactory: (_, v) => v + 1L);
+
+    /// <summary>
     /// AutoIncrement assignment helper, called via Cecil-prepended IL at the start
     /// of NavRecord.ALInsertAsync(DataError, bool, bool). Pure side-effect:
     /// if the table has a registered AutoIncrement field and that field is currently
@@ -562,7 +632,12 @@ public static partial class BcRuntime
                 var currentVal = self.GetFieldValue(aiField);
                 if (currentVal.IsZeroOrEmpty)
                 {
-                    long next = _aiCounters.AddOrUpdate(tableId, 1L, (_, v) => v + 1L);
+                    // #2289: force this table's storage/hydration into existence BEFORE
+                    // reading its high-water mark — see EnsureTableTouchedForAutoIncrement's
+                    // doc comment for why the record being inserted cannot be trusted to have
+                    // already done this itself.
+                    EnsureTableTouchedForAutoIncrement(self);
+                    long next = NextAutoIncrementValue(tableId, aiFieldNo);
                     var newVal = Microsoft.Dynamics.Nav.Runtime.NavValue
                         .CreateNavValueFromObject(aiField, (object)(int)next);
                     self.SetFieldValue(aiField, newVal);
@@ -700,7 +775,8 @@ public static partial class BcRuntime
                 var currentVal = self.GetFieldValue(aiField);
                 if (currentVal.IsZeroOrEmpty)
                 {
-                    long next = _aiCounters.AddOrUpdate(tableId, 1L, (_, v) => v + 1L);
+                    EnsureTableTouchedForAutoIncrement(self);
+                    long next = NextAutoIncrementValue(tableId, aiFieldNo);
                     var newVal = Microsoft.Dynamics.Nav.Runtime.NavValue
                         .CreateNavValueFromObject(aiField, (object)(int)next);
                     self.SetFieldValue(aiField, newVal);

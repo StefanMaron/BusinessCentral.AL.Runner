@@ -1,0 +1,21 @@
+{
+  "id": "8e2f4a6b-1c3d-4e5f-9a7b-2c4d6e8f0a1b",
+  "name": "Runner Extras - Test Data + AutoIncrement Hydration (local, needs a BC backup)",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Issue #2289: an AutoIncrement field must not reuse a key --test-data hydration already put in the table.",
+  "description": "NOT RUN BY CI — see README.md in tests/test-data-fixture/. This bundle only passes when the runner is invoked with --test-data and a BC sandbox backup is present, which no CI leg has (the artifact is ~1 GB). It is a SEPARATE app from tests/test-data-fixture/ (not an addition to it) because it needs the Tests-TestLibraries dependency to reach System Application's own install triggers, which the other fixture deliberately has none of.",
+  "dependencies": [
+    {
+      "id": "5d86850b-0d76-4eca-bd7b-951ad998e997",
+      "name": "Tests-TestLibraries",
+      "publisher": "Microsoft",
+      "version": "28.0.0.0"
+    }
+  ],
+  "idRanges": [ { "from": 65300, "to": 65309 } ],
+  "platform": "28.0.0.0",
+  "application": "28.0.0.0",
+  "runtime": "17.0",
+  "target": "Cloud"
+}
