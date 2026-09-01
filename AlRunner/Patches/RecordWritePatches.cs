@@ -320,7 +320,8 @@ public static partial class BcRuntime
             var factory = helper.GetMethod("GetRecordNotFoundException",
                 BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic,
                 binder: null, new[] { metaTable.GetType(), argType! }, modifiers: null);
-            if (factory?.Invoke(null, new[] { metaTable, key }) is Exception ex) return ex;
+            if (factory?.Invoke(null, new[] { metaTable, key }) is Exception ex)
+                return AlRunner.Infrastructure.MissingTestDataDiagnosis.TagTable(ex, metaTable);
         }
 
         throw new InvalidOperationException(

@@ -97,8 +97,15 @@ public static class JUnitReport
 
     private static string BuildBody(TestResult test)
     {
+        // #2240: the missing-test-data explanation goes in the BODY, never into the `message`
+        // attribute above — that attribute is BC's own failure text and a CI dashboard groups
+        // failures by it, so appending to it would both alter the reported failure and split one
+        // cluster into two.
+        var head = string.IsNullOrEmpty(test.Diagnosis)
+            ? test.Message ?? ""
+            : $"{test.Message}\n{test.Diagnosis}";
         var body = test.AlCallStack ?? test.FullException;
-        if (body == null) return test.Message ?? "";
-        return $"{test.Message}\n\n{body}";
+        if (body == null) return head;
+        return $"{head}\n\n{body}";
     }
 }

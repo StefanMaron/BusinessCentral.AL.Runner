@@ -148,6 +148,12 @@ public static class Reporter
                 {
                     if (!string.IsNullOrEmpty(t.Message))
                         w.WriteLine($"      {t.Message}");
+                    // #2240: printed AFTER BC's own message and BEFORE the AL stack, so the
+                    // failure still reads as BC reported it and the explanation sits next to it
+                    // rather than in place of it. Absent evidence there is no line at all, which
+                    // is why a default run's output is unchanged.
+                    if (!string.IsNullOrEmpty(t.Diagnosis))
+                        w.WriteLine($"      {t.Diagnosis}");
                     if (!string.IsNullOrEmpty(t.AlCallStack))
                     {
                         // Show the AL call stack (BC service-tier format), not the C# trace.
@@ -253,6 +259,9 @@ public static class Reporter
                 status = t.Outcome.ToString().ToLowerInvariant(),
                 durationMs = (long)t.Duration.TotalMilliseconds,
                 message = t.Message,
+                // #2240: additive and null-omitted (DefaultIgnoreCondition below), so a run that
+                // produced no diagnosis emits byte-identical JSON to before.
+                diagnosis = t.Diagnosis,
                 stackTrace = (t.AlCallStack ?? t.FullException)?.TrimEnd(),
                 // Manifest reclassification (docs/expectations.md): "pass-oos",
                 // "pass-known-gap", "pass-divergence", "skipped" or
@@ -324,6 +333,7 @@ public static class Reporter
                         codeunit = t.Codeunit,
                         method = t.Method,
                         message = t.Message,
+                        diagnosis = t.Diagnosis,
                         // First few stack frames (after the test method) — enough to identify
                         // which BC API the failure hit, but not so many that the JSON explodes.
                         stack_top = StackTop(t.FullException, 6),

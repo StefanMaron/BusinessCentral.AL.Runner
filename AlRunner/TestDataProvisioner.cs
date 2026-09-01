@@ -173,11 +173,42 @@ internal static class TestDataProvisioner
     internal static IReadOnlyCollection<int> ArmedTableIds
         => _armed?.ByTableId.Keys.ToArray() ?? Array.Empty<int>();
 
+    // ─────────────────────────────────────────── per-table outcome (#2240) ──
+
+    /// <summary>
+    /// Why one table ended up with the rows it has, in the user's words rather than the
+    /// hydrator's. Recorded per table id by the on-demand loader, and read only by the
+    /// missing-test-data diagnosis (Infrastructure.MissingTestDataDiagnosis) when it has
+    /// already established that the table is EMPTY and --test-data was on — i.e. the one case
+    /// where the user cannot possibly guess which of "refused", "not in this backup" or
+    /// "genuinely empty in the backup" happened, and the runner can.
+    ///
+    /// The aggregate Summary above cannot answer this: it counts refusals across the whole run
+    /// and never says which table each one was.
+    /// </summary>
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<int, string> _tableOutcome = new();
+
+    /// <summary>The recorded outcome for <paramref name="tableId"/>, or null when the loader
+    /// never considered it. Null is meaningful: under the on-demand policy it means nothing in
+    /// this run ever touched the table, so no reason exists yet.</summary>
+    internal static string? TableOutcome(int tableId)
+        => _tableOutcome.TryGetValue(tableId, out var reason) ? reason : null;
+
+    /// <summary>True when a plan is armed — i.e. --test-data resolved a backup and a company
+    /// and the on-demand loader is installed. Distinguishes "the flag is on and working" from
+    /// "the flag is on but Arm() has not run for this app group yet".</summary>
+    internal static bool IsArmed => _armed != null;
+
+    /// <summary>The armed backup/company pair, for a diagnosis that has to name them.</summary>
+    internal static (string Backup, string Company)? ArmedBackup
+        => _armed == null ? null : (_armed.Backup, _armed.Company);
+
     internal static void ResetForTests()
     {
         _lastSummary = null;
         _armed = null;
         _tablesDone = _rowsDone = _refused = _readerRefused = _droppedColumns = 0;
+        _tableOutcome.Clear();
         RecordPatches.TestDataOnDemandLoader = null;
     }
 
@@ -257,7 +288,15 @@ internal static class TestDataProvisioner
     {
         var armed = _armed;
         if (armed == null) return;
-        if (!armed.ByTableId.TryGetValue(tableId, out var entry)) return;   // not a table this backup offers
+        if (!armed.ByTableId.TryGetValue(tableId, out var entry))
+        {
+            // #2240: recorded, not just skipped. "This backup's plan does not offer the table"
+            // is one of the answers the diagnosis has to be able to give, and it is only
+            // knowable here — the store afterwards looks the same as a refusal.
+            _tableOutcome[tableId] = $"the plan built from '{Path.GetFileName(armed.Backup)}' "
+                + $"company '{armed.Company}' has no table with this id, so nothing was loaded";
+            return;
+        }
 
         try
         {
@@ -274,12 +313,17 @@ internal static class TestDataProvisioner
             }
             _rowsDone += result.Rows;
             _droppedColumns += result.ColumnsFromUninstalledApps;
+            _tableOutcome[tableId] = result.Rows > 0
+                ? $"{result.Rows} row(s) loaded from '{Path.GetFileName(armed.Backup)}' company '{armed.Company}'"
+                : $"'{entry.TableName}' in '{Path.GetFileName(armed.Backup)}' company '{armed.Company}' "
+                  + "holds no rows, so there was nothing to load";
             PerfTrace.Log(
                 $"TestData.LazyLoad {tableId} '{entry.TableName}' {result.Rows} row(s)");
         }
         catch (TestDataHydrationRefusal ex)
         {
             _refused++;
+            _tableOutcome[tableId] = $"the backup's rows for it were refused — {ex.Message}";
             Console.Error.WriteLine($"[test-data] REFUSED {ex.Message}");
         }
         catch (BackupReaderException ex)
@@ -289,6 +333,8 @@ internal static class TestDataProvisioner
             // own text IN FULL, because that text is the only diagnosis there is and the bundle
             // reporter keeps only line 1 of an EXEC-FAIL message.
             _readerRefused++;
+            _tableOutcome[tableId] =
+                $"the backup reader refused table '{entry.TableName}' — {ex.Message.Split('\n')[0]}";
             Console.Error.WriteLine(
                 $"[test-data] READER REFUSED table '{entry.TableName}': {ex.Message}");
         }

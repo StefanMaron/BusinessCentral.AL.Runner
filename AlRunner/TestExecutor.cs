@@ -96,7 +96,14 @@ public sealed record TestResult(string Codeunit, string Method, TestOutcome Outc
                                 // "requested but empty" — an empty list IS how "requested,
                                 // zero AL locals" is represented (AlValueCapture.Collect()
                                 // never returns null).
-                                IReadOnlyList<Infrastructure.AlCapturedValue>? CapturedValues = null);
+                                IReadOnlyList<Infrastructure.AlCapturedValue>? CapturedValues = null,
+                                // #2240: an ADDITIONAL one-line explanation shown next to the
+                                // failure, never instead of it. Non-null only when the runner has
+                                // EVIDENCE that the failure is about a table with no rows in it —
+                                // see Infrastructure.MissingTestDataDiagnosis for why a text
+                                // pattern alone is not evidence. Message, FullException,
+                                // AlCallStack, Outcome and Exception are all untouched by it.
+                                string? Diagnosis = null);
 
 public sealed class TestExecutor
 {
@@ -526,9 +533,14 @@ public sealed class TestExecutor
                 // InsideTestProc: false — instantiation blew up, so no [Test] body
                 // ever ran. That is what makes this a `setup` errorKind on the wire
                 // rather than a test-runtime failure (see ErrorClassifier).
+                // #2240: the same explanation the per-test path gets. A codeunit whose AL
+                // global-variable initialisation or OnRun reads a setup record fails HERE, with
+                // the identical "does not exist" shape and no [Test] name attached — leaving it
+                // out would explain the failure only when it happened to land inside a test body.
                 var ctorResult = new TestResult(t.Name, "<ctor>", TestOutcome.Error,
                     Unwrap(ex).Message, ex.ToString(), TimeSpan.Zero,
-                    Exception: Unwrap(ex), InsideTestProc: false);
+                    Exception: Unwrap(ex), InsideTestProc: false,
+                    Diagnosis: AlRunner.Infrastructure.MissingTestDataDiagnosis.Explain(Unwrap(ex)));
                 results.Add(ctorResult);
                 onTestComplete?.Invoke(ctorResult);
                 continue;
@@ -601,7 +613,8 @@ public sealed class TestExecutor
                         {
                             var ctorResult = new TestResult(t.Name, m.Name, TestOutcome.Error,
                                 Unwrap(ex).Message, ex.ToString(), TimeSpan.Zero,
-                                null, displayName, Unwrap(ex), InsideTestProc: false);
+                                null, displayName, Unwrap(ex), InsideTestProc: false,
+                                Diagnosis: AlRunner.Infrastructure.MissingTestDataDiagnosis.Explain(Unwrap(ex)));
                             results.Add(ctorResult);
                             onTestComplete?.Invoke(ctorResult);
                             continue;
@@ -962,7 +975,12 @@ public sealed class TestExecutor
             // so for now: any thrown exception is Fail.
             return new TestResult(codeunit, m.Name, TestOutcome.Fail,
                 $"{inner.GetType().Name}: {inner.Message}", inner.ToString(), sw.Elapsed, alStack, displayName,
-                inner);
+                inner,
+                // #2240: computed HERE, and nowhere later, because it reads the live row store —
+                // the codeunit/test boundary that follows restores the install baseline over it,
+                // so a diagnosis derived after the fact would describe a different database than
+                // the one the test actually failed against.
+                Diagnosis: AlRunner.Infrastructure.MissingTestDataDiagnosis.Explain(inner));
         }
         catch (Exception ex)
         {
@@ -970,7 +988,8 @@ public sealed class TestExecutor
             var alStack = AlRunner.Infrastructure.AlCallStackCapture.GetCaptured(ex);
             return new TestResult(codeunit, m.Name, TestOutcome.Error,
                 ex.Message, ex.ToString(), sw.Elapsed, alStack, displayName,
-                ex);
+                ex,
+                Diagnosis: AlRunner.Infrastructure.MissingTestDataDiagnosis.Explain(ex));
         }
         finally
         {
