@@ -32,14 +32,53 @@ Operating rules live in `.claude/rules/` and are auto-loaded. Task-specific refe
 - Act as orchestrator or implementation agent → sub-agents `orchestrator` / `impl-agent` in `.claude/agents/`
 - Drive a full work cycle (triage → parallel impls in worktrees → orchestrator merge pass, until the queue is empty) → slash command `/work-cycle`
 
-### Local knowledge graph (optional)
+### Code navigation: use these before grepping
 
-If `graphify-out/graph.json` exists, this checkout has a locally built knowledge graph of
-`AlRunner/`. It is generated, gitignored, and never committed. Query it from the repo root with
-`graphify query "<question>"`, and rebuild it with `graphify AlRunner --update` — `AlRunner/`
-changes often and a stale graph still reads as authoritative.
+Finding and reading code is the single biggest token cost in this repo — measured at **63% of
+one implementation agent's tool calls** (63 greps + 50 file reads out of 180). `AlRunner/` is
+~81,000 lines across 194 files, and two files are over 8,000 lines each, so a grep hit usually
+costs several follow-up reads to interpret. Reach for a real navigation tool first.
 
-It maps **static** structure only: which types and files reference which. It cannot tell you
-whether a `Hook(...)` registration or a Cecil rewrite actually fires at runtime — an orphaned
-hook and a live one look identical in the graph. Use `AL_RUNNER_HOOK_AUDIT=1` for that question,
-and see the README's Knowledge graph section for which graphify build to install.
+**1. Language server (best for "who calls this", "where is this defined").**
+
+The `LSP` tool answers `findReferences`, `incomingCalls`, `outgoingCalls`, `goToDefinition`,
+`goToImplementation` and `workspaceSymbol` for `.cs`. It is provided by the `csharp-lsp`
+plugin driving `csharp-ls`; both are installed on the maintainer's machine
+(`mise use -g dotnet:csharp-ls`, `claude plugin install csharp-lsp@claude-plugins-official`).
+
+Verified against this repo: it loads `AlRunner.slnx`, does not trip on the
+`EnsureBCServiceTierDlls` target, and returns full signatures —
+`workspace/symbol "GetDataAccessForTableCore"` resolves to
+`RecordPatches.GetDataAccessForTableCore(object self, NCLMetaTable table, bool isTemporary)` at
+`AlRunner/Patches/RecordPatches.cs:1314`.
+
+If `LSP` reports no server for `.cs`, the plugin is not enabled in that session — say so and
+fall back, do not treat it as "no results".
+
+**2. Knowledge graph (best for "what is near this", orientation in an unfamiliar area).**
+
+Rebuild AND query from `AlRunner/`, not the repo root:
+
+```bash
+cd AlRunner && graphify AlRunner --update     # ~2 seconds, 191 files
+cd AlRunner && graphify query "SomeSymbol callers"
+```
+
+Both commands default to `graphify-out/graph.json` **relative to the current directory**, so a
+rebuild run from one directory and a query run from another silently use different files. That
+mismatch is why an earlier root-level copy sat 13 days stale while the documented rebuild
+appeared to work.
+
+**Phrase queries as bare symbols or `Symbol callers` — never as an English question.** The
+start-node resolver matches on the words you type, so `graphify query "what calls
+GetDataAccessForTableCore"` matches **CallSiteArgWrap** on the word *calls*, returns 2 unrelated
+nodes, and gives no sign it failed. The same question as `"GetDataAccessForTableCore callers"`
+returns the correct 66-node neighbourhood.
+
+Rebuilding takes ~2 seconds, so rebuild rather than wonder whether it is current. In a worktree
+the graph only drifts by your own edits.
+
+The graph maps **static** structure only: which types and files reference which. It cannot tell
+you whether a `Hook(...)` registration or a Cecil rewrite actually fires at runtime — an
+orphaned hook and a live one look identical in it. Use `AL_RUNNER_HOOK_AUDIT=1` for that
+question, and see the README's Knowledge graph section for which graphify build to install.

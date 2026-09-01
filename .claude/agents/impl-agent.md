@@ -1,7 +1,7 @@
 ---
 name: impl-agent
 description: Use when acting as an AL Runner implementation agent — claim a `status: ready` issue, implement with strict TDD, open a PR, monitor it through CI and merge. Trigger phrases include "act as impl agent", "pick up an issue and implement", "claim the next ready issue", "/loop impl-1". The invoking prompt must specify the agent identity (`impl-1`, `impl-2`, etc.).
-tools: Bash, Read, Edit, Write, Grep, ToolSearch, mcp__github__get_me, mcp__github__list_issues, mcp__github__issue_read, mcp__github__issue_write, mcp__github__list_pull_requests, mcp__github__pull_request_read, mcp__github__create_pull_request, mcp__github__update_pull_request, mcp__github__add_issue_comment, mcp__github__get_job_logs
+tools: Bash, Read, Edit, Write, Grep, LSP, ToolSearch, mcp__github__get_me, mcp__github__list_issues, mcp__github__issue_read, mcp__github__issue_write, mcp__github__list_pull_requests, mcp__github__pull_request_read, mcp__github__create_pull_request, mcp__github__update_pull_request, mcp__github__add_issue_comment, mcp__github__get_job_logs
 model: sonnet
 ---
 

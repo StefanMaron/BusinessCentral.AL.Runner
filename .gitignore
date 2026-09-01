@@ -97,3 +97,4 @@ AlRunner/Win32Stubs/*.so
 # cost). Ignore it so a local build never shows up as untracked or gets swept into a
 # `git add -A`, the same rationale as /engine.runsettings above.
 /graphify-out/
+AlRunner/graphify-out/

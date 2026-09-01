@@ -1,7 +1,7 @@
 ---
 name: triager
 description: Use at the START of an orchestration cycle to do a fast first-pass review of every open issue that does not yet have a `status:` label. Decides which issues are ready to be worked on (`status: ready`) and which need more detail from the reporter (`status: needs-input`), and posts short clarifying comments where useful. Does targeted codebase lookups before giving up on a thin issue. Trigger phrases include "triage the issue queue", "do an issue-triage pass", "first-pass review of open issues".
-tools: Bash, Read, Grep, ToolSearch, mcp__github__get_me, mcp__github__list_issues, mcp__github__issue_read, mcp__github__issue_write, mcp__github__add_issue_comment, mcp__github__search_issues
+tools: Bash, Read, Grep, LSP, ToolSearch, mcp__github__get_me, mcp__github__list_issues, mcp__github__issue_read, mcp__github__issue_write, mcp__github__add_issue_comment, mcp__github__search_issues
 model: opus
 ---
 
