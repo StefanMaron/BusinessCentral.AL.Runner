@@ -4,11 +4,19 @@
 This is a presence check only: it reads the Certificate Table entry (data
 directory index 4, IMAGE_DIRECTORY_ENTRY_SECURITY) in the PE optional header
 and treats a nonzero Size as "signed". It does NOT validate that the
-signature is well-formed or that it chains to a trusted root -- that needs a
-real crypto stack (signtool / Get-AuthenticodeSignature on Windows,
-osslsigncode on Linux) and is deliberately out of scope here. See
-publish.yml's sign-and-pack job for the chain-of-trust check, which runs on
-the real Windows signing runner where that tooling exists.
+signature is well-formed or that it chains to a trusted root -- a file whose
+Certificate Table holds a nonzero size but arbitrary, non-Authenticode bytes
+still reads as "signed" here (see test_pe_signing.py's
+PresenceCheckOnlyTests, #2284).
+
+publish.yml's sign-and-pack job runs a real chain-of-trust check
+(Get-AuthenticodeSignature, on the Windows signing runner, right after the
+signing action) in addition to this one -- but only over the files THAT RUN
+signed (catalog.txt), not over the whole tree this script scans. The ~84
+files this workflow deliberately never touches carry Microsoft's or a third
+party's own signature, and an expired or untimestamped third-party
+certificate would fail a validity check for a reason that isn't this repo's
+defect, so this presence check is still the only gate applied to those.
 
 Used two ways from publish.yml (#2248):
 
@@ -159,11 +167,28 @@ def _cmd_list_unsigned(args: argparse.Namespace) -> int:
 
     lines = []
     for path in unsigned_paths:
+        resolved = path.resolve()
         try:
-            rel = os.path.relpath(path.resolve(), relative_to)
-        except ValueError:
-            # Different drive on Windows -- fall back to the absolute path.
-            rel = str(path.resolve())
+            rel = os.path.relpath(resolved, relative_to)
+        except ValueError as exc:
+            # azure/artifact-signing-action joins every catalog entry onto
+            # the workspace root before calling Resolve-Path (#2286), so an
+            # absolute path here can never resolve on the signing runner --
+            # measured in a real release run: both a literal absolute path
+            # (doubled: D:\a\repo\repo\D:\a\repo\repo\out\bcdb.exe) and a Git
+            # Bash /d/a/... path (mangled the same way) failed. A catalog
+            # entry must be relative to the workspace; this file is on a
+            # different drive from --relative-to, so it cannot be expressed
+            # that way and cannot be signed from this catalog. Fail loudly
+            # here instead of emitting a form the signing action can't read.
+            print(
+                f"::error::{resolved} cannot be made relative to {relative_to} "
+                f"({exc}). A signing catalog entry must be relative to the "
+                "workspace -- this file is on a different drive and cannot "
+                "be signed from this catalog.",
+                file=sys.stderr,
+            )
+            raise SystemExit(1) from exc
         lines.append(rel)
 
     output = "\n".join(lines)

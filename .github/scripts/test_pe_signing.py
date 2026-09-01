@@ -24,6 +24,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -100,6 +101,65 @@ def build_fake_pe(magic: int, cert_table_size: int, num_rva_and_sizes: int = 16)
         struct.pack_into("<II", optional_header, entry_offset, va, size)
 
     return bytes(dos_header) + pe_signature + coff_header + bytes(optional_header)
+
+
+def build_fake_pe_with_certificate_bytes(magic: int, certificate_bytes: bytes) -> bytes:
+    """Like build_fake_pe, but backs the Certificate Table entry with REAL
+    bytes appended right after the header -- arbitrary bytes, not a
+    well-formed WIN_CERTIFICATE/PKCS#7 Authenticode blob. Used by
+    PresenceCheckOnlyTests (#2284) to prove pe_signing's presence check
+    accepts any nonzero-size Certificate Table entry, regardless of whether
+    the bytes it points at are an actual signature.
+    """
+    assert magic in (0x10B, 0x20B)
+    header = build_fake_pe(magic, cert_table_size=len(certificate_bytes))
+    header_len = len(header)
+
+    data_directory_offset = 96 if magic == 0x10B else 112
+    optional_header_start = 64 + 4 + 20  # dos header + "PE\0\0" + COFF header
+    entry_offset = (
+        optional_header_start
+        + data_directory_offset
+        + pe_signing._CERT_TABLE_DIRECTORY_INDEX * 8
+    )
+
+    patched = bytearray(header)
+    # VirtualAddress (a raw file offset for the Security directory, per the
+    # comment on _CERT_TABLE_DIRECTORY_INDEX) points at the appended bytes.
+    struct.pack_into("<II", patched, entry_offset, header_len, len(certificate_bytes))
+    return bytes(patched) + certificate_bytes
+
+
+class PresenceCheckOnlyTests(unittest.TestCase):
+    """Documents the exact defect #2284 exists to cover: pe_signing's checks
+    read only the Certificate Table's Size field. A table backed by bytes
+    that are not a valid Authenticode signature at all -- arbitrary garbage,
+    not even a well-formed WIN_CERTIFICATE header -- is still reported as
+    signed. That is why publish.yml needs a REAL Get-AuthenticodeSignature
+    check in addition to this one, not instead of it (this check stays,
+    scoped to the ~84 files the workflow never touches -- see the
+    module docstring)."""
+
+    def test_verify_reports_signed_for_arbitrary_certificate_table_bytes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            garbage = b"\x00\xde\xad\xbe\xef not a WIN_CERTIFICATE or a PKCS#7 blob at all"
+            path = root / "fake-signed.dll"
+            path.write_bytes(build_fake_pe_with_certificate_bytes(0x20B, garbage))
+
+            # The internal check agrees...
+            self.assertTrue(pe_signing.is_signed(path))
+
+            # ...and so does the CLI gate that publish.yml runs as its
+            # release-path check: it reports this file as signed and OK,
+            # even though "signed" here means nothing more than "Certificate
+            # Table Size is nonzero".
+            result = subprocess.run(
+                [sys.executable, SCRIPT_PATH, "verify", str(root)],
+                capture_output=True, text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("OK", result.stdout)
 
 
 class CertificateTableSizeTests(unittest.TestCase):
@@ -242,6 +302,68 @@ class ListUnsignedCliTests(unittest.TestCase):
             )
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn("OK", result.stdout)
+
+
+class ListUnsignedCrossDriveTests(unittest.TestCase):
+    """#2286: when a path can't be made relative to --relative-to (the
+    Windows cross-drive case), _cmd_list_unsigned must fail loudly instead
+    of silently emitting an absolute path -- azure/artifact-signing-action
+    joins every catalog entry onto the workspace root before Resolve-Path,
+    so an absolute entry can never resolve on the signing runner. A real
+    cross-drive path can't be produced on a single-drive Linux CI runner, so
+    this drives the failure by making os.path.relpath raise ValueError
+    directly, the same way it does for a real cross-drive pair on Windows.
+    """
+
+    def _make_tree(self, root: Path):
+        (root / "unsigned.dll").write_bytes(build_fake_pe(0x20B, cert_table_size=0))
+
+    def test_relpath_valueerror_fails_loudly_naming_path_and_reason(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._make_tree(root)
+            args = pe_signing.argparse.Namespace(
+                roots=[str(root)],
+                relative_to=str(root),
+                exclude_dir=[],
+                catalog=None,
+            )
+
+            def raising_relpath(_path, _start):
+                raise ValueError("path is on mount 'D:', start on mount 'C:'")
+
+            captured_stderr = __import__("io").StringIO()
+            with unittest.mock.patch.object(
+                pe_signing.os.path, "relpath", side_effect=raising_relpath
+            ), unittest.mock.patch("sys.stderr", captured_stderr):
+                with self.assertRaises(SystemExit) as cm:
+                    pe_signing._cmd_list_unsigned(args)
+
+            self.assertEqual(cm.exception.code, 1)
+            message = captured_stderr.getvalue()
+            self.assertIn("unsigned.dll", message)
+            self.assertIn("relative to", message)
+            self.assertIn("different drive", message)
+
+    def test_normal_tree_without_the_valueerror_still_emits_relative_paths(self):
+        # The un-mocked control case, in the same class as the failure case,
+        # so both directions of this behaviour live together.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._make_tree(root)
+            args = pe_signing.argparse.Namespace(
+                roots=[str(root)],
+                relative_to=str(root),
+                exclude_dir=[],
+                catalog=None,
+            )
+
+            captured_stdout = __import__("io").StringIO()
+            with unittest.mock.patch("sys.stdout", captured_stdout):
+                result = pe_signing._cmd_list_unsigned(args)
+
+            self.assertEqual(result, 0)
+            self.assertEqual(captured_stdout.getvalue().strip(), "unsigned.dll")
 
 
 if __name__ == '__main__':

@@ -426,6 +426,40 @@ jobs:
           timestamp-rfc3161: http://timestamp.acs.microsoft.com
           timestamp-digest: SHA256
 
+      - name: Verify every signed file's Authenticode signature actually validates (#2284)
+        # pe_signing.py's checks (this job's next step, and both checks in the release
+        # job below) are presence checks only -- they read the PE Certificate Table's
+        # Size field and treat "nonzero" as "signed" (see that script's docstring). A
+        # malformed signature, one that chains to no trusted root, or one missing its
+        # RFC 3161 timestamp still has a nonzero Certificate Table, so every one of
+        # those gates would pass it. This is the real chain-of-trust check: it runs
+        # here, on the Windows runner that just signed these files, using the same
+        # Get-AuthenticodeSignature cmdlet BusinessCentral.DbReader's v0.1.0 release
+        # measured working against an Azure Trusted Signing certificate on
+        # windows-latest.
+        #
+        # Scoped to catalog.txt -- the files THIS run signed -- not the whole tree.
+        # The ~84 files this workflow deliberately never touches carry Microsoft's or
+        # a third party's own signature, and an expired or untimestamped third-party
+        # certificate would fail a validity check for a reason that isn't our defect;
+        # those keep only the presence check.
+        shell: pwsh
+        run: |
+          $failures = @()
+          Get-Content catalog.txt | Where-Object { $_.Trim() -ne '' } | ForEach-Object {
+            $relativePath = $_
+            $fullPath = Join-Path '${{ github.workspace }}' $relativePath
+            $sig = Get-AuthenticodeSignature $fullPath
+            Write-Host "$relativePath -> $($sig.Status)  $($sig.SignerCertificate.Subject)"
+            if ($sig.Status -ne 'Valid') {
+              $failures += "$relativePath is not validly signed: $($sig.Status)"
+            }
+          }
+          if ($failures.Count -gt 0) {
+            $failures | ForEach-Object { Write-Error $_ }
+            exit 1
+          }
+
       - name: Verify the signing step actually signed everything it listed
         # Fail fast here, on the machine that just did the signing, rather than
         # discovering a gap only after packing and uploading. The release job
