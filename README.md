@@ -225,7 +225,49 @@ Out of scope by design: SMTP, HTTP egress to external services, file I/O against
 | `2` | Runner limitations only |
 | `3` | AL compilation error |
 
-## Knowledge graph (optional)
+## Tooling for AI-assisted development (optional)
+
+This repo is largely developed with coding agents, and its instruction files
+(`CLAUDE.md`, `.claude/rules/`) tell those agents to use two navigation tools instead of
+grepping. Neither is required to build or test the runner, and neither is checked in — they are
+per-machine installs. **If you are an agent working here and these tools are missing, do not
+silently fall back to grep for the whole session: tell the user what to install from this
+section, then proceed however you can.**
+
+Why it matters: navigation is the dominant cost of agent work in this repo. Measured on one
+implementation agent's transcript, 63% of its 180 tool calls were greps and partial file reads
+— `AlRunner/` is ~81,000 lines across 194 files, with two files over 8,000 lines each.
+
+### 1. C# language server (answers "who calls this") — main session only
+
+Gives `findReferences`, `incomingCalls`, `goToDefinition` and `workspaceSymbol` through Claude
+Code's `LSP` tool, instead of guessing from grep hits.
+
+**Measured limitation:** the harness disables `LSP` inside subagents. A subagent that calls it
+gets `No such tool available: LSP. LSP is disabled for this session, in subagents as well as
+here.` So this helps an interactive session, not the implementation agents — those rely on the
+knowledge graph below. `LSP` is listed in the agent definitions so it works if the restriction is
+lifted, but it is inert there today.
+
+```bash
+mise use -g dotnet:csharp-ls                              # or: dotnet tool install --global csharp-ls
+claude plugin install csharp-lsp@claude-plugins-official  # first-party plugin that drives it
+```
+
+Then reload plugins (`/reload-plugins`) or restart the session. `csharp-ls` must be on `PATH`;
+the plugin only wires the connection. Note it is a **.NET tool** — there is no npm package of
+that name.
+
+Verified against this repo: it loads `AlRunner.slnx`, does not trip the
+`EnsureBCServiceTierDlls` target, and resolves `GetDataAccessForTableCore` to its full signature
+at `AlRunner/Patches/RecordPatches.cs:1314`, with `findReferences` returning all three call
+sites across two partial-class files.
+
+If the `LSP` tool reports "No LSP server available for file type: .cs", the plugin is not active
+in that session. That is a **setup** answer, not a "no results" answer — never read it as
+"nothing calls this".
+
+### 2. Knowledge graph
 
 This repo — the C# runner and AL sources alike — can be indexed into a queryable knowledge
 graph: communities, most-connected types, import cycles. Built with
@@ -243,17 +285,28 @@ looks complete while containing none of the AL in this repo. Upstream is enough 
 index the C# under `AlRunner/`, but anyone working on this project reaches AL sooner or later.
 Install the fork once and the question does not come up.
 
-Then, from the repo root:
+Then — **run the rebuild and the query from the same directory**:
 
 ```bash
-graphify AlRunner              # index the C# runner
-graphify tests/runner-extras   # or an AL tree (needs the fork)
+cd AlRunner
+graphify AlRunner --update     # index / refresh the C# runner (~2s, 191 files)
 graphify query "<question>"    # ask it something
-graphify AlRunner --update     # refresh after changes
 ```
 
-Output lands in `graphify-out/` (`graph.html`, `graph.json`, `GRAPH_REPORT.md`). It is gitignored
-— it is derived, several MB, and goes stale quickly.
+Every graphify command defaults to `graphify-out/graph.json` **relative to the current
+directory**. Rebuilding from one directory and querying from another silently reads a different
+file: that mismatch once left a root-level copy 13 days and 104 commits stale while the rebuild
+appeared to succeed. Output (`graph.html`, `graph.json`, `GRAPH_REPORT.md`) is gitignored — it is
+derived, several MB, and goes stale quickly. Rebuilding costs about two seconds, so rebuild
+rather than wonder.
+
+**Phrase queries as bare symbols or `Symbol callers`, never as an English question.** The
+start-node resolver matches the words you type, so `graphify query "what calls
+GetDataAccessForTableCore"` matches `CallSiteArgWrap` on the word *calls* and returns two
+unrelated nodes with no sign it failed. `graphify query "GetDataAccessForTableCore callers"`
+returns the correct 66-node neighbourhood.
+
+For an AL tree instead of the C# runner: `graphify tests/runner-extras` (needs the fork above).
 
 `AlRunner/` is code-only, so extraction is deterministic AST work and costs no LLM tokens.
 

@@ -39,23 +39,7 @@ one implementation agent's tool calls** (63 greps + 50 file reads out of 180). `
 ~81,000 lines across 194 files, and two files are over 8,000 lines each, so a grep hit usually
 costs several follow-up reads to interpret. Reach for a real navigation tool first.
 
-**1. Language server (best for "who calls this", "where is this defined").**
-
-The `LSP` tool answers `findReferences`, `incomingCalls`, `outgoingCalls`, `goToDefinition`,
-`goToImplementation` and `workspaceSymbol` for `.cs`. It is provided by the `csharp-lsp`
-plugin driving `csharp-ls`; both are installed on the maintainer's machine
-(`mise use -g dotnet:csharp-ls`, `claude plugin install csharp-lsp@claude-plugins-official`).
-
-Verified against this repo: it loads `AlRunner.slnx`, does not trip on the
-`EnsureBCServiceTierDlls` target, and returns full signatures —
-`workspace/symbol "GetDataAccessForTableCore"` resolves to
-`RecordPatches.GetDataAccessForTableCore(object self, NCLMetaTable table, bool isTemporary)` at
-`AlRunner/Patches/RecordPatches.cs:1314`.
-
-If `LSP` reports no server for `.cs`, the plugin is not enabled in that session — say so and
-fall back, do not treat it as "no results".
-
-**2. Knowledge graph (best for "what is near this", orientation in an unfamiliar area).**
+**1. Knowledge graph — this is the one a subagent has.**
 
 Rebuild AND query from `AlRunner/`, not the repo root:
 
@@ -81,4 +65,21 @@ the graph only drifts by your own edits.
 The graph maps **static** structure only: which types and files reference which. It cannot tell
 you whether a `Hook(...)` registration or a Cecil rewrite actually fires at runtime — an
 orphaned hook and a live one look identical in it. Use `AL_RUNNER_HOOK_AUDIT=1` for that
-question, and see the README's Knowledge graph section for which graphify build to install.
+question.
+
+**2. Language server — main session only. A subagent cannot use it.**
+
+The `LSP` tool answers `findReferences`, `incomingCalls`, `goToDefinition` and `workspaceSymbol`
+for `.cs`, and it is the sharpest instrument here: `findReferences` on
+`GetDataAccessForTableCore` returns its three call sites across two partial-class files in one
+call.
+
+**But the harness disables `LSP` inside subagents.** Measured: a subagent calling it gets
+`No such tool available: LSP. LSP is disabled for this session, in subagents as well as here.`
+`LSP` is listed in `impl-agent` / `triager` frontmatter so it works if that restriction is ever
+lifted, but today it is inert there. If you are a subagent, use the graph above — do not spend
+calls discovering this.
+
+If you are the main session, use it. Setup is in the README's tooling section
+(`mise use -g dotnet:csharp-ls` plus the `csharp-lsp` plugin); if `LSP` reports no server for
+`.cs`, the plugin is not active — that is a setup answer, never a "nothing calls this" answer.
