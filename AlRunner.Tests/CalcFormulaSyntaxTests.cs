@@ -308,6 +308,102 @@ public class CalcFormulaSyntaxTests
         finally { ParsedTables.Remove(TableId); }
     }
 
+    // ─── #2305 — an AL quoted identifier inside filter(...) ──────────────────────────────
+    //
+    // AL quotes an identifier with double quotes; BC's FILTER grammar quotes a literal with
+    // SINGLE quotes and treats `"` as an ordinary character (FilterExpressionTokenizer.GetTokens
+    // in Ncl 28.1 has a case for '\'' and none for '"'). So `filter("Initial Entry")` must reach
+    // the runtime as `'Initial Entry'`. Carried through verbatim it arrives as the 15-character
+    // literal `"Initial Entry"`, which is not an option member, and the FlowField throws.
+    //
+    // Converting rather than stripping is the point: several Base App members contain filter
+    // metacharacters — `Payment Discount (VAT Excl.)` has parentheses, which the tokenizer reads
+    // as grouping — so quotes cannot simply be removed the way ConstValueText removes them
+    // (a const value is evaluated as a bare value, not parsed as an expression).
+
+    [Fact]
+    public void FilterCondition_QuotedOptionMember_BecomesASingleQuotedFilterLiteral()
+    {
+        try
+        {
+            var f = ParseFormulaRequired(
+                """sum("Detailed Vendor Ledg. Entry".Amount where("Entry Type" = filter("Initial Entry")))""");
+
+            var c = Assert.Single(f.Filters);
+            Assert.Equal("Entry Type", c.SourceFieldName);
+            Assert.Equal(ParsedCalcFilterKind.Filter, c.Kind);
+            Assert.Equal("'Initial Entry'", c.Value);
+        }
+        finally { ParsedTables.Remove(TableId); }
+    }
+
+    [Fact]
+    public void FilterCondition_MixedQuotedAndBareMembers_ConvertsOnlyTheQuotedOnes()
+    {
+        try
+        {
+            var f = ParseFormulaRequired(
+                """sum("Sales Line".Amount where("Document Type" = filter(Invoice | "Credit Memo")))""");
+
+            var c = Assert.Single(f.Filters);
+            Assert.Equal("'Credit Memo'", c.Value.Replace("Invoice | ", ""));
+            Assert.StartsWith("Invoice", c.Value);
+            Assert.DoesNotContain('"', c.Value);
+        }
+        finally { ParsedTables.Remove(TableId); }
+    }
+
+    [Fact]
+    public void FilterCondition_MemberNameWithParentheses_SurvivesAsAQuotedLiteral()
+    {
+        // The case that rules out stripping the quotes: unquoted, the tokenizer would read
+        // `(` and `)` as grouping and `..` would bind to the wrong operand.
+        try
+        {
+            var f = ParseFormulaRequired(
+                """sum("Detailed Vendor Ledg. Entry".Amount where("Entry Type" = filter("Payment Discount" .. "Payment Discount (VAT Adjustment)")))""");
+
+            var c = Assert.Single(f.Filters);
+            Assert.Contains("'Payment Discount (VAT Adjustment)'", c.Value);
+            Assert.DoesNotContain('"', c.Value);
+        }
+        finally { ParsedTables.Remove(TableId); }
+    }
+
+    [Fact]
+    public void FilterCondition_BlankMember_BecomesAQuotedSpace()
+    {
+        // `filter(<> " ")` — the blank member of an option set, negated. The space must stay
+        // inside quotes; bare, the tokenizer discards it as whitespace and the filter becomes
+        // `<>` with no operand.
+        try
+        {
+            var f = ParseFormulaRequired(
+                """sum("Warehouse Activity Line".Quantity where("Activity Type" = filter(<> " ")))""");
+
+            var c = Assert.Single(f.Filters);
+            Assert.Contains("' '", c.Value);
+            Assert.StartsWith("<>", c.Value);
+        }
+        finally { ParsedTables.Remove(TableId); }
+    }
+
+    [Fact]
+    public void FilterCondition_UnquotedMembers_AreLeftExactlyAsWritten()
+    {
+        // The other direction: a filter with no AL quoting must come through untouched — the
+        // conversion must be driven by the source text, not applied to every filter.
+        try
+        {
+            var f = ParseFormulaRequired(
+                """sum("Sales Line".Amount where(Status = filter(Open | Released)))""");
+
+            var c = Assert.Single(f.Filters);
+            Assert.Equal("Open | Released", c.Value);
+        }
+        finally { ParsedTables.Remove(TableId); }
+    }
+
     [Fact]
     public void NonFormulaPropertyValue_YieldsNoFormula()
     {

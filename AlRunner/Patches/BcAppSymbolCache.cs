@@ -62,7 +62,14 @@ internal static partial class BcAppSymbolCache
     // aggregated column as an ordinary one again, returning raw ungrouped rows: the exact
     // #2137 bug reintroduced on any machine whose symbol cache predates this change, not a
     // cache miss, hence the bump.
-    private const int CacheVersion = 14;
+    // v15: a CalcFormula's `filter(...)` condition now carries AL's quoted identifiers
+    // re-quoted for BC's filter grammar — `filter("Initial Entry")` is cached as
+    // `'Initial Entry'`, not as the AL text (issue #2305). A v14 payload deserialises
+    // perfectly well and replays the AL spelling, which reaches the runtime as a literal
+    // with double quotes in it, matches no option member, and throws
+    // NavInvalidFilterExpressionException out of CalcFields — a wrong answer replayed from
+    // cache on any machine whose symbol cache predates this change, not a cache miss.
+    private const int CacheVersion = 15;
     private static readonly ConcurrentDictionary<string, AppSymbols> ProcessCache = new(StringComparer.OrdinalIgnoreCase);
     // Issue #1820 — path -> content-hash memo. ComputeAppContentHash needs to read the
     // WHOLE .app to hash it (unlike the FileInfo.Length/LastWriteTimeUtc stat it replaced,

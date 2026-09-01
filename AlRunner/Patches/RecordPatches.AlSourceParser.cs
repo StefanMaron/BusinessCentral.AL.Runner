@@ -421,7 +421,7 @@ public static partial class RecordPatches
                     list.Add(new ParsedCalcFilter(
                         Unquote(fe.LeftHandSide?.ToString()?.Trim() ?? ""),
                         ParsedCalcFilterKind.Filter,
-                        Value: fe.Filter?.ToString()?.Trim() ?? ""));
+                        Value: FilterValueText(fe.Filter?.ToString())));
                     break;
 
                 default:
@@ -653,7 +653,7 @@ public static partial class RecordPatches
                         filters.Add(new ParsedCalcFilter(
                             Unquote(fe.LeftHandSide?.ToString()?.Trim() ?? ""),
                             ParsedCalcFilterKind.Filter,
-                            Value: fe.Filter?.ToString()?.Trim() ?? ""));
+                            Value: FilterValueText(fe.Filter?.ToString())));
                         break;
 
                     // #1716 — the three flow-filter forms. All of them are FIELD links in
@@ -717,6 +717,58 @@ public static partial class RecordPatches
         if (s.Length >= 2 && s[0] == '"' && s[^1] == '"') return s[1..^1].Replace("\"\"", "\"");
         if (s.Length >= 2 && s[0] == '\'' && s[^1] == '\'') return s[1..^1].Replace("''", "'");
         return s;
+    }
+
+    /// <summary>
+    /// The expression of a <c>filter(...)</c> condition, as text BC's filter grammar can read.
+    /// <para>#2305. AL quotes an identifier with DOUBLE quotes; BC's filter grammar quotes a
+    /// literal with SINGLE quotes and treats <c>"</c> as an ordinary character — Ncl 28.1's
+    /// <c>FilterExpressionTokenizer.GetTokens</c> has a case for <c>'</c> (with <c>''</c> as its
+    /// escape) and none for <c>"</c>. So each AL quoted identifier is re-quoted here: AL's
+    /// <c>""</c> escape is resolved, then any <c>'</c> in the resulting name is doubled.</para>
+    /// <para>This is NOT <see cref="ConstValueText"/>'s rule, and the difference matters. A
+    /// const value is evaluated as a bare value, so its quotes simply come off; a filter value
+    /// is PARSED AS AN EXPRESSION, and Base App members such as
+    /// <c>Payment Discount (VAT Excl.)</c> carry parentheses the tokenizer would otherwise read
+    /// as grouping. <c>filter(&lt;&gt; " ")</c> is the same hazard with whitespace: bare, the
+    /// space is discarded and <c>&lt;&gt;</c> is left with no operand.</para>
+    /// <para>Carried through verbatim, <c>filter("Initial Entry")</c> reached the runtime as the
+    /// 15-character literal <c>"Initial Entry"</c>, which matches no option member, so
+    /// <c>Vendor Ledger Entry."Original Amount"</c> — and the 87 Base App CalcFormulas with a
+    /// <c>filter(...)</c> condition, 44 of them quoted — threw
+    /// <c>NavInvalidFilterExpressionException</c> instead of calculating.</para>
+    /// </summary>
+    private static string FilterValueText(string? text)
+    {
+        var s = (text ?? "").Trim();
+        if (s.IndexOf('"') < 0) return s;
+
+        var sb = new System.Text.StringBuilder(s.Length + 8);
+        for (int i = 0; i < s.Length; i++)
+        {
+            if (s[i] != '"') { sb.Append(s[i]); continue; }
+
+            var name = new System.Text.StringBuilder();
+            var closed = false;
+            for (i++; i < s.Length; i++)
+            {
+                if (s[i] != '"') { name.Append(s[i]); continue; }
+                // AL escapes a literal double quote inside an identifier by doubling it.
+                if (i + 1 < s.Length && s[i + 1] == '"') { name.Append('"'); i++; continue; }
+                closed = true;
+                break;
+            }
+            if (!closed)
+            {
+                // Unterminated quote: the AL parser would not have produced this node, so
+                // there is nothing to convert. Keep the text as written rather than invent
+                // a closing quote.
+                sb.Append('"').Append(name);
+                break;
+            }
+            sb.Append('\'').Append(name.ToString().Replace("'", "''")).Append('\'');
+        }
+        return sb.ToString();
     }
 
     /// <summary>
