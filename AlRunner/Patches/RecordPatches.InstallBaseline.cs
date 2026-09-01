@@ -17,6 +17,13 @@
 //   Rows are deep-copied on both capture and restore, so a test mutating a restored row
 //   cannot corrupt the baseline for the next codeunit.
 //
+//   NOT snapshotted: the self-populating virtual tables (AllObj, Field, Table Metadata and
+//   the rest of IsSelfPopulatingVirtualTableId). They are projections of the loaded-object
+//   set that GetDataAccessForTableCore re-derives on every access, so a boundary restore
+//   that carried them re-inserted ~22k rows it did not need, and then paid for them a second
+//   time when the top-up re-attempted every insert against the fresh provider. See the
+//   comment at the skip in CaptureInstallBaselineSnapshot (#2272).
+//
 // MEASURED (Pageworks 28.2, 1076 tests, same build, same session)
 //   test run 163.0s -> 78.8s (2.07x), byte-identical outcomes: 964P/112F with the same
 //   failing test set. al-language corpus failure set also byte-identical.
@@ -112,6 +119,21 @@ public static partial class RecordPatches
     /// </summary>
     internal static void AppendBaselineTable(object source, int tableId, object metaTable, NavValue[][] pristineRows)
     {
+        // #2272: the capture path refuses to put a self-populating virtual table in a
+        // baseline, and this is the only OTHER writer of the same lists — a table appended
+        // here would survive every boundary restore exactly as if it had been captured, so
+        // the two writers have to agree or the invariant is only half enforced.
+        //
+        // Unreachable today, and loudly so rather than silently skipped: the lazy loader that
+        // calls this fires from GetDataAccessForTableCore's fall-through path, which every
+        // virtual table returns before reaching. If that ever changes, re-seeding a projection
+        // table from a backup is a bug worth stopping on, not one worth absorbing.
+        if (IsSelfPopulatingVirtualTableId(tableId))
+            throw new InvalidOperationException(
+                $"install-baseline — table {tableId} is a self-populating virtual table "
+                + "(see IsSelfPopulatingVirtualTableId) and must not be appended to an install "
+                + "baseline; GetDataAccessForTableCore re-derives it on every access.");
+
         var rows = new NavValue[pristineRows.Length][];
         for (var i = 0; i < pristineRows.Length; i++)
             rows[i] = CloneValues(pristineRows[i]);
@@ -170,11 +192,46 @@ public static partial class RecordPatches
     internal static InstallBaselineSnapshot CaptureInstallBaselineSnapshot()
     {
         var sources = new List<BaselineSource>();
+        // Diagnostic only (the PerfTrace line below). At most ten ids, so collecting them
+        // unconditionally costs nothing worth gating.
+        var skippedVirtual = new List<int>();
         foreach (var (source, perTable) in _dataAccessByTable)
         {
             var tables = new List<BaselineTable>();
             foreach (var (tableId, dataAccess) in perTable)
             {
+                // ── Self-populating virtual tables are not install-trigger output (#2272) ──
+                // AllObj, AllObjWithCaption, Field, Table/Page/Report Metadata and their
+                // siblings are projections of the loaded-object set, and
+                // GetDataAccessForTableCore re-populates each of them on EVERY access
+                // (PopulateAllObjVirtualTable & co.) before it hands the data access back.
+                // Their populated-guards are ConditionalWeakTables keyed by the in-memory
+                // PROVIDER, and a boundary restore builds a brand-new provider, so a
+                // restored table is re-derived from scratch on the next access either way —
+                // carrying the rows across the boundary buys nothing.
+                //
+                // It cost, though. On a trivial fixture with the Base Application closure the
+                // capture was 41 tables / 23,651 rows, of which 22,354 rows were these
+                // tables; every codeunit (or, under TestIsolation.Test, every test) boundary
+                // re-inserted all of them, ~95 ms each. And because the restore hands the new
+                // provider an empty populated-guard, the very next access then re-attempted
+                // every one of those inserts and swallowed a NavRecordAlreadyExistsException
+                // per row — so the rows were paid for twice per boundary.
+                //
+                // This is the same filter the on-disk codec already applies on write
+                // (RecordPatches.InstallBaselineDisk.cs), which is why a disk-cache HIT has
+                // been running without these tables in its baseline on every warm machine
+                // since that landed. NOT the cross-bundle-leak argument from that file's
+                // header: in one process the parsed-object registries accumulate across
+                // bundles anyway (Program.cs's run loop never resets them), so the top-up
+                // already reports the union — dropping the rows here changes what it costs,
+                // not what it answers.
+                if (IsSelfPopulatingVirtualTableId(tableId))
+                {
+                    skippedVirtual.Add(tableId);
+                    continue;
+                }
+
                 var provider = GetDataProvider(dataAccess);
                 if (provider == null)
                     continue;
@@ -217,8 +274,13 @@ public static partial class RecordPatches
             TenantStoragePatches.CaptureInstallBaseline(),
             RecordLinkPatches.CaptureInstallBaseline(),
             BcRuntime.CaptureAutoIncrementBaseline());
+        skippedVirtual.Sort();
         PerfTrace.Log($"InstallBaseline.Capture {sources.Sum(s => s.Tables.Count)} table(s), " +
-                      $"{sources.Sum(s => s.Tables.Sum(t => t.Rows.Length))} row(s)" +
+                      $"{sources.Sum(s => s.Tables.Sum(t => t.Rows.Length))} row(s), " +
+                      // #2272: named, not just counted — "which tables were left out" is the
+                      // whole claim, and a bare count cannot distinguish "skipped AllObj" from
+                      // "skipped something that should have been captured".
+                      $"skipped-self-populating [{string.Join(",", skippedVirtual)}]" +
                       // #1867: a content digest, not just counts — lets a diagnostic run compare
                       // "the dep+company baseline this app group got via a cache HIT" against
                       // "what a fresh, uncached capture for that same app group would have
@@ -239,12 +301,14 @@ public static partial class RecordPatches
     ///
     /// #1867 root-cause note: two DIFFERENT digests for the same conceptual dependency
     /// closure are EXPECTED and do not indicate drift. Two known, faithful sources of
-    /// non-determinism guarantee it:
+    /// non-determinism guaranteed it:
     ///   1. System/virtual metadata tables (id >= 2,000,000,000, e.g. Field 2000000041)
     ///      are process-wide caches of loaded-assembly schema by design (see the
     ///      Field-virtual-table comment above GetDataAccessForTableCore) — they grow
     ///      monotonically as more test assemblies load into the process, independent of
-    ///      install-trigger/company-init business logic.
+    ///      install-trigger/company-init business logic. NO LONGER A SOURCE since #2272:
+    ///      the self-populating ones are not captured at all, so they cannot move the
+    ///      digest. The rest of the note stands.
     ///   2. Business rows carry BC-native SystemId (a GUID) and SystemCreatedAt/
     ///      SystemModifiedAt (wall-clock) fields assigned by the unmodified BC Insert path
     ///      at insert time (precompiled-dll-respect.md — we don't touch that). A fresh

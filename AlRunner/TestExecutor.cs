@@ -178,9 +178,10 @@ public sealed class TestExecutor
     // would corrupt every subsequent app group sharing this dep key, not just one. And the
     // virtual/system metadata tables (Field, AllObj, AllObjWithCaption, table id ≥
     // 2,000,000,000) that grow monotonically as more test assemblies load in-process are not
-    // a staleness hazard for a HIT either: GetDataAccessForTableCore re-populates them on
-    // EVERY access as an idempotent top-up, so restoring an earlier app group's narrower
-    // subset self-corrects on the next read.
+    // a staleness hazard for a HIT either — since #2272 they are not in the snapshot at all:
+    // CaptureInstallBaselineSnapshot skips every IsSelfPopulatingVirtualTableId table because
+    // GetDataAccessForTableCore re-populates them on EVERY access as an idempotent top-up, so
+    // a restore that omits them is re-derived in full on the next read.
     //
     // NOT cached here: the bundle's OWN test assembly's Install triggers
     // (InstallTriggerRunner.RunTestAssemblyOnly, genuinely per-app-group, always re-run) and
