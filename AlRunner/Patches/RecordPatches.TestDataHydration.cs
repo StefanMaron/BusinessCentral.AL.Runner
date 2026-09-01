@@ -72,9 +72,24 @@
 //   a) A column for an app OUTSIDE this run's closure arrives in its raw BC storage form,
 //      `<sql name>$<app id>`, because the reader had no symbols to name it with. The AL record
 //      this run builds has no such field — the app is not installed here — so the column is
-//      dropped, counted, and reported. Anything else that fails to resolve still REFUSES the
-//      table: a bare unresolvable name could equally be a schema mismatch, and the two must
-//      not be confused.
+//      dropped, counted, and reported.
+//
+//   c) A column naming a field this runner build's copy of the table does not have is dropped
+//      and counted too, under its own name (#2273/#2301). It used to refuse the whole table,
+//      on the grounds that a bare unresolvable name could be a schema mismatch. Measured, the
+//      refusal was the more dangerous answer: table 309 refused over `Allow Gaps in Nos.` —
+//      ObsoleteState = Removed since BC 27.0, so compiled out of the app while both the
+//      shipped SymbolReference.json and the physical SQL column survive — and left No. Series
+//      Line EMPTY, which is a state AL reads and believes: ~220 of Microsoft's
+//      Tests-SINGLESERVER tests failed with "You cannot assign new numbers from the number
+//      series <X>" against a backup whose CONT series has 99,977 numbers left.
+//      What makes dropping safe is not a guess about why the field is missing: the metatable
+//      IS the metadata every AL statement in this run resolves field access against, so a
+//      column absent from it is unaddressable here and its absence cannot change an answer AL
+//      can read.
+//      One refusal remains, for the mismatch the old rule was aimed at: a row shape that
+//      shares NO column with the table. Dropping every column of that would insert rows made
+//      entirely of defaults.
 //
 //   b) The merge can fail to happen at all without failing. Measured on reader builds up to
 //      9701b04: `--mergeExtensions` (camelCase) was accepted by the CLI, ignored, and exited
@@ -120,10 +135,59 @@ public static partial class RecordPatches
         new HashSet<string>(StringComparer.Ordinal)
         { "timestamp", "$systemId", "$systemCreatedAt", "$systemCreatedBy", "$systemModifiedAt", "$systemModifiedBy" };
 
-    /// <summary>The outcome of one table's hydration: how many rows landed, and how many
-    /// merged columns belonged to an app this run does not have installed. The second number
-    /// is reported rather than left implicit — see the file header, case (a).</summary>
-    internal readonly record struct TestDataTableResult(int Rows, int ColumnsFromUninstalledApps);
+    /// <summary>The outcome of one table's hydration: how many rows landed, how many merged
+    /// columns belonged to an app this run does not have installed, and how many named a
+    /// field this runner build's copy of the table does not have. All three are reported
+    /// rather than left implicit — see the file header, cases (a) and (c).</summary>
+    internal readonly record struct TestDataTableResult(
+        int Rows, int ColumnsFromUninstalledApps, int ColumnsNotInThisBuild);
+
+    /// <summary>How one table's backup columns divide up against the target metatable.
+    /// <see cref="CanHydrate"/> is false only for a row shape that shares NOTHING with the
+    /// table — see <see cref="PlanTestDataColumns"/>.</summary>
+    internal readonly record struct TestDataColumnPlan(
+        IReadOnlyList<string> Mapped,
+        IReadOnlyList<string> FromUninstalledApps,
+        IReadOnlyList<string> NotInThisBuild)
+    {
+        internal bool CanHydrate => Mapped.Count > 0 || (FromUninstalledApps.Count == 0 && NotInThisBuild.Count == 0);
+    }
+
+    /// <summary>
+    /// Sort one table's backup columns into the three things a column can be.
+    ///
+    /// A column that is not a field of the target metatable is DROPPED, not a reason to
+    /// refuse the table. The reason it is safe is narrow and load-bearing: the metatable is
+    /// the very metadata every AL statement in this run resolves field access against, so a
+    /// column missing from it is not addressable by any AL code here — dropping it cannot
+    /// change an answer AL can read. Refusing instead leaves the table EMPTY, which AL very
+    /// much can read, and reads as "this table has no rows" rather than as a diagnostic.
+    /// Measured: table 309 refused over `Allow Gaps in Nos.` (ObsoleteState = Removed since
+    /// BC 27.0, still declared in the shipped symbols and still a physical SQL column), and
+    /// ~220 of Microsoft's Tests-SINGLESERVER tests then failed on number series that have
+    /// 99,977 numbers left in the backup.
+    ///
+    /// Two counts, not one, because they mean different things: a `&lt;sql&gt;$&lt;app id&gt;` column
+    /// says an app is outside this run's closure (case (a)), while a bare name says this
+    /// build's table has no such field (case (c)).
+    ///
+    /// The one refusal left is a row shape that shares NO column with the table: that is a
+    /// mismatch, and hydrating it would insert rows made entirely of defaults.
+    /// </summary>
+    internal static TestDataColumnPlan PlanTestDataColumns(
+        IReadOnlySet<string> fieldNames, IEnumerable<string> columnNames)
+    {
+        var mapped = new List<string>();
+        var fromUninstalledApps = new List<string>();
+        var notInThisBuild = new List<string>();
+        foreach (var name in columnNames.Distinct(StringComparer.Ordinal))
+        {
+            if (fieldNames.Contains(name)) mapped.Add(name);
+            else if (BackupCatalog.TryParseUnresolvedExtensionColumn(name, out _, out _)) fromUninstalledApps.Add(name);
+            else notInThisBuild.Add(name);
+        }
+        return new TestDataColumnPlan(mapped, fromUninstalledApps, notInThisBuild);
+    }
 
     /// <summary>
     /// Everything BC's own SQL-cell reader reads off the field it is converting for. There are
@@ -169,13 +233,12 @@ public static partial class RecordPatches
     /// <paramref name="rows"/> is one dictionary per row, keyed by the AL field NAME the
     /// reader emitted (BC's system columns already dropped by the caller).
     ///
-    /// Every key must resolve to a field of the target NCLMetaTable — the metatable the row is
-    /// actually inserted into — with ONE declared exception: a table-extension storage column
-    /// (`&lt;sql name&gt;$&lt;app id&gt;`) owned by an app outside this run's closure is dropped and
-    /// counted, because this run's AL record genuinely has no such field. Any OTHER key that
-    /// does not resolve refuses the table rather than being dropped: an unresolvable bare name
-    /// means the reader decoded a column this runner build has no AL field for, and hydrating
-    /// the rest would ship a knowingly incomplete record.
+    /// A key that resolves to a field of the target NCLMetaTable — the metatable the row is
+    /// actually inserted into — is hydrated. A key that does not is dropped and counted, in
+    /// one of two buckets: a table-extension storage column (`&lt;sql name&gt;$&lt;app id&gt;`) owned by
+    /// an app outside this run's closure, or a name this build's copy of the table has no
+    /// field for. See the file header, cases (a) and (c), for why dropping is the faithful
+    /// answer and refusing was not.
     ///
     /// Throws <see cref="TestDataHydrationRefusal"/> BEFORE touching the store if any value
     /// cannot be rebuilt, so a refusal never leaves rows behind.
@@ -209,7 +272,7 @@ public static partial class RecordPatches
     {
         metaTable = null;
         pristineRows = Array.Empty<NavValue[]>();
-        if (rows.Count == 0) return new TestDataTableResult(0, 0);
+        if (rows.Count == 0) return new TestDataTableResult(0, 0, 0);
 
         var meta = EnsureTableInMetadataCache(tableId)
             ?? throw new TestDataHydrationRefusal(
@@ -227,23 +290,17 @@ public static partial class RecordPatches
             fieldByName[f.FieldName] = f;
         }
 
-        var droppedColumns = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var name in rows.SelectMany(r => r.Keys).Distinct(StringComparer.Ordinal))
-        {
-            if (fieldByName.ContainsKey(name)) continue;
-            if (BackupCatalog.TryParseUnresolvedExtensionColumn(name, out _, out _))
-            {
-                // Case (a): a companion column for an app outside this run's closure. Dropped
-                // and counted — BuildTestDataRow never looks it up, because it indexes the row
-                // by the metatable's own field names.
-                droppedColumns.Add(name);
-                continue;
-            }
+        // Neither dropped list is looked up again: BuildTestDataRow indexes each row by the
+        // metatable's own field names, so a dropped column is simply never asked for.
+        var plan = PlanTestDataColumns(
+            (IReadOnlySet<string>)new HashSet<string>(fieldByName.Keys, StringComparer.Ordinal),
+            rows.SelectMany(r => r.Keys));
+        if (!plan.CanHydrate)
             throw new TestDataHydrationRefusal(
-                $"table {tableId} '{tableNameForDiagnostics}': the backup has a column '{name}' that is "
-                + "not a field of the AL table this runner build would insert into, so the rows cannot "
-                + "be rebuilt faithfully");
-        }
+                $"table {tableId} '{tableNameForDiagnostics}': not one of the backup's "
+                + $"{plan.FromUninstalledApps.Count + plan.NotInThisBuild.Count} column(s) is a field of the AL "
+                + $"table this runner build would insert into ({string.Join(", ", plan.NotInThisBuild.Concat(plan.FromUninstalledApps).Take(5))}"
+                + "…), so these rows are not this table's rows");
 
         // Build EVERY row first. A refusal in row 900 must not leave rows 1-899 in the store.
         var built = new NavValue[rows.Count][];
@@ -280,7 +337,8 @@ public static partial class RecordPatches
         // for a table that ended up refused.
         metaTable = meta;
         pristineRows = built;
-        return new TestDataTableResult(built.Length, droppedColumns.Count);
+        return new TestDataTableResult(
+            built.Length, plan.FromUninstalledApps.Count, plan.NotInThisBuild.Count);
     }
 
     private static NavValue[] BuildTestDataRow(

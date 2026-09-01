@@ -21,6 +21,16 @@ back through ordinary AL `Record` calls with the right values.
   BC's container (four magic bytes + raw Deflate), not the field's bytes, so a codec that
   stored it verbatim would still give a blob with `HasValue` = true and a plausible length.
 
+- `TestDataSameAppExtensionColumns.Codeunit.al` (#2273, #2301) — a column the base table's own
+  AL field list does not name, because BC stores a tableextension's fields in the base table
+  itself when the extension is declared in the same app. Twelve tables used to be refused whole
+  over one such column. The assertions are on VALUES (`No. Series Line`'s CONT range, `Item`'s
+  `Routing No.`) because a test asserting only "the table has rows" would pass with every
+  extension field left blank — which is the bug's near miss. `ANumberCanBeDrawnFromAHydratedSeries`
+  is the failure in the form Microsoft's Tests-SINGLESERVER hit it: ~220 of its tests failed with
+  "You cannot assign new numbers from the number series CONT" against a backup where that series
+  has 99,977 numbers left.
+
 **CI does not run this bundle, and that is deliberate.** It only passes with `--test-data`
 and a BC sandbox backup on the machine (~1 GB, shipped inside the sandbox artifact). CI runs
 `tests/runner-extras/` wholesale, without the flag — a bundle asserting hydrated rows would

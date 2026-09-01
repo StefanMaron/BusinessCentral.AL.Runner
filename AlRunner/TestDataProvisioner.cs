@@ -115,12 +115,22 @@
 //      symbols to name them with and passes them through in BC's raw `<name>$<app id>` storage
 //      form; this run's AL record has no such field, so they are dropped and counted. See
 //      RecordPatches.TestDataHydration's header, case (a).
-//   5. A BARE column name the target AL table has no field for. Refused, not dropped, and the
-//      distinction from case 4 is the point: a bare unresolvable name could equally be a
-//      schema mismatch, and hydrating a table against a shape this build does not have is
-//      exactly the silent guess the feature exists to prevent. Measured on BC 28.1's W1
-//      CRONUS this is now the ONLY refusal left, 12 tables of it (Item."Routing No_",
-//      Purchase Line."Prod_ Order No_", …) — #2273.
+//   5. A column naming a field the target AL table does not have in THIS build. Dropped and
+//      counted under its own name, separately from case 4 (#2273/#2301). Refusing the table
+//      was measured to be the more dangerous answer: it leaves the table empty, and an empty
+//      table is a state AL reads and believes. `No. Series Line` refused over
+//      `Allow Gaps in Nos.` (ObsoleteState = Removed since BC 27.0 — compiled out of the app,
+//      still in the shipped symbols and still a physical column), and ~220 of Microsoft's
+//      Tests-SINGLESERVER tests then failed on number series the backup says are almost
+//      untouched. What was reported as one refusal cost every No. Series in the run.
+//      The 11 other tables #2273 listed (Item."Routing No_", Purchase Line."Prod_ Order No_",
+//      …) had a different cause and are fixed in the reader, not here: those fields are LIVE,
+//      declared by a tableextension in the same app as the table it extends, which BC stores
+//      in the base table itself. The reader named base columns from the table's own field
+//      list only, so they arrived in SQL form and matched nothing (BakReader:
+//      SymbolStore.FindBaseTableField).
+//   6. A row shape sharing NO column with the target table. Still refused: that is a
+//      mismatch, and hydrating it would insert rows made entirely of defaults.
 using AlRunner.Infrastructure;
 using AlRunner.Patches;
 using System.Text.Json;
@@ -132,7 +142,7 @@ internal static class TestDataProvisioner
     internal sealed record Summary(
         string BackupPath, string Company, int TablesHydrated, int RowsHydrated,
         int TablesSkippedAmbiguous, int TablesRefused, int TablesRefusedByReader,
-        int ColumnsFromUninstalledApps)
+        int ColumnsFromUninstalledApps, int ColumnsNotInThisBuild)
     {
         // "the run touched", not "the backup holds": under the on-demand policy (#2262) a
         // table is only read when something asks for it, so these counts describe what this
@@ -143,7 +153,8 @@ internal static class TestDataProvisioner
             + $"skipped {TablesSkippedAmbiguous} ambiguous by name, "
             + $"{TablesRefused} refused (unsupported value types or unknown columns), "
             + $"{TablesRefusedByReader} refused by the backup reader, "
-            + $"{ColumnsFromUninstalledApps} extension column(s) dropped for apps this run does not install.";
+            + $"{ColumnsFromUninstalledApps} extension column(s) dropped for apps this run does not install, "
+            + $"{ColumnsNotInThisBuild} column(s) dropped that this build's AL tables have no field for.";
     }
 
     private static Summary? _lastSummary;
@@ -158,7 +169,7 @@ internal static class TestDataProvisioner
     private static ArmedPlan? _armed;
 
     // Running tallies, accumulated across on-demand loads rather than known at Arm() time.
-    private static int _tablesDone, _rowsDone, _refused, _readerRefused, _droppedColumns;
+    private static int _tablesDone, _rowsDone, _refused, _readerRefused, _droppedColumns, _columnsNotInThisBuild;
 
     /// <summary>The most recent hydration's outcome — the assertable signal a test uses
     /// instead of re-deriving what happened from log text. Under the on-demand policy it is
@@ -207,7 +218,7 @@ internal static class TestDataProvisioner
     {
         _lastSummary = null;
         _armed = null;
-        _tablesDone = _rowsDone = _refused = _readerRefused = _droppedColumns = 0;
+        _tablesDone = _rowsDone = _refused = _readerRefused = _droppedColumns = _columnsNotInThisBuild = 0;
         _tableOutcome.Clear();
         RecordPatches.TestDataOnDemandLoader = null;
     }
@@ -313,6 +324,7 @@ internal static class TestDataProvisioner
             }
             _rowsDone += result.Rows;
             _droppedColumns += result.ColumnsFromUninstalledApps;
+            _columnsNotInThisBuild += result.ColumnsNotInThisBuild;
             _tableOutcome[tableId] = result.Rows > 0
                 ? $"{result.Rows} row(s) loaded from '{Path.GetFileName(armed.Backup)}' company '{armed.Company}'"
                 : $"'{entry.TableName}' in '{Path.GetFileName(armed.Backup)}' company '{armed.Company}' "
@@ -339,7 +351,7 @@ internal static class TestDataProvisioner
                 $"[test-data] READER REFUSED table '{entry.TableName}': {ex.Message}");
         }
         _lastSummary = new Summary(armed.Backup, armed.Company, _tablesDone, _rowsDone,
-            armed.SkippedAmbiguous, _refused, _readerRefused, _droppedColumns);
+            armed.SkippedAmbiguous, _refused, _readerRefused, _droppedColumns, _columnsNotInThisBuild);
     }
 
     /// <summary>
