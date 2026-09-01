@@ -25,6 +25,7 @@
 //   NCLEnumMetadata override: 158980 / 158985 returns namesList / ordinalsList.
 //
 using System.Collections.Concurrent;
+using System.Globalization;
 using System.Collections.Immutable;
 using System.Reflection;
 using System.Runtime.CompilerServices;
@@ -37,6 +38,7 @@ using NavListInt = Microsoft.Dynamics.Nav.Runtime.NavList<int>;
 using NavOption = Microsoft.Dynamics.Nav.Runtime.NavOption;
 using NavText = Microsoft.Dynamics.Nav.Runtime.NavText;
 using ITreeObject = Microsoft.Dynamics.Nav.Runtime.ITreeObject;
+using StringHelper = Microsoft.Dynamics.Nav.Runtime.StringHelper;
 
 namespace AlRunner;
 
@@ -427,19 +429,52 @@ internal sealed class AlEnumOptionMetadata : NCLOptionMetadata
         return false;
     }
 
+    // #2302 — text → ordinal resolution must match BC's own NCLEnumMetadata, not a
+    // stricter ordinal string.Equals. BC's decompiled body is:
+    //
+    //     int r = StringHelper.FindStringInStringArrayUsingCurrentCulture(Options, option);
+    //     if (r != -1) return OrdinalValues[r];
+    //     if (int.TryParse(option, out r)) return r;
+    //     return -1;
+    //
+    // and that helper TRIMS both sides, compares case-INSENSITIVELY in the session's
+    // culture, and skips members whose name is zero-length. Delegating to the helper
+    // rather than restating it keeps this observably identical to the service tier
+    // (including the zero-length skip, which is the only reason " " and "" differ).
+    //
+    // The practical consequence is AL's blank enum member. `value(0; " ")` is named with a
+    // single space, so `SetFilter(<enum field>, '<>''''')` — Base App codeunit 5055
+    // "CustVendBank-Update" line 34, reached by ~170 of Microsoft's Tests-SINGLESERVER
+    // tests — evaluates '' against it. Under the old ordinal compare that raised
+    // NavNCLInvalidOptionStringException ("'' is not an option"); under BC's own rule
+    // " ".Trim() == "".Trim() and it resolves to ordinal 0.
     public override int GetIndexFromOption(string option)
     {
-        for (int i = 0; i < _optionNames.Length; i++)
-        {
-            if (string.Equals(_optionNames[i], option, StringComparison.Ordinal))
-                return _ordinalValues[i];
-        }
+        var i = StringHelper.FindStringInStringArrayUsingCurrentCulture(_optionNames, option);
+        if (i != -1)
+            return _ordinalValues[i];
         if (int.TryParse(option, out var ord))
             return ord;
         return -1;
     }
 
-    public override int GetIndexFromCaption(string caption) => GetIndexFromOption(caption);
+    // BC's NCLEnumMetadata.GetIndexFromCaption is NOT a synonym for GetIndexFromOption: it
+    // matches against each value's CAPTION (falling back to the member name where a value
+    // declares none), trims both sides, and compares case-insensitively — in the caption's
+    // own language culture, or InvariantCulture when there is no translated caption to
+    // carry an LCID. Our captures carry no LCID, so invariant is the whole of that rule
+    // here. It also has NO zero-length guard, unlike the option side.
+    public override int GetIndexFromCaption(string caption)
+    {
+        var target = caption.Trim();
+        for (int i = 0; i < _optionNames.Length; i++)
+        {
+            var text = (_captions[i] ?? _optionNames[i]) ?? string.Empty;
+            if (string.Compare(target, text.Trim(), ignoreCase: true, CultureInfo.InvariantCulture) == 0)
+                return _ordinalValues[i];
+        }
+        return -1;
+    }
 
     private readonly string[] _optionNames;
 
