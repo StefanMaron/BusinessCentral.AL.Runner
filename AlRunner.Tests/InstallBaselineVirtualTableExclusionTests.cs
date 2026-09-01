@@ -76,6 +76,16 @@ public class InstallBaselineVirtualTableExclusionTests
     private const int MaxRestoredRowsPerBoundary = 3000;
 
     private static (string output, int exit) RunRunner(string[] extraArgs, params string[] bundles)
+        => RunRunner(extraArgs, freshDepCompanyBaseline: true, bundles);
+
+    /// <param name="freshDepCompanyBaseline">Sets AL_RUNNER_NO_DEP_COMPANY_CACHE=1. On for the
+    /// single-app-group tests, where a warm on-disk baseline would already omit these tables
+    /// and the run would measure the cache instead of the change. OFF for the app-group test,
+    /// which needs the second app group to take a cache HIT — restoring a snapshot at the
+    /// app-group boundary is the code path under test there, and the kill switch would make
+    /// every app group recompute instead of restore.</param>
+    private static (string output, int exit) RunRunner(
+        string[] extraArgs, bool freshDepCompanyBaseline, params string[] bundles)
     {
         var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
         args.Append(TestBuildConfig.BcVersionArg);
@@ -89,12 +99,10 @@ public class InstallBaselineVirtualTableExclusionTests
             FileName = "dotnet", Arguments = args.ToString(),
             RedirectStandardOutput = true, RedirectStandardError = true,
             UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
-            Environment =
-            {
-                ["AL_RUNNER_PERF"] = "1",
-                ["AL_RUNNER_NO_DEP_COMPANY_CACHE"] = "1",
-            },
+            Environment = { ["AL_RUNNER_PERF"] = "1" },
         };
+        if (freshDepCompanyBaseline)
+            psi.Environment["AL_RUNNER_NO_DEP_COMPANY_CACHE"] = "1";
         var sb = new StringBuilder();
         var p = Process.Start(psi)!;
         p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
@@ -106,24 +114,48 @@ public class InstallBaselineVirtualTableExclusionTests
         lock (sb) return (sb.ToString(), p.ExitCode);
     }
 
-    private static void WriteFixture(string dir)
+    /// <summary>Writes one app group. Parameterised by id base and tag so a SECOND, disjoint
+    /// app group can be generated for the app-group-boundary test — AL resolves objects by
+    /// name, so the names have to differ too, not just the ids.
+    ///
+    /// Layout, relative to <paramref name="baseId"/>: +0 table, +1 page, +2 and +3 the two
+    /// symmetric test codeunits, +4 the assert helper, +5 the Install codeunit.</summary>
+    private static void WriteFixture(string dir, int baseId, string tag)
     {
         Directory.CreateDirectory(dir);
         File.WriteAllText(Path.Combine(dir, "app.json"), $$"""
         {
           "id": "{{Guid.NewGuid()}}",
-          "name": "IT2272 Virtual Table Baseline",
+          "name": "IT2272 Virtual Table Baseline {{tag}}",
           "publisher": "IssueTest2272",
           "version": "1.0.0.0",
           "dependencies": [],
           "platform": "1.0.0.0",
           "application": "1.0.0.0",
-          "idRanges": [ { "from": 62500, "to": 62519 } ],
+          "idRanges": [ { "from": {{baseId}}, "to": {{baseId + 19}} } ],
           "runtime": "14.0"
         }
         """);
-        File.WriteAllText(Path.Combine(dir, "Fixture.al"), """
-        table 62500 "IT2272 Widget"
+
+        var al = FixtureAlTemplate
+            .Replace("$TABLE$", (baseId + 0).ToString())
+            .Replace("$PAGE$", (baseId + 1).ToString())
+            .Replace("$TESTSA$", (baseId + 2).ToString())
+            .Replace("$TESTSB$", (baseId + 3).ToString())
+            .Replace("$ASSERT$", (baseId + 4).ToString())
+            .Replace("$INSTALL$", (baseId + 5).ToString())
+            .Replace("$ABSENT$", NeverDeclaredId.ToString())
+            .Replace("$TAG$", tag);
+        File.WriteAllText(Path.Combine(dir, "Fixture.al"), al);
+    }
+
+    /// <summary>An id no app group in any of these runs declares anything at, and which is
+    /// outside every fixture idRange. The negative half of every assertion below rests on
+    /// it, so it must stay outside the ranges if a fixture ever grows.</summary>
+    private const int NeverDeclaredId = 62599;
+
+    private const string FixtureAlTemplate = """
+        table $TABLE$ "IT2272 $TAG$ Widget"
         {
             DataClassification = SystemMetadata;
             fields
@@ -134,10 +166,10 @@ public class InstallBaselineVirtualTableExclusionTests
             keys { key(PK; "No.") { Clustered = true; } }
         }
 
-        page 62501 "IT2272 Widget Card"
+        page $PAGE$ "IT2272 $TAG$ Widget Card"
         {
             PageType = Card;
-            SourceTable = "IT2272 Widget";
+            SourceTable = "IT2272 $TAG$ Widget";
             layout
             {
                 area(content)
@@ -148,7 +180,7 @@ public class InstallBaselineVirtualTableExclusionTests
             }
         }
 
-        codeunit 62505 "IT2272 Install"
+        codeunit $INSTALL$ "IT2272 $TAG$ Install"
         {
             Subtype = Install;
 
@@ -168,14 +200,14 @@ public class InstallBaselineVirtualTableExclusionTests
                 if AllObjRec.FindFirst() then;
                 AllObjCap.SetRange("Object Type", AllObjCap."Object Type"::Table);
                 if AllObjCap.FindFirst() then;
-                FieldRec.SetRange(TableNo, 62500);
+                FieldRec.SetRange(TableNo, $TABLE$);
                 if FieldRec.FindFirst() then;
                 if TableMeta.FindFirst() then;
                 if PageMeta.FindFirst() then;
             end;
         }
 
-        codeunit 62504 "IT2272 Assert"
+        codeunit $ASSERT$ "IT2272 $TAG$ Assert"
         {
             procedure IsTrue(Condition: Boolean; Msg: Text)
             begin
@@ -195,11 +227,14 @@ public class InstallBaselineVirtualTableExclusionTests
                     Error('Assert.AreEqual failed. Expected <%1>, got <%2>. %3', Expected, Actual, Msg);
             end;
 
-            // Every assertion is a concrete value for a concrete object, and every one has a
-            // negative twin against id 62599 — an id this app declares nothing at. A restore
-            // that left a stale or foreign inventory behind passes the positive half and
-            // fails the negative one; an empty table fails the positive half. Neither can be
-            // satisfied by a top-up that silently does nothing.
+            // Every assertion is a concrete value for a concrete object THIS app group
+            // declares, and every one has a negative twin against $ABSENT$ — an id nothing in
+            // the run declares. A restore that left an empty table fails the positive half; a
+            // top-up that silently does nothing fails it too; a table answering for an id that
+            // does not exist fails the negative half. Deliberately says nothing about ANOTHER
+            // app group's objects: those ARE visible here, on this branch and on main alike
+            // (the parsed-object registries accumulate across bundles), which is a separate
+            // pre-existing defect and not something this fixture should encode either way.
             procedure CheckVirtualTables()
             var
                 AllObjRec: Record AllObj;
@@ -209,44 +244,44 @@ public class InstallBaselineVirtualTableExclusionTests
                 PageMeta: Record "Page Metadata";
                 FieldNames: Text;
             begin
-                IsTrue(AllObjRec.Get(AllObjRec."Object Type"::Table, 62500), 'AllObj must list table 62500');
-                AreEqual('IT2272 Widget', AllObjRec."Object Name", 'AllObj object name for table 62500');
-                IsTrue(AllObjRec.Get(AllObjRec."Object Type"::Page, 62501), 'AllObj must list page 62501');
-                AreEqual('IT2272 Widget Card', AllObjRec."Object Name", 'AllObj object name for page 62501');
-                IsFalse(AllObjRec.Get(AllObjRec."Object Type"::Table, 62599), 'AllObj must NOT list table 62599');
+                IsTrue(AllObjRec.Get(AllObjRec."Object Type"::Table, $TABLE$), 'AllObj must list table $TABLE$');
+                AreEqual('IT2272 $TAG$ Widget', AllObjRec."Object Name", 'AllObj object name for table $TABLE$');
+                IsTrue(AllObjRec.Get(AllObjRec."Object Type"::Page, $PAGE$), 'AllObj must list page $PAGE$');
+                AreEqual('IT2272 $TAG$ Widget Card', AllObjRec."Object Name", 'AllObj object name for page $PAGE$');
+                IsFalse(AllObjRec.Get(AllObjRec."Object Type"::Table, $ABSENT$), 'AllObj must NOT list table $ABSENT$');
 
-                IsTrue(AllObjCap.Get(AllObjCap."Object Type"::Table, 62500), 'AllObjWithCaption must list table 62500');
-                AreEqual('IT2272 Widget', AllObjCap."Object Name", 'AllObjWithCaption object name for table 62500');
-                IsFalse(AllObjCap.Get(AllObjCap."Object Type"::Table, 62599), 'AllObjWithCaption must NOT list table 62599');
+                IsTrue(AllObjCap.Get(AllObjCap."Object Type"::Table, $TABLE$), 'AllObjWithCaption must list table $TABLE$');
+                AreEqual('IT2272 $TAG$ Widget', AllObjCap."Object Name", 'AllObjWithCaption object name for table $TABLE$');
+                IsFalse(AllObjCap.Get(AllObjCap."Object Type"::Table, $ABSENT$), 'AllObjWithCaption must NOT list table $ABSENT$');
 
-                FieldRec.SetRange(TableNo, 62500);
-                IsTrue(FieldRec.FindSet(), 'Field must have rows for table 62500');
+                FieldRec.SetRange(TableNo, $TABLE$);
+                IsTrue(FieldRec.FindSet(), 'Field must have rows for table $TABLE$');
                 repeat
                     FieldNames += FieldRec."Field Caption" + ';';
                 until FieldRec.Next() = 0;
-                IsTrue(StrPos(FieldNames, 'No.;') > 0, 'Field must list "No." for table 62500, got ' + FieldNames);
-                IsTrue(StrPos(FieldNames, 'Description;') > 0, 'Field must list Description for table 62500, got ' + FieldNames);
+                IsTrue(StrPos(FieldNames, 'No.;') > 0, 'Field must list "No." for table $TABLE$, got ' + FieldNames);
+                IsTrue(StrPos(FieldNames, 'Description;') > 0, 'Field must list Description for table $TABLE$, got ' + FieldNames);
                 FieldRec.Reset();
-                FieldRec.SetRange(TableNo, 62599);
-                IsTrue(FieldRec.IsEmpty(), 'Field must have no rows for nonexistent table 62599');
+                FieldRec.SetRange(TableNo, $ABSENT$);
+                IsTrue(FieldRec.IsEmpty(), 'Field must have no rows for nonexistent table $ABSENT$');
 
-                IsTrue(TableMeta.Get(62500), 'Table Metadata must list 62500');
-                AreEqual('IT2272 Widget', TableMeta.Name, 'Table Metadata name for 62500');
-                IsFalse(TableMeta.Get(62599), 'Table Metadata must NOT list 62599');
+                IsTrue(TableMeta.Get($TABLE$), 'Table Metadata must list $TABLE$');
+                AreEqual('IT2272 $TAG$ Widget', TableMeta.Name, 'Table Metadata name for $TABLE$');
+                IsFalse(TableMeta.Get($ABSENT$), 'Table Metadata must NOT list $ABSENT$');
 
-                IsTrue(PageMeta.Get(62501), 'Page Metadata must list 62501');
-                IsFalse(PageMeta.Get(62599), 'Page Metadata must NOT list 62599');
+                IsTrue(PageMeta.Get($PAGE$), 'Page Metadata must list $PAGE$');
+                IsFalse(PageMeta.Get($ABSENT$), 'Page Metadata must NOT list $ABSENT$');
             end;
         }
 
-        codeunit 62502 "IT2272 Tests A"
+        codeunit $TESTSA$ "IT2272 $TAG$ Tests A"
         {
             Subtype = Test;
 
             [Test]
             procedure VirtualTablesAnswerAcrossBoundaryA1()
             var
-                IT2272Assert: Codeunit "IT2272 Assert";
+                IT2272Assert: Codeunit "IT2272 $TAG$ Assert";
             begin
                 IT2272Assert.CheckVirtualTables();
             end;
@@ -254,7 +289,7 @@ public class InstallBaselineVirtualTableExclusionTests
             [Test]
             procedure VirtualTablesAnswerAcrossBoundaryA2()
             var
-                IT2272Assert: Codeunit "IT2272 Assert";
+                IT2272Assert: Codeunit "IT2272 $TAG$ Assert";
             begin
                 IT2272Assert.CheckVirtualTables();
             end;
@@ -262,14 +297,14 @@ public class InstallBaselineVirtualTableExclusionTests
 
         // Symmetric with A, sharing one body: codeunit execution order is not id order, so a
         // fixture whose proof depends on which of the two runs first proves nothing.
-        codeunit 62503 "IT2272 Tests B"
+        codeunit $TESTSB$ "IT2272 $TAG$ Tests B"
         {
             Subtype = Test;
 
             [Test]
             procedure VirtualTablesAnswerAcrossBoundaryB1()
             var
-                IT2272Assert: Codeunit "IT2272 Assert";
+                IT2272Assert: Codeunit "IT2272 $TAG$ Assert";
             begin
                 IT2272Assert.CheckVirtualTables();
             end;
@@ -277,26 +312,27 @@ public class InstallBaselineVirtualTableExclusionTests
             [Test]
             procedure VirtualTablesAnswerAcrossBoundaryB2()
             var
-                IT2272Assert: Codeunit "IT2272 Assert";
+                IT2272Assert: Codeunit "IT2272 $TAG$ Assert";
             begin
                 IT2272Assert.CheckVirtualTables();
             end;
         }
-        """);
-    }
+        """;
 
     private static readonly Regex CaptureLine = new(
         @"InstallBaseline\.Capture .* skipped-self-populating \[([0-9,]*)\]", RegexOptions.Compiled);
     private static readonly Regex RestoreLine = new(
         @"InstallBaseline\.Restore (\d+) row\(s\)", RegexOptions.Compiled);
 
-    private static void AssertBaselineExcludesVirtualTablesAndAlPasses(string output, int exitCode)
+    private static void AssertBaselineExcludesVirtualTablesAndAlPasses(
+        string output, int exitCode, int expectedPassGroups = 1)
     {
         // [THEN] Every AL assertion above passed — the virtual tables still answer truthfully
         // for this app's own objects, and still refuse an id it does not declare, after the
         // boundary restores below.
         Assert.Equal(0, exitCode);
-        Assert.Contains("4P/0F/0E", output);
+        Assert.True(CountOccurrences(output, "4P/0F/0E") >= expectedPassGroups,
+            $"expected {expectedPassGroups} app group(s) reporting 4P/0F/0E, got:\n{output}");
 
         // [THEN] The capture NAMED the tables it left out, and the set covers every one the
         // fixture's Install trigger materialised. A capture that silently kept one of them
@@ -340,7 +376,7 @@ public class InstallBaselineVirtualTableExclusionTests
         try
         {
             var app = Path.Combine(root, "app");
-            WriteFixture(app);
+            WriteFixture(app, 62500, "A");
             var (output, exitCode) = RunRunner(Array.Empty<string>(), app);
             AssertBaselineExcludesVirtualTablesAndAlPasses(output, exitCode);
         }
@@ -363,7 +399,7 @@ public class InstallBaselineVirtualTableExclusionTests
         try
         {
             var app = Path.Combine(root, "app");
-            WriteFixture(app);
+            WriteFixture(app, 62500, "A");
             var (output, exitCode) = RunRunner(new[] { "--isolation", "test" }, app);
             AssertBaselineExcludesVirtualTablesAndAlPasses(output, exitCode);
 
@@ -378,5 +414,69 @@ public class InstallBaselineVirtualTableExclusionTests
         {
             try { Directory.Delete(root, true); } catch { }
         }
+    }
+
+    /// <summary>
+    /// The app-group boundary — a THIRD restore call site, and the one the issue's
+    /// cross-bundle question hangs on. Two app groups with the identical (empty) dependency
+    /// closure: the first computes the dep+company baseline, the second takes a cache HIT and
+    /// is restored from it (TestExecutor.Run's HIT branch calls
+    /// RestoreInstallBaselineSnapshot directly, not via the codeunit-boundary path the other
+    /// two tests exercise). The kill switch is deliberately NOT set here, because with it on
+    /// there would be no restore at that boundary at all.
+    ///
+    /// Each app group asserts only its OWN objects, positively and negatively. It does not
+    /// assert anything about the other app group's objects: those are visible in AllObj and
+    /// Table Metadata here, and were equally visible before this change — measured on both,
+    /// with byte-identical results — because the parsed-object registries accumulate across
+    /// bundles in the CLI run loop and the top-up therefore reports the union. That is a
+    /// separate pre-existing defect (tracked on its own), and encoding it here in either
+    /// direction would be wrong.
+    /// </summary>
+    [SkippableFact]
+    public void AppGroupBoundary_RestoredFromCachedBaselineWithoutVirtualTables_AndTheyStillAnswer()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        var root = Path.Combine(Path.GetTempPath(), "al-runner-2272-appgroup", Guid.NewGuid().ToString("N"));
+        try
+        {
+            var appA = Path.Combine(root, "app-a");
+            var appB = Path.Combine(root, "app-b");
+            WriteFixture(appA, 62500, "A");
+            WriteFixture(appB, 62520, "B");
+
+            var (output, exitCode) = RunRunner(
+                Array.Empty<string>(), freshDepCompanyBaseline: false, appA, appB);
+
+            // [THEN] Both app groups' four tests passed — each one's own objects resolve, by
+            // name, in all five virtual tables, on the far side of the app-group boundary.
+            Assert.Equal(0, exitCode);
+            Assert.True(CountOccurrences(output, "4P/0F/0E") >= 2,
+                $"expected both app groups to report 4P/0F/0E, got:\n{output}");
+
+            // [THEN] The second app group really was RESTORED from the first's snapshot rather
+            // than recomputing — without this the test would be two independent app groups
+            // that never crossed the boundary it claims to cover.
+            Assert.True(CountOccurrences(output, "InstallBaseline.DepCompanyCache HIT") >= 1,
+                $"expected the second app group to take an in-memory dep+company cache HIT, got:\n{output}");
+
+            // [THEN] And the snapshot it was restored from carried no virtual tables, at any
+            // boundary, in either app group.
+            AssertBaselineExcludesVirtualTablesAndAlPasses(output, exitCode, expectedPassGroups: 2);
+        }
+        finally
+        {
+            try { Directory.Delete(root, true); } catch { }
+        }
+    }
+
+    private static int CountOccurrences(string haystack, string needle)
+    {
+        var n = 0;
+        for (var i = haystack.IndexOf(needle, StringComparison.Ordinal); i >= 0;
+             i = haystack.IndexOf(needle, i + needle.Length, StringComparison.Ordinal))
+            n++;
+        return n;
     }
 }
