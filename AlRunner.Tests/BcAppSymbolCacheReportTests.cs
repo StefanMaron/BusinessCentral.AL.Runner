@@ -77,7 +77,10 @@ public class BcAppSymbolCacheReportTests
                           "Name": "Line",
                           "RelatedTable": "Sales Invoice Line",
                           "Indentation": 1,
-                          "OwningDataItemName": "Header"
+                          "OwningDataItemName": "Header",
+                          "Properties": [
+                            { "Name": "DataItemTableView", "Value": "sorting(\"Document No.\") where(\"Entry Type\" = filter(<> \"Initial Entry\"))" }
+                          ]
                         },
                         {
                           "Id": 55501,
@@ -139,6 +142,16 @@ public class BcAppSymbolCacheReportTests
             Assert.Equal("Sales Invoice Line", nested.RelatedTable);
             Assert.Equal(1, nested.Indentation);
             Assert.Equal(411976133, nested.Id);
+
+            // #2305 — BC applies DataItemTableView with NavRecord.ALSetView, and
+            // TableViewParser reads a FILTER(...) body with ' as its quote character while
+            // reading SORTING field names and a field name in WHERE(...) with ". So the AL
+            // spelling of a member name has to be re-quoted on the filter side ONLY: left as
+            // written it reaches the option evaluator as a literal with double quotes in it
+            // and Report 321 "Vendor - Balance to Date" throws instead of running.
+            Assert.Equal(
+                """sorting("Document No.") where("Entry Type" = filter(<> 'Initial Entry'))""",
+                nested.DataItemTableView);
 
             // A data item bound to a table in ANOTHER module arrives module-qualified
             // (#appIdNoHyphens#Name) — most Base Application reports iterate System's

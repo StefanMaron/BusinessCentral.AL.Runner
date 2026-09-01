@@ -95,7 +95,7 @@ public static partial class RecordPatches
             // A namespaced reference collapses to its last segment.
             RelatedTable: LastNameSegment(di.DataItemTable?.ToString()),
             Indentation: indentation,
-            DataItemTableView: PropertyTextFrom(PropValue(props, "DataItemTableView")),
+            DataItemTableView: TableViewText(PropertyTextFrom(PropValue(props, "DataItemTableView"))),
             RequestFilterFields: PropertyTextFrom(PropValue(props, "RequestFilterFields"))));
 
         foreach (var child in di.Elements.OfType<NavSyntax.ReportDataItemSyntax>())
