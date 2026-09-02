@@ -1456,16 +1456,62 @@ internal static class TestPageOptionValue
     /// silently write a different member.
     /// </summary>
     internal static string? Display(NavOption option, string[]? captions)
-    {
-        var metadata = option.NavOptionMetadata;
-        if (metadata == null) return null;
+        => option.NavOptionMetadata is { } metadata
+            ? DisplayOrdinal(metadata, option.Value, captions)
+            : null;
 
-        var index = IndexOfOrdinal(metadata, option.Value);
+    /// <summary>
+    /// The same text <see cref="Display"/> produces, for a BARE ORDINAL rather than for a
+    /// NavOption that already carries its own metadata (issue #2367).
+    ///
+    /// <c>NavTestField.ALAssertEquals</c> and <c>ALSetValue</c> — the real, precompiled BC
+    /// methods the AL compiler emits for <c>TestPage.&lt;field&gt;.AssertEquals(&lt;option&gt;)</c>
+    /// and <c>SetValue(&lt;option&gt;)</c> — never hand an AL Option/Enum value to
+    /// <see cref="ITestField"/> as-is. They round-trip it through
+    /// <c>NavValue.CreateNavValueFromObject(NavValueMetadata.DefaultMetadata(FieldType), value)</c>,
+    /// whose <c>NavNclType.NavOption</c> arm rebuilds the value against the DEFAULT option
+    /// metadata, and then hand the resulting <c>ClientObject</c> — a bare ordinal, with the
+    /// field's own member/caption table gone — to <see cref="ITestField.ValueToString"/>.
+    ///
+    /// So <c>ValueToString</c> is where the control's own option table has to be put back.
+    /// The metadata comes from the value the control currently holds, which is the control's
+    /// option set; only the ordinal comes from the caller.
+    /// </summary>
+    internal static string? DisplayOrdinal(NavOption? current, object? value, string[]? captions)
+        => current?.NavOptionMetadata is { } metadata && TryAsOrdinal(value, out var ordinal)
+            ? DisplayOrdinal(metadata, ordinal, captions)
+            : null;
+
+    private static string? DisplayOrdinal(object metadata, int ordinal, string[]? captions)
+    {
+        var index = IndexOfOrdinal(metadata, ordinal);
         if (index < 0) return null;
 
         if (captions != null && index < captions.Length) return captions[index];
         var options = Members(metadata);
         return index < options.Length ? options[index] : null;
+    }
+
+    // Deliberately narrow. An ordinal is what BC's own round trip leaves behind for an
+    // Option/Enum, and nothing else on this path is one: a string is not accepted here
+    // because ALSetValue's `value is NavStringValue` fast path never reaches ValueToString,
+    // so a string arriving would mean some OTHER caller with an unexamined contract, and
+    // silently reinterpreting its text as an option would be exactly the kind of guess
+    // loud-failures.md exists to prevent. Anything unrecognised falls back to the caller's
+    // own Convert.ToString, i.e. to the behaviour before #2367.
+    private static bool TryAsOrdinal(object? value, out int ordinal)
+    {
+        switch (value)
+        {
+            case NavOption option: ordinal = option.Value; return true;
+            case int i:            ordinal = i;            return true;
+            case short s:          ordinal = s;            return true;
+            case byte b:           ordinal = b;            return true;
+            case sbyte sb:         ordinal = sb;           return true;
+            case long l when l >= int.MinValue && l <= int.MaxValue:
+                                   ordinal = (int)l;       return true;
+            default:               ordinal = 0;            return false;
+        }
     }
 
     /// <summary>
@@ -1795,7 +1841,16 @@ internal sealed class LiveNavTestField : ITestField
     }
 
     public void Invoke() { }
-    public string ValueToString(object? value) => Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty;
+
+    // An Option/Enum-bound control renders an ordinal as the text the control SHOWS, the same
+    // spelling the Value getter answers with — issue #2367. BC's own ALAssertEquals/ALSetValue
+    // strip an AL option value down to a bare ordinal before calling this (see
+    // TestPageOptionValue.DisplayOrdinal for the exact chain), so leaving it as
+    // Convert.ToString made AssertEquals compare the ordinal '2' against the control's
+    // 'Pending Approval' and report a mismatch for the value the record actually held.
+    public string ValueToString(object? value)
+        => TestPageOptionValue.DisplayOrdinal(CurrentOption(), value, OptionCaptions())
+           ?? Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty;
 
     // AL that walks an option set (building a picker, asserting the members a field offers) got
     // an empty string for every index, which reads as "this option has blank members" rather
@@ -1959,7 +2014,20 @@ internal sealed class PageVariableTestField : ITestField
     /// <summary>Run the control's OnDrillDown trigger — see LiveNavTestField.Drilldown.</summary>
     public void Drilldown() => _page.RaiseOnDrillDown(_controlId);
     public void Invoke() { }
-    public string ValueToString(object? value) => Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty;
+
+    // An Option/Enum-bound control renders an ordinal as the text the control SHOWS, the same
+    // spelling the Value getter answers with — issue #2367. BC's own ALAssertEquals/ALSetValue
+    // strip an AL option value down to a bare ordinal before calling this (see
+    // TestPageOptionValue.DisplayOrdinal for the exact chain), so leaving it as
+    // Convert.ToString made AssertEquals compare the ordinal '2' against the control's
+    // 'Pending Approval' and report a mismatch for the value the record actually held.
+    // The Rec-bound sibling above had the identical gap; both are fixed together because both
+    // Value getters already render captions, so either one left alone would keep disagreeing
+    // with its own read side.
+    public string ValueToString(object? value)
+        => TestPageOptionValue.DisplayOrdinal(CurrentOption(), value,
+               CurrentOption() is { } option ? _page.TryGetOptionCaptions(_controlId, option) : null)
+           ?? Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty;
     public string GetOption(int index) => string.Empty;
 }
 
