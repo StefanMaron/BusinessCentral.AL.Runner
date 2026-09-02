@@ -1960,4 +1960,156 @@ public sealed class ProvisioningCheckTests : IDisposable
             new[] { "Application", "System" },
             missing.OrderBy(n => n, StringComparer.Ordinal).ToArray());
     }
+
+    // ── Per-directory platform-app index (issue #2371) ────────────────────────
+    //
+    // CheckPlatformApps answers three fixed questions ("is System Application / Base
+    // Application / Business Foundation present as an R2R package?") by reading the
+    // manifest of EVERY .app in EVERY package cache directory. Measured on a warm trivial
+    // bundle: 696 unique manifest lookups, 8.8% of the worker process. The answer is a
+    // function of (directory, the names/sizes/mtimes of the .app files in it), so it is
+    // cached per directory and the whole scan is skipped when nothing on disk changed.
+    //
+    // These tests pin both halves: the repeat call must not re-inspect the packages, and a
+    // directory that changed must never be served a stale answer.
+
+    /// <summary>
+    /// Simulates a fresh process: clears AppLoader's in-process manifest memo so the second
+    /// CheckPlatformApps call cannot be served by it, and resets the scan counter.
+    /// </summary>
+    private static void SimulateFreshProcess()
+    {
+        AlRunner.AppLoader.ResetManifestMemoForTests();
+        ProvisioningCheck.ResetPlatformScanCountersForTests();
+    }
+
+    /// <summary>
+    /// Points CacheRoots at a directory owned by this test for the duration of the case.
+    /// The default root is the real ~/.cache/al-runner, which every other test class also
+    /// writes to; the corrupt-entry case below rewrites every file under the index root, so
+    /// sharing it would corrupt a sibling test's entries.
+    /// </summary>
+    private IDisposable IsolatedCacheRoot()
+    {
+        CacheRoots.SetOverride(Path.Combine(_dir, "cache-root"));
+        return new CacheRootReset();
+    }
+
+    private sealed class CacheRootReset : IDisposable
+    {
+        public void Dispose() => CacheRoots.ResetForTests();
+    }
+
+    [Fact]
+    public void CheckPlatformApps_RepeatCallInFreshProcess_IsServedFromDirectoryIndex()
+    {
+        using var cacheRoot = IsolatedCacheRoot();
+        var dir = Path.Combine(_dir, "idx-hit");
+        Directory.CreateDirectory(dir);
+        WriteSymbolOnlyApp(dir, "microsoft_system application_28.2.0.0.app",
+            "00000000-0000-0000-0000-0000000000a1", "System Application", "Microsoft", "28.2.0.0");
+        // Four packages that are not platform apps — the cost this index exists to remove.
+        for (var i = 0; i < 4; i++)
+            WriteSymbolOnlyApp(dir, $"contoso_filler{i}_1.0.0.0.app",
+                $"00000000-0000-0000-0000-0000000000b{i}", $"Filler{i}", "Contoso", "1.0.0.0");
+
+        SimulateFreshProcess();
+        var cold = ProvisioningCheck.CheckPlatformApps("28.2.0.0", new[] { dir });
+        var coldLookups = ProvisioningCheck.PlatformScanManifestLookups;
+
+        SimulateFreshProcess();
+        var warm = ProvisioningCheck.CheckPlatformApps("28.2.0.0", new[] { dir });
+        var warmLookups = ProvisioningCheck.PlatformScanManifestLookups;
+
+        // Cold: every .app in the directory is inspected.
+        Assert.Equal(5, coldLookups);
+        // Warm, in a process that has never seen this directory: none of them are.
+        Assert.Equal(0, warmLookups);
+
+        // And the answer is the same one, not a default.
+        Assert.False(cold.Ok);
+        Assert.False(warm.Ok);
+        Assert.Equal("System Application", warm.Issues.Single().Name);
+        Assert.Equal("28.2.0.0", warm.Issues.Single().AppVersion);
+        Assert.Equal(cold.Issues.Single().AppPath, warm.Issues.Single().AppPath);
+    }
+
+    [Fact]
+    public void CheckPlatformApps_PlatformAppReplacedWithR2R_IsRescannedNotServedStale()
+    {
+        using var cacheRoot = IsolatedCacheRoot();
+        var dir = Path.Combine(_dir, "idx-stale");
+        Directory.CreateDirectory(dir);
+        const string appFile = "microsoft_system application_28.2.0.0.app";
+        WriteSymbolOnlyApp(dir, appFile,
+            "00000000-0000-0000-0000-0000000000c1", "System Application", "Microsoft", "28.2.0.0");
+
+        SimulateFreshProcess();
+        var before = ProvisioningCheck.CheckPlatformApps("28.2.0.0", new[] { dir });
+        Assert.False(before.Ok);
+
+        // Provisioning fixes the gap: the symbol-only package is replaced by the R2R one.
+        WriteR2RApp(dir, appFile,
+            "00000000-0000-0000-0000-0000000000c1", "System Application", "Microsoft", "28.2.0.0");
+        File.SetLastWriteTimeUtc(Path.Combine(dir, appFile), DateTime.UtcNow.AddSeconds(5));
+
+        SimulateFreshProcess();
+        var after = ProvisioningCheck.CheckPlatformApps("28.2.0.0", new[] { dir });
+
+        // The directory changed, so the index entry must not answer for it.
+        Assert.Equal(1, ProvisioningCheck.PlatformScanManifestLookups);
+        Assert.True(after.Ok);
+        Assert.Empty(after.Issues);
+    }
+
+    [Fact]
+    public void CheckPlatformApps_PackageAddedToDirectory_IsRescanned()
+    {
+        using var cacheRoot = IsolatedCacheRoot();
+        var dir = Path.Combine(_dir, "idx-added");
+        Directory.CreateDirectory(dir);
+        WriteSymbolOnlyApp(dir, "microsoft_base application_28.2.0.0.app",
+            "00000000-0000-0000-0000-0000000000d1", "Base Application", "Microsoft", "28.2.0.0");
+
+        SimulateFreshProcess();
+        ProvisioningCheck.CheckPlatformApps("28.2.0.0", new[] { dir });
+
+        // A new package lands in the cache — the file set no longer matches the index key.
+        WriteR2RApp(dir, "microsoft_business foundation_28.2.0.0.app",
+            "00000000-0000-0000-0000-0000000000d2", "Business Foundation", "Microsoft", "28.2.0.0");
+
+        SimulateFreshProcess();
+        var after = ProvisioningCheck.CheckPlatformApps("28.2.0.0", new[] { dir });
+
+        Assert.Equal(2, ProvisioningCheck.PlatformScanManifestLookups);
+        // Base Application is still symbol-only, Business Foundation is R2R and fine.
+        Assert.False(after.Ok);
+        Assert.Equal("Base Application", after.Issues.Single().Name);
+    }
+
+    [Fact]
+    public void CheckPlatformApps_UnreadableIndexEntry_FallsBackToAFullScan()
+    {
+        using var cacheRoot = IsolatedCacheRoot();
+        var dir = Path.Combine(_dir, "idx-corrupt");
+        Directory.CreateDirectory(dir);
+        WriteSymbolOnlyApp(dir, "microsoft_system application_28.2.0.0.app",
+            "00000000-0000-0000-0000-0000000000e1", "System Application", "Microsoft", "28.2.0.0");
+
+        SimulateFreshProcess();
+        ProvisioningCheck.CheckPlatformApps("28.2.0.0", new[] { dir });
+
+        // Corrupt every entry the index just wrote.
+        var indexDir = CacheRoots.Resolve("platform-apps");
+        foreach (var f in Directory.GetFiles(indexDir, "*.json"))
+            File.WriteAllText(f, "{ this is not json");
+
+        SimulateFreshProcess();
+        var after = ProvisioningCheck.CheckPlatformApps("28.2.0.0", new[] { dir });
+
+        // A corrupt entry is a miss, never a wrong answer and never a throw.
+        Assert.Equal(1, ProvisioningCheck.PlatformScanManifestLookups);
+        Assert.False(after.Ok);
+        Assert.Equal("System Application", after.Issues.Single().Name);
+    }
 }

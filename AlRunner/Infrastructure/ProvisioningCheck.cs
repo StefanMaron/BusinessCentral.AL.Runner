@@ -1,3 +1,6 @@
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
 using AlRunner.Provisioning;
 
 namespace AlRunner.Infrastructure;
@@ -49,6 +52,14 @@ public static class ProvisioningCheck
         "Base Application",
         "Business Foundation",
     };
+
+    // Test-only: counts the .app manifests CheckPlatformApps actually inspected, so a test
+    // can assert a repeat call in a fresh process was answered from the per-directory index
+    // instead of re-reading every package in the cache (issue #2371).
+    internal static int PlatformScanManifestLookups;
+
+    /// <summary>Test-only: zeroes <see cref="PlatformScanManifestLookups"/>.</summary>
+    internal static void ResetPlatformScanCountersForTests() => PlatformScanManifestLookups = 0;
 
     /// <summary>True if <paramref name="appName"/> is a known Microsoft platform runtime app.</summary>
     public static bool IsKnownPlatformRuntimeApp(string appName)
@@ -224,34 +235,201 @@ public static class ProvisioningCheck
         string version,
         IReadOnlyList<string> packageCacheDirs)
     {
-        var issues = new List<(string Name, string AppVersion, string AppPath)>();
+        // One pass per DIRECTORY, not one pass per platform app name. The old shape was
+        // `foreach (name) foreach (dir) foreach (app) ReadManifest(app)`, so a cache holding
+        // N packages cost 3N manifest lookups to answer three fixed questions; measured at
+        // 696 unique packages and 8.8% of a warm trivial invocation (issue #2371). Two of the
+        // three passes were already served from AppLoader's in-process memo, but the first
+        // still paid a SHA-256 + read + JSON deserialize per package, and the memo is gone
+        // the moment the process exits — which is every invocation.
+        var found = new Dictionary<string, List<MicrosoftAppFacts>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var platformAppName in KnownPlatformRuntimeApps)
+            found[platformAppName] = new List<MicrosoftAppFacts>();
 
+        // Directory order, then file order within a directory — the same order the old
+        // nested loops produced for any single platform app name, which matters because the
+        // OrderByDescending below is stable and ties therefore resolve identically.
+        foreach (var entry in MicrosoftAppsIn(packageCacheDirs))
+        {
+            foreach (var platformAppName in KnownPlatformRuntimeApps)
+            {
+                if (!string.Equals(platformAppName, entry.Name, StringComparison.OrdinalIgnoreCase))
+                    continue;
+                // Report the canonical spelling from KnownPlatformRuntimeApps, not whatever
+                // casing the manifest happened to use — same as before, where the issue was
+                // recorded under the loop variable.
+                found[platformAppName].Add(entry);
+            }
+        }
+
+        var issues = new List<(string Name, string AppVersion, string AppPath)>();
         foreach (var platformAppName in KnownPlatformRuntimeApps)
         {
-            // Collect all instances of this platform app across all cache dirs.
-            var found = new List<(string AppPath, string AppVersion, bool IsR2R)>();
-            foreach (var dir in packageCacheDirs)
-            {
-                if (!Directory.Exists(dir)) continue;
-                foreach (var appFile in AlRunner.Infrastructure.SafeDirectoryScan.Files(dir, "*.app"))
-                {
-                    var m = AlRunner.AppLoader.ReadManifest(appFile);
-                    if (m == null) continue;
-                    if (!string.Equals(m.Publisher, "Microsoft", StringComparison.OrdinalIgnoreCase)) continue;
-                    if (!string.Equals(m.Name, platformAppName, StringComparison.OrdinalIgnoreCase)) continue;
-                    found.Add((appFile, m.Version.ToString(), AlRunner.AppLoader.IsR2R(appFile)));
-                }
-            }
-
+            var instances = found[platformAppName];
             // Issue: at least one instance found but NONE is R2R.
-            if (found.Count > 0 && !found.Any(f => f.IsR2R))
+            if (instances.Count > 0 && !instances.Any(f => f.IsR2R == true))
             {
-                var best = found.OrderByDescending(f => f.AppVersion).First();
-                issues.Add((platformAppName, best.AppVersion, best.AppPath));
+                var best = instances.OrderByDescending(f => f.Version, StringComparer.Ordinal).First();
+                issues.Add((platformAppName, best.Version, best.AppPath));
             }
         }
 
         return new PlatformAppsReport(version, issues, packageCacheDirs);
+    }
+
+    // ── Per-directory Microsoft-app index (issue #2371) ───────────────────────
+    //
+    // Five routines in this class answer different questions about the same data: which
+    // Microsoft apps are in the package cache directories, at what versions, and — for the
+    // three platform runtime apps — whether they are R2R packages. Each used to walk every
+    // directory and call ReadManifest on every `.app` in it. A warm trivial invocation has
+    // 696 packages across 10 directories, so the FIRST of those five routines paid a
+    // SHA-256 + file read + JSON deserialize per package and the other four were served
+    // from AppLoader's in-process memo. Measured at 8.8% of the worker process, and the
+    // memo does not survive the process, so it is paid on every invocation.
+    //
+    // The answer is a function of the directory's `.app` files and nothing else, so it is
+    // cached on disk keyed by the same kind of fingerprint AppLoader.ReadManifest already
+    // uses for a single file: path, length, last-write-time — a stat, never file content.
+    // A directory whose files changed gets a different key and is rescanned; that is a
+    // miss, never a stale answer.
+    //
+    // Only Microsoft-published apps are indexed. Every consumer here filters on
+    // `Publisher == "Microsoft"` as its first test, and in a real cache the great majority
+    // of packages are not Microsoft's, so storing the rest would bloat the entry for
+    // nothing.
+    //
+    // Failure is always a miss, never a throw and never a wrong answer: an unstattable
+    // file, an unwritable cache root or a corrupt entry all fall through to the full scan.
+
+    /// <summary>
+    /// One Microsoft `.app`, reduced to the facts the provisioning scans ask about.
+    /// <paramref name="IsR2R"/> is null for apps that are not platform runtime apps: it
+    /// costs a ZIP open to answer and <see cref="CheckPlatformApps"/> is the only caller
+    /// that wants it, so it is only computed (and only stored) for those three names.
+    /// </summary>
+    private sealed record MicrosoftAppFacts(string AppPath, string Name, string Version, bool? IsR2R);
+
+    /// <summary>
+    /// Every Microsoft `.app` under <paramref name="dir"/>, served from the on-disk index
+    /// when the directory's file set is unchanged. Order is the directory walk's own order,
+    /// which is what the callers' "first match wins" and stable-sort behaviour relies on.
+    /// </summary>
+    private static IReadOnlyList<MicrosoftAppFacts> MicrosoftAppsIn(string dir)
+    {
+        var appFiles = AlRunner.Infrastructure.SafeDirectoryScan.Files(dir, "*.app");
+
+        var fingerprint = TryFingerprintAppFiles(appFiles);
+        if (fingerprint != null && TryReadPlatformIndex(dir, fingerprint) is { } cached)
+        {
+            AlRunner.PerfTrace.Log($"platform-apps HIT {dir} ({appFiles.Count} package(s), {cached.Count} Microsoft app(s))");
+            return cached;
+        }
+
+        var entries = new List<MicrosoftAppFacts>();
+        foreach (var appFile in appFiles)
+        {
+            PlatformScanManifestLookups++;
+            var m = AlRunner.AppLoader.ReadManifest(appFile);
+            if (m == null) continue;
+            if (!string.Equals(m.Publisher, "Microsoft", StringComparison.OrdinalIgnoreCase)) continue;
+            bool? isR2R = IsKnownPlatformRuntimeApp(m.Name) ? AlRunner.AppLoader.IsR2R(appFile) : null;
+            entries.Add(new MicrosoftAppFacts(appFile, m.Name, m.Version.ToString(), isR2R));
+        }
+        AlRunner.PerfTrace.Log($"platform-apps MISS {dir} ({appFiles.Count} package(s) inspected)");
+
+        if (fingerprint != null) TryWritePlatformIndex(dir, fingerprint, entries);
+        return entries;
+    }
+
+    /// <summary>
+    /// Every Microsoft `.app` across <paramref name="packageCacheDirs"/>, in directory
+    /// order then walk order — the same order the nested loops these callers replaced
+    /// produced. Nonexistent directories are skipped, exactly as before.
+    /// </summary>
+    private static IEnumerable<MicrosoftAppFacts> MicrosoftAppsIn(IReadOnlyList<string> packageCacheDirs)
+    {
+        foreach (var dir in packageCacheDirs)
+        {
+            if (!Directory.Exists(dir)) continue;
+            foreach (var app in MicrosoftAppsIn(dir)) yield return app;
+        }
+    }
+
+    /// <summary>Parses a stored version string back, skipping an entry we cannot read.</summary>
+    private static Version? VersionOrNull(MicrosoftAppFacts f)
+        => Version.TryParse(f.Version, out var v) ? v : null;
+
+    /// <summary>
+    /// Sorted "path|length|mtime-ticks" over every `.app` under the directory, hashed.
+    /// Sorted so the key does not depend on the order the filesystem hands back entries.
+    /// Null when any file cannot be stat'd, which disables caching for that directory
+    /// rather than keying on an incomplete picture of it.
+    /// </summary>
+    private static string? TryFingerprintAppFiles(IReadOnlyList<string> appFiles)
+    {
+        try
+        {
+            var parts = new List<string>(appFiles.Count);
+            foreach (var f in appFiles)
+            {
+                var fi = new FileInfo(f);
+                if (!fi.Exists) return null;
+                parts.Add($"{fi.FullName}|{fi.Length}|{fi.LastWriteTimeUtc.Ticks}");
+            }
+            parts.Sort(StringComparer.Ordinal);
+            return Convert.ToHexString(
+                SHA256.HashData(Encoding.UTF8.GetBytes(string.Join("\n", parts)))).ToLowerInvariant();
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string PlatformIndexPath(string dir, string fingerprint)
+    {
+        var key = $"{Path.GetFullPath(dir)}\n{fingerprint}";
+        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(key))).ToLowerInvariant();
+        return Path.Combine(CacheRoots.Resolve("platform-apps"), hash + ".json");
+    }
+
+    private static IReadOnlyList<MicrosoftAppFacts>? TryReadPlatformIndex(string dir, string fingerprint)
+    {
+        try
+        {
+            var path = PlatformIndexPath(dir, fingerprint);
+            if (!File.Exists(path)) return null;
+            var payload = JsonSerializer.Deserialize<List<MicrosoftAppFacts>>(File.ReadAllText(path));
+            if (payload == null)
+            {
+                AlRunner.PerfTrace.Log($"platform-apps index entry unusable for {dir}: payload malformed — rescanning");
+                return null;
+            }
+            return payload;
+        }
+        catch (Exception ex)
+        {
+            AlRunner.PerfTrace.Log($"platform-apps index read failed for {dir}: {ex.Message} — rescanning");
+            return null;
+        }
+    }
+
+    private static void TryWritePlatformIndex(
+        string dir, string fingerprint, IReadOnlyList<MicrosoftAppFacts> entries)
+    {
+        try
+        {
+            var path = PlatformIndexPath(dir, fingerprint);
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            // Atomic (temp file + rename), same as AppLoader's manifest index: up to four
+            // runner processes share a package cache in CI and can race the same key.
+            AlCacheWriter.AtomicPublish(path, tmp => File.WriteAllText(tmp, JsonSerializer.Serialize(entries)));
+        }
+        catch (Exception ex)
+        {
+            AlRunner.PerfTrace.Log($"platform-apps index write failed for {dir}: {ex.Message}");
+        }
     }
 
     /// <summary>
@@ -384,18 +562,13 @@ public static class ProvisioningCheck
         IReadOnlyDictionary<string, Version>? versionFloors = null)
     {
         var floor = versionFloors != null && versionFloors.TryGetValue(TestToolkitSentinelApp, out var f) ? f : null;
-        foreach (var dir in packageCacheDirs)
+        foreach (var app in MicrosoftAppsIn(packageCacheDirs))
         {
-            if (!Directory.Exists(dir)) continue;
-            foreach (var appFile in AlRunner.Infrastructure.SafeDirectoryScan.Files(dir, "*.app"))
-            {
-                var m = AlRunner.AppLoader.ReadManifest(appFile);
-                if (m == null) continue;
-                if (!string.Equals(m.Publisher, "Microsoft", StringComparison.OrdinalIgnoreCase)) continue;
-                if (!string.Equals(TestToolkitSentinelApp, m.Name, StringComparison.OrdinalIgnoreCase)) continue;
-                if (floor != null && m.Version < floor) continue;
-                return true;
-            }
+            if (!string.Equals(TestToolkitSentinelApp, app.Name, StringComparison.OrdinalIgnoreCase)) continue;
+            var v = VersionOrNull(app);
+            if (v == null) continue;
+            if (floor != null && v < floor) continue;
+            return true;
         }
         return false;
     }
@@ -423,19 +596,12 @@ public static class ProvisioningCheck
     public static string DerivePresentPlatformMajorMinor(
         IReadOnlyList<string> packageCacheDirs, string fallbackVersion)
     {
-        foreach (var dir in packageCacheDirs)
+        foreach (var app in MicrosoftAppsIn(packageCacheDirs))
         {
-            if (!Directory.Exists(dir)) continue;
-            foreach (var appFile in AlRunner.Infrastructure.SafeDirectoryScan.Files(dir, "*.app"))
-            {
-                var m = AlRunner.AppLoader.ReadManifest(appFile);
-                if (m == null) continue;
-                if (!string.Equals(m.Publisher, "Microsoft", StringComparison.OrdinalIgnoreCase)) continue;
-                if (!string.Equals(m.Name, "Base Application", StringComparison.OrdinalIgnoreCase)
-                    && !string.Equals(m.Name, "System Application", StringComparison.OrdinalIgnoreCase))
-                    continue;
-                return MajorMinorOf(m.Version.ToString());
-            }
+            if (!string.Equals(app.Name, "Base Application", StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(app.Name, "System Application", StringComparison.OrdinalIgnoreCase))
+                continue;
+            return MajorMinorOf(app.Version);
         }
         return MajorMinorOf(fallbackVersion);
     }
@@ -1020,6 +1186,7 @@ public static class ProvisioningCheck
                 if (!Directory.Exists(dir)) continue;
                 foreach (var appFile in AlRunner.Infrastructure.SafeDirectoryScan.Files(dir, "*.app"))
                 {
+                    PlatformScanManifestLookups++;
                     var m = AlRunner.AppLoader.ReadManifest(appFile);
                     if (m == null) continue;
                     if (!string.Equals(m.Publisher, "Microsoft", StringComparison.OrdinalIgnoreCase)) continue;
@@ -1071,6 +1238,7 @@ public static class ProvisioningCheck
                 if (!Directory.Exists(dir)) continue;
                 foreach (var appFile in AlRunner.Infrastructure.SafeDirectoryScan.Files(dir, "*.app"))
                 {
+                    PlatformScanManifestLookups++;
                     var m = AlRunner.AppLoader.ReadManifest(appFile);
                     if (m == null) continue;
                     if (!string.Equals(m.Publisher, "Microsoft", StringComparison.OrdinalIgnoreCase)) continue;
