@@ -7,6 +7,7 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **report:** resolve request-page controls against the report globals they bind to
 - **report:** run the request page from Report.Run and write the dataset it asks for
 - **record:** implement the Date system virtual table (2000000007)
 - **record:** serve the Metadata Permission Set virtual table (2000000250)
