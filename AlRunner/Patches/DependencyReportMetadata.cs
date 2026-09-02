@@ -102,6 +102,49 @@ public static partial class RecordPatches
         return null;
     }
 
+    // ── ProcessingOnly for a report the runner never source-compiled ─────────
+
+    /// <summary>
+    /// Ids of every report that a loaded dependency's SymbolReference.json declares
+    /// <c>ProcessingOnly</c> on. Reports the symbol files describe WITHOUT the property, and
+    /// reports no symbol file describes at all, are both absent — AL's default for
+    /// ProcessingOnly is false, so "absent" and "stated false" are the same answer here and
+    /// a set is the whole representation needed.
+    /// </summary>
+    private static HashSet<int>? _depProcessingOnlyReportIds;
+
+    /// <summary>
+    /// Generation the set above was built from. The registered-.app list grows as
+    /// dependencies load, and this question is first asked well before the last one is
+    /// registered, so a set memoized without this key would freeze an early, short answer
+    /// for the rest of the run.
+    /// </summary>
+    private static int _depProcessingOnlyBuiltFrom = -1;
+
+    /// <summary>
+    /// Whether a PRECOMPILED dependency declares <c>ProcessingOnly</c> on this report.
+    /// This is the only route to the property for a Base Application / System Application /
+    /// ISV report: the runner never parses their AL source, so <c>_parsedReports</c> cannot
+    /// hold them, and an R2R .app ships no compiled metadata form of its objects. The
+    /// symbol file is the compiler's own statement of the property, so nothing here is
+    /// inferred — a report the symbol files do not describe simply is not in the set.
+    /// </summary>
+    internal static bool IsDependencyReportProcessingOnly(int reportId)
+    {
+        var generation = _bcAppPaths.Count;
+        var set = _depProcessingOnlyReportIds;
+        if (set == null || _depProcessingOnlyBuiltFrom != generation)
+        {
+            set = new HashSet<int>();
+            foreach (var symbol in EnumerateBcAppReportSymbols())
+                if (symbol.ProcessingOnly)
+                    set.Add(symbol.Id);
+            _depProcessingOnlyReportIds = set;
+            _depProcessingOnlyBuiltFrom = generation;
+        }
+        return set.Contains(reportId);
+    }
+
     // ── column source expressions ────────────────────────────────────────────
 
     // `column(Name; Expression)` — the name is a plain or quoted AL identifier, the

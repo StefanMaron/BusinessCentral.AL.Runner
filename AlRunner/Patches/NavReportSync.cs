@@ -639,9 +639,10 @@ public static class NavReportSync
             InvokeDataItems(navReport);
             InvokeVirtual(_onPostReport, navReport);
 
-            // Strict AL semantics: when the AL source declares `ProcessingOnly =
-            // false` (the AL default), Run() must attempt rendering after the
-            // lifecycle triggers. The runner has no service tier and cannot
+            // Strict AL semantics: when the report declares `ProcessingOnly =
+            // false` (the AL default) — in its own AL source, or in the symbol
+            // data of the precompiled dependency it came from — Run() must
+            // attempt rendering after the lifecycle triggers. The runner has no service tier and cannot
             // render layouts, so the rendering attempt must surface as an
             // AL-observable error. We trigger that via NavReport.RDLCLayout —
             // a public static method that forwards to GetLayoutCore (Cecil-
@@ -705,7 +706,10 @@ public static class NavReportSync
         return false;
     }
 
-    // Looks up ProcessingOnly from the parsed AL source (RecordPatches).
+    // Looks up ProcessingOnly through RecordPatches, which answers from the parsed AL
+    // source when the runner compiled the report and from the dependency .app's
+    // SymbolReference.json when it did not (#2397 — every Base Application report takes
+    // the second path).
     // Falls back to true when the report ID cannot be resolved — defensive
     // so unknown reports do not trip the rendering guard.
     private static bool IsProcessingOnly(object navReport, Type navReportBase)
