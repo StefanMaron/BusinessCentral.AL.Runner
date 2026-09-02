@@ -69,16 +69,35 @@ public sealed class UserPropertyCompanionRowBindingTests
             .Select(i => (i.Operand as MethodReference)?.FullName ?? string.Empty)
             .ToList();
 
+    /// <summary>
+    /// A marker prepend that predates this one, used to tell "the file on disk has not been
+    /// Cecil-rewritten yet" (a legitimate skip) apart from "it was rewritten and OUR prepend
+    /// is missing" (the regression this test exists to catch). Without the distinction an
+    /// un-rewritten bin would fail the test for the wrong reason.
+    /// </summary>
+    private const string PriorPrependMarker =
+        "AlRunner.BcRuntime::AssignAutoIncrement(Microsoft.Dynamics.Nav.Runtime.NavRecord)";
+
+    private static void SkipUnlessRewritten(MethodDefinition alInsert)
+        => Skip.IfNot(
+            CalledMethods(alInsert).Any(name => name.Contains(PriorPrependMarker, StringComparison.Ordinal)),
+            $"'{RewrittenNclPath}' has not been Cecil-rewritten (no prepends present at all), so "
+            + "there is nothing to assert about the prepend list. Run the runner once to warm "
+            + "the Cecil cache first — CI's bc-tests.yml does exactly that before `dotnet test`.");
+
+    // These two read a FILE with Mono.Cecil and load no BC type, so they deliberately do NOT
+    // gate on BcEngineFixture.Ready. That gate is about whether the engine can be brought up
+    // in-process; a machine where it cannot (a cold Cecil cache, say) can still answer the
+    // question these tests ask, and gating on it hid them behind an unrelated skip.
     [SkippableFact]
     public void AlInsertEntryPoint_CallsTheCompanionRowHelperAsItsFirstAct()
     {
-        TestArtifacts.SkipIf(!_engine.Ready,
-            _engine.SkipReason ?? "the in-process BC engine is not ready (see BcEngineCollection).");
         Skip.IfNot(File.Exists(RewrittenNclPath),
             $"the rewritten Ncl is not present at '{RewrittenNclPath}'.");
 
         using var module = ModuleDefinition.ReadModule(RewrittenNclPath);
         var alInsert = NavRecordMethod(module, "ALInsertAsync", "DataError", "Boolean", "Boolean");
+        SkipUnlessRewritten(alInsert);
         var instructions = alInsert.Body.Instructions;
 
         // The prepend is `ldarg.0; call helper` inserted before the original body, so the
@@ -98,24 +117,30 @@ public sealed class UserPropertyCompanionRowBindingTests
             + "reaches UserManagement.DirectSetUserFieldValue would fail with "
             + "\"The User Property does not exist\" (issue #2355).");
 
-        // Three prepends share this entry point (AutoIncrement, SystemFields, this one), each
-        // contributing `ldarg.0; call`, so index 5 is the last slot the third can occupy.
-        Assert.True(helperIndex!.Value <= 5,
-            $"the companion-row helper is called at instruction {helperIndex} of "
-            + "NavRecord.ALInsertAsync, not in the prepended prefix — it must run before the "
-            + "original body, exactly as BC's own OnBeforeInsertAsync does.");
-        Assert.Equal(OpCodes.Ldarg_0, instructions[helperIndex.Value - 1].OpCode);
+        // It must be in the PREPENDED PREFIX, not merely somewhere in the method: the
+        // companion row has to be written before the original body runs, exactly as BC's own
+        // OnBeforeInsertAsync does. Several prepends share this entry point (AutoIncrement,
+        // SystemFields, the rowversion write note, the All Profile guard, this one) and each
+        // contributes exactly `ldarg.0; call`, so the prefix is characterised by its SHAPE —
+        // nothing but those two opcodes ahead of us — rather than by a fixed index that a
+        // sixth prepend would invalidate.
+        Assert.Equal(OpCodes.Ldarg_0, instructions[helperIndex!.Value - 1].OpCode);
+        for (var i = 0; i < helperIndex.Value; i++)
+            Assert.True(
+                instructions[i].OpCode == OpCodes.Ldarg_0 || instructions[i].OpCode == OpCodes.Call,
+                $"instruction {i} of NavRecord.ALInsertAsync is {instructions[i].OpCode}, so the "
+                + "companion-row helper is no longer inside the prepended prefix — it would run "
+                + "after part of the original body instead of before all of it.");
     }
 
     [SkippableFact]
     public void ModifyAndDeleteEntryPoints_DoNotCallTheCompanionRowHelper()
     {
-        TestArtifacts.SkipIf(!_engine.Ready,
-            _engine.SkipReason ?? "the in-process BC engine is not ready (see BcEngineCollection).");
         Skip.IfNot(File.Exists(RewrittenNclPath),
             $"the rewritten Ncl is not present at '{RewrittenNclPath}'.");
 
         using var module = ModuleDefinition.ReadModule(RewrittenNclPath);
+        SkipUnlessRewritten(NavRecordMethod(module, "ALInsertAsync", "DataError", "Boolean", "Boolean"));
 
         // BC creates the companion row in OnBEFOREInsert only. Modify must not create a second
         // one, and Delete must not create one for a user being removed.
