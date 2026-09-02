@@ -124,4 +124,113 @@ public sealed class TestPageOptionValueEnumCaptionTests
 
         Assert.Equal(1, resolved.Value);
     }
+
+    // ── DisplayOrdinal — issue #2367 ────────────────────────────────────────────────
+    //
+    // The runner-mechanism half of #2367. The BC-behaviour claim ("AssertEquals on an
+    // Option/Enum control compares the control's text on both sides, so passing the option
+    // value the record holds is a match") is proven upstream against a live service tier —
+    // StefanMaron/BusinessCentral.AL.Language.Tests#108, branch
+    // agent/impl-3/testpage-option-assertequals, four tests in "Test Page Extended" (60126).
+    //
+    // What is pinned HERE is our own contract: BC's NavTestField.ALAssertEquals and
+    // ALSetValue rebuild an AL option value against NavValueMetadata.DefaultMetadata(FieldType),
+    // which throws the field's member table away, and then call ITestField.ValueToString on
+    // the resulting bare ordinal. So ValueToString is the one place the control's own option
+    // table can be put back, and DisplayOrdinal is what puts it back. Both of the runner's
+    // real ITestField implementations (LiveNavTestField, PageVariableTestField) route through
+    // it.
+    //
+    // RED/GREEN: reverting either ValueToString to `Convert.ToString(value, InvariantCulture)`
+    // leaves these passing but breaks the upstream tests; deleting DisplayOrdinal's caption/
+    // member lookup (returning null unconditionally) fails RendersTheOrdinalAsItsDeclaredCaption
+    // and RendersTheOrdinalAsItsMemberName here, in milliseconds.
+
+    [Fact]
+    public void DisplayOrdinal_EnumControl_RendersTheOrdinalAsItsDeclaredCaption()
+    {
+        var current = NavOption.Create(BuildEnumMetadata(), 0);
+        var captions = TestPageOptionValue.EnumCaptions(current);
+
+        // 1, not 0: the ordinal must come from the ARGUMENT, not from the value the control
+        // happens to be holding. Answering "Fields" here would still look like a caption.
+        Assert.Equal("Blocks", TestPageOptionValue.DisplayOrdinal(current, 1, captions));
+        Assert.Equal("Images", TestPageOptionValue.DisplayOrdinal(current, 2, captions));
+    }
+
+    // The plain Option primitive has no per-value Caption, so its members are what the
+    // control shows — the same fallback Display already used for the read direction.
+    [Fact]
+    public void DisplayOrdinal_PlainOptionControl_RendersTheOrdinalAsItsMemberName()
+    {
+        var current = NavOption.Create(NCLOptionMetadata.Create("Field,Block,Image"), 0);
+
+        Assert.Equal("Block", TestPageOptionValue.DisplayOrdinal(current, 1, captions: null));
+        Assert.Equal("Image", TestPageOptionValue.DisplayOrdinal(current, 2, captions: null));
+    }
+
+    // The invariant #2367 was a violation of: the text the write path produces for an ordinal
+    // and the text the read path (Display, behind ITestField.Value) produces for the same
+    // ordinal must be one and the same. They disagreed — Value said "Blocks", ValueToString
+    // said "1" — and AssertEquals compares one against the other.
+    [Fact]
+    public void DisplayOrdinal_AgreesWithDisplay_ForEveryMemberOfTheSet()
+    {
+        var metadata = BuildEnumMetadata();
+        var current = NavOption.Create(metadata, 0);
+        var captions = TestPageOptionValue.EnumCaptions(current);
+        var expected = new[] { "Fields", "Blocks", "Images" };
+
+        foreach (var ordinal in new[] { 0, 1, 2 })
+        {
+            var read = TestPageOptionValue.Display(NavOption.Create(metadata, ordinal), captions);
+            var write = TestPageOptionValue.DisplayOrdinal(current, ordinal, captions);
+
+            // Naming the concrete text matters: comparing the two paths to each other alone
+            // would still hold if BOTH collapsed to null, which is exactly the no-op an
+            // agreement-only assertion cannot distinguish from a working one.
+            Assert.Equal(expected[ordinal], read);
+            Assert.Equal(expected[ordinal], write);
+        }
+    }
+
+    // A NavOption that still carries its own metadata is accepted too — ALSetValue's
+    // CreateNavValueFromObject can hand back a NavOption rather than a boxed int.
+    [Fact]
+    public void DisplayOrdinal_NavOptionArgument_RendersThatOptionsOrdinal()
+    {
+        var metadata = BuildEnumMetadata();
+        var current = NavOption.Create(metadata, 0);
+        var captions = TestPageOptionValue.EnumCaptions(current);
+
+        Assert.Equal("Blocks",
+            TestPageOptionValue.DisplayOrdinal(current, NavOption.Create(metadata, 1), captions));
+    }
+
+    // Null means "not mine — use your own Convert.ToString", which is what keeps this fix
+    // additive. Three ways to land there, each asserted rather than assumed:
+
+    [Fact]
+    public void DisplayOrdinal_ControlIsNotOptionBound_ReturnsNull()
+        => Assert.Null(TestPageOptionValue.DisplayOrdinal(null, 1, captions: null));
+
+    [Fact]
+    public void DisplayOrdinal_OrdinalOutsideTheOptionSet_ReturnsNull()
+    {
+        var current = NavOption.Create(NCLOptionMetadata.Create("Field,Block,Image"), 0);
+
+        Assert.Null(TestPageOptionValue.DisplayOrdinal(current, 7, captions: null));
+    }
+
+    // Deliberately narrow: a string is NOT reinterpreted as an option. ALSetValue's
+    // `value is NavStringValue` fast path never reaches ValueToString, so a string arriving
+    // would mean some other caller with an unexamined contract.
+    [Fact]
+    public void DisplayOrdinal_NonOrdinalArgument_ReturnsNull()
+    {
+        var current = NavOption.Create(NCLOptionMetadata.Create("Field,Block,Image"), 0);
+
+        Assert.Null(TestPageOptionValue.DisplayOrdinal(current, "1", captions: null));
+        Assert.Null(TestPageOptionValue.DisplayOrdinal(current, null, captions: null));
+    }
 }
