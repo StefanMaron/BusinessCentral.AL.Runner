@@ -364,19 +364,21 @@ public static partial class BcRuntime
     }
 
     /// <summary>
-    /// Is this parameter (positionally) capable of being the "Sender" param of an
-    /// IncludeSender=true event subscriber? AL emits it as a positional first parameter whose
-    /// name is "Sender" (case-insensitive) and whose type is either <c>NavCodeunitHandle</c> (or
-    /// a typed codeunit-handle subclass, for a codeunit publisher) or <c>INavRecordHandle</c> (an
-    /// interface, or a concrete <c>Record&lt;N&gt;</c> implementing it, for a TABLE publisher —
-    /// #1956). This only answers the TYPE-SHAPE question; the call site additionally requires
-    /// no scope field matched this parameter's name before treating it as sender (see
-    /// InvokeOneSubscriber) — that's what distinguishes an actual sender from a coincidentally
-    /// leading, genuinely-declared record/codeunit-typed event argument.
+    /// Is this parameter capable of being the "Sender" param of an IncludeSender=true event
+    /// subscriber? Real BC does not require the sender to be the first parameter — the AL
+    /// compiler preserves the subscriber's declared parameter order in the emitted signature,
+    /// so a sender declared last (e.g. Base Application's
+    /// <c>MfgItemJnlPostLine.OnPostOutput</c>) arrives at whatever index it was written at
+    /// (#2348). Its type is either <c>NavCodeunitHandle</c> (or a typed codeunit-handle
+    /// subclass, for a codeunit publisher) or <c>INavRecordHandle</c> (an interface, or a
+    /// concrete <c>Record&lt;N&gt;</c> implementing it, for a TABLE publisher — #1956). This
+    /// only answers the TYPE-SHAPE question; the call site additionally requires no scope field
+    /// matched this parameter's name before treating it as sender (see InvokeOneSubscriber) —
+    /// that's what distinguishes an actual sender from a genuinely-declared record/codeunit-typed
+    /// event argument at any position.
     /// </summary>
     internal static bool IsSenderParameter(ParameterInfo p, int paramIndex)
     {
-        if (paramIndex != 0) return false;
         // Codeunit publisher: AL emits sender as Codeunit50047 (the publisher CLR type) — the
         // bundle's typed handle. The runtime type ancestry traces back to NavCodeunitHandle.
         var t = p.ParameterType;

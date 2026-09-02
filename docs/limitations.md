@@ -150,7 +150,7 @@ assembly for `[NavEventSubscriber]` methods at startup and calls matching subscr
 **What works:**
 - Custom `[IntegrationEvent]` / `[BusinessEvent]` publishers with any subscriber signature.
 - Subscribers that receive `var` parameters (e.g. `var Rec: Record X`, `var IsHandled: Boolean`) — the rewriter forwards all event parameters, and `var` arguments are wrapped in `ByRef<T>` so mutations propagate back to the publisher.
-- `IncludeSender = true` — the sender codeunit instance is prepended as the first argument.
+- `IncludeSender = true` — the sender codeunit instance is bound to the subscriber's sender parameter regardless of its position in the declared parameter list (matching real BC — #2348).
 - Database event subscribers (`OnAfterModify`, `OnBeforeInsert`, etc.) receive `Rec` and can read or modify fields; the mutations are visible to the caller after the trigger returns.
 
 ### No UI rendering
