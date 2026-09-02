@@ -29,7 +29,6 @@ public sealed class ServerAlDiagnosticFailureTests
           "version": "1.0.0.0",
           "dependencies": [],
           "platform": "1.0.0.0",
-          "application": "1.0.0.0",
           "idRanges": [ { "from": 62220, "to": 62229 } ],
           "runtime": "14.0"
         }

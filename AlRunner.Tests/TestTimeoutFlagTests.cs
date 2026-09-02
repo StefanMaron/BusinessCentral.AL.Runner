@@ -58,7 +58,6 @@ public sealed class TestTimeoutFlagTests : IDisposable
           "version": "1.0.0.0",
           "dependencies": [],
           "platform": "1.0.0.0",
-          "application": "1.0.0.0",
           "idRanges": [ { "from": 62120, "to": 62129 } ],
           "runtime": "14.0"
         }

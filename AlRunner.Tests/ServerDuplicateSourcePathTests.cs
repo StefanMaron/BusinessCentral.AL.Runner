@@ -37,7 +37,6 @@ public class ServerDuplicateSourcePathTests
           "version": "1.0.0.0",
           "dependencies": [],
           "platform": "1.0.0.0",
-          "application": "1.0.0.0",
           "idRanges": [ { "from": {{idFrom}}, "to": {{idFrom + 4}} } ],
           "runtime": "14.0"
         }

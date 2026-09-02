@@ -170,7 +170,7 @@ public sealed class BundleRootDeduplicationTests : IDisposable
         const string manifest = """
         { "id": "a1b2c3d4-2136-4a1b-9c3d-000000000001", "name": "Dup 2136",
           "publisher": "Repro2136", "version": "1.0.0.0", "dependencies": [],
-          "platform": "1.0.0.0", "application": "1.0.0.0",
+          "platform": "1.0.0.0",
           "idRanges": [ { "from": 62430, "to": 62439 } ], "runtime": "14.0" }
         """;
         var a = MakeDir("copy-a");

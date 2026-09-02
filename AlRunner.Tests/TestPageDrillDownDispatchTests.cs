@@ -81,7 +81,6 @@ public sealed class TestPageDrillDownDispatchTests : IDisposable
           "version": "1.0.0.0",
           "dependencies": [],
           "platform": "1.0.0.0",
-          "application": "1.0.0.0",
           "idRanges": [ { "from": 62380, "to": 62389 } ],
           "runtime": "14.0"
         }

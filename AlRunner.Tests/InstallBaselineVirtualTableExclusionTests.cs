@@ -131,7 +131,6 @@ public class InstallBaselineVirtualTableExclusionTests
           "version": "1.0.0.0",
           "dependencies": [],
           "platform": "1.0.0.0",
-          "application": "1.0.0.0",
           "idRanges": [ { "from": {{baseId}}, "to": {{baseId + 19}} } ],
           "runtime": "14.0"
         }

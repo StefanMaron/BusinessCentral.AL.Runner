@@ -87,7 +87,6 @@ public class ServerCancelTests : IClassFixture<SharedCliServer>
           "version": "1.0.0.0",
           "dependencies": [],
           "platform": "1.0.0.0",
-          "application": "1.0.0.0",
           "idRanges": [ { "from": {{baseId}}, "to": {{baseId + 9}} } ],
           "runtime": "14.0"
         }
@@ -141,7 +140,6 @@ public class ServerCancelTests : IClassFixture<SharedCliServer>
           "version": "1.0.0.0",
           "dependencies": [],
           "platform": "1.0.0.0",
-          "application": "1.0.0.0",
           "idRanges": [ { "from": 60320, "to": 60329 } ],
           "runtime": "14.0"
         }

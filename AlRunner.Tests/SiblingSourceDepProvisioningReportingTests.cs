@@ -73,7 +73,6 @@ public class SiblingSourceDepProvisioningReportingTests
             { "id": "{{sidekickId}}", "name": "SSD Sidekick", "publisher": "AL Runner", "version": "1.0.0.0" }
           ],
           "platform": "1.0.0.0",
-          "application": "1.0.0.0",
           "idRanges": [ { "from": {{idFrom}}, "to": {{idFrom + 19}} } ],
           "runtime": "14.0"
         }
@@ -112,7 +111,6 @@ public class SiblingSourceDepProvisioningReportingTests
             { "id": "{{thirdPartyId}}", "name": "Acme Add-On", "publisher": "Acme Corp", "version": "{{thirdPartyMinVersion}}" }
           ],
           "platform": "1.0.0.0",
-          "application": "1.0.0.0",
           "idRanges": [ { "from": {{idFrom}}, "to": {{idFrom + 19}} } ],
           "runtime": "14.0"
         }
@@ -147,7 +145,6 @@ public class SiblingSourceDepProvisioningReportingTests
           "version": "1.0.0.0",
           "dependencies": [],
           "platform": "1.0.0.0",
-          "application": "1.0.0.0",
           "idRanges": [ { "from": {{idFrom}}, "to": {{idFrom + 19}} } ],
           "runtime": "14.0"
         }

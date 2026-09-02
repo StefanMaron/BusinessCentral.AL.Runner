@@ -88,7 +88,6 @@ public sealed class PlaceholderFloorProvisioningTests
           "dependencies": [],
           "idRanges": [ { "from": 61970, "to": 61979 } ],
           "platform": "1.0.0.0",
-          "application": "1.0.0.0",
           "runtime": "14.0"
         }
         """);

@@ -78,7 +78,6 @@ public class ServerCrossAppStaleGenerationTests
           "dependencies": [],
           "idRanges": [ { "from": 60960, "to": 60969 } ],
           "platform": "1.0.0.0",
-          "application": "1.0.0.0",
           "runtime": "14.0"
         }
         """);
@@ -127,7 +126,6 @@ public class ServerCrossAppStaleGenerationTests
           ],
           "idRanges": [ { "from": 60970, "to": 60979 } ],
           "platform": "1.0.0.0",
-          "application": "1.0.0.0",
           "runtime": "14.0"
         }
         """);

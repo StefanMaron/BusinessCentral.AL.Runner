@@ -97,7 +97,6 @@ public sealed class DefineFlagIntegrationTests : IDisposable
           "version": "1.0.0.0",
           "dependencies": [],
           "platform": "1.0.0.0",
-          "application": "1.0.0.0",
           "idRanges": [ { "from": 62100, "to": 62119 } ],
           "runtime": "14.0"
         }

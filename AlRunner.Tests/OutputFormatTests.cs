@@ -49,7 +49,6 @@ public sealed class OutputFormatTests : IDisposable
           "publisher": "Scratch",
           "version": "1.0.0.0",
           "platform": "1.0.0.0",
-          "application": "1.0.0.0",
           "idRanges": [{ "from": 50910, "to": 50919 }],
           "runtime": "8.0"
         }

@@ -63,7 +63,6 @@ public class ServerTestIsolationTests : IClassFixture<SharedCliServer>
           "version": "1.0.0.0",
           "dependencies": [],
           "platform": "1.0.0.0",
-          "application": "1.0.0.0",
           "idRanges": [ { "from": {{baseId}}, "to": {{baseId + 9}} } ],
           "runtime": "14.0"
         }

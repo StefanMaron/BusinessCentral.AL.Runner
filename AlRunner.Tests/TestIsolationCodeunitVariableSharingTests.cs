@@ -59,7 +59,6 @@ public sealed class TestIsolationCodeunitVariableSharingTests : IDisposable
           "version": "1.0.0.0",
           "dependencies": [],
           "platform": "1.0.0.0",
-          "application": "1.0.0.0",
           "idRanges": [ { "from": 62130, "to": 62139 } ],
           "runtime": "14.0"
         }

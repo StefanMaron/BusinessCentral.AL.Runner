@@ -58,7 +58,6 @@ public class ServerCrossBundleModuleIdentityDedupTests
           "version": "1.0.0.0",
           "dependencies": [],
           "platform": "1.0.0.0",
-          "application": "1.0.0.0",
           "idRanges": [ { "from": 61990, "to": 61999 } ],
           "runtime": "14.0"
         }
@@ -122,7 +121,6 @@ public class ServerCrossBundleModuleIdentityDedupTests
             { "id": "{{appId}}", "name": "SX1892 Repro App", "publisher": "Repro1892", "version": "1.0.0.0" }
           ],
           "platform": "1.0.0.0",
-          "application": "1.0.0.0",
           "idRanges": [ { "from": 62050, "to": 62059 } ],
           "runtime": "14.0"
         }

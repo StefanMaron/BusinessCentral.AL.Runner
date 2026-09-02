@@ -47,7 +47,6 @@ public class AlPerTestCoverageTests : IClassFixture<SharedCliServer>
           "version": "1.0.0.0",
           "dependencies": [],
           "platform": "1.0.0.0",
-          "application": "1.0.0.0",
           "idRanges": [ { "from": 60200, "to": 60209 } ],
           "runtime": "14.0"
         }

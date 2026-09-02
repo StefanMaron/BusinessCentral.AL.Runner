@@ -76,7 +76,6 @@ public class QueryColumnAlDiagnosticFailureTests
           "version": "1.0.0.0",
           "dependencies": [],
           "platform": "1.0.0.0",
-          "application": "1.0.0.0",
           "idRanges": [ { "from": 62200, "to": 62209 } ],
           "runtime": "14.0"
         }

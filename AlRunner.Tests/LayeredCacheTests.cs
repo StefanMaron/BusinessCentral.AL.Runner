@@ -42,7 +42,6 @@ public class LayeredCacheTests
           "version": "1.0.0.0",
           "dependencies": [{{dependsOnJson ?? ""}}],
           "platform": "1.0.0.0",
-          "application": "1.0.0.0",
           "idRanges": [ { "from": {{idFrom}}, "to": {{idFrom + 9}} } ],
           "runtime": "14.0"
         }

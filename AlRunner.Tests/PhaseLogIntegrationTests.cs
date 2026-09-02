@@ -65,7 +65,6 @@ public sealed class PhaseLogIntegrationTests : IDisposable
         var roots = platformRoots
             ? """
                 "platform": "1.0.0.0",
-                "application": "1.0.0.0",
               """
             : "";
         File.WriteAllText(Path.Combine(dir, "app.json"), $$"""

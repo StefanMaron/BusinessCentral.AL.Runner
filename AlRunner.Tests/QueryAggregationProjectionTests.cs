@@ -73,7 +73,6 @@ public class QueryAggregationProjectionTests
           "version": "1.0.0.0",
           "dependencies": [],
           "platform": "1.0.0.0",
-          "application": "1.0.0.0",
           "idRanges": [ { "from": 61890, "to": 61899 } ],
           "runtime": "14.0"
         }

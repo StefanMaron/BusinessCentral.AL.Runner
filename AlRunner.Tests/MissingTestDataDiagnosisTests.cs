@@ -77,7 +77,6 @@ public sealed class MissingTestDataDiagnosisTests : IDisposable
           "version": "1.0.0.0",
           "dependencies": [],
           "platform": "27.0.0.0",
-          "application": "27.0.0.0",
           "idRanges": [ { "from": 62440, "to": 62449 } ],
           "runtime": "17.0",
           "target": "Cloud"

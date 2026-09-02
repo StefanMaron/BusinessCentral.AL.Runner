@@ -71,7 +71,6 @@ public sealed class TestPageBooleanRecBoundDispatchTests : IDisposable
           "version": "1.0.0.0",
           "dependencies": [],
           "platform": "1.0.0.0",
-          "application": "1.0.0.0",
           "idRanges": [ { "from": 62390, "to": 62399 } ],
           "runtime": "14.0"
         }
