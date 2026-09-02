@@ -76,6 +76,12 @@ internal static partial class BcAppSymbolCache
     // which reads as "the enum declares none" — so a cached dependency would keep failing
     // every enum-to-interface cast with "Unable to cast enum ... to interface at index 0",
     // the exact #2306 bug, rather than missing the cache.
+    // v17: AppSymbols gained Profiles / AppId / AppName, the rows of the "All Profile"
+    // (2000000178) virtual table and the declaring app each row is attributed to (issue
+    // #2317). A v16 payload deserialises with all three null, which reads as "this .app
+    // declares no profiles" — so a cached dependency would leave All Profile empty and
+    // every read of it would keep raising "There is no All Profile within the filter",
+    // the exact #2317 bug replayed from cache rather than a cache miss.
     private const int CacheVersion = 17;
     private static readonly ConcurrentDictionary<string, AppSymbols> ProcessCache = new(StringComparer.OrdinalIgnoreCase);
     // Issue #1820 — path -> content-hash memo. ComputeAppContentHash needs to read the
