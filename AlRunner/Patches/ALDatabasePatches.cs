@@ -447,7 +447,7 @@ public static class ALDatabasePatches
     // which is what the al-language corpus CI runs on) replaces this exact method through
     // its StartupHook "Patch #17", returning an FNV-1a hash of the user name shaped like a
     // SID. So the corpus tier answers with a synthetic SID of its own and cannot adjudicate
-    // what BC does here. See AlRunner#<ISSUE> for the measurement. A BC-on-Windows tier in
+    // what BC does here. See AlRunner#2312 for the measurement. A BC-on-Windows tier in
     // a domain where the probe account does and does not exist would settle it.
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static string ALDatabase_ALSidForAccountName(string userName)
