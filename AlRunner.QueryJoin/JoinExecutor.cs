@@ -30,6 +30,13 @@ public static class JoinExecutor
     private static PropertyInfo? _pQueryDefDataItems;
     private static PropertyInfo? _pQueryDefOrderBy;
     private static PropertyInfo? _pDataItemMetaTable;
+    // #2300: NCLMetaQueryDataItem.SubQueryDefinition — non-null for a synthesized dataitem
+    // BC's own NCLMetaQuery.CreateSubQueryForFlowFieldCalculation builds when a query column
+    // is a FlowField. Such a dataitem has no `tableNo` of its own (it wraps an OuterApply
+    // sub-query instead), so calling its `.MetaTable` getter NREs — exactly what BC's own
+    // NCLMetaQueryDefinition.GetAllDataItems avoids by testing this same property and NOT
+    // recursing/yielding a dataitem that has one. See GetRealDataItems below.
+    private static PropertyInfo? _pDataItemSubQueryDefinition;
     private static PropertyInfo? _pDataItemLinks;
     private static PropertyInfo? _pDataItemLinkType;
     private static PropertyInfo? _pDataItemName;
@@ -66,6 +73,7 @@ public static class JoinExecutor
         _pQueryDefDataItems = tQueryDef.GetProperty("DataItems", F)!;
         _pQueryDefOrderBy = tQueryDef.GetProperty("OrderBy", F)!;
         _pDataItemMetaTable = tDataItem.GetProperty("MetaTable", F)!;
+        _pDataItemSubQueryDefinition = tDataItem.GetProperty("SubQueryDefinition", F)!;
         _pDataItemLinks = tDataItem.GetProperty("DataItemLinks", F)!;
         _pDataItemLinkType = tDataItem.GetProperty("DataItemLinkType", F)!;
         _pDataItemName = tDataItem.GetProperty("Name", F)!;
@@ -96,13 +104,31 @@ public static class JoinExecutor
         _ready = true;
     }
 
-    /// <summary>True iff this query definition has more than one (flat) dataitem — i.e. a join.</summary>
-    public static bool IsMultiDataItem(object queryDefinition)
+    /// <summary>
+    /// The query's REAL (table-backed) dataitems — excludes any FlowField-calculation
+    /// synthesized dataitem BC's own NCLMetaQuery.CreateSubQueryForFlowFieldCalculation
+    /// added (SubQueryDefinition != null; see field comment above). Those columns are
+    /// computed separately (RecordPatches.QueryProjection.cs's FlowFieldPatches.
+    /// CalcOneFlowFieldForQueryRow), not by joining over their sub-query's own dataitem —
+    /// mirrors BC's own NCLMetaQueryDefinition.GetAllDataItems test, just without the
+    /// recursion into the sub-query's DataItems (this runner never executes that sub-query).
+    /// </summary>
+    private static List<object> GetRealDataItems(object queryDefinition)
     {
         EnsureReflection(queryDefinition);
-        var items = (ICollection)_pQueryDefDataItems!.GetValue(queryDefinition)!;
-        return items.Count > 1;
+        var raw = ((IEnumerable)_pQueryDefDataItems!.GetValue(queryDefinition)!).Cast<object>();
+        var result = new List<object>();
+        foreach (var di in raw)
+        {
+            if (_pDataItemSubQueryDefinition!.GetValue(di) != null) continue;
+            result.Add(di);
+        }
+        return result;
     }
+
+    /// <summary>True iff this query definition has more than one (flat, real) dataitem — i.e. a join.</summary>
+    public static bool IsMultiDataItem(object queryDefinition)
+        => GetRealDataItems(queryDefinition).Count > 1;
 
     private static void Log(JoinContext ctx, string m) => ctx.Log(m);
 
@@ -154,7 +180,13 @@ public static class JoinExecutor
         EnsureReflection(queryDef);
         Log(ctx, "reflection ready");
 
-        var dataItems = ((IEnumerable)_pQueryDefDataItems!.GetValue(queryDef)!).Cast<object>().ToList();
+        // #2300: excludes a FlowField-calculation synthesized dataitem, same as IsMultiDataItem
+        // above — a real multi-dataitem join that ALSO selects a FlowField column would
+        // otherwise crash here calling .MetaTable on the synthesized dataitem. That combination
+        // isn't wired up to compute the FlowField column's value here yet (tracked as a
+        // follow-up; the single-real-dataitem FlowField case is handled entirely before this
+        // method is ever reached, via IsMultiDataItem now reporting "not multi").
+        var dataItems = GetRealDataItems(queryDef);
 
         // 1. Read every dataitem's rows (honouring its own table filters). Validate the join
         //    shape up-front so an unsupported case throws BEFORE any partial output.

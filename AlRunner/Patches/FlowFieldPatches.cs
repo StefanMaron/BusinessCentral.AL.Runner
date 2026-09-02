@@ -885,6 +885,45 @@ public static class FlowFieldPatches
         }
     }
 
+    /// <summary>
+    /// #2300 — compute a FlowField's value for one QUERY result row, the same way a `Record.
+    /// CalcFields` call computes it for one record row (via <see cref="CalcFlowFieldValuesCore"/>
+    /// — the same source-row enumeration, formula-filter resolution and aggregation, just entered
+    /// from the query projection layer instead of RecordImplementation). BC's own query engine
+    /// answers this by naming the FlowField a synthesized `OuterApply` sub-dataitem
+    /// (<c>NCLMetaQuery.CreateSubQueryForFlowFieldCalculation</c>) and letting SQL execute it —
+    /// the runner has no SQL to run that sub-query against, so it computes the value directly
+    /// against the in-memory store instead. <paramref name="rowBuffer"/> is the QUERY row
+    /// (<c>ReadOnlyRecordBuffer</c>, boxed as <c>object</c> since QueryProjection.cs isn't allowed
+    /// to hand a typed reference across the same isolation boundary that keeps AlRunner.QueryJoin
+    /// Ncl-free) — it satisfies BC's own <c>IRecordBuffer</c> the same as a record's
+    /// <c>MutableRecordBuffer</c> does, which is what <c>GetFilterFromMetaFilterCollection</c>
+    /// actually requires (its parameter type is the interface, not the concrete buffer type), so
+    /// CalcFlowFieldValuesCore needs no changes to accept it.
+    /// </summary>
+    internal static NavValue? CalcOneFlowFieldForQueryRow(object rowBuffer, NCLMetaField flowFieldMeta)
+    {
+        object? session = null;
+        try
+        {
+            var tNCT = flowFieldMeta.GetType().Assembly.GetType("Microsoft.Dynamics.Nav.Runtime.NavCurrentThread");
+            var pSess = tNCT?.GetProperty("Session", BindingFlags.Public | BindingFlags.Static);
+            session = pSess?.GetValue(null);
+        }
+        catch { }
+        if (session == null) return null;
+
+        // The runner is single-company; token 0 is the runner's own unnamed company (see
+        // RecordPatches.cs's companyTokens skeleton-state comment) — the same value every other
+        // FlowField/query code path in this runner uses when no per-record company token is
+        // available.
+        var results = new List<Tuple<INavFieldMetadata, NavValue>>();
+        CalcFlowFieldValuesCore(session, companyToken: 0, rowBuffer,
+            parentFiltersAndMarks: null, securityFiltering: null, alIsolationLevel: null,
+            new NCLMetaField[] { flowFieldMeta }, recursionLevel: 0, results);
+        return results.Count > 0 ? results[0].Item2 : null;
+    }
+
     // ── BC recursion guards ──────────────────────────────────────────────────
     // FlowFieldsHelper's own constant, and its own exception. Both guards are BC's, not the
     // runner's: a self-referencing or mutually-referencing CalcFormula must produce exactly
