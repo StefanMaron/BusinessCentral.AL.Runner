@@ -377,6 +377,73 @@ public static partial class BcRuntime
         else
             Console.Error.WriteLine("[BcRuntime] InjectSkeletonSystemTenant: NavTenant.defaultEncoding field NOT FOUND");
 
+        // 4a-2. Seed NavSystemTenant.upgradeMetadata — the other half of the null pair that
+        //        NavDatabase.UpgradeManager dereferences.
+        //
+        //        NavDatabase.UpgradeManager (decompiled, unmodified Ncl) is
+        //            upgradeManager ??= new NavDataUpgradeManager(SystemTenant.UpgradeMetadata, Tenant);
+        //        and the two-argument NavDataUpgradeManager ctor chains to the three-argument one
+        //        via `tenant.Id`, which is what NREs when NavDatabase.Tenant is null (fixed in
+        //        RecordPatches.Register, see the skeleton NavDatabase block there). The three-argument
+        //        ctor then throws ArgumentNullException("upgradeMetadata") if the FIRST argument is
+        //        null — and it is, for the same reason: NavSystemTenant's real ctor does
+        //        `upgradeMetadata = new NavDataUpgradeMetadata(base.Database)`, and step 2 above builds
+        //        the tenant with GetUninitializedObject, so no field initialiser or ctor ever ran.
+        //        Fixing only NavDatabase.Tenant therefore just moves the failure. See AlRunner#2353.
+        //
+        //        Built through NavDataUpgradeMetadata's INTERNAL (ITenantSessionHandler,
+        //        INavUpgradeCodeunitObjectFactory) ctor rather than the public (NavDatabase) one.
+        //        Both are real BC constructors and end up assigning the same two fields — the public
+        //        one does `sessionHandler = ownerDatabase.Tenant; navUpgradeCodeunitObjectFactory =
+        //        new NavUpgradeCodeunitObjectFactory();` after validating DatabaseType — so this is
+        //        the same object BC would have built, without asking the skeleton database to claim
+        //        a NavDatabaseType it does not have. Its own field initialiser (`syncObject = new
+        //        object()`) runs either way, because this is a real ctor invocation, not
+        //        GetUninitializedObject.
+        //
+        //        Nothing on the execution-context path reads this object: NavDataUpgradeManager
+        //        stores it and only dereferences it when a data upgrade is actually started
+        //        (StartUpgrade/GetWorkflow), which the runner never does. It is seeded faithfully
+        //        rather than left null so that if something ever does reach UpgradeCodeunits, it
+        //        goes through BC's real body against the runner's real tenant, instead of NREing.
+        var stUpgradeMetaField = systemTenantType.GetField("upgradeMetadata",
+            BindingFlags.NonPublic | BindingFlags.Instance);
+        if (stUpgradeMetaField == null)
+        {
+            Console.Error.WriteLine(
+                "[BcRuntime] InjectSkeletonSystemTenant: NavSystemTenant.upgradeMetadata field NOT FOUND — "
+                + "NavDatabase.UpgradeManager will still throw");
+        }
+        else if (stUpgradeMetaField.GetValue(_skeletonSystemTenant) == null)
+        {
+            var tUpgradeMeta = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NavDataUpgradeMetadata");
+            var tCodeunitFactory = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NavUpgradeCodeunitObjectFactory");
+            var tSessionHandler = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.ITenantSessionHandler");
+            var tCodeunitFactoryIface = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.INavUpgradeCodeunitObjectFactory");
+            var ctorUpgradeMeta = (tUpgradeMeta != null && tSessionHandler != null && tCodeunitFactoryIface != null)
+                ? tUpgradeMeta.GetConstructor(
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+                    binder: null, new[] { tSessionHandler, tCodeunitFactoryIface }, modifiers: null)
+                : null;
+            var ctorCodeunitFactory = tCodeunitFactory?.GetConstructor(
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+                binder: null, System.Type.EmptyTypes, modifiers: null);
+            if (ctorUpgradeMeta != null && ctorCodeunitFactory != null)
+            {
+                var upgradeMeta = ctorUpgradeMeta.Invoke(
+                    new[] { _skeletonSystemTenant, ctorCodeunitFactory.Invoke(null) });
+                FieldPoke.SetInstance(stUpgradeMetaField, _skeletonSystemTenant!, upgradeMeta);
+                Console.Error.WriteLine(
+                    "[BcRuntime] InjectSkeletonSystemTenant: skeleton NavDataUpgradeMetadata wired onto systemTenant.upgradeMetadata");
+            }
+            else
+            {
+                Console.Error.WriteLine(
+                    "[BcRuntime] InjectSkeletonSystemTenant: NavDataUpgradeMetadata ctor NOT FOUND — "
+                    + "NavDatabase.UpgradeManager will still throw");
+            }
+        }
+
         // 4b. Populate the skeleton tenant's TenantSettings and wire the tenant onto the session.
         //
         //     "Environment Information" (CU457) → "Environment Information Impl." (CU3702) → its

@@ -452,6 +452,59 @@ public static partial class RecordPatches
                     ctorCompanyTokens.Invoke(new[] { _skeletonDatabase }));
         }
 
+        // tenant — BC's own NavDatabase ctor takes the owning NavTenant and stores it in this
+        // private field; GetUninitializedObject skips it, so NavDatabase.Tenant was null on the
+        // skeleton even though NavSession.Tenant was not. Both NavSession.get_Database and
+        // NavTenant.get_Database are Cecil-rewritten to hand out this one skeleton instance, so
+        // the null was the answer every session got.
+        //
+        // What that broke: NavDatabase.UpgradeManager is
+        //     upgradeManager ??= new NavDataUpgradeManager(SystemTenant.UpgradeMetadata, Tenant);
+        // and the two-argument ctor chains through `tenant.Id` — the only dereference in its body,
+        // since the workflow factory it also passes is a deferred lambda. So every caller of
+        // NavSession.GetModuleExecutionContext / GetCurrentModuleExecutionContext died with a bare
+        // NullReferenceException raised inside a BC ctor. That is reachable from ordinary AL:
+        // BaseApp's Company-Initialize (codeunit 50) asks for the execution context from its
+        // OnCompanyOpen subscriber, so any test that opens a company hit it. See AlRunner#2353.
+        //
+        // Note this is NOT the same method as NavSession.get_ExecutionContext, which
+        // NclCecilRewrite already replaces with `return ExecutionContext.Normal` and whose comment
+        // names this very NRE. That rewrite covers one method; the module-scoped siblings reach
+        // Database.UpgradeManager through a different path and were left crashing.
+        //
+        // Populating the field rather than rewriting the property is what keeps the answer
+        // faithful: BC's own GetModuleExecutionContext body still returns Install / Uninstall from
+        // session.AppInstallationContext and Upgrade from session.AppUpgradeContext — both of which
+        // the runner does populate while running install triggers — and only falls through to
+        // Normal when no upgrade workflow is in progress, which on the skeleton is always
+        // (GetUpgradeInformation answers NavWorkflowState.NotStarted when no workflow was started).
+        // A blanket "return Normal" replacement would answer Normal inside an install trigger,
+        // where real BC answers Install.
+        var fDatabaseTenant = _tNavDatabase.GetField("tenant",
+            BindingFlags.NonPublic | BindingFlags.Instance);
+        if (fDatabaseTenant == null)
+        {
+            Console.Error.WriteLine(
+                "[RecordPatches] NavDatabase.tenant field NOT FOUND — NavDatabase.Tenant stays null, "
+                + "NavSession.GetModuleExecutionContext will NRE");
+        }
+        else if (fDatabaseTenant.GetValue(_skeletonDatabase) == null)
+        {
+            var skeletonTenant = AlRunner.BcRuntime.SkeletonSystemTenant;
+            if (skeletonTenant != null)
+            {
+                AlRunner.Infrastructure.FieldPoke.SetInstance(fDatabaseTenant, _skeletonDatabase, skeletonTenant);
+                Console.Error.WriteLine("[RecordPatches] Skeleton NavDatabase.tenant wired to the skeleton system tenant");
+            }
+            else
+            {
+                // BcRuntime.InjectSkeletonSystemTenant runs before ApplyRecordPatches, so this
+                // is only reachable when the environment ctor fell back and left Tenants null.
+                Console.Error.WriteLine(
+                    "[RecordPatches] No skeleton system tenant available — NavDatabase.Tenant stays null");
+            }
+        }
+
         Console.Error.WriteLine($"[RecordPatches] Skeleton NavDatabase built: {_skeletonDatabase.GetType().Name}");
 
         // DataAccessSource fields to poke when creating skeleton
