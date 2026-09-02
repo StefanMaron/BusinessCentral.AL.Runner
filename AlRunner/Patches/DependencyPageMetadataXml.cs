@@ -110,9 +110,24 @@ public static partial class RecordPatches
                 w.WriteEndElement();
                 w.WriteEndElement();
             }
+            // ALWAYS written, even for a page with no source table (issue #2451). Same
+            // reason as the empty <Content> element below: MetaPageDefinition deserializes a
+            // MISSING element to null rather than to an empty one, and BC dereferences this
+            // one WITHOUT a null check —
+            // MetadataProvider.MergePageAndTable reads
+            // `masterPage.PageProperties.SourceObject.SourceTable > 0` as its first act.
+            // Omitting it NREs inside BC's own metadata merge, which
+            // RunnerPageInstance.TryCreateRecordless catches and turns into null, which
+            // silently demotes the TestPage to the navigation mock — every action there
+            // answers Enabled = true and Invoke() is a literal no-op.
+            //
+            // The real AL compiler writes it unconditionally too: across the 3187 page
+            // metadata documents in this machine's dependency-compile sidecars,
+            // <SourceObject> appears in all 3187, and in 1114 of them it carries no
+            // SourceTable attribute at all — the empty form written here.
+            w.WriteStartElement("SourceObject");
             if (page.SourceTableId > 0)
             {
-                w.WriteStartElement("SourceObject");
                 w.WriteAttributeString("SourceTable",
                     page.SourceTableId.ToString(System.Globalization.CultureInfo.InvariantCulture));
                 if (page.SourceTableTemporary)
@@ -120,9 +135,24 @@ public static partial class RecordPatches
                 if (!page.InsertAllowed) w.WriteAttributeString("InsertAllowed", "0");
                 if (!page.ModifyAllowed) w.WriteAttributeString("ModifyAllowed", "0");
                 if (!page.DeleteAllowed) w.WriteAttributeString("DeleteAllowed", "0");
-                w.WriteEndElement();
             }
+            // The attributes above only mean anything alongside a SourceTable, so a page
+            // without one gets the bare element the compiler itself emits — not
+            // SourceTable="0", which would answer "table 0" to a question about a table the
+            // page does not have.
+            w.WriteEndElement(); // SourceObject
             w.WriteEndElement(); // Properties
+
+            // Present-but-empty for the third time, and for the third identical reason:
+            // MetadataProvider.LoadExpressionRelationTables iterates
+            // `masterPage.Expressions` with no null check, so a missing element NREs one
+            // statement after the SourceObject read above. The real compiler emits it on all
+            // 3187 documents measured. No expressions are reconstructed here — the
+            // synthesizer carries no control tree (see the file header) — so this
+            // deserializes to an empty collection, which is what a page with no bound
+            // controls would have anyway.
+            w.WriteStartElement("Expressions");
+            w.WriteEndElement();
 
             // An empty (but present) Content element, not an absent one: NCLMetaForm.
             // LoadPageMetadata()'s own post-load check (EnsureNoControlIdAppearsMoreThanOnce)
