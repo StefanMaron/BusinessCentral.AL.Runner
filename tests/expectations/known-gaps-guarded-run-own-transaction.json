@@ -1,0 +1,18 @@
+[
+  {
+    "codeunitId": 60254,
+    "CodeunitName": "Test Codeunit Run Write Tx",
+    "Method": "GuardedRun_LeavingUncommittedWrite_DoesNotBlockTheNextGuardedRun",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2332",
+    "Note": "A guarded Codeunit.Run that leaves an uncommitted write does not end its own transaction here, so the next guarded run raises NavCSideException: An error occurred and the transaction is stopped. Green on real BC in StefanMaron/BusinessCentral.AL.Language.Tests#89, which merged upstream before this pin bump, so the pin carries it in. Tracked as #2332, whose fix is open as PR #2338 -- that PR removes this entry."
+  },
+  {
+    "codeunitId": 60254,
+    "CodeunitName": "Test Codeunit Run Write Tx",
+    "Method": "GuardedRun_LeavingUncommittedWrite_CommitsItWithTheRunsOwnTransaction",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2332",
+    "Note": "The other half of the same gap: the row a successful guarded Codeunit.Run wrote does not survive a later rollback in the caller, so the test reads 0 rows where BC reads 1. See GuardedRun_LeavingUncommittedWrite_DoesNotBlockTheNextGuardedRun above and #2332."
+  }
+]

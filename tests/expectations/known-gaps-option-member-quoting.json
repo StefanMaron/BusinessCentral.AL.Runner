@@ -1,0 +1,10 @@
+[
+  {
+    "codeunitId": 60300,
+    "CodeunitName": "EBF Blank Option Filter Tests",
+    "Method": "OptionFilter_SpaceNamedBlankMember_IsMatchedByTheEmptyString",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2345",
+    "Note": "An Option field declared OptionMembers = \" \",Draft,Active keeps AL's identifier quoting in the option string the runner builds, so member 0 is named \" \" (three characters) instead of a single space. RecordPatches.AlSourceParser.cs trims each token and does nothing else. The empty string therefore matches no member and SetFilter is refused with NavFilterException: '' is not an option. The existing options are: \" \",Draft,Active -- note the quotes in that list, which real BC does not print. This is the Option-field half of what #2308 fixed for enums: the matcher trims and compares case-insensitively, correctly, but the member name it matches against is wrong. The test passes on real BC on all eight versions in the corpus matrix (27.0, 27.3, 27.5, 28.0, 28.1, 28.2, 28.3, 28.4) -- measured in StefanMaron/BusinessCentral.AL.Language.Tests#90, run 33593916797. The other seven tests in codeunit 60300 pass here. Tracked as #2345; the fix removes this entry."
+  }
+]
