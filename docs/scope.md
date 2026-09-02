@@ -59,6 +59,7 @@ real thing for any test that only observes documented BC behaviour.
 | **Field caption / table caption / lookup-page IDs** | From metadata + language pack | From parsed AL source (real values for AL-compiled tables; falls back to `"FieldNN"` for base-app tables not compiled in this run) | Faithful for in-scope tables; documented stub for non-compiled base-app tables. |
 | **Event publisher → subscriber dispatch** | Service-tier event dispatcher | **Working as of 2026-05-11 (`c4bce11a`, W-8b A-prime).** Discovers `[NavEventSubscriber]`-attributed methods at startup, constructs real `NavEventSubscription` instances, and injects them into each table's `NavTableTriggerEventHandler.eventScopes[evt].registeredSubscriptions`. BC's own `NavEventScope.CheckAndFireTriggerEventsAsync` then dispatches — no JmpHook on the dispatch path (it would have been R2R-inlined and silently bypassed; see `feedback_r2r_inlining_traps.md`). | Faithful for documented event semantics including `var` params and `IncludeSender`. Manual-binding subscribers (`BindSubscription`) still pending. |
 | **`Page.RunModal` / report `[RequestPageHandler]`** | Real UI dialog | Looks up registered `[ModalPageHandler]` / `[RequestPageHandler]` and calls it | Faithful for the handler dispatch contract that test code relies on; no actual UI is rendered. |
+| **`Page.Run` (non-modal)** | Real UI window | Hands the page to BC's own `NavTestExecution.TestHandleForm`, which gives it to the test's `TestPage.Trap()` if one is outstanding, otherwise to the registered `[PageHandler]`, otherwise raises BC's own `Unhandled UI` error | Faithful for the handler/trap dispatch contract; no window is rendered. Outside a test session there is no client and BC's own client-callback refusal stands. |
 | **`RecordLink` (table 2000000068)** AL surface: `Rec.AddLink/HasLinks/DeleteLink/DeleteLinks/CopyLinks` | Stored in the platform RecordLink table | `RecordLinkPatches` in-memory dict keyed by `NavRecord.ALRecordId` (see commit landing 2026-05-17). Reset to empty between tests via `ResetPerTestState`. | Faithful for AL-observable semantics: `AddLink` returns a positive monotone id, `HasLinks` is true iff a live link exists, `Delete*` and `CopyLinks` behave as documented. Boundary: BC code reading the RecordLink table directly via `Record 2000000068` from inside a non-AL path (BC internals) is unaware of the polyfill — that path isn't an AL surface and isn't exercised by the tests we care about. |
 
 ---
@@ -178,7 +179,7 @@ invokes `OnInitReport` → `OnPreReport` → per-DataItem `OnPreDataItem` / `OnP
 
 | API | Reason |
 |---|---|
-| `Page.Run` (non-modal), `controladdin`, `usercontrol`, profiles | Requires BC client. UI dialog **callbacks** (`[MessageHandler]`, `[ConfirmHandler]`, …) are in scope under §2; the UI itself isn't. |
+| `controladdin`, `usercontrol`, profiles | Requires BC client. UI dialog **callbacks** (`[MessageHandler]`, `[ConfirmHandler]`, …) are in scope under §2; the UI itself isn't. |
 
 ### §3.12. Debugger <a id="debugger"></a>
 

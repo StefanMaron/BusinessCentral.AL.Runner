@@ -410,37 +410,32 @@ namespace AlRunnerShim
                 errorLevel, sessionId, objectId, companyName, record);
 
         // ───────────────────────────────────────────────────────────────────────
-        // NavForm.Run (static, non-modal) — OOS §3.11 #ui.
+        // NavForm.Run (static, non-modal) — Page.Run.
         // BC emits NavForm.Run(...) (the [Obsolete] sync wrapper around RunAsync)
         // for all Page.Run call sites. JmpHook.Apply cannot reliably intercept
         // these on .NET 8 R2R (code-layout mismatch); source-level redirect is safe.
-        // All overloads throw RunnerOutOfScopeException when OosHooksActive (i.e.
-        // inside a test run); calls during BC SA init pass through harmlessly.
+        //
+        // These forward to BC's own RunAsync, which asks NavTestExecution.TestHandleForm
+        // first: in a test session that dispatches the page to the test's TestPage.Trap()
+        // or its [PageHandler], with no client involved, and refuses with BC's own
+        // ""Unhandled UI"" error when the test declared neither. Outside a test session
+        // there is genuinely no client and BC's own client-callback refusal stands.
+        // They used to throw out-of-scope §3.11 unconditionally, which made the SAME AL
+        // behave differently depending on whether it was compiled here or arrived in a
+        // precompiled Base App DLL (which never went through this redirect). See #2349.
+        //
+        // Named RunAsync rather than Run so the _polyfillRedirects rewrite of the literal
+        // ""NavForm.Run("" cannot match these bodies and send them back to themselves.
         public static void NavForm_Run(int formId)
-        {
-            if (global::AlRunner.BcRuntime.OosHooksActive)
-                global::AlRunner.Infrastructure.RunnerScope.ThrowOutOfScope(""NavForm.RunAsync"", ""non-modal-ui"", ""ui"");
-        }
+            => Microsoft.Dynamics.Nav.Runtime.NavForm.RunAsync(formId).AsTask().GetAwaiter().GetResult();
         public static void NavForm_Run(int formId, Microsoft.Dynamics.Nav.Runtime.NavRecord record)
-        {
-            if (global::AlRunner.BcRuntime.OosHooksActive)
-                global::AlRunner.Infrastructure.RunnerScope.ThrowOutOfScope(""NavForm.RunAsync"", ""non-modal-ui"", ""ui"");
-        }
+            => Microsoft.Dynamics.Nav.Runtime.NavForm.RunAsync(formId, record).AsTask().GetAwaiter().GetResult();
         public static void NavForm_Run(int formId, Microsoft.Dynamics.Nav.Runtime.NavRecord record, int fieldNo)
-        {
-            if (global::AlRunner.BcRuntime.OosHooksActive)
-                global::AlRunner.Infrastructure.RunnerScope.ThrowOutOfScope(""NavForm.RunAsync"", ""non-modal-ui"", ""ui"");
-        }
+            => Microsoft.Dynamics.Nav.Runtime.NavForm.RunAsync(formId, record, fieldNo).AsTask().GetAwaiter().GetResult();
         public static void NavForm_Run(string fullName, Microsoft.Dynamics.Nav.Runtime.NavRecord record)
-        {
-            if (global::AlRunner.BcRuntime.OosHooksActive)
-                global::AlRunner.Infrastructure.RunnerScope.ThrowOutOfScope(""NavForm.RunAsync"", ""non-modal-ui"", ""ui"");
-        }
+            => Microsoft.Dynamics.Nav.Runtime.NavForm.RunAsync(fullName, record).AsTask().GetAwaiter().GetResult();
         public static void NavForm_Run(string fullName, Microsoft.Dynamics.Nav.Runtime.NavRecord record, int fieldNo)
-        {
-            if (global::AlRunner.BcRuntime.OosHooksActive)
-                global::AlRunner.Infrastructure.RunnerScope.ThrowOutOfScope(""NavForm.RunAsync"", ""non-modal-ui"", ""ui"");
-        }
+            => Microsoft.Dynamics.Nav.Runtime.NavForm.RunAsync(fullName, record, fieldNo).AsTask().GetAwaiter().GetResult();
 
         // ─── Text method polyfills ────────────────────────────────────────────────
         // AL string positions are 1-based throughout (CopyStr, StrPos, IndexOf, Substring).

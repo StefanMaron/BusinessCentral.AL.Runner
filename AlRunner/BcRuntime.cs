@@ -1567,28 +1567,13 @@ public static partial class BcRuntime
         // registration was a silent no-op and BC's own body ran and NREd instead.
 
         // NavFormHandle.CreateTarget is Cecil-owned (see NclCecilRewrite.cs).
-        var formHandleType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NavFormHandle");
-        if (formHandleType != null)
-        {
-            // NavFormHandle.Run — Page variable .Run() — non-modal UI (§3.11 OOS).
-            // Uses Apply() which patches both the precode and the R2R native code, ensuring
-            // callers that resolve directly to native code are also intercepted.
-            foreach (var runMethod in formHandleType.GetMethods(BindingFlags.Public | BindingFlags.Instance)
-                .Where(m => m.Name == "Run"))
-            {
-                var ps = runMethod.GetParameters();
-                var replName = ps.Length switch
-                {
-                    0 => nameof(FormPatches.NavFormHandle_Run_0),
-                    1 => nameof(FormPatches.NavFormHandle_Run_1),
-                    2 => nameof(FormPatches.NavFormHandle_Run_2),
-                    _ => null
-                };
-                if (replName == null) continue;
-                var repl = typeof(FormPatches).GetMethod(replName, BindingFlags.Public | BindingFlags.Static)!;
-                Hook(runMethod, repl, $"NavFormHandle.Run/{ps.Length}p");
-            }
-        }
+        //
+        // NavFormHandle.Run — the page-variable `P.Run()` form — used to be hooked here to
+        // throw out-of-scope §3.11. Deleted with #2349: the JmpHook layer is off by default so
+        // the registration was already a silent no-op (BC's own body ran), and non-modal
+        // Page.Run is no longer out of scope — BC's body reaches NavTestExecution.TestHandleForm,
+        // which dispatches to the test's trap or [PageHandler]. Reviving it would make
+        // `P.Run()` refuse what `Page.Run(id, Rec)` performs.
 
         // NavForm.RunModalAsync — PAGE-REPORT-CLUSTERS §2. Hook all 7 overloads
         // (3 instance + 4 static) to return FormResult.OK without touching skeleton
