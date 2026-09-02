@@ -903,15 +903,30 @@ public static class FlowFieldPatches
     /// </summary>
     internal static NavValue? CalcOneFlowFieldForQueryRow(object rowBuffer, NCLMetaField flowFieldMeta)
     {
-        object? session = null;
-        try
-        {
-            var tNCT = flowFieldMeta.GetType().Assembly.GetType("Microsoft.Dynamics.Nav.Runtime.NavCurrentThread");
-            var pSess = tNCT?.GetProperty("Session", BindingFlags.Public | BindingFlags.Static);
-            session = pSess?.GetValue(null);
-        }
-        catch { }
-        if (session == null) return null;
+        // NavCurrentThread.Session must resolve on every real test run (CalcFlowFieldValuesCore
+        // below is unreachable without it, and every other FlowField entry point in this file —
+        // RecordImpl_CalcFieldsAsync_3 above — relies on the SAME static resolving). Swallowing
+        // a reflection failure here and returning null would silently read a query FlowField
+        // column as unset/default instead of its calculated value — the loud-failures.md silent
+        // default this file exists to avoid everywhere else. Fail loudly instead, naming the
+        // surface and the field, so a genuine artifact incompatibility is visible rather than
+        // read back as "the value is 0/empty".
+        var tNCT = flowFieldMeta.GetType().Assembly.GetType("Microsoft.Dynamics.Nav.Runtime.NavCurrentThread")
+            ?? throw new InvalidOperationException(
+                $"CalcOneFlowFieldForQueryRow('{flowFieldMeta.FieldName}' on "
+                + $"'{flowFieldMeta.Parent?.TableName}'): Microsoft.Dynamics.Nav.Runtime.NavCurrentThread "
+                + "type not found in the Ncl assembly — cannot resolve the current NavSession to "
+                + "compute this query FlowField column.");
+        var pSess = tNCT.GetProperty("Session", BindingFlags.Public | BindingFlags.Static)
+            ?? throw new InvalidOperationException(
+                $"CalcOneFlowFieldForQueryRow('{flowFieldMeta.FieldName}' on "
+                + $"'{flowFieldMeta.Parent?.TableName}'): NavCurrentThread.Session property not "
+                + "found — cannot resolve the current NavSession to compute this query FlowField column.");
+        var session = pSess.GetValue(null)
+            ?? throw new InvalidOperationException(
+                $"CalcOneFlowFieldForQueryRow('{flowFieldMeta.FieldName}' on "
+                + $"'{flowFieldMeta.Parent?.TableName}'): NavCurrentThread.Session returned null — "
+                + "no current session to compute this query FlowField column against.");
 
         // The runner is single-company; token 0 is the runner's own unnamed company (see
         // RecordPatches.cs's companyTokens skeleton-state comment) — the same value every other
