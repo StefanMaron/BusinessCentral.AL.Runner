@@ -346,3 +346,56 @@ Full detail on each of these is in `.claude/rules/` (`branch-and-pr.md`,
 - No shipped real implementations of System Application codeunits (blank-shell auto-stubs and test-automation libraries only).
 - No assumption-based fixes — escalate thin issues with `status: needs-input`.
 - Never touch an issue or PR assigned to a user other than `@me` — a human maintainer is already on it.
+
+
+### Reading BC's own code: use the `bc-decompiler` MCP server
+
+Settling "what does BC actually do" means reading `Microsoft.Dynamics.Nav.Ncl.dll`. Do not
+grep a decompile dump for this — the `mcp__bc-decompiler__*` tools answer in well under a
+second and answer questions grep cannot.
+
+Every cached BC version is already registered as a context, so there is no path to look up:
+
+| alias | | alias | |
+|---|---|---|---|
+| `bc260` | 26.0 | `bc281` | 28.1 (current) |
+| `bc270` | 27.0 | `bc282` | 28.2 |
+| `bc273` | 27.3 | `bc283` | 28.3 |
+| `bc275` | 27.5 | `bc284` | 28.4 |
+| `bc280` | 28.0 | | |
+
+The workflow is always: **find the id, then use it.**
+
+```
+search_members(query: "TestHandleForm")        -> memberId "<mvid>:0600527A:M"
+get_decompiled_source(memberId: "<that id>")   -> the C# body
+find_callers(methodId: "<that id>")            -> call sites
+```
+
+Measured on Ncl.dll (8,619 types, 43,135 methods): `search_members` 1.6s, then
+`get_decompiled_source` **0.42s** and `find_callers` **0.11s**.
+
+**`find_callers` resolves through compiler-generated async state machines.** On
+`NavTestExecution.TestHandleForm` it returns `NavForm.<RunAsync>d__19` — the shape that has
+repeatedly bitten this repo, where a hook installs but never fires because the real caller is
+a state machine. Grep cannot find that.
+
+**`compare_symbols` diffs a method between two BC versions**, which is how you catch a Cecil
+rewrite that silently stopped being reached — a BC service update once rerouted callers past
+one of ours and cost 53 tests on the newer build only:
+
+```
+compare_symbols(leftContextAlias: "bc275", rightContextAlias: "bc284",
+                symbol: "Microsoft.Dynamics.Nav.Runtime.NavTestExecution.TestHandleForm",
+                symbolKind: "method", compareMode: "body")
+```
+
+Returns `signatureChanged`, `bodyChanged` and line counts in about half a second.
+
+Other tools worth knowing: `search_string_literals` (find the code that raises an error
+message you saw), `search_attributes`, `get_il` (when the C# decompile is misleading),
+`find_usages` for fields and properties, `get_members_of_type`, `list_namespaces`.
+
+Setup, if the server is missing on a machine: `tools/setup-bc-decompiler.sh`. It needs the
+.NET 10 SDK; the runner itself stays on net8.0.
+

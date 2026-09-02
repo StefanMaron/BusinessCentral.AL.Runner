@@ -29,6 +29,9 @@ Operating rules live in `.claude/rules/` and are auto-loaded. Task-specific refe
 - Writing AL tests, bucket layout, running the matrix → skill `al-runner-tests`
 - `--guide` flag, full agent workflow contract → skill `al-runner-workflow`
 - Triage new untriaged issues → sub-agent `triager` (Opus, runs once at the start of a cycle)
+- Run a coordinator session (delegation, identity reuse, corpus-PR authority, the merge bar,
+  measurement rules, environment traps) → skill `orchestrating-a-session` — **invoke it at the
+  start of any session that drives work through subagents**
 - Act as orchestrator or implementation agent → sub-agents `orchestrator` / `impl-agent` in `.claude/agents/`
 - Drive a full work cycle (triage → parallel impls in worktrees → orchestrator merge pass, until the queue is empty) → slash command `/work-cycle`
 
