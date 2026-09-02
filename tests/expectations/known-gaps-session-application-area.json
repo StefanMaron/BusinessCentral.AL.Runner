@@ -1,0 +1,34 @@
+[
+  {
+    "codeunitId": 60700,
+    "CodeunitName": "Test Session Application Area",
+    "Method": "SaveExperienceTier_Essential_ReadsBackAsTheCurrentTier",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2315",
+    "Note": "Green on real BC 27.0-28.4 (BusinessCentral.AL.Language.Tests#86). The skeleton session's application-area fields are null, so the first assignment NREs in NavSession.set_ApplicationAreas. These four entries exist ONLY because the submodule pin bump that carries this repo's own new All Profile tests (#2317) also pulls in #86, which merged upstream first; they are not a new gap this change introduced. The fix for #2315 removes them."
+  },
+  {
+    "codeunitId": 60700,
+    "CodeunitName": "Test Session Application Area",
+    "Method": "SaveExperienceTier_Premium_ReplacesTheEssentialTier",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2315",
+    "Note": "Same gap as SaveExperienceTier_Essential_ReadsBackAsTheCurrentTier above -- see that entry and #2315. This arm stops one step earlier, on Application Area Mgmt..SaveExperienceTierCurrentCompany not finding the Company row."
+  },
+  {
+    "codeunitId": 60700,
+    "CodeunitName": "Test Session Application Area",
+    "Method": "SaveExperienceTier_UnknownTier_IsRefusedAndChangesNothing",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2315",
+    "Note": "Same gap as SaveExperienceTier_Essential_ReadsBackAsTheCurrentTier above -- see that entry and #2315."
+  },
+  {
+    "codeunitId": 60700,
+    "CodeunitName": "Test Session Application Area",
+    "Method": "SetupApplicationArea_LeavesTheFoundationAreaEnabled",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2315",
+    "Note": "Same gap as SaveExperienceTier_Essential_ReadsBackAsTheCurrentTier above -- see that entry and #2315."
+  }
+]
