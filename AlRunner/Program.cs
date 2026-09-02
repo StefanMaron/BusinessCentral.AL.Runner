@@ -3010,6 +3010,13 @@ foreach (var bundle in bundles)
                 tests = OverrideTddDependentResults(executor.Run(asm));
                 execSw.Stop();
                 AlRunner.PerfTrace.Log($"TestExecutor.Run {rel} {execSw.ElapsedMilliseconds}ms");
+                // #2415: Run() returns normally even when a watchdog timeout aborted the
+                // rest of this app group's codeunits — it doesn't throw, so the catch
+                // below never sees it. Fold its own suite-error lines in here so the
+                // "N suite errors" summary and the exit code (computedExitCode's
+                // CompileErrors check) both reflect the abandoned tests.
+                if (executor.AbortReasons.Count > 0)
+                    bundleErrors.AddRange(executor.AbortReasons.Select(r => $"{rel}: TEST-TIMEOUT-ABORT: {r}"));
             }
             catch (Exception ex)
             {
@@ -3139,6 +3146,11 @@ foreach (var bundle in bundles)
                 }
                 BcRuntime.OosHooksActive = true;
                 tests = OverrideTddDependentResults(executor.Run(asm));
+                // #2415: see the bundled-mode call site's identical comment — Run()
+                // returns normally on a watchdog-timeout abort, so the catch below
+                // never sees it.
+                if (executor.AbortReasons.Count > 0)
+                    bundleErrors.AddRange(executor.AbortReasons.Select(r => $"{suiteName}: TEST-TIMEOUT-ABORT: {r}"));
             }
             catch (Exception ex)
             {

@@ -364,19 +364,21 @@ public static partial class BcRuntime
     }
 
     /// <summary>
-    /// Is this parameter (positionally) capable of being the "Sender" param of an
-    /// IncludeSender=true event subscriber? AL emits it as a positional first parameter whose
-    /// name is "Sender" (case-insensitive) and whose type is either <c>NavCodeunitHandle</c> (or
-    /// a typed codeunit-handle subclass, for a codeunit publisher) or <c>INavRecordHandle</c> (an
-    /// interface, or a concrete <c>Record&lt;N&gt;</c> implementing it, for a TABLE publisher —
-    /// #1956). This only answers the TYPE-SHAPE question; the call site additionally requires
-    /// no scope field matched this parameter's name before treating it as sender (see
-    /// InvokeOneSubscriber) — that's what distinguishes an actual sender from a coincidentally
-    /// leading, genuinely-declared record/codeunit-typed event argument.
+    /// Is this parameter capable of being the "Sender" param of an IncludeSender=true event
+    /// subscriber? Real BC does not require the sender to be the first parameter — the AL
+    /// compiler preserves the subscriber's declared parameter order in the emitted signature,
+    /// so a sender declared last (e.g. Base Application's
+    /// <c>MfgItemJnlPostLine.OnPostOutput</c>) arrives at whatever index it was written at
+    /// (#2348). Its type is either <c>NavCodeunitHandle</c> (or a typed codeunit-handle
+    /// subclass, for a codeunit publisher) or <c>INavRecordHandle</c> (an interface, or a
+    /// concrete <c>Record&lt;N&gt;</c> implementing it, for a TABLE publisher — #1956). This
+    /// only answers the TYPE-SHAPE question; the call site additionally requires no scope field
+    /// matched this parameter's name before treating it as sender (see InvokeOneSubscriber) —
+    /// that's what distinguishes an actual sender from a genuinely-declared record/codeunit-typed
+    /// event argument at any position.
     /// </summary>
     internal static bool IsSenderParameter(ParameterInfo p, int paramIndex)
     {
-        if (paramIndex != 0) return false;
         // Codeunit publisher: AL emits sender as Codeunit50047 (the publisher CLR type) — the
         // bundle's typed handle. The runtime type ancestry traces back to NavCodeunitHandle.
         var t = p.ParameterType;
@@ -390,6 +392,18 @@ public static partial class BcRuntime
         if (typeof(Microsoft.Dynamics.Nav.Runtime.INavRecordHandle).IsAssignableFrom(p.ParameterType)) return true;
         return false;
     }
+
+    /// <summary>
+    /// Is a subscriber allowed to bind a field-lookup fallthrough parameter as the sender,
+    /// given how many of THIS subscriber's own declared parameters had no matching
+    /// publisher-scope field? Extracted as a pure, unit-testable seam pinning the exact
+    /// threshold (#2348): exactly ONE unmatched parameter is the only shape IncludeSender's
+    /// contract actually produces, whether or not the subscriber also omits trailing
+    /// publisher parameters (AL allows that — see the call site's doc comment). Zero
+    /// unmatched parameters means there is no sender to bind. Two or more means this lookup
+    /// doesn't understand what's going on and must not guess.
+    /// </summary>
+    internal static bool AllowsSenderSubstitution(int unmatchedFieldCount) => unmatchedFieldCount == 1;
 
     private static Type? _tNavCodeunitHandle;
     private static ConstructorInfo? _ciNavCodeunitHandleByIdInt;
@@ -447,20 +461,47 @@ public static partial class BcRuntime
         // publisher itself (wrapped in a NavCodeunitHandle for a codeunit publisher, or passed
         // straight through for a table publisher — see IsSenderParameter/#1956).
         //
-        // Field lookup runs FIRST and wins: an IncludeSender=true event declares no parameters
-        // at all, so AL never emits a scope field for its "Sender" — the field-vs-sender
-        // branches can never both match the SAME parameter. A leading parameter that DOES have
-        // a matching scope field is a genuinely declared, record-typed (or codeunit-typed)
-        // event ARGUMENT, not a sender, and must keep taking its value from the scope.
+        // Field lookup runs FIRST and wins: an IncludeSender=true event's SENDER parameter has
+        // no scope field (see IsSenderParameter's doc comment for why), so the field-vs-sender
+        // branches can never both match the SAME parameter. A parameter that DOES have a
+        // matching scope field is a genuinely declared, record-typed (or codeunit-typed) event
+        // ARGUMENT, not a sender, and must keep taking its value from the scope.
+        //
+        // "No matching scope field" is necessary but not SUFFICIENT, though (#2348): a
+        // subscriber parameter can lack a matching field for other reasons too (a stale-named
+        // arg, a rename mismatch, anything the compiler emits that this lookup doesn't
+        // recognise). An EARLIER version of this fix required the subscriber's parameter count
+        // to be EXACTLY one more than the publisher's own declared arity — but AL subscribers
+        // are allowed to omit trailing publisher parameters entirely (confirmed empirically:
+        // the AL compiler accepts a subscriber declaring only a PREFIX of the publisher's
+        // parameters, sender included, at any position within that prefix), so an omitting
+        // subscriber has FEWER parameters than arity+1 and that exact-equality check wrongly
+        // rejected it — a real regression vs. even the pre-#2348 position-0-only behaviour for
+        // a sender-first subscriber that also omits a trailing parameter.
+        //
+        // The correct discriminator doesn't need the publisher's raw arity at all: exactly ONE
+        // parameter across this SPECIFIC subscriber's own declared list may go unmatched. Two
+        // or more unmatched parameters means something this lookup doesn't understand is going
+        // on, and this must NOT guess which one (if any) is the sender — see
+        // .claude/rules/loud-failures.md. A single unmatched parameter is only substituted when
+        // it is also shaped like a sender (IsSenderParameter's type check).
         int publisherCodeunitId = ExtractCodeunitIdFromTypeName(treeObj.GetType());
         var parms = subscriberMethod.GetParameters();
+        var flds = new FieldInfo?[parms.Length];
+        int unmatchedCount = 0;
+        for (int i = 0; i < parms.Length; i++)
+        {
+            flds[i] = scopeType.GetField(parms[i].Name!,
+                BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase);
+            if (flds[i] == null) unmatchedCount++;
+        }
+        bool allowSenderSubstitution = AllowsSenderSubstitution(unmatchedCount);
         var args = new object?[parms.Length];
         for (int i = 0; i < parms.Length; i++)
         {
             var p = parms[i];
-            var fld = scopeType.GetField(p.Name!,
-                BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase);
-            if (fld == null && IsSenderParameter(p, i))
+            var fld = flds[i];
+            if (fld == null && allowSenderSubstitution && IsSenderParameter(p, i))
             {
                 if (typeof(Microsoft.Dynamics.Nav.Runtime.INavRecordHandle).IsAssignableFrom(p.ParameterType))
                 {
