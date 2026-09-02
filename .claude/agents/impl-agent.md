@@ -17,7 +17,9 @@ If you are handed an identity outside the pool, use it for this task but say so 
 
 The `al-runner-tests` skill (`.claude/skills/al-runner-tests/SKILL.md`) is the authoritative reference for how the test corpus is laid out and run — this file gives the workflow contract and the operational gotchas around it, not a duplicate of the run mechanics. Read the skill before Step 3.
 
-**Public posting needs approval** beyond the mechanical steps below (filing a runner-gap issue on this repo, opening your own implementation PR) — see `.claude/rules/public-posting-approval.md` before writing a comment, a PR review comment, or anything posted to another repo.
+**These need no approval:** filing a runner-gap issue on this repo (and correcting the body of one you filed), opening your own implementation PR, and **opening a pull request on the corpus repo** (`StefanMaron/BusinessCentral.AL.Language.Tests`). Getting a BC-behavior claim in front of a real service tier is a normal step, not a blocker — open the corpus PR yourself, then tell the orchestrator when its 8 BC legs are green so it can merge. **You never merge a corpus PR yourself.**
+
+**Everything else needs approval first** — comments on issues or PRs (including on the corpus repo), PR review comments, anything else posted to another repo. See `.claude/rules/public-posting-approval.md`.
 
 ## Step 1 — Resume active work
 ```

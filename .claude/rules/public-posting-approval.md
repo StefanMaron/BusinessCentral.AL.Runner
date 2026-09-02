@@ -5,15 +5,24 @@ explicit approval before it posts. Use the `plain-language` skill (American
 English, first-person, no LLM-typical metaphor/jargon) for anything
 outward-facing.
 
-**The carve-out is narrow:** filing new issues on this repo
-(`StefanMaron/BusinessCentral.AL.Runner`) needs no approval — that channel
-exists specifically so agents can report gaps and follow-ups without a human
-in the loop. Everything else needs approval first:
+**Two things need no approval**, because both are channels that exist
+specifically so agents can work without a human in the loop:
 
-- Comments on issues or PRs (this repo or any other).
+- **Filing new issues on this repo** (`StefanMaron/BusinessCentral.AL.Runner`),
+  and editing the body of an issue you filed to correct it.
+- **Opening a pull request on the corpus repo**
+  (`StefanMaron/BusinessCentral.AL.Language.Tests`). Getting a BC-behavior claim
+  in front of a real service tier is step 2 of the workflow in
+  `bc-behavior-tests-go-upstream.md` — gating it stalled agents for no benefit,
+  since the corpus CI adjudicates the claim and a human still merges. **Open it
+  yourself; the orchestrator reviews and merges it when all 8 BC legs are green.**
+  You still do not merge it.
+
+Everything else needs approval first:
+
+- Comments on issues or PRs (this repo or any other), including on the corpus repo.
 - PR review comments.
-- Anything posted to another repo — including opening a PR, or commenting on
-  one, in `StefanMaron/BusinessCentral.AL.Language.Tests`.
+- Anything else posted to another repo.
 
 This does not gate the mechanical steps of the established agent workflow
 (claiming an issue, opening your own implementation PR with `Closes #N`,
