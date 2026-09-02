@@ -85,17 +85,53 @@ public static partial class BcRuntime
     /// Returns default ValueTask — synchronous execution model.
     /// </summary>
     private static bool _firstEntryLogged;
+
+    // ── debug gates, read ONCE ────────────────────────────────────────────────────────
+    // Both of these are developer switches, and this method runs on EVERY AL event scope.
+    // Re-reading them per call put System.Environment.GetEnvironmentVariableCore in the
+    // resolved leaf frame of 7 of 73 CPU samples of the single test in #2304. Memoised the
+    // same way EventSubscriberPatches.ScanAuditEnabled already is; setting the variable
+    // after the first dispatch has no effect, which is what ResetDispatchGatesForTests and
+    // HotPathHookCostTests pin.
+    private static bool? _dispatcherOff;
+    private static bool? _dispatchTrace;
+
+    internal static bool DispatcherDisabled
+        => _dispatcherOff ??= Environment.GetEnvironmentVariable("AL_RUNNER_DISPATCHER_OFF") == "1";
+
+    internal static bool DispatchTraceEnabled
+        => _dispatchTrace ??= Environment.GetEnvironmentVariable("ALRUNNER_DISPATCH_TRACE") == "1";
+
+    internal static void ResetDispatchGatesForTests()
+    {
+        _dispatcherOff = null;
+        _dispatchTrace = null;
+    }
+
+    // DispatchCore used to resolve this per FIRED event with
+    // AppDomain.CurrentDomain.GetAssemblies().First(a => a.GetName().Name == "…Ncl"), which
+    // materialises an AssemblyName (and with it a native GetCodeBase call) for every loaded
+    // assembly until it hits the match. Resolved once instead; Ncl is loaded once per process
+    // and never replaced. See LoadedRuntimeAssemblies.cs.
+    private static Type? _tNavMethodScope;
+
+    private static Type NavMethodScopeType
+        => _tNavMethodScope ??= RequireRuntimeAssembly("Microsoft.Dynamics.Nav.Ncl")
+            .GetType("Microsoft.Dynamics.Nav.Runtime.NavMethodScope")
+           ?? throw new InvalidOperationException(
+               "Microsoft.Dynamics.Nav.Runtime.NavMethodScope not found in Microsoft.Dynamics.Nav.Ncl");
+
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static System.Threading.Tasks.ValueTask CodeunitEventDispatch_OnRunEventAsync(object publisherScope)
     {
         if (!_firstEntryLogged) { _firstEntryLogged = true; Console.Error.WriteLine($"[Dispatch] entry-method first hit"); }
-        if (Environment.GetEnvironmentVariable("AL_RUNNER_DISPATCHER_OFF") == "1")
+        if (DispatcherDisabled)
             return default;
         try { DispatchCore(publisherScope); }
         catch (Exception ex)
         {
             var inner = ex is TargetInvocationException tie ? tie.InnerException ?? ex : ex;
-            if (Environment.GetEnvironmentVariable("ALRUNNER_DISPATCH_TRACE") == "1")
+            if (DispatchTraceEnabled)
                 Console.Error.WriteLine(
                     $"[DispatchRethrow] {inner.GetType().Name}: {inner.Message}\nCALLER CHAIN:\n{Environment.StackTrace}");
             RethrowPreservingStack(inner);
@@ -165,13 +201,11 @@ public static partial class BcRuntime
         if (subs == null || subs.Count == 0) return;
         Interlocked.Increment(ref _dispatchFiredCount);
         if (!_firstFireLogged) { _firstFireLogged = true; Console.Error.WriteLine($"[Dispatch] first FIRE: {declName}.{eventMethodName} → {subs.Count} subs"); }
-        if (Environment.GetEnvironmentVariable("ALRUNNER_DISPATCH_TRACE") == "1")
+        if (DispatchTraceEnabled)
             Console.Error.WriteLine($"[Dispatch] FIRE {declName}.{eventMethodName} → {subs.Count} subs");
 
         // Publisher application object (NavCodeunit) — for NavCodeunitHandle.Target lookup of subscriber instances.
-        var navMethodScopeType = AppDomain.CurrentDomain.GetAssemblies()
-            .First(a => a.GetName().Name == "Microsoft.Dynamics.Nav.Ncl")
-            .GetType("Microsoft.Dynamics.Nav.Runtime.NavMethodScope")!;
+        var navMethodScopeType = NavMethodScopeType;
         var pubObj = navMethodScopeType.GetProperty("ApplicationObject", BindingFlags.Public | BindingFlags.Instance)?
             .GetValue(publisherScope);
         if (pubObj == null) return;
@@ -207,7 +241,7 @@ public static partial class BcRuntime
             }
             catch (TargetInvocationException tie)
             {
-                if (Environment.GetEnvironmentVariable("ALRUNNER_DISPATCH_TRACE") == "1")
+                if (DispatchTraceEnabled)
                     Console.Error.WriteLine(
                         $"[DispatchThrow] {declName}.{eventMethodName} subscriber threw: "
                         + $"{(tie.InnerException ?? tie).GetType().Name}: {(tie.InnerException ?? tie).Message}");
@@ -449,7 +483,7 @@ public static partial class BcRuntime
                 continue;
             }
             args[i] = CoerceArg(fld?.GetValue(publisherScope), p.ParameterType);
-            if (Environment.GetEnvironmentVariable("ALRUNNER_DISPATCH_TRACE") == "1"
+            if (DispatchTraceEnabled
                 && subscriberMethod.Name.Contains("CustomDocumentMerger", StringComparison.OrdinalIgnoreCase))
             {
                 string repr;

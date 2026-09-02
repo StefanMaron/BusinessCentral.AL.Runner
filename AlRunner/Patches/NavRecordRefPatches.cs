@@ -103,8 +103,11 @@ public static partial class BcRuntime
         if (existing != null) return existing;
 
         // Construct SharedRecordRef using a skeleton TreeSharedObjectContainer.
-        var navNcl = AppDomain.CurrentDomain.GetAssemblies()
-            .First(a => a.GetName().Name == "Microsoft.Dynamics.Nav.Ncl");
+        // Resolved through the memoised lookup: this method runs on every RecordRef
+        // materialisation, and the AppDomain scan it replaces (which calls
+        // RuntimeAssembly.GetName -> native GetCodeBase per loaded assembly) was a resolved
+        // leaf frame in the #2304 profile. See BcRuntime LoadedRuntimeAssemblies.cs.
+        var navNcl = RequireRuntimeAssembly("Microsoft.Dynamics.Nav.Ncl");
         if (_skeletonSharedObjectContainer == null)
         {
             var tContainer = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.TreeSharedObjectContainer")!;
