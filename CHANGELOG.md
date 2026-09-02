@@ -12,6 +12,7 @@ All notable changes to this project are documented here. Format based on
 - **all-profile:** populate the All Profile system virtual table (2000000178)
 
 ### Fixed
+- **permissions:** a Caption-less permission set's Name falls back to its Role ID
 - **hooks:** nudge on shell READS of C# too, not just searches
 - **query:** normalize a module-qualified RelatedTable on Query dataitems
 - **testpage:** position a page on its first row (or new-row line) the moment it opens
