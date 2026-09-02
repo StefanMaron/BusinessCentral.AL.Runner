@@ -73,6 +73,13 @@ public sealed class MissingTestDataDiagnosisTests : IDisposable
     /// "Source Code Setup" is the table #2240 measured 12 of its 16 failures on. "Payment
     /// Method" is a Base App table the runner starts empty and this fixture inserts into, so
     /// "populated" is a fact the test creates rather than one it inherits.
+    ///
+    /// "Source Code Setup" itself is NOT guaranteed empty by construction any more (#2348):
+    /// fixing IncludeSender sender-position dispatch also fixed a latent install-time bug that
+    /// used to leave Codeunit2's OnBeforeSourceCodeSetupInsert NRE-ing silently, which — before
+    /// that fix — happened to keep this table permanently empty as a side effect. A correct
+    /// runner may now legitimately seed it during install, so the two "EmptySetupTable_*"
+    /// procedures below call DeleteAll() first to make "no rows" a fact THIS TEST guarantees.
     /// </summary>
     private static void WriteFixture(string dir)
     {
@@ -101,6 +108,13 @@ public sealed class MissingTestDataDiagnosisTests : IDisposable
             var
                 SourceCodeSetup: Record "Source Code Setup";
             begin
+                // #2348: fixing IncludeSender sender-position dispatch also fixed a latent
+                // install-time bug that used to leave this table's own default-row insert
+                // silently broken, so a fresh company may now legitimately arrive with a row
+                // already in it (Codeunit2's OnBeforeSourceCodeSetupInsert firing correctly).
+                // DeleteAll() first so "no rows" is still a fact this test GUARANTEES, not one
+                // it merely used to inherit from a broken install.
+                SourceCodeSetup.DeleteAll();
                 SourceCodeSetup.Get();
             end;
 
@@ -121,6 +135,8 @@ public sealed class MissingTestDataDiagnosisTests : IDisposable
             var
                 SourceCodeSetup: Record "Source Code Setup";
             begin
+                // Same #2348 guarantee as EmptySetupTable_Get above — DeleteAll() first.
+                SourceCodeSetup.DeleteAll();
                 SourceCodeSetup.Init();
                 SourceCodeSetup.TestField("Sales Journal");
             end;

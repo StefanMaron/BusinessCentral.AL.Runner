@@ -571,6 +571,98 @@ public static class EventSubscriberPatches
     }
 
     /// <summary>
+    /// Inject any not-yet-injected table-level trigger subscribers (Insert/Modify/Delete/Rename
+    /// ordinals, <see cref="_byKey"/>) that target <paramref name="tableId"/> onto the supplied
+    /// (freshly built) NCLMetaTable's <c>tableTriggerEventHandler</c>. Mirrors
+    /// <see cref="InjectValidateSubsForTable"/> — before this, table-level ordinals were injected
+    /// only in bulk passes over ALREADY-BUILT NCLMetaTables (<see cref="DoInject"/>, called once per
+    /// bundle and once per test codeunit), so a table whose metatable was first built mid-codeunit
+    /// (lazy build on first <c>Record</c> touch, e.g. a precompiled BaseApp table the current
+    /// codeunit is the first to reference) missed every pass that could have served it, and its
+    /// subscriber stayed silently unwired until the next codeunit boundary — never, if there wasn't
+    /// one (issue #2197). Called from the same call sites as <see cref="InjectValidateSubsForTable"/>
+    /// — i.e. AFTER the table's NCLMetaTable has been fully built and returned from
+    /// <c>_metaTableCache.GetOrAdd</c>, never from inside
+    /// <see cref="RecordPatches.NclMetaTableBuilder.BuildNCLMetaTable"/> itself: building a
+    /// subscription resolves the publisher's application object, which re-enters
+    /// <c>EnsureTableInMetadataCache(tableId)</c> — calling this while that same table's
+    /// <c>GetOrAdd</c> factory is still on the stack recurses until the stack overflows (measured
+    /// during #2197 investigation; see the NOTE in <c>BuildNCLMetaTable</c>). Idempotent via
+    /// <c>_injectedSubscriberMethods</c> — the next bulk <see cref="DoInject"/> pass simply finds
+    /// these subscribers already injected and skips them.
+    /// </summary>
+    public static void InjectTriggerSubsForTable(int tableId, object metaTableObj)
+    {
+        if (_reflectionFailed || _navAppGroupBaseGroup == null) return;
+        if (metaTableObj is not NCLMetaTable metaTable) return;
+        object? triggerHandlerObj;
+        try { triggerHandlerObj = _fTableTriggerEventHandler!.GetValue(metaTable); }
+        catch { triggerHandlerObj = null; }
+        if (triggerHandlerObj == null) return;
+        // Ensure discovery has run so _byKey is populated (it may not have been if this table is
+        // built before the first bulk injection pass — e.g. a platform table built during runtime
+        // bring-up, before EventSubscriberPatches.Register/EnsureRegistryFresh have ever run).
+        try { EnsureRegistryFresh(); } catch { }
+        if (_byKey.Count == 0) return;
+
+        lock (_lock)
+        {
+            int injected = 0, failed = 0;
+            foreach (var kv in _byKey)
+            {
+                if (kv.Key.PublisherId != tableId) continue;
+                int ord = kv.Key.EventTypeOrdinal;
+
+                var ordEnum = Enum.ToObject(_tNavTriggerEventType!, ord);
+                var createIfNotFound = Enum.ToObject(_tEventScopeGetOption!, 1); // CreateIfNotFound
+                object? scope;
+                try { scope = _miGetEventScope!.Invoke(triggerHandlerObj, new object?[] { ordEnum, createIfNotFound }); }
+                catch (Exception ex)
+                {
+                    var inner = ex is TargetInvocationException tie ? tie.InnerException ?? ex : ex;
+                    Console.Error.WriteLine($"[Subscribers] GetEventScope({tableId},{ord}) failed (lazy): " +
+                        $"{inner.GetType().Name}: {inner.Message}");
+                    failed += kv.Value.Count(s => !_injectedSubscriberMethods.Contains(s.Method));
+                    continue;
+                }
+                if (scope == null) { failed += kv.Value.Count(s => !_injectedSubscriberMethods.Contains(s.Method)); continue; }
+
+                var existing = (Array?)_fRegisteredSubscriptions!.GetValue(scope);
+                var newOnes = new List<object>();
+                foreach (var sub in kv.Value)
+                {
+                    if (_injectedSubscriberMethods.Contains(sub.Method)) continue;
+                    object? subscription;
+                    try { subscription = BuildSubscription(sub); }
+                    catch (Exception ex)
+                    {
+                        var inner = ex is TargetInvocationException tie ? tie.InnerException ?? ex : ex;
+                        Console.Error.WriteLine($"[Subscribers] BuildSubscription failed for " +
+                            $"{sub.DiagnosticName}: {inner.GetType().Name}: {inner.Message}");
+                        failed++;
+                        _injectedSubscriberMethods.Add(sub.Method);
+                        continue;
+                    }
+                    if (subscription == null) { failed++; _injectedSubscriberMethods.Add(sub.Method); continue; }
+                    newOnes.Add(subscription);
+                    _injectedSubscriberMethods.Add(sub.Method);
+                    injected++;
+                }
+                if (newOnes.Count == 0) continue;
+
+                int oldLen = existing?.Length ?? 0;
+                var merged = Array.CreateInstance(_tNavEventSubscription!, oldLen + newOnes.Count);
+                if (existing != null && oldLen > 0) Array.Copy(existing, 0, merged, 0, oldLen);
+                for (int i = 0; i < newOnes.Count; i++) merged.SetValue(newOnes[i], oldLen + i);
+                FieldPoke.SetInstance(_fRegisteredSubscriptions, scope, merged);
+            }
+            if (injected > 0 || failed > 0)
+                Console.Error.WriteLine($"[Subscribers] trigger-inject (table {tableId}, lazy): " +
+                    $"injected={injected} failed={failed}");
+        }
+    }
+
+    /// <summary>
     /// Inject field-scoped validate subscribers (OnBefore/OnAfterValidateEvent). These are
     /// dispatched by BC's own NavRecord validate path:
     ///   if (metaField.IsEventSubscribed(OnAfterValidateEvent, appGroup))

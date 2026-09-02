@@ -140,6 +140,16 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             // producing a 73s single-threaded tail (it is 3rd-heaviest at ~196s of serial
             // work; see the file header and issue #1887 for the measured timeline).
             ["InstallSeedDepCompanyCacheTests"] = 196,
+            // #2348: EmptySetupTable_Get/EmptySetupTable_TestField now call DeleteAll() on
+            // "Source Code Setup" before asserting it's empty (fixing IncludeSender's
+            // sender-position dispatch also fixed a latent install-time bug that used to
+            // leave that table's own default-row insert silently broken, so a fresh company
+            // may now legitimately arrive with a row already in it — DeleteAll() makes
+            // emptiness a fact the test guarantees instead of one it used to inherit).
+            // Absent from this table before, fell back to UnmeasuredWeightSeconds; measured
+            // 60.8s on the BC 28.3 leg of the first CI run after the fix, tripping
+            // check-collection-weights.py. Rounded down per the file header's rule.
+            ["MissingTestDataDiagnosisTests"] = 60,
             // #2175: measured 31.8s (28.2) to 61.2s (27.5) across the eight legs of one
             // run — it crosses the 60s freshness threshold only under load, so it failed
             // whichever leg happened to be slow while being absent here. The low-end rule

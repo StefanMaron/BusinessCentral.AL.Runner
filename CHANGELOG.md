@@ -12,6 +12,12 @@ All notable changes to this project are documented here. Format based on
 - **all-profile:** populate the All Profile system virtual table (2000000178)
 
 ### Fixed
+- **query:** compute single-dataitem FlowField query columns instead of NRE-ing or corrupting the value
+- **test-exec:** make a watchdog-timeout suite abort loud, not silent
+- **query:** retarget wildcard filters on query columns to the source field
+- **events:** bind IncludeSender to the sender parameter at any position
+- **events:** lazily inject table-trigger subscribers at metatable-build time
+- **agents:** allowlist the bc-decompiler MCP tools the agent definitions already document
 - **testpage:** await the AL page trigger's ValueTask so a control's OnValidate error is not silently discarded
 - **page:** dispatch non-modal Page.Run instead of NREing on a null ServiceConnection
 - **session:** give the skeleton NavDatabase a tenant so BC can answer the execution context

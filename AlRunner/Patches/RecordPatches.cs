@@ -430,6 +430,22 @@ public static partial class RecordPatches
                 ?.SetValue(sqlDbProps, new object());
             tSqlDbProps.GetField("databasePropertiesReady", BindingFlags.NonPublic | BindingFlags.Instance)
                 ?.SetValue(sqlDbProps, true);
+            // #2300: NavSqlDatabaseProperties.InvalidIdentifierChars is read by
+            // NavSqlStatementHelper.ConvertToSqlIdentifier (via NCLMetaTable.SqlTableName),
+            // which a Query with a FlowField column reaches while naming the FlowField's
+            // synthesized sub-dataitem (NCLMetaQuery.CreateSubQueryForFlowFieldCalculation
+            // → SqlTableDataProviderHelper.CreateDataItemFromFlowField). GetUninitializedObject
+            // leaves the private `invalidIdentifierChars` field null, and ConvertToSqlIdentifier
+            // iterates it unconditionally — NRE before any row is read, regardless of whether the
+            // identifier it's naming actually contains an invalid character. Populate it from BC's
+            // own internal constant (read via reflection, not restated as a literal, so a future
+            // BC version's different default is picked up automatically rather than silently
+            // diverging) — the same value the real ctor assigns before any SQL round-trip.
+            var fDefaultInvalidChars = tSqlDbProps.GetField("DefaultInvalidIdentifierChars",
+                BindingFlags.NonPublic | BindingFlags.Static);
+            var defaultInvalidChars = fDefaultInvalidChars?.GetRawConstantValue() as string ?? ".\"\\/'%][";
+            tSqlDbProps.GetField("invalidIdentifierChars", BindingFlags.NonPublic | BindingFlags.Instance)
+                ?.SetValue(sqlDbProps, defaultInvalidChars);
             fSqlDbProps.SetValue(_skeletonDatabase, sqlDbProps);
         }
         // companyTokens — BC's own NavDatabase ctor does `companyTokens = new CompanyTokens(this)`,
@@ -1157,6 +1173,10 @@ public static partial class RecordPatches
         // vendor name), without the subscriber injection an ISV's OnAfterValidateEvent never fires.
         WireFieldTriggerHandlersForTable(id, metaTable);
         AlRunner.Patches.EventSubscriberPatches.InjectValidateSubsForTable(id, metaTable);
+        // Table-level trigger subscribers (Insert/Modify/Delete/Rename ordinals) — same lazy
+        // wiring, called here (after GetOrAdd returned) rather than from inside BuildNCLMetaTable
+        // to avoid the reentrant-GetOrAdd stack overflow described on InjectTriggerSubsForTable.
+        AlRunner.Patches.EventSubscriberPatches.InjectTriggerSubsForTable(id, metaTable);
         return rec;
     }
 

@@ -84,6 +84,9 @@ public static partial class RecordPatches
             // value factory, so any metadata lookups hit the cache, no reentrancy).
             WireFieldTriggerHandlersForTable(tableId, metaTableSelf);
             EventSubscriberPatches.InjectValidateSubsForTable(tableId, metaTableSelf);
+            // Table-level trigger subscribers — see InjectTriggerSubsForTable for why this must
+            // run after GetOrAdd returns, not from inside BuildNCLMetaTable.
+            EventSubscriberPatches.InjectTriggerSubsForTable(tableId, metaTableSelf);
         }
         return rec;
     }
