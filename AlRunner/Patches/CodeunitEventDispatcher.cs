@@ -190,6 +190,15 @@ public static partial class BcRuntime
         string eventMethodName = scopeName.Substring(0, us);
 
         if (!TryDecodeEventPublisherDeclType(declName, out var publisherKind, out int publisherId)) return;
+        // #2348 safety net: the publisher's OWN declared event method (the local procedure
+        // carrying [IntegrationEvent]/[BusinessEvent]) tells us exactly how many parameters
+        // the AL author declared — NOT counting IncludeSender's implicit sender. A subscriber
+        // is only allowed to bind a sender when its own parameter count is EXACTLY one more
+        // than this — see IsSenderParameter's doc comment for why relying on "no scope field
+        // matched" alone is not safe on its own.
+        int? publisherEventArity = declType.GetMethod(eventMethodName,
+                BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static)
+            ?.GetParameters().Length;
         IReadOnlyList<MethodInfo>? subs = publisherKind switch
         {
             PublisherKindCodeunit => EventSubscriberPatches.GetCodeunitSubscribers(publisherId, eventMethodName),
@@ -232,11 +241,11 @@ public static partial class BcRuntime
                     // into an event, e.g. System Application Test Library's 132513
                     // "Confirm Test Library" answering OnBeforeGuiAllowed with false).
                     foreach (var bound in BoundInstancesOf(ExtractCodeunitIdFromTypeName(sub.DeclaringType!)))
-                        InvokeOneSubscriber(publisherScope, scopeType, pubObj, sub, bound);
+                        InvokeOneSubscriber(publisherScope, scopeType, pubObj, sub, bound, publisherEventArity);
                 }
                 else
                 {
-                    InvokeOneSubscriber(publisherScope, scopeType, pubObj, sub, null);
+                    InvokeOneSubscriber(publisherScope, scopeType, pubObj, sub, null, publisherEventArity);
                 }
             }
             catch (TargetInvocationException tie)
@@ -399,7 +408,7 @@ public static partial class BcRuntime
     private static PropertyInfo? _pNavCodeunitHandle_Target;
 
     private static void InvokeOneSubscriber(object publisherScope, Type scopeType, object treeObj, MethodInfo subscriberMethod,
-        object? boundInstance)
+        object? boundInstance, int? publisherEventArity)
     {
         EnsureCodeunitHandleReflection();
 
@@ -449,20 +458,31 @@ public static partial class BcRuntime
         // publisher itself (wrapped in a NavCodeunitHandle for a codeunit publisher, or passed
         // straight through for a table publisher — see IsSenderParameter/#1956).
         //
-        // Field lookup runs FIRST and wins: an IncludeSender=true event declares no parameters
-        // at all, so AL never emits a scope field for its "Sender" — the field-vs-sender
-        // branches can never both match the SAME parameter. A leading parameter that DOES have
-        // a matching scope field is a genuinely declared, record-typed (or codeunit-typed)
-        // event ARGUMENT, not a sender, and must keep taking its value from the scope.
+        // Field lookup runs FIRST and wins: an IncludeSender=true event's SENDER parameter has
+        // no scope field (see IsSenderParameter's doc comment for why), so the field-vs-sender
+        // branches can never both match the SAME parameter. A parameter that DOES have a
+        // matching scope field is a genuinely declared, record-typed (or codeunit-typed) event
+        // ARGUMENT, not a sender, and must keep taking its value from the scope.
+        //
+        // "No matching scope field" is necessary but not SUFFICIENT, though (#2348): a
+        // subscriber parameter can lack a matching field for other reasons too (a stale-named
+        // arg, a rename mismatch, anything the compiler emits that this lookup doesn't
+        // recognise). Before treating that fallthrough as sender-shaped, the ARITY must also
+        // fit — the subscriber has EXACTLY ONE more parameter than the publisher itself
+        // declared for this event. That is the one condition IncludeSender's own contract
+        // guarantees; anything else can produce a genuinely-still-null desired value, and
+        // substituting the publisher instance instead would be a silent wrong answer (see
+        // .claude/rules/loud-failures.md) rather than the intended one.
         int publisherCodeunitId = ExtractCodeunitIdFromTypeName(treeObj.GetType());
         var parms = subscriberMethod.GetParameters();
+        bool arityAllowsSender = publisherEventArity.HasValue && parms.Length == publisherEventArity.Value + 1;
         var args = new object?[parms.Length];
         for (int i = 0; i < parms.Length; i++)
         {
             var p = parms[i];
             var fld = scopeType.GetField(p.Name!,
                 BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase);
-            if (fld == null && IsSenderParameter(p, i))
+            if (fld == null && arityAllowsSender && IsSenderParameter(p, i))
             {
                 if (typeof(Microsoft.Dynamics.Nav.Runtime.INavRecordHandle).IsAssignableFrom(p.ParameterType))
                 {
