@@ -645,13 +645,29 @@ public sealed class TestExecutor
                         instMs += stageSw.ElapsedMilliseconds;
                         if (fresh == null)
                         {
-                            // The very first instantiation of this type (above) already
-                            // succeeded with a matching constructor, so this can only
-                            // mean the type stopped being instantiable mid-codeunit,
-                            // which should never happen — treat it the same as the
-                            // outer "no matching ctor" case rather than fail every
-                            // remaining test one by one.
-                            break;
+                            // Unreachable today, and deliberately loud rather than silent.
+                            //
+                            // InstantiateCodeunit returns null in exactly one case: no
+                            // constructor taking a single ITreeObject. Every other failure
+                            // throws and is caught just above. Reaching here means the FIRST
+                            // instantiation of this same `t` returned non-null (otherwise the
+                            // `instance == null` check further up would have skipped the whole
+                            // codeunit), so a matching constructor exists — and
+                            // Type.GetConstructors() cannot change for a loaded type while the
+                            // process runs. So this branch cannot execute.
+                            //
+                            // It used to `break`, which would have silently dropped every
+                            // remaining [Test] in the codeunit — the exact shape #2415 fixed
+                            // elsewhere in this loop. If InstantiateCodeunit ever gains a second
+                            // reason to return null, that silent truncation would come back with
+                            // nothing reporting it. Throwing means the day it becomes reachable
+                            // is the day it is seen (#2420).
+                            throw new InvalidOperationException(
+                                $"TestExecutor: re-instantiating test codeunit '{t.Name}' returned null "
+                                + $"before '{m.Name}', although its first instantiation succeeded. "
+                                + "InstantiateCodeunit only returns null when no ITreeObject constructor "
+                                + "exists, which cannot change for a loaded type — so this indicates a "
+                                + "change in InstantiateCodeunit, not a fault in the AL under test.");
                         }
                         testInstance = fresh;
                     }
