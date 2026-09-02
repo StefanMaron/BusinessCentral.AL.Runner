@@ -69,7 +69,7 @@ public static class RunnerTestPageState
             live.RaiseOnOpenPage();
             if (viewMode == Microsoft.Dynamics.Nav.Types.Metadata.ViewMode.Create)
                 live.InsertEmptyRow(beforeCurrent: true);
-            else if (live.Record != null)
+            else if (live.Record != null && AlRunner.Patches.RunnerTestClientSession.IsUnpositioned(live.Record))
                 // A real client positions on the first row (or the implicit new-row line, if
                 // the view has none — see LiveNavTestPage.MoveFirst) the instant the page
                 // opens, before any AL code runs. Without this, a page opened on an empty view
@@ -81,6 +81,11 @@ public static class RunnerTestPageState
                 // Guarded on Record != null: a page with no SourceTable (the StandardDialog
                 // shape, issue #2007) has no rowset to position at all, and MoveFirst() refuses
                 // that case by name (RequireRecord) rather than silently doing nothing.
+                //
+                // Guarded on IsUnpositioned too, same reason as RunnerTestClientSession.GetPage
+                // (corpus CU60848 RunModal_OpensOnTheRecordSetByTheCaller): a record the caller
+                // already positioned on a specific row must not be silently reset to the
+                // table's own first row.
                 live.MoveFirst();
         }
         catch { /* a page that cannot be marked simply behaves as it did before */ }
