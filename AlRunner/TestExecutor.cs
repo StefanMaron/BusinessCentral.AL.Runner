@@ -346,7 +346,10 @@ public sealed class TestExecutor
         using (AlRunner.Infrastructure.PhaseLog.AppStage("install-seed-reset-per-test"))
             AlRunner.Patches.RecordPatches.ResetPerTestState();
         using (AlRunner.Infrastructure.PhaseLog.AppStage("install-seed-reset-for-new-bundle"))
+        {
             CompanyInitializer.ResetForNewBundle();
+            AlRunner.Patches.RecordPatches.ResetCompanySystemTableForNewBundle();
+        }
         using (AlRunner.Infrastructure.PhaseLog.AppStage("install-seed-set-test-assembly"))
             InstallTriggerRunner.SetTestAssembly(assembly);
         // #1867: install-seed-run-install-triggers + install-seed-ensure-company-initialized
@@ -467,6 +470,11 @@ public sealed class TestExecutor
         // shared across app groups, so this always runs fresh, cache or no cache.
         using (AlRunner.Infrastructure.PhaseLog.AppStage("install-seed-run-own-install-triggers"))
             InstallTriggerRunner.RunTestAssemblyOnly();
+        // #2329 — the Company system table row. Must be seeded BEFORE the baseline capture
+        // below: the per-codeunit restore puts the store back to that baseline, so a row
+        // added after it would survive only until the first codeunit boundary.
+        using (AlRunner.Infrastructure.PhaseLog.AppStage("install-seed-company-row"))
+            AlRunner.Patches.RecordPatches.EnsureCompanySystemTableRowSeeded();
         using (AlRunner.Infrastructure.PhaseLog.AppStage("install-seed-capture-baseline"))
             AlRunner.Patches.RecordPatches.CaptureInstallBaseline();
         seedSw.Stop();
