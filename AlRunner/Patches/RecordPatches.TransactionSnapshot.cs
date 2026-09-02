@@ -128,6 +128,42 @@ public static partial class RecordPatches
     [ThreadStatic]
     private static Stack<List<object>>? _pendingInsertsScopeStack;
 
+    // Depth of nested asserterror scopes on this thread — the "scope active" signal
+    // NoteTransactionWrite uses to decide whether to also refresh _scopedPreWrite (see
+    // below). _pendingInsertsInScope can't serve as that signal: EndAssertErrorScope leaves
+    // it non-null (an empty list popped from the stack) after a scope ends, not null.
+    [ThreadStatic]
+    private static int _scopeDepth;
+
+    // Per-table pre-write image, refreshed on EVERY write made WHILE the CURRENTLY executing
+    // asserterror-wrapped statement is running (AlRunner#2191) — deliberately NOT the same
+    // as _txCommitPoint, which is captured once, lazily, and never refreshed (see
+    // NoteTransactionWrite). SettleAssertErrorScopeWrites reads this to decide, per table,
+    // whether the write that produced the snapshot ever physically landed.
+    [ThreadStatic]
+    private static Dictionary<(object Source, int TableId), BaselineTable>? _scopedPreWrite;
+
+    [ThreadStatic]
+    private static Stack<Dictionary<(object Source, int TableId), BaselineTable>>? _scopedPreWriteStack;
+
+    // The NavRecord instance the MOST RECENT write-note call inside the current scope was
+    // for. SettleAssertErrorScopeWrites' doc explains why, within one scope, at most one
+    // write can fail to land, and it is always this one: an earlier write's trigger throwing
+    // would have unwound straight to the catch before a later write ever ran.
+    [ThreadStatic]
+    private static object? _lastScopedWriteRecord;
+
+    [ThreadStatic]
+    private static Stack<object?>? _lastScopedWriteRecordStack;
+
+    // Set by SettleAssertErrorScopeWrites, consumed by ForceDurableFailedInserts immediately
+    // afterwards (same catch handler, no intervening scope change) — true when
+    // _lastScopedWriteRecord's own write physically landed, so ForceDurableFailedInserts must
+    // NOT force it durable a second time (and must not force any OTHER pending insert durable
+    // either — see AlRunner#2191 shape 4).
+    [ThreadStatic]
+    private static bool _lastScopedWriteLanded;
+
     /// <summary>
     /// Establish a commit point: everything written up to now survives a later rollback.
     /// Called at each test-method boundary and from AL's <c>Commit()</c>.
@@ -135,29 +171,40 @@ public static partial class RecordPatches
     public static void MarkCommitPoint() => _txCommitPoint.Clear();
 
     /// <summary>
-    /// Start tracking Insert() attempts for the statement asserterror is about to invoke,
-    /// pushing aside whatever the OUTER scope (if any — nested asserterror) had accumulated.
-    /// Called from MethodScopePatches.NavMethodScope_AssertError immediately before invoking
-    /// the wrapped Action. Does NOT touch <see cref="_txCommitPoint"/> — the general
+    /// Start tracking Insert() attempts and per-write pre-images for the statement
+    /// asserterror is about to invoke, pushing aside whatever the OUTER scope (if any —
+    /// nested asserterror) had accumulated. Called from
+    /// MethodScopePatches.NavMethodScope_AssertError immediately before invoking the wrapped
+    /// Action. Does NOT touch <see cref="_txCommitPoint"/> — the general
     /// roll-back-to-last-commit-point rule is unscoped by design (Codeunit 60943).
     /// </summary>
     public static void BeginAssertErrorScope()
     {
         (_pendingInsertsScopeStack ??= new()).Push(_pendingInsertsInScope ?? new List<object>());
         _pendingInsertsInScope = new List<object>();
+        (_scopedPreWriteStack ??= new()).Push(_scopedPreWrite ?? new());
+        _scopedPreWrite = new();
+        (_lastScopedWriteRecordStack ??= new()).Push(_lastScopedWriteRecord);
+        _lastScopedWriteRecord = null;
+        _scopeDepth++;
     }
 
     /// <summary>
-    /// Restore the outer scope's pending-inserts list pushed aside by
-    /// <see cref="BeginAssertErrorScope"/>. Called from
+    /// Restore the outer scope's pending-inserts list and per-write pre-images pushed aside
+    /// by <see cref="BeginAssertErrorScope"/>. Called from
     /// MethodScopePatches.NavMethodScope_AssertError in a finally around the wrapped Action,
     /// after <see cref="ForceDurableFailedInserts"/> (if the statement threw) has already
-    /// consumed this scope's own list.
+    /// consumed this scope's own state.
     /// </summary>
     public static void EndAssertErrorScope()
     {
         var stack = _pendingInsertsScopeStack;
         _pendingInsertsInScope = (stack != null && stack.Count > 0) ? stack.Pop() : null;
+        var pwStack = _scopedPreWriteStack;
+        _scopedPreWrite = (pwStack != null && pwStack.Count > 0) ? pwStack.Pop() : null;
+        var lwStack = _lastScopedWriteRecordStack;
+        _lastScopedWriteRecord = (lwStack != null && lwStack.Count > 0) ? lwStack.Pop() : null;
+        if (_scopeDepth > 0) _scopeDepth--;
     }
 
     /// <summary>
@@ -222,13 +269,31 @@ public static partial class RecordPatches
     }
 
     /// <summary>
-    /// Snapshot the record's table to its CURRENT live state on every write — see the file
-    /// header's "always refresh" note for why this must not skip when a snapshot already
-    /// exists for the table (that lazy-first-write-only version is what let
-    /// OnDelete_Throws_RecordStillExists's rollback reach back past an earlier, unrelated
-    /// Insert to a stale, pre-Insert baseline). Called from
-    /// <see cref="ALDatabasePatches.NoteRecordWrite"/> / <see cref="ALDatabasePatches.NoteRecordInsertWrite"/>,
-    /// which BC's own AL write entry points run before doing anything.
+    /// Capture the pre-write image of the record's table. Two independent captures happen
+    /// here, at every write (AlRunner#2191 rewrote this from the earlier "always refresh"
+    /// design — see the file header's "HOW IT IS DONE HERE" section):
+    ///
+    ///   - <see cref="_txCommitPoint"/>, the TRUE commit-point baseline: captured ONCE,
+    ///     lazily, on the FIRST write to a table since the last commit point, and never
+    ///     refreshed after that. This is what an UNRELATED asserterror rolls back to
+    ///     (TestAssertErrorRollback.al) — everything written since commit is discarded,
+    ///     however many separate writes landed, and however many statements they were spread
+    ///     across (AlRunner#2191 shapes: two Inserts to the same table, an Insert+Modify, or
+    ///     writes made INSIDE the asserterror'd statement itself followed by an unrelated
+    ///     Error()).
+    ///
+    ///   - <see cref="_scopedPreWrite"/>, refreshed on EVERY write made while an asserterror
+    ///     scope is active (<see cref="_scopeDepth"/> &gt; 0 — see BeginAssertErrorScope).
+    ///     SettleAssertErrorScopeWrites reads this, per table, to decide whether the write
+    ///     that produced it ever physically landed; if it did not (TestTriggerRollback.al's
+    ///     shape — the asserterror'd statement IS the failing write), that table is left out
+    ///     of the general rollback below entirely, so whatever it already held (however
+    ///     uncommitted) survives.
+    ///
+    /// Called from <see cref="ALDatabasePatches.NoteRecordWrite"/> /
+    /// <see cref="ALDatabasePatches.NoteRecordInsertWrite"/>, which BC's own AL write entry
+    /// points run before doing anything — so both captures are always the state BEFORE this
+    /// particular write, whether or not it goes on to succeed.
     /// </summary>
     internal static void NoteTransactionWrite(object? record)
     {
@@ -236,6 +301,8 @@ public static partial class RecordPatches
         int tableId;
         try { tableId = rec.MetaTable.TableId; }
         catch { return; }
+
+        var scopeActive = _scopeDepth > 0;
 
         foreach (var (source, perTable) in _dataAccessByTable)
         {
@@ -257,8 +324,94 @@ public static partial class RecordPatches
                     if (row is TempTableRecordBuffer buffer)
                         rows.Add(CloneValues(buffer.ToArray()));
 
-            _txCommitPoint[key] = new BaselineTable(tableId, metaTable, rows.ToArray());
+            var snapshot = new BaselineTable(tableId, metaTable, rows.ToArray());
+
+            if (!_txCommitPoint.ContainsKey(key))
+                _txCommitPoint[key] = snapshot;
+
+            if (scopeActive)
+                (_scopedPreWrite ??= new())[key] = snapshot;
         }
+
+        if (scopeActive) _lastScopedWriteRecord = rec;
+    }
+
+    /// <summary>
+    /// Called from MethodScopePatches.NavMethodScope_AssertErrorCore's catch handler, BEFORE
+    /// <see cref="RollbackToCommitPoint"/>. For every table written to WHILE the just-caught
+    /// exception's statement was executing (<see cref="_scopedPreWrite"/>, refreshed on every
+    /// scoped write — see NoteTransactionWrite), compares the CURRENT live rows to that
+    /// pre-write image:
+    ///
+    ///   - identical → the write that produced this snapshot never physically landed (its own
+    ///     trigger threw before the physical write ran — TestTriggerRollback.al's shape).
+    ///     Pruning the table's entry from <see cref="_txCommitPoint"/> means
+    ///     RollbackToCommitPoint below has nothing to restore for it, so whatever the table
+    ///     already held — committed or not — is left exactly as it is. Also records that
+    ///     <see cref="_lastScopedWriteRecord"/> (the record that write-note call was for)
+    ///     did NOT land, for ForceDurableFailedInserts to consult.
+    ///
+    ///   - different → a write to this table DID land before some LATER, unrelated failure in
+    ///     the same statement (AlRunner#2191 shape 4: two successful Inserts then a plain
+    ///     Error()). The scoped snapshot is stale (it predates the landed write) and must NOT
+    ///     be used — the table's entry in _txCommitPoint stays under its TRUE, unrefreshed
+    ///     baseline, so RollbackToCommitPoint discards the landed write along with everything
+    ///     else written since the last commit point, exactly as an unrelated asserterror must.
+    ///
+    /// Consumes <see cref="_scopedPreWrite"/> for the ending scope either way (it is rebuilt
+    /// from scratch by the next BeginAssertErrorScope).
+    /// </summary>
+    internal static void SettleAssertErrorScopeWrites()
+    {
+        _lastScopedWriteLanded = true;
+        var scoped = _scopedPreWrite;
+        if (scoped == null || scoped.Count == 0) return;
+
+        foreach (var (key, snap) in scoped)
+        {
+            if (!_dataAccessByTable.TryGetValue(key.Source, out var perTable)) continue;
+            if (!perTable.TryGetValue(key.TableId, out var dataAccess)) continue;
+            var provider = GetDataProvider(dataAccess);
+            if (provider == null || provider.GetType().Name != "TempTableDataProvider") continue;
+
+            if (RowsUnchangedSince(provider, snap))
+            {
+                _txCommitPoint.Remove(key);
+                _lastScopedWriteLanded = false;
+            }
+        }
+    }
+
+    /// <summary>Reads the table's CURRENT live rows and compares them to <paramref
+    /// name="snap"/>'s, positionally — the same row order both captures came from (the
+    /// provider's own primaryTree enumeration), so this is a value comparison, not just a
+    /// count check (needed to detect a Modify whose row count doesn't change but whose field
+    /// values do — TestTriggerRollback.OnModify_Throws_ValueNotModified). NavBLOB fields are
+    /// always treated as equal: <see cref="CloneValues"/> deep-copies them on capture, so a
+    /// reference/default comparison would read "changed" even when nothing was, pushing a
+    /// genuine not-landed write into the wrong branch.</summary>
+    private static bool RowsUnchangedSince(object provider, BaselineTable snap)
+    {
+        var providerType = provider.GetType();
+        var current = new List<NavValue[]>();
+        if (RequiredField(providerType, "primaryTree").GetValue(provider) is IEnumerable primaryTree)
+            foreach (var row in primaryTree)
+                if (row is TempTableRecordBuffer buffer)
+                    current.Add(buffer.ToArray());
+
+        if (current.Count != snap.Rows.Length) return false;
+        for (var i = 0; i < current.Count; i++)
+        {
+            var a = current[i];
+            var b = snap.Rows[i];
+            if (a.Length != b.Length) return false;
+            for (var f = 0; f < a.Length; f++)
+            {
+                if (a[f] is NavBLOB || b[f] is NavBLOB) continue;
+                if (!Equals(a[f], b[f])) return false;
+            }
+        }
+        return true;
     }
 
     /// <summary>
@@ -292,15 +445,29 @@ public static partial class RecordPatches
 
     /// <summary>
     /// Called from MethodScopePatches.NavMethodScope_AssertErrorCore's catch handler, AFTER
-    /// <see cref="RollbackToCommitPoint"/> — order matters: a Modify/Delete on the SAME table
-    /// tracked earlier in this same statement could restore the table to a state that
-    /// pre-dates an Insert() also made during this statement, and inserting before that
-    /// rollback runs would just get discarded again.
+    /// <see cref="SettleAssertErrorScopeWrites"/> and <see cref="RollbackToCommitPoint"/> —
+    /// order matters: a Modify/Delete on the SAME table tracked earlier in this same
+    /// statement could restore the table to a state that pre-dates an Insert() also made
+    /// during this statement, and inserting before that rollback runs would just get
+    /// discarded again.
     ///
-    /// For every Insert() attempted during THIS statement (BeginAssertErrorScope/
-    /// EndAssertErrorScope-scoped — see their docs and the file header for why an Insert()
-    /// from an earlier, different statement must NOT be forced durable here), forces the row
-    /// durable if it isn't already there. Real BC's measured behaviour
+    /// Forces durable ONLY the record noted by the LAST write during this scope (<see
+    /// cref="_lastScopedWriteRecord"/>), and ONLY if <see cref="SettleAssertErrorScopeWrites"/>
+    /// determined it did NOT land (<see cref="_lastScopedWriteLanded"/> false). Every OTHER
+    /// Insert() attempted during this statement (BeginAssertErrorScope/EndAssertErrorScope-
+    /// scoped — see their docs and the file header for why an Insert() from an earlier,
+    /// different statement must never reach this list at all) already landed and stays
+    /// subject to the ordinary roll-back-to-commit-point rule RollbackToCommitPoint already
+    /// applied above — see AlRunner#2191 shape 4 (two successful Inserts inside the
+    /// asserterror'd statement, followed by an unrelated Error()): forcing EVERY pending
+    /// insert durable here (the pre-#2191 behaviour) re-added rows the rollback had already,
+    /// correctly, discarded. At most one write per scope can fail to land, and it is always
+    /// the last one noted — an earlier write's trigger throwing would have unwound straight
+    /// to this catch before a later write ever ran, so there is nothing to gain from checking
+    /// any entry but the last.
+    ///
+    /// When the last write IS the one that didn't land, and it was an Insert(), forces the
+    /// row durable if it isn't already there. Real BC's measured behaviour
     /// (TestTriggerRollback.OnInsert_Throws_RecordNotInserted) is that the row survives even
     /// OnInsert's own trigger throwing. This is NOT because OnInsert runs after the physical
     /// write on real BC — decompiled NavRecord.InsertAsync (Ncl.dll) runs OnInsert BEFORE
@@ -323,7 +490,11 @@ public static partial class RecordPatches
     {
         var pending = _pendingInsertsInScope;
         if (pending == null || pending.Count == 0) return;
-        foreach (var record in pending) ForceDurableInsert(record);
+        if (!_lastScopedWriteLanded && _lastScopedWriteRecord != null
+            && pending.Contains(_lastScopedWriteRecord))
+        {
+            ForceDurableInsert(_lastScopedWriteRecord);
+        }
         pending.Clear();
     }
 

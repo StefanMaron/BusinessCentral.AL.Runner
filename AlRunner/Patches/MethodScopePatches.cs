@@ -327,6 +327,12 @@ public static partial class BcRuntime
             // in MiscPatches) can return its message — Assert.ExpectedError / Library
             // Assert depend on this round-trip.
             StoreLastExceptionOnSkeletonSession(effectiveEx);
+            // AlRunner#2191: decide, per table written to WHILE `body` was executing,
+            // whether that write physically landed BEFORE rolling anything back — see
+            // RecordPatches.SettleAssertErrorScopeWrites. Must run before
+            // RollbackToCommitPoint: it prunes _txCommitPoint for tables whose last scoped
+            // write never landed, so the general rollback below leaves those tables alone.
+            AlRunner.Patches.RecordPatches.SettleAssertErrorScopeWrites();
             // BC's own AssertError ends its catch with session.Rollback(): an AL error
             // unwinds the database to the last COMMIT. This replacement exists because the
             // real body's rollback path NREs on the skeleton session, not because the
