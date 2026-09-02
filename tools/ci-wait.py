@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 import time
@@ -69,6 +70,20 @@ def gh(args: list[str], attempts: int = 4) -> tuple[int, str]:
     return 1, last.strip()
 
 
+def job_id_from(details_url: str | None) -> str | None:
+    """Actions job id out of a check-run details_url.
+
+    A check-run's own `id` is a DIFFERENT identifier from the Actions job id that
+    `gh run view --job` expects -- passing the former fails with "could not find
+    job", which is how this went wrong the first time. The job id is the trailing
+    segment of .../actions/runs/<run-id>/job/<job-id>.
+    """
+    if not details_url:
+        return None
+    m = re.search(r"/job/(\d+)", details_url)
+    return m.group(1) if m else None
+
+
 def head_sha(pr: str) -> str | None:
     rc, out = gh(["pr", "view", pr, "--repo", REPO, "--json", "headRefOid",
                   "--jq", ".headRefOid"])
@@ -77,7 +92,7 @@ def head_sha(pr: str) -> str | None:
 
 def required_checks(sha: str) -> list[dict] | None:
     rc, out = gh(["api", f"repos/{REPO}/commits/{sha}/check-runs?per_page=100",
-                  "--jq", "[.check_runs[] | {name, status, conclusion, id}]"])
+                  "--jq", "[.check_runs[] | {name, status, conclusion, id, details_url}]"])
     if rc != 0:
         return None
     try:
@@ -124,15 +139,22 @@ def main() -> int:
             for r in bad:
                 print(f"  {r['name']}: {r.get('conclusion')}")
             if not args.no_log:
-                rc, out = gh(["run", "view", "--repo", REPO, "--log-failed",
-                              "--job", str(bad[0]["id"])])
+                # The check-run `id` is NOT the Actions job id that `gh run view --job`
+                # wants; passing it fails with "could not find job". The job id is the
+                # trailing path segment of details_url (.../actions/runs/<run>/job/<job>).
+                job = job_id_from(bad[0].get("details_url"))
+                rc, out = (gh(["run", "view", "--repo", REPO, "--log-failed", "--job", job])
+                           if job else (1, ""))
                 if rc == 0 and out:
                     tail = out.split("\n")[-120:]
                     print("\n--- failing log (tail) ---")
                     print("\n".join(tail))
                 else:
+                    where = job or "<job id>"
                     print("\n(could not fetch the failing log; read it with "
-                          f"`gh run view --repo {REPO} --log-failed --job {bad[0]['id']}`)")
+                          f"`gh run view --repo {REPO} --log-failed --job {where}`)")
+                    if bad[0].get("details_url"):
+                        print(f" or open {bad[0]['details_url']}")
             print("\nNEVER `gh run rerun` -- it overwrites this log permanently. "
                   "Push a new commit for a fresh run.")
             return 1
