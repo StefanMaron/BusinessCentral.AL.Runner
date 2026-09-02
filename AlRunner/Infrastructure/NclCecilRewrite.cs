@@ -1166,8 +1166,8 @@ public static class NclCecilRewrite
             Console.Error.WriteLine("[Cecil] Rewrote NavTestPageBase.CheckPageOpened → no-op (ret)");
         }
 
-        // 3b. NavTestExecution.TestHandleModalForm — replace the CLIENT callback with the
-        //     runner's own dispatch.
+        // 3b. NavTestExecution.TestHandleModalForm and TestHandleForm — replace the CLIENT
+        //     callback with the runner's own dispatch.
         //
         //     BC finds the test's [ModalPageHandler], pushes a delegate that will run it onto
         //     dialogHandlerStack, then asks the client to run the form modally:
@@ -1183,10 +1183,14 @@ public static class NclCecilRewrite
         //
         //     Dropping the three middle instructions leaves `ldarg.0` (the NavTestExecution)
         //     where the callback receiver was, so the stack arriving at the call is exactly
-        //     [NavTestExecution][FormRunModalRequest] — the signature of the replacement,
-        //     which performs the step the client would have caused using BC's own ShowDialog
-        //     and SetLastFormResult. Satisfying this one call through a real IService
-        //     implementation would mean ~130 members that exist only to throw.
+        //     [NavTestExecution][FormRun(Modal)Request] — the signature of the replacement,
+        //     which performs the step the client would have caused using BC's own ShowDialog /
+        //     ShowForm. Satisfying this one call through a real IService implementation would
+        //     mean ~130 members that exist only to throw.
+        //
+        //     TestHandleForm is the non-modal twin (Page.Run) and carries the identical chain;
+        //     it is redirected the same way. Leaving it alone was worse than leaving it
+        //     refused — see the comment at that call below and issue #2349.
         {
             var navTestExecutionType = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.NavTestExecution")
                 ?? throw new InvalidOperationException("NavTestExecution type not found in Ncl — do not commit");
@@ -1194,40 +1198,66 @@ public static class NclCecilRewrite
                 .FirstOrDefault(m => m.Name == "TestHandleModalForm" && m.HasBody)
                 ?? throw new InvalidOperationException("NavTestExecution.TestHandleModalForm not found — do not commit");
 
-            var il = method.Body.GetILProcessor();
-            var call = method.Body.Instructions.FirstOrDefault(i =>
-                (i.OpCode == OpCodes.Callvirt || i.OpCode == OpCodes.Call)
-                && i.Operand is MethodReference mr && mr.Name == "FormRunModal"
-                && mr.Parameters.Count == 1)
-                ?? throw new InvalidOperationException(
-                    "TestHandleModalForm has no FormRunModal call — Ncl shape changed; do not commit");
-
-            // Walk back over the receiver chain: Proxy, get_CallbackHandler, get_ServiceConnection.
-            var toRemove = new List<Instruction>();
-            for (var cursor = call.Previous; cursor != null && toRemove.Count < 8; cursor = cursor.Previous)
+            // Both dispatch methods end in the SAME receiver chain, so redirect them the same
+            // way rather than twice by hand — a shape check that only one of them enforced is
+            // how TestHandleForm was left behind in the first place (issue #2349).
+            void RedirectClientCallback(string methodName, string callName, string replacementName)
             {
-                if (cursor.Operand is not MethodReference m2) continue;
-                if (m2.Name is "Proxy" or "get_CallbackHandler" or "get_ServiceConnection")
+                var target = navTestExecutionType.Methods
+                    .FirstOrDefault(m => m.Name == methodName && m.HasBody)
+                    ?? throw new InvalidOperationException(
+                        $"NavTestExecution.{methodName} not found — do not commit");
+
+                var il = target.Body.GetILProcessor();
+                var call = target.Body.Instructions.FirstOrDefault(i =>
+                    (i.OpCode == OpCodes.Callvirt || i.OpCode == OpCodes.Call)
+                    && i.Operand is MethodReference mr && mr.Name == callName
+                    && mr.Parameters.Count == 1)
+                    ?? throw new InvalidOperationException(
+                        $"{methodName} has no {callName} call — Ncl shape changed; do not commit");
+
+                // Walk back over the receiver chain: Proxy, get_CallbackHandler, get_ServiceConnection.
+                var toRemove = new List<Instruction>();
+                for (var cursor = call.Previous; cursor != null && toRemove.Count < 8; cursor = cursor.Previous)
                 {
-                    toRemove.Add(cursor);
-                    if (m2.Name == "get_ServiceConnection") break;
+                    if (cursor.Operand is not MethodReference m2) continue;
+                    if (m2.Name is "Proxy" or "get_CallbackHandler" or "get_ServiceConnection")
+                    {
+                        toRemove.Add(cursor);
+                        if (m2.Name == "get_ServiceConnection") break;
+                    }
                 }
+                if (toRemove.Count != 3)
+                    throw new InvalidOperationException(
+                        $"{methodName} receiver chain shape changed (matched {toRemove.Count} of 3) — do not commit");
+
+                foreach (var ins in toRemove) il.Remove(ins);
+
+                var replacement = asm.MainModule.ImportReference(
+                    typeof(AlRunner.Patches.RunnerModalDispatch).GetMethod(
+                        replacementName, BindingFlags.Public | BindingFlags.Static)
+                    ?? throw new InvalidOperationException(
+                        $"RunnerModalDispatch.{replacementName} not found — do not commit"));
+                il.Replace(call, il.Create(OpCodes.Call, replacement));
+
+                Console.Error.WriteLine(
+                    $"[Cecil] Rewrote NavTestExecution.{methodName} client callback → "
+                    + $"RunnerModalDispatch.{replacementName}");
             }
-            if (toRemove.Count != 3)
-                throw new InvalidOperationException(
-                    $"TestHandleModalForm receiver chain shape changed (matched {toRemove.Count} of 3) — do not commit");
 
-            foreach (var ins in toRemove) il.Remove(ins);
+            RedirectClientCallback("TestHandleModalForm", "FormRunModal",
+                nameof(AlRunner.Patches.RunnerModalDispatch.FormRunModal));
 
-            var replacement = asm.MainModule.ImportReference(
-                typeof(AlRunner.Patches.RunnerModalDispatch).GetMethod(
-                    nameof(AlRunner.Patches.RunnerModalDispatch.FormRunModal),
-                    BindingFlags.Public | BindingFlags.Static)
-                ?? throw new InvalidOperationException("RunnerModalDispatch.FormRunModal not found — do not commit"));
-            il.Replace(call, il.Create(OpCodes.Call, replacement));
-
-            Console.Error.WriteLine(
-                "[Cecil] Rewrote NavTestExecution.TestHandleModalForm client callback → RunnerModalDispatch.FormRunModal");
+            // NavTestExecution.TestHandleForm — the NON-MODAL twin, reached by Page.Run /
+            // NavForm.RunAsync. Its receiver chain is identical, and here ServiceConnection is
+            // not merely refusing: it is null, because the runner pokes testClientSession
+            // without testServiceConnection (only CreateTestClientSession sets the latter, and
+            // the poke exists precisely to skip it). So get_CallbackHandler NRE'd in
+            // TestHandleForm's own frame, and every [PageHandler] in a non-modal Page.Run was
+            // unreachable. RunnerModalDispatch.FormRun performs the step the client would have
+            // caused, through BC's own ShowForm.
+            RedirectClientCallback("TestHandleForm", "FormRun",
+                nameof(AlRunner.Patches.RunnerModalDispatch.FormRun));
 
             // NavSession.SetServerFormRequestData — called by TestHandleModalForm just BEFORE
             // the dispatch above, and its real body throws NotSupportedException outright when

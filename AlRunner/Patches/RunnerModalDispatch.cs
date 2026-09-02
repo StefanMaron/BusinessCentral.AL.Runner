@@ -1,4 +1,5 @@
-// RunnerModalDispatch — stand in for the CLIENT half of BC's modal-page handler round-trip.
+// RunnerModalDispatch — stand in for the CLIENT half of BC's page-handler round-trip, both
+// the modal one (RunModal → [ModalPageHandler]) and the non-modal one (Run → [PageHandler]).
 //
 // HOW BC DOES IT
 //   NavTestExecution.TestHandleModalForm finds the test's [ModalPageHandler], pushes a
@@ -15,6 +16,14 @@
 //   purpose is to refuse ("Client callbacks are not supported on {0}"). Implementing the
 //   real IService/IClientCallbackHandler surface to satisfy one call means ~130 members that
 //   exist only to throw, so NclCecilRewrite instead redirects that single call site here.
+//
+//   TestHandleForm — the NON-MODAL twin — ends in the same receiver chain, and it was worse
+//   than refused there: the runner field-pokes NavTestExecution.testClientSession with its own
+//   RunnerTestClientSession but never sets testServiceConnection (BC only assigns that inside
+//   CreateTestClientSession, which the poke bypasses). So ServiceConnection returned null and
+//   `callvirt IService::get_CallbackHandler()` NRE'd inside TestHandleForm's own frame, with
+//   no inner frame to name the cause. Redirecting that call site here removes the last read of
+//   ServiceConnection, so the broken invariant has no observer left. See issue #2349.
 //
 //   This is not a shortcut around BC's logic — it performs exactly the step the client would
 //   have caused, using BC's own methods: pop the dialog handler, record its result. Every
@@ -78,6 +87,78 @@ public static class RunnerModalDispatch
                 "NavTestExecution.SetLastFormResult not found — Ncl shape changed; do not commit");
         if (result != null && setLastFormResult.GetParameters()[0].ParameterType.IsInstanceOfType(result))
             Invoke(setLastFormResult, testExecution, new[] { result });
+    }
+
+    /// <summary>
+    /// Called from the rewritten NavTestExecution.TestHandleForm in place of the client
+    /// callback — the NON-MODAL twin of <see cref="FormRunModal"/>. Signature matches the call
+    /// site's stack shape: the NavTestExecution (left by the original `ldarg.0`) and the
+    /// FormRunRequest.
+    ///
+    /// BC's own callback for this direction is ShowForm(handle), which a real client reaches
+    /// after opening the page. ShowForm decides everything that matters: whether the page was
+    /// trapped by the test (attach it and let the test drive it), or whether a [PageHandler]
+    /// answers it (build a NavTestPage and invoke the handler), or neither — in which case BC
+    /// raises its own NavTestPageInvokedWithoutHandlerException. None of that logic is
+    /// duplicated here.
+    /// </summary>
+    public static void FormRun(object testExecution, object runRequest)
+    {
+        if (testExecution == null || runRequest == null)
+            throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+                "TestPage page dispatch",
+                "testpage-page — the runner was asked to run a page with no test-execution "
+                + "context or no request. See docs/scope.md");
+
+        var handle = FormHandleOf(runRequest);
+        var type = testExecution.GetType();
+        var form = RegisteredForm(handle);
+
+        // A page the test TRAPPED (TestPage.Trap()) is handed to the test's own TestPage
+        // variable by ShowForm and stays open until the test closes it. Closing it here would
+        // pull the page out from under the AL that is about to drive it — so ask BEFORE
+        // ShowForm, which consumes the trap.
+        var trapped = HasTrap(testExecution, form);
+
+        // Same reasoning as the modal path: a real client opens the form as part of this round
+        // trip, and opening is what raises OnOpenPage. Not wrapped in a catch — an Error()
+        // raised in OnOpenPage is a real test failure.
+        var opened = TryOpenForm(form);
+
+        var showForm = type.GetMethod("ShowForm", BindingFlags.NonPublic | BindingFlags.Instance)
+            ?? throw new InvalidOperationException(
+                "NavTestExecution.ShowForm not found — Ncl shape changed; do not commit");
+        try
+        {
+            Invoke(showForm, testExecution, new object?[] { handle });
+        }
+        finally
+        {
+            if (opened && !trapped) TryCloseForm(form!, result: null);
+        }
+    }
+
+    /// <summary>
+    /// Whether the test has an outstanding TestPage.Trap() for this form's page, asked through
+    /// BC's own NavTestExecution.HasTrap so the answer is the one ShowForm will act on.
+    /// </summary>
+    private static bool HasTrap(object testExecution, object? form)
+    {
+        if (form == null) return false;
+
+        var objectId = form.GetType()
+            .GetProperty("ObjectId", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?
+            .GetValue(form);
+        if (objectId?.GetType()
+                .GetProperty("ObjectNumber", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?
+                .GetValue(objectId) is not int pageNo)
+            return false;
+
+        var hasTrap = testExecution.GetType().GetMethod("HasTrap",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+            binder: null, types: new[] { typeof(int) }, modifiers: null);
+        if (hasTrap == null) return false;
+        return Invoke(hasTrap, testExecution, new object?[] { pageNo }) is true;
     }
 
     /// <summary>
