@@ -1584,6 +1584,32 @@ public static partial class RecordPatches
                 return permSetDa;
             }
 
+            // ── Aggregate Permission Set system virtual table (2000000167) ──────────────
+            // Virtual on the service tier too: its rows are the UNION of System-scope
+            // (Metadata Permission Set, 2000000250 — just above) and Tenant-scope (Tenant
+            // Permission Set, 2000000165) rows, computed by BC's own
+            // AggregatePermissionSetDataProvider, driven directly by reflection. An empty
+            // store made every `Record "Aggregate Permission Set".Get(...)` fail "does not
+            // exist" — the root of a 14-test "already bound" cascade in Microsoft's own
+            // Tests-SINGLESERVER bucket (issue #2357, ruled out as a binding-mechanism
+            // defect by #2393). See RecordPatches.AggregatePermissionSetVirtualTable.cs.
+            if (IsAggregatePermissionSetVirtualTable(table))
+            {
+                if (!perTable.TryGetValue(tableId, out var aggPermSetDa))
+                {
+                    var createdAggPermSet = _mCreateTempDataAccess!.Invoke(self, new object[] { table })!;
+                    aggPermSetDa = perTable.GetOrAdd(tableId, createdAggPermSet);
+                }
+                var aggPermSetSession = _fDasSession?.GetValue(self)
+                    ?? throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+                        "Aggregate Permission Set (virtual table 2000000167)",
+                        "aggregate-permission-set-virtual-table — DataAccessSource has no skeleton "
+                        + "session, so BC's own AggregatePermissionSetDataProvider cannot be "
+                        + "constructed; see docs/scope.md");
+                PopulateAggregatePermissionSetVirtualTable(aggPermSetDa, table, aggPermSetSession);
+                return aggPermSetDa;
+            }
+
             if (IsReportDataItemsVirtualTable(table))
             {
                 if (!perTable.TryGetValue(tableId, out var reportDiDa))
