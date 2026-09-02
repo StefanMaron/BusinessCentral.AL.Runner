@@ -126,4 +126,42 @@ public class DispatchSenderParameterClassificationTests
 
         Assert.False(BcRuntime.IsSenderParameter(p, paramIndex: 0));
     }
+
+    // ── #2348 follow-up: AllowsSenderSubstitution (the omitted-trailing-parameter fix) ──
+    //
+    // AL lets a subscriber omit trailing publisher parameters entirely, sender included
+    // (confirmed empirically against a real compiled bundle: a subscriber declaring only a
+    // PREFIX of the publisher's parameters compiles and dispatches). An earlier version of
+    // this fix required the subscriber's parameter count to be EXACTLY one more than the
+    // publisher's declared arity, which rejected that legal shape and regressed a
+    // sender-first subscriber that also omits a trailing parameter — worse than even the
+    // pre-#2348 position-0-only behaviour, which tolerated it. AllowsSenderSubstitution
+    // replaces the arity count with counting how many of THIS subscriber's own parameters
+    // had no matching scope field: exactly one is the only shape IncludeSender's contract
+    // produces, at any position, with any number of trailing parameters omitted.
+
+    [Fact]
+    public void AllowsSenderSubstitution_ExactlyOneUnmatchedParameter_IsAllowed()
+    {
+        // The IncludeSender shape: every declared event argument matched a scope field,
+        // and the sender itself is the sole leftover.
+        Assert.True(BcRuntime.AllowsSenderSubstitution(unmatchedFieldCount: 1));
+    }
+
+    [Fact]
+    public void AllowsSenderSubstitution_NoUnmatchedParameters_IsNotAllowed()
+    {
+        // A subscriber that omits trailing parameters and does NOT declare a sender: every
+        // parameter it kept matched a scope field, so there is nothing left to substitute.
+        Assert.False(BcRuntime.AllowsSenderSubstitution(unmatchedFieldCount: 0));
+    }
+
+    [Fact]
+    public void AllowsSenderSubstitution_TwoOrMoreUnmatchedParameters_IsNotAllowed()
+    {
+        // Two or more parameters missing a scope field is not a shape IncludeSender's
+        // contract can produce — substituting a guess here would be exactly the silent
+        // wrong answer .claude/rules/loud-failures.md forbids.
+        Assert.False(BcRuntime.AllowsSenderSubstitution(unmatchedFieldCount: 2));
+    }
 }

@@ -190,15 +190,6 @@ public static partial class BcRuntime
         string eventMethodName = scopeName.Substring(0, us);
 
         if (!TryDecodeEventPublisherDeclType(declName, out var publisherKind, out int publisherId)) return;
-        // #2348 safety net: the publisher's OWN declared event method (the local procedure
-        // carrying [IntegrationEvent]/[BusinessEvent]) tells us exactly how many parameters
-        // the AL author declared — NOT counting IncludeSender's implicit sender. A subscriber
-        // is only allowed to bind a sender when its own parameter count is EXACTLY one more
-        // than this — see IsSenderParameter's doc comment for why relying on "no scope field
-        // matched" alone is not safe on its own.
-        int? publisherEventArity = declType.GetMethod(eventMethodName,
-                BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static)
-            ?.GetParameters().Length;
         IReadOnlyList<MethodInfo>? subs = publisherKind switch
         {
             PublisherKindCodeunit => EventSubscriberPatches.GetCodeunitSubscribers(publisherId, eventMethodName),
@@ -241,11 +232,11 @@ public static partial class BcRuntime
                     // into an event, e.g. System Application Test Library's 132513
                     // "Confirm Test Library" answering OnBeforeGuiAllowed with false).
                     foreach (var bound in BoundInstancesOf(ExtractCodeunitIdFromTypeName(sub.DeclaringType!)))
-                        InvokeOneSubscriber(publisherScope, scopeType, pubObj, sub, bound, publisherEventArity);
+                        InvokeOneSubscriber(publisherScope, scopeType, pubObj, sub, bound);
                 }
                 else
                 {
-                    InvokeOneSubscriber(publisherScope, scopeType, pubObj, sub, null, publisherEventArity);
+                    InvokeOneSubscriber(publisherScope, scopeType, pubObj, sub, null);
                 }
             }
             catch (TargetInvocationException tie)
@@ -402,13 +393,25 @@ public static partial class BcRuntime
         return false;
     }
 
+    /// <summary>
+    /// Is a subscriber allowed to bind a field-lookup fallthrough parameter as the sender,
+    /// given how many of THIS subscriber's own declared parameters had no matching
+    /// publisher-scope field? Extracted as a pure, unit-testable seam pinning the exact
+    /// threshold (#2348): exactly ONE unmatched parameter is the only shape IncludeSender's
+    /// contract actually produces, whether or not the subscriber also omits trailing
+    /// publisher parameters (AL allows that — see the call site's doc comment). Zero
+    /// unmatched parameters means there is no sender to bind. Two or more means this lookup
+    /// doesn't understand what's going on and must not guess.
+    /// </summary>
+    internal static bool AllowsSenderSubstitution(int unmatchedFieldCount) => unmatchedFieldCount == 1;
+
     private static Type? _tNavCodeunitHandle;
     private static ConstructorInfo? _ciNavCodeunitHandleByIdInt;
     private static ConstructorInfo? _ciNavCodeunitHandleByInstance;
     private static PropertyInfo? _pNavCodeunitHandle_Target;
 
     private static void InvokeOneSubscriber(object publisherScope, Type scopeType, object treeObj, MethodInfo subscriberMethod,
-        object? boundInstance, int? publisherEventArity)
+        object? boundInstance)
     {
         EnsureCodeunitHandleReflection();
 
@@ -467,22 +470,38 @@ public static partial class BcRuntime
         // "No matching scope field" is necessary but not SUFFICIENT, though (#2348): a
         // subscriber parameter can lack a matching field for other reasons too (a stale-named
         // arg, a rename mismatch, anything the compiler emits that this lookup doesn't
-        // recognise). Before treating that fallthrough as sender-shaped, the ARITY must also
-        // fit — the subscriber has EXACTLY ONE more parameter than the publisher itself
-        // declared for this event. That is the one condition IncludeSender's own contract
-        // guarantees; anything else can produce a genuinely-still-null desired value, and
-        // substituting the publisher instance instead would be a silent wrong answer (see
-        // .claude/rules/loud-failures.md) rather than the intended one.
+        // recognise). An EARLIER version of this fix required the subscriber's parameter count
+        // to be EXACTLY one more than the publisher's own declared arity — but AL subscribers
+        // are allowed to omit trailing publisher parameters entirely (confirmed empirically:
+        // the AL compiler accepts a subscriber declaring only a PREFIX of the publisher's
+        // parameters, sender included, at any position within that prefix), so an omitting
+        // subscriber has FEWER parameters than arity+1 and that exact-equality check wrongly
+        // rejected it — a real regression vs. even the pre-#2348 position-0-only behaviour for
+        // a sender-first subscriber that also omits a trailing parameter.
+        //
+        // The correct discriminator doesn't need the publisher's raw arity at all: exactly ONE
+        // parameter across this SPECIFIC subscriber's own declared list may go unmatched. Two
+        // or more unmatched parameters means something this lookup doesn't understand is going
+        // on, and this must NOT guess which one (if any) is the sender — see
+        // .claude/rules/loud-failures.md. A single unmatched parameter is only substituted when
+        // it is also shaped like a sender (IsSenderParameter's type check).
         int publisherCodeunitId = ExtractCodeunitIdFromTypeName(treeObj.GetType());
         var parms = subscriberMethod.GetParameters();
-        bool arityAllowsSender = publisherEventArity.HasValue && parms.Length == publisherEventArity.Value + 1;
+        var flds = new FieldInfo?[parms.Length];
+        int unmatchedCount = 0;
+        for (int i = 0; i < parms.Length; i++)
+        {
+            flds[i] = scopeType.GetField(parms[i].Name!,
+                BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase);
+            if (flds[i] == null) unmatchedCount++;
+        }
+        bool allowSenderSubstitution = AllowsSenderSubstitution(unmatchedCount);
         var args = new object?[parms.Length];
         for (int i = 0; i < parms.Length; i++)
         {
             var p = parms[i];
-            var fld = scopeType.GetField(p.Name!,
-                BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase);
-            if (fld == null && arityAllowsSender && IsSenderParameter(p, i))
+            var fld = flds[i];
+            if (fld == null && allowSenderSubstitution && IsSenderParameter(p, i))
             {
                 if (typeof(Microsoft.Dynamics.Nav.Runtime.INavRecordHandle).IsAssignableFrom(p.ParameterType))
                 {
