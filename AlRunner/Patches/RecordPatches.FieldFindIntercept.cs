@@ -121,10 +121,34 @@ public static partial class RecordPatches
     private static PropertyInfo? _pMaoObjIdLight;  // NCLMetaApplicationObject.ObjectId
     private static volatile bool _lightReady;
 
-    public static bool DataAccess_IsFieldFindRequest(object self, object request)
-        => IsFieldFindRequest(request);
+    /// <summary>
+    /// The predicate the Cecil-prepended branch on DataAccess.InnerFindAsync evaluates for
+    /// EVERY find. True means "take the managed Field-table bypass"; false means "run BC's
+    /// original InnerFindAsync unchanged", which is what every table but 2000000041 does.
+    ///
+    /// Table 2000000007 (Date) passes through here on its way to the ORIGINAL find, and takes
+    /// the one side effect this method has: EnsureDateWindowCoversRequest widens the
+    /// materialised Date window to cover the closed bounds this request's "Period Start"
+    /// filter names, or throws RunnerOutOfScopeException when that would exceed the row cap.
+    /// The find request is the first and only place the runner sees that filter, so it is the
+    /// only place the check can happen. See RecordPatches.DateVirtualTable.cs.
+    /// </summary>
+    public static bool DataAccess_IsManagedFindRequest(object self, object request)
+    {
+        var tableId = FindRequestTableId(request);
+        if (tableId == DateVirtualTableId)
+        {
+            EnsureDateWindowCoversRequest(self, request);
+            return false;
+        }
+        return tableId == FieldFindTableId;
+    }
 
     private static bool IsFieldFindRequest(object request)
+        => FindRequestTableId(request) == FieldFindTableId;
+
+    /// <summary>Object id of the table this find request targets, or -1 if it cannot be read.</summary>
+    private static int FindRequestTableId(object request)
     {
         try
         {
@@ -137,14 +161,13 @@ public static partial class RecordPatches
                 _pMaoObjIdLight = nclAsm.GetType(rt + "NCLMetaApplicationObject")!
                     .GetProperty("ObjectId", BindingFlags.Public | BindingFlags.Instance);
                 _lightReady = _pReqMaoLight != null && _pMaoObjIdLight != null;
-                if (!_lightReady) return false;
+                if (!_lightReady) return -1;
             }
             var mao = _pReqMaoLight!.GetValue(request);
-            if (mao == null) return false;
-            var oid = _pMaoObjIdLight!.GetValue(mao);
-            return oid is int i && i == FieldFindTableId;
+            if (mao == null) return -1;
+            return _pMaoObjIdLight!.GetValue(mao) is int i ? i : -1;
         }
-        catch { return false; }
+        catch { return -1; }
     }
 
     /// <summary>

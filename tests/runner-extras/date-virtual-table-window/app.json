@@ -1,0 +1,19 @@
+{
+  "id": "2f6b8c14-9a37-4d5e-8b02-7c1a4e9d3b60",
+  "name": "Runner Extras - Date Virtual Table Window",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Issue #2309: the Date system virtual table (2000000007) is computed on demand on the service tier and spans years 1 to 9999, which cannot be materialised whole. The runner materialises a window and widens it on demand; this suite pins the two runner-specific halves of that: a closed filter bound outside the default window is materialised on demand, and a request past the row cap throws RunnerOutOfScopeException instead of answering with fewer rows.",
+  "description": "What the Date table itself answers — which weekday a date is, which ISO week a Monday starts, when a leap February ends, that Period End is a closing date — is plain BC behaviour and is covered upstream in the al-language corpus (Test Date Virtual Table, codeunit 60983). This suite deliberately asserts none of that. It asserts only what exists because this is the runner: that the materialised window is not a silent truncation. The default window is 1900-01-01 to 2099-12-31 and the default row cap is 500,000 (AL_RUNNER_DATE_WINDOW_MIN_YEAR / _MAX_YEAR / _MAX_ROWS), so a filter naming 1850 is outside the window but well inside the cap, and a filter spanning year 1200 to year 9998 is far past it.",
+  "dependencies": [],
+  "idRanges": [
+    {
+      "from": 64560,
+      "to": 64569
+    }
+  ],
+  "platform": "27.0.0.0",
+  "application": "27.0.0.0",
+  "runtime": "15.0",
+  "target": "Cloud"
+}

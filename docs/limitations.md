@@ -359,6 +359,43 @@ the exact value will see different results.
 | `Commit()` | Commits current transaction | Establishes a rollback commit-point — see "Transaction semantics" above; not a no-op |
 | `FilterGroup(n)` | Scoped filter groups | Not tracked — `FilterGroup()` is a no-op; all filters apply to group 0 |
 
+### `Record Date` — an open-ended `Period Start` filter is answered from a materialised window
+
+<a id="date-virtual-table"></a>
+
+The `Date` system virtual table (2000000007) is computed per request on the service
+tier and covers years 1 through 9999 — about 3.6 million `Date`-type rows on its own,
+plus the Week, Month, Quarter and Year periods. The runner serves every table from an
+in-memory store, so it has to materialise rows, and it cannot materialise all of them.
+
+What it does instead:
+
+- It materialises a window of whole years, **1900-01-01 to 2099-12-31** by default
+  (about 87,000 rows across all five period types).
+- Whenever an AL `"Period Start"` filter names a **closed** bound outside that window,
+  the window widens to cover it before the read runs. This happens on both request
+  paths — `FindFirst` / `FindSet` / `FindLast` / `Get`, and `Count` / `IsEmpty` — so a
+  filter naming 1850 or 2300 gets real rows.
+- Widening past **500,000 rows** raises `RunnerOutOfScopeException`, naming the
+  requested bounds, the current window and the cap. It never answers a wider request
+  with fewer rows.
+
+The one case the window does not cover is an **open** bound. `SetFilter("Period Start",
+'%1..', D)` asks real BC for every period from `D` to 9999-12-31; the runner answers it
+from the window. `FindFirst` on such a filter is unaffected, because its answer sits at
+the closed end — and that is the shape production AL uses. Iterating an open-ended range
+to the end stops at the window edge instead of year 9999.
+
+Three environment variables move all three numbers for a one-off run:
+`AL_RUNNER_DATE_WINDOW_MIN_YEAR`, `AL_RUNNER_DATE_WINDOW_MAX_YEAR`,
+`AL_RUNNER_DATE_WINDOW_MAX_ROWS`.
+
+Everything the rows themselves say — the weekday number and name of a `Date` period,
+the Monday start and ISO week number of a `Week` period, a computed month end, and
+`"Period End"` being a closing date — comes from BC's own arithmetic
+(`DateTimeHelper` and `DateDataProvider` in `Microsoft.Dynamics.Nav.Ncl`, called by
+reflection), so the runner cannot disagree with the service tier about any of it.
+
 ---
 
 ## Per-BC-minor engine variants: granularity is per MINOR, not per exact build

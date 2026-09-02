@@ -7304,10 +7304,28 @@ public static class NclCecilRewrite
             // into its callers and so a rewrite of it never fires under default R2R — file-traced).
             // The helper returns a boxed ValueTask<ResultSetEnumerator>; the prepended IL
             // unbox.any's it to the declared return type. See RecordPatches.FieldFindIntercept.cs.
+            //
+            // The predicate is also where the Date virtual table (2000000007) gets its window
+            // guard: a Date find passes through the predicate on its way to the ORIGINAL
+            // InnerFindAsync, and the predicate widens the materialised Date window to cover
+            // the closed bounds that find's "Period Start" filter names (or throws past the
+            // row cap). The find request is the only place the runner ever sees that filter.
             PrependFieldFindGuard(nclMod,
                 ByParams(Rt + "DataAccess", "InnerFindAsync", "FindCacheRequest", "Boolean", "Func`1"),
-                H(recordPatches, "DataAccess_IsFieldFindRequest"),
+                H(recordPatches, "DataAccess_IsManagedFindRequest"),
                 H(recordPatches, "DataAccess_FieldFindManaged"));
+
+            // ── DataAccess.CountAsync — Date virtual table (2000000007) window guard ─────
+            // Record.Count() / IsEmpty() reach a CountCacheRequest, not a FindCacheRequest, so
+            // the find guard above never sees them. Without this prepend a Count over a range
+            // outside the materialised Date window would answer with however many rows the
+            // window happens to hold — the silent short answer the window guard exists to
+            // prevent. The helper widens the window (or throws past the row cap) and returns;
+            // the original CountAsync body then runs unchanged, for this and every other table.
+            PrependStaticCall(nclMod,
+                ByParams(Rt + "DataAccess", "CountAsync", "CountCacheRequest"),
+                H(recordPatches, "DataAccess_DateWindowGuardForCount"),
+                argSlots: 2); // `this` — the DataAccess — and the count request
 
             // ── NavDatabase / NavRecordId collation comparers ───────────────────
             ReplaceBodyWithHelper(nclMod,

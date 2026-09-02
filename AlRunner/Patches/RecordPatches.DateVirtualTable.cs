@@ -42,12 +42,14 @@
 // THE WINDOW, AND WHAT IT DOES AND DOES NOT PROMISE
 //   The real table spans years 1 through 9999 — 3.6 million Date rows alone — so it cannot be
 //   materialised whole. We materialise a window of whole years (default 1900-01-01 ..
-//   2099-12-31, about 87,000 rows across all five period types) and, at find time, EXTEND that
-//   window on demand whenever an AL filter names a closed bound outside it
-//   (EnsureDateWindowCoversRequest, called from the InnerFindAsync guard in
-//   RecordPatches.FieldFindIntercept.cs). Past AL_RUNNER_DATE_WINDOW_MAX_ROWS the extension
-//   throws RunnerOutOfScopeException naming the requested bound, the window and the cap,
-//   rather than answering a larger request with fewer rows.
+//   2099-12-31, about 87,000 rows across all five period types) and EXTEND that window on
+//   demand whenever an AL filter names a closed bound outside it. EnsureDateWindowCoversRequest
+//   does that, from both request paths a Record Date read can take: the InnerFindAsync guard in
+//   RecordPatches.FieldFindIntercept.cs (FindFirst / FindSet / FindLast / Get) and a prepend on
+//   DataAccess.CountAsync (Count / IsEmpty), which carry different request types. Past
+//   AL_RUNNER_DATE_WINDOW_MAX_ROWS the extension throws RunnerOutOfScopeException naming the
+//   requested bound, the window and the cap, rather than answering a larger request with fewer
+//   rows.
 //
 //   The one thing the window does NOT cover is an OPEN bound: `SetFilter("Period Start",
 //   '%1..', D)` asks BC for everything up to 9999-12-31, and we answer it from the window.
@@ -120,17 +122,21 @@ public static partial class RecordPatches
     }
 
     /// <summary>
-    /// Number of rows the window [min..max] holds across all five period types. Used to
-    /// refuse an extension before it is attempted, so the refusal names a number instead of
-    /// running out of memory.
+    /// Upper bound on the number of rows the span [start..end] holds across all five period
+    /// types. Used to refuse an extension before it is attempted, so the refusal names a number
+    /// instead of running out of memory. It must never UNDER-count: an under-count lets a
+    /// request through that then allocates more rows than the cap was meant to allow, which is
+    /// why AlRunner.Tests/DateVirtualTableWindowTests.cs checks it against a day-by-day count.
     /// </summary>
     internal static long EstimateDateRowCount(DateTime windowStart, DateTime windowEnd)
     {
         if (windowEnd < windowStart) return 0;
         long days = (long)(windowEnd - windowStart).TotalDays + 1;
         long years = windowEnd.Year - windowStart.Year + 1;
-        // days (Date) + days/7 (Week) + 12·years (Month) + 4·years (Quarter) + years (Year).
-        return days + days / 7 + 17 * years;
+        // days (Date) + at most ceil(days/7) Mondays (Week) + 12·years (Month)
+        // + 4·years (Quarter) + years (Year). A span of 366 days holds 53 Mondays, so the
+        // week term rounds UP — days/7 undercounts a leap year that starts on a Monday.
+        return days + (days + 6) / 7 + 17 * years;
     }
 
     // ── Per-provider populated span ──────────────────────────────────────────────────────
@@ -370,6 +376,191 @@ public static partial class RecordPatches
             // ("Period Type", "Period Start") is unique; a repeat means this span was already
             // populated. Faithful to a virtual table where the pair identifies one period.
         }
+    }
+
+    // ── Find-time window guard ───────────────────────────────────────────────────────────
+
+    private static PropertyInfo? _dvtDaSession;
+    private static MethodInfo? _dvtToRangeList;      // FilterExpression.ToRangeList(ISortingRulesProvider)
+    private static PropertyInfo? _dvtRangeListRanges;
+    private static PropertyInfo? _dvtRangeLowIsMin, _dvtRangeHighIsMax, _dvtRangeLowValue,
+        _dvtRangeHighValue, _dvtRangeIsEmpty;
+    private static MethodInfo? _dvtNavValueToDateTime;
+    private static bool _dvtGuardReady;
+
+    /// <summary>
+    /// Called from the InnerFindAsync guard for EVERY find on table 2000000007, before BC's
+    /// own find runs. Reads the request's "Period Start" filter through BC's own
+    /// FilterExpression.ToRangeList and widens the materialised window so it covers every
+    /// CLOSED bound the filter names. Past AL_RUNNER_DATE_WINDOW_MAX_ROWS, PopulateDateSpan
+    /// throws instead of answering a wider request with fewer rows.
+    ///
+    /// An OPEN bound (`'%1..'`, `'..%1'`, or a bound sitting at BC's own first/last period
+    /// start) is left to the window: BC would answer it out to year 1 or year 9999, and
+    /// materialising 3.6 million rows is not on the table. That single approximation is
+    /// documented in docs/limitations.md.
+    /// </summary>
+    internal static void EnsureDateWindowCoversRequest(object dataAccess, object cacheRequest)
+    {
+        DateTime? wantLow = null, wantHigh = null;
+        NCLMetaTable meta;
+        object session;
+
+        try
+        {
+            if (_pReqMaoLight?.GetValue(cacheRequest) is not NCLMetaTable m) return;
+            meta = m;
+            EnsureDateReflection(meta);
+            EnsureDateGuardReflection(dataAccess, cacheRequest);
+
+            if (_dvtDaSession!.GetValue(dataAccess) is not object s) return;
+            session = s;
+
+            var filter = FindPeriodStartFilter(cacheRequest);
+            if (filter == null) return;
+
+            var rangeList = _dvtToRangeList!.Invoke(filter, new[] { session });
+            if (rangeList == null) return;
+            if (_dvtRangeListRanges!.GetValue(rangeList) is not System.Collections.IEnumerable ranges) return;
+
+            // BC's own first and last period start for period type Date — the widest the real
+            // table ever goes. A bound at or past either end is the filter saying "no limit".
+            var bcFirst = (DateTime)_dvtPeriodStartMin!.Invoke(null, new[] { DatePeriodTypeDate() })!;
+            var bcLast = (DateTime)_dvtPeriodStartMax!.Invoke(null, new[] { DatePeriodTypeDate() })!;
+
+            foreach (var range in ranges)
+            {
+                if (range == null) continue;
+                if ((bool)_dvtRangeIsEmpty!.GetValue(range)!) continue;
+
+                if (!(bool)_dvtRangeLowIsMin!.GetValue(range)!
+                    && ToDateTimeOrNull(_dvtRangeLowValue!.GetValue(range)) is DateTime lo
+                    && lo > bcFirst)
+                    wantLow = wantLow == null || lo < wantLow ? lo : wantLow;
+
+                if (!(bool)_dvtRangeHighIsMax!.GetValue(range)!
+                    && ToDateTimeOrNull(_dvtRangeHighValue!.GetValue(range)) is DateTime hi
+                    && hi < bcLast)
+                    wantHigh = wantHigh == null || hi > wantHigh ? hi : wantHigh;
+            }
+        }
+        catch (RunnerOutOfScopeException) { throw; }
+        catch
+        {
+            // Reading the filter is best-effort: a shape we cannot parse means we do not widen
+            // the window, never that we answer something different. The find then runs over the
+            // window exactly as it would without this guard.
+            return;
+        }
+
+        if (wantLow == null && wantHigh == null) return;
+
+        // PopulateDateSpan only ever widens, and returns immediately when the span already
+        // covers what was asked for — which is the common case after the first find.
+        PopulateDateSpan(dataAccess, meta, session,
+            wantLow ?? new DateTime(DateWindowMinYear, 1, 1),
+            wantHigh ?? new DateTime(DateWindowMaxYear, 12, 31));
+    }
+
+    /// <summary>
+    /// Prepended to DataAccess.CountAsync(CountCacheRequest) for every table. Record.Count()
+    /// and IsEmpty() take the count path, not the find path, so the InnerFindAsync guard never
+    /// sees them; without this a Count over a range outside the materialised Date window would
+    /// return however many rows the window happens to hold. For every table but 2000000007 this
+    /// does one integer comparison and returns.
+    /// </summary>
+    public static void DataAccess_DateWindowGuardForCount(object self, object request)
+    {
+        if (FindRequestTableId(request) != DateVirtualTableId) return;
+        EnsureDateWindowCoversRequest(self, request);
+    }
+
+    /// <summary>The "Period Start" (field 2) FilterExpression on this find request, if any.</summary>
+    private static object? FindPeriodStartFilter(object cacheRequest)
+    {
+        var fam = _pFiltersAndMarks!.GetValue(cacheRequest);
+        if (fam == null) return null;
+        var filters = _pFamFilters!.GetValue(fam);
+        if (filters == null) return null;
+        if (_pFfdItems!.GetValue(filters) is not Array items) return null;
+
+        foreach (var item in items)
+        {
+            if (item == null) continue;
+            var tupleType = item.GetType();
+            var fieldMeta = tupleType.GetProperty("Item1")?.GetValue(item);
+            var expr = tupleType.GetProperty("Item2")?.GetValue(item);
+            if (fieldMeta == null || expr == null) continue;
+            if (_pFieldNo?.GetValue(fieldMeta) is int fieldNo && fieldNo == DateFieldPeriodStart)
+                return expr;
+        }
+        return null;
+    }
+
+    private static DateTime? ToDateTimeOrNull(object? navValue)
+    {
+        if (navValue == null) return null;
+        try
+        {
+            var r = _dvtNavValueToDateTime!.Invoke(navValue, null);
+            return r is DateTime dt ? dt.Date : null;
+        }
+        catch { return null; }
+    }
+
+    private static void EnsureDateGuardReflection(object dataAccess, object cacheRequest)
+    {
+        if (_dvtGuardReady) return;
+
+        // The filter-expression accessors are shared with the Field-table find interception;
+        // EnsureFilterReflection binds those but not DataCacheRequest.FiltersAndMarks itself
+        // (that one belongs to the heavy Field-only bind), so it is resolved here.
+        EnsureFilterReflection(cacheRequest);
+
+        var nclAsm = cacheRequest.GetType().Assembly;
+        const string rt = "Microsoft.Dynamics.Nav.Runtime.";
+        const BindingFlags anyInstance = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
+
+        var tCacheRequest = nclAsm.GetType(rt + "DataCacheRequest")
+            ?? throw new InvalidOperationException("DataCacheRequest not found — BC metadata shape changed");
+        _pFiltersAndMarks ??= tCacheRequest.GetProperty("FiltersAndMarks", anyInstance)
+            ?? throw new InvalidOperationException("DataCacheRequest.FiltersAndMarks not found — BC metadata shape changed");
+
+        var tDataAccess = nclAsm.GetType(rt + "DataAccess")
+            ?? throw new InvalidOperationException("DataAccess not found — BC metadata shape changed");
+        _dvtDaSession = tDataAccess.GetProperty("Session", anyInstance)
+            ?? tDataAccess.GetProperty("session", anyInstance)
+            ?? throw new InvalidOperationException("DataAccess.Session not found — BC metadata shape changed");
+
+        var tFilterExpr = nclAsm.GetType(rt + "FilterExpression")
+            ?? throw new InvalidOperationException("FilterExpression not found — BC metadata shape changed");
+        _dvtToRangeList = tFilterExpr.GetMethods(anyInstance)
+            .FirstOrDefault(m => m.Name == "ToRangeList" && m.GetParameters().Length == 1)
+            ?? throw new InvalidOperationException("FilterExpression.ToRangeList(1 arg) not found — BC metadata shape changed");
+
+        var tRangeList = nclAsm.GetType(rt + "RangeList")
+            ?? throw new InvalidOperationException("RangeList not found — BC metadata shape changed");
+        _dvtRangeListRanges = tRangeList.GetProperty("Ranges", anyInstance)
+            ?? throw new InvalidOperationException("RangeList.Ranges not found — BC metadata shape changed");
+
+        var tRange = nclAsm.GetType(rt + "Range")
+            ?? throw new InvalidOperationException("Range not found — BC metadata shape changed");
+        PropertyInfo NeedProp(string name) => tRange.GetProperty(name, anyInstance)
+            ?? throw new InvalidOperationException($"Range.{name} not found — BC metadata shape changed");
+        _dvtRangeLowIsMin = NeedProp("IsLowIsMinimum");
+        _dvtRangeHighIsMax = NeedProp("IsHighMaximum");
+        _dvtRangeLowValue = NeedProp("LowValue");
+        _dvtRangeHighValue = NeedProp("HighValue");
+        _dvtRangeIsEmpty = NeedProp("IsEmptyRange");
+
+        var tNavValue = ResolveType(rt + "NavValue", "Microsoft.Dynamics.Nav.Types.NavValue")
+            ?? throw new InvalidOperationException("NavValue type not found — BC metadata shape changed");
+        _dvtNavValueToDateTime = tNavValue.GetMethod("ToDateTime",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+            binder: null, types: Type.EmptyTypes, modifiers: null)
+            ?? throw new InvalidOperationException("NavValue.ToDateTime() not found — BC metadata shape changed");
+
+        _dvtGuardReady = true;
     }
 
     // ── Thin wrappers over BC's own arithmetic ───────────────────────────────────────────
