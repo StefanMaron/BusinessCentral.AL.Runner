@@ -1446,6 +1446,30 @@ public static partial class RecordPatches
                 return allProfileDa;
             }
 
+            // ── Date system virtual table (2000000007) ───────────────────────────────────
+            // Virtual on the service tier (DateDataProvider computes one row per period, for
+            // each of the five period types, on demand). Routed to the same in-memory store as
+            // every other table and populated over a bounded window that the find-time guard
+            // extends when an AL filter names a closed bound outside it, so `Record Date`
+            // iteration answers with real periods instead of "There is no Date within the
+            // filter." Every piece of the period arithmetic is BC's own code, called by
+            // reflection. See RecordPatches.DateVirtualTable.cs.
+            if (IsDateVirtualTable(table))
+            {
+                if (!perTable.TryGetValue(tableId, out var dateDa))
+                {
+                    var createdDate = _mCreateTempDataAccess!.Invoke(self, new object[] { table })!;
+                    dateDa = perTable.GetOrAdd(tableId, createdDate);
+                }
+                var dateSession = _fDasSession?.GetValue(self)
+                    ?? throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+                        "Date (virtual table 2000000007)",
+                        "date-virtual-table — DataAccessSource has no skeleton session, so BC's own "
+                        + "DateDataProvider.GetPeriodName cannot name a period; see docs/scope.md");
+                PopulateDateVirtualTable(dateDa, table, dateSession);
+                return dateDa;
+            }
+
             // ── Report Layout List system virtual table (2000000234) ─────────────────────
             // Virtual on the service tier too (its rows are the layouts every published
             // app declares, plus tenant layouts). BC's own by-name layout resolution
