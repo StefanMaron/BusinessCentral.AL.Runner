@@ -30,11 +30,12 @@
 //                          confirmed by MetadataPermissionSetRelationDataProvider,
 //                          which builds the same key with
 //                          `new NavCode(len, permissionSet.Name)`.
-//     field 3 "Name"       NCLMetaPermissionSet.Caption, which is
-//                          `captionStrings?.GetValueOrDefault() ?? string.Empty` —
-//                          so a permission set declaring no Caption has a BLANK
-//                          Name here, NOT its role id. Base Application's "LOCAL"
-//                          is one such set.
+//     field 3 "Name"       NCLMetaPermissionSet.Caption when the permission set
+//                          declares one; when it does not, real BC substitutes the
+//                          Role ID instead of leaving it blank — measured directly
+//                          (StefanMaron/BusinessCentral.AL.Language.Tests#102,
+//                          issue #2388). Base Application's "LOCAL" is one such
+//                          set and lists Name = 'LOCAL' on every BC version 27.0-28.4.
 //     field 4 "Assignable" NCLMetaPermissionSet.Assignable.
 //
 // WHERE THE ROWS COME FROM HERE
@@ -216,12 +217,14 @@ public static partial class RecordPatches
             case "roleid":
                 return _mpsNavCodeCtor!.Invoke(new object?[] { field.FieldDefinedLength, permissionSet.Name });
             case "name":
-                // NCLMetaPermissionSet.Caption is `?? string.Empty`, so a permission set
-                // declaring no Caption gets a BLANK Name on a real tier — substituting the
-                // role id here would be a nicer-looking lie.
+                // Measured against real BC 27.0-28.4 (StefanMaron/BusinessCentral.AL.Language.Tests#102,
+                // StefanMaron/BusinessCentral.AL.Runner#2388): a permission set declaring no Caption is
+                // listed with its Role ID substituted for Name, not a blank string. Base Application's
+                // "LOCAL" (object id 1001) is one such set and lists Name = 'LOCAL' on every version.
                 return _aovNavTextCreateTruncated!.Invoke(null, new object?[]
                 {
-                    field.FieldDefinedLength, permissionSet.Caption ?? string.Empty
+                    field.FieldDefinedLength,
+                    string.IsNullOrEmpty(permissionSet.Caption) ? permissionSet.Name : permissionSet.Caption
                 });
             case "assignable":
                 return _mpsNavBooleanCreate!.Invoke(null, new object?[] { permissionSet.Assignable });
