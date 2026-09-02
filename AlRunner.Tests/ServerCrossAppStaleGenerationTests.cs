@@ -57,9 +57,37 @@ namespace AlRunner.Tests;
 /// Spawns the real runner in --server mode; needs the BC artifact cache. Skips
 /// (no-op) when absent.
 /// </summary>
-public class ServerCrossAppStaleGenerationTests
+public class ServerCrossAppStaleGenerationTests : IClassFixture<SharedCliServer>
 {
-    private static (string libDir, string testDir, string answerFile) MakeLibTestPair(string rootName)
+    private readonly SharedCliServer _shared;
+
+    public ServerCrossAppStaleGenerationTests(SharedCliServer shared) => _shared = shared;
+
+    /// <summary>
+    /// The one `--cache` dir this class's server is started with (#2377). Both facts used
+    /// to build their own; a fresh GUID per test RUN keeps the "no cache from a previous
+    /// invocation can answer for this one" guarantee that mattered, and the two facts
+    /// cannot collide inside it because <see cref="MakeLibTestPair"/> now gives each
+    /// variant its own app ids, object ids and object names (see below).
+    /// </summary>
+    private static readonly string CacheDir = Path.Combine(
+        Path.GetTempPath(), "al-runner-xapp-stale-gen-cache", Guid.NewGuid().ToString("N"));
+
+    /// <param name="variant">
+    /// #2377: which fact is asking. Not cosmetic — it is what makes sharing one server
+    /// SOUND. <c>DependencyLoader.TryGetByAppId</c> caches a compiled module by AppId for
+    /// the lifetime of the server PROCESS and hands it back for any later request whose
+    /// bundle declares a MATCHING AppId at a DIFFERENT SourcePath. Both facts used to
+    /// write the same hardcoded ids under different temp roots, so on a shared server the
+    /// second fact would have been served the first fact's already-compiled modules and
+    /// never produced the two distinct generations its claim is entirely about — it would
+    /// have gone green having proven nothing. Object ids and object NAMES are varied for
+    /// the same reason one layer down: AL resolves by name, and this class's subject is
+    /// precisely which resident generation a by-name/by-id lookup binds to, so two facts
+    /// sharing a name would be feeding ambiguity into the mechanism under test.
+    /// </param>
+    private static (string libDir, string testDir, string answerFile) MakeLibTestPair(
+        string rootName, int variant)
     {
         var root = Path.Combine(Path.GetTempPath(), rootName, Guid.NewGuid().ToString("N"));
         var libDir = Path.Combine(root, "Lib");
@@ -67,24 +95,28 @@ public class ServerCrossAppStaleGenerationTests
         Directory.CreateDirectory(libDir);
         Directory.CreateDirectory(testDir);
 
-        const string libId = "d1a2b3c4-d5e6-4f70-8a91-b2c3d4e5f701";
+        var sfx = variant == 0 ? string.Empty : $" V{variant + 1}";
+        var libFrom = 60960 - variant * 20;   // v0: 60960-60969, v1: 60940-60949
+        var testFrom = 60970 - variant * 20;  // v0: 60970-60979, v1: 60950-60959
+        var libId = $"d1a2b3c4-d5e6-4f70-8a91-b2c3d4e5f7{variant + 1:D2}";
+        var testId = $"d1a2b3c4-d5e6-4f70-8a91-b2c3d4e5f8{variant + 1:D2}";
 
         File.WriteAllText(Path.Combine(libDir, "app.json"), $$"""
         {
           "id": "{{libId}}",
-          "name": "WS Lib",
+          "name": "WS Lib{{sfx}}",
           "publisher": "AL Runner Repro",
           "version": "1.0.0.0",
           "dependencies": [],
-          "idRanges": [ { "from": 60960, "to": 60969 } ],
+          "idRanges": [ { "from": {{libFrom}}, "to": {{libFrom + 9}} } ],
           "platform": "1.0.0.0",
           "application": "1.0.0.0",
           "runtime": "14.0"
         }
         """);
         var answerFile = Path.Combine(libDir, "Answer.Codeunit.al");
-        File.WriteAllText(answerFile, """
-        codeunit 60960 "WS Answer"
+        File.WriteAllText(answerFile, $$"""
+        codeunit {{libFrom}} "WS Answer{{sfx}}"
         {
             procedure Answer(): Integer
             begin
@@ -92,8 +124,8 @@ public class ServerCrossAppStaleGenerationTests
             end;
         }
         """);
-        File.WriteAllText(Path.Combine(libDir, "FireEvent.Codeunit.al"), """
-        codeunit 60963 "WS Fire Event"
+        File.WriteAllText(Path.Combine(libDir, "FireEvent.Codeunit.al"), $$"""
+        codeunit {{libFrom + 3}} "WS Fire Event{{sfx}}"
         {
             [IntegrationEvent(false, false)]
             local procedure OnFire(var FireCount: Integer)
@@ -106,9 +138,9 @@ public class ServerCrossAppStaleGenerationTests
             end;
         }
 
-        codeunit 60964 "WS Fire Sub"
+        codeunit {{libFrom + 4}} "WS Fire Sub{{sfx}}"
         {
-            [EventSubscriber(ObjectType::Codeunit, Codeunit::"WS Fire Event", 'OnFire', '', false, false)]
+            [EventSubscriber(ObjectType::Codeunit, Codeunit::"WS Fire Event{{sfx}}", 'OnFire', '', false, false)]
             local procedure OnFireHandler(var FireCount: Integer)
             begin
                 FireCount += 1;
@@ -118,28 +150,28 @@ public class ServerCrossAppStaleGenerationTests
 
         File.WriteAllText(Path.Combine(testDir, "app.json"), $$"""
         {
-          "id": "d1a2b3c4-d5e6-4f70-8a91-b2c3d4e5f702",
-          "name": "WS Test",
+          "id": "{{testId}}",
+          "name": "WS Test{{sfx}}",
           "publisher": "AL Runner Repro",
           "version": "1.0.0.0",
           "dependencies": [
-            { "id": "{{libId}}", "name": "WS Lib", "publisher": "AL Runner Repro", "version": "1.0.0.0" }
+            { "id": "{{libId}}", "name": "WS Lib{{sfx}}", "publisher": "AL Runner Repro", "version": "1.0.0.0" }
           ],
-          "idRanges": [ { "from": 60970, "to": 60979 } ],
+          "idRanges": [ { "from": {{testFrom}}, "to": {{testFrom + 9}} } ],
           "platform": "1.0.0.0",
           "application": "1.0.0.0",
           "runtime": "14.0"
         }
         """);
-        File.WriteAllText(Path.Combine(testDir, "WsTests.Codeunit.al"), """
-        codeunit 60970 "WS Tests"
+        File.WriteAllText(Path.Combine(testDir, "WsTests.Codeunit.al"), $$"""
+        codeunit {{testFrom}} "WS Tests{{sfx}}"
         {
             Subtype = Test;
 
             [Test]
             procedure LibAnswer_Is42()
             var
-                Ans: Codeunit "WS Answer";
+                Ans: Codeunit "WS Answer{{sfx}}";
                 Actual: Integer;
             begin
                 Actual := Ans.Answer();
@@ -148,14 +180,14 @@ public class ServerCrossAppStaleGenerationTests
             end;
         }
 
-        codeunit 60971 "WS Sub Test"
+        codeunit {{testFrom + 1}} "WS Sub Test{{sfx}}"
         {
             Subtype = Test;
 
             [Test]
             procedure Fire_SubscriberFiresExactlyOnce()
             var
-                FireEvt: Codeunit "WS Fire Event";
+                FireEvt: Codeunit "WS Fire Event{{sfx}}";
                 Count: Integer;
             begin
                 Count := 0;
@@ -177,14 +209,34 @@ public class ServerCrossAppStaleGenerationTests
             packagePaths = Array.Empty<string>(),
         });
 
+    /// <summary>
+    /// #2377 guard on the shared-server conversion itself: cycle 2 must report the edited
+    /// file in the summary's `changedFiles`. The failure mode a class-shared server
+    /// introduces here is <c>DependencyLoader.TryGetByAppId</c> handing back a module
+    /// compiled for an EARLIER request instead of compiling this bundle — which would
+    /// leave only one generation resident and quietly turn both facts below into tests of
+    /// nothing. `changedFiles` is empty on a reuse and names the edit on a real recompile,
+    /// so asserting it keeps the conversion honest rather than trusting that the distinct
+    /// per-variant app ids did their job.
+    /// </summary>
+    private static void AssertCycleTwoRecompiled(JsonElement summary, string editedFileName)
+    {
+        var changed = summary.TryGetProperty("changedFiles", out var cf)
+            ? cf.EnumerateArray().Select(e => e.GetString()).ToList()
+            : new List<string?>();
+        Assert.True(changed.Contains(editedFileName),
+            $"cycle 2 must have RECOMPILED the edited dependency, not been served a module " +
+            $"cached by AppId from an earlier request on this shared server — " +
+            $"changedFiles was [{string.Join(", ", changed)}], expected it to name '{editedFileName}'.");
+    }
+
     [SkippableFact]
     public async Task RunTests_Then_EditDependencyOnly_Rerun_ObservesTheEditNotTheStaleGeneration()
     {
         TestArtifacts.SkipIfMissing();
 
-        var (libDir, testDir, answerFile) = MakeLibTestPair("al-runner-xapp-stale-gen");
-        var cacheDir = Path.Combine(Path.GetTempPath(), "al-runner-xapp-stale-gen-cache", Guid.NewGuid().ToString("N"));
-        await using var server = await CliServer.StartAsync(new[] { "--cache", cacheDir });
+        var (libDir, testDir, answerFile) = MakeLibTestPair("al-runner-xapp-stale-gen", variant: 0);
+        var server = await _shared.GetAsync(new[] { "--cache", CacheDir });
 
         // ── Cycle 1: fresh generation of WS Lib, Answer() == 42 — must PASS ──────
         var lines1 = await server.SendRequestStreamingAsync(Req(libDir, testDir), TimeSpan.FromSeconds(180));
@@ -205,6 +257,7 @@ public class ServerCrossAppStaleGenerationTests
         //    a stale-generation resolution would still see 42 and report PASS. ────
         var lines2 = await server.SendRequestStreamingAsync(Req(libDir, testDir), TimeSpan.FromSeconds(180));
         var (events2, d2) = ProtocolV2Streaming.Split(lines2);
+        AssertCycleTwoRecompiled(d2, "Answer.Codeunit.al");
         var answerEvent2 = events2.Single(e => e.GetProperty("name").GetString()!.EndsWith("LibAnswer_Is42"));
 
         // The whole point of the RED->GREEN cycle: a PASS here means the runner served
@@ -224,9 +277,8 @@ public class ServerCrossAppStaleGenerationTests
     {
         TestArtifacts.SkipIfMissing();
 
-        var (libDir, testDir, answerFile) = MakeLibTestPair("al-runner-xapp-stale-gen-sub");
-        var cacheDir = Path.Combine(Path.GetTempPath(), "al-runner-xapp-stale-gen-sub-cache", Guid.NewGuid().ToString("N"));
-        await using var server = await CliServer.StartAsync(new[] { "--cache", cacheDir });
+        var (libDir, testDir, answerFile) = MakeLibTestPair("al-runner-xapp-stale-gen-sub", variant: 1);
+        var server = await _shared.GetAsync(new[] { "--cache", CacheDir });
 
         // ── Cycle 1: fresh generation of WS Lib — the subscriber must fire exactly
         //    once (sanity: the mechanism works at all). ───────────────────────────
@@ -251,6 +303,7 @@ public class ServerCrossAppStaleGenerationTests
         //    under-firing rather than double-firing for this dispatch path). ───────
         var lines2 = await server.SendRequestStreamingAsync(Req(libDir, testDir), TimeSpan.FromSeconds(180));
         var (events2, d2) = ProtocolV2Streaming.Split(lines2);
+        AssertCycleTwoRecompiled(d2, "Answer.Codeunit.al");
         var subEvent2 = events2.Single(e => e.GetProperty("name").GetString()!.EndsWith("Fire_SubscriberFiresExactlyOnce"));
 
         Assert.Equal("pass", subEvent2.GetProperty("status").GetString());
