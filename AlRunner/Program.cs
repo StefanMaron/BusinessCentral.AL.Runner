@@ -2507,7 +2507,9 @@ foreach (var bundle in bundles)
             BcEmitOutput? incrementalOutput = null;
             if (watchMode)
             {
-                incrementalOutput = emitter.TryEmitIncremental(allPaths, moduleName, appGroup.SuiteDir, out var incrementalFallbackReason);
+                incrementalOutput = emitter.TryEmitIncremental(
+                    allPaths, moduleName, appGroup.SuiteDir,
+                    out var incrementalFallbackReason, out _);
                 // #1905 (defect 4): a full rebuild costs whole MINUTES on a large app
                 // (761-862s measured on NP Retail, #1905's own numbers) against an
                 // incremental cycle's seconds, so which reason forced it is a RESULT
@@ -3519,7 +3521,9 @@ return strictExitCode ? computedExitCode : 0;
     // ever starting, not just stop mid-bundle-1 (that half is TestExecutor.Run's job).
     List<ServerRunResult> RunAllBundlesForServer(string[] sourcePaths, string[]? requestPackagePaths,
         Func<Assembly, IReadOnlyList<TestResult>> runStep,
-        System.Threading.CancellationToken cancellationToken = default)
+        System.Threading.CancellationToken cancellationToken = default,
+        bool useIncrementalChangeModel = false,
+        Action<string, string, string, IReadOnlyList<AffectedObjectId>?, string?>? beforeRun = null)
     {
         // Server requests share a process, so give each request the same fresh
         // NumberSequence lifetime as a standalone CLI/watch execution.
@@ -3600,6 +3604,8 @@ return strictExitCode ? computedExitCode : 0;
                 Environment.CurrentDirectory, Path.GetFullPath(bundleDir));
             AlRunner.Infrastructure.PhaseLog.BeginBundle(relBundle, bundleIndex);
             var result = RunBundleForServer(bundleDir, requestPackagePaths, runStep,
+                useIncrementalChangeModel,
+                beforeRun,
                 out var emitElapsed, out var compileElapsed, out var runElapsed);
             AlRunner.Infrastructure.PhaseLog.EndBundle(emitElapsed, compileElapsed, runElapsed);
             results.Add(result);
@@ -3613,6 +3619,8 @@ return strictExitCode ? computedExitCode : 0;
     // (executor.Run for runTests, OnRun dispatch for execute) is supplied by the caller.
     ServerRunResult RunBundleForServer(string bundleDir, string[]? requestPackagePaths,
         Func<Assembly, IReadOnlyList<TestResult>> runStep,
+        bool useIncrementalChangeModel,
+        Action<string, string, string, IReadOnlyList<AffectedObjectId>?, string?>? beforeRun,
         out TimeSpan emitElapsed, out TimeSpan compileElapsed, out TimeSpan runElapsed)
     {
         // #1888: defaulted here so every early-return path below (dep-resolve
@@ -3635,6 +3643,11 @@ return strictExitCode ? computedExitCode : 0;
             .Concat(packageCacheDirs)
             .Distinct()
             .ToList();
+        var selectionEnvironmentKey =
+            $"{AlRunner.Infrastructure.BcArtifacts.SelectedVersion}|{AlRunner.Infrastructure.BcArtifacts.ServiceTierDir}|"
+            + string.Join("|", effectivePkgDirs
+                .Select(d => Path.GetFullPath(d))
+                .OrderBy(d => d, StringComparer.Ordinal));
 
         IReadOnlyList<(AlRunner.AppManifest Manifest, string AppPath)> ordered =
             Array.Empty<(AlRunner.AppManifest, string)>();
@@ -3799,6 +3812,8 @@ return strictExitCode ? computedExitCode : 0;
             }
 
             var compileErrors = new List<string>();
+            IReadOnlyList<AffectedObjectId>? changedObjects = Array.Empty<AffectedObjectId>();
+            string? changeModelFallbackReason = null;
             if (reusedAsm == null && assemblyBytes == null)
             {
                 if (alCacheDir != null)
@@ -3810,7 +3825,28 @@ return strictExitCode ? computedExitCode : 0;
                 var et = System.Diagnostics.Stopwatch.StartNew();
                 try
                 {
-                    var emitOutput = emitter.Emit(allPaths, moduleName, bucketRoot);
+                    BcEmitOutput emitOutput;
+                    if (beforeRun != null && useIncrementalChangeModel)
+                    {
+                        var incrementalOutput = emitter.TryEmitIncremental(
+                            allPaths, moduleName, bucketRoot,
+                            out var incrementalFallbackReason, out var incrementalChangedObjects);
+                        if (incrementalOutput != null)
+                        {
+                            emitOutput = incrementalOutput;
+                            changedObjects = incrementalChangedObjects ?? Array.Empty<AffectedObjectId>();
+                        }
+                        else
+                        {
+                            changeModelFallbackReason = incrementalFallbackReason;
+                            emitOutput = emitter.Emit(allPaths, moduleName, bucketRoot, trackIncrementalBaseline: true);
+                            changedObjects = null;
+                        }
+                    }
+                    else
+                    {
+                        emitOutput = emitter.Emit(allPaths, moduleName, bucketRoot, trackIncrementalBaseline: true);
+                    }
                     sources = emitOutput.Sources;
                     alDiagnostics = emitOutput.Diagnostics;
                     excludedObjects = emitOutput.ExcludedObjects;
@@ -3910,6 +3946,11 @@ return strictExitCode ? computedExitCode : 0;
                     catch (Exception ex) { Console.Error.WriteLine($"  [cache] write failed: {ex.Message}"); }
                 }
             }
+            else if (beforeRun != null)
+            {
+                // Cache hit (or cross-bundle reuse) means this bundle's AL content is unchanged.
+                changedObjects = Array.Empty<AffectedObjectId>();
+            }
 
             Assembly asm;
             if (reusedAsm != null)
@@ -3953,6 +3994,7 @@ return strictExitCode ? computedExitCode : 0;
             var rt = System.Diagnostics.Stopwatch.StartNew();
             try
             {
+                beforeRun?.Invoke(bundleAbs, moduleName, selectionEnvironmentKey, changedObjects, changeModelFallbackReason);
                 BcRuntime.SetTestAssembly(asm);
                 BcRuntime.RegisterTestAssemblyInfo(asm);
                 BcRuntime.OosHooksActive = true;
@@ -4069,7 +4111,7 @@ int RunDapLoop(string bundleDir, int port, bool stdioMode, System.IO.Stream? std
     };
 
     var bundleRunTask = System.Threading.Tasks.Task.Run(
-        () => RunAllBundlesForServer(new[] { bundleDir }, null, dapRunStep, cts.Token));
+        () => RunAllBundlesForServer(new[] { bundleDir }, null, dapRunStep, cts.Token, false, null));
 
     int exitCode = 0;
     bool terminatedSent = false;
@@ -4397,6 +4439,13 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
     // Per-session memory of the last served request's .al file hashes, so a cache
     // miss can report which files changed (v1 `changedFiles`).
     Dictionary<string, string>? lastFileHashes = null;
+    // Per-bundle memory for affected-only test selection (#2441): previous run's
+    // per-test object coverage (object-key strings), tests that were unknown on that
+    // run (no mappable coverage or non-pass outcome), and the runtime environment key
+    // this coverage was recorded under.
+    var affectedCoverageByBundle = new Dictionary<string, Dictionary<string, HashSet<string>>>(StringComparer.Ordinal);
+    var affectedUnknownTestsByBundle = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+    var affectedEnvironmentKeyByBundle = new Dictionary<string, string>(StringComparer.Ordinal);
 
     // Guards every write to `output`: the reader thread's cancel-ack and this
     // method's normal command responses / streaming runtests output are now genuine
@@ -4539,6 +4588,14 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
     // EOF — client disconnected.
     return 0;
 
+    static string ToAffectedObjectKey(AffectedObjectId id)
+        => $"{id.Kind}|{(id.Id.HasValue ? "id:" + id.Id.Value : "name:" + id.Name)}";
+
+    static string ToAffectedObjectDisplay(AffectedObjectId id)
+        => id.Id.HasValue
+            ? $"{id.Kind} {id.Id.Value} {id.Name}"
+            : $"{id.Kind} {id.Name}";
+
     // Sets executor.Isolation from req.TestIsolation (see #1616), falling back to
     // defaultServerIsolation when the request doesn't specify one. Returns an
     // error response string on an unrecognised mode, else null.
@@ -4621,15 +4678,17 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
         // HandleServerExecute below. Reset() (not just Enabled=true) so a warm
         // server's hit counts from a PRIOR request never leak into this one — the
         // dictionary is process-global and this process outlives many requests.
-        AlRunner.Infrastructure.AlCoverageTracker.Enabled = req.Coverage == true;
-        if (req.Coverage == true) AlRunner.Infrastructure.AlCoverageTracker.Reset();
-        // #2135: 'perTestCoverage:true' opts into the SAME per-statement hit counts,
-        // grouped by the test whose window recorded them instead of summed over the
-        // whole run — a SEPARATE flag/dictionary from 'coverage' above (see
-        // AlCoverageTracker.PerTestEnabled's doc comment), so the two opt-ins are
-        // priced independently and a caller can ask for either, both, or neither.
-        AlRunner.Infrastructure.AlCoverageTracker.PerTestEnabled = req.PerTestCoverage == true;
-        if (req.PerTestCoverage == true) AlRunner.Infrastructure.AlCoverageTracker.ResetPerTest();
+        var requestCoverage = req.Coverage == true;
+        var requestPerTestCoverage = req.PerTestCoverage == true;
+        var affectedOnly = req.AffectedOnly == true;
+        // #2441: affected-only selection needs per-test coverage from this run to seed
+        // the next run's selection baseline, even when the caller doesn't ask to emit
+        // `perTestCoverage` on the wire.
+        var collectPerTestForSelection = requestPerTestCoverage || affectedOnly;
+        AlRunner.Infrastructure.AlCoverageTracker.Enabled = requestCoverage;
+        if (requestCoverage) AlRunner.Infrastructure.AlCoverageTracker.Reset();
+        AlRunner.Infrastructure.AlCoverageTracker.PerTestEnabled = collectPerTestForSelection;
+        if (collectPerTestForSelection) AlRunner.Infrastructure.AlCoverageTracker.ResetPerTest();
 
         var cts = new System.Threading.CancellationTokenSource();
         System.Threading.Interlocked.Exchange(ref activeRunCts, cts);
@@ -4652,8 +4711,113 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                 AlRunner.Infrastructure.TestBarrier.WaitForRelease();
             }
 
+            var requestDiscoveredTestsByBundle = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+            var requestModuleByBundle = new Dictionary<string, string>(StringComparer.Ordinal);
+            var requestEnvironmentByBundle = new Dictionary<string, string>(StringComparer.Ordinal);
+            var selectionByBundle = new Dictionary<string, ServerSelection>(StringComparer.Ordinal);
+            var activeBundleKey = "";
+            Dictionary<string, HashSet<string>>? activePreviousCoverage = null;
+            HashSet<string>? activePreviousUnknown = null;
+            HashSet<string>? activeChangedObjectKeys = null;
+            List<string> activeChangedObjectDisplay = new();
+            bool activeForcedFull = false;
+            string? activeForcedReason = null;
+
             var runs = RunAllBundlesForServer(req.SourcePaths, req.PackagePaths,
-                asm => executor.Run(asm, OnTestComplete, cts.Token), cts.Token);
+                asm =>
+                {
+                    var discovered = executor.DiscoverTests(asm);
+                    requestDiscoveredTestsByBundle[activeBundleKey] =
+                        new HashSet<string>(discovered, StringComparer.Ordinal);
+
+                    HashSet<string>? exactSelection = null;
+                    var plannedRan = discovered.Count;
+                    var plannedSkipped = 0;
+                    if (affectedOnly && !activeForcedFull)
+                    {
+                        exactSelection = new HashSet<string>(StringComparer.Ordinal);
+                        foreach (var testKey in discovered)
+                        {
+                            if (activePreviousCoverage == null
+                                || !activePreviousCoverage.TryGetValue(testKey, out var coveredObjects)
+                                || coveredObjects.Count == 0
+                                || (activePreviousUnknown?.Contains(testKey) ?? false))
+                            {
+                                exactSelection.Add(testKey);
+                                continue;
+                            }
+                            if (activeChangedObjectKeys != null && coveredObjects.Overlaps(activeChangedObjectKeys))
+                                exactSelection.Add(testKey);
+                        }
+                        plannedRan = exactSelection.Count;
+                        plannedSkipped = Math.Max(0, discovered.Count - plannedRan);
+                    }
+
+                    if (affectedOnly)
+                    {
+                        selectionByBundle[activeBundleKey] = new ServerSelection(
+                            "affected",
+                            plannedRan,
+                            plannedSkipped,
+                            activeChangedObjectDisplay,
+                            activeForcedFull,
+                            activeForcedReason);
+                    }
+
+                    var previousExact = executor.ExactTestFilter;
+                    executor.ExactTestFilter = exactSelection;
+                    try { return executor.Run(asm, OnTestComplete, cts.Token); }
+                    finally { executor.ExactTestFilter = previousExact; }
+                },
+                cts.Token,
+                affectedOnly,
+                (bundlePath, moduleName, selectionEnvironmentKey, changedObjects, changeModelFallbackReason) =>
+                {
+                    activeBundleKey = bundlePath;
+                    requestModuleByBundle[bundlePath] = moduleName;
+                    requestEnvironmentByBundle[bundlePath] = selectionEnvironmentKey;
+                    activeChangedObjectKeys = changedObjects?.Select(ToAffectedObjectKey)
+                        .ToHashSet(StringComparer.Ordinal);
+                    activeChangedObjectDisplay = (changedObjects ?? Array.Empty<AffectedObjectId>())
+                        .Select(ToAffectedObjectDisplay)
+                        .Distinct(StringComparer.Ordinal)
+                        .OrderBy(x => x, StringComparer.Ordinal)
+                        .ToList();
+                    activePreviousCoverage = affectedCoverageByBundle.TryGetValue(bundlePath, out var prevCov)
+                        ? prevCov : null;
+                    activePreviousUnknown = affectedUnknownTestsByBundle.TryGetValue(bundlePath, out var prevUnknown)
+                        ? prevUnknown : null;
+
+                    activeForcedFull = false;
+                    activeForcedReason = null;
+                    if (!affectedOnly) return;
+
+                    if (changeModelFallbackReason != null)
+                    {
+                        activeForcedFull = true;
+                        activeForcedReason = $"change model unavailable: {changeModelFallbackReason}";
+                        return;
+                    }
+                    if (changedObjects == null)
+                    {
+                        activeForcedFull = true;
+                        activeForcedReason = "changed files could not be attributed to AL objects";
+                        return;
+                    }
+                    if (activePreviousCoverage == null || activePreviousUnknown == null)
+                    {
+                        activeForcedFull = true;
+                        activeForcedReason = "no previous per-test coverage baseline for this bundle";
+                        return;
+                    }
+                    if (!affectedEnvironmentKeyByBundle.TryGetValue(bundlePath, out var previousEnv)
+                        || !string.Equals(previousEnv, selectionEnvironmentKey, StringComparison.Ordinal))
+                    {
+                        activeForcedFull = true;
+                        activeForcedReason =
+                            "coverage baseline environment changed (BC version/artifact/package cache)";
+                    }
+                });
 
             var allTests = runs.SelectMany(r => r.Tests).ToList();
             var allCompileErrors = runs.SelectMany(r => r.CompileErrors ?? Array.Empty<CompilationErrorGroup>()).ToList();
@@ -4702,16 +4866,98 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
             // work for callers who never asked for it.
             IReadOnlyList<AlRunner.Infrastructure.AlCoverageTracker.AlStatementRecord>? statementTable = null;
             IReadOnlyDictionary<string, List<AlRunner.Infrastructure.AlCoverageTracker.AlStatementRecord>>? perTestStatementTable = null;
-            if (req.Coverage == true || req.PerTestCoverage == true)
+            if (requestCoverage || collectPerTestForSelection)
             {
                 var covSourceMap = AlRunner.Infrastructure.AlCoverageSourceMap.Build(
                     req.SourcePaths, relativeTo: null);
-                if (req.Coverage == true)
+                if (requestCoverage)
                     statementTable = AlRunner.Infrastructure.AlCoverageTracker.CollectStatementTable(covSourceMap);
                 // #2135: independent of the aggregate table above — see
                 // AlCoverageTracker.CollectPerTestStatementTable's doc comment.
-                if (req.PerTestCoverage == true)
+                if (collectPerTestForSelection)
                     perTestStatementTable = AlRunner.Infrastructure.AlCoverageTracker.CollectPerTestStatementTable(covSourceMap);
+            }
+
+            if (collectPerTestForSelection && perTestStatementTable != null)
+            {
+                var resultByTest = allTests
+                    .Where(t => t.Method != "<ctor>")
+                    .GroupBy(t => $"{t.Codeunit}.{t.Method}", StringComparer.Ordinal)
+                    .ToDictionary(g => g.Key, g => g.Last(), StringComparer.Ordinal);
+
+                foreach (var (bundlePath, discoveredTests) in requestDiscoveredTestsByBundle)
+                {
+                    if (!requestModuleByBundle.TryGetValue(bundlePath, out var moduleName)) continue;
+                    if (!requestEnvironmentByBundle.TryGetValue(bundlePath, out var envKey)) continue;
+                    var trackedObjectsByPath = emitter.TryGetTrackedObjectsByPath(moduleName);
+                    if (trackedObjectsByPath == null) continue;
+
+                    var nextCoverage = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+                    var nextUnknown = new HashSet<string>(StringComparer.Ordinal);
+                    foreach (var testKey in discoveredTests)
+                    {
+                        if (!resultByTest.TryGetValue(testKey, out var result)
+                            || result.Outcome != TestOutcome.Pass
+                            || result.TimedOut)
+                        {
+                            nextUnknown.Add(testKey);
+                            continue;
+                        }
+
+                        if (!perTestStatementTable.TryGetValue(testKey, out var statements) || statements.Count == 0)
+                        {
+                            nextUnknown.Add(testKey);
+                            continue;
+                        }
+
+                        var coveredObjects = new HashSet<string>(StringComparer.Ordinal);
+                        var unmappable = false;
+                        foreach (var s in statements)
+                        {
+                            if (!trackedObjectsByPath.TryGetValue(s.FilePath, out var identity))
+                            {
+                                unmappable = true;
+                                break;
+                            }
+                            coveredObjects.Add(ToAffectedObjectKey(identity));
+                        }
+
+                        if (unmappable || coveredObjects.Count == 0)
+                        {
+                            nextUnknown.Add(testKey);
+                            continue;
+                        }
+                        nextCoverage[testKey] = coveredObjects;
+                    }
+
+                    affectedCoverageByBundle[bundlePath] = nextCoverage;
+                    affectedUnknownTestsByBundle[bundlePath] = nextUnknown;
+                    affectedEnvironmentKeyByBundle[bundlePath] = envKey;
+                }
+            }
+
+            ServerSelection? requestSelection = null;
+            if (affectedOnly)
+            {
+                var changedObjects = selectionByBundle.Values
+                    .SelectMany(s => s.ChangedObjects)
+                    .Distinct(StringComparer.Ordinal)
+                    .OrderBy(x => x, StringComparer.Ordinal)
+                    .ToList();
+                var forcedReasons = selectionByBundle.Values
+                    .Where(s => s.ForcedFull && !string.IsNullOrWhiteSpace(s.Reason))
+                    .Select(s => s.Reason!)
+                    .Distinct(StringComparer.Ordinal)
+                    .ToList();
+                if (selectionByBundle.Count == 0 && allCompileErrors.Count > 0)
+                    forcedReasons.Add("bundle did not reach test execution (compile/dependency failure)");
+                requestSelection = new ServerSelection(
+                    "affected",
+                    selectionByBundle.Values.Sum(s => s.Ran),
+                    selectionByBundle.Values.Sum(s => s.Skipped),
+                    changedObjects,
+                    forcedReasons.Count > 0,
+                    forcedReasons.Count > 0 ? string.Join(" | ", forcedReasons) : null);
             }
 
             lock (outputLock)
@@ -4720,8 +4966,9 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                     allTests, exitCode, cached, changed,
                     allCompileErrors.Count > 0 ? allCompileErrors : null,
                     cancelled: cancelled, wallSeconds: reqSw.Elapsed.TotalSeconds,
+                    selection: requestSelection,
                     statementTable: statementTable,
-                    perTestStatementTable: perTestStatementTable));
+                    perTestStatementTable: requestPerTestCoverage ? perTestStatementTable : null));
                 output.Flush();
             }
         }
@@ -4809,7 +5056,7 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
             messageCaptureSession.ClientCallbackOverride = new AlRunner.Patches.RunnerClientCallback();
         try
         {
-            var runs = RunAllBundlesForServer(sourcePaths, req.PackagePaths, RunFirstCodeunitOnRun);
+            var runs = RunAllBundlesForServer(sourcePaths, req.PackagePaths, RunFirstCodeunitOnRun, default, false, null);
 
             var allTests = runs.SelectMany(r => r.Tests).ToList();
             var allCompileErrors = runs.SelectMany(r => r.CompileErrors ?? Array.Empty<CompilationErrorGroup>()).ToList();
@@ -4836,9 +5083,22 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                     perTestStatementTable = AlRunner.Infrastructure.AlCoverageTracker.CollectPerTestStatementTable(covSourceMap);
             }
 
+            ServerSelection? selection = null;
+            if (req.AffectedOnly == true)
+            {
+                selection = new ServerSelection(
+                    "affected",
+                    allTests.Count,
+                    0,
+                    Array.Empty<string>(),
+                    true,
+                    "affectedOnly selection is applied to runTests; execute always runs the first OnRun codeunit");
+            }
+
             return AlRunner.ServerProtocol.Execute(allTests, exitCode,
                 AlRunner.Infrastructure.AlMessageCapture.Snapshot(),
                 allCompileErrors.Count > 0 ? allCompileErrors : null,
+                selection: selection,
                 statementTable: statementTable,
                 perTestStatementTable: perTestStatementTable);
         }

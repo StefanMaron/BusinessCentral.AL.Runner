@@ -86,4 +86,37 @@ public class ServerProtocolAckSummaryTests
         Assert.Equal(2, e.GetProperty("protocolVersion").GetInt32());
         Assert.Equal("summary", e.GetProperty("type").GetString());
     }
+
+    [Fact]
+    public void Summary_Selection_EmitsAffectedSelectionShape()
+    {
+        var selection = new ServerSelection(
+            "affected", Ran: 1, Skipped: 4,
+            ChangedObjects: new[] { "Codeunit 60205 Test Query Object" },
+            ForcedFull: false, Reason: null);
+        var json = ServerProtocol.Summary(new[] { PassResult }, exitCode: 0, cached: false, selection: selection);
+        var e = JsonDocument.Parse(json).RootElement;
+
+        Assert.True(e.TryGetProperty("selection", out var sel), json);
+        Assert.Equal("affected", sel.GetProperty("mode").GetString());
+        Assert.Equal(1, sel.GetProperty("ran").GetInt32());
+        Assert.Equal(4, sel.GetProperty("skipped").GetInt32());
+        Assert.False(sel.GetProperty("forcedFull").GetBoolean());
+        Assert.False(sel.TryGetProperty("reason", out _));
+    }
+
+    [Fact]
+    public void Execute_Selection_EmitsForcedFullReason()
+    {
+        var selection = new ServerSelection(
+            "affected", Ran: 2, Skipped: 0,
+            ChangedObjects: Array.Empty<string>(),
+            ForcedFull: true, Reason: "change model unavailable");
+        var json = ServerProtocol.Execute(new[] { PassResult, PassResult }, exitCode: 0, selection: selection);
+        var e = JsonDocument.Parse(json).RootElement;
+
+        Assert.True(e.TryGetProperty("selection", out var sel), json);
+        Assert.True(sel.GetProperty("forcedFull").GetBoolean());
+        Assert.Equal("change model unavailable", sel.GetProperty("reason").GetString());
+    }
 }
