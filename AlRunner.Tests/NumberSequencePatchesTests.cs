@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using AlRunner.Patches;
 using Microsoft.Dynamics.Nav.Runtime;
+using Microsoft.Dynamics.Nav.Types.Exceptions;
 using Xunit;
 
 namespace AlRunner.Tests;
@@ -34,7 +35,7 @@ public sealed class NumberSequencePatchesTests : IDisposable
         Assert.Equal(1, NumberSequencePatches.ALNext("orders", true));
         Assert.Equal(100, NumberSequencePatches.ALNext("Orders", false));
 
-        var duplicate = Assert.Throws<InvalidOperationException>(
+        var duplicate = Assert.Throws<NavALException>(
             () => NumberSequencePatches.ALInsert("ORDERS", 999, 1, true));
         Assert.Contains("already exists", duplicate.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(2, NumberSequencePatches.ALNext("Orders", true));
@@ -77,7 +78,7 @@ public sealed class NumberSequencePatchesTests : IDisposable
     {
         NumberSequencePatches.ALInsert("Orders", 10, 3, true);
 
-        Assert.Throws<ArgumentOutOfRangeException>(
+        Assert.Throws<NavALException>(
             () => NumberSequencePatches.ALRange("Orders", count, true));
 
         Assert.Equal(10, NumberSequencePatches.ALNext("Orders", true));
@@ -88,11 +89,69 @@ public sealed class NumberSequencePatchesTests : IDisposable
     {
         Assert.False(NumberSequencePatches.ALExists("Missing", true));
 
-        Assert.Throws<InvalidOperationException>(() => NumberSequencePatches.ALCurrent("Missing", true));
-        Assert.Throws<InvalidOperationException>(() => NumberSequencePatches.ALNext("Missing", true));
-        Assert.Throws<InvalidOperationException>(() => NumberSequencePatches.ALRestart("Missing", 1, true));
-        Assert.Throws<InvalidOperationException>(() => NumberSequencePatches.ALDelete("Missing", true));
-        Assert.Throws<InvalidOperationException>(() => NumberSequencePatches.ALRange("Missing", 1, true));
+        foreach (var operation in new Action[]
+                 {
+                     () => NumberSequencePatches.ALCurrent("Missing", true),
+                     () => NumberSequencePatches.ALNext("Missing", true),
+                     () => NumberSequencePatches.ALRestart("Missing", 1, true),
+                     () => NumberSequencePatches.ALRange("Missing", 1, true),
+                 })
+        {
+            var error = Assert.Throws<NavALException>(operation);
+            Assert.Contains("Missing", error.Message, StringComparison.Ordinal);
+            Assert.Contains("does not exist", error.Message, StringComparison.OrdinalIgnoreCase);
+        }
+
+        Assert.False(NumberSequencePatches.ALExists("Missing", true));
+    }
+
+    /// <summary>
+    /// AlRunner#2311. The mechanism the 29-test Tests-SINGLESERVER cluster tripped over:
+    /// Base App codeunit "Sequence No. Mgt." asks for a number sequence from inside an AL
+    /// [TryFunction] and creates it when the answer is "no". A BCL exception is not a
+    /// NavBaseException, so it blew through TryInvokeAsync and aborted the test instead of
+    /// returning false. Assert the runner's own try-function boundary — the same method the
+    /// Cecil rewrite puts in front of NavApplicationObjectBase.TryInvokeAsync — now returns
+    /// false for every missing-sequence operation.
+    /// </summary>
+    [Fact]
+    public void MissingOperations_AreTrappedByAnAlTryFunction()
+    {
+        Assert.False(NumberSequencePatches.ALExists("Missing", true));
+
+        Assert.False(TrapsLikeAlTryFunction(() => NumberSequencePatches.ALCurrent("Missing", true)));
+        Assert.False(TrapsLikeAlTryFunction(() => NumberSequencePatches.ALNext("Missing", true)));
+        Assert.False(TrapsLikeAlTryFunction(() => NumberSequencePatches.ALRestart("Missing", 1, true)));
+        Assert.False(TrapsLikeAlTryFunction(() => NumberSequencePatches.ALRange("Missing", 1, true)));
+
+        // Positive direction: the same boundary reports true when nothing failed, so a
+        // false above means the error was trapped, not that the boundary always says false.
+        Assert.True(TrapsLikeAlTryFunction(() => NumberSequencePatches.ALInsert("Missing", 7, 1, true)));
+        Assert.True(TrapsLikeAlTryFunction(() => NumberSequencePatches.ALCurrent("Missing", true)));
+        Assert.Equal(7, NumberSequencePatches.ALCurrent("Missing", true));
+    }
+
+    /// <summary>
+    /// Runs <paramref name="body"/> through the runner's replacement for
+    /// NavApplicationObjectBase.TryInvokeAsync, which is what an AL [TryFunction] compiles
+    /// down to. Returns what AL would see.
+    /// </summary>
+    private static bool TrapsLikeAlTryFunction(Action body) =>
+        BcRuntime.NavApplicationObjectBase_TryInvokeAsync(
+            session: null,
+            method: () => { body(); return ValueTask.CompletedTask; })
+            .GetAwaiter().GetResult();
+
+    /// <summary>
+    /// Real BC's ALDeleteAsync issues DROP SEQUENCE IF EXISTS, so deleting a sequence that
+    /// was never created succeeds. Documented in the decompiled DeleteAsync body.
+    /// </summary>
+    [Fact]
+    public void Delete_MissingSequence_Succeeds()
+    {
+        Assert.False(NumberSequencePatches.ALExists("Missing", true));
+
+        NumberSequencePatches.ALDelete("Missing", true);
 
         Assert.False(NumberSequencePatches.ALExists("Missing", true));
     }
@@ -112,7 +171,7 @@ public sealed class NumberSequencePatchesTests : IDisposable
     [Fact]
     public void Insert_RejectsZeroIncrement_WithoutCreatingTheSequence()
     {
-        Assert.Throws<ArgumentOutOfRangeException>(
+        Assert.Throws<NavALException>(
             () => NumberSequencePatches.ALInsert("Orders", 1, 0, true));
 
         Assert.False(NumberSequencePatches.ALExists("Orders", true));
@@ -124,7 +183,7 @@ public sealed class NumberSequencePatchesTests : IDisposable
         NumberSequencePatches.ALInsert("Orders", long.MaxValue - 1, 2, true);
         Assert.Equal(long.MaxValue - 1, NumberSequencePatches.ALNext("Orders", true));
 
-        var error = Assert.Throws<InvalidOperationException>(
+        var error = Assert.Throws<NavALException>(
             () => NumberSequencePatches.ALNext("Orders", true));
 
         Assert.Contains("range", error.Message, StringComparison.OrdinalIgnoreCase);

@@ -12,6 +12,28 @@ namespace AlRunner.Patches;
 /// operation still fails, although issue #2049 explicitly permits runner-specific error text.
 /// The (name, CompanySpecific) key intentionally models only the runner's single-company scope;
 /// database persistence and company switching remain outside that issue's initial contract.
+///
+/// EXCEPTION TYPE IS PART OF THE CONTRACT (AlRunner#2311). Every failure below raises
+/// <c>NavALException</c>, the trappable AL error real BC raises, not a BCL exception.
+/// The decompiled <c>ALNumberSequence.ALCurrentAsync</c> ends with:
+/// <code>
+///   if (obj == null)
+///       throw new NavALException(string.Format(session.Culture, Lang.NumberSequenceDoesNotExist, name));
+/// </code>
+/// and ALNextAsync / ALRestartAsync / RangeAsync raise the same NavALException from their
+/// <c>catch (NavSqlException ex) when (IsMissingSequence(ex))</c> handlers, ALInsertAsync
+/// from <c>catch (NavSqlException ex) when (ex.ErrorNumber == 2714)</c>. NavALException
+/// derives from NavBaseException with UntrappableError false, and
+/// <c>NavApplicationObjectBase.TryInvokeAsync</c> traps exactly
+/// <c>catch (NavBaseException ex) when (!ex.UntrappableError)</c> — so on a real tier an AL
+/// [TryFunction] around any of these sees false and carries on. That is load-bearing: Base App
+/// codeunit "Sequence No. Mgt." wraps Current/Next/Range in [TryFunction]s and CREATES the
+/// sequence when one returns false, and the No. Series code does the same for a
+/// sequence-backed No. Series Line. A BCL exception here is not "a different message" — it
+/// blows through the try boundary and aborts AL that real BC never aborts.
+/// This is not a silent default (.claude/rules/loud-failures.md): the error still happens,
+/// still names the sequence, and is still readable from AL via GetLastErrorText. Only the
+/// type changes, from one AL cannot trap to the one BC actually throws.
 /// </summary>
 public static class NumberSequencePatches
 {
@@ -48,14 +70,18 @@ public static class NumberSequencePatches
     public static void ALInsert(string name, long seed, long increment, bool companySpecific)
     {
         ArgumentNullException.ThrowIfNull(name);
+        // Real BC issues CREATE SEQUENCE ... INCREMENT BY 0, which SQL Server rejects; the
+        // NavSqlException surfaces to AL as a trappable error (ALInsertAsync only converts
+        // error 2714, so the rest propagate as NavSqlException, itself a NavBaseException).
+        // Trappable either way, so raise the AL error rather than a BCL one.
         if (increment == 0)
-            throw new ArgumentOutOfRangeException(nameof(increment), "Number sequence increment cannot be zero.");
+            throw AlError($"Number sequence '{name}' cannot be created with an increment of zero.");
 
         lock (_sync)
         {
             var key = (name, companySpecific);
             if (!_sequences.TryAdd(key, new SequenceState(seed, increment)))
-                throw new InvalidOperationException($"Number sequence '{name}' already exists.");
+                throw AlError($"Number sequence '{name}' already exists.");
         }
     }
 
@@ -103,15 +129,19 @@ public static class NumberSequencePatches
         }
     }
 
+    /// <summary>
+    /// Deleting a sequence that does not exist SUCCEEDS, matching real BC. ALDeleteAsync
+    /// delegates to DeleteAsync, whose whole body is
+    /// <c>"DROP SEQUENCE IF EXISTS dbo.[" + sequenceName + "]"</c> — no missing-sequence
+    /// branch and no NavALException anywhere on the path. Returning without an error is
+    /// therefore observably equivalent, not a swallowed failure.
+    /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static void ALDelete(string name, bool companySpecific)
     {
         ArgumentNullException.ThrowIfNull(name);
         lock (_sync)
-        {
-            if (!_sequences.Remove((name, companySpecific)))
-                throw MissingSequence(name);
-        }
+            _sequences.Remove((name, companySpecific));
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -187,8 +217,11 @@ public static class NumberSequencePatches
         bool companySpecific)
     {
         ArgumentNullException.ThrowIfNull(name);
+        // Real BC hands the count straight to sp_sequence_get_range, which raises a SQL
+        // error for a non-positive range size. RangeAsync only converts the missing-sequence
+        // numbers, so the rest reach AL as NavSqlException — trappable, like this.
         if (count <= 0)
-            throw new ArgumentOutOfRangeException(nameof(count), "Number sequence range count must be greater than zero.");
+            throw AlError($"Number sequence '{name}' cannot reserve a range of {count} value(s).");
 
         lock (_sync)
         {
@@ -216,8 +249,22 @@ public static class NumberSequencePatches
         throw MissingSequence(name);
     }
 
-    private static InvalidOperationException MissingSequence(string name) =>
-        new($"Number sequence '{name}' does not exist.");
+    /// <summary>
+    /// BC's own wording is Lang.NumberSequenceDoesNotExist formatted with the sequence name.
+    /// The resource text is not reproduced here — issue #2049 permits runner-specific error
+    /// text — but the name is kept in the message because AL that reads GetLastErrorText
+    /// after a trapped failure needs to know which sequence was missing.
+    /// </summary>
+    private static Exception MissingSequence(string name) =>
+        AlError($"Number sequence '{name}' does not exist.");
+
+    /// <summary>
+    /// The one place a NumberSequence failure becomes an exception. NavALException is BC's
+    /// trappable AL error: NavBaseException with UntrappableError false, which is exactly
+    /// what NavApplicationObjectBase.TryInvoke/TryInvokeAsync catch. See the type comment.
+    /// </summary>
+    private static Exception AlError(string message) =>
+        new Microsoft.Dynamics.Nav.Types.Exceptions.NavALException(message);
 
     private static long AddChecked(string name, long left, long right)
     {
@@ -243,6 +290,11 @@ public static class NumberSequencePatches
         }
     }
 
-    private static InvalidOperationException OutOfRange(string name, OverflowException inner) =>
-        new($"Number sequence '{name}' moved outside the supported BigInteger range.", inner);
+    /// <summary>
+    /// Exhausting a sequence is a SQL error on a real tier (the BIGINT sequence runs past its
+    /// maximum), which reaches AL as a trappable NavSqlException. Trappable here too.
+    /// </summary>
+    private static Exception OutOfRange(string name, OverflowException inner) =>
+        new Microsoft.Dynamics.Nav.Types.Exceptions.NavALException(
+            $"Number sequence '{name}' moved outside the supported BigInteger range.", inner);
 }
