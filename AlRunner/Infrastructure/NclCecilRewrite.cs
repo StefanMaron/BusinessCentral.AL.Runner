@@ -327,9 +327,6 @@ public static class NclCecilRewrite
         "Microsoft.Dynamics.Nav.Runtime.NavSession::SyncFormatSettings/0",
         "Microsoft.Dynamics.Nav.Runtime.NavSession::get_Culture/0",
         "Microsoft.Dynamics.Nav.Runtime.NavSession::get_WindowsCulture/0",
-        // get_ExecutionContext → Normal (skeleton Database.Tenant is null → UpgradeManager
-        // ctor NRE). Body rewritten in RewriteNcl (search "get_ExecutionContext").
-        "Microsoft.Dynamics.Nav.Runtime.NavSession::get_ExecutionContext/0",
         "Microsoft.Dynamics.Nav.Runtime.RecordImplementation::GetActiveCompany/0",
         "Microsoft.Dynamics.Nav.Runtime.NavStream::get_Target/0",
         // NavHttpClient/NavHttpResponseMessageBase/NavHttpRequestMessage.get_Target — same
@@ -4044,34 +4041,16 @@ public static class NclCecilRewrite
             Console.Error.WriteLine("[Cecil] Replaced NavSession.get_SortingProperties → RecordPatches.NavSession_get_SortingProperties");
         }
 
-        // ── NavSession.get_ExecutionContext → return ExecutionContext.Normal (0) ──
-        // The getter computes: if installing→Install, if upgrading→Upgrade, else checks
-        // `Database?.UpgradeManager?.IsSessionInUpgrade(Id)` → Upgrade, else Normal.
-        // On the skeleton, `Database.Tenant` is null, so the lazy `UpgradeManager` getter
-        // (`new NavDataUpgradeManager(SystemTenant.UpgradeMetadata, Tenant)`) NREs at
-        // `tenant.Id` in the ctor delegation. A headless test session is never installing,
-        // uninstalling, or in a data upgrade, so the faithful value is always Normal —
-        // identical to the existing ALSession.ALGetExecutionContext shim (BcAssembler.cs).
-        // Reached from BaseApp WorkflowSetup.AddEventToLibrary (Codeunit 1520) during
-        // WorkflowSetup.InitWorkflow → CreateEventsLibrary → OnAddWorkflowEventsToLibrary
-        // subscriber fan-out (RecoverySolutions Customizations.Test, 40 workflow tests).
-        {
-            var navSessionType = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.NavSession")
-                ?? throw new InvalidOperationException("NavSession type not found");
-            var getExecCtx = navSessionType.Methods.FirstOrDefault(m =>
-                m.Name == "get_ExecutionContext" && m.Parameters.Count == 0 && !m.IsStatic)
-                ?? throw new InvalidOperationException("NavSession.get_ExecutionContext not found — Ncl shape changed; do not commit");
-
-            var body = getExecCtx.Body;
-            body.Instructions.Clear();
-            body.Variables.Clear();
-            body.ExceptionHandlers.Clear();
-            var il = body.GetILProcessor();
-            il.Append(il.Create(OpCodes.Ldc_I4_0)); // ExecutionContext.Normal
-            il.Append(il.Create(OpCodes.Ret));
-            body.MaxStackSize = 1;
-            Console.Error.WriteLine("[Cecil] Replaced NavSession.get_ExecutionContext → return ExecutionContext.Normal");
-        }
+        // NavSession.get_ExecutionContext used to be replaced here with `return
+        // ExecutionContext.Normal`, because the getter's third branch reads
+        // `Database?.UpgradeManager?.IsSessionInUpgrade(Id)` and the lazy UpgradeManager getter
+        // NRE'd on `tenant.Id` — NavDatabase.Tenant was null on the skeleton. That cause is fixed
+        // at the source (RecordPatches.Register wires the skeleton NavDatabase's tenant field,
+        // MetadataPatches seeds NavSystemTenant.upgradeMetadata), so BC's own getter runs:
+        // Install / Uninstall from session.AppInstallationContext, Upgrade from
+        // session.AppUpgradeContext, and Normal otherwise — which the hardcoded 0 got wrong
+        // inside an install trigger, where the runner does populate AppInstallationContext.
+        // See AlRunner#2353.
 
         // ── ALNavApp.GetDataVersionForUpgrade(NavAppRuntimeMetadata) → return null ──
         // The method probes whether an app data-upgrade is in progress, via

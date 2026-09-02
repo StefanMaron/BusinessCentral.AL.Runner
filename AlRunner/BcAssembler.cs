@@ -162,10 +162,12 @@ public sealed class BcAssembler
         ("ALDebugger.CheckPermissionToDebug(", "global::AlRunnerShim.NavRuntimeHelpersShim.ALDebugger_CheckPermissionToDebug("),
         // ALSession.ALStopSession sync wrappers NRE via session.Diagnostics; return false.
         ("ALSession.ALStopSession(",   "global::AlRunnerShim.NavRuntimeHelpersShim.ALSession_StopSession("),
-        // ALSession.ALGetExecutionContext / ALGetModuleExecutionContext NRE via session properties.
-        // Return ExecutionContext.Normal (0) which is the expected value in a headless runner.
-        ("ALSession.ALGetExecutionContext(",         "global::AlRunnerShim.NavRuntimeHelpersShim.ALGetExecutionContext("),
-        ("ALSession.ALGetModuleExecutionContext(",   "global::AlRunnerShim.NavRuntimeHelpersShim.ALGetModuleExecutionContext("),
+        // ALSession.ALGetExecutionContext / ALGetModuleExecutionContext used to be redirected here
+        // to a shim that always answered ExecutionContext.Normal. Removed with AlRunner#2353:
+        // they NRE'd only because NavDatabase.Tenant was null on the skeleton, and that is now
+        // populated (RecordPatches.Register), so BC's own bodies run and compute the answer —
+        // including Install / Uninstall / Upgrade from session.AppInstallationContext and
+        // session.AppUpgradeContext, which a hardcoded Normal got wrong inside an install trigger.
         // ALSession.ALSendTraceTag NREs via session.Diagnostics; telemetry is a no-op here.
         ("ALSession.ALSendTraceTag(",  "global::AlRunnerShim.NavRuntimeHelpersShim.ALSession_SendTraceTag("),
         // ALSessionInformation static properties NRE via session.SqlDebuggingStatisticsCheckPoint.
@@ -300,17 +302,6 @@ namespace AlRunnerShim
         // ALSession.ALStopSession — sync wrappers call ALStopSessionAsync which NREs.
         public static bool ALSession_StopSession(Microsoft.Dynamics.Nav.Types.DataError e, int sessionId) => false;
         public static bool ALSession_StopSession(Microsoft.Dynamics.Nav.Types.DataError e, int sessionId, string comment) => false;
-
-        // ALSession.ALGetExecutionContext / ALGetModuleExecutionContext.
-        // Return Normal (0) — headless runner has no install/upgrade execution context.
-        public static Microsoft.Dynamics.Nav.Types.ExecutionContext ALGetExecutionContext(object session)
-            => Microsoft.Dynamics.Nav.Types.ExecutionContext.Normal;
-        public static Microsoft.Dynamics.Nav.Types.ExecutionContext ALGetModuleExecutionContext(object session)
-            => Microsoft.Dynamics.Nav.Types.ExecutionContext.Normal;
-        public static Microsoft.Dynamics.Nav.Types.ExecutionContext ALGetModuleExecutionContext(object session, int id)
-            => Microsoft.Dynamics.Nav.Types.ExecutionContext.Normal;
-        public static Microsoft.Dynamics.Nav.Types.ExecutionContext ALGetModuleExecutionContext(object session, System.Guid id)
-            => Microsoft.Dynamics.Nav.Types.ExecutionContext.Normal;
 
         // ALSession.ALSendTraceTag — telemetry no-op; accepts all parameter overloads.
         public static void ALSession_SendTraceTag(object session, string tag, string category, object verbosity, string message) { }
