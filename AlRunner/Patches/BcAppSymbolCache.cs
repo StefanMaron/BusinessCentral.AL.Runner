@@ -119,7 +119,29 @@ internal static partial class BcAppSymbolCache
     }
 
     internal sealed record AppSymbols(List<ParsedTable> Tables, List<EnumSymbol> Enums, List<QuerySymbol> Queries,
-        List<ObjectSymbol> Objects, List<ReportSymbol> Reports, List<PageSymbol> Pages);
+        List<ObjectSymbol> Objects, List<ReportSymbol> Reports, List<PageSymbol> Pages,
+        // Profiles the .app declares, plus the app's own identity — both feed the
+        // "All Profile" (2000000178) virtual table, whose rows are per-app and carry the
+        // declaring app's id and name as columns of their own (#2317).
+        List<ProfileSymbol>? Profiles = null, string? AppId = null, string? AppName = null);
+
+    /// <summary>
+    /// One profile as SymbolReference.json states it. <c>ProfileId</c> is the profile object's
+    /// AL name, which is also what the platform uses as "All Profile"."Profile ID" (a Code[30]
+    /// — e.g. Base Application's <c>ORDER PROCESSOR</c>).
+    ///
+    /// <para><c>RoleCenterPageName</c> is the <c>RoleCenter</c> property verbatim: a page NAME
+    /// (<c>"Order Processor Role Center"</c>), not an id, so the consumer resolves it against
+    /// the run's page inventory — the same shape as a page's CardPageId.</para>
+    ///
+    /// <para><c>Enabled</c> defaults to true and <c>Promoted</c> to false because that is AL's
+    /// own default for a profile that declares neither, not a guess: 16 of the platform apps'
+    /// 44 profiles state no <c>Enabled</c> property at all and every one of them is enabled on
+    /// a real tier.</para>
+    /// </summary>
+    internal sealed record ProfileSymbol(
+        string ProfileId, string? Caption, string? Description, string? RoleCenterPageName,
+        bool Enabled, bool Promoted);
 
     /// <summary>
     /// A precompiled dependency's page, as far as SymbolReference.json states it — just
@@ -261,7 +283,8 @@ internal static partial class BcAppSymbolCache
     // cache-key VALIDATION, not what Parse extracts from SymbolReference.json.
     private sealed record CachePayload(string ContentHash,
         List<ParsedTable> Tables, List<EnumSymbol> Enums, List<QuerySymbol> Queries,
-        List<ObjectSymbol>? Objects, List<ReportSymbol>? Reports, List<PageSymbol>? Pages);
+        List<ObjectSymbol>? Objects, List<ReportSymbol>? Reports, List<PageSymbol>? Pages,
+        List<ProfileSymbol>? Profiles = null, string? AppId = null, string? AppName = null);
 
     /// <summary>
     /// Parse a loose <c>SymbolReference.json</c> file (the raw module JSON, NOT a .app
@@ -278,10 +301,13 @@ internal static partial class BcAppSymbolCache
         var objects = new Dictionary<(string, int), ObjectSymbol>();
         var reports = new Dictionary<int, ReportSymbol>();
         var pages = new Dictionary<int, PageSymbol>();
+        var profiles = new Dictionary<string, ProfileSymbol>(StringComparer.OrdinalIgnoreCase);
         using var doc = JsonDocument.Parse(File.ReadAllText(jsonPath));
-        VisitSymbolContainer(doc.RootElement, tables, enums, queries, objects, reports, pages);
+        VisitSymbolContainer(doc.RootElement, tables, enums, queries, objects, reports, pages, profiles);
+        var (appId, appName) = ReadAppIdentity(doc.RootElement);
         return new AppSymbols(tables.Values.ToList(), enums.Values.ToList(), queries.Values.ToList(),
-            objects.Values.ToList(), reports.Values.ToList(), pages.Values.ToList());
+            objects.Values.ToList(), reports.Values.ToList(), pages.Values.ToList(),
+            profiles.Values.ToList(), appId, appName);
     }
 
     internal static AppSymbols Get(string appPath)
@@ -358,7 +384,8 @@ internal static partial class BcAppSymbolCache
                 return null;
             return new AppSymbols(payload.Tables, payload.Enums, payload.Queries ?? new List<QuerySymbol>(),
                 payload.Objects ?? new List<ObjectSymbol>(), payload.Reports ?? new List<ReportSymbol>(),
-                payload.Pages ?? new List<PageSymbol>());
+                payload.Pages ?? new List<PageSymbol>(),
+                payload.Profiles ?? new List<ProfileSymbol>(), payload.AppId, payload.AppName);
         }
         catch (Exception ex)
         {
@@ -375,7 +402,7 @@ internal static partial class BcAppSymbolCache
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(cachePath)!);
-            var payload = new CachePayload(contentHash, symbols.Tables, symbols.Enums, symbols.Queries, symbols.Objects, symbols.Reports, symbols.Pages);
+            var payload = new CachePayload(contentHash, symbols.Tables, symbols.Enums, symbols.Queries, symbols.Objects, symbols.Reports, symbols.Pages, symbols.Profiles, symbols.AppId, symbols.AppName);
             // #1809 follow-up: cachePath is content-keyed (hash of the .app file),
             // so two subprocesses parsing the same app concurrently used to race a
             // plain File.WriteAllText into the same path. TryRead already treats any
@@ -405,16 +432,37 @@ internal static partial class BcAppSymbolCache
         var objects = new Dictionary<(string, int), ObjectSymbol>();
         var reports = new Dictionary<int, ReportSymbol>();
         var pages = new Dictionary<int, PageSymbol>();
+        var profiles = new Dictionary<string, ProfileSymbol>(StringComparer.OrdinalIgnoreCase);
+        string? appId = null, appName = null;
         foreach (var json in ReadSymbolReferences(appPath))
         {
             using var doc = JsonDocument.Parse(json);
-            VisitSymbolContainer(doc.RootElement, tables, enums, queries, objects, reports, pages);
+            VisitSymbolContainer(doc.RootElement, tables, enums, queries, objects, reports, pages, profiles);
+            // The .app's own identity, stated once at the root of its SymbolReference.json.
+            // First one wins: ReadSymbolReferences can yield more than one module for a
+            // package, and the package's own module is the one that comes first.
+            if (appId == null)
+                (appId, appName) = ReadAppIdentity(doc.RootElement);
         }
         return new AppSymbols(tables.Values.ToList(), enums.Values.ToList(), queries.Values.ToList(),
-            objects.Values.ToList(), reports.Values.ToList(), pages.Values.ToList());
+            objects.Values.ToList(), reports.Values.ToList(), pages.Values.ToList(),
+            profiles.Values.ToList(), appId, appName);
     }
 
-    private static void VisitSymbolContainer(JsonElement container, Dictionary<int, ParsedTable> tables, Dictionary<int, EnumSymbol> enums, Dictionary<int, QuerySymbol> queries, Dictionary<(string, int), ObjectSymbol> objects, Dictionary<int, ReportSymbol> reports, Dictionary<int, PageSymbol> pages)
+    /// <summary>
+    /// The declaring app's id (GUID text) and name, as SymbolReference.json's root states
+    /// them. Both are columns of an "All Profile" row ("App ID" / "App Name"), so a profile
+    /// whose app the runner cannot identify is not answerable and is dropped rather than
+    /// handed out under an invented app.
+    /// </summary>
+    private static (string? AppId, string? AppName) ReadAppIdentity(JsonElement root)
+    {
+        var id = root.TryGetProperty("AppId", out var idProp) ? idProp.GetString() : null;
+        var name = root.TryGetProperty("Name", out var nameProp) ? nameProp.GetString() : null;
+        return (string.IsNullOrWhiteSpace(id) ? null : id, string.IsNullOrWhiteSpace(name) ? null : name);
+    }
+
+    private static void VisitSymbolContainer(JsonElement container, Dictionary<int, ParsedTable> tables, Dictionary<int, EnumSymbol> enums, Dictionary<int, QuerySymbol> queries, Dictionary<(string, int), ObjectSymbol> objects, Dictionary<int, ReportSymbol> reports, Dictionary<int, PageSymbol> pages, Dictionary<string, ProfileSymbol> profiles)
     {
         // Flat (kind, id, name) sweep for AllObj. Independent of the typed parsing below
         // so a kind we do not model in depth still shows up as an existing object.
@@ -483,11 +531,51 @@ internal static partial class BcAppSymbolCache
             }
         }
 
+        // Profiles are NOT in ObjectContainers above: a profile has no object id, so it can
+        // never appear in AllObj. Its identity is its NAME, which is also its "Profile ID".
+        if (container.TryGetProperty("Profiles", out var profileArray) && profileArray.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var pr in profileArray.EnumerateArray())
+            {
+                var parsed = TryParseProfileSymbol(pr);
+                if (parsed != null)
+                    profiles.TryAdd(parsed.ProfileId, parsed);
+            }
+        }
+
         if (container.TryGetProperty("Namespaces", out var namespaces) && namespaces.ValueKind == JsonValueKind.Array)
         {
             foreach (var ns in namespaces.EnumerateArray())
-                VisitSymbolContainer(ns, tables, enums, queries, objects, reports, pages);
+                VisitSymbolContainer(ns, tables, enums, queries, objects, reports, pages, profiles);
         }
+    }
+
+    /// <summary>
+    /// Parse one entry of a SymbolReference.json <c>Profiles</c> array. Nothing is inferred:
+    /// the properties the file states are carried verbatim, and the two AL defaults applied
+    /// here (<c>Enabled</c> = true, <c>Promoted</c> = false) are AL's own defaults for a
+    /// profile that declares neither.
+    ///
+    /// <para><c>Description</c> is read from both spellings the compiler emits:
+    /// <c>ProfileDescription</c> (42 of the platform apps' 44 profiles) and the older
+    /// <c>Description</c> (Test Runner's TestRoleCenter profile). They are the same AL
+    /// property; the platform puts either into "All Profile".Description.</para>
+    /// </summary>
+    private static ProfileSymbol? TryParseProfileSymbol(JsonElement profile)
+    {
+        var name = profile.TryGetProperty("Name", out var nameProp) ? nameProp.GetString() : null;
+        if (string.IsNullOrWhiteSpace(name)) return null;
+
+        var props = SymbolProperties(profile);
+        props.TryGetValue("Caption", out var caption);
+        if (!props.TryGetValue("ProfileDescription", out var description))
+            props.TryGetValue("Description", out description);
+        props.TryGetValue("RoleCenter", out var roleCenter);
+
+        return new ProfileSymbol(
+            name!, caption, description, roleCenter,
+            Enabled: !SymbolBoolFalse(props, "Enabled"),
+            Promoted: SymbolBool(props, "Promoted"));
     }
 
     /// <summary>

@@ -224,7 +224,7 @@ public static partial class RecordPatches
     /// different <c>--define</c> sets are a genuinely different parse, not a cache hit.
     /// </para>
     /// </summary>
-    private static void ParseSourceFileIntoAllExtractors(string text)
+    private static void ParseSourceFileIntoAllExtractors(string text, string? filePath = null)
     {
         TryParseTableFile(text);
         TryParseTableExtensionFile(text);
@@ -234,6 +234,10 @@ public static partial class RecordPatches
         TryParseXmlPortFile(text);
         TryParseObjectDeclFile(text);
         TryParseObjectCaptionFile(text);
+        // Profiles need the file PATH, not just its text: a profile has no object id, and
+        // its "All Profile" row carries the declaring app's id and name, which are only
+        // knowable from the app.json that owns the file (#2317).
+        TryParseProfileFile(text, filePath);
     }
 
     /// <summary>
@@ -249,7 +253,7 @@ public static partial class RecordPatches
     {
         foreach (var dir in _sourceDirs)
             foreach (var file in AlRunner.Infrastructure.SafeDirectoryScan.Files(dir, "*.al"))
-                ParseSourceFileIntoAllExtractors(File.ReadAllText(file));
+                ParseSourceFileIntoAllExtractors(File.ReadAllText(file), file);
     }
 
     /// <summary>
@@ -302,7 +306,7 @@ public static partial class RecordPatches
             if (_registered)
             {
                 foreach (var file in AlRunner.Infrastructure.SafeDirectoryScan.Files(dir, "*.al"))
-                    ParseSourceFileIntoAllExtractors(File.ReadAllText(file));
+                    ParseSourceFileIntoAllExtractors(File.ReadAllText(file), file);
                 parsedAny = true;
             }
         }
@@ -1420,6 +1424,26 @@ public static partial class RecordPatches
                 }
                 PopulateIntegerVirtualTable(integerDa, table);
                 return integerDa;
+            }
+
+            // ── All Profile system virtual table (2000000178) ────────────────────────────
+            // Virtual on the service tier too: AllProfileDataProvider's rows are every
+            // profile every published app declares plus the tenant-owned ones. It is the
+            // table Profile List / Profile Card are bound to and the one
+            // Conf./Personalization Mgt. resolves a user's role centre through, so an empty
+            // store made every read of it raise "There is no All Profile within the filter."
+            // Populated once per provider — unlike AllObj this table is WRITTEN by AL, and a
+            // top-up on a later handout would resurrect a just-deleted row.
+            // See RecordPatches.AllProfileVirtualTable.cs.
+            if (IsAllProfileVirtualTable(table))
+            {
+                if (!perTable.TryGetValue(tableId, out var allProfileDa))
+                {
+                    var createdAllProfile = _mCreateTempDataAccess!.Invoke(self, new object[] { table })!;
+                    allProfileDa = perTable.GetOrAdd(tableId, createdAllProfile);
+                }
+                PopulateAllProfileVirtualTable(allProfileDa, table);
+                return allProfileDa;
             }
 
             // ── Report Layout List system virtual table (2000000234) ─────────────────────

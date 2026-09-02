@@ -215,7 +215,7 @@ public static partial class RecordPatches
                 $"NCLMetaTable.AllFields not found on {tNclMetaTable.FullName} — BC metadata shape changed");
     }
 
-    private static IEnumerable<NCLMetaField>? GetAllFields(NCLMetaTable meta)
+    internal static IEnumerable<NCLMetaField>? GetAllFields(NCLMetaTable meta)
     {
         EnsureNclMetaTableAllFieldsReflection(meta);
         var arr = (_pNclMetaTableAllFields?.GetValue(meta) ?? _fNclMetaTableAllFields?.GetValue(meta)) as Array;

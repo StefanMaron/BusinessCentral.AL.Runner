@@ -4487,6 +4487,54 @@ public static class NclCecilRewrite
         }
 
 
+        // -- All Profile (2000000178) write rules ------------------------------------
+        // The in-memory store behind All Profile accepts any write, but a real tier does
+        // not: AllProfileDataProvider routes Insert/Modify/Delete through
+        // TenantProfileTableDataHandler, which refuses Insert/Delete/Rename for any profile
+        // an installed app declares. Prepend a guard to those three AL write entry points,
+        // exactly like the rowversion clock above; it is a no-op for every table but
+        // 2000000178. Modify is deliberately NOT guarded -- a non-key modify of an app-owned
+        // profile is legal on a real tier (it writes the per-tenant profile settings), and
+        // Microsoft's own AllProfile V2 Test.Cleanup() relies on that.
+        // See AlRunner/Patches/AllProfileWritePatches.cs.
+        {
+            var navRecordForProfileGuard = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.NavRecord")
+                ?? throw new InvalidOperationException("NavRecord type not found in Ncl");
+
+            MethodReference ProfileGuardRef(string helper)
+            {
+                var mi = typeof(AlRunner.Patches.AllProfileWritePatches).GetMethod(
+                    helper, BindingFlags.Public | BindingFlags.Static)
+                    ?? throw new InvalidOperationException($"AllProfileWritePatches.{helper} not found");
+                return asm.MainModule.ImportReference(mi);
+            }
+
+            var profileGuards = new (string Entry, MethodReference Helper)[]
+            {
+                ("ALInsertAsync", ProfileGuardRef(nameof(AlRunner.Patches.AllProfileWritePatches.GuardAllProfileInsert))),
+                ("ALDeleteAsync", ProfileGuardRef(nameof(AlRunner.Patches.AllProfileWritePatches.GuardAllProfileDelete))),
+                ("ALRenameAsync", ProfileGuardRef(nameof(AlRunner.Patches.AllProfileWritePatches.GuardAllProfileRename))),
+            };
+
+            int profileGuarded = 0;
+            foreach (var (entry, helper) in profileGuards)
+                foreach (var m in navRecordForProfileGuard.Methods.Where(
+                             x => x.Name == entry && x.HasBody && x.Body.Instructions.Count > 0))
+                {
+                    var il = m.Body.GetILProcessor();
+                    var first = m.Body.Instructions[0];
+                    il.InsertBefore(first, il.Create(OpCodes.Ldarg_0));
+                    il.InsertBefore(first, il.Create(OpCodes.Call, helper));
+                    profileGuarded++;
+                }
+            if (profileGuarded == 0)
+                throw new InvalidOperationException(
+                    "[Cecil] no NavRecord ALInsert/ALDelete/ALRename entry points found for the All Profile "
+                    + "write guard - an app-owned profile would silently be deletable.");
+            Console.Error.WriteLine(
+                $"[Cecil] Prepended All Profile write guards -> {profileGuarded} NavRecord AL write entry point(s)");
+        }
+
         // === NavQuery ctor null-safety ===
         // The AL-emitted Query{ID} class chains to `: base(parent, securityFiltering, metaQuery)`
         // (the 3-arg ctor `(ITreeObject, SecurityFiltering, NCLMetaQuery)`). The original ctor
