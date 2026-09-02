@@ -120,10 +120,23 @@ See `.claude/rules/local-test-scope.md` for the general rule. Concretely for
 an impl agent, before pushing:
 
 1. **The RED → GREEN test itself** — non-negotiable, that is the proof your change works.
-2. **`dotnet test AlRunner.Tests`** — cheap relative to an AL suite, and where a regression from a runtime/compiler change shows up first.
+2. **A FILTERED `AlRunner.Tests` run** covering the surface you changed:
+   `dotnet test AlRunner.Tests --filter FullyQualifiedName~<YourTestClass>`. Seconds to a
+   couple of minutes, and where a regression from a runtime/compiler change shows up first.
 3. **The one AL bundle your change plausibly affects**, if there is an obvious one. Not all 32.
 
-Then push. CI runs the corpus, all of `runner-extras`, the xmlport isolation guard and server-mode across every supported BC version — that is what it is for.
+**Do not run the whole `dotnet test AlRunner.Tests` as a matter of routine.** This line
+used to call it "cheap relative to an AL suite"; measured, it is **15 minutes on a quiet
+machine and 31 on a loaded one**, and that sentence is why agents ran it four times in a
+two-hour task and spent half the task waiting. The cost is concentrated, not spread —
+1231 of 1435 tests finish under a second, and the top 50 are 64% of all test time,
+because they spawn the runner as a subprocess. A filter that names your class skips
+essentially all of it.
+
+Then push. CI runs the corpus, all of `runner-extras`, the xmlport isolation guard and
+server-mode across every supported BC version, plus the full `AlRunner.Tests` suite on
+each of the 8 legs — that is what it is for, and it runs in parallel with you rather
+than in front of you.
 
 **When to run wider anyway** (judgement, not routine):
 - You changed something in the shared compile/dispatch path with a broad blast radius — `BcCompiler`, `CodeunitEventDispatcher`, `RecordPatches`, the loader/cache layer. A wide change earns a wide local run.
