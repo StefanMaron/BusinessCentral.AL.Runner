@@ -1,0 +1,3 @@
+# The repo is LF throughout. #2426: one file arrived CRLF via an editor conversion and
+# turned a 56-line change into a 2,372-line diff. Pin it so that cannot recur silently.
+*.cs text=auto eol=lf
