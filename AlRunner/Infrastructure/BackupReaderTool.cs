@@ -1,11 +1,15 @@
 // BackupReaderTool — the process boundary between the runner and `bcbak`, the reader that
 // decodes a BC SQL Server `.bak` directly (no SQL Server, no restore, no container).
 //
-// TRANSPORT IS INTERIM: one process per command. The reader has a serve mode that opens the
-// backup once and answers newline-delimited JSON on stdin — measured at 317 ms of startup
-// plus 1.5-15 ms per warm small table, against ~0.7-2.3 s for every invocation here (all 456
-// CRONUS tables: 1.76 s vs 2m13s). #2263 swaps it. This file is the whole surface that has to
-// change: everything else goes through Run(...) and knows nothing about the transport.
+// TRANSPORT: per-table reads go over the reader's SERVE mode (BackupReaderServe.cs); every
+// other command still spawns one process. `read` is the only command issued once per table,
+// and the per-invocation cost is the `--symbols` parse, not the process: measured against BC
+// 28.1's W1 backup with the 108 .app files a normal run resolves, `bcdb read` costs 1.85 s
+// EVERY time, while `bcdb serve` answers five tables in 2.49 s total. See BackupReaderServe's
+// header for what that cost did to issues 2304 and 2336. Issue 2263 stays open for `tables`,
+// `companies` and `describe`, which run once per run and are not worth another output-shape
+// translation. This file plus BackupReaderServe.cs are the whole transport surface:
+// everything else goes through Run(...) and knows nothing about it.
 //
 // WHY A SUBPROCESS AND NOT A PACKAGE REFERENCE
 //   The reader is a separate project that knows nothing about AL Runner, and it must stay
@@ -151,9 +155,16 @@ internal static class BackupReaderTool
     }
 
     /// <summary>Run the reader and return stdout. A non-zero exit is an error, surfaced with
-    /// the reader's own stderr text — never converted into an empty result.</summary>
+    /// the reader's own stderr text — never converted into an empty result.
+    ///
+    /// A `read --format json` is answered over the shared serve process when one is available;
+    /// the returned text is byte-for-byte the shape the CLI would have printed, so no caller
+    /// can tell which transport answered. Everything else, and any read the serve transport
+    /// cannot express, spawns a process here.</summary>
     internal static string Run(IReadOnlyList<string> args, int timeoutMs = 600_000)
     {
+        if (BackupReaderServe.TryRun(args, out var served)) return served;
+
         var exe = Resolve();
         var psi = new ProcessStartInfo(exe)
         {
