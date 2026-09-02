@@ -1,4 +1,4 @@
-// UserPropertyCompanionRowBindingTests — issue #2353.
+// UserPropertyCompanionRowBindingTests — issue #2355.
 //
 // This is a RUNNER-MECHANISM test, not a claim about what real BC does. The BC-observable
 // claim ("a User row always has a matching User Property row, created with it, so
@@ -96,7 +96,7 @@ public sealed class UserPropertyCompanionRowBindingTests
             + "UserTableTriggerPatches.CreateUserPropertyOnUserInsert — the User Property row BC's "
             + "own User insert trigger creates would never be written, and every AL path that "
             + "reaches UserManagement.DirectSetUserFieldValue would fail with "
-            + "\"The User Property does not exist\" (issue #2353).");
+            + "\"The User Property does not exist\" (issue #2355).");
 
         // Three prepends share this entry point (AutoIncrement, SystemFields, this one), each
         // contributing `ldarg.0; call`, so index 5 is the last slot the third can occupy.

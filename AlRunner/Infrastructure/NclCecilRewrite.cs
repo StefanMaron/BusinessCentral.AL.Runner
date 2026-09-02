@@ -4195,7 +4195,7 @@ public static class NclCecilRewrite
         // error level. The runner bypasses BC's trigger dispatch on insert, so the row was
         // never created. Same prepend shape as AssignAutoIncrement / StampSystemFieldsOnInsert
         // above; a no-op for every table but User. See AlRunner/Patches/UserTableTriggerPatches.cs
-        // and issue #2353.
+        // and issue #2355.
         {
             var navRecord = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.NavRecord")
                 ?? throw new InvalidOperationException("NavRecord type not found in Ncl");

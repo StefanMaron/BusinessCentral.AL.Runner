@@ -29,7 +29,7 @@
 //       NavCSideRecordNotFoundException: The User Property does not exist.
 //       Identification fields and values: User Security ID='{...}'
 //
-//   Issue #2353. Measured on Microsoft's Tests-SINGLESERVER bucket, BC 28.1.49838.53910.
+//   Issue #2355. Measured on Microsoft's Tests-SINGLESERVER bucket, BC 28.1.49838.53910.
 //
 // WHY A PREPEND, AND WHY THIS ENTRY POINT
 //   NavRecord.ALInsertAsync(DataError, bool, bool) is the single async entry point every AL
@@ -45,7 +45,7 @@
 //   authentication email, application id) and its OnAfterDeleteAsync arm cascades a User
 //   delete into Access Control (2000000053), User Property (2000000121), User
 //   Personalization (2000000107) and 2000000233. None of that is reproduced here; the
-//   delete cascade is tracked separately in #2354. This file establishes exactly one
+//   delete cascade is tracked separately in #2356. This file establishes exactly one
 //   invariant — a non-temporary User row has a User Property row — and says so rather than
 //   quietly implementing a third of a trigger.
 //
