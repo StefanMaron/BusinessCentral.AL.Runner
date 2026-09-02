@@ -173,6 +173,9 @@ public static partial class BcRuntime
         // metatable (lazy wiring for on-demand-built tables — e.g. a precompiled BaseApp table).
         RecordPatches.WireFieldTriggerHandlersForTable(tableNo, metaTable);
         AlRunner.Patches.EventSubscriberPatches.InjectValidateSubsForTable(tableNo, metaTable);
+        // Table-level trigger subscribers — see InjectTriggerSubsForTable for why this must
+        // run after GetOrAdd returns, not from inside BuildNCLMetaTable.
+        AlRunner.Patches.EventSubscriberPatches.InjectTriggerSubsForTable(tableNo, metaTable);
         // SharedRecordRef.Record is a non-public-accessor property on the headless
         // build, so include NonPublic in the lookup (Public-only returns null → NRE).
         var recordProp = target.GetType().GetProperty("Record",

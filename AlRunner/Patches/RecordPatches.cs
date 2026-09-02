@@ -1157,6 +1157,10 @@ public static partial class RecordPatches
         // vendor name), without the subscriber injection an ISV's OnAfterValidateEvent never fires.
         WireFieldTriggerHandlersForTable(id, metaTable);
         AlRunner.Patches.EventSubscriberPatches.InjectValidateSubsForTable(id, metaTable);
+        // Table-level trigger subscribers (Insert/Modify/Delete/Rename ordinals) — same lazy
+        // wiring, called here (after GetOrAdd returned) rather than from inside BuildNCLMetaTable
+        // to avoid the reentrant-GetOrAdd stack overflow described on InjectTriggerSubsForTable.
+        AlRunner.Patches.EventSubscriberPatches.InjectTriggerSubsForTable(id, metaTable);
         return rec;
     }
 
