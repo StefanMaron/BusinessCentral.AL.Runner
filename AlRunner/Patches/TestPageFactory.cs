@@ -105,6 +105,29 @@ internal static class TestPageFactory
             return null;
         }
 
+        // Lazy trigger/validate-subscriber injection (issue #2411, mirroring #2197/#2412's fix
+        // at the three sites RecordPatches.CreateObjectInstance / RecordPatches
+        // .CreateObjectInstance.cs / NavRecordRefPatches.RecordRef.Open). Called AFTER
+        // GetOrBuildNCLMetaTable returns, never from inside BuildNCLMetaTable itself — see the
+        // reentrancy NOTE on InjectTriggerSubsForTable.
+        //
+        // MEASURED (stack trace, issue #2411 investigation): on every path this method's
+        // caller can actually reach a live page object through, BC's own SetSourceTable ->
+        // EnsureMetadataLoaded -> InitializeFromMetadata, and separately NewRecordAsync ->
+        // RaiseOnNewRecordAsync -> NavRecord.get_OldRecord, already construct this table's
+        // xRec via NCLMetaTable.CreateObjectInstance (RecordPatches.CreateObjectInstance.cs) --
+        // one of the three #2412-fixed sites -- before OnBeforeInsertEvent/OnBeforeDeleteEvent
+        // can fire on `record` itself. That FAITHFULLY masks the gap end-to-end for a driven
+        // TestPage or Page-variable with a compiled page object: the subscriber is wired by the
+        // time Insert/Modify/Delete/Rename runs, just via xRec rather than via `record`
+        // directly. The call below still matters for RunnerPageInstance.TryCreate's record-only
+        // fallback (no page object built at all -- see its catch block, and the "no
+        // source-expression table" branch) where neither of those BC call chains ever runs, and
+        // it keeps this site's contract identical to the other three regardless of which
+        // fallback a future caller takes.
+        AlRunner.Patches.EventSubscriberPatches.InjectValidateSubsForTable(tableId, metaTable);
+        AlRunner.Patches.EventSubscriberPatches.InjectTriggerSubsForTable(tableId, metaTable);
+
         var ctor = recordType.GetConstructors().FirstOrDefault(c => c.GetParameters().Length == 6);
         if (ctor == null)
         {
