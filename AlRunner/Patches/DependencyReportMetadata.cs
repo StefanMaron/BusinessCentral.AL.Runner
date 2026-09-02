@@ -258,9 +258,6 @@ public static partial class RecordPatches
         w.WriteElementString("FriendlyFieldName", col.Name);
         if (CanonicalNavTypeName(col.TypeName) is { } fieldType)
             w.WriteElementString("FieldType", fieldType);
-        else if (Environment.GetEnvironmentVariable("AL_RUNNER_DIAG_RP") == "1")
-            System.IO.File.AppendAllText("/tmp/al-runner-diag-cols.txt",
-                $"name={col.Name} typeName={col.TypeName ?? "(null)"}\n");
 
         // FieldNo is only stated when the expression is a plain field of the data item's own
         // table. A computed column (`Format(...)`, a variable, a nested record's field) has
@@ -290,12 +287,25 @@ public static partial class RecordPatches
     /// Matching against the live enum (rather than a hand-written table) also means a type
     /// this BC version added needs no change here.
     ///
+    /// One deliberate remap: AL's <c>Label</c> ("column(Foo; MyLabelVar)" over a `Label`
+    /// variable) matches a REAL <c>NavType.Label</c> member — so this used to emit it
+    /// verbatim — but <c>NavDataSetBuilder.AddColumnToDataTable</c> /
+    /// <c>CommonTypeInformation.ResolveClrType</c> (Types.dll, decompiled) have no case for
+    /// it and throw <c>ArgumentException("UnsupportedType")</c> building the very first
+    /// dataset that contains one (measured: Codeunit134335.PurchaseReceiptNoOption, report
+    /// "Purchase - Receipt"). A Label's dataset-observable value is always the resolved
+    /// translated string, same as any other text column, so it is reported as
+    /// <c>Text</c> — matching the coercion <c>AddColumnToDataTable</c>'s own switch already
+    /// does for RecordID/Option/Duration/Enum (all forced to <c>typeof(string)</c> rather
+    /// than routed through ResolveClrType).
+    ///
     /// Returns null for a type the enum does not know, so the column is emitted without a
     /// FieldType instead of with an unparseable one.
     /// </summary>
     private static string? CanonicalNavTypeName(string? typeName)
     {
         if (string.IsNullOrEmpty(typeName)) return null;
+        if (string.Equals(typeName, "Label", StringComparison.OrdinalIgnoreCase)) return "Text";
         return _canonicalNavTypeNames.GetOrAdd(typeName!, static name =>
         {
             _navTypeEnum ??= AppDomain.CurrentDomain.GetAssemblies()

@@ -694,17 +694,6 @@ public static class NavReportSync
         }
         if (_metadataSetter?.GetValue(navReport) is not MetaReport metaReport) return;
 
-        if (Environment.GetEnvironmentVariable("AL_RUNNER_DIAG_RP") == "1")
-        {
-            var lines = new System.Collections.Generic.List<string>();
-            foreach (var di in metaReport.DataItems)
-            {
-                foreach (var col in di.DataItemColumns)
-                    lines.Add($"report={reportId} dataitem={di.DataItemVarName} col={col.Name} fieldType={col.FieldType}");
-            }
-            System.IO.File.AppendAllLines("/tmp/al-runner-diag-metareport-cols.txt", lines);
-        }
-
         var dataSet = NavDataSetBuilder.CreateNavDataSet(metaReport);
 
         var delegateType = typeof(ReportSaveAsXmlRenderer).GetNestedType("GetReportParameters", BindingFlags.NonPublic)
@@ -1107,6 +1096,7 @@ public static class NavReportSync
         if (processor != null) AwaitValueTask(processor.StartAsync());
         AwaitValueTask(Invoke(_loopRootDataItems, navReport, Array.Empty<object?>()));
         if (processor != null) AwaitValueTask(processor.FinishAsync());
+        (processor as IDisposable)?.Dispose();
     }
 
     /// <summary>
