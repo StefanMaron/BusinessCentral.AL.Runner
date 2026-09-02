@@ -311,7 +311,12 @@ internal static partial class BcAppSymbolCache
     // for an unaggregated column. Names match Microsoft.Dynamics.Nav.Types.AggregationType's
     // member names exactly, so RecordPatches.NclMetaQueryBuilder.AddColumn can hand it straight
     // to SetProp's Enum.Parse without translation.
-    internal sealed record QueryColumnSymbol(int Id, string Name, string SourceColumn, string? Caption, string? Method);
+    // ColumnFilter (#2418) is the AL `ColumnFilter = <Field> = const(...)/filter(...) [, ...]`
+    // property, carried verbatim ("AssignedQuantity = filter(> 0)") — parsed by
+    // RecordPatches.TryParseColumnFilterText in RecordPatches.NclMetaQueryBuilder.BuildMetaQueryDesign
+    // once every column's id is known (a ColumnFilter condition may name any query column of
+    // the same dataitem, not just the column that declares the property).
+    internal sealed record QueryColumnSymbol(int Id, string Name, string SourceColumn, string? Caption, string? Method, string? ColumnFilter);
 
     // #1820: ContentHash replaces Length/LastWriteUtcTicks. The KEY (below, in Get) already
     // switched from mtime to a content hash, so an old Length/LastWriteUtcTicks payload can
@@ -930,7 +935,8 @@ internal static partial class BcAppSymbolCache
             var props = SymbolProperties(col);
             props.TryGetValue("Caption", out var caption);
             props.TryGetValue("Method", out var method); // issue #2137 — Method = Sum/Count/Average/Min/Max
-            result.Add(new QueryColumnSymbol(id, name, sourceColumn, caption, method));
+            props.TryGetValue("ColumnFilter", out var columnFilter); // issue #2418
+            result.Add(new QueryColumnSymbol(id, name, sourceColumn, caption, method, columnFilter));
         }
         return result;
     }

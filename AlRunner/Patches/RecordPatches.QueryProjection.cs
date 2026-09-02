@@ -462,59 +462,113 @@ public static partial class RecordPatches
         EnsureFilterReflection();
         var filtersAndMarks = request.GetType().GetProperty("FiltersAndMarks", BindingFlags.Public | BindingFlags.Instance)!
             .GetValue(request);
-        if (filtersAndMarks == null) return request;
-        var filters = _tFiltersAndMarks!.GetProperty("Filters", BindingFlags.Public | BindingFlags.Instance)!
-            .GetValue(filtersAndMarks);
-        if (filters == null) return request;
+        object? filters = null;
+        if (filtersAndMarks != null)
+            filters = _tFiltersAndMarks!.GetProperty("Filters", BindingFlags.Public | BindingFlags.Instance)!
+                .GetValue(filtersAndMarks);
 
         // FilterFieldDictionary.Items : Tuple<INavFieldMetadata, FilterExpression>[]
-        var items = (Array?)_tFilterFieldDictionary!.GetProperty("Items", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?
+        var items = filters == null ? null : (Array?)_tFilterFieldDictionary!.GetProperty("Items", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?
             .GetValue(filters);
-        if (items == null || items.Length == 0) return request; // no field filters → nothing to do.
 
         var translatedTuples = new List<object>();
         bool anyTranslated = false;
-        foreach (var item in items)
-        {
-            // Tuple<INavFieldMetadata, FilterExpression>
-            var key = item!.GetType().GetProperty("Item1")!.GetValue(item);
-            var expr = item.GetType().GetProperty("Item2")!.GetValue(item);
-            if (key != null && _tNCLMetaQueryColumn != null && _tNCLMetaQueryColumn.IsInstanceOfType(key))
+        // #2418: query columns that already carry a RUNTIME (SetRange/SetFilter) filter — a
+        // runtime filter on a column REPLACES its static ColumnFilter (verified against real
+        // BC 28.4, see #2418), so the static-ColumnFilter pass below skips these entirely.
+        var runtimeFilteredColumnIds = new HashSet<int>();
+        if (items != null)
+            foreach (var item in items)
             {
-                if (((NCLMetaQueryColumn)key).AggregationType != AggregationType.None)
+                // Tuple<INavFieldMetadata, FilterExpression>
+                var key = item!.GetType().GetProperty("Item1")!.GetValue(item);
+                var expr = item.GetType().GetProperty("Item2")!.GetValue(item);
+                if (key != null && _tNCLMetaQueryColumn != null && _tNCLMetaQueryColumn.IsInstanceOfType(key))
                 {
-                    // HAVING-clause filter — exclude from the WHERE-style push-down (pushing it
-                    // unchanged would make FindImplementation try to cast this NCLMetaQueryColumn
-                    // key to NCLMetaField and fail; retargeting it to the source field would
-                    // filter raw pre-aggregation rows, which is the #2137-class bug). Hand it
-                    // back for post-aggregation evaluation instead.
-                    havingFilters.Add((key!, expr!));
-                    anyTranslated = true;
-                    continue;
-                }
+                    runtimeFilteredColumnIds.Add(((NCLMetaQueryColumn)key).Id);
+                    if (((NCLMetaQueryColumn)key).AggregationType != AggregationType.None)
+                    {
+                        // HAVING-clause filter — exclude from the WHERE-style push-down (pushing it
+                        // unchanged would make FindImplementation try to cast this NCLMetaQueryColumn
+                        // key to NCLMetaField and fail; retargeting it to the source field would
+                        // filter raw pre-aggregation rows, which is the #2137-class bug). Hand it
+                        // back for post-aggregation evaluation instead.
+                        havingFilters.Add((key!, expr!));
+                        anyTranslated = true;
+                        continue;
+                    }
 
-                var srcField = key.GetType().GetProperty("SourceTableField", BindingFlags.Public | BindingFlags.Instance)!.GetValue(key);
-                if (srcField != null && expr != null)
-                {
-                    var srcCtx = srcField.GetType().GetProperty("ExpressionContext", BindingFlags.Public | BindingFlags.Instance)!.GetValue(srcField);
-                    var retargeted = RetargetFilterExpression(expr, srcCtx!);
-                    translatedTuples.Add(MakeFieldTuple(srcField, retargeted));
-                    anyTranslated = true;
-                    continue;
+                    var srcField = key.GetType().GetProperty("SourceTableField", BindingFlags.Public | BindingFlags.Instance)!.GetValue(key);
+                    if (srcField != null && expr != null)
+                    {
+                        var srcCtx = srcField.GetType().GetProperty("ExpressionContext", BindingFlags.Public | BindingFlags.Instance)!.GetValue(srcField);
+                        var retargeted = RetargetFilterExpression(expr, srcCtx!);
+                        translatedTuples.Add(MakeFieldTuple(srcField, retargeted));
+                        anyTranslated = true;
+                        continue;
+                    }
                 }
+                translatedTuples.Add(item); // already table-keyed or no source — keep as-is.
             }
-            translatedTuples.Add(item); // already table-keyed or no source — keep as-is.
+
+        // #2418: static `ColumnFilter` conditions (NCLMetaQuery.ColumnFilters, built in
+        // NclMetaQueryBuilder.BuildMetaQueryDesign from the AL `ColumnFilter` property) — same
+        // WHERE/HAVING routing as a runtime filter on that column, applied only when no runtime
+        // filter already targets it (a runtime filter REPLACES the static one, never combines).
+        var staticColumnFilters = GetStaticColumnFilters(metaAppObj!);
+        foreach (var (col, expr) in staticColumnFilters)
+        {
+            if (runtimeFilteredColumnIds.Contains(col.Id)) continue;
+            if (col.AggregationType != AggregationType.None)
+            {
+                havingFilters.Add((col, expr));
+                anyTranslated = true;
+                continue;
+            }
+            if (col.SourceTableField != null)
+            {
+                var retargeted = RetargetFilterExpression(expr, col.SourceTableField.ExpressionContext);
+                translatedTuples.Add(MakeFieldTuple(col.SourceTableField, retargeted));
+                anyTranslated = true;
+            }
         }
+
         if (!anyTranslated) return request;
 
         // Build FilterFieldDictionary(IEnumerable<Tuple<INavFieldMetadata, FilterExpression>>)
         var newFilters = BuildFilterFieldDictionary(translatedTuples);
-        var markedRecords = _tFiltersAndMarks.GetProperty("MarkedRecords", BindingFlags.Public | BindingFlags.Instance)!.GetValue(filtersAndMarks);
-        var newFam = Activator.CreateInstance(_tFiltersAndMarks, newFilters, markedRecords)!;
+        var markedRecords = filtersAndMarks == null ? null
+            : _tFiltersAndMarks!.GetProperty("MarkedRecords", BindingFlags.Public | BindingFlags.Instance)!.GetValue(filtersAndMarks);
+        var newFam = Activator.CreateInstance(_tFiltersAndMarks!, newFilters, markedRecords)!;
         return CloneRequestWithFilters(request, newFam);
     }
 
     private static Type? _tNCLMetaQueryColumn;
+    private static PropertyInfo? _pNCLMetaQueryColumnFilters; // #2418
+
+    /// <summary>
+    /// The query's static <c>ColumnFilter</c> conditions — <c>NCLMetaQuery.ColumnFilters</c>
+    /// (a <c>ReadOnlyCollection&lt;Tuple&lt;NCLMetaQueryColumn, FilterExpression&gt;&gt;</c>),
+    /// built by BC's own <c>BuildFilterExpressionCollection</c> from the design-time
+    /// <c>MetaQuery.ColumnFilters</c> list <c>NclMetaQueryBuilder.BuildMetaQueryDesign</c>
+    /// populates (#2418). The property is <c>internal</c> to Ncl.dll, hence reflection.
+    /// Never null on a real <c>NCLMetaQuery</c> — an empty collection when the query declares
+    /// no <c>ColumnFilter</c> at all.
+    /// </summary>
+    private static IEnumerable<(NCLMetaQueryColumn Column, object Expr)> GetStaticColumnFilters(object metaAppObj)
+    {
+        _pNCLMetaQueryColumnFilters ??= _tNCLMetaQuery!.GetProperty("ColumnFilters",
+            BindingFlags.NonPublic | BindingFlags.Instance);
+        var raw = _pNCLMetaQueryColumnFilters?.GetValue(metaAppObj) as System.Collections.IEnumerable;
+        if (raw == null) yield break;
+        foreach (var tuple in raw)
+        {
+            var col = tuple!.GetType().GetProperty("Item1")!.GetValue(tuple);
+            var expr = tuple.GetType().GetProperty("Item2")!.GetValue(tuple);
+            if (col is NCLMetaQueryColumn c && expr != null)
+                yield return (c, expr);
+        }
+    }
 
     private static object MakeFieldTuple(object field, object expr)
     {
