@@ -150,3 +150,23 @@ Grep remains right for logs, JSON, TRX, markdown and `.al` sources. It is the wr
 "where is this C# symbol defined" and "what calls it". A `PreToolUse` hook prints a reminder
 when a shell search targets `AlRunner/**/*.cs`; it never blocks, and you may proceed if grep
 really is what you want.
+
+
+### `grep` here is a shell function, and it fails silently
+
+Measured in this environment: `grep` resolves to a shell **function**, not `/usr/bin/grep`.
+It rejects `-E`, `--include` and some pipelines with `error: unknown option '-G'` — and
+**exits 0 with no output**, which reads exactly like "no matches found".
+
+That is a false negative, not an error you will notice. An agent burned several calls on it
+before running `type grep`, and it silently corrupted intermediate results before that.
+
+```bash
+command grep -E "pattern" file     # bypasses the function
+rg "pattern"                       # or just use ripgrep
+python3 - <<'EOF' ... EOF          # or do the scan in python, which also batches
+```
+
+**Never conclude "nothing matches" from a bare `grep -E` in this repo.** Re-run it with
+`command grep` before believing an empty result.
+

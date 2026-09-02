@@ -35,7 +35,10 @@ MESSAGE = (
     "  cd AlRunner && graphify update . && graphify query \"<Name> callers\"\n"
     "Phrase graphify queries as bare symbols, never as English questions.\n"
     "The LSP tool itself is disabled inside subagents on this build -- these scripts are the\n"
-    "supported substitute. Keep using grep for logs, JSON, markdown and AL sources."
+    "supported substitute. Keep using grep for logs, JSON, markdown and AL sources -- but\n"
+    "note `grep` here is a shell FUNCTION that rejects -E/--include with \"unknown option\n"
+    "'-G'\" and exits 0 with NO OUTPUT, which reads exactly like 'no matches'. Use\n"
+    "`command grep` or `rg` before believing an empty result."
 )
 
 

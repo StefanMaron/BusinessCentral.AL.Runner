@@ -114,6 +114,24 @@ statement-attribution bug that an existing test had encoded as correct (#2074), 
 `WorkDate` regression that would have broken nearly every `execute` call (#2117). CI was
 green in all five cases and would have stayed green.
 
+### `grep` here is a shell function, and it fails silently
+
+Measured in this environment: `grep` resolves to a shell **function**, not `/usr/bin/grep`.
+It rejects `-E`, `--include` and some pipelines with `error: unknown option '-G'` — and
+**exits 0 with no output**, which reads exactly like "no matches found".
+
+That is a false negative, not an error you will notice. An agent burned several calls on it
+before running `type grep`, and it silently corrupted intermediate results before that.
+
+```bash
+command grep -E "pattern" file     # bypasses the function
+rg "pattern"                       # or just use ripgrep
+python3 - <<'EOF' ... EOF          # or do the scan in python, which also batches
+```
+
+**Never conclude "nothing matches" from a bare `grep -E` in this repo.** Re-run it with
+`command grep` before believing an empty result.
+
 ## Waiting for CI: one call, not a poll loop
 
 **Use `tools/ci-wait.py <PR>`.** It keeps the polling but moves it inside a single tool
