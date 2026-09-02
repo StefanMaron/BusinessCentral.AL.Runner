@@ -1055,13 +1055,31 @@ internal sealed class RunnerPageInstance
     /// dispatch reaches the page's override; a page that declares none lands on NavForm's
     /// implementation, which is the correct no-op/true.
     /// </summary>
+    /// <summary>
+    /// Invoke one of the page's own record triggers (OnOpenPage, OnQueryClosePage, OnNewRecord,
+    /// OnInsertRecord, …) and answer with what it produced.
+    ///
+    /// Routed through <see cref="AwaitTriggerResult"/> for the same reason the control-trigger
+    /// path is (#2359), and the consequences here are worse, because two of these triggers'
+    /// RETURN VALUES are load-bearing:
+    ///
+    /// <list type="bullet">
+    /// <item><c>RaiseOnClosePage</c> tests <c>is false</c> to honour OnQueryClosePage's veto,
+    /// and <c>RaiseOnInsertRecord</c> tests <c>is not false</c> to honour OnInsertRecord's.
+    /// Against a raw <c>ValueTask&lt;bool&gt;</c> neither pattern can ever match, so a page that
+    /// refused to close, or refused an insert, was closed and inserted anyway.</item>
+    /// <item>An <c>Error()</c> raised in OnOpenPage or OnQueryClosePage was parked on the
+    /// discarded awaitable and never reached the AL that called <c>OpenNew()</c> /
+    /// <c>Close()</c> — the same silent success the control-trigger half produced.</item>
+    /// </list>
+    /// </summary>
     private object? InvokeRecordTrigger(string name, Type[] parameterTypes, object[] arguments)
     {
         var trigger = _form.GetType().GetMethod(name,
             BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
             binder: null, types: parameterTypes, modifiers: null);
         if (trigger == null) return null;
-        try { return trigger.Invoke(_form, arguments); }
+        try { return AwaitTriggerResult(trigger.Invoke(_form, arguments)); }
         catch (TargetInvocationException tie) when (tie.InnerException != null)
         {
             // An Error() inside the trigger is the trigger's own outcome, not a runner
