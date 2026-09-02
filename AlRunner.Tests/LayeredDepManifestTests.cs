@@ -30,6 +30,20 @@ namespace AlRunner.Tests;
 /// Spawns the real runner; needs the BC artifact cache. Skips (no-op) when absent.
 /// See DefineFlagIntegrationTests for why this used to be
 /// [Collection("server-serial")] and no longer is — #1809.
+///
+/// #2377: deliberately NOT moved to the shared --server fixture, unlike its neighbours.
+/// The negative fact's decisive assertion is that "Unhandled exception" is ABSENT — that
+/// an invalid dep manifest yields a formatted "<layered-deps>: COMPILE-FAIL" and exit 3
+/// rather than the CLR's default handler aborting the PROCESS with exit 134/SIGABRT,
+/// which is exactly what #1898 fixed and exactly what a pre-fix regression would undo.
+/// That claim is about the CLI's own Main-level exception handling and can only be
+/// observed by watching a process exit; RunAllBundlesForServer wraps the same pre-pass in
+/// its own try/catch, so a server request can never reach the code path being held down.
+/// Converting the POSITIVE fact alone would leave the class spawning anyway for the
+/// negative one, so it buys a server process rather than removing one. A test that keeps
+/// its meaning and stays slow beats a fast one that proves something else
+/// (.claude/rules/tdd.md). See ManifestFeaturesSubprocessTests' fourth fact for the same
+/// call, made one fact at a time.
 /// </summary>
 public class LayeredDepManifestTests
 {

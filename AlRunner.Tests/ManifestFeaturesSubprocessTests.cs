@@ -24,22 +24,80 @@
 
 using System.Diagnostics;
 using System.Text;
+using System.Text.Json;
 using Xunit;
 
 namespace AlRunner.Tests;
 
-public sealed class ManifestFeaturesSubprocessTests : IDisposable
+public sealed class ManifestFeaturesSubprocessTests : IClassFixture<SharedCliServer>, IDisposable
 {
     private static readonly string RepoRoot = Path.GetFullPath(
         Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
     private static readonly string ProjectPath = Path.Combine(RepoRoot, "AlRunner");
 
     private readonly string _root;
+    private readonly SharedCliServer _shared;
 
-    public ManifestFeaturesSubprocessTests()
+    public ManifestFeaturesSubprocessTests(SharedCliServer shared)
     {
+        _shared = shared;
         _root = Path.Combine(Path.GetTempPath(), "al-runner-manifest-features-subprocess", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(_root);
+    }
+
+    /// <summary>#2377: the one `--cache` dir this class's shared server is started with,
+    /// fresh per test run so nothing an earlier invocation cached can answer here.</summary>
+    private static readonly string CacheDir = Path.Combine(
+        Path.GetTempPath(), "al-runner-manifest-features-cache", Guid.NewGuid().ToString("N"));
+
+    private static IEnumerable<string> ServerArgs()
+    {
+        yield return "--cache";
+        yield return CacheDir;
+        foreach (var a in ExtraPackageCacheArgs()) yield return a;
+    }
+
+    /// <summary>
+    /// The same two env vars <see cref="RunRunner"/> sets on its spawn, hoisted to the
+    /// server process (SharedCliServer applies them on the spawning call only). They
+    /// widen what the runner REPORTS about an emit-retry exclusion — without them the
+    /// EMIT-EXCLUDED payload names only the excluded OBJECT and never the AL0129/AL0135
+    /// diagnostics that identified it — and change nothing about what it compiles, so
+    /// they are safe to apply to every fact in the class rather than per request.
+    /// </summary>
+    private static readonly Dictionary<string, string> DiagEnv = new()
+    {
+        ["AL_RUNNER_DIAG_EMITRETRY"] = "1",
+        ["BCCOMPILER_DIAG"] = "1",
+    };
+
+    private static string Req(params string[] bundles)
+        => JsonSerializer.Serialize(new
+        {
+            command = "runTests",
+            sourcePaths = bundles,
+            packagePaths = Array.Empty<string>(),
+        });
+
+    /// <summary>
+    /// The summary line's compile errors as one string. This is where the server surfaces
+    /// EMIT-EXCLUDED, EMIT-ZERO, COMPILE-FAIL, LAYERED-PREPASS-FAIL and BC's own AL
+    /// diagnostics (RunBundleForServer / RunAllBundlesForServer) — i.e. every string the
+    /// CLI-spawning version of these facts used to look for in the console dump, but
+    /// scoped to THIS request and carried by the protocol rather than scraped.
+    /// </summary>
+    private static string CompileErrorText(JsonElement summary)
+    {
+        if (!summary.TryGetProperty("compilationErrors", out var ce) || ce.ValueKind != JsonValueKind.Array)
+            return string.Empty;
+        var sb = new StringBuilder();
+        foreach (var group in ce.EnumerateArray())
+        {
+            if (group.TryGetProperty("file", out var f)) sb.AppendLine(f.GetString());
+            if (group.TryGetProperty("errors", out var errs) && errs.ValueKind == JsonValueKind.Array)
+                foreach (var e in errs.EnumerateArray()) sb.AppendLine(e.GetString());
+        }
+        return sb.ToString();
     }
 
     public void Dispose()
@@ -104,14 +162,27 @@ public sealed class ManifestFeaturesSubprocessTests : IDisposable
     // trigger that BC's implicit-with binder resolves against the SourceTable record's own
     // same-named members instead of the page's own local var/procedure, UNLESS
     // NoImplicitWith is on.
+    /// <param name="tag">
+    /// #2377: a per-FACT tag folded into the app name AND the AL object names. Fresh GUID
+    /// app ids alone are not enough once these facts share one server process: dependency
+    /// resolution matches on name/publisher/version and RunAllBundlesForServer accumulates
+    /// each request's layered workspace dirs into the server-level packageCacheDirs, so an
+    /// app one fact built stays resolvable by name for every later fact. AL object names
+    /// matter for the same reason one layer down — AL resolves by name, .NET cannot unload
+    /// an assembly, and three facts compiling three same-named "MFS NIW Table"s into one
+    /// process is ambiguity fed straight into the resolution the runner has to get right.
+    /// The measured cost of getting this wrong is not a crash: LayeredSourceChainTests'
+    /// absent-dependency fact silently stopped failing for its own reason when a sibling
+    /// fact's identically-named app was still in the search set.
+    /// </param>
     private static void WriteNoImplicitWithFixture(
-        string dir, int tableId, int pageId, string featuresLine, string? appId = null)
+        string dir, int tableId, int pageId, string featuresLine, string tag, string? appId = null)
     {
         Directory.CreateDirectory(dir);
         File.WriteAllText(Path.Combine(dir, "app.json"), $$"""
         {
           "id": "{{appId ?? Guid.NewGuid().ToString()}}",
-          "name": "MFS Repro App",
+          "name": "MFS Repro App {{tag}}",
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [],
@@ -122,7 +193,7 @@ public sealed class ManifestFeaturesSubprocessTests : IDisposable
         }
         """);
         File.WriteAllText(Path.Combine(dir, "Niw.Table.al"), $$"""
-        table {{tableId}} "MFS NIW Table"
+        table {{tableId}} "MFS NIW Table {{tag}}"
         {
             DataClassification = CustomerContent;
 
@@ -144,12 +215,12 @@ public sealed class ManifestFeaturesSubprocessTests : IDisposable
         }
         """);
         File.WriteAllText(Path.Combine(dir, "Niw.Page.al"), $$"""
-        page {{pageId}} "MFS NIW Page"
+        page {{pageId}} "MFS NIW Page {{tag}}"
         {
             PageType = Card;
             ApplicationArea = All;
             UsageCategory = Administration;
-            SourceTable = "MFS NIW Table";
+            SourceTable = "MFS NIW Table {{tag}}";
 
             layout
             {
@@ -182,42 +253,53 @@ public sealed class ManifestFeaturesSubprocessTests : IDisposable
     // ── Top-level bundle (BcCompiler.Emit) ────────────────────────────────────────────
 
     [SkippableFact]
-    public void TopLevel_ManifestDeclaresNoImplicitWith_CompilesCleanly()
+    public async Task TopLevel_ManifestDeclaresNoImplicitWith_CompilesCleanly()
     {
         TestArtifacts.SkipIfMissing();
-        WriteNoImplicitWithFixture(_root, 61060, 61061, ",\n  \"features\": [ \"NoImplicitWith\" ]");
+        WriteNoImplicitWithFixture(_root, 61060, 61061, ",\n  \"features\": [ \"NoImplicitWith\" ]", "TLPos");
 
-        var (output, exit) = RunRunner(_root);
+        var server = await _shared.GetAsync(ServerArgs(), DiagEnv);
+        var lines = await server.SendRequestStreamingAsync(Req(_root), TimeSpan.FromSeconds(300));
+        var (_, summary) = ProtocolV2Streaming.Split(lines);
 
-        Assert.DoesNotContain("AL0129", output);
-        Assert.DoesNotContain("AL0135", output);
-        Assert.DoesNotContain("EMIT-EXCLUDED", output);
-        Assert.Equal(0, exit);
+        var compileErrors = CompileErrorText(summary);
+        Assert.DoesNotContain("AL0129", compileErrors);
+        Assert.DoesNotContain("AL0135", compileErrors);
+        Assert.DoesNotContain("EMIT-EXCLUDED", compileErrors);
+        Assert.Equal(0, summary.GetProperty("exitCode").GetInt32());
     }
 
     [SkippableFact]
-    public void TopLevel_ManifestOmitsFeatures_SameAlStillFailsAL0129AL0135()
+    public async Task TopLevel_ManifestOmitsFeatures_SameAlStillFailsAL0129AL0135()
     {
         TestArtifacts.SkipIfMissing();
-        WriteNoImplicitWithFixture(_root, 61070, 61071, "");
+        WriteNoImplicitWithFixture(_root, 61070, 61071, "", "TLNeg");
 
-        var (output, exit) = RunRunner(_root);
+        var server = await _shared.GetAsync(ServerArgs(), DiagEnv);
+        var lines = await server.SendRequestStreamingAsync(Req(_root), TimeSpan.FromSeconds(300));
+        var (_, summary) = ProtocolV2Streaming.Split(lines);
 
-        Assert.Contains("AL0129", output);
-        Assert.Contains("AL0135", output);
-        Assert.Contains("EMIT-EXCLUDED", output);
-        Assert.Equal(3, exit);
+        // The server has its OWN EMIT-EXCLUDED guard (Program.cs, RunBundleForServer —
+        // added by #2152 precisely because the server path used to run the surviving
+        // objects and report exitCode 0 with a whole test codeunit missing), so this is
+        // the same claim asserted against the code path an editor integration actually
+        // drives, not a weaker restatement of the CLI one.
+        var compileErrors = CompileErrorText(summary);
+        Assert.Contains("AL0129", compileErrors);
+        Assert.Contains("AL0135", compileErrors);
+        Assert.Contains("EMIT-EXCLUDED", compileErrors);
+        Assert.Equal(3, summary.GetProperty("exitCode").GetInt32());
     }
 
     // ── Source dependency (BcCompiler.EmitDepSymbols via the layered pre-pass) ───────
 
-    private static void WriteMainDependingOn(string dir, string depId, string depName, int idFrom)
+    private static void WriteMainDependingOn(string dir, string depId, string depName, int idFrom, string tag)
     {
         Directory.CreateDirectory(dir);
         File.WriteAllText(Path.Combine(dir, "app.json"), $$"""
         {
           "id": "{{Guid.NewGuid()}}",
-          "name": "MFS Main App",
+          "name": "MFS Main App {{tag}}",
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [
@@ -230,7 +312,7 @@ public sealed class ManifestFeaturesSubprocessTests : IDisposable
         }
         """);
         File.WriteAllText(Path.Combine(dir, "Tests.Codeunit.al"), $$"""
-        codeunit {{idFrom}} "MFS Main Tests"
+        codeunit {{idFrom}} "MFS Main Tests {{tag}}"
         {
             Subtype = Test;
 
@@ -245,24 +327,33 @@ public sealed class ManifestFeaturesSubprocessTests : IDisposable
     }
 
     [SkippableFact]
-    public void SourceDependency_ManifestDeclaresNoImplicitWith_CompilesCleanly_BothBundlesRun()
+    public async Task SourceDependency_ManifestDeclaresNoImplicitWith_CompilesCleanly_BothBundlesRun()
     {
         TestArtifacts.SkipIfMissing();
 
         var depDir = Path.Combine(_root, "dep");
         var mainDir = Path.Combine(_root, "main");
         var depId = Guid.NewGuid().ToString();
-        WriteNoImplicitWithFixture(depDir, 61080, 61081, ",\n  \"features\": [ \"NoImplicitWith\" ]", depId);
-        WriteMainDependingOn(mainDir, depId, "MFS Repro App", 61090);
+        WriteNoImplicitWithFixture(depDir, 61080, 61081, ",\n  \"features\": [ \"NoImplicitWith\" ]", "DepPos", depId);
+        WriteMainDependingOn(mainDir, depId, "MFS Repro App DepPos", 61090, "DepPos");
 
-        var (output, exit) = RunRunner(depDir, mainDir);
+        var server = await _shared.GetAsync(ServerArgs(), DiagEnv);
+        var mark = server.StdErrMark;
+        var lines = await server.SendRequestStreamingAsync(Req(depDir, mainDir), TimeSpan.FromSeconds(300));
+        var (_, summary) = ProtocolV2Streaming.Split(lines);
 
-        Assert.Contains("[layered]", output);
-        Assert.DoesNotContain("AL0129", output);
-        Assert.DoesNotContain("AL0135", output);
-        Assert.DoesNotContain("Unhandled exception", output);
-        Assert.True(exit == 0 && output.Contains("1P/0F/0E"),
-            $"a dependency whose manifest genuinely declares NoImplicitWith must compile and run (exit {exit}):\n{output}");
+        var compileErrors = CompileErrorText(summary);
+        Assert.DoesNotContain("AL0129", compileErrors);
+        Assert.DoesNotContain("AL0135", compileErrors);
+        Assert.Equal(0, summary.GetProperty("exitCode").GetInt32());
+        Assert.Equal(1, summary.GetProperty("passed").GetInt32());
+        Assert.Equal(0, summary.GetProperty("failed").GetInt32());
+        Assert.Equal(0, summary.GetProperty("errors").GetInt32());
+
+        // Precondition: this really took the layered two-bundle source-dependency path,
+        // not a degenerate single-bundle one.
+        var stderr = await server.StdErrSinceAsync(mark, "[layered] pre-built");
+        Assert.Contains("MFS Repro App DepPos", stderr);
     }
 
     [SkippableFact]
@@ -273,9 +364,19 @@ public sealed class ManifestFeaturesSubprocessTests : IDisposable
         var depDir = Path.Combine(_root, "dep");
         var mainDir = Path.Combine(_root, "main");
         var depId = Guid.NewGuid().ToString();
-        WriteNoImplicitWithFixture(depDir, 61100, 61101, "", depId);
-        WriteMainDependingOn(mainDir, depId, "MFS Repro App", 61110);
+        WriteNoImplicitWithFixture(depDir, 61100, 61101, "", "DepNeg", depId);
+        WriteMainDependingOn(mainDir, depId, "MFS Repro App DepNeg", 61110, "DepNeg");
 
+        // #2377: NOT converted to the shared server, unlike the three facts above. Its
+        // decisive assertion is "Unhandled exception" being ABSENT — i.e. that a dep whose
+        // manifest is genuinely invalid produces a formatted exit 3 rather than the CLR's
+        // default handler aborting the PROCESS with exit 134, which is what #1898 fixed.
+        // That is a claim about the CLI's own Main-level exception handling, and it can
+        // only be observed by watching a process exit. RunAllBundlesForServer wraps the
+        // same pre-pass in its own try/catch, so a server request cannot reach the code
+        // path this fact exists to hold down — converting it would trade a true slow test
+        // for a fast one asserting something else. Same reasoning keeps all of
+        // LayeredDepManifestTests spawning.
         var (output, exit) = RunRunner(depDir, mainDir);
 
         Assert.Contains("AL0129", output);
