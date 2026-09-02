@@ -398,4 +398,71 @@ public static class ALDatabasePatches
     /// by 318-navtext-string-rewrite.</summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static string ALDatabase_ALTenantID() => "STANDALONE";
+
+    // ── ALDatabase.ALSid(string) — Windows account name → Windows SID ──────────
+    //
+    // BC's own body (Ncl 28.1, decompiled) is:
+    //
+    //     if (string.IsNullOrEmpty(userName))
+    //         return NavCurrentThread.Session.User.Sid;
+    //     try { return new NTAccount(userName).Translate(typeof(SecurityIdentifier)).ToString(); }
+    //     catch (IdentityNotMappedException)          { return string.Empty; }
+    //     catch (SystemException ex) when (HResult...) { return string.Empty; }
+    //     catch (SystemException ex)                  { throw new NavUserNotFoundException(...); }
+    //
+    // `NTAccount.Translate` asks the host's Windows identity store (LSA / AD) what SID
+    // a name maps to, and .NET documents `IdentityNotMappedException` as the answer when
+    // the name maps to nothing. On a Linux host there is no Windows identity store at
+    // all, so `System.Security.Principal`'s Unix build throws PlatformNotSupportedException
+    // out of the `IdentityReference` constructor before Translate is ever reached. Its
+    // HResult (0x80131539) does not match the -2146233087 (0x80131501) the second catch
+    // filters on, so BC's last catch converts it into
+    //
+    //     NavUserNotFoundException: Cannot retrieve the requested user SID. The following
+    //     error was reported: Windows Principal functionality is not supported on this platform.
+    //
+    // which is what AL code sees today. That message describes the runner's host, not an
+    // answer to the AL author's question.
+    //
+    // WHY EMPTY IS THE FAITHFUL ANSWER, NOT A SILENT FAKE.
+    // The AL-observable question `Sid(N)` asks is "what SID does this host's Windows
+    // identity store map the account name N to?". On the runner's host the answer is
+    // provably "none" — for every N, because there is no Windows identity store to map
+    // anything. BC already has a documented, AL-visible result for exactly that outcome:
+    // the empty string, from its own `catch (IdentityNotMappedException)` branch. So this
+    // returns BC's own not-found answer to a question the runner can answer completely.
+    //
+    // That is a different thing from the anti-pattern loud-failures.md cites — the
+    // deleted `ALDatabase_ALSid(string) => "S-1-0-0"` stub. That one FABRICATED an
+    // identity: it claimed the named account exists and has a specific SID, which is a
+    // statement about a Windows account database the runner has never seen. Reporting
+    // absence is not the same as inventing presence, and no AL caller can read an
+    // identity out of "".
+    //
+    // WHAT NO SERVICE TIER HAS ADJUDICATED, AND WHY.
+    // A real BC on Windows, joined to a domain in which N *does* exist, returns N's real
+    // SID. The runner cannot reproduce that and does not claim to. What the runner claims
+    // is only the narrower deployment fact above. This claim could not be settled upstream:
+    // the only Linux-capable BC service tier available (StefanMaron/MsDyn365Bc.On.Linux,
+    // which is what the al-language corpus CI runs on) replaces this exact method through
+    // its StartupHook "Patch #17", returning an FNV-1a hash of the user name shaped like a
+    // SID. So the corpus tier answers with a synthetic SID of its own and cannot adjudicate
+    // what BC does here. See AlRunner#<ISSUE> for the measurement. A BC-on-Windows tier in
+    // a domain where the probe account does and does not exist would settle it.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static string ALDatabase_ALSidForAccountName(string userName)
+    {
+        // BC's own first branch: an empty name means "the current session's user", which
+        // is session state the runner does populate (an unpopulated windowsSID field →
+        // "", already guarded by aldatabase-cluster-1883's Sid_EmptyUserName test).
+        if (string.IsNullOrEmpty(userName))
+        {
+#pragma warning disable CS0618 // NavCurrentThread.Session is [Obsolete] ("expensive"), not unsupported.
+            return Microsoft.Dynamics.Nav.Runtime.NavCurrentThread.Session?.User?.Sid ?? string.Empty;
+#pragma warning restore CS0618
+        }
+
+        // Every other name: not mapped on this host. BC's IdentityNotMapped answer.
+        return string.Empty;
+    }
 }

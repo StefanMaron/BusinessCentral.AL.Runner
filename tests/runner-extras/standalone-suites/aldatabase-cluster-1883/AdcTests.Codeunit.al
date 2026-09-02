@@ -88,6 +88,56 @@ codeunit 60708 "ADC Tests"
                 + 'string on the skeleton runtime, got: %1', Sid);
     end;
 
+    // ── ALDatabase.ALSid(string) with a NON-EMPTY name ───────────────────────────────────────
+    // Runner-deployment claim, not a re-proof of BC's Sid() contract: the runner's host has
+    // no Windows identity store (no LSA, no AD), so no account name resolves to a SID here,
+    // and the runner must report that as BC's own not-mapped answer — the empty string —
+    // instead of letting NTAccount's PlatformNotSupportedException surface as
+    // "NavUserNotFoundException: ... Windows Principal functionality is not supported on
+    // this platform", which describes the host rather than answering the AL author.
+    //
+    // This claim could not be sent upstream: the only Linux-capable BC service tier
+    // (StefanMaron/MsDyn365Bc.On.Linux, which the al-language corpus CI runs on) replaces
+    // ALDatabase.ALSid(string) in its StartupHook "Patch #17" with an FNV-1a hash of the
+    // user name, so it cannot adjudicate what BC does here. Same framing as the sibling
+    // #1883 suites — see bc-behavior-tests-go-upstream.md's "no verdict available" clause.
+    [Test]
+    procedure Sid_UnmappableAccountName_ReturnsEmptyString_NoThrow()
+    var
+        Sid: Text;
+    begin
+        Sid := Database.Sid('ADCNOSUCHWINDOWSACCOUNT7F3A');
+        if Sid <> '' then
+            Error('Expected Database.Sid(<name that maps to no Windows account>) to return '
+                + 'the empty string on a host with no Windows identity store, got: %1', Sid);
+    end;
+
+    // Negative direction: the failure this replaced must not come back. A name that BC's
+    // real body would push through NTAccount must not raise ANY error — the pre-fix build
+    // raised NavUserNotFoundException here, naming the .NET platform.
+    [Test]
+    procedure Sid_UnmappableAccountName_DoesNotRaiseUserNotFound()
+    var
+        Sid: Text;
+        Raised: Boolean;
+    begin
+        Raised := false;
+        if not TryReadSid('ADCNODOMAIN7F3A\ADCNOSUCHWINDOWSACCOUNT7F3A', Sid) then
+            Raised := true;
+
+        if Raised then
+            Error('Database.Sid(<DOMAIN\account>) must not raise on a host with no Windows '
+                + 'identity store; it raised: %1', GetLastErrorText());
+        if Sid <> '' then
+            Error('Expected Database.Sid(<DOMAIN\account>) to return the empty string, got: %1', Sid);
+    end;
+
+    [TryFunction]
+    local procedure TryReadSid(AccountName: Text; var Result: Text)
+    begin
+        Result := Database.Sid(CopyStr(AccountName, 1, 208));
+    end;
+
     // ── ALDatabase.ALSessionID() — deleted hook, real body returns 0 (no crash) ──────────────
     [Test]
     procedure SessionId_ReturnsZero_NonNegative()

@@ -2500,6 +2500,27 @@ public static class NclCecilRewrite
                     ReplaceBodyWithHelper(asm.MainModule, m, nameof(AlRunner.BcRuntime.ReturnStandalone_0Args));
                     Console.Error.WriteLine("[Cecil] Rewrote ALDatabase.get_ALSerialNumber → STANDALONE sentinel");
                 }
+
+                // ALDatabase.ALSid(string) — AL's Sid(). BC's real body calls
+                // NTAccount(userName).Translate(SecurityIdentifier), which on Linux throws
+                // PlatformNotSupportedException out of the IdentityReference constructor
+                // and surfaces to AL as NavUserNotFoundException naming the .NET platform
+                // rather than answering the AL author's question. The runner's host has no
+                // Windows identity store, so the correct answer for any account name is
+                // BC's own not-mapped result — the empty string. Full faithfulness argument,
+                // including why this is not the fabricated-SID anti-pattern and what no
+                // service tier has been able to adjudicate, is on the helper.
+                var alSidHelper = typeof(AlRunner.Patches.ALDatabasePatches).GetMethod(
+                    nameof(AlRunner.Patches.ALDatabasePatches.ALDatabase_ALSidForAccountName),
+                    BindingFlags.Public | BindingFlags.Static)
+                    ?? throw new InvalidOperationException(
+                        "[Cecil] ALDatabasePatches.ALDatabase_ALSidForAccountName not found");
+                foreach (var m in alDatabaseType.Methods.Where(x =>
+                    x.Name == "ALSid" && x.Parameters.Count == 1 && x.HasBody))
+                {
+                    ReplaceBodyWithHelper(asm.MainModule, m, alSidHelper);
+                    Console.Error.WriteLine("[Cecil] Rewrote ALDatabase.ALSid(string) → host has no Windows identity store");
+                }
             }
         }
 
