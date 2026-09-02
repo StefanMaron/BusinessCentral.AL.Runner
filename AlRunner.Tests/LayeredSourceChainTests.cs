@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.Text;
-using System.Text.Json;
 using Xunit;
 
 namespace AlRunner.Tests;
@@ -36,73 +35,31 @@ namespace AlRunner.Tests;
 /// the runner's OWN workspace dirs, not about artifact provisioning.
 ///
 /// Spawns the real runner; needs the BC artifact cache. Skips (visibly) when absent.
+///
+/// #2377: MEASURED and left spawning. Two of the three facts below could technically be
+/// served by a shared --server fixture, and converting them made the class SLOWER —
+/// 128.8s -> 139.9s of per-test time in a back-to-back matched pair. A warm server only
+/// pays for itself when a class issues SEVERAL expensive requests against one BC boot
+/// (LayeredCacheTests: 150.6s -> 28.9s, two expensive runs collapsing onto one boot).
+/// Here exactly one fact is expensive; the negative fact costs 5s because it dies in
+/// dependency resolution before BC boots at all; and the sibling-source fact CANNOT move
+/// (see below). So the conversion added a whole second BC boot to a class that still had
+/// to spawn a CLI anyway, and bought back 5 seconds.
+///
+/// The sibling-source fact is stuck for a different reason worth knowing about:
+/// RunAllBundlesForServer puts BOTH source pre-passes behind `if (sourcePaths.Length > 1)`,
+/// while the CLI gates only RunLayeredPrePass on bundle count and runs
+/// BuildSiblingSourceDeps unconditionally. Measured on this fixture's shape: the CLI exits
+/// 0, the identical single-bundle runTests request exits 3 with "DEP-RESOLVE-FAIL:
+/// Dependency not found". That is a runner bug (tracked in #2380), not a property of this
+/// test — a --server client such as the VS Code extension, which sends one bundle at a
+/// time, cannot resolve a sibling source dependency at all today.
 /// </summary>
-public class LayeredSourceChainTests : IClassFixture<SharedCliServer>
+public class LayeredSourceChainTests
 {
     private static readonly string RepoRoot = Path.GetFullPath(
         Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
     private static readonly string ProjectPath = Path.Combine(RepoRoot, "AlRunner");
-
-    private readonly SharedCliServer _shared;
-
-    public LayeredSourceChainTests(SharedCliServer shared) => _shared = shared;
-
-    /// <summary>
-    /// #2377: the one `--cache` dir this class's shared server is started with. The CLI
-    /// version gave each fact its own; a fresh GUID per test RUN preserves what that was
-    /// actually for (no workspace-deps or al-out entry from an earlier invocation may
-    /// answer for this one), and the facts cannot answer for EACH OTHER inside it because
-    /// every fixture below already writes fresh GUID app ids per fact — see the "Fixture
-    /// writers" note.
-    /// </summary>
-    private static readonly string CacheDir = Path.Combine(
-        Path.GetTempPath(), "al-runner-layered-chain", "shared-cache", Guid.NewGuid().ToString("N"), "al-out");
-
-    /// <summary>Emitted by the layered pre-pass after every per-impl WROTE/HIT line — the
-    /// synchronisation anchor for reading a request's own stderr slice. See
-    /// <see cref="CliServer.StdErrSinceAsync"/> for why an anchor is required.</summary>
-    private const string PrePassTrailer = "[layered] pre-built";
-
-    private static IEnumerable<string> ServerArgs()
-    {
-        yield return "--cache";
-        yield return CacheDir;
-        var platformApps = TestArtifacts.PlatformAppsDir();
-        if (Directory.Exists(platformApps))
-        {
-            yield return "--package-cache";
-            yield return platformApps;
-        }
-    }
-
-    private static string Req(params string[] bundles)
-        => JsonSerializer.Serialize(new
-        {
-            command = "runTests",
-            sourcePaths = bundles,
-            packagePaths = Array.Empty<string>(),
-        });
-
-    /// <summary>
-    /// The summary line's compile errors as one string — the server's equivalent of the
-    /// CLI console text these tests used to substring-match. EMIT-EXCLUDED, EMIT-ZERO,
-    /// COMPILE-FAIL, DEP-RESOLVE-FAIL, LAYERED-PREPASS-FAIL and BC's own AL diagnostics
-    /// all arrive here (see RunBundleForServer / RunAllBundlesForServer), so asserting on
-    /// it is a strictly narrower claim than matching the whole console dump was.
-    /// </summary>
-    private static string CompileErrorText(JsonElement summary)
-    {
-        if (!summary.TryGetProperty("compilationErrors", out var ce) || ce.ValueKind != JsonValueKind.Array)
-            return string.Empty;
-        var sb = new StringBuilder();
-        foreach (var group in ce.EnumerateArray())
-        {
-            if (group.TryGetProperty("file", out var f)) sb.AppendLine(f.GetString());
-            if (group.TryGetProperty("errors", out var errs) && errs.ValueKind == JsonValueKind.Array)
-                foreach (var e in errs.EnumerateArray()) sb.AppendLine(e.GetString());
-        }
-        return sb.ToString();
-    }
 
     // ── Fixture writers ────────────────────────────────────────────────────────
     // One chain, written three times into different layouts so each pre-pass sees the
@@ -110,27 +67,13 @@ public class LayeredSourceChainTests : IClassFixture<SharedCliServer>
     // own idRanges) and the app ids are fresh GUIDs per run, so no workspace-deps /
     // compiled-deps / al-out cache from a previous run can answer for any of them.
 
-    /// <param name="suffix">
-    /// #2377: a per-FACT tag folded into the app NAME. Distinct app ids are not enough
-    /// once these facts share one server process. Dependency resolution matches on
-    /// name/publisher/version, and RunAllBundlesForServer ACCUMULATES each request's
-    /// layered workspace dirs into the server-level packageCacheDirs — so the base app
-    /// this class builds in one fact stays in the search set for every later fact.
-    /// Measured: with a shared name, LayeredPrePass_BaseAppAbsent_… stopped failing for
-    /// its own reason (it passed alone and failed in-class in 67ms), because a base app
-    /// it declares to be ABSENT was still resolvable from the earlier fact's workspace.
-    /// A per-fact name is what makes "genuinely absent" true again.
-    /// AL object names and ids are deliberately NOT varied: only the positive fact ever
-    /// reaches a compile at all (the negative one dies in dep resolution), and the
-    /// spawning fact runs in its own process.
-    /// </param>
-    private static void WriteBaseApp(string dir, Guid baseId, string suffix)
+    private static void WriteBaseApp(string dir, Guid baseId)
     {
         Directory.CreateDirectory(dir);
         File.WriteAllText(Path.Combine(dir, "app.json"), $$"""
         {
           "id": "{{baseId}}",
-          "name": "LSC Chain Base{{suffix}}",
+          "name": "LSC Chain Base",
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [],
@@ -172,17 +115,17 @@ public class LayeredSourceChainTests : IClassFixture<SharedCliServer>
         """);
     }
 
-    private static void WriteMiddleApp(string dir, Guid middleId, Guid baseId, string suffix)
+    private static void WriteMiddleApp(string dir, Guid middleId, Guid baseId)
     {
         Directory.CreateDirectory(dir);
         File.WriteAllText(Path.Combine(dir, "app.json"), $$"""
         {
           "id": "{{middleId}}",
-          "name": "LSC Chain Middle{{suffix}}",
+          "name": "LSC Chain Middle",
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [
-            { "id": "{{baseId}}", "name": "LSC Chain Base{{suffix}}", "publisher": "AL Runner", "version": "1.0.0.0" }
+            { "id": "{{baseId}}", "name": "LSC Chain Base", "publisher": "AL Runner", "version": "1.0.0.0" }
           ],
           "platform": "1.0.0.0",
           "application": "1.0.0.0",
@@ -227,17 +170,17 @@ public class LayeredSourceChainTests : IClassFixture<SharedCliServer>
         """);
     }
 
-    private static void WriteTestApp(string dir, Guid testsId, Guid middleId, string suffix)
+    private static void WriteTestApp(string dir, Guid testsId, Guid middleId)
     {
         Directory.CreateDirectory(dir);
         File.WriteAllText(Path.Combine(dir, "app.json"), $$"""
         {
           "id": "{{testsId}}",
-          "name": "LSC Chain Test{{suffix}}",
+          "name": "LSC Chain Test",
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [
-            { "id": "{{middleId}}", "name": "LSC Chain Middle{{suffix}}", "publisher": "AL Runner", "version": "1.0.0.0" }
+            { "id": "{{middleId}}", "name": "LSC Chain Middle", "publisher": "AL Runner", "version": "1.0.0.0" }
           ],
           "platform": "1.0.0.0",
           "application": "1.0.0.0",
@@ -333,44 +276,26 @@ public class LayeredSourceChainTests : IClassFixture<SharedCliServer>
     /// "Dependency not found: AL Runner/LSC Chain Base".
     /// </summary>
     [SkippableFact]
-    public async Task LayeredPrePass_ThreeSourceBundles_MiddleImplResolvesTheBaseImpl()
+    public void LayeredPrePass_ThreeSourceBundles_MiddleImplResolvesTheBaseImpl()
     {
         TestArtifacts.SkipIfMissing();
-
-        var server = await _shared.GetAsync(ServerArgs());
 
         var scratch = NewScratch("layered");
         Guid baseId = Guid.NewGuid(), middleId = Guid.NewGuid(), testsId = Guid.NewGuid();
         var baseDir = Path.Combine(scratch, "base-app");
         var middleDir = Path.Combine(scratch, "middle-app");
         var testsDir = Path.Combine(scratch, "tests-app");
-        WriteBaseApp(baseDir, baseId, " Chained");
-        WriteMiddleApp(middleDir, middleId, baseId, " Chained");
-        WriteTestApp(testsDir, testsId, middleId, " Chained");
+        WriteBaseApp(baseDir, baseId);
+        WriteMiddleApp(middleDir, middleId, baseId);
+        WriteTestApp(testsDir, testsId, middleId);
 
-        var mark = server.StdErrMark;
-        var lines = await server.SendRequestStreamingAsync(
-            Req(baseDir, middleDir, testsDir), TimeSpan.FromSeconds(300));
-        var (_, summary) = ProtocolV2Streaming.Split(lines);
+        var (output, exit) = RunRunner(scratch, baseDir, middleDir, testsDir);
 
-        // The three CLI-era DoesNotContain checks ("Dependency not found", "AL1022",
-        // "COMPILE-FAIL") were three spellings of one claim: nothing failed to compile.
-        // The server states that claim directly, and states it about THIS request only.
-        var compileErrors = CompileErrorText(summary);
-        Assert.True(compileErrors.Length == 0,
-            $"a three-deep source chain must compile clean:\n{compileErrors}");
-        Assert.Equal(0, summary.GetProperty("exitCode").GetInt32());
-        Assert.Equal(3, summary.GetProperty("passed").GetInt32());
-        Assert.Equal(0, summary.GetProperty("failed").GetInt32());
-        Assert.Equal(0, summary.GetProperty("errors").GetInt32());
-
-        // Stronger than the CLI version, which never asserted the pre-pass ran at all:
-        // both impls must have been BUILT by it, so a green summary cannot come from the
-        // chain being resolved some other way.
-        var stderr = await server.StdErrSinceAsync(mark, PrePassTrailer);
-        Assert.Contains("LSC Chain Base Chained", stderr);
-        Assert.Contains("LSC Chain Middle Chained", stderr);
-        Assert.DoesNotContain("Dependency not found", stderr);
+        Assert.DoesNotContain("Dependency not found", output);
+        Assert.DoesNotContain("AL1022", output);
+        Assert.DoesNotContain("COMPILE-FAIL", output);
+        Assert.True(exit == 0 && output.Contains("3P/0F/0E"),
+            $"a three-deep source chain must compile and run (exit {exit}):\n{output}");
     }
 
     // ── Positive: BuildSiblingSourceDeps (one bundle argument, sibling sources) ─
@@ -394,22 +319,10 @@ public class LayeredSourceChainTests : IClassFixture<SharedCliServer>
         var baseDir = Path.Combine(scratch, "base-app");
         var middleDir = Path.Combine(scratch, "middle-app");
         var testsDir = Path.Combine(scratch, "tests-app");
-        WriteBaseApp(baseDir, baseId, " Sibling");
-        WriteMiddleApp(middleDir, middleId, baseId, " Sibling");
-        WriteTestApp(testsDir, testsId, middleId, " Sibling");
+        WriteBaseApp(baseDir, baseId);
+        WriteMiddleApp(middleDir, middleId, baseId);
+        WriteTestApp(testsDir, testsId, middleId);
 
-        // #2377: this fact deliberately keeps spawning the CLI while its two siblings
-        // above moved to the shared --server fixture. It is the ONE bundle case, and
-        // BuildSiblingSourceDeps — the pre-pass this fact exists to exercise — is not
-        // reached at all by a single-sourcePath server request: RunAllBundlesForServer
-        // puts BOTH pre-passes behind `if (sourcePaths.Length > 1)`, while the CLI gates
-        // only RunLayeredPrePass on bundle count and runs the sibling pre-pass
-        // unconditionally. Measured on the fixture shape below: the CLI exits 0, the
-        // identical single-bundle runTests request exits 3 with "DEP-RESOLVE-FAIL:
-        // Dependency not found". That divergence is a runner bug, tracked in #2380 — NOT
-        // a property of this test — so converting this fact would have replaced a claim
-        // about the sibling pre-pass with a claim about nothing. It stays slow and true
-        // until #2380 lands.
         // Only the TEST app is a bundle; the other two are siblings under the same parent.
         var (output, exit) = RunRunner(scratch, testsDir);
 
@@ -431,7 +344,7 @@ public class LayeredSourceChainTests : IClassFixture<SharedCliServer>
     /// with a silently missing dependency.
     /// </summary>
     [SkippableFact]
-    public async Task LayeredPrePass_BaseAppAbsent_FailsNamingTheMissingDependency()
+    public void LayeredPrePass_BaseAppAbsent_FailsNamingTheMissingDependency()
     {
         TestArtifacts.SkipIfMissing();
 
@@ -442,20 +355,13 @@ public class LayeredSourceChainTests : IClassFixture<SharedCliServer>
         var chainRoot = Path.Combine(scratch, "chain");
         var middleDir = Path.Combine(chainRoot, "middle-app");
         var testsDir = Path.Combine(chainRoot, "tests-app");
-        WriteMiddleApp(middleDir, middleId, baseId, " Absent");
-        WriteTestApp(testsDir, testsId, middleId, " Absent");
+        WriteMiddleApp(middleDir, middleId, baseId);
+        WriteTestApp(testsDir, testsId, middleId);
 
-        var server = await _shared.GetAsync(ServerArgs());
-        var lines = await server.SendRequestStreamingAsync(
-            Req(middleDir, testsDir), TimeSpan.FromSeconds(300));
-        var (_, summary) = ProtocolV2Streaming.Split(lines);
+        var (output, exit) = RunRunner(scratch, middleDir, testsDir);
 
-        Assert.NotEqual(0, summary.GetProperty("exitCode").GetInt32());
-        // The layered pre-pass's failure reaches a server client as a compilationErrors
-        // group (LAYERED-PREPASS-FAIL), which is where the naming has to survive — an
-        // editor never sees the CLI's console text.
-        var compileErrors = CompileErrorText(summary);
-        Assert.True(compileErrors.Contains("LSC Chain Base Absent") && compileErrors.Contains("Dependency not found"),
-            $"the failure must name the dependency it could not find:\n{compileErrors}");
+        Assert.NotEqual(0, exit);
+        Assert.Contains("LSC Chain Base", output);
+        Assert.Contains("Dependency not found", output);
     }
 }
