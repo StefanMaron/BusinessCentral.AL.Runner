@@ -276,6 +276,95 @@ does not exist" (`.claude/rules/loud-failures.md`).
   the same "requested vs found nothing" distinction `capturedValues` already
   makes.
 
+### Loop iterations (`iterationTracking`)
+
+`iterationTracking: true` (#2056, `execute` only) opts into per-iteration
+segmentation of every loop the run entered. It is what a consumer needs to
+answer "which iteration produced this value" and to step through iterations
+(SShadowS/ALchemist#1): each test result gains an `iterations` array with one
+entry per **loop instance** (a `for` inside a procedure called three times
+appears three times, each with its own id and parent), and each instance has
+one `steps` entry per iteration carrying that iteration's own captured values,
+`Message()` calls and executed lines.
+
+```json
+{"command":"execute","captureValues":true,"iterationTracking":true,
+ "code":"codeunit 50102 X3 { trigger OnRun() var i: Integer; total: Integer; begin total := 0; for i := 1 to 3 do begin total := total + i; Message(Format(total)); end; end; }"}
+```
+
+```json
+{"exitCode":0,"tests":[{"name":"X3.OnRun","status":"pass","durationMs":9,
+ "capturedValues":[ ...the flat series, unchanged... ],
+ "iterations":[{
+   "loopId":"L0","scope":"OnRun","file":"/tmp/.../Scratch.al","loopLine":1,"loopEndLine":1,
+   "iterationCount":3,
+   "steps":[
+     {"iteration":1,
+      "capturedValues":[{"scopeName":"OnRun","variableName":"i","value":1,"statementId":0},
+                        {"scopeName":"OnRun","variableName":"total","value":1,"statementId":2}],
+      "messages":[{"text":"1","scopeName":"OnRun","statementId":3}],
+      "linesExecuted":[1]},
+     {"iteration":2, "capturedValues":[ ...i=2, total=3... ], "messages":[ ... ], "linesExecuted":[1]},
+     {"iteration":3, "capturedValues":[ ...i=3, total=6... ], "messages":[ ... ], "linesExecuted":[1]}]}]}],
+ "messages":[ ...all four calls, unchanged... ]}
+```
+
+- **A step's `capturedValues` are the SAME records the flat per-test series
+  carries, bucketed by the iteration that produced them.** Never a delta and
+  never a snapshot of every local: a value that did not change in an iteration
+  has no record in it, exactly as in the flat series. `messages` entries have
+  the same shape as the top-level `messages` array. Both are complete lists for
+  that iteration, in execution order.
+- **Where a value lands.** `--capture-values` observes a statement's effect at
+  the NEXT statement's hit, so the last statement of one pass is observed at the
+  first hit of the next. Values are filed with the pass that produced them; a
+  `for`/`foreach` loop variable's new value (the one thing that runs between two
+  passes with no hit of its own) is filed with the pass it opens. A value
+  changed by a `while`/`until` condition itself (`Rec.Next()`) is filed with the
+  pass that condition opens.
+- **`linesExecuted`** are the 1-based AL lines of every statement that ran in
+  that iteration, nested loops' lines included, in the loop's own scope only (a
+  called procedure's statements belong to that procedure's own loop instances).
+  A `while` condition's line is filed with the pass it ended; the final, false
+  evaluation with the last pass.
+- **Nesting is dynamic, not lexical.** `parentLoopId`/`parentIteration` name the
+  loop instance and iteration that were *active when this instance was
+  entered*, across procedure calls: a loop inside a procedure called from
+  iteration 2 of an outer loop reports `parentLoopId` = that outer instance and
+  `parentIteration: 2`. Both are omitted for a loop with no enclosing active
+  loop. Instances are listed in entry order.
+- **`loopLine`/`loopEndLine`** are the loop statement's first and last 1-based
+  source lines; `file` is the same path identity `coverage[].file` uses.
+  `iterationCount` counts passes whose body began, so a `for i := 1 to 0`
+  reports `iterationCount: 0` with no steps, and a `break`/`exit` mid-pass still
+  counts that pass (its values up to the exit are in its step).
+- **Unsegmentable loops are said so, never guessed.** A loop whose body has no
+  instrumented statement (`for i := 1 to 3 do ;`) has nothing in the hit stream
+  to count passes on; it is still listed, with `iterationCount` omitted and an
+  `unsegmentable` string saying why.
+- Independent of `captureValues` (without it, steps carry `messages` and
+  `linesExecuted` with empty `capturedValues`). `iterations` is omitted entirely
+  when the request didn't set `iterationTracking: true`; a present but empty
+  `iterations: []` means "asked, nothing looped".
+- **How it works.** Loop *structure* comes from BC's own syntax tree (the same
+  `ParseObjectText` the compiler runs, once per request, with the bundle's own
+  preprocessor symbols): which statements are a loop's header, which are its
+  body, and which one opens an iteration. Segmentation then rides the existing
+  `StmtHit` hook `coverage`/`capturedValues` already use: BC hits a `for` once
+  at entry and its body once per pass, a `while`/`until` condition once per
+  evaluation. No new Cecil rewrite. See `AlRunner/Infrastructure/AlLoopModel.cs`
+  for the measured instrumentation shapes and `AlIterationSegmenter.cs` for the
+  state machine.
+- **One correction to `capturedValues` came with this.** BC assigns a
+  `for`/`foreach` loop variable *before* the loop statement's own hit, so when
+  the loop is the scope's first statement the very first observation already
+  sees `i = 1`; the previous rule treated that first observation as a silent
+  baseline and never emitted it, leaving the series (and iteration 1) without
+  the loop variable's initial value. A primitive local that is non-default at
+  the baseline can only have been assigned by statement 0 before its hit (AL
+  locals start at their default), so it is now emitted, attributed to statement
+  0. Every other baseline value is still never emitted.
+
 ### `shutdown`
 
 ```json

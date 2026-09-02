@@ -9,7 +9,7 @@ namespace AlRunner;
 ///
 /// One JSON object per line. stdin = requests, stdout = responses.
 ///   request : {command, sourcePaths[], packagePaths[], stubPaths[], code, captureValues,
-///              coverage, perTestCoverage, testIsolation}
+///              coverage, perTestCoverage, iterationTracking, testIsolation}
 ///   runTests: STREAMING (protocol-v2.schema.json — see #1641) — zero or more
 ///             {"type":"test", name, status, durationMs, message, errorKind,
 ///             stackFrames, stackTrace} lines, one per completed test as it
@@ -32,7 +32,7 @@ namespace AlRunner;
 ///             already finished) at the moment the cancel was processed — the v1
 ///             shape (#1613/#1614), reused verbatim rather than inventing a new one.
 ///   execute : {exitCode, tests:[{name,status,durationMs,message,stackTrace,
-///              capturedValues|omitted}], messages|omitted, compilationErrors|null,
+///              capturedValues|omitted, iterations|omitted}], messages|omitted, compilationErrors|null,
 ///              coverage|omitted} —
 ///              single response, not streamed (matches v1: only runTests streams).
 ///              `capturedValues` (#1640) is present per test only when the request
@@ -164,6 +164,21 @@ public sealed class ServerRequest
     /// behaviour, field omitted from the response.
     /// </summary>
     [JsonPropertyName("perTestCoverage")] public bool? PerTestCoverage { get; set; }
+
+    /// <summary>
+    /// #2056: `execute` only. When true, each test result additionally carries
+    /// `iterations[]` — one entry per loop INSTANCE entered during the run (a loop in a
+    /// procedure called three times appears three times), each with one `steps[]` entry
+    /// per iteration holding that iteration's own `capturedValues` (the SAME records the
+    /// flat per-test series has, bucketed — never a delta, never a snapshot of every
+    /// local), its Message() calls, and the AL lines it executed; nested loops carry
+    /// `parentLoopId`/`parentIteration` naming the loop instance and iteration that were
+    /// active when they were entered, across procedure calls. Present as `[]` when the
+    /// run looped nowhere; absent entirely when not requested. Independent of
+    /// `captureValues` (without it, steps carry lines and messages only). See
+    /// docs/server-mode.md "Loop iterations" and Infrastructure/AlIterationTracker.cs.
+    /// </summary>
+    [JsonPropertyName("iterationTracking")] public bool? IterationTracking { get; set; }
     /// <summary>
     /// "codeunit" (default) | "test"/"method" | "disabled" — see <see cref="TestIsolationParser"/>.
     /// Null = the server's existing default (TestIsolation.Codeunit), matching the
@@ -427,6 +442,7 @@ public static class ServerProtocol
         message = t.Message,
         stackTrace = (t.AlCallStack ?? t.FullException)?.TrimEnd(),
         capturedValues = t.CapturedValues?.Select(ToWire),
+        iterations = t.Iterations?.Select(ToWire),
     };
 
     // One captured AL local on the wire — the shape protocol-v2.schema.json already
@@ -451,5 +467,31 @@ public static class ServerProtocol
         text = m.Text,
         scopeName = m.ScopeName,
         statementId = m.StatementId,
+    };
+
+    // One loop instance on the wire (#2056) — see ServerRequest.IterationTracking's doc
+    // comment for the contract. `file` is the same path identity `coverage[].file`
+    // uses; `loopLine`/`loopEndLine` are the loop statement's 1-based source lines.
+    // parentLoopId/parentIteration are null-omitted for a root loop, and
+    // iterationCount is null-omitted exactly when `unsegmentable` is present (the loop
+    // was entered but its iterations cannot be counted — never a fake 0).
+    private static object ToWire(Infrastructure.AlLoopRecord l) => new
+    {
+        loopId = l.LoopId,
+        scope = l.ScopeName,
+        file = l.FilePath,
+        loopLine = l.LoopLine,
+        loopEndLine = l.LoopEndLine,
+        parentLoopId = l.ParentLoopId,
+        parentIteration = l.ParentIteration,
+        iterationCount = l.IterationCount,
+        steps = l.Steps.Select(s => new
+        {
+            iteration = s.Iteration,
+            capturedValues = s.CapturedValues.Select(ToWire),
+            messages = s.Messages.Select(ToWire),
+            linesExecuted = s.LinesExecuted,
+        }),
+        unsegmentable = l.Unsegmentable,
     };
 }

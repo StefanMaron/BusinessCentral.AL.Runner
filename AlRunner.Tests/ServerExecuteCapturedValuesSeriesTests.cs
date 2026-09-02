@@ -173,4 +173,38 @@ public class ServerExecuteCapturedValuesSeriesTests : IClassFixture<SharedCliSer
         Assert.False(tests[0].TryGetProperty("capturedValues", out _),
             $"capturedValues must be absent when captureValues wasn't requested: {r}");
     }
+
+    // #2056: a `for` loop as the scope's FIRST statement. BC assigns `i := 1` before the
+    // `for` statement's own StmtHit (measured), so the baseline observation already sees
+    // it; the pre-#2056 rule swallowed it and the series started at i = 2. Proven here on
+    // the wire: the loop variable's initial value is present, first, and attributed to the
+    // `for` statement (statement 0) — the one whose pre-hit part produced it.
+    [SkippableFact]
+    public async Task Execute_ForLoopAsFirstStatement_LoopVariableInitialValueIsInTheSeries()
+    {
+        TestArtifacts.SkipIfMissing();
+        var server = await _fixture.GetAsync();
+        var r = await server.SendAsync(JsonSerializer.Serialize(new
+        {
+            command = "execute",
+            captureValues = true,
+            code = "codeunit 60314 \"CV Leading For SX\" { trigger OnRun() var i: Integer; s: Integer; " +
+                   "begin for i := 1 to 3 do s := s + i; end; }",
+        }));
+        var d = JsonSerializer.Deserialize<JsonElement>(r);
+        Assert.False(d.TryGetProperty("error", out _), $"unexpected error response: {r}");
+        Assert.Equal(0, d.GetProperty("exitCode").GetInt32());
+
+        var series = d.GetProperty("tests")[0].GetProperty("capturedValues").EnumerateArray()
+            .Where(v => v.GetProperty("variableName").GetString() == "i")
+            .Select(v => (Value: v.GetProperty("value").GetInt32(), Stmt: v.GetProperty("statementId").GetInt32()))
+            .ToList();
+        Assert.Equal(new[] { 1, 2, 3 }, series.Select(e => e.Value).ToArray());
+        Assert.Equal(0, series[0].Stmt); // produced by the `for` statement itself, before its hit
+        // A local that really was untouched at the baseline is still never invented.
+        var sAtBaseline = d.GetProperty("tests")[0].GetProperty("capturedValues").EnumerateArray()
+            .Where(v => v.GetProperty("variableName").GetString() == "s")
+            .Select(v => v.GetProperty("value").GetInt32()).ToList();
+        Assert.Equal(new[] { 1, 3, 6 }, sAtBaseline);
+    }
 }

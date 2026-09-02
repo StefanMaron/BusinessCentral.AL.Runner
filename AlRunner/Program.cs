@@ -4781,6 +4781,16 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
         // so a captureValues:true request never leaves the flag on for a later request
         // that didn't ask for it (the flag is process-global, same as AlCoverageTracker.Enabled).
         AlRunner.Infrastructure.AlValueCapture.Enabled = req.CaptureValues == true;
+        // #2056: `iterationTracking:true` — loop iteration segmentation. The loop
+        // STRUCTURE comes from the bundle's AL syntax (parsed here, once per request,
+        // with the bundle's own preprocessor symbols); the segmentation itself rides the
+        // same StmtHit hook coverage/capturedValues already use. Scoped to THIS request
+        // like the flags above; RunFirstCodeunitOnRun resets+collects it per bundle.
+        AlRunner.Infrastructure.AlIterationTracker.Enabled = req.IterationTracking == true;
+        if (req.IterationTracking == true)
+            AlRunner.Infrastructure.AlIterationTracker.Configure(
+                AlRunner.Infrastructure.AlLoopSyntaxIndex.Build(sourcePaths),
+                AlRunner.Infrastructure.AlCoverageSourceMap.Build(sourcePaths, relativeTo: null));
         // #2042: 'coverage:true' on `execute` — same request/response correlation the
         // issue's acceptance criteria need: THIS single `execute` call can enable BOTH
         // captureValues AND coverage together, so a caller can prove statementId lines
@@ -4845,6 +4855,7 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
         finally
         {
             AlRunner.Infrastructure.AlValueCapture.Enabled = false;
+            AlRunner.Infrastructure.AlIterationTracker.Enabled = false;
             AlRunner.Infrastructure.AlCoverageTracker.Enabled = false;
             AlRunner.Infrastructure.AlCoverageTracker.PerTestEnabled = false;
             if (messageCaptureSession != null) messageCaptureSession.ClientCallbackOverride = null;
@@ -4999,6 +5010,12 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
             AlRunner.Infrastructure.AlValueCapture.Enabled
                 ? AlRunner.Infrastructure.AlValueCapture.Collect()
                 : null;
+        // #2056: same per-bundle reset/collect bracket as AlValueCapture above.
+        AlRunner.Infrastructure.AlIterationTracker.Reset();
+        IReadOnlyList<AlRunner.Infrastructure.AlLoopRecord>? Iterations() =>
+            AlRunner.Infrastructure.AlIterationTracker.Enabled
+                ? AlRunner.Infrastructure.AlIterationTracker.Collect()
+                : null;
         // #2135: same test-window bracket TestExecutor.RunOne uses for [Test]
         // procedures, applied to `execute`'s single OnRun invocation — the key
         // matches the SAME "{Codeunit}.{Method}" shape (target.Name is the .NET type
@@ -5020,7 +5037,7 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                 System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance, null,
                 Type.EmptyTypes, null)!.Invoke(instance, null);
             return new[] { new TestResult(target.Name, "OnRun", TestOutcome.Pass, null, null, sw.Elapsed,
-                CapturedValues: Captured()) };
+                CapturedValues: Captured(), Iterations: Iterations()) };
         }
         catch (System.Reflection.TargetInvocationException tex)
         {
@@ -5028,12 +5045,12 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
             var alStack = AlRunner.Infrastructure.AlCallStackCapture.GetCaptured(inner);
             return new[] { new TestResult(target.Name, "OnRun", TestOutcome.Fail,
                 $"{inner.GetType().Name}: {inner.Message}", inner.ToString(), sw.Elapsed, alStack,
-                CapturedValues: Captured()) };
+                CapturedValues: Captured(), Iterations: Iterations()) };
         }
         catch (Exception ex)
         {
             return new[] { new TestResult(target.Name, "OnRun", TestOutcome.Error,
-                ex.Message, ex.ToString(), sw.Elapsed, CapturedValues: Captured()) };
+                ex.Message, ex.ToString(), sw.Elapsed, CapturedValues: Captured(), Iterations: Iterations()) };
         }
         finally
         {

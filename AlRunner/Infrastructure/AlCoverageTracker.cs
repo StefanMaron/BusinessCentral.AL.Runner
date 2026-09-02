@@ -102,12 +102,17 @@ public static class AlCoverageTracker
     public static void OnStmtHit(NavMethodScope scope, int currentStatementNumber)
     {
         AlCurrentStatement.Update(scope, currentStatementNumber);
-        AlValueCapture.OnStmtHit(scope, currentStatementNumber);
+        var observed = AlValueCapture.OnStmtHit(scope, currentStatementNumber);
         // NavMethodScope.ExitStatementNumber (int.MaxValue) is written directly by
         // Exit(), never passed to StmtHit by generated code — guarded defensively so a
         // future BC emit change can't corrupt either dictionary with a giant fake
         // index. Shared by BOTH the aggregate and per-test paths below.
         if (currentStatementNumber == int.MaxValue) return;
+        // #2056: loop iteration segmentation, SELF-gated by AlIterationTracker.Enabled
+        // (a third independent opt-in). Fed the values THIS observation produced so
+        // they land in the iteration that produced them — see AlIterationSegmenter.
+        if (AlIterationTracker.Enabled)
+            AlIterationTracker.OnStmtHit(scope, currentStatementNumber, observed);
         if (Enabled)
             _hits.AddOrUpdate((scope.GetType(), currentStatementNumber), 1, static (_, c) => c + 1);
         // #2135: per-test attribution — a SEPARATE flag/dictionary from the aggregate
@@ -323,6 +328,18 @@ public static class AlCoverageTracker
         if (!sourceMap.TryGetValue((label, id), out var filePath)) return null;
         var scopeName = AlNavNameReflection.GetAlName(type) ?? "?";
         return (filePath, scopeName, spans);
+    }
+
+    /// <summary>#2056: the same (file, scope name, spans) resolution AlIterationTracker
+    /// needs for a scope type, with the reflection init this class otherwise performs
+    /// on its own Collect* entry points. Null means "not a mapped AL scope of the
+    /// bundle", same as ResolveScopeInfo.</summary>
+    internal static (string FilePath, string ScopeName, long[] Spans)? TryResolveScope(
+        Type type, IReadOnlyDictionary<(string Label, int Id), string> sourceMap)
+    {
+        EnsureReflInit();
+        AlNavNameReflection.EnsureInit();
+        return ResolveScopeInfo(type, sourceMap);
     }
 
     /// <summary>
