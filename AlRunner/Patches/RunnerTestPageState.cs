@@ -69,6 +69,19 @@ public static class RunnerTestPageState
             live.RaiseOnOpenPage();
             if (viewMode == Microsoft.Dynamics.Nav.Types.Metadata.ViewMode.Create)
                 live.InsertEmptyRow(beforeCurrent: true);
+            else if (live.Record != null)
+                // A real client positions on the first row (or the implicit new-row line, if
+                // the view has none — see LiveNavTestPage.MoveFirst) the instant the page
+                // opens, before any AL code runs. Without this, a page opened on an empty view
+                // sat on nothing until an AL test called First()/Next() itself — and code that
+                // never does that (issue #2392: Base App's ApprovalCommentsHandler writes a
+                // field straight after Trap(), no navigation call of its own) wrote into a
+                // record that had never been positioned at all.
+                //
+                // Guarded on Record != null: a page with no SourceTable (the StandardDialog
+                // shape, issue #2007) has no rowset to position at all, and MoveFirst() refuses
+                // that case by name (RequireRecord) rather than silently doing nothing.
+                live.MoveFirst();
         }
         catch { /* a page that cannot be marked simply behaves as it did before */ }
     }

@@ -63,13 +63,25 @@ public sealed class RunnerTestClientSession : ITestClientSession
         // source-expression table and never touches the record at all.
         var record = ReadProperty(form, "SourceTable") as NavRecord;
 
-        return new AlRunner.LiveNavTestPage(
+        var live = new AlRunner.LiveNavTestPage(
             record,
             RecordPatches.GetPageControlFieldMap(pageId),
             RecordPatches.GetInsertAllowedForPage(pageId),
             RunnerPageInstance.Adopt(form, pageId),
             _session,
             pageId);
+
+        // This wrapper is built AFTER the underlying form already opened — the code that
+        // positions a TestPage the AL test opened itself (RunnerTestPageState.MarkOpened)
+        // never runs on this path, so without this the page a [PageHandler]/[ModalPageHandler]
+        // receives sits on no row at all, even when its view has one. A real client positions
+        // on the first row (or the implicit new-row line, if the view has none — see
+        // LiveNavTestPage.MoveFirst) the moment a page is shown, before any AL handler code
+        // runs. Issue #2392: Base App's ApprovalCommentsHandler writes a field straight after
+        // being handed the page — no New()/First() of its own — which needs exactly this.
+        if (record != null) live.MoveFirst();
+
+        return live;
     }
 
     private object? RegisteredForm(Guid handle)

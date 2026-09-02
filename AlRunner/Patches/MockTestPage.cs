@@ -1060,7 +1060,26 @@ internal class LiveNavTestPage : MockITestPage
     // otherwise navigating away from a New() silently discards it. Parts flush too: moving
     // the parent re-links every part to a different row, so a row started in a part must be
     // persisted while the link that stamped its key is still the current one.
-    public override bool MoveFirst() { var record = RequireRecord("MoveFirst()"); FlushParts(); FlushRow(); LeaveNewRowLine(); return Loaded(record.ALFindFirstAsync(DataError.TrapError).GetAwaiter().GetResult()); }
+    //
+    // An empty result still lands on the implicit new-row line as a SIDE EFFECT, mirroring
+    // MoveNext() past the last data row (see EnterNewRowLine). The RETURN VALUE stays false —
+    // corpus CU60743 EmptyEditableList_FirstReturnsFalse pins that an explicit First() call on
+    // an empty editable, insert-allowed page must still report false, so this only changes
+    // internal cursor state, never what First() answers. What it fixes is issue #2392: BC's own
+    // ApprovalCommentsHandler opens such a page and writes a field directly, with no New() or
+    // First() of its own — the page-construction sites that position a page at open time (see
+    // RunnerTestClientSession.GetPage, RunnerTestPageState.MarkOpened) call this so that write
+    // has a row to land on instead of silently targeting nothing (corpus CU60743
+    // EmptyEditableList_SetValueWithoutNewOrFirst_InsertsARow, validated against a real service
+    // tier on all 8 supported BC versions).
+    public override bool MoveFirst()
+    {
+        var record = RequireRecord("MoveFirst()");
+        FlushParts(); FlushRow(); LeaveNewRowLine();
+        var found = record.ALFindFirstAsync(DataError.TrapError).GetAwaiter().GetResult();
+        if (!found) EnterNewRowLine(record);
+        return Loaded(found);
+    }
     public override bool MoveLast() { var record = RequireRecord("MoveLast()"); FlushParts(); FlushRow(); LeaveNewRowLine(); return Loaded(record.ALFindLastAsync(DataError.TrapError).GetAwaiter().GetResult()); }
 
     /// <summary>
