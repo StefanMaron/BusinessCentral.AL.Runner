@@ -600,6 +600,30 @@ internal class LiveNavTestPage : MockITestPage
     {
         if (!_pendingNewRow) return;
         _pendingNewRow = false;
+
+        // Issue #2394 — a field's OWN OnValidate can insert the row out from under this flag.
+        // BC's client model is "insert on leave", which is what this class implements — but a
+        // control's OnValidate is free to call CurrPage.Update(), and for a page that shows a
+        // template-selection dialog on New() (Customer/Vendor/Item Card with Templates enabled:
+        // real Base App, "Cust./Vend./Item Templ. Mgt.") that update reaches the page's own
+        // OnAfterGetCurrRecord while its "newMode" flag is still set, which is precisely the
+        // gate real BC uses to run the ONE-TIME "create record from template" logic — the
+        // template codeunit's own Insert(true), a second, EARLIER physical row-write this class
+        // never saw and cannot know about except by asking the table. Falling through to our own
+        // ALInsertAsync below then inserted a SECOND time: same "No." (blank stays blank only
+        // once — InitSeries no-ops on a field that already has a value), so Table 18 itself
+        // stayed unique, but the subscriber chain their Insert(true) fires (Codeunit 5056
+        // "CustCont-Update" et al.) ran a second time, and Table 5054 "Contact Business
+        // Relation"'s own uniqueness guard turned that into
+        // "Customer X already has a Contact Business Relation with Contact Y" — the record's own
+        // AL business logic policing a duplicate insert that never should have been attempted.
+        // Checking existence first is the general fix: it is exactly how a real client would
+        // notice the row it was about to create already has one, for ANY reason a nested
+        // CurrPage.Update() might have inserted it — templates are the pattern that exposed the
+        // gap here, not the only page shape that can trigger it.
+        if (_record!.ExistsAsync(_record.ALRecordId).AsTask().GetAwaiter().GetResult())
+            return;
+
         // AutoSplitKey, in BC's own order: SplitKey, then OnInsertRecord, then the record's
         // Insert (NavForm.SaveRecordAsync / NavForm.InsertAsync(belowXRec) both do exactly
         // this). Skipping it left the last primary-key field at its Init() default, so a page
@@ -912,8 +936,28 @@ internal class LiveNavTestPage : MockITestPage
         }
 
         // A new row is already going to be written by FlushPendingNewRow; marking it modified
-        // as well would try to Modify a row that does not exist yet.
-        if (!_pendingNewRow) _pendingModify = true;
+        // as well would try to Modify a row that does not exist yet — UNLESS the edit just
+        // made (ALValidateAsync, run by the caller before this method) already caused it to
+        // exist. Issue #2394: a control's OnValidate is free to call CurrPage.Update(), and
+        // for a page that runs "create record from template" on New() (Customer/Vendor/Item
+        // Card with Templates enabled — real Base App, "Cust./Vend./Item Templ. Mgt.") that
+        // reaches the page's own OnAfterGetCurrRecord while "newMode" is still set, which is
+        // exactly the gate real BC uses to run the one-time template codeunit — including its
+        // own Insert(true). That is a second, EARLIER physical row-write this class never
+        // issued and cannot know about except by asking the table, right after the edit that
+        // may have triggered it. Once it has happened, this row is no longer "pending insert"
+        // — FlushPendingNewRow must not insert it again (see its own existence check, the
+        // final safety net for a row inserted with no further field edit at all) — and any
+        // field written from here on must go through Modify, or it sits in the buffer and is
+        // never persisted at all: the field IS validated (ALValidateAsync above always runs),
+        // but nothing then sends it to the row that already exists.
+        if (_pendingNewRow)
+        {
+            if (_record!.ExistsAsync(_record.ALRecordId).AsTask().GetAwaiter().GetResult())
+                _pendingNewRow = false;
+            return;
+        }
+        _pendingModify = true;
     }
 
     internal void FlushPendingModify()
