@@ -215,9 +215,14 @@ public static partial class NavReportSync
     /// here: it brings the standard request-page controls with it, and NavForm's
     /// InitializeFromMetadata — which request pages are deliberately not opted into
     /// (RunnerFormInit) — then NREs walking them. A request page with no controls is the
-    /// honest description of what a reconstructed report's metadata actually contains, and a
-    /// handler that reaches for a control is refused by name in RequestPageTestPage.GetField
-    /// rather than silently answering an empty value.
+    /// honest description of what a reconstructed report's metadata actually contains.
+    ///
+    /// This is only the fallback for a report whose real metadata could not be loaded. A
+    /// report the runner compiled gets a real MasterPage, and its request page's own
+    /// generated OnMetadataLoaded registers a source expression per control — which is what
+    /// RequestPageTestPage.GetField resolves against (#2442). On this stub there are no
+    /// controls and therefore no bindings, so GetField refuses by name rather than silently
+    /// answering an empty value.
     /// </summary>
     public static object BuildRequestPageStubMasterPage(
         System.Reflection.Assembly typesAsm, Type masterPageType, int reportId)
@@ -494,6 +499,14 @@ public static partial class NavReportSync
 
         if (parameters != null)
             TrySetParameterSet(requestPage, parameters);
+
+        // Must precede RunModal: RunModal is what reaches {Report}.RequestPage's generated
+        // OnMetadataLoaded, and that is where BC registers the request page's control ->
+        // report-global bindings. Without the opt-in, NavForm.RegisterSourceExpression
+        // no-ops and NavForm.SourceExpressions stays empty, so a [RequestPageHandler] that
+        // sets a control has nothing to resolve against (issue #2442). Registration only —
+        // see RunnerFormInit.MarkSourceExpressionsWanted for why this is not MarkRealInit.
+        AlRunner.Patches.RunnerFormInit.MarkSourceExpressionsWanted(requestPage);
 
         // Register the request-page surface BC's dispatch will ask the client session for
         // (RunnerTestClientSession.GetPage) — it is keyed by this form, and is also how the
