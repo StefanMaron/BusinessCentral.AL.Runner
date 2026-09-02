@@ -551,6 +551,32 @@ public static class JoinExecutor
         int maxSlot = -1;
         var dataItems = ((IEnumerable)_pQueryDefDataItems!.GetValue(queryDef)!).Cast<object>().ToList();
 
+        // #2423: a multi-real-dataitem JOIN that also selects a FlowField column reaches this
+        // plan with the FlowField-calculation synthesized dataitem (SubQueryDefinition != null
+        // -- see the field comment above) still in the RAW dataitem list, same as GetRealDataItems
+        // filters out elsewhere. Its own "column" is a real NCLMetaQueryColumn with the outer
+        // AL-compiled Id/ColumnIndex (see #2300's PR body), so ResolveTableSlot below resolves it
+        // to a field on the FlowField's SOURCE table -- a table this join never reads a row buffer
+        // for at all (Execute's own row-reading, above, already excludes this dataitem). Before
+        // this guard, that silently produced the column's typed default (observed: 0 instead of
+        // the oracle's 7.25) -- a wrong answer read back with no error, exactly the silent default
+        // .claude/rules/loud-failures.md forbids. Neither BuildJoinProjectionPlan nor its
+        // al-runner-side mirror ComputeJoinColumnSlotMap route a FlowField column through
+        // FlowFieldPatches.CalcOneFlowFieldForQueryRow the way the single-dataitem projection path
+        // (#2300) does -- tracked as the remaining gap in #2423. Fail loudly instead of guessing.
+        foreach (var di in dataItems)
+        {
+            if (_pDataItemSubQueryDefinition!.GetValue(di) == null) continue;
+            var subDataItemName = (string)_pDataItemName!.GetValue(di)!;
+            throw ctx.OutOfScope(
+                "NavQuery (multi-dataitem join with a FlowField column)",
+                $"query-join-flowfield-column-not-implemented -- dataitem '{subDataItemName}' is the " +
+                "synthesized FlowField-calculation sub-dataitem for a column selected alongside a " +
+                "real multi-dataitem JOIN; this runner does not yet compute a FlowField column's " +
+                "value in the join projection path (only the single-real-dataitem case is wired, " +
+                "via FlowFieldPatches.CalcOneFlowFieldForQueryRow) -- see #2423");
+        }
+
         // Pass 1: genuinely-projected (non-filter-only) columns get their real ColumnIndex slot.
         foreach (var di in dataItems)
         {
