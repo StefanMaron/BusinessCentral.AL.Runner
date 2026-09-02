@@ -53,20 +53,25 @@ internal enum TestPageClientKind
 internal static class TestPageClientConstructionRule
 {
     /// <param name="recordBuilt">Whether TestPageFactory.TryBuild produced a record cursor.</param>
-    /// <param name="pageIsParsed">Whether the runner AL-source-parsed this page, so "declares
-    /// no SourceTable" is a fact about the page rather than about the runner's ignorance.</param>
-    /// <param name="pageDeclaresSourceTable">Whether the parsed page declares a SourceTable.</param>
+    /// <param name="pageShapeKnown">Whether the runner knows this page's DECLARED SHAPE, so
+    /// "declares no SourceTable" is a fact about the page rather than about the runner's
+    /// ignorance. Both sources count: the runner's own AL source parse, and a loaded
+    /// dependency .app's SymbolReference.json (<c>RecordPatches.IsPageShapeKnown</c>). Reading
+    /// this as the parsed half alone is what issue #2341 was — it demoted every
+    /// no-SourceTable page shipping in a precompiled dependency (167 of them in Base
+    /// Application 28.1, 35 more in System Application) to the navigation mock.</param>
+    /// <param name="pageDeclaresSourceTable">Whether that declared shape has a SourceTable.</param>
     internal static TestPageClientKind Resolve(
-        bool recordBuilt, bool pageIsParsed, bool pageDeclaresSourceTable)
+        bool recordBuilt, bool pageShapeKnown, bool pageDeclaresSourceTable)
     {
         if (recordBuilt) return TestPageClientKind.LiveOverRecord;
 
         // No record AND the page declares no source table: nothing is missing — there is
         // simply nothing to build. Drive it record-less.
-        if (pageIsParsed && !pageDeclaresSourceTable) return TestPageClientKind.LiveRecordless;
+        if (pageShapeKnown && !pageDeclaresSourceTable) return TestPageClientKind.LiveRecordless;
 
-        // No record but the page DOES declare a source table (or the runner never saw the
-        // page): something the runner needed is missing. Answering record-less here would
+        // No record but the page DOES declare a source table (or the runner knows nothing
+        // about the page from either source): something the runner needed is missing. Answering record-less here would
         // swap one wrong answer for another — a page that should have had rows would report
         // none, quietly — so this keeps the pre-existing mock, which the call site announces.
         return TestPageClientKind.NavigationMock;

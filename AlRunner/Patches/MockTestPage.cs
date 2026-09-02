@@ -251,8 +251,8 @@ internal class LiveNavTestPage : MockITestPage
         RunnerPageInstance? partPage;
         switch (TestPageClientConstructionRule.Resolve(
                     recordBuilt: built != null,
-                    pageIsParsed: RecordPatches.IsPageParsed(partPageId),
-                    pageDeclaresSourceTable: RecordPatches.PageDeclaresSourceTable(partPageId)))
+                    pageShapeKnown: RecordPatches.IsPageShapeKnown(partPageId),
+                    pageDeclaresSourceTable: RecordPatches.ResolvePageDeclaresSourceTableForAnyPage(partPageId)))
         {
             case TestPageClientKind.LiveOverRecord:
                 partRecord = built!.Record;

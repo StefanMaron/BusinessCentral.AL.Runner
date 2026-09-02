@@ -482,8 +482,8 @@ public static partial class BcRuntime
         // for this shape since #2007. Both sites now agree.
         switch (TestPageClientConstructionRule.Resolve(
                     recordBuilt: built != null,
-                    pageIsParsed: RecordPatches.IsPageParsed(pageId),
-                    pageDeclaresSourceTable: RecordPatches.PageDeclaresSourceTable(pageId)))
+                    pageShapeKnown: RecordPatches.IsPageShapeKnown(pageId),
+                    pageDeclaresSourceTable: RecordPatches.ResolvePageDeclaresSourceTableForAnyPage(pageId)))
         {
             case TestPageClientKind.LiveOverRecord:
                 return new LiveNavTestPage(built!.Record, RecordPatches.GetPageControlFieldMap(pageId),
@@ -514,19 +514,28 @@ public static partial class BcRuntime
 
         // BC's own body returns null when the page's SourceObject.SourceTable is 0 — a page
         // without a source table is legal AL, and PrimaryKeyFields then reads as empty.
-        // Mirror that, but ONLY for a page we actually parsed: answering null for a page the
-        // parser never saw would turn a runner gap into a silently empty primary key.
-        if (!RecordPatches.IsPageParsed(pageId))
+        // Mirror that, but ONLY for a page whose declared shape we actually know: answering
+        // null for a page we know nothing about would turn a runner gap into a silently empty
+        // primary key.
+        //
+        // "Know" means AL-source-parsed OR declared by a loaded dependency .app (issue #2341).
+        // Restricting it to the parsed half refused every TestPage over a Base App / System
+        // App page — TestPage 9807 "User Card" among them, whose SourceTable the runner was
+        // already holding in BcAppSymbolCache. TestPageFactory.TryBuild and
+        // NavTestPageBase_ALGoToRecord below both resolve a precompiled page's table today;
+        // this is the third reader of the same state, and it was the one still refusing.
+        if (!RecordPatches.IsPageShapeKnown(pageId))
             throw new InvalidOperationException(
-                $"TestPage {pageId} was never parsed from AL source — cannot resolve its " +
-                $"SourceTable, and guessing would silently yield an empty primary key.");
+                $"TestPage {pageId} is declared neither in this bundle's AL source nor in any " +
+                $"loaded dependency .app — cannot resolve its SourceTable, and guessing would " +
+                $"silently yield an empty primary key.");
 
-        if (!RecordPatches.PageDeclaresSourceTable(pageId))
+        if (!RecordPatches.ResolvePageDeclaresSourceTableForAnyPage(pageId))
             return null!;
 
-        var tableId = RecordPatches.GetSourceTableIdForPage(pageId);
+        var tableId = RecordPatches.ResolveSourceTableIdForAnyPage(pageId);
         if (tableId == 0)
-            throw new InvalidOperationException($"TestPage {pageId} has no parsed SourceTable.");
+            throw new InvalidOperationException($"TestPage {pageId} has no resolvable SourceTable.");
 
         return RecordPatches.GetOrBuildNCLMetaTable(tableId)
             ?? throw new InvalidOperationException($"TestPage {pageId} SourceTable {tableId} has no NCLMetaTable.");

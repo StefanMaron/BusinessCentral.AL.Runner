@@ -26,10 +26,10 @@ public sealed class TestPageClientConstructionRuleTests
     [InlineData(true, true)]
     [InlineData(true, false)]
     [InlineData(false, false)]
-    public void RecordBuilt_AlwaysDrivesOverTheRecord(bool pageIsParsed, bool declaresSourceTable)
+    public void RecordBuilt_AlwaysDrivesOverTheRecord(bool pageShapeKnown, bool declaresSourceTable)
         => Assert.Equal(TestPageClientKind.LiveOverRecord,
             TestPageClientConstructionRule.Resolve(
-                recordBuilt: true, pageIsParsed, pageDeclaresSourceTable: declaresSourceTable));
+                recordBuilt: true, pageShapeKnown, pageDeclaresSourceTable: declaresSourceTable));
 
     // THE REGRESSION ROW. A parsed page that declares no SourceTable has no record to build
     // and needs none — it is driven live over a null record. This resolved to
@@ -38,7 +38,7 @@ public sealed class TestPageClientConstructionRuleTests
     public void NoRecord_ParsedPageWithoutSourceTable_IsDrivenRecordless()
         => Assert.Equal(TestPageClientKind.LiveRecordless,
             TestPageClientConstructionRule.Resolve(
-                recordBuilt: false, pageIsParsed: true, pageDeclaresSourceTable: false));
+                recordBuilt: false, pageShapeKnown: true, pageDeclaresSourceTable: false));
 
     // A page that DOES declare a source table but whose record could not be built is a runner
     // gap — a missing runtime record type. Driving it record-less would report "no rows" for a
@@ -47,15 +47,15 @@ public sealed class TestPageClientConstructionRuleTests
     public void NoRecord_ParsedPageWithASourceTable_StaysOnTheNavigationMock()
         => Assert.Equal(TestPageClientKind.NavigationMock,
             TestPageClientConstructionRule.Resolve(
-                recordBuilt: false, pageIsParsed: true, pageDeclaresSourceTable: true));
+                recordBuilt: false, pageShapeKnown: true, pageDeclaresSourceTable: true));
 
-    // A page the parser never saw: "declares no SourceTable" is then a fact about the runner's
+    // A page NEITHER source knows: "declares no SourceTable" is then a fact about the runner's
     // ignorance, not about the page, so it may not be read as permission to drive it.
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public void NoRecord_UnparsedPage_StaysOnTheNavigationMock(bool declaresSourceTable)
+    public void NoRecord_UnknownPage_StaysOnTheNavigationMock(bool declaresSourceTable)
         => Assert.Equal(TestPageClientKind.NavigationMock,
             TestPageClientConstructionRule.Resolve(
-                recordBuilt: false, pageIsParsed: false, pageDeclaresSourceTable: declaresSourceTable));
+                recordBuilt: false, pageShapeKnown: false, pageDeclaresSourceTable: declaresSourceTable));
 }

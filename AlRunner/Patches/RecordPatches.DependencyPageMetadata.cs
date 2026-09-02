@@ -39,6 +39,34 @@ public static partial class RecordPatches
     }
 
     /// <summary>
+    /// Whether the runner knows <paramref name="pageId"/>'s DECLARED SHAPE at all — from its
+    /// own AL source parse, or from a loaded dependency .app's SymbolReference.json.
+    ///
+    /// <para>This is the predicate every "is 'declares no SourceTable' a fact about the page,
+    /// or about our ignorance?" decision actually wants. <see cref="IsPageParsed"/> answers
+    /// only the first half, and reading it as the whole question is what issue #2341 was:
+    /// TestPage 9807 "User Card" ships in the precompiled Base Application, whose
+    /// SymbolReference.json states <c>SourceTable = 2000000120</c> verbatim, and the runner
+    /// refused to resolve it while already holding the answer.</para>
+    /// </summary>
+    internal static bool IsPageShapeKnown(int pageId)
+        => IsPageParsed(pageId) || TryGetDependencyPageSymbol(pageId) != null;
+
+    /// <summary>
+    /// Whether <paramref name="pageId"/> declares a SourceTable — checking the runner's own
+    /// AL-source-parsed pages first, then any loaded dependency .app.
+    ///
+    /// <para>Source-compiled wins outright for a page id the parser saw, mirroring how the
+    /// Page Metadata / Page Control Field virtual tables merge the two sources: a parsed page
+    /// that declares none must answer false, never fall through to a same-numbered dependency
+    /// page's answer.</para>
+    /// </summary>
+    internal static bool ResolvePageDeclaresSourceTableForAnyPage(int pageId)
+        => IsPageParsed(pageId)
+            ? PageDeclaresSourceTable(pageId)
+            : (TryGetDependencyPageSymbol(pageId)?.SourceTableId ?? 0) != 0;
+
+    /// <summary>
     /// Whether <paramref name="pageId"/> declares <c>SourceTableTemporary = true</c> —
     /// checking the runner's own AL-source-parsed pages first, then any loaded dependency
     /// .app. False (including "unknown page") is the safe default — it is also AL's own
