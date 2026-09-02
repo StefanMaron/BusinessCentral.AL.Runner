@@ -13,6 +13,8 @@ All notable changes to this project are documented here. Format based on
 - **all-profile:** populate the All Profile system virtual table (2000000178)
 
 ### Fixed
+- **test-exec:** make an unreachable null-instance branch throw, not break
+- **report:** read ProcessingOnly from dependency symbols, not only parsed AL source
 - **query:** apply a query column's static ColumnFilter property
 - **query:** compute a JOIN's FlowField column instead of throwing OOS
 - **rollback:** a plain nested BC transaction is not a commit point
