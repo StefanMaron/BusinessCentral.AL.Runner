@@ -888,6 +888,126 @@ public static partial class RecordPatches
         }
         return null;
     }
+
+    /// <summary>
+    /// Parses a query column's <c>ColumnFilter</c> property text (#2418) — a comma-separated
+    /// list of <c>&lt;QueryColumnName&gt; = const(&lt;value&gt;) / filter(&lt;expr&gt;)</c>
+    /// conditions, exactly BC's <c>MetaQueryColumnFilter.TypeOfFilter/Value</c> shape (verified
+    /// against the decompiled <c>Microsoft.Dynamics.Nav.Types.Metadata.MetaQueryColumnFilter</c>
+    /// and <c>NCLMetaQuery.BuildFilterExpressionCollection</c>).
+    /// <para>Text-only (no AL syntax tree involved): the runner never parses a query's AL source
+    /// into a query-object syntax tree — queries are read back from the compiled
+    /// SymbolReference.json (<c>BcAppSymbolCache</c>), same for source-compiled and precompiled
+    /// dep queries — so the property arrives as a plain string in both cases and there is no
+    /// tree to reparse against. Reuses <see cref="ConstValueText"/> / <see cref="FilterValueText"/>
+    /// so a quoted identifier inside the filter/const value is rewritten exactly the same way a
+    /// CalcFormula/TableRelation condition already is (#2305).</para>
+    /// <para>The LHS names a QUERY COLUMN of the same query, not a table field — BC's grammar has
+    /// no <c>field(...)</c> link form here (there is no "referencing row" for ColumnFilter to
+    /// read a field from, unlike CalcFormula's where-clause). A shape this parser does not
+    /// recognise refuses the WHOLE property, matching the CalcFormula/TableRelation discipline
+    /// (#1709/#1737): applying only the conditions understood would silently narrow-or-widen the
+    /// filter versus what BC's compiler actually emitted.</para>
+    /// </summary>
+    internal static List<ParsedColumnFilter>? TryParseColumnFilterText(string? text)
+    {
+        var s = (text ?? "").Trim();
+        if (s.Length == 0) return new List<ParsedColumnFilter>();
+
+        var result = new List<ParsedColumnFilter>();
+        foreach (var raw in SplitTopLevelCommas(s))
+        {
+            var entry = raw.Trim();
+            if (entry.Length == 0) continue;
+
+            var eq = TopLevelIndexOf(entry, '=');
+            if (eq < 0)
+            {
+                Console.Error.WriteLine($"[ColumnFilter] REFUSED '{s}': no '=' in condition '{entry}'");
+                return null;
+            }
+            var fieldName = Unquote(entry[..eq].Trim());
+            var rhs = entry[(eq + 1)..].Trim();
+
+            if (TryMatchCallKeyword(rhs, "const", out var constOpen))
+            {
+                var close = MatchingCloseParen(rhs, constOpen);
+                if (close < 0)
+                {
+                    Console.Error.WriteLine($"[ColumnFilter] REFUSED '{s}': unterminated const(...) in '{entry}'");
+                    return null;
+                }
+                result.Add(new ParsedColumnFilter(fieldName, ParsedColumnFilterKind.Const,
+                    ConstValueText(rhs.Substring(constOpen + 1, close - constOpen - 1))));
+            }
+            else if (TryMatchCallKeyword(rhs, "filter", out var filterOpen))
+            {
+                var close = MatchingCloseParen(rhs, filterOpen);
+                if (close < 0)
+                {
+                    Console.Error.WriteLine($"[ColumnFilter] REFUSED '{s}': unterminated filter(...) in '{entry}'");
+                    return null;
+                }
+                result.Add(new ParsedColumnFilter(fieldName, ParsedColumnFilterKind.Filter,
+                    FilterValueText(rhs.Substring(filterOpen + 1, close - filterOpen - 1))));
+            }
+            else
+            {
+                Console.Error.WriteLine($"[ColumnFilter] REFUSED '{s}': unsupported condition '{entry}'");
+                return null;
+            }
+        }
+        return result;
+    }
+
+    /// <summary>True when <paramref name="s"/> starts (ignoring case) with
+    /// <paramref name="keyword"/> immediately followed by optional spaces and <c>(</c>, whose
+    /// index is returned in <paramref name="open"/>.</summary>
+    private static bool TryMatchCallKeyword(string s, string keyword, out int open)
+    {
+        open = -1;
+        if (s.Length <= keyword.Length) return false;
+        if (string.Compare(s, 0, keyword, 0, keyword.Length, StringComparison.OrdinalIgnoreCase) != 0) return false;
+        var j = keyword.Length;
+        while (j < s.Length && s[j] == ' ') j++;
+        if (j >= s.Length || s[j] != '(') return false;
+        open = j;
+        return true;
+    }
+
+    /// <summary>Splits <paramref name="s"/> on top-level commas — ones not inside a quoted
+    /// identifier or parentheses (so <c>const('A, B')</c> and nested <c>filter(...)</c> value
+    /// commas are not mistaken for condition separators).</summary>
+    private static List<string> SplitTopLevelCommas(string s)
+    {
+        var parts = new List<string>();
+        var start = 0;
+        var depth = 0;
+        for (var i = 0; i < s.Length; i++)
+        {
+            if (s[i] == '"') { i = SkipAlQuoted(s, i) - 1; continue; }
+            if (s[i] == '(') depth++;
+            else if (s[i] == ')') depth--;
+            else if (s[i] == ',' && depth == 0) { parts.Add(s[start..i]); start = i + 1; }
+        }
+        parts.Add(s[start..]);
+        return parts;
+    }
+
+    /// <summary>Index of the first top-level occurrence of <paramref name="c"/> in
+    /// <paramref name="s"/> — outside any quoted identifier or parentheses — or -1.</summary>
+    private static int TopLevelIndexOf(string s, char c)
+    {
+        var depth = 0;
+        for (var i = 0; i < s.Length; i++)
+        {
+            if (s[i] == '"') { i = SkipAlQuoted(s, i) - 1; continue; }
+            if (s[i] == '(') depth++;
+            else if (s[i] == ')') depth--;
+            else if (s[i] == c && depth == 0) return i;
+        }
+        return -1;
+    }
 }
 
 // ─── Data holders ────────────────────────────────────────────────────────────
@@ -951,6 +1071,20 @@ internal record ParsedRelationArm(string TableName, string? FieldName, List<Pars
 /// field declares no ObsoleteReason (distinct from an explicit empty string).</param>
 internal record ParsedField(int FieldId, string FieldName, string TypeName, int Length, bool IsFlowField = false, ParsedCalcFormula? CalcFormula = null, string? OptionMembers = null, string? InitValueText = null, bool IsAutoIncrement = false, string? Caption = null, List<ParsedRelationArm>? RelationArms = null, bool RelationValidate = true, bool IsFlowFilter = false, string ObsoleteState = "No", string? ObsoleteReason = null);
 internal record ParsedKey(string Name, List<int> FieldIds);
+
+/// <summary>Which value shape a <see cref="ParsedColumnFilter"/> condition carries — matches
+/// <c>Microsoft.Dynamics.Nav.Types.Metadata.FilterType</c>'s CONST/FILTER members exactly
+/// (#2418).</summary>
+internal enum ParsedColumnFilterKind { Const, Filter }
+
+/// <summary>One condition of a query column's <c>ColumnFilter</c> property (#2418) —
+/// <c>&lt;FieldName&gt; = const(&lt;Value&gt;)</c> or <c>&lt;FieldName&gt; = filter(&lt;Value&gt;)</c>.
+/// <paramref name="FieldName"/> names a QUERY COLUMN of the same query (resolved to a
+/// <c>QueryColumnId</c> by <c>RecordPatches.NclMetaQueryBuilder</c>, which is the only place
+/// with every column's id in hand); <paramref name="Value"/> is already unquoted/rewritten by
+/// <c>ConstValueText</c> / <c>FilterValueText</c> — ready to hand to
+/// <c>MetaQueryColumnFilter.Value</c> as-is.</summary>
+internal record ParsedColumnFilter(string FieldName, ParsedColumnFilterKind Kind, string Value);
 /// <param name="LookupPageName">The table's declared <c>LookupPageId</c> as WRITTEN — a page
 /// name (<c>"Customer List"</c>) or a bare id in text form. Both sources state it by name:
 /// AL source writes the reference, and a dependency's SymbolReference.json records

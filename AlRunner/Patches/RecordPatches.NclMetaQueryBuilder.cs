@@ -30,6 +30,7 @@ public static partial class RecordPatches
     private static Type? _tMetaQueryColumn;
     private static Type? _tMetaQueryOrderBy;
     private static Type? _tMetaQueryDataItemLink;
+    private static Type? _tMetaQueryColumnFilter; // #2418
     private static MethodInfo? _mCreateDynamicQuery;
 
     private static void QLog(string msg)
@@ -50,6 +51,7 @@ public static partial class RecordPatches
         _tMetaQueryColumn = typesAsm?.GetType(md + "MetaQueryColumn");
         _tMetaQueryOrderBy = typesAsm?.GetType(md + "MetaQueryOrderBy");
         _tMetaQueryDataItemLink = typesAsm?.GetType(md + "MetaQueryDataItemLink");
+        _tMetaQueryColumnFilter = typesAsm?.GetType(md + "MetaQueryColumnFilter"); // #2418
 
         // public static NCLMetaQuery CreateDynamicQuery(ApplicationObjectId, MetaQuery, Type, NavAppGroup)
         if (_tNCLMetaQuery != null)
@@ -156,6 +158,13 @@ public static partial class RecordPatches
         // (columnName/dataItemName → columnId) so OrderBy can map names → column ids.
         var columnIdByName = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
 
+        // #2418: raw ColumnFilter property text, collected per-column while columns are built.
+        // Resolution (query-column NAME → id) happens in a SEPARATE pass after every dataitem's
+        // columns are in columnIdByName, because a ColumnFilter condition may name any query
+        // column of the query — including one defined later in dataitem/column order than the
+        // column that declares the property.
+        var pendingColumnFilters = new List<string>();
+
         bool isRoot = true;
         foreach (var diSym in FlattenDataItems(sym.DataItems))
         {
@@ -209,6 +218,8 @@ public static partial class RecordPatches
                 }
                 AddColumn(di, id: col.Id, name: col.Name, fieldNo: fieldNo, index: resultColumnIndex++, caption: col.Caption, method: col.Method);
                 columnIdByName[col.Name] = col.Id;
+                if (!string.IsNullOrEmpty(col.ColumnFilter))
+                    pendingColumnFilters.Add(col.ColumnFilter!);
             }
 
             // Filter-only columns (dataitem filter(...) elements). They carry a real BC
@@ -242,6 +253,42 @@ public static partial class RecordPatches
 
             GetList(mq, "DataItems").Add(di);
             isRoot = false;
+        }
+
+        // #2418: resolve every ColumnFilter condition collected above, now that every dataitem's
+        // columns are in columnIdByName. An unresolvable field name or an unparseable condition
+        // abandons the WHOLE build (loud, matching the other "abandoning build" guards above) —
+        // silently dropping just that condition would make the query return groups/rows real BC
+        // excludes, the exact class of bug #2418 reports.
+        if (_tMetaQueryColumnFilter != null)
+        {
+            foreach (var raw in pendingColumnFilters)
+            {
+                var parsed = TryParseColumnFilterText(raw);
+                if (parsed == null)
+                {
+                    QLog($"BuildMetaQueryDesign({queryId}): ColumnFilter '{raw}' could not be parsed — abandoning build");
+                    return null;
+                }
+                foreach (var cond in parsed)
+                {
+                    if (!columnIdByName.TryGetValue(cond.FieldName, out var targetColumnId))
+                    {
+                        QLog($"BuildMetaQueryDesign({queryId}): ColumnFilter '{raw}' names unknown query column '{cond.FieldName}' — abandoning build");
+                        return null;
+                    }
+                    var cf = Activator.CreateInstance(_tMetaQueryColumnFilter)!;
+                    SetProp(cf, "QueryColumnId", targetColumnId);
+                    SetProp(cf, "TypeOfFilter", cond.Kind == ParsedColumnFilterKind.Const ? "CONST" : "FILTER");
+                    SetProp(cf, "Value", cond.Value);
+                    GetList(mq, "ColumnFilters").Add(cf);
+                }
+            }
+        }
+        else if (pendingColumnFilters.Count > 0)
+        {
+            QLog($"BuildMetaQueryDesign({queryId}): ColumnFilter present but MetaQueryColumnFilter reflection unavailable — abandoning build");
+            return null;
         }
 
         // OrderBy: SymbolReference carries "ascending(Col1,Col2)" / "descending(...)". Map
