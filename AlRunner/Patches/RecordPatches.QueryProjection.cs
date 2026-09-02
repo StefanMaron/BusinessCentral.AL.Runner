@@ -288,6 +288,7 @@ public static partial class RecordPatches
     private static Type? _tFilterFieldDictionary;
     private static Type? _tUnaryFilterExpr;
     private static Type? _tBinaryFilterExpr;
+    private static Type? _tWildcardFilterExpr;
     private static Type? _tFilterExpr;
     private static Type? _tNavFieldMetadata;
     private static bool _filterReflectionReady;
@@ -311,6 +312,7 @@ public static partial class RecordPatches
         _tFilterFieldDictionary = asm.GetType(rt + "FilterFieldDictionary");
         _tUnaryFilterExpr = asm.GetType(rt + "UnaryFilterExpression");
         _tBinaryFilterExpr = asm.GetType(rt + "BinaryFilterExpression");
+        _tWildcardFilterExpr = asm.GetType(rt + "WildcardFilterExpression");
         _tFilterExpr = asm.GetType(rt + "FilterExpression");
         _tNavFieldMetadata = asm.GetType(rt + "INavFieldMetadata");
         _tNCLMetaQueryColumn = asm.GetType(rt + "NCLMetaQueryColumn");
@@ -503,7 +505,25 @@ public static partial class RecordPatches
                 .First(c => c.GetParameters().Length == 3 && c.GetParameters()[0].ParameterType.Name == "FilterExpressionType");
             return ctor.Invoke(new object?[] { exprType, newLeft, newRight });
         }
-        // Other expression kinds (wildcard/fieldEqualsField/etc.) are not produced by
+        // #2299: Query.SetFilter(<col>, 'ABC*') on a query column DOES produce a
+        // WildcardFilterExpression (SetRange with an exact value produces the Unary/Binary
+        // shapes above, but a filter containing wildcard characters does not). Left
+        // unretargeted, its ExpressionContext.Metadata stays the NCLMetaQueryColumn key, and
+        // BC's own TempTableDataProvider.RecordBufferEvaluatorVisitor.Evaluate unconditionally
+        // casts `(NCLMetaField)expressionContext.Metadata` for the wildcard branch — an
+        // InvalidCastException at the first Read(), not a silent non-match. Rebuild it against
+        // the retargeted (real table field) context the same way Unary/Binary already are.
+        if (_tWildcardFilterExpr!.IsInstanceOfType(expr))
+        {
+            // public WildcardFilterExpression(bool isNegated, string pattern, bool isCaseAndAccentInsensitive, FilterExpressionContext expressionContext)
+            var isNegated = t.GetProperty("IsNegated", BindingFlags.Public | BindingFlags.Instance)!.GetValue(expr);
+            var pattern = t.GetProperty("Pattern", BindingFlags.Public | BindingFlags.Instance)!.GetValue(expr);
+            var isCaseAndAccentInsensitive = t.GetProperty("IsCaseAndAccentInsensitive", BindingFlags.Public | BindingFlags.Instance)!.GetValue(expr);
+            var ctor = _tWildcardFilterExpr.GetConstructors()
+                .First(c => c.GetParameters().Length == 4 && c.GetParameters()[0].ParameterType == typeof(bool));
+            return ctor.Invoke(new object?[] { isNegated, pattern, isCaseAndAccentInsensitive, targetCtx });
+        }
+        // Other expression kinds (fieldEqualsField/fullText/etc.) are not produced by
         // single-column SetRange/SetFilter; leave them (will not match a table field and
         // is a documented follow-up if a test relies on them).
         return expr;

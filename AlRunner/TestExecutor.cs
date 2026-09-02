@@ -820,8 +820,17 @@ public sealed class TestExecutor
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<Type, MethodInfo[]> _sourceOrderCache = new();
     private static Type? _signatureSpanAttrType;
     private static bool _signatureSpanAttrTypeResolved;
+    // #2299 (test-order-preservation side effect): anchored at BOTH ends. Unanchored at
+    // the start, this let a nested scope type belonging to a DIFFERENT, longer method name
+    // that happens to start with this method's name (e.g. "LocalTableQuery_SetFilterWildcard"
+    // is a strict prefix of "LocalTableQuery_SetFilterWildcard_NoMatch") match here too: the
+    // remainder after stripping the shorter method's name is "_NoMatch_Scope_123", which still
+    // satisfies an end-anchored-only "_Scope_+\d+$" (it ends with "_Scope_123"). FirstOrDefault
+    // then silently picked the wrong nested type's declaration line, corrupting the very
+    // ordering #1766 exists to preserve whenever one [Test] procedure's name is a prefix of
+    // another's in the same codeunit.
     private static readonly System.Text.RegularExpressions.Regex _scopeTypeSuffix =
-        new(@"_Scope_+\d+$", System.Text.RegularExpressions.RegexOptions.Compiled);
+        new(@"^_Scope_+\d+$", System.Text.RegularExpressions.RegexOptions.Compiled);
 
     /// <summary>
     /// Returns <paramref name="t"/>'s public instance methods ordered by AL source
