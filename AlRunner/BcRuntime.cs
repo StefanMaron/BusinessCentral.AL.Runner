@@ -1250,6 +1250,49 @@ public static partial class BcRuntime
                 }
             }
 
+            // applicationAreaCache / applicationAreas / applicationAreaString — the three
+            // fields behind NavSession.ApplicationAreas, all set by FIELD INITIALIZERS on
+            // NavSession (decompile pin: NCL @ 214751, 214757, 214759):
+            //
+            //     private readonly Dictionary<string, bool> applicationAreaCache = new();
+            //     private string[] applicationAreas = new string[1] { "#All" };
+            //     private string applicationAreaString = string.Empty;
+            //
+            // GetUninitializedObject skips field initializers, so on the skeleton session all
+            // three are null. The setter (NCL @ 215838) ends with applicationAreaCache.Clear(),
+            // so the FIRST assignment NREs — inside BC, with no indication of what is missing.
+            //
+            // That assignment is not exotic. System Application codeunit 9178
+            // "Application Area Mgmt".SetupApplicationArea calls it whenever the experience
+            // tier is set, which Microsoft's own test setup does routinely: 34 of the tests in
+            // the Tests-SINGLESERVER bucket died here, all reporting only
+            // "Object reference not set to an instance of an object".
+            //
+            // Planting the declared initial values is faithful by construction — they are
+            // exactly what the ctor would have produced — and it leaves BC's own getter,
+            // setter and applicationAreaCache lookup (NCL @ 218102) running unchanged, so an
+            // application area set by AL is the one AL reads back.
+            foreach (var (fieldName, initial) in new (string, object)[]
+                     {
+                         ("applicationAreaCache", new Dictionary<string, bool>()),
+                         ("applicationAreas", new[] { "#All" }),
+                         ("applicationAreaString", string.Empty),
+                     })
+            {
+                var f = sessType.GetField(fieldName, BindingFlags.NonPublic | BindingFlags.Instance);
+                if (f == null || f.GetValue(_skeletonSession) != null) continue;
+                try
+                {
+                    FieldPoke.SetInstance(f, _skeletonSession!, initial);
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine(
+                        $"[BcRuntime] WARN: {fieldName} populate failed: {ex.GetType().Name}: {ex.Message} — "
+                        + "AL that sets the application area will NRE");
+                }
+            }
+
             // VerifyExecutePermission overloads → no-op
             foreach (var m in sessType.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
                 .Where(m => m.Name == "VerifyExecutePermission" && m.ReturnType == typeof(void)))
