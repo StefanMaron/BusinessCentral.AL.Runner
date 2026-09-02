@@ -114,6 +114,33 @@ statement-attribution bug that an existing test had encoded as correct (#2074), 
 `WorkDate` regression that would have broken nearly every `execute` call (#2117). CI was
 green in all five cases and would have stayed green.
 
+## Waiting for CI: one call, not a poll loop
+
+**Use `tools/ci-wait.py <PR>`.** It keeps the polling but moves it inside a single tool
+call: it loops internally, prints nothing until it has an answer, and returns one verdict.
+
+```bash
+tools/ci-wait.py 2379                 # blocks, then reports once
+tools/ci-wait.py 2379 --timeout 2400
+```
+
+| exit | meaning |
+|---|---|
+| 0 | every required check passed **on the current head** -- safe to report green |
+| 1 | a required check failed; **the failing log is already printed** |
+| 2 | timed out while still running -- **not a verdict**, call again |
+| 3 | could not determine (auth, network, no checks) |
+
+It enforces the two rules agents keep getting wrong: checks are matched against the PR's
+**current head SHA**, so a newer completed run for an older push is never reported as this
+push's result; and on failure it fetches `--log-failed` for you, so there is never a reason
+to reach for `gh run rerun`, which destroys the log permanently.
+
+**Why this exists:** measured across one session's 17 subagents, CI waiting was 328 of
+3,282 Bash calls, and the shape was wrong -- 107 `gh run view` polls and 37 `sleep` loops
+against only 29 blocking `gh run watch` calls. Each poll is a round trip that re-sends the
+whole conversation. This turns ten-to-forty round trips into one.
+
 ## Code navigation: reach for these before grepping
 
 **Measured 2026-09-02 across 17 subagents in one session: 3,237 Bash calls, of which

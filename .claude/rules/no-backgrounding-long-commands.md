@@ -1,5 +1,11 @@
 # Never background a long-running command and end your turn
 
+**The cheap way to wait on CI is `tools/ci-wait.py <PR>`.** It does the polling inside one
+tool call and returns a single verdict (0 green / 1 failed, with the log already fetched /
+2 still running, call again / 3 undetermined). Reach for it instead of hand-rolling a
+`gh run view` loop -- the guidance below about re-checking still holds, it just costs one
+round trip instead of dozens.
+
 A backgrounded process is killed when the turn ends, no completion
 notification arrives, and the work sits uncommitted. You will then wait
 forever on something that is already dead. This applies to **any** long
