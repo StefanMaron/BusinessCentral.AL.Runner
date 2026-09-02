@@ -34,10 +34,33 @@ Operating rules live in `.claude/rules/` and are auto-loaded. Task-specific refe
 
 ### Code navigation: use these before grepping
 
-Finding and reading code is the single biggest token cost in this repo — measured at **63% of
-one implementation agent's tool calls** (63 greps + 50 file reads out of 180). `AlRunner/` is
-~81,000 lines across 194 files, and two files are over 8,000 lines each, so a grep hit usually
-costs several follow-up reads to interpret. Reach for a real navigation tool first.
+Finding and reading code is the single biggest token cost in this repo. **Re-measured
+2026-09-02 across 17 subagents in one session: 3,545 tool calls, of which 3,266 were Bash,
+and 2,775 of those (85%) were `grep`/`sed`/`cat`/`head`/`find` over the source tree.
+`tools/lsp-query.py` was called ONCE in total; `graphify` twice.** Agents doing this ran two
+hours and 300k tokens on a single cluster.
+
+The cost driver is the **number** of round trips, not the size of any one result — the
+average result was 1.3 KB, but every call re-sends the whole accumulated conversation, so
+200 small greps cost far more than 20 targeted ones. `AlRunner/` is ~81,000 lines across
+194 files with two files over 8,000 lines each, so a grep hit usually costs several
+follow-up reads to interpret, and returns comment and string matches you then discount by
+hand.
+
+Re-measure with `tools/agent-cost.py <tasks-dir>` rather than trusting this paragraph — the
+previous figure here ("63 greps + 50 file reads out of 180") sat stale for a long time
+because nobody re-ran it.
+
+**0. `tools/context-pack.py` — one round trip, many answers.**
+
+```bash
+tools/context-pack.py <Name> [<Name>...]   # definition + source + call sites for each
+```
+
+Prefer it whenever you have more than one symbol to resolve; that is the whole point of it.
+A `PreToolUse` hook (`.claude/hooks/prefer-code-navigation.py`) prints a reminder when a
+shell search targets `AlRunner/**/*.cs`. It is advisory and never blocks — grep stays right
+for logs, JSON, TRX, markdown and `.al` sources.
 
 **1. Knowledge graph — this is the one a subagent has.**
 

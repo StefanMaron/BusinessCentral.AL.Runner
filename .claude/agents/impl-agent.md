@@ -114,6 +114,47 @@ statement-attribution bug that an existing test had encoded as correct (#2074), 
 `WorkDate` regression that would have broken nearly every `execute` call (#2117). CI was
 green in all five cases and would have stayed green.
 
+## Code navigation: reach for these before grepping
+
+**Measured 2026-09-02 across 17 subagents in one session: 3,237 Bash calls, of which
+2,716 (84%) were `grep`/`sed`/`cat`/`head`/`find` over the source tree.
+`tools/lsp-query.py` was called ONCE in total. `graphify` twice.**
+
+That is the single largest token cost in this repo's agent work, and the driver is the
+**number** of round trips, not the size of any one result: every tool call re-sends the
+whole accumulated conversation, so 200 small greps cost far more than 20 targeted ones.
+Agents that did this ran two hours and 300k tokens on one cluster.
+
+`AlRunner/` is ~81,000 lines across 194 files, two of them over 8,000 lines, so a grep hit
+usually costs several follow-up reads to interpret — and returns comment and string matches
+you then have to discount by hand.
+
+**The `LSP` tool is disabled inside subagents on this build.** That is measured, not a
+guess, and adding `LSP` to your `tools:` frontmatter does not help. These scripts are the
+supported substitute and they work everywhere:
+
+```bash
+tools/context-pack.py <Name> [<Name>...]   # definition + source + call sites, ONE round trip
+tools/lsp-query.py symbol  <Name>          # where it is defined
+tools/lsp-query.py callers <Name>          # what calls it
+cd AlRunner && graphify update . && graphify query "<Name> callers"
+```
+
+Prefer `context-pack.py` when you have more than one symbol to resolve — that is the whole
+point of it, one invocation instead of one per question.
+
+**Exit code 2 from `lsp-query.py` means the server failed and the result means NOTHING.**
+Never read a 2 as "nothing calls this". Exit 1 is a real not-found you may rely on.
+
+**Phrase graphify queries as bare symbols or `Symbol callers`, never as an English
+question.** The resolver matches on the words you type, so `"what calls GetDataAccessForTableCore"`
+matches an unrelated node on the word *calls*, returns nonsense, and gives no sign it failed.
+
+Grep remains right for logs, JSON, TRX, markdown and `.al` sources. It is the wrong tool for
+"where is this C# symbol defined" and "what calls it". A `PreToolUse` hook prints a reminder
+when a shell search targets `AlRunner/**/*.cs`; it never blocks, and you may proceed if grep
+really is what you want.
+
 ### What to run before you push — targeted, not everything
 
 See `.claude/rules/local-test-scope.md` for the general rule. Concretely for
