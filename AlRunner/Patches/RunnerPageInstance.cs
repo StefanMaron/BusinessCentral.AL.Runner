@@ -1428,13 +1428,25 @@ internal sealed class RunnerPageInstance
         return result;
     }
 
-    /// <summary>Task&lt;T&gt;.Result for a completed generic task; null for a plain Task.</summary>
+    /// <summary>
+    /// <c>Task&lt;T&gt;.Result</c> for a completed generic task; null for a task that carries no
+    /// value.
+    ///
+    /// "Carries no value" is not the same as "is not generic": an <c>async Task</c> method
+    /// materialises at runtime as <c>Task&lt;VoidTaskResult&gt;</c>, where <c>VoidTaskResult</c>
+    /// is the BCL's internal placeholder struct. Reading <c>.Result</c> off that hands back a
+    /// boxed placeholder — a non-null object standing in for a void trigger — which would then
+    /// flow out of AwaitTriggerResult as if the trigger had returned something. Filter it out by
+    /// name; the type is internal to System.Private.CoreLib so there is nothing to compare
+    /// against.
+    /// </summary>
     private static object? TaskResultOrNull(System.Threading.Tasks.Task task)
     {
         var type = task.GetType();
-        return type.IsGenericType
-            ? type.GetProperty("Result", BindingFlags.Public | BindingFlags.Instance)?.GetValue(task)
-            : null;
+        if (!type.IsGenericType) return null;
+        var resultType = type.GetGenericArguments()[0];
+        if (resultType.FullName == "System.Threading.Tasks.VoidTaskResult") return null;
+        return type.GetProperty("Result", BindingFlags.Public | BindingFlags.Instance)?.GetValue(task);
     }
 
     /// <summary>
