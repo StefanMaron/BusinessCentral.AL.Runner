@@ -816,7 +816,12 @@ public static class FlowFieldPatches
             if (Equals(calcMethod, _cmCount))
                 result = NavValue.CreateNavValueFromObject((NCLMetaField)fieldObj, matchCount);
             else if (Equals(calcMethod, _cmExist))
-                result = NavValue.CreateNavValueFromObject((NCLMetaField)fieldObj, anyMatch);
+                // #2323 — the sign is applied HERE for exist, not through NegateValue below,
+                // because BC applies it here too: FlowFieldsHelper's Exists branch builds
+                //   NegateResult ? NavBoolean.Create(!exists) : NavBoolean.Create(exists)
+                // and the virtual-table path is the same shape. See the NegateValue comment.
+                result = NavValue.CreateNavValueFromObject((NCLMetaField)fieldObj,
+                    negate ? !anyMatch : anyMatch);
             else if (Equals(calcMethod, _cmSum))
                 result = NavValue.CreateNavValueFromObject((NCLMetaField)fieldObj, CoerceSumResult(sum));
             else if (Equals(calcMethod, _cmAverage))
@@ -835,10 +840,35 @@ public static class FlowFieldPatches
             }
 
             // #1708 — `CalcFormula = -sum(...)`. The negation is BC's own
-            // NCLMetaCalculationFormula.NegateValue rather than a local `-x`, so every
-            // CalculationMethod gets the semantics BC gives it (the Base Application ships
-            // both `-sum(...)` and `-exist(...)`, and negating a Boolean is not arithmetic).
-            if (negate && result != null)
+            // NCLMetaCalculationFormula.NegateValue rather than a local `-x`, so the numeric
+            // CalculationMethods get exactly the semantics BC gives them.
+            //
+            // #2323 — but NOT for exist. NegateValue switches on the SOURCE FIELD's type,
+            // not the value's:
+            //
+            //     public NavValue NegateValue(NavValue value) => SourceField.FieldNavType switch
+            //     {
+            //         NavType.Decimal    => NavDecimal.Create(-((NavDecimal)value).Value),
+            //         NavType.BigInteger => NavBigInteger.Create(-((NavBigInteger)value).Value),
+            //         NavType.Integer    => NavInteger.Create(-((NavInteger)value).Value),
+            //         _ => value,
+            //     };
+            //
+            // An exist FlowField is Boolean by construction (CheckFlowFieldProperties throws
+            // FlowFieldMustBeBooleanError otherwise) while its source field is whatever the
+            // where clause names, so the two never agree. Routing exist through here was wrong
+            // in BOTH directions: a numeric source field made the cast throw
+            // InvalidCastException (Purch. Inv. Header."Closed", whose source field is a
+            // BigInteger), and a non-numeric one fell into `_ => value` and returned the
+            // UN-negated Boolean — the exact opposite of the truth, silently
+            // (Item."Cost is Posted to G/L", whose source field is a Code).
+            //
+            // Real BC never reaches NegateValue for exist; it negates the Boolean logically
+            // at construction, which is what the _cmExist branch above now does. Every BC site
+            // that DOES call NegateValue builds its value from the source field first
+            // (ExecuteAggregateAsync's CreateNavValueFromReader(SourceField, i)), or only
+            // handles Count/Sum/Average, so the types agree there by construction.
+            if (negate && result != null && !Equals(calcMethod, _cmExist))
             {
                 if (_mCalcFormulaNegateValue == null)
                     // Writing the POSITIVE aggregate instead would be the exact silent
