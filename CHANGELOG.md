@@ -7,6 +7,7 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **report:** run the request page from Report.Run and write the dataset it asks for
 - **record:** implement the Date system virtual table (2000000007)
 - **record:** serve the Metadata Permission Set virtual table (2000000250)
 - **all-profile:** populate the All Profile system virtual table (2000000178)
