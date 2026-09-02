@@ -289,7 +289,7 @@ Then — **run the rebuild and the query from the same directory**:
 
 ```bash
 cd AlRunner
-graphify AlRunner --update     # index / refresh the C# runner (~2s, 191 files)
+graphify update .              # index / refresh the C# runner (~2s, 200 files)
 graphify query "<question>"    # ask it something
 ```
 

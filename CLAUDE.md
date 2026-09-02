@@ -70,7 +70,7 @@ for logs, JSON, TRX, markdown and `.al` sources.
 Rebuild AND query from `AlRunner/`, not the repo root:
 
 ```bash
-cd AlRunner && graphify AlRunner --update     # ~2 seconds, 191 files
+cd AlRunner && graphify update .              # ~2 seconds, 200 files
 cd AlRunner && graphify query "SomeSymbol callers"
 ```
 
