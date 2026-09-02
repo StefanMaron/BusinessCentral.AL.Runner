@@ -189,7 +189,22 @@ dispatch, and report/request-page variables support a limited standalone surface
   [#1918](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/1918); pass an
   explicit page id in the meantime.
 - Request pages can be handled via `[RequestPageHandler]`, but this is handler dispatch
-  only, not real request-page rendering.
+  only, not real request-page rendering. `Report.Run()` / `RunModal()` open the request page
+  and route it to the declared handler, exactly as a real service tier does under test:
+  a handler that cancels leaves the report body unexecuted, and one that calls
+  `TestRequestPage.SaveAsXml(parametersFile, dataSetFile)` gets the report's dataset written
+  to that file (so `Codeunit "Library - Report Dataset"` can load it) instead of a layout.
+  Two differences from real BC remain:
+    - A request page whose handler reads or writes a **control** bound to a report global
+      (`RequestPage.ShowAmountsInLCY.SetValue(true)`) is refused with
+      `out-of-scope: TestRequestPage control … request-page-control`. Resolving one needs the
+      request page's `NavForm.SourceExpressions` table, which the runner only builds for
+      forms it drives as a `TestPage`. Tracked in
+      [#2442](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2442).
+    - When no declared handler matches the request page, the runner continues WITHOUT
+      opening one rather than raising BC's `Unhandled UI` error. It cannot yet tell "the
+      test declared no handler" apart from "handler lookup did not reach us", and refusing
+      on the second would break reports that run fine today.
 - Report variables support `Run()`, `RunRequestPage()`, `SetTableView()`, and
   helper procedures. Report triggers execute: `OnPreReport`, `OnPreDataItem`,
   `OnAfterGetRecord` (once per row in the in-memory table), `OnPostDataItem`, and
@@ -200,12 +215,10 @@ dispatch, and report/request-page variables support a limited standalone surface
 - The static `Report.Run(id[, requestWindow[, systemPrinter[, record]]])` /
   `Report.RunModal(id, ...)` forms (called on the `Report` codeunit-like object, without
   first declaring a report variable) execute the report the same way the report-variable
-  form does — construct the report from its id, then run the same trigger lifecycle.
-  `requestWindow` / `systemPrinter` are accepted but not acted on: no dialog is ever raised
-  from `Run`/`RunModal` (request pages are handler dispatch only, see above); a report that
-  needs its request page's `[RequestPageHandler]` to fire should call the static/instance
-  `RunRequestPage()` explicitly. The `Report.Run(ReportRunOptions)` overload is not
-  implemented and throws `out-of-scope: static NavReport.Run`.
+  form does — construct the report from its id, then run the same trigger lifecycle, and
+  open the request page when `requestWindow` says to. `systemPrinter` is accepted but not
+  acted on: nothing prints. The `Report.Run(ReportRunOptions)` overload is not implemented
+  and throws `out-of-scope: static NavReport.Run`.
 
 ### No debugger infrastructure
 

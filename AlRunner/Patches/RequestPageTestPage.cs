@@ -39,15 +39,17 @@ internal sealed class RequestPageTestPage : MockITestPage
 {
     private readonly object _report;
     private readonly int _reportId;
+    private readonly bool _offersOk;
     private readonly Dictionary<string, ITestFilter> _dataItemFilters = new(StringComparer.OrdinalIgnoreCase);
     private FormResult _formResult = FormResult.None;
 
     private readonly Guid _formHandle;
 
-    private RequestPageTestPage(object requestPageForm, object report, int reportId)
+    private RequestPageTestPage(object requestPageForm, object report, int reportId, bool offersOk)
     {
         _report = report;
         _reportId = reportId;
+        _offersOk = offersOk;
         _formHandle = ReadProperty(requestPageForm, "Handle") is Guid handle ? handle : Guid.Empty;
     }
 
@@ -67,9 +69,15 @@ internal sealed class RequestPageTestPage : MockITestPage
     // it — hence one table keyed by the form, weak so a finished report is collectable.
     private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<object, RequestPageTestPage> _byForm = new();
 
-    internal static RequestPageTestPage Bind(object requestPageForm, object report, int reportId)
+    /// <param name="offersOk">
+    /// Whether this request page has a plain OK built-in action at all — see
+    /// <see cref="GetBuiltInAction"/>. True when the page was opened to capture PARAMETERS
+    /// (<c>Report.RunRequestPage</c>), or when the report is ProcessingOnly; false for a
+    /// plain <c>Report.Run()</c> on a report that renders.
+    /// </param>
+    internal static RequestPageTestPage Bind(object requestPageForm, object report, int reportId, bool offersOk)
     {
-        var page = new RequestPageTestPage(requestPageForm, report, reportId);
+        var page = new RequestPageTestPage(requestPageForm, report, reportId, offersOk);
         _byForm.Remove(requestPageForm);
         _byForm.Add(requestPageForm, page);
         return page;
@@ -87,8 +95,30 @@ internal sealed class RequestPageTestPage : MockITestPage
     /// <summary>True once the handler confirmed with OK (or LookupOK).</summary>
     internal bool Confirmed => _formResult is FormResult.OK or FormResult.LookupOK;
 
+    /// <summary>
+    /// The request page's built-in actions. Invoking one records how the page was closed.
+    ///
+    /// Returning null for OK is LOAD-BEARING and measured, not defensive. On a real service
+    /// tier a request page opened by a plain <c>Report.Run()</c> on a report that is NOT
+    /// ProcessingOnly has no OK action at all: OK selects no report output, and BC answers
+    /// <c>NavTestActionNotFoundException</c> — "The built-in action = OK is not found on the
+    /// page." — rather than running the report and then objecting. The same page DOES offer
+    /// OK when it was opened to capture parameters (<c>Report.RunRequestPage</c>), because
+    /// there OK means "these are the parameters", not "produce output".
+    ///
+    /// Both halves are pinned upstream in the al-language corpus
+    /// (handlers/TestReportRunWithRequestPage.al and handlers/TestReportRunRequestPage.al),
+    /// green on BC 27.0 through 28.4. Answering every result with an action made the
+    /// difference invisible here.
+    ///
+    /// Null is how BC's NavTestPageBase.GetBuiltInAction is told an action is absent — it
+    /// raises the exception itself, so the message is BC's own rather than one written here.
+    /// </summary>
     public override ITestAction GetBuiltInAction(FormResult formResult)
-        => new RecordingBuiltInAction(this, formResult);
+    {
+        if (!_offersOk && formResult is FormResult.OK or FormResult.LookupOK) return null!;
+        return new RecordingBuiltInAction(this, formResult);
+    }
 
     /// <summary>
     /// The filter group for one of the report's data items, addressed by the data item's AL

@@ -94,7 +94,9 @@ internal static partial class BcAppSymbolCache
     // ResolveTableIdByName never matches — so a cached query over a dependency table would
     // keep failing to build its NCLMetaQuery design and NRE on Open()/SetRange(), the exact
     // #2295 bug replayed from cache rather than a cache miss.
-    private const int CacheVersion = 19;
+    // v20: added Reports' data-item DataItemLink / DataItemLinkReference / PrintOnlyIfDetail,
+    // without which a nested data item of a precompiled report has no join at all (#2436).
+    private const int CacheVersion = 20;
     private static readonly ConcurrentDictionary<string, AppSymbols> ProcessCache = new(StringComparer.OrdinalIgnoreCase);
     // Issue #1820 — path -> content-hash memo. ComputeAppContentHash needs to read the
     // WHOLE .app to hash it (unlike the FileInfo.Length/LastWriteTimeUtc stat it replaced,
@@ -238,7 +240,13 @@ internal static partial class BcAppSymbolCache
     internal sealed record ReportDataItemSymbol(
         int Id, string Name, string RelatedTable, int Indentation,
         string? DataItemTableView, string? RequestFilterFields,
-        List<ReportColumnSymbol>? Columns = null);
+        List<ReportColumnSymbol>? Columns = null,
+        // The parent-child join. Without these two a nested data item has no restriction at
+        // all and iterates its WHOLE table once per parent row — for report 411
+        // "Vendor - Payment Receipt" that is hundreds of thousands of rows where BC produces
+        // a handful. Invisible until a dataset was actually built from them (#2436).
+        string? DataItemLink = null, string? DataItemLinkReference = null,
+        bool PrintOnlyIfDetail = false);
 
     /// <summary>
     /// One <c>column(Name; SourceExpr)</c> of a report data item, as SymbolReference.json
@@ -828,9 +836,14 @@ internal static partial class BcAppSymbolCache
             props.TryGetValue("DataItemTableView", out var tableView);
             tableView = RecordPatches.TableViewText(tableView);
             props.TryGetValue("RequestFilterFields", out var filterFields);
+            props.TryGetValue("DataItemLink", out var dataItemLink);
+            props.TryGetValue("DataItemLinkReference", out var dataItemLinkReference);
+            props.TryGetValue("PrintOnlyIfDetail", out var printOnlyIfDetail);
 
             into.Add(new ReportDataItemSymbol(dataItemId, name, relatedTable, indent, tableView, filterFields,
-                ParseReportColumns(di)));
+                ParseReportColumns(di),
+                RecordPatches.TableViewText(dataItemLink), dataItemLinkReference,
+                printOnlyIfDetail is "1" or "true" or "True"));
             CollectReportDataItems(di, indent + 1, into);
         }
     }
