@@ -43,6 +43,20 @@ namespace AlRunner.Tests;
 ///
 /// Spawns the real runner; needs the BC artifact cache. Skips (no-op) when absent.
 /// </summary>
+/// <para>
+/// <b>#2364 — the <c>"application"</c> floor in this file's fixtures is an OUTSTANDING
+/// VIOLATION of <c>.claude/rules/no-base-app-in-csharp-tests.md</c>, not an exception to
+/// it.</b> Every other fixture in <c>AlRunner.Tests</c> dropped it (#2358): it pulls in the
+/// whole Base Application closure and costs ~70s cold / ~6s warm per runner invocation.
+/// </para>
+/// <para>
+/// This class does not test Base Application — it tests #1867 install-baseline caching. It
+/// needs a dependency closure whose install triggers WRITE ROWS; without one the runner logs
+/// <c>not persisting: snapshot has 0 DataAccessSource(s)</c> and the assertions have nothing
+/// to observe, so the tests would pass vacuously. The fix is a small fixture dependency app
+/// with its own table and an <c>OnInstallAppPerCompany</c> trigger, tracked in #2364.
+/// Do not copy this floor into a new test.
+/// </para>
 public class InstallBaselineDiskCacheTests
 {
     private static readonly string RepoRoot = Path.GetFullPath(
@@ -103,21 +117,6 @@ public class InstallBaselineDiskCacheTests
           "version": "1.0.0.0",
           "dependencies": [],
           "platform": "1.0.0.0",
-          // KEEP the "application" floor here. Every other fixture in AlRunner.Tests
-          // dropped it (#2358): it pulls in the whole Base Application closure and
-          // costs ~70s cold / ~6s warm per runner invocation. This class is one of
-          // the two exceptions, because what it asserts IS the dependency closure --
-          // remove the floor and the closures under test become trivial, so the test
-          // still goes green while proving nothing. Measured: removing it fails this
-          // class outright.
-          // #2364 -- this "application" floor is an OUTSTANDING VIOLATION of
-          // .claude/rules/no-base-app-in-csharp-tests.md, not an exception to it.
-          // This class does not test Base Application; it tests #1867 install-baseline
-          // caching. It needs a closure whose install triggers WRITE ROWS -- without one
-          // the runner logs "not persisting: snapshot has 0 DataAccessSource(s)" and there
-          // is nothing for the assertions to observe. The fix is a small fixture dependency
-          // app with its own table and OnInstallAppPerCompany trigger, tracked in #2364.
-          // Do not copy this floor into a new test.
           "application": "1.0.0.0",
           "idRanges": [ { "from": {{baseId}}, "to": {{baseId + 4}} } ],
           "runtime": "14.0"
