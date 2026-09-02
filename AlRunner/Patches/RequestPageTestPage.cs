@@ -19,12 +19,19 @@
 //   into the parameters XML the AL under test receives, which is the entire purpose of
 //   Report.RunRequestPage.
 //
+//   CONTROLS bound to report globals (#2442). `{Report}.RequestPage`'s generated
+//   OnMetadataLoaded registers one source expression per control, whose getter and setter
+//   read and write the REPORT's own global field — so a handler's SetValue lands on the
+//   global the report body then reads, which is the only thing that makes a request-page
+//   control worth setting. That registration used to be no-opped for every request page
+//   (NavForm.SourceExpressions stayed an empty dictionary and GetField refused by name);
+//   the request-page path now opts its own form into registration and nothing else, see
+//   RunnerFormInit.MarkSourceExpressionsWanted.
+//
 // WHAT IS NOT ANSWERED HERE
-//   Request-page CONTROLS bound to report globals. Resolving one needs the request page's
-//   NavForm.SourceExpressions table, which the runner only populates for forms it opted
-//   into real initialisation (RunnerFormInit) — request pages are deliberately not among
-//   them today. GetField therefore refuses by name rather than silently answering an empty
-//   value, which would let a handler "set" an option the report never sees.
+//   A control the request page publishes no source expression for. GetField still refuses
+//   by name rather than silently answering an empty value, which would let a handler "set"
+//   an option the report never sees.
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -37,16 +44,20 @@ namespace AlRunner.Patches;
 
 internal sealed class RequestPageTestPage : MockITestPage
 {
+    private readonly object _requestPageForm;
     private readonly object _report;
     private readonly int _reportId;
     private readonly bool _offersOk;
     private readonly Dictionary<string, ITestFilter> _dataItemFilters = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<int, ITestField> _controlFields = new();
+    private RunnerPageInstance? _pageInstance;
     private FormResult _formResult = FormResult.None;
 
     private readonly Guid _formHandle;
 
     private RequestPageTestPage(object requestPageForm, object report, int reportId, bool offersOk)
     {
+        _requestPageForm = requestPageForm;
         _report = report;
         _reportId = reportId;
         _offersOk = offersOk;
@@ -140,13 +151,69 @@ internal sealed class RequestPageTestPage : MockITestPage
         return filter;
     }
 
+    /// <summary>
+    /// A control on the request page, addressed by the control id the AL compiler derived for
+    /// it. Resolved through the request page's own <c>NavForm.SourceExpressions</c> — BC's
+    /// control -> value binding table, whose getter/setter for a request-page control read and
+    /// write the REPORT's global variable. That indirection is the whole point: a handler's
+    /// <c>SetValue</c> has to land where the report body's <c>OnAfterGetRecord</c> reads it,
+    /// and a value held aside here would make the handler look like it worked while the report
+    /// went on seeing the old one.
+    ///
+    /// The binding table is BC's, not a map assembled here — <see cref="PageVariableTestField"/>
+    /// drives the same expression object the TestPage path drives for a page-global control,
+    /// so option captions, the declared NavType, and the control's OnValidate trigger all work
+    /// the same way on a request page as on a page.
+    /// </summary>
     public override ITestField GetField(int id)
-        => throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
-            $"TestRequestPage control {id} (report {_reportId})",
-            "request-page-control — request-page controls bound to report globals are not yet "
-            + "resolvable: they need the request page's NavForm.SourceExpressions table, which "
-            + "the runner only builds for forms it drives as a TestPage. Data-item filters and "
-            + "the built-in OK/Cancel actions are supported. See docs/scope.md");
+    {
+        if (_controlFields.TryGetValue(id, out var cached)) return cached;
+
+        var page = PageInstance();
+        var expression = page?.TryGetSourceExpression(id);
+        if (expression == null)
+            throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+                $"TestRequestPage control {id} (report {_reportId})",
+                "request-page-control — the request page publishes no source expression for this "
+                + "control, so there is no report global for the [RequestPageHandler] to read or "
+                + "write. Registered controls: "
+                + string.Join(", ", RegisteredControlKeys().DefaultIfEmpty("(none)"))
+                + ". See docs/scope.md");
+
+        var field = new PageVariableTestField(page!, expression, id);
+        _controlFields[id] = field;
+        return field;
+    }
+
+    /// <summary>
+    /// The request page wrapped as a <see cref="RunnerPageInstance"/>. <c>Adopt</c>, never
+    /// <c>TryCreate</c>: the form is already live — NavReportSync constructed it and BC's
+    /// RunModal ran its metadata load — so re-initialising it would register every source
+    /// expression a second time ("An item with the same key has already been added").
+    /// </summary>
+    private RunnerPageInstance? PageInstance()
+    {
+        if (_pageInstance != null) return _pageInstance;
+        try { return _pageInstance = RunnerPageInstance.Adopt(_requestPageForm, _reportId); }
+        catch (Exception ex)
+        {
+            // stdout on purpose: the test-execution child's stderr is not captured, so a
+            // Console.Error line would be invisible exactly when it is needed.
+            Console.Out.WriteLine(
+                $"[RequestPageTestPage] report {_reportId}: could not adopt the request-page form "
+                + $"({ex.GetType().Name}: {ex.Message}); its controls stay unresolvable");
+            return null;
+        }
+    }
+
+    /// <summary>The control ids the request page actually registered, for the refusal above.</summary>
+    private IEnumerable<string> RegisteredControlKeys()
+    {
+        var table = ReadProperty(_requestPageForm, "SourceExpressions") as System.Collections.IDictionary;
+        if (table == null) yield break;
+        foreach (var key in table.Keys)
+            if (key?.ToString() is { Length: > 0 } text) yield return text;
+    }
 
     // ── report data items ─────────────────────────────────────────────────────
 

@@ -125,7 +125,51 @@ public static class RunnerFormInit
     /// pure "record this binding" step against a MasterPage the wider gate has already
     /// admitted; InitializeForm and CallInitializeComponentExtensionMethod are the ones that
     /// reach into skeleton-session state, and they stay on the narrow instance opt-in.
-    /// Request pages stay excluded — that is the path the original blanket no-op protected.
+    ///
+    /// A REQUEST PAGE is admitted only through the explicit per-instance opt-in below
+    /// (<see cref="MarkSourceExpressionsWanted"/>), never through
+    /// <see cref="ShouldResolveMasterPage"/>, which still refuses every request page. See
+    /// that method for why.
     /// </summary>
-    public static bool ShouldRegisterSourceExpressions(object form) => ShouldResolveMasterPage(form);
+    public static bool ShouldRegisterSourceExpressions(object form)
+        => ShouldResolveMasterPage(form) || WantsSourceExpressions(form);
+
+    // ── request pages: registration only, per instance ────────────────────────────────
+    //
+    // A report's request page binds its controls to the REPORT's own globals, and BC
+    // publishes those bindings the same way any page does — {Report}.RequestPage's generated
+    // OnMetadataLoaded calls NavForm.RegisterSourceExpression("Control{id}", get, set) with
+    // delegates that read and write the report's global fields directly. With registration
+    // no-opped, NavForm.SourceExpressions stays an EMPTY dictionary (measured: 0 keys on a
+    // request page whose single control is bound to a report global), so a
+    // [RequestPageHandler] that sets a control had nothing to resolve against — issue #2442.
+    //
+    // This is a SEPARATE table from _realInitForms on purpose. MarkRealInit opts a form into
+    // all THREE guarded NavForm methods, and the other two — InitializeForm and
+    // CallInitializeComponentExtensionMethod — are the ones that reach into skeleton-session
+    // state (the PageExtensions list, Session.IsCompanyOpen, MasterPage.Expressions) that the
+    // report request-page path was neutered for in the first place. Registration is a pure
+    // "record this binding" step and carries none of that, so a request page gets exactly it
+    // and nothing else.
+    private static readonly ConditionalWeakTable<object, object> _sourceExpressionForms = new();
+
+    /// <summary>
+    /// Opt <paramref name="form"/> into BC's own source-expression registration, and into
+    /// nothing else. Called by the request-page path (NavReportSync.RunRequestPageForHandler)
+    /// on the form it is about to drive, before RunModal reaches OnMetadataLoaded.
+    /// </summary>
+    public static void MarkSourceExpressionsWanted(object form)
+    {
+        if (form == null) return;
+        _sourceExpressionForms.Remove(form);
+        _sourceExpressionForms.Add(form, Marker);
+    }
+
+    /// <summary>Whether <see cref="MarkSourceExpressionsWanted"/> was called for this form.
+    /// Must never throw — it runs inside BC's own IL.</summary>
+    public static bool WantsSourceExpressions(object form)
+    {
+        try { return form != null && _sourceExpressionForms.TryGetValue(form, out _); }
+        catch { return false; }
+    }
 }
