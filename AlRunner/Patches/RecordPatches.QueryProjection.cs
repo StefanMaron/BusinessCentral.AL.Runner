@@ -337,6 +337,9 @@ public static partial class RecordPatches
     // ComputeJoinColumnSlotMap's own copy of BuildJoinProjectionPlan's algorithm must carry too.
     private static PropertyInfo? _pDataItemSubQueryDefinitionQ;
     private static PropertyInfo? _pDataItemNameQ;
+    // #2423: mirrors JoinExecutor's own _pDataItemSourceFlowField — distinguishes the
+    // FlowField-calculation synthesized sub-dataitem from any other synthesized-subquery shape.
+    private static PropertyInfo? _pDataItemSourceFlowFieldQ;
 
     private static void EnsureFilterReflection()
     {
@@ -359,6 +362,7 @@ public static partial class RecordPatches
         _pColColumnTypeQ = _tNCLMetaQueryColumn?.GetProperty("ColumnType", anyInstance);
         _pDataItemSubQueryDefinitionQ = _tNCLMetaQueryDataItem?.GetProperty("SubQueryDefinition", anyInstance);
         _pDataItemNameQ = _tNCLMetaQueryDataItem?.GetProperty("Name", anyInstance);
+        _pDataItemSourceFlowFieldQ = _tNCLMetaQueryDataItem?.GetProperty("SourceFlowField", anyInstance);
         _filterReflectionReady = true;
     }
 
@@ -383,25 +387,24 @@ public static partial class RecordPatches
         var dataItems = ((System.Collections.IEnumerable)_pQueryDefDataItemsQ.GetValue(queryDef)!).Cast<object>().ToList();
 
         // #2423: mirrors JoinExecutor.BuildJoinProjectionPlan's own guard EXACTLY (this method's
-        // own doc comment requires the two algorithms to change together) -- a multi-real-dataitem
-        // JOIN that also selects a FlowField column still carries the FlowField-calculation
-        // synthesized dataitem (SubQueryDefinition != null) in this RAW dataitem list. Before this
-        // guard its column resolved to a field on the FlowField's SOURCE table, a table this join
-        // never reads a row buffer for, silently producing the column's typed default (0) instead
-        // of the calculated value -- the silent default .claude/rules/loud-failures.md forbids.
-        // Neither this method nor JoinExecutor's copy route a FlowField column through
-        // FlowFieldPatches.CalcOneFlowFieldForQueryRow in the join path yet -- tracked in #2423.
+        // own doc comment requires the two algorithms to change together). The FlowField-
+        // calculation synthesized sub-dataitem (SubQueryDefinition != null, SourceFlowField !=
+        // null) IS now given a slot below like any other column — its ColumnIndex is unaffected
+        // by how JoinExecutor computes its VALUE (via ctx.CalcFlowFieldForRow, not TableSlot), so
+        // this mirror needs no FlowField-specific branch of its own, only the throw removed for
+        // that shape. A synthesized sub-dataitem that is NOT the FlowField-calculation shape
+        // (SourceFlowField == null — some other synthesized-subquery shape this runner does not
+        // otherwise support in the join path) still throws loudly rather than guess.
         foreach (var diCheck in dataItems)
         {
             if (_pDataItemSubQueryDefinitionQ?.GetValue(diCheck) == null) continue;
+            if (_pDataItemSourceFlowFieldQ?.GetValue(diCheck) != null) continue; // FlowField calc — gets a slot below.
             var subDataItemName = _pDataItemNameQ?.GetValue(diCheck) as string ?? "<unknown>";
             throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
-                "NavQuery (multi-dataitem join with a FlowField column)",
-                $"query-join-flowfield-column-not-implemented -- dataitem '{subDataItemName}' is the " +
-                "synthesized FlowField-calculation sub-dataitem for a column selected alongside a " +
-                "real multi-dataitem JOIN; this runner does not yet compute a FlowField column's " +
-                "value in the join projection path (only the single-real-dataitem case is wired, " +
-                "via FlowFieldPatches.CalcOneFlowFieldForQueryRow) -- see #2423");
+                "NavQuery (multi-dataitem join with a synthesized sub-dataitem)",
+                $"query-join-synthesized-subquery-not-implemented -- dataitem '{subDataItemName}' is a " +
+                "synthesized sub-dataitem (SubQueryDefinition != null) that is not a FlowField-calculation " +
+                "sub-query; this runner does not support this join sub-shape in-memory; see docs/scope.md");
         }
 
         int maxSlot = -1;
@@ -1102,6 +1105,16 @@ public static partial class RecordPatches
         var values = rawValues.Select(v => (NavValue?)v);
         return ComputeAggregateCore(column.AggregationType, column, rawValues.Length, values);
     }
+
+    /// <summary>
+    /// Adapter for AlRunner.QueryJoin.JoinContext.CalcFlowFieldForRow (#2423): the isolated
+    /// JoinExecutor hands back the OWNER dataitem's own row buffer (boxed) and the FlowField's
+    /// NCLMetaField (boxed) for a JOIN that also selects a FlowField column; forwards to the
+    /// same FlowFieldPatches.CalcOneFlowFieldForQueryRow the single-real-dataitem path (#2300)
+    /// uses, so the aggregation/formula math is not duplicated across the assembly boundary.
+    /// </summary>
+    private static object? Join_CalcFlowFieldForRow(object rowBuffer, object flowFieldMeta)
+        => FlowFieldPatches.CalcOneFlowFieldForQueryRow(rowBuffer, (NCLMetaField)flowFieldMeta);
 
     private static Type? _tNavValue;
     private static Array ToNavValueArray(object?[] values)
