@@ -317,7 +317,7 @@ public sealed partial class BcCompiler
     /// </summary>
     internal BcEmitOutput? TryEmitIncremental(
         IEnumerable<string> alFolders, string moduleName, string? appRootDir,
-        out string fallbackReason, out IReadOnlyList<RadObjectIdentity>? changedObjects)
+        out string fallbackReason, out IReadOnlyList<AffectedObjectId>? changedObjects)
     {
         fallbackReason = "";
         changedObjects = null;
@@ -392,7 +392,7 @@ public sealed partial class BcCompiler
         {
             // Every file hashes identical to the last cycle — including a touch-with-identical-
             // bytes. Genuinely zero work: replay the last cycle's result verbatim.
-            changedObjects = Array.Empty<RadObjectIdentity>();
+            changedObjects = Array.Empty<AffectedObjectId>();
             return baseline.LastOutput;
         }
 
@@ -535,6 +535,7 @@ public sealed partial class BcCompiler
             .OrderBy(i => i.Kind.ToString(), StringComparer.Ordinal)
             .ThenBy(i => i.Id ?? int.MaxValue)
             .ThenBy(i => i.Name, StringComparer.Ordinal)
+            .Select(ToAffectedObjectId)
             .ToArray();
 
         var selfSpec = new NavCA.SymbolReferenceSpecification(
@@ -668,10 +669,15 @@ public sealed partial class BcCompiler
         IEnumerable<string> alFolders, string moduleName, string? appRootDir, out string fallbackReason)
         => TryEmitIncremental(alFolders, moduleName, appRootDir, out fallbackReason, out _);
 
-    internal IReadOnlyDictionary<string, RadObjectIdentity>? TryGetTrackedObjectsByPath(string moduleName)
+    internal IReadOnlyDictionary<string, AffectedObjectId>? TryGetTrackedObjectsByPath(string moduleName)
         => _radBaselines.TryGetValue(moduleName, out var baseline)
-            ? baseline.ObjectByPath
+            ? baseline.ObjectByPath.ToDictionary(kv => kv.Key, kv => ToAffectedObjectId(kv.Value), StringComparer.Ordinal)
             : null;
+
+    /// <summary>Projects to the NavCA-free shape Program.cs is allowed to name.
+    /// See <see cref="AffectedObjectId"/> for why that boundary exists.</summary>
+    private static AffectedObjectId ToAffectedObjectId(RadObjectIdentity id)
+        => new(id.Kind.ToString(), id.Id, id.Name);
 
     /// <summary>
     /// Called by <see cref="Emit"/> after a clean success, when its caller passed

@@ -3523,7 +3523,7 @@ return strictExitCode ? computedExitCode : 0;
         Func<Assembly, IReadOnlyList<TestResult>> runStep,
         System.Threading.CancellationToken cancellationToken = default,
         bool useIncrementalChangeModel = false,
-        Action<string, string, string, IReadOnlyList<RadObjectIdentity>?, string?>? beforeRun = null)
+        Action<string, string, string, IReadOnlyList<AffectedObjectId>?, string?>? beforeRun = null)
     {
         // Server requests share a process, so give each request the same fresh
         // NumberSequence lifetime as a standalone CLI/watch execution.
@@ -3620,7 +3620,7 @@ return strictExitCode ? computedExitCode : 0;
     ServerRunResult RunBundleForServer(string bundleDir, string[]? requestPackagePaths,
         Func<Assembly, IReadOnlyList<TestResult>> runStep,
         bool useIncrementalChangeModel,
-        Action<string, string, string, IReadOnlyList<RadObjectIdentity>?, string?>? beforeRun,
+        Action<string, string, string, IReadOnlyList<AffectedObjectId>?, string?>? beforeRun,
         out TimeSpan emitElapsed, out TimeSpan compileElapsed, out TimeSpan runElapsed)
     {
         // #1888: defaulted here so every early-return path below (dep-resolve
@@ -3812,7 +3812,7 @@ return strictExitCode ? computedExitCode : 0;
             }
 
             var compileErrors = new List<string>();
-            IReadOnlyList<RadObjectIdentity>? changedObjects = Array.Empty<RadObjectIdentity>();
+            IReadOnlyList<AffectedObjectId>? changedObjects = Array.Empty<AffectedObjectId>();
             string? changeModelFallbackReason = null;
             if (reusedAsm == null && assemblyBytes == null)
             {
@@ -3834,7 +3834,7 @@ return strictExitCode ? computedExitCode : 0;
                         if (incrementalOutput != null)
                         {
                             emitOutput = incrementalOutput;
-                            changedObjects = incrementalChangedObjects ?? Array.Empty<RadObjectIdentity>();
+                            changedObjects = incrementalChangedObjects ?? Array.Empty<AffectedObjectId>();
                         }
                         else
                         {
@@ -3949,7 +3949,7 @@ return strictExitCode ? computedExitCode : 0;
             else if (beforeRun != null)
             {
                 // Cache hit (or cross-bundle reuse) means this bundle's AL content is unchanged.
-                changedObjects = Array.Empty<RadObjectIdentity>();
+                changedObjects = Array.Empty<AffectedObjectId>();
             }
 
             Assembly asm;
@@ -4588,10 +4588,10 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
     // EOF — client disconnected.
     return 0;
 
-    static string ToAffectedObjectKey(RadObjectIdentity id)
+    static string ToAffectedObjectKey(AffectedObjectId id)
         => $"{id.Kind}|{(id.Id.HasValue ? "id:" + id.Id.Value : "name:" + id.Name)}";
 
-    static string ToAffectedObjectDisplay(RadObjectIdentity id)
+    static string ToAffectedObjectDisplay(AffectedObjectId id)
         => id.Id.HasValue
             ? $"{id.Kind} {id.Id.Value} {id.Name}"
             : $"{id.Kind} {id.Name}";
@@ -4778,7 +4778,7 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                     requestEnvironmentByBundle[bundlePath] = selectionEnvironmentKey;
                     activeChangedObjectKeys = changedObjects?.Select(ToAffectedObjectKey)
                         .ToHashSet(StringComparer.Ordinal);
-                    activeChangedObjectDisplay = (changedObjects ?? Array.Empty<RadObjectIdentity>())
+                    activeChangedObjectDisplay = (changedObjects ?? Array.Empty<AffectedObjectId>())
                         .Select(ToAffectedObjectDisplay)
                         .Distinct(StringComparer.Ordinal)
                         .OrderBy(x => x, StringComparer.Ordinal)
