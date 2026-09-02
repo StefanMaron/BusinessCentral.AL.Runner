@@ -89,8 +89,15 @@ public class NonModalPageRunDispatchBindingTests
         Assert.False(CallsAnyNamed(m, "get_CallbackHandler"),
             "TestHandleForm still reads IService.CallbackHandler — that callvirt on a null "
             + "ServiceConnection is the NRE in issue #2349.");
-        Assert.False(CallsAnyNamed(m, "FormRun"),
-            "TestHandleForm still calls the client's IClientContract.FormRun.");
+        // Not "no call named FormRun" — the replacement is also called FormRun. The claim is
+        // that no call named FormRun is left on a CLIENT interface.
+        Assert.False(
+            m.Body.Instructions.Any(i =>
+                (i.OpCode == OpCodes.Call || i.OpCode == OpCodes.Callvirt)
+                && i.Operand is MethodReference mr
+                && mr.Name == "FormRun"
+                && !mr.DeclaringType.FullName.StartsWith("AlRunner.", StringComparison.Ordinal)),
+            "TestHandleForm still calls the client's IClientCallbackHandler.FormRun.");
     }
 
     // The sibling that was already fixed must keep the same invariant: both dispatch methods
