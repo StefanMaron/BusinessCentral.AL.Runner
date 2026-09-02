@@ -152,18 +152,31 @@ public static partial class BcRuntime
         // form (the Boolean result is consumed), which needs its own isolated transaction and is
         // therefore refused while an uncommitted write is pending. See
         // ALDatabasePatches.ThrowIfWriteTransactionStarted.
-        if (errorLevel != Microsoft.Dynamics.Nav.Types.DataError.ThrowError)
+        bool guarded = errorLevel != Microsoft.Dynamics.Nav.Types.DataError.ThrowError;
+        if (guarded)
             ALDatabasePatches.ThrowIfWriteTransactionStarted();
 
+        // BC brackets the guarded branch with BeginTransactionWorldAndTransaction() ...
+        // finally EndTransactionWorldAndTransaction(result), so the run codeunit's writes land
+        // in a nested logical transaction that is committed and POPPED when the run returns.
+        // Without the closing half the runner left its single write-transaction flag set and
+        // refused every later guarded Codeunit.Run in the same caller. See
+        // ALDatabasePatches.EndGuardedRunTransaction and AlRunner#2332.
+        bool ran = false;
         try
         {
             InvokeOnRun(self, record);
+            ran = true;
             return new System.Threading.Tasks.ValueTask<bool>(true);
         }
         catch (TargetInvocationException tie) when (tie.InnerException != null)
         {
             System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw(tie.InnerException);
             return default;
+        }
+        finally
+        {
+            if (guarded) ALDatabasePatches.EndGuardedRunTransaction(ran);
         }
     }
 
@@ -185,20 +198,29 @@ public static partial class BcRuntime
         // BeginTransactionWorldAndTransaction outside the try whose catch suppresses the
         // codeunit's own errors: a refusal must reach the AL caller as an error, never be
         // converted into a `false` return. See ALDatabasePatches.ThrowIfWriteTransactionStarted.
-        if (errorLevel != Microsoft.Dynamics.Nav.Types.DataError.ThrowError)
+        bool guarded = errorLevel != Microsoft.Dynamics.Nav.Types.DataError.ThrowError;
+        if (guarded)
             ALDatabasePatches.ThrowIfWriteTransactionStarted();
 
+        // The closing half of the same bracket — see NavCodeunit_DoRunAsync above and
+        // ALDatabasePatches.EndGuardedRunTransaction.
+        bool ran = false;
         try
         {
             var handle = CreateCodeunitHandle(objectId);
             var target = NavCodeunitHandle_CreateTarget(handle);
             InvokeOnRun(target, record);
+            ran = true;
             return true;
         }
         catch when (trap)
         {
             // TrapError contract for Codeunit.Run(...): swallow and return false.
             return false;
+        }
+        finally
+        {
+            if (guarded) ALDatabasePatches.EndGuardedRunTransaction(ran);
         }
     }
 

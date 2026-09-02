@@ -107,6 +107,53 @@ public static class ALDatabasePatches
     }
 
     /// <summary>
+    /// BC's TransactionManager end of the nested logical transaction a GUARDED
+    /// <c>Codeunit.Run</c> opens — the other half of
+    /// <see cref="ThrowIfWriteTransactionStarted"/>, which only models the entry guard.
+    ///
+    /// BC's own NavCodeunit.DoRunAsync, `errorLevel != DataError.ThrowError` branch
+    /// (decompiled Ncl.dll):
+    ///
+    ///     activeSession.BeginTransactionWorldAndTransaction();
+    ///     try     { OnRun(record); result = true; }
+    ///     catch (NavBaseException) { /* suppressed */ }
+    ///     finally { activeSession.EndTransactionWorldAndTransaction(result); }
+    ///
+    /// TransactionManager.BeginTransaction PUSHES a new LogicalTransaction; EndTransactionImpl
+    /// POPS it, committing when `commit` is true. So the run codeunit's writes set
+    /// TransactionOpenForWrites on the PUSHED transaction, which is gone by the time the call
+    /// returns — the CALLER's transaction is never left open for writes, and the next guarded
+    /// Codeunit.Run in the same caller is allowed.
+    ///
+    /// The runner models the whole stack as one boolean, so without this the first guarded
+    /// Codeunit.Run that wrote anything left the flag set and every later guarded run in that
+    /// caller was refused with BC's "…the transaction is stopped" error. That is the shape of
+    /// RapidStart's Config. Package Management.ApplyPackageRecords apply loop — see
+    /// AlRunner#2332.
+    ///
+    /// A committed nested transaction is exactly as durable, from AL's point of view, as an
+    /// explicit Commit() statement (the same reasoning as RecordPatches.NoteTransactionEnd,
+    /// AlRunner#1946, which prepends BC's own SessionTransactionExtensions.EndTransaction /
+    /// EndTransactionWorldAndTransaction — a hook this path never reaches, because the runner
+    /// replaces DoRunAsync outright), so a later unrelated error in the caller must not roll
+    /// the run's rows back. ALDatabase_ALCommit is precisely that: clear the write-transaction
+    /// flag, and mark a commit point.
+    ///
+    /// NOT modelled: the <c>commit == false</c> half. BC's EndTransactionWorldAndTransaction(false)
+    /// rolls the failed run's own rows back; the runner's snapshot store cannot express a
+    /// rollback to the scope's ENTRY state (RecordPatches.NoteTransactionWrite re-baselines on
+    /// every write, so RollbackToCommitPoint only restores the state before the LAST write per
+    /// table). Rather than half-restore, this leaves the failure path exactly as it behaves
+    /// today, tracked as its own gap — see AlRunner#2334.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static void EndGuardedRunTransaction(bool commit)
+    {
+        if (!commit) return;
+        ALDatabase_ALCommit();
+    }
+
+    /// <summary>
     /// Resolve BC's NavCSideException type.
     ///
     /// It is DEFINED in Microsoft.Dynamics.Nav.Types as
