@@ -97,7 +97,18 @@ public sealed class SharedCliServer : IAsyncLifetime
     /// fact calls it) — never one that varies by test, which would silently be
     /// ignored on every call after the first.
     /// </summary>
-    public async Task<CliServer> GetAsync(IEnumerable<string>? extraArgs = null)
+    /// <param name="extraEnv">
+    /// #2377: environment variables for the server subprocess, consulted on the same
+    /// first (spawning) call only and subject to the same rule as
+    /// <paramref name="extraArgs"/> — a value that varies per fact would silently be
+    /// ignored on every call after the first. Exists because
+    /// ManifestFeaturesSubprocessTests needs AL_RUNNER_DIAG_EMITRETRY/BCCOMPILER_DIAG
+    /// set for the whole class (they only widen what the runner REPORTS about an
+    /// emit-retry exclusion; they do not change what it compiles), and those are
+    /// process-level knobs with no per-request equivalent in the protocol.
+    /// </param>
+    public async Task<CliServer> GetAsync(IEnumerable<string>? extraArgs = null,
+        IReadOnlyDictionary<string, string>? extraEnv = null)
     {
         if (_server != null) return _server;
         await _gate.WaitAsync();
@@ -105,7 +116,7 @@ public sealed class SharedCliServer : IAsyncLifetime
         {
             if (_server == null)
             {
-                _server = await CliServer.StartAsync(extraArgs);
+                _server = await CliServer.StartAsync(extraArgs, extraEnv: extraEnv);
                 _spawnCount++;
             }
             return _server;

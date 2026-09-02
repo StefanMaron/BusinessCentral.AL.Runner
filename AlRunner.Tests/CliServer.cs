@@ -52,6 +52,70 @@ public sealed class CliServer : IAsyncDisposable
     /// <summary>Captured stderr so far — surfaced in assertion messages when the protocol stalls.</summary>
     public string StdErr { get { lock (_stderr) return _stderr.ToString(); } }
 
+    /// <summary>
+    /// #2377: how many characters of stderr have been captured so far — a marker to
+    /// slice ONE request's diagnostics out of a shared server's cumulative stderr.
+    ///
+    /// A class-shared server serves many requests through one pipe, so
+    /// <see cref="StdErr"/> is the concatenation of every request's output. A test
+    /// converted from "spawn the CLI once, assert on its whole console dump" needs the
+    /// dump for ITS request only — otherwise `Assert.DoesNotContain("[layered] WROTE B")`
+    /// would match a line the PREVIOUS fact legitimately produced, and the converted test
+    /// would fail for a reason that has nothing to do with what it proves.
+    ///
+    /// Take the mark immediately before <c>SendRequestStreamingAsync</c>, read the slice
+    /// with <see cref="StdErrSinceAsync"/> after.
+    /// </summary>
+    public int StdErrMark { get { lock (_stderr) return _stderr.Length; } }
+
+    /// <summary>
+    /// The stderr captured since <paramref name="mark"/>, once <paramref name="anchor"/>
+    /// appears in it — or a <see cref="TimeoutException"/> naming both.
+    ///
+    /// The wait is the point, and skipping it is how this goes flaky. stdout (the JSON
+    /// protocol) and stderr (every diagnostic a converted test asserts on) are two
+    /// separate pipes drained by two different threads, so reading the terminal
+    /// <c>{"type":"summary"}</c> line establishes NOTHING about how much of that
+    /// request's stderr the background drain task has appended yet. Measured on a loaded
+    /// box the last stderr line of a request lands 0.05-5.9s BEFORE its summary — i.e.
+    /// usually early enough that an unsynchronised read would pass, which is exactly the
+    /// shape of a test that fails once a month on CI and nowhere else.
+    ///
+    /// <paramref name="anchor"/> must be a string the runner emits AFTER everything the
+    /// caller intends to assert on — for the layered pre-pass, its
+    /// "[layered] pre-built N impl package(s)" trailer, which follows the per-impl
+    /// WROTE/HIT lines. That ordering is what makes a NEGATIVE assertion
+    /// (<c>DoesNotContain</c>) on the returned slice sound: without an anchor emitted
+    /// after the line being excluded, "not there yet" and "never emitted" are the same
+    /// observation.
+    /// </summary>
+    public async Task<string> StdErrSinceAsync(int mark, string anchor, TimeSpan? timeout = null)
+    {
+        var deadline = DateTime.UtcNow + (timeout ?? TimeSpan.FromSeconds(30));
+        while (true)
+        {
+            var slice = StdErrSince(mark);
+            if (slice.Contains(anchor, StringComparison.Ordinal)) return slice;
+            if (DateTime.UtcNow >= deadline)
+                throw new TimeoutException(
+                    $"stderr anchor '{anchor}' never appeared in this request's slice.\n" +
+                    $"--- slice since mark {mark} ---\n{slice}");
+            await Task.Delay(25);
+        }
+    }
+
+    /// <summary>
+    /// The raw stderr slice since <paramref name="mark"/>, with no wait. Only sound when
+    /// the caller has ALREADY synchronised on an anchor via <see cref="StdErrSinceAsync"/>
+    /// (e.g. to take a second, wider slice), or when the assertion is positive and the
+    /// caller is prepared for it to be racy. Prefer <see cref="StdErrSinceAsync"/>.
+    /// </summary>
+    public string StdErrSince(int mark)
+    {
+        lock (_stderr)
+            return mark >= _stderr.Length ? string.Empty : _stderr.ToString(mark, _stderr.Length - mark);
+    }
+
     private static string CurrentFramework()
     {
         var v = Environment.Version;

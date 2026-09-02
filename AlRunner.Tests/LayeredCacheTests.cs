@@ -1,5 +1,4 @@
-using System.Diagnostics;
-using System.Text;
+using System.Text.Json;
 using Xunit;
 
 namespace AlRunner.Tests;
@@ -14,21 +13,44 @@ namespace AlRunner.Tests;
 /// re-emits. With a combined workspace key, editing A orphans B's cache too and B
 /// re-emits — which this test fails on.
 ///
+/// #2377: the two runs are two `runTests` requests to ONE warm <c>--server</c>
+/// process (<see cref="SharedCliServer"/>) rather than two CLI spawns. The claim is
+/// unchanged because it is the SAME code that answers it either way:
+/// <c>RunAllBundlesForServer</c> calls <c>RunLayeredPrePass</c> for any request with
+/// more than one sourcePath, exactly as the CLI's bundled loop does, and the pre-pass
+/// emits the same `[layered] WROTE` / `[layered] cache HIT` lines (server mode routes
+/// them to stderr, which <see cref="CliServer.StdErrSinceAsync"/> slices per request).
+/// The `--cache` dir the workspace key lives under is a server STARTUP flag, so both
+/// requests share one — which is what the CLI version did too, passing the same
+/// cacheDir to both spawns. Measured: 219.7s as two spawns, ~25s as boot + two
+/// requests, on the same loaded box.
+///
 /// Spawns the real runner; needs the BC artifact cache. Skips (no-op) when absent.
 /// See DefineFlagIntegrationTests for why this used to be
 /// [Collection("server-serial")] and no longer is — #1809.
 /// </summary>
-public class LayeredCacheTests
+public class LayeredCacheTests : IClassFixture<SharedCliServer>
 {
-    private static readonly string RepoRoot = Path.GetFullPath(
-        Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
-    private static readonly string ProjectPath = Path.Combine(RepoRoot, "AlRunner");
+    private readonly SharedCliServer _shared;
 
-    private static string CurrentFramework()
-    {
-        var v = Environment.Version;
-        return $"net{v.Major}.{v.Minor}";
-    }
+    /// <summary>
+    /// The one `--cache` dir this class's server is started with. Per test-run (a fresh
+    /// GUID), so a workspace cache left behind by an earlier invocation can never answer
+    /// for this one — the same guarantee the CLI version got from building its cacheDir
+    /// under a fresh scratch root.
+    /// </summary>
+    private static readonly string CacheDir = Path.Combine(
+        Path.GetTempPath(), "al-runner-layered-cache", Guid.NewGuid().ToString("N"), "al-out");
+
+    /// <summary>
+    /// Emitted by the layered pre-pass AFTER every per-impl WROTE/HIT line, so it is a
+    /// sound synchronisation point for this class's negative assertion
+    /// ("B must not have been re-WROTE"): once this is in the slice, every line the
+    /// pre-pass had to say about A and B is already in it too.
+    /// </summary>
+    private const string PrePassTrailer = "[layered] pre-built";
+
+    public LayeredCacheTests(SharedCliServer shared) => _shared = shared;
 
     private static void WriteApp(string dir, string id, string name, int idFrom,
         string codeunit, string? dependsOnJson = null)
@@ -42,7 +64,6 @@ public class LayeredCacheTests
           "version": "1.0.0.0",
           "dependencies": [{{dependsOnJson ?? ""}}],
           "platform": "1.0.0.0",
-          "application": "1.0.0.0",
           "idRanges": [ { "from": {{idFrom}}, "to": {{idFrom + 9}} } ],
           "runtime": "14.0"
         }
@@ -50,36 +71,22 @@ public class LayeredCacheTests
         File.WriteAllText(Path.Combine(dir, "Probe.Codeunit.al"), codeunit);
     }
 
-    private static (string output, int exit) RunRunner(string cacheDir, params string[] bundles)
-    {
-        var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
-        args.Append(TestBuildConfig.BcVersionArg);
-        foreach (var b in bundles) args.Append(" \"").Append(b).Append('"');
-        args.Append(" --cache \"").Append(cacheDir).Append('"');
-        var psi = new ProcessStartInfo
+    private static string Req(params string[] bundles)
+        => JsonSerializer.Serialize(new
         {
-            FileName = "dotnet", Arguments = args.ToString(),
-            RedirectStandardOutput = true, RedirectStandardError = true,
-            UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
-        };
-        var sb = new StringBuilder();
-        var p = Process.Start(psi)!;
-        p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.BeginOutputReadLine();
-        p.BeginErrorReadLine();
-        if (!p.WaitForExit(180_000)) { try { p.Kill(true); } catch { } throw new TimeoutException("runner hung"); }
-        p.WaitForExit();
-        lock (sb) return (sb.ToString(), p.ExitCode);
-    }
+            command = "runTests",
+            sourcePaths = bundles,
+            packagePaths = Array.Empty<string>(),
+        });
 
     [SkippableFact]
-    public void EditingOneImpl_DoesNotRebuildSiblingImpl()
+    public async Task EditingOneImpl_DoesNotRebuildSiblingImpl()
     {
         TestArtifacts.SkipIfMissing();
 
+        var server = await _shared.GetAsync(new[] { "--cache", CacheDir });
+
         var root = Path.Combine(Path.GetTempPath(), "al-runner-layered-cache", Guid.NewGuid().ToString("N"));
-        var cacheDir = Path.Combine(root, "al-out");
         var aDir = Path.Combine(root, "A");
         var bDir = Path.Combine(root, "B");
         var cDir = Path.Combine(root, "C");
@@ -103,17 +110,25 @@ public class LayeredCacheTests
             dependsOnJson: depsJson);
 
         // Run 1 — both impls fresh-built.
-        var (out1, _) = RunRunner(cacheDir, aDir, bDir, cDir);
+        var mark1 = server.StdErrMark;
+        var lines1 = await server.SendRequestStreamingAsync(Req(aDir, bDir, cDir), TimeSpan.FromSeconds(300));
+        var (_, summary1) = ProtocolV2Streaming.Split(lines1);
+        Assert.Equal(0, summary1.GetProperty("exitCode").GetInt32());
+        var out1 = await server.StdErrSinceAsync(mark1, PrePassTrailer);
         Assert.Contains("[layered] WROTE Layered A LC", out1);
         Assert.Contains("[layered] WROTE Layered B LC", out1);
 
         // Edit ONLY A.
-        File.WriteAllText(Path.Combine(aDir, "Probe.Codeunit.al"),
+        await File.WriteAllTextAsync(Path.Combine(aDir, "Probe.Codeunit.al"),
             $"codeunit 60130 \"Layered A Cu LC\"\n{{\n    // marker {tokA}-EDITED\n    procedure A_Ping(): Integer begin exit(99); end;\n}}\n");
 
         // Run 2 — A re-emits, B must be a cache HIT (the fix); a combined key would
         // rebuild B too.
-        var (out2, _) = RunRunner(cacheDir, aDir, bDir, cDir);
+        var mark2 = server.StdErrMark;
+        var lines2 = await server.SendRequestStreamingAsync(Req(aDir, bDir, cDir), TimeSpan.FromSeconds(300));
+        var (_, summary2) = ProtocolV2Streaming.Split(lines2);
+        Assert.Equal(0, summary2.GetProperty("exitCode").GetInt32());
+        var out2 = await server.StdErrSinceAsync(mark2, PrePassTrailer);
         Assert.Contains("[layered] WROTE Layered A LC", out2);
         Assert.Contains("[layered] cache HIT Layered B LC", out2);
         Assert.DoesNotContain("[layered] WROTE Layered B LC", out2);
