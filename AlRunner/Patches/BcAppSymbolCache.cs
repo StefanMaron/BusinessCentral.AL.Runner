@@ -76,7 +76,7 @@ internal static partial class BcAppSymbolCache
     // which reads as "the enum declares none" — so a cached dependency would keep failing
     // every enum-to-interface cast with "Unable to cast enum ... to interface at index 0",
     // the exact #2306 bug, rather than missing the cache.
-    private const int CacheVersion = 16;
+    private const int CacheVersion = 17;
     private static readonly ConcurrentDictionary<string, AppSymbols> ProcessCache = new(StringComparer.OrdinalIgnoreCase);
     // Issue #1820 — path -> content-hash memo. ComputeAppContentHash needs to read the
     // WHOLE .app to hash it (unlike the FileInfo.Length/LastWriteTimeUtc stat it replaced,
@@ -556,10 +556,12 @@ internal static partial class BcAppSymbolCache
     /// here (<c>Enabled</c> = true, <c>Promoted</c> = false) are AL's own defaults for a
     /// profile that declares neither.
     ///
-    /// <para><c>Description</c> is read from both spellings the compiler emits:
-    /// <c>ProfileDescription</c> (42 of the platform apps' 44 profiles) and the older
-    /// <c>Description</c> (Test Runner's TestRoleCenter profile). They are the same AL
-    /// property; the platform puts either into "All Profile".Description.</para>
+    /// <para>Only <c>ProfileDescription</c> feeds "All Profile".Description. A profile may
+    /// also declare a <c>Description</c> property — Test Runner's TestRoleCenter profile does
+    /// — but that is a DIFFERENT AL property and a service tier leaves the row's Description
+    /// empty for it. Measured, not assumed: the corpus fixture ALT Profile SameApp declares
+    /// Description and its row comes back with an empty Description on BC 27.0-28.4
+    /// (BusinessCentral.AL.Language.Tests, TestAllProfileTable.al).</para>
     /// </summary>
     private static ProfileSymbol? TryParseProfileSymbol(JsonElement profile)
     {
@@ -568,8 +570,7 @@ internal static partial class BcAppSymbolCache
 
         var props = SymbolProperties(profile);
         props.TryGetValue("Caption", out var caption);
-        if (!props.TryGetValue("ProfileDescription", out var description))
-            props.TryGetValue("Description", out description);
+        props.TryGetValue("ProfileDescription", out var description);
         props.TryGetValue("RoleCenter", out var roleCenter);
 
         return new ProfileSymbol(

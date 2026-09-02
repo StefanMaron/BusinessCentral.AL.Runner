@@ -86,10 +86,12 @@ public static partial class RecordPatches
             _parsedProfiles[(appId, name)] = new ParsedAlProfile(
                 name,
                 PropertyTextFrom(PropValue(props, "Caption")),
-                // AL accepts both spellings for the same property; the compiler writes
-                // ProfileDescription into the symbol file and Description into older source.
-                PropertyTextFrom(PropValue(props, "ProfileDescription"))
-                    ?? PropertyTextFrom(PropValue(props, "Description")),
+                // ProfileDescription ONLY. A profile may also declare a Description property,
+                // but that is a different AL property and a service tier leaves the All
+                // Profile row's Description empty for it — measured on BC 27.0-28.4 by the
+                // corpus's TestAllProfileTable.al, whose ALT Profile SameApp fixture declares
+                // Description and reads back an empty row Description.
+                PropertyTextFrom(PropValue(props, "ProfileDescription")),
                 PageRefText(PropValue(props, "RoleCenter")),
                 enabled, promoted, appId, appName);
         }
