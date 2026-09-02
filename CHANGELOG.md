@@ -12,6 +12,7 @@ All notable changes to this project are documented here. Format based on
 - **all-profile:** populate the All Profile system virtual table (2000000178)
 
 ### Fixed
+- **rollback:** a plain nested BC transaction is not a commit point
 - **record:** asserterror rollback no longer materializes a phantom failed-Insert row or discards an earlier landed write on the same table
 - **permissions:** a Caption-less permission set's Name falls back to its Role ID
 - **hooks:** nudge on shell READS of C# too, not just searches
