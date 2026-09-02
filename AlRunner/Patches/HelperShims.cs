@@ -309,17 +309,21 @@ public static partial class BcRuntime
     /// SyncTextWriter.WriteLine under BcRuntime.ReturnTrue under NavRecord.GetFieldValue.
     /// The trace is kept behind a gate that is read ONCE, for whoever needs it next.
     /// </summary>
-    private static readonly bool _logIsOpenHook =
-        Environment.GetEnvironmentVariable("AL_RUNNER_LOG_ISOPEN_HOOK") == "1";
+    /// <summary>
+    /// One gate for every per-call hook trace, read ONCE. A hook that fires per field read or
+    /// per record construction cannot afford an environment read, let alone a formatted
+    /// console write, and two of them were doing both. Set AL_RUNNER_TRACE_HOOKS=1 to get the
+    /// traces back.
+    /// </summary>
+    private static readonly bool _traceHooks =
+        Environment.GetEnvironmentVariable("AL_RUNNER_TRACE_HOOKS") == "1";
 
-    /// <summary>Whether the IsOpen hook traces every call. Off unless
-    /// AL_RUNNER_LOG_ISOPEN_HOOK=1 is set in the environment.</summary>
-    internal static bool IsOpenHookLoggingEnabled => _logIsOpenHook;
+    internal static bool HookTraceEnabled => _traceHooks;
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static bool ReturnTrue(object? a)
     {
-        if (_logIsOpenHook)
+        if (_traceHooks)
             Console.Error.WriteLine($"[ReturnTrue] IsOpen hook fired for {a?.GetType().Name}");
         return true;
     }

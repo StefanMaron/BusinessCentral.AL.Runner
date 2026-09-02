@@ -21,6 +21,37 @@ public static partial class BcRuntime
 {
     [ThreadStatic] private static int _navMethodScopeDepth;
     private const int MaxRecursionDepth = 500;
+
+    // ── GetMethodScopeFlags, resolved once per concrete scope type ───────────────────────
+    //
+    // This ctor replacement runs on EVERY AL method call -- NavMethodScope is the per-AL-frame
+    // execution unit -- and it used to do a Type.GetMethod("GetMethodScopeFlags", NonPublic |
+    // Instance) lookup each time. A reflection member lookup walks the type's method table and
+    // allocates; the answer depends only on the concrete scope type, of which a run has a
+    // handful. Resolved once per type instead. A null answer is cached too: "this subtype does
+    // not override it" is as stable as the type itself, and re-asking would put the lookup back
+    // on the path for exactly the types that cannot benefit from it.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<Type, MethodInfo?>
+        _getMethodScopeFlagsByType = new();
+
+    private static int _getMethodScopeFlagsLookups;
+
+    /// <summary>How many reflection lookups were actually performed. Test seam: the cache's
+    /// whole claim is that this stops growing once a scope type has been seen.</summary>
+    internal static int GetMethodScopeFlagsLookupCount => Volatile.Read(ref _getMethodScopeFlagsLookups);
+
+    internal static void ResetGetMethodScopeFlagsCacheForTests()
+    {
+        _getMethodScopeFlagsByType.Clear();
+        Interlocked.Exchange(ref _getMethodScopeFlagsLookups, 0);
+    }
+
+    internal static MethodInfo? ResolveGetMethodScopeFlags(Type scopeType)
+        => _getMethodScopeFlagsByType.GetOrAdd(scopeType, static t =>
+        {
+            Interlocked.Increment(ref _getMethodScopeFlagsLookups);
+            return t.GetMethod("GetMethodScopeFlags", BindingFlags.NonPublic | BindingFlags.Instance);
+        });
     /// <summary>
     /// Full replacement for NavMethodScope..ctor(NavApplicationObjectBase, MethodScopeFlags, bool).
     ///
@@ -92,8 +123,7 @@ public static partial class BcRuntime
             {
                 try
                 {
-                    var getFlags = self.GetType().GetMethod("GetMethodScopeFlags",
-                        BindingFlags.NonPublic | BindingFlags.Instance);
+                    var getFlags = ResolveGetMethodScopeFlags(self.GetType());
                     var scopeFlags = getFlags != null ? getFlags.Invoke(self, null) : null;
                     FieldPoke.SetInstance(_fMsFlags, self, scopeFlags ?? Enum.ToObject(_fMsFlags.FieldType, 0));
                 }

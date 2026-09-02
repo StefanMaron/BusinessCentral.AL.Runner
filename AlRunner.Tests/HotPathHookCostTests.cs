@@ -42,11 +42,12 @@ public sealed class HotPathHookCostTests
     }
 
     [Fact]
-    public void IsOpenHook_LoggingIsOffUnlessExplicitlyRequested()
+    public void HookTracing_IsOffUnlessExplicitlyRequested()
     {
-        // The env var is not set in this process, so the gate must read false. If it ever
-        // defaults to true again, the hot path pays a formatted console write per field read.
-        Assert.False(BcRuntime.IsOpenHookLoggingEnabled);
+        // AL_RUNNER_TRACE_HOOKS is not set in this process, so the gate must read false. If it
+        // ever defaults to true again, every field read pays a formatted console write and
+        // every record construction pays another.
+        Assert.False(BcRuntime.HookTraceEnabled);
     }
 
     [Fact]
@@ -157,6 +158,40 @@ public sealed class HotPathHookCostTests
         Assert.Equal(1, BcRuntime.RuntimeAssemblyScanCount);
         Assert.Null(BcRuntime.FindRuntimeAssembly("No.Such.Assembly.Exists"));
         Assert.Equal(2, BcRuntime.RuntimeAssemblyScanCount);
+    }
+
+    // ── NavMethodScope ctor: GetMethodScopeFlags lookup ───────────────────────
+
+    private sealed class ScopeWithFlags
+    {
+        // Same shape the real NavMethodScope subtypes have: a non-public instance method.
+        private int GetMethodScopeFlags() => 42;
+    }
+
+    private sealed class ScopeWithoutFlags
+    {
+    }
+
+    [Fact]
+    public void MethodScopeFlagsLookup_HappensOncePerScopeType()
+    {
+        BcRuntime.ResetGetMethodScopeFlagsCacheForTests();
+
+        var first = BcRuntime.ResolveGetMethodScopeFlags(typeof(ScopeWithFlags));
+        Assert.NotNull(first);
+        Assert.Equal("GetMethodScopeFlags", first!.Name);
+        Assert.Equal(42, first.Invoke(new ScopeWithFlags(), null));
+        Assert.Equal(1, BcRuntime.GetMethodScopeFlagsLookupCount);
+
+        for (var i = 0; i < 20; i++)
+            Assert.Same(first, BcRuntime.ResolveGetMethodScopeFlags(typeof(ScopeWithFlags)));
+        Assert.Equal(1, BcRuntime.GetMethodScopeFlagsLookupCount);
+
+        // A second type costs exactly one more lookup, not one per call.
+        Assert.Null(BcRuntime.ResolveGetMethodScopeFlags(typeof(ScopeWithoutFlags)));
+        Assert.Equal(2, BcRuntime.GetMethodScopeFlagsLookupCount);
+        Assert.Null(BcRuntime.ResolveGetMethodScopeFlags(typeof(ScopeWithoutFlags)));
+        Assert.Equal(2, BcRuntime.GetMethodScopeFlagsLookupCount);
     }
 
     [Fact]

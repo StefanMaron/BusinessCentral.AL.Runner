@@ -1111,10 +1111,18 @@ public static partial class RecordPatches
     /// Replacement for NavSession.DataAccessSource getter.
     /// Returns a skeleton DataAccessSource backed by TempTableDataProvider (in-memory).
     /// </summary>
+    /// <remarks>
+    /// PER RECORD CONSTRUCTION -- NavRecord..ctor asks the session for its DataAccessSource, so
+    /// this getter runs once per AL record variable that comes into existence. It used to open
+    /// with an unconditional Console.Error.WriteLine, the same leftover tracing aid the IsOpen
+    /// hook carried, and CPU sampling of the test in issue 2304 caught the two of them the
+    /// same way. Behind BcRuntime.HookTraceEnabled now, which is read once.
+    /// </remarks>
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static object? NavSession_get_DataAccessSource(NavSession self)
     {
-        Console.Error.WriteLine("[RecordPatches] NavSession_get_DataAccessSource called");
+        if (BcRuntime.HookTraceEnabled)
+            Console.Error.WriteLine("[RecordPatches] NavSession_get_DataAccessSource called");
         // Return cached DataAccessSource stored on the session's field.
         var existing = _fSessionDataAccessSource?.GetValue(self);
         if (existing != null) return existing;
