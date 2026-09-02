@@ -95,6 +95,7 @@ public static partial class RecordPatches
         Set("ToNavValueArray", FieldType("ToNavValueArray"), nameof(Join_ToNavValueArray));
         Set("TypedDefaultForField", FieldType("TypedDefaultForField"), nameof(Join_TypedDefaultForField));
         Set("ComputeAggregate", FieldType("ComputeAggregate"), nameof(Join_ComputeAggregate));
+        Set("CalcFlowFieldForRow", FieldType("CalcFlowFieldForRow"), nameof(Join_CalcFlowFieldForRow));
         Set("Log", FieldType("Log"), nameof(Join_Log));
         Set("OutOfScope", FieldType("OutOfScope"), nameof(Join_OutOfScope));
         return ctx;
