@@ -9,6 +9,8 @@
 // resolve them by parameter name and fall back to defaults / zero-values for
 // any we don't care about.
 using System.Collections.Immutable;
+using System.Globalization;
+using System.Linq;
 using System.Reflection;
 using Microsoft.Dynamics.Nav.Runtime;
 
@@ -535,6 +537,29 @@ public static partial class RecordPatches
                 {
                     iv = iv.Substring(1, iv.Length - 2).Replace("\"\"", "\"");
                 }
+                // #2339 — a Time field's InitValue is not evaluable text on either of the
+                // two paths it arrives by, and BC evaluates it with FORMAT 9 (the invariant
+                // XML format): NCLMetaField.InitValue is
+                // `ALSystemVariable.EvaluateIntoNavValue(null, ThrowError, this,
+                // initialValueText, 9)` (Ncl @ 157875).
+                //
+                //   * From SymbolReference.json it arrives as BC's INTERNAL representation —
+                //     milliseconds since midnight plus one. Base App table 1513
+                //     "Notification Schedule" field 4 carries "43200001" for `InitValue =
+                //     120000T`, and table 2161 carries "1" for midnight.
+                //   * From AL source it arrives as the literal the author wrote, `120000T`.
+                //
+                // Neither parses as format 9, so every Init() of such a table threw
+                // "The value \"43200001\" can't be evaluated into type Time" — 102 of the
+                // tests in Microsoft's Tests-SINGLESERVER bucket, all reaching it through
+                // Notification Schedule.GetTelemetryDimensions on the approval-notification
+                // path. Normalising to HH:mm:ss.fff gives BC's own evaluator the shape it
+                // documents, so the value AL reads back is the one the AL author declared.
+                else if (tn.StartsWith("Time", StringComparison.OrdinalIgnoreCase)
+                    && TryNormalizeTimeInitValue(iv, out var normalizedTime))
+                {
+                    iv = normalizedTime;
+                }
                 args[i] = iv;
                 continue;
             }
@@ -542,6 +567,59 @@ public static partial class RecordPatches
             args[i] = p.ParameterType.IsValueType ? Activator.CreateInstance(p.ParameterType) : null;
         }
         return ctor.Invoke(args)!;
+    }
+
+    /// <summary>
+    /// A Time field's InitValue, normalised to the invariant <c>HH:mm:ss.fff</c> shape BC's
+    /// own <c>ALSystemVariable.EvaluateIntoNavValue(..., 9)</c> parses (#2339). Returns false
+    /// — leaving the text untouched — for anything already in that shape or not recognised,
+    /// so an unfamiliar spelling still reaches BC's evaluator rather than being silently
+    /// replaced by a value this method made up.
+    /// <para>Two input spellings are recognised, one per path the text arrives by:
+    /// BC's internal integer (milliseconds since midnight PLUS ONE, so 1 is midnight and
+    /// 43200001 is noon), and AL's own time literal (<c>120000T</c>, i.e. HHMMSS[.fff]
+    /// followed by T).</para>
+    /// </summary>
+    internal static bool TryNormalizeTimeInitValue(string? text, out string normalized)
+    {
+        normalized = string.Empty;
+        var s = (text ?? string.Empty).Trim();
+        if (s.Length == 0) return false;
+
+        // BC's internal representation: all digits. Zero means "no value"; BC's own
+        // GetDefaultNavValue already covers that, so leave it alone rather than emitting
+        // a spurious 00:00:00.
+        if (s.All(char.IsDigit))
+        {
+            if (!long.TryParse(s, System.Globalization.NumberStyles.None,
+                    CultureInfo.InvariantCulture, out var raw) || raw <= 0)
+                return false;
+            var ms = raw - 1;                       // 1 == midnight
+            if (ms >= 24L * 60 * 60 * 1000) return false;
+            normalized = TimeSpan.FromMilliseconds(ms).ToString(@"hh\:mm\:ss\.fff", CultureInfo.InvariantCulture);
+            return true;
+        }
+
+        // AL's literal: HHMMSS[.fff] followed by T.
+        if (s[^1] is 'T' or 't')
+        {
+            var body = s[..^1];
+            var dot = body.IndexOf('.');
+            var whole = dot < 0 ? body : body[..dot];
+            var frac = dot < 0 ? string.Empty : body[(dot + 1)..];
+            if (whole.Length is not (>= 1 and <= 6) || !whole.All(char.IsDigit)) return false;
+            if (frac.Length > 0 && !frac.All(char.IsDigit)) return false;
+            whole = whole.PadLeft(6, '0');
+            var h = int.Parse(whole[..2], CultureInfo.InvariantCulture);
+            var m = int.Parse(whole.Substring(2, 2), CultureInfo.InvariantCulture);
+            var sec = int.Parse(whole.Substring(4, 2), CultureInfo.InvariantCulture);
+            if (h > 23 || m > 59 || sec > 59) return false;
+            var f = frac.Length == 0 ? 0 : int.Parse(frac.PadRight(3, '0')[..3], CultureInfo.InvariantCulture);
+            normalized = new TimeSpan(0, h, m, sec, f).ToString(@"hh\:mm\:ss\.fff", CultureInfo.InvariantCulture);
+            return true;
+        }
+
+        return false;
     }
 
     /// <summary>
