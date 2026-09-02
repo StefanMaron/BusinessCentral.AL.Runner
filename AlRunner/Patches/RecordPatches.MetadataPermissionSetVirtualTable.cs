@@ -214,7 +214,21 @@ public static partial class RecordPatches
                     IsPermissionSetAppIdNull(permissionSet.Name) ? Guid.Empty : owningAppId
                 });
             case "roleid":
-                return _mpsNavCodeCtor!.Invoke(new object?[] { field.FieldDefinedLength, permissionSet.Name });
+                // NavCode(maxLength, value) does NOT truncate — it requires value.Length <=
+                // maxLength already and a later ModifyLength(shorter) on an over-length value
+                // throws NavNCLStringLengthExceededException rather than losing data (#2357).
+                // A real permissionset object's declared NAME can exceed Code[20] — the
+                // System Application itself ships one 22 characters long ("System Execute -
+                // Basic") — and AL's own Code[N] assignment semantics truncate silently, the
+                // same way `SomeCode20Var := SomeLongerText;` does anywhere else in AL. Match
+                // that here rather than passing the untruncated symbol name through.
+                return _mpsNavCodeCtor!.Invoke(new object?[]
+                {
+                    field.FieldDefinedLength,
+                    permissionSet.Name.Length > field.FieldDefinedLength
+                        ? permissionSet.Name.Substring(0, field.FieldDefinedLength)
+                        : permissionSet.Name
+                });
             case "name":
                 // NCLMetaPermissionSet.Caption is `?? string.Empty`, so a permission set
                 // declaring no Caption gets a BLANK Name on a real tier — substituting the
