@@ -13,6 +13,7 @@ All notable changes to this project are documented here. Format based on
 - **all-profile:** populate the All Profile system virtual table (2000000178)
 
 ### Fixed
+- **testpage:** inject lazy trigger/validate subscribers at TestPageFactory's record construction site
 - **testpage:** render an Option/Enum ordinal as the control's text in ValueToString
 - **test-exec:** make an unreachable null-instance branch throw, not break
 - **report:** read ProcessingOnly from dependency symbols, not only parsed AL source
