@@ -140,6 +140,16 @@ public sealed class TestExecutor
     /// </summary>
     public Infrastructure.ExpectationManifest? Expectations { get; set; }
 
+    // #2415: a hung test's watchdog fires correctly (RunOne's TIMEOUT branch), but the
+    // codeunit/type loop below used to respond with a bare `return results;` — ending the
+    // WHOLE Run() call, silently, with no exception and no record of what was abandoned.
+    // Program.cs's catch-and-report-as-suite-error path only fires when Run() THROWS, so a
+    // clean early return left `bundleErrors` at 0 and the test count merely smaller, exactly
+    // as if fewer tests existed. Populated by RecordAbortedSuite, reset at the top of every
+    // Run() call (this executor instance is reused across bundles/app-groups) so a suite
+    // that aborted does not leak its reasons into the next, clean one.
+    public IReadOnlyList<string> AbortReasons { get; private set; } = Array.Empty<string>();
+
     // #1867: process-lifetime cache of the dependency-assemblies' Install triggers +
     // Company-Initialize (codeunit 2) — the invariant portion of the per-app-group
     // "install-seed" sequence, keyed by InstallTriggerRunner.CurrentDependencySetKey()
@@ -289,6 +299,7 @@ public sealed class TestExecutor
     {
         var totalSw = System.Diagnostics.Stopwatch.StartNew();
         var results = new List<TestResult>();
+        AbortReasons = Array.Empty<string>();   // #2415: this instance is reused across Run() calls
         var ctorParam = typeof(Microsoft.Dynamics.Nav.Runtime.ITreeObject);
         var filter = NormaliseFilter(TestFilter);
         var typeSw = System.Diagnostics.Stopwatch.StartNew();
@@ -496,8 +507,9 @@ public sealed class TestExecutor
         // instance under Codeunit isolation is therefore faithful, and Test isolation's
         // fresh instance per test is AL's TestIsolation = Function.
         var perTestInstance = Isolation == TestIsolation.Test;
-        foreach (var t in types)
+        for (int ti = 0; ti < types.Length; ti++)
         {
+            var t = types[ti];
             // Cooperative cancellation: stop before instantiating the next test
             // codeunit. See the Run() doc comment — never mid-test.
             if (cancellationToken.IsCancellationRequested) break;
@@ -575,10 +587,12 @@ public sealed class TestExecutor
             var isFirstMethod = true;
 
             var loopSw = System.Diagnostics.Stopwatch.StartNew();
+            var orderedMethods = OrderTestMethodsBySourceDeclaration(t);
             try
             {
-                foreach (var m in OrderTestMethodsBySourceDeclaration(t))
+                for (int mi = 0; mi < orderedMethods.Length; mi++)
                 {
+                    var m = orderedMethods[mi];
                     // Cooperative cancellation: stop before running the next test
                     // method inside this already-instantiated codeunit.
                     if (cancellationToken.IsCancellationRequested) break;
@@ -662,9 +676,16 @@ public sealed class TestExecutor
 
                     // Timeout is judged on the RAW outcome: even if a manifest entry
                     // reclassifies the hung test, its runaway thread still poisons the
-                    // process, so the suite must stop either way.
+                    // process, so the suite must stop either way. #2415: make the stop
+                    // loud — count what this abandons (the rest of this codeunit, plus
+                    // every later codeunit the outer loop will now never reach) before
+                    // returning, so the caller can report a non-zero suite-error count
+                    // instead of a quietly-smaller test total.
                     if (IsTimeout(raw))
+                    {
+                        RecordAbortedSuite(t, m, displayName, orderedMethods, mi, types, ti, filter);
                         return results;
+                    }
                 }
                 methodLoopMs += loopSw.ElapsedMilliseconds;
             }
@@ -1079,6 +1100,52 @@ public sealed class TestExecutor
     // TestTimeoutFlagTests), not a classification channel, and the same fact now has
     // to be answered for protocol-v2's `errorKind` too. One source of truth.
     private static bool IsTimeout(TestResult result) => result.TimedOut;
+
+    // #2415: called right before the timeout path's early `return results;`. Counts
+    // every [Test] method this abort abandons — the rest of THIS codeunit (methods
+    // after `mi` in source-declaration order) plus every later test codeunit the
+    // outer loop (`types[ti+1..]`) will now never reach — and records one loud,
+    // human-readable line naming the hang's origin and the total. Deliberately does
+    // NOT consult the expectations manifest for `skip`-declared methods among the
+    // abandoned ones: undercounting here would silently understate the loss again,
+    // which is exactly the failure mode this method exists to close off; a handful of
+    // legitimately-skipped tests inflating the count by a few is the safe direction.
+    private void RecordAbortedSuite(Type hungType, MethodInfo hungMethod, string hungDisplayName,
+        MethodInfo[] orderedMethodsInHungType, int hungMethodIndex,
+        Type[] allTypes, int hungTypeIndex, string? filter)
+    {
+        int remainingInCodeunit = 0;
+        for (int mi = hungMethodIndex + 1; mi < orderedMethodsInHungType.Length; mi++)
+        {
+            var mm = orderedMethodsInHungType[mi];
+            if (!IsTestMethod(mm)) continue;
+            if (filter != null && !MethodMatchesFilter(hungType.Name, mm.Name, filter)) continue;
+            remainingInCodeunit++;
+        }
+
+        int remainingCodeunits = 0, remainingInOtherCodeunits = 0;
+        for (int ti = hungTypeIndex + 1; ti < allTypes.Length; ti++)
+        {
+            var t2 = allTypes[ti];
+            if (!IsTestCodeunit(t2)) continue;
+            if (filter != null && !CodeunitMatchesFilter(t2, filter)) continue;
+            var count = t2.GetMethods(BindingFlags.Public | BindingFlags.Instance)
+                .Count(mm => IsTestMethod(mm) && (filter == null || MethodMatchesFilter(t2.Name, mm.Name, filter)));
+            if (count == 0) continue;
+            remainingCodeunits++;
+            remainingInOtherCodeunits += count;
+        }
+
+        var total = remainingInCodeunit + remainingInOtherCodeunits;
+        var reason = $"{hungDisplayName} ({hungType.Name}).{hungMethod.Name}: watchdog timeout aborted the run — " +
+            $"{remainingInCodeunit} further [Test] method(s) in this codeunit" +
+            (remainingCodeunits > 0
+                ? $" and {remainingInOtherCodeunits} in {remainingCodeunits} subsequent codeunit(s)"
+                : "") +
+            $" did not run ({total} total)";
+        Console.Error.WriteLine($"[test-exec] SUITE ABORTED: {reason}");
+        AbortReasons = AbortReasons.Append(reason).ToList();
+    }
 
     private static Exception Unwrap(Exception ex)
     {
