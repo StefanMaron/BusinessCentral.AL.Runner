@@ -315,10 +315,12 @@ public sealed partial class BcCompiler
     /// cannot prove safe; <paramref name="fallbackReason"/> names it. On success, this instance's
     /// baseline for <paramref name="moduleName"/> is already updated for the NEXT cycle.
     /// </summary>
-    public BcEmitOutput? TryEmitIncremental(
-        IEnumerable<string> alFolders, string moduleName, string? appRootDir, out string fallbackReason)
+    internal BcEmitOutput? TryEmitIncremental(
+        IEnumerable<string> alFolders, string moduleName, string? appRootDir,
+        out string fallbackReason, out IReadOnlyList<RadObjectIdentity>? changedObjects)
     {
         fallbackReason = "";
+        changedObjects = null;
         if (!_radBaselines.TryGetValue(moduleName, out var baseline))
         {
             // #2002: under --tdd, RecordIncrementalBaseline (called from Emit, below) is
@@ -390,6 +392,7 @@ public sealed partial class BcCompiler
         {
             // Every file hashes identical to the last cycle — including a touch-with-identical-
             // bytes. Genuinely zero work: replay the last cycle's result verbatim.
+            changedObjects = Array.Empty<RadObjectIdentity>();
             return baseline.LastOutput;
         }
 
@@ -528,6 +531,11 @@ public sealed partial class BcCompiler
         foreach (var c in contentEdits) allChangedIdentities.Add(c.Identity);
         foreach (var r in renamePairs) allChangedIdentities.Add(r.Identity);
         foreach (var v in vacated.Values) allChangedIdentities.Add(v.Identity);
+        changedObjects = allChangedIdentities
+            .OrderBy(i => i.Kind.ToString(), StringComparer.Ordinal)
+            .ThenBy(i => i.Id ?? int.MaxValue)
+            .ThenBy(i => i.Name, StringComparer.Ordinal)
+            .ToArray();
 
         var selfSpec = new NavCA.SymbolReferenceSpecification(
             publisher: publisher, name: moduleName, version: version,
@@ -655,6 +663,15 @@ public sealed partial class BcCompiler
 
         return output;
     }
+
+    internal BcEmitOutput? TryEmitIncremental(
+        IEnumerable<string> alFolders, string moduleName, string? appRootDir, out string fallbackReason)
+        => TryEmitIncremental(alFolders, moduleName, appRootDir, out fallbackReason, out _);
+
+    internal IReadOnlyDictionary<string, RadObjectIdentity>? TryGetTrackedObjectsByPath(string moduleName)
+        => _radBaselines.TryGetValue(moduleName, out var baseline)
+            ? baseline.ObjectByPath
+            : null;
 
     /// <summary>
     /// Called by <see cref="Emit"/> after a clean success, when its caller passed
