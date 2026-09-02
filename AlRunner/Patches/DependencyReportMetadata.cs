@@ -258,6 +258,9 @@ public static partial class RecordPatches
         w.WriteElementString("FriendlyFieldName", col.Name);
         if (CanonicalNavTypeName(col.TypeName) is { } fieldType)
             w.WriteElementString("FieldType", fieldType);
+        else if (Environment.GetEnvironmentVariable("AL_RUNNER_DIAG_RP") == "1")
+            System.IO.File.AppendAllText("/tmp/al-runner-diag-cols.txt",
+                $"name={col.Name} typeName={col.TypeName ?? "(null)"}\n");
 
         // FieldNo is only stated when the expression is a plain field of the data item's own
         // table. A computed column (`Format(...)`, a variable, a nested record's field) has

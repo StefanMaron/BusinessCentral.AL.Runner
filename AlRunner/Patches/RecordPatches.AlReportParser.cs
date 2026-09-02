@@ -110,6 +110,31 @@ public static partial class RecordPatches
     /// </summary>
     public static bool IsReportProcessingOnly(int reportId) =>
         _parsedReports.TryGetValue(reportId, out var p) && p.ProcessingOnly;
+
+    /// <summary>
+    /// AL-declared UseRequestPage for the given report ID — checked at report CONSTRUCTION
+    /// time (NavReportSync.CompleteReportConstruction) to seed the live
+    /// NavReport.UseRequestForm property, mirroring BC's own
+    /// <c>UseRequestForm = base.Metadata.UseRequestForm</c> assignment (decompiled from
+    /// Ncl.dll), which the runner's stub/real metadata construction does not otherwise
+    /// populate. AL test code calling <c>Report.UseRequestPage(false)</c> at runtime
+    /// overrides this normally afterwards, via the property setter, same as real BC.
+    ///
+    /// Checks source-compiled reports first (<c>_parsedReports</c>), then a dependency
+    /// .app's own symbol reference (<c>EnumerateBcAppReportSymbols</c>, same source the
+    /// Report Metadata virtual table reads) — the same two-tier lookup
+    /// <see cref="IsReportProcessingOnly"/>'s sibling machinery already uses. Defaults to
+    /// <c>true</c> (AL's own default — the request page IS shown unless told otherwise) when
+    /// the report is unknown to both, rather than <c>false</c> like
+    /// <see cref="IsReportProcessingOnly"/> — the two properties have opposite AL defaults.
+    /// </summary>
+    public static bool GetReportUseRequestPage(int reportId)
+    {
+        if (_parsedReports.TryGetValue(reportId, out var p)) return p.UseRequestPage;
+        foreach (var symbol in EnumerateBcAppReportSymbols())
+            if (symbol.Id == reportId) return symbol.UseRequestPage;
+        return true;
+    }
 }
 
 internal record ParsedReport(int Id, string Name, bool IsExtension, bool ProcessingOnly = false)

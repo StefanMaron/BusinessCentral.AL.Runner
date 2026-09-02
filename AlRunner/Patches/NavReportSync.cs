@@ -36,6 +36,10 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.CompilerServices;
+using Microsoft.Dynamics.Nav.Runtime;
+using Microsoft.Dynamics.Nav.Types;
+using Microsoft.Dynamics.Nav.Types.Data;
+using Microsoft.Dynamics.Nav.Types.Metadata;
 
 namespace AlRunner;
 
@@ -532,6 +536,206 @@ public static class NavReportSync
         return testPage.Confirmed;
     }
 
+    private static PropertyInfo? _useRequestFormProp; // NavReport.UseRequestForm : bool
+
+    /// <summary>
+    /// Read the live <c>NavReport.UseRequestForm</c> value off the report instance —
+    /// the same flag BC's own <c>RunReportInternalCoreAsync</c> reads
+    /// (<c>bool flag = !UseRequestForm || IsBackGroundSession;</c>, decompiled from
+    /// Ncl.dll) to decide whether to show the request page at all. AL's built-in
+    /// <c>Report.UseRequestPage(false)</c> compiles straight to <c>set_UseRequestForm</c>
+    /// (there is no method literally named <c>UseRequestPage</c> anywhere in Ncl —
+    /// confirmed by a full metadata scan), so reading the live property after
+    /// construction picks up both the report's own declared default (seeded by
+    /// <see cref="CompleteReportConstruction"/>, since BC's own construction path —
+    /// <c>UseRequestForm = base.Metadata.UseRequestForm;</c> — is not reachable from the
+    /// runner's stub/real metadata construction) and any runtime override the AL under
+    /// test made before calling Run()/RunModal().
+    /// </summary>
+    private static bool ReadUseRequestForm(object report)
+    {
+        if (_useRequestFormProp == null)
+        {
+            for (Type? t = report.GetType(); t != null; t = t.BaseType)
+            {
+                _useRequestFormProp = t.GetProperty("UseRequestForm",
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly);
+                if (_useRequestFormProp != null) break;
+            }
+        }
+        // Defensive: if Ncl's shape changed and the property cannot be found, keep today's
+        // behaviour (no dispatch) rather than newly throwing across the whole corpus.
+        return _useRequestFormProp?.GetValue(report) is true;
+    }
+
+    /// <summary>
+    /// Dispatch the report's request page for the plain <c>Report.Run()</c> / <c>RunModal()</c>
+    /// entry point, mirroring BC's own <c>RunReportInternalCoreAsync</c> →
+    /// <c>RunRequestPageCoreAsync</c> sequence (decompiled from Ncl.dll): <c>UseRequestForm</c>
+    /// gates whether the dialog is shown at all; when it is, BC dispatches to the test's own
+    /// <c>[RequestPageHandler]</c> via <c>TestHandleModalForm</c> — exactly what the explicit
+    /// <c>Report.RunRequestPage()</c> call already does through
+    /// <see cref="RunRequestPageForHandler"/> above. This reuses that same dispatch
+    /// mechanism (bind → RunModal → handler fires) rather than re-implementing it.
+    ///
+    /// Returns <c>(true, null)</c> when <c>UseRequestForm</c> is false or the report has no
+    /// request page at all — BC runs the report straight through with the request page's
+    /// own default values, no handler involved (the <c>flag</c> branch of
+    /// <c>RunReportInternalCoreAsync</c>). Returns <c>(testPage.ClosedForRun, testPage)</c>
+    /// once a handler has closed the page — <c>false</c> for Cancel/LookupCancel/an
+    /// unhandled close, matching real BC where a cancelled request page makes the void
+    /// <c>Run()</c>/<c>RunModal()</c> do nothing (no AL-observable error).
+    /// </summary>
+    private static (bool shouldRun, AlRunner.Patches.RequestPageTestPage? testPage) DispatchRequestPageForRun(
+        object report, int reportId)
+    {
+        if (!ReadUseRequestForm(report)) return (true, null);
+
+        var pRequestPage = FindProperty(report.GetType(), "RequestOptionsPage");
+        if (pRequestPage == null) return (true, null);
+        object? requestPage;
+        try { requestPage = pRequestPage.GetValue(report); }
+        catch (TargetInvocationException) { return (true, null); }
+        if (requestPage == null) return (true, null);
+
+        var testPage = AlRunner.Patches.RequestPageTestPage.Bind(requestPage, report, reportId);
+
+        var runModal = requestPage.GetType().GetMethod("RunModal",
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null, types: Type.EmptyTypes, modifiers: null);
+        if (runModal == null) return (true, null);
+        try
+        {
+            Invoke(runModal, requestPage, Array.Empty<object?>());
+        }
+        catch (Exception ex) when (ex.GetType().Name == "NavNCLCallbackNotAllowedException")
+        {
+            // Same "no handler matched" shape RunRequestPageForHandler already throws for
+            // the explicit RunRequestPage() call — see its comment above. Report.Run() now
+            // reaches the same dispatch, so a report that shows a request page
+            // (UseRequestPage is not false) with no declared [RequestPageHandler] hits it
+            // too, exactly as real BC's own test framework would refuse an unhandled dialog.
+            throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+                "NavReport.Run request page",
+                "request-page-dispatch — report " + reportId + " shows a request page "
+                + "(UseRequestPage is not false) but BC found no [RequestPageHandler] for "
+                + "it, so it fell through to a client callback the runner cannot serve. "
+                + "Either declare a [RequestPageHandler], or call "
+                + "Report.UseRequestPage(false) before Run()/RunModal() if the test does "
+                + "not need the dialog. See docs/scope.md");
+        }
+
+        return (testPage.ClosedForRun, testPage);
+    }
+
+    private static PropertyInfo? _testExecutionProp; // NavSession.TestExecution
+
+    /// <summary>The <c>NavSession.TestExecution</c> (<c>NavTestExecution</c>) for a report
+    /// instance's session, or null if either lookup fails.</summary>
+    private static object? GetTestExecution(object navReport)
+    {
+        var session = TryGetSession(navReport);
+        if (session == null) return null;
+        _testExecutionProp ??= session.GetType().GetProperty("TestExecution",
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+        return _testExecutionProp?.GetValue(session);
+    }
+
+    private static string? ReadTestExecutionString(object testExecution, string propertyName)
+        => testExecution.GetType()
+            .GetProperty(propertyName, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?
+            .GetValue(testExecution) as string;
+
+    private static void WriteTestExecutionValue(object testExecution, string propertyName, object? value)
+    {
+        var p = testExecution.GetType().GetProperty(propertyName,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+        if (p != null && p.CanWrite) p.SetValue(testExecution, value);
+    }
+
+    /// <summary>
+    /// Install BC's own <c>ReportSaveAsXmlRenderer</c> (Ncl.dll) as the
+    /// <c>DataItemIterator.ResultSetProcessor</c> BEFORE the data-item loop runs, so
+    /// <c>SetValue</c>/<c>SetCurrentDataSet</c>/<c>StartLevelAsync</c>/<c>EndLevelAsync</c>
+    /// during the loop populate a REAL dataset instead of <c>NullResultSetProcessor</c>'s
+    /// discard. Mirrors <c>ReportResultSetProcessorFactory.GetTestResultProcessor()</c>
+    /// (decompiled from Ncl.dll), which takes exactly this branch whenever
+    /// <c>Session.TestExecution.ReportOutputFileName != null</c> and the requested format is
+    /// Xml/None — entirely before any layout is resolved. Reuses BC's own
+    /// <c>NavDataSetBuilder.CreateNavDataSet</c> (public static, Types.dll) rather than
+    /// building a dataset ourselves.
+    /// </summary>
+    private static void InstallXmlResultSetProcessor(object navReport, Type navReportBase, int reportId)
+    {
+        Type? iter = navReport.GetType();
+        while (iter != null && iter.Name != "DataItemIterator") iter = iter.BaseType;
+        if (iter == null) return;
+
+        _resultSetProcessorProp ??= iter.GetProperty("ResultSetProcessor",
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+        if (_resultSetProcessorProp == null) return;
+        if (_resultSetProcessorProp.GetValue(navReport) != null) return; // don't clobber
+
+        var testExecution = GetTestExecution(navReport);
+        if (testExecution == null) return;
+        var dataSetFileName = ReadTestExecutionString(testExecution, "ReportOutputFileName");
+        if (string.IsNullOrEmpty(dataSetFileName)) return; // SaveAsXml was never actually called
+        var parametersFileName = ReadTestExecutionString(testExecution, "ReportParameterOutputFileName");
+
+        if (_metadataSetter == null)
+        {
+            Type? t = navReportBase;
+            while (t != null && _metadataSetter == null)
+            {
+                _metadataSetter = t.GetProperty("Metadata",
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                t = t.BaseType;
+            }
+        }
+        if (_metadataSetter?.GetValue(navReport) is not MetaReport metaReport) return;
+
+        if (Environment.GetEnvironmentVariable("AL_RUNNER_DIAG_RP") == "1")
+        {
+            var lines = new System.Collections.Generic.List<string>();
+            foreach (var di in metaReport.DataItems)
+            {
+                foreach (var col in di.DataItemColumns)
+                    lines.Add($"report={reportId} dataitem={di.DataItemVarName} col={col.Name} fieldType={col.FieldType}");
+            }
+            System.IO.File.AppendAllLines("/tmp/al-runner-diag-metareport-cols.txt", lines);
+        }
+
+        var dataSet = NavDataSetBuilder.CreateNavDataSet(metaReport);
+
+        var delegateType = typeof(ReportSaveAsXmlRenderer).GetNestedType("GetReportParameters", BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException(
+                "ReportSaveAsXmlRenderer.GetReportParameters not found — Ncl shape changed; do not commit");
+        var getParamsMethod = navReportBase.GetMethod("GetParameters",
+            BindingFlags.Instance | BindingFlags.Public, binder: null, types: Type.EmptyTypes, modifiers: null);
+        if (getParamsMethod == null) return;
+        var paramsDelegate = Delegate.CreateDelegate(delegateType, navReport, getParamsMethod);
+
+        var ctor = typeof(ReportSaveAsXmlRenderer).GetConstructor(
+            BindingFlags.NonPublic | BindingFlags.Instance, binder: null,
+            types: new[] { typeof(string), delegateType, typeof(string), typeof(NavDataSet) }, modifiers: null)
+            ?? throw new InvalidOperationException(
+                "ReportSaveAsXmlRenderer(string, GetReportParameters, string, NavDataSet) not found — "
+                + "Ncl shape changed; do not commit");
+        var renderer = ctor.Invoke(new object?[] { parametersFileName, paramsDelegate, dataSetFileName, dataSet });
+
+        var setter = _resultSetProcessorProp.GetSetMethod(nonPublic: true)
+            ?? throw new InvalidOperationException(
+                "DataItemIterator.ResultSetProcessor has no setter — Ncl shape changed; do not commit");
+        setter.Invoke(navReport, new[] { renderer });
+
+        // BC's own GetTestResultProcessor() clears these three TestExecution fields once it
+        // has consumed them into the renderer — leaving them set would make the NEXT report
+        // run on this session see a stale SaveAsXml target.
+        WriteTestExecutionValue(testExecution, "ReportOutputFileName", null);
+        WriteTestExecutionValue(testExecution, "ReportParameterOutputFileName", null);
+        WriteTestExecutionValue(testExecution, "ReportOutputFormat", FormResult.None);
+    }
+
     /// <summary>Register a form with the skeleton company, ignoring an already-registered one.</summary>
     private static void TryRegisterForm(object form)
     {
@@ -626,13 +830,35 @@ public static class NavReportSync
         TryRunOrControlFlow(navReport, navReportBase);
     }
 
-    // Runs the full lifecycle (OnInitReport → OnPreReport → DataItems →
+    // Runs the full lifecycle (request page → OnInitReport → OnPreReport → DataItems →
     // OnPostReport → layout). Catches NavControlException (Skip/Quit/etc.)
     // as control-flow termination, not error.
     private static bool TryRunOrControlFlow(object navReport, Type navReportBase)
     {
         try
         {
+            int reportId = TryGetObjectId(navReport, navReportBase);
+            var (shouldRun, requestPage) = DispatchRequestPageForRun(navReport, reportId);
+            if (!shouldRun)
+            {
+                // The request page was CANCELLED (or the handler never closed it at all).
+                // Report.Run() / RunModal() are both void in AL — a cancelled dialog means
+                // the report does not execute, same as real BC; no AL-observable error.
+                if (Environment.GetEnvironmentVariable("AL_RUNNER_DIAG_IC") == "1")
+                    Console.Error.WriteLine($"[NavReportSync] SyncRun: report {reportId} request page not confirmed — Run() is a no-op");
+                return false;
+            }
+
+            // A request page closed with FormResult.Xml (Report.SaveAsXml in the
+            // [RequestPageHandler]) must have its ResultSetProcessor installed BEFORE the
+            // data-item loop runs — real BC's ReportResultSetProcessorFactory.CreateInstance
+            // does the same, ahead of ExecuteDataItemIteratorAsync, so SetValue/
+            // StartLevelAsync/EndLevelAsync during the loop populate a real dataset instead
+            // of being silently thrown away by NullResultSetProcessor.
+            bool xmlOutput = requestPage != null && requestPage.FormResult == FormResult.Xml;
+            if (xmlOutput)
+                InstallXmlResultSetProcessor(navReport, navReportBase, reportId);
+
             InvokeVirtual(_onInitReport, navReport);
             ApplyCallerTableViewBeforePreReport(navReport);
             InvokeVirtual(_onPreReport, navReport);
@@ -648,7 +874,14 @@ public static class NavReportSync
             // rewritten to throw an OOS InvalidOperationException on
             // ThrowError). The error therefore originates from the actual
             // layout-resolution code path, not from a guard at the top of Run.
-            if (!IsProcessingOnly(navReport, navReportBase))
+            //
+            // EXCEPT when the request page selected XML output: BC's own
+            // ReportResultSetProcessorFactory.CreateInstance() (decompiled from Ncl.dll)
+            // routes Session.TestExecution.ReportOutputFileName != null straight to
+            // GetTestResultProcessor() BEFORE any layout resolution — no layout is ever
+            // touched for that case, so InvokeDataItems (which already ran the real
+            // ReportSaveAsXmlRenderer installed above) is the whole story.
+            if (!IsProcessingOnly(navReport, navReportBase) && !xmlOutput)
                 InvokeLayoutForReport(navReport, navReportBase);
             return false;
         }
@@ -861,7 +1094,19 @@ public static class NavReportSync
         if (_applyDataItemTableView != null)
             Invoke(_applyDataItemTableView, navReport, Array.Empty<object?>());
 
+        // BC's own ExecuteDataItemIteratorAsync (decompiled from Ncl.dll) wraps the loop in
+        // ResultSetProcessor.StartAsync() / FinishAsync() — StartAsync clears any
+        // accumulated dataset state before the first row, FinishAsync renders/closes it
+        // (for ReportSaveAsXmlRenderer, closes the XmlWriter) once the loop has completed
+        // normally. NullResultSetProcessor's versions are no-ops (verified by decompile), so
+        // calling them unconditionally is safe for every report that does not carry a real
+        // output renderer today. FinishAsync deliberately runs only on the success path —
+        // matching BC, which does not call it when the loop throws (NavControlException or
+        // an AL error both skip it there too; the caller's own AbortAsync handles cleanup).
+        var processor = (IResultSetProcessor?)_resultSetProcessorProp?.GetValue(navReport);
+        if (processor != null) AwaitValueTask(processor.StartAsync());
         AwaitValueTask(Invoke(_loopRootDataItems, navReport, Array.Empty<object?>()));
+        if (processor != null) AwaitValueTask(processor.FinishAsync());
     }
 
     /// <summary>
@@ -1438,6 +1683,17 @@ public static class NavReportSync
         // key off base.ObjectId.ObjectNumber and otherwise resolve "report 0".
         SeedObjectId(instance, reportId);
 
+        // Seed NavReport.UseRequestForm from the report's own declared UseRequestPage AL
+        // property (parsed source, or a dependency .app's symbol reference). Real BC seeds
+        // this at construction from `base.Metadata.UseRequestForm`; the runner's stub/real
+        // MetaReport construction does not populate it, so without this seed every AL-
+        // emitted report reads UseRequestForm as C#'s bool default (false) regardless of
+        // what the report actually declares — silently skipping request-page dispatch for
+        // every report that never explicitly calls Report.UseRequestPage(...) at runtime.
+        // A later runtime `Report.UseRequestPage(false)` call still overrides this normally
+        // through the property setter, same as real BC.
+        SeedUseRequestForm(instance, reportId);
+
         try
         {
             // BC's MetaReport(XmlNode) ctor calls BuildDataItemTree() before the report runs;
@@ -1454,6 +1710,21 @@ public static class NavReportSync
         {
             throw tie.InnerException;
         }
+    }
+
+    private static void SeedUseRequestForm(object instance, int reportId)
+    {
+        if (_useRequestFormProp == null)
+        {
+            for (Type? t = instance.GetType(); t != null; t = t.BaseType)
+            {
+                _useRequestFormProp = t.GetProperty("UseRequestForm",
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly);
+                if (_useRequestFormProp != null) break;
+            }
+        }
+        if (_useRequestFormProp == null || !_useRequestFormProp.CanWrite) return;
+        _useRequestFormProp.SetValue(instance, AlRunner.Patches.RecordPatches.GetReportUseRequestPage(reportId));
     }
 
     private static PropertyInfo? _appObjBaseSessionProp;

@@ -87,6 +87,23 @@ internal sealed class RequestPageTestPage : MockITestPage
     /// <summary>True once the handler confirmed with OK (or LookupOK).</summary>
     internal bool Confirmed => _formResult is FormResult.OK or FormResult.LookupOK;
 
+    /// <summary>
+    /// True when the handler closed the page with anything BC's own
+    /// <c>NavReport.RunRequestPageCoreAsync</c> switch maps to a real <c>ReportIntent</c>
+    /// (decompiled from Ncl.dll: Pdf/Word/Excel/Xml/ExcelDataset -&gt; Download,
+    /// Preview/PreviewPrint -&gt; Preview, Print -&gt; Print, Schedule -&gt; Schedule, OK/LookupOK
+    /// via the built-in action same as <see cref="Confirmed"/>). False for Cancel/LookupCancel
+    /// or a handler that returned without invoking any built-in action (still <c>None</c>) —
+    /// both cases BC's switch falls through to <c>ReportIntent.None</c>, which
+    /// <c>Report.Run()</c>/<c>RunModal()</c> (both void) observe as "did nothing", not an
+    /// error. Used by <c>NavReportSync</c> to decide whether a request-page-driven
+    /// <c>Report.Run()</c> proceeds to execute the report at all.
+    /// </summary>
+    internal bool ClosedForRun => _formResult is FormResult.OK or FormResult.LookupOK
+        or FormResult.Pdf or FormResult.Word or FormResult.Excel or FormResult.Xml
+        or FormResult.ExcelDataset or FormResult.Preview or FormResult.PreviewPrint
+        or FormResult.Print or FormResult.Schedule;
+
     public override ITestAction GetBuiltInAction(FormResult formResult)
         => new RecordingBuiltInAction(this, formResult);
 
