@@ -116,8 +116,18 @@ tier with SQL Server.
 | API | Reason |
 |---|---|
 | `Report.SaveAsPdf` / `SaveAsHtml` / `SaveAsExcel` / `SaveAsWord` / `SaveAsDocx` | No layout renderer. Cecil-rewritten to throw `InvalidOperationException("out-of-scope: NavReport.SaveAs* ...")`. Tests `asserterror` + `Assert.ExpectedError('out-of-scope: NavReport.SaveAs')`. |
-| `Report.RunRequestPage(...)` | No UI tier — request-page dialog can't be rendered or driven. Throws OOS at the sync wrapper before entering `RunReportAsync`. |
-| Static `Report.Run(id, ...)` / `Report.RunModal(id, ...)` | In-process construction from a metadata id is not yet wired; throws OOS with the reportId in the message. Construct the report as an AL variable and call instance `Run()` instead — that path executes triggers. |
+| Request-page **controls** bound to report globals (`RequestPage.ShowAmountsInLCY.SetValue(…)`) | Resolving one needs the request page's `NavForm.SourceExpressions` table, which the runner only builds for forms it drives as a `TestPage`. Throws `out-of-scope: TestRequestPage control … request-page-control`. Data-item filters and the built-in actions ARE answered. See [#2442](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2442). |
+
+**Running a request page is in scope; rendering one is not.** `Report.Run()` /
+`RunModal()` / `RunRequestPage()` open the report's request page and let BC's own
+`NavTestExecution.TestHandleModalForm` route it to the declared
+`[RequestPageHandler]` — no dialog is drawn, and nothing about that needs a UI tier.
+How the handler closes the page decides what happens next, the same as on a real
+service tier: `Cancel` leaves the report body unexecuted, and
+`TestRequestPage.SaveAsXml(parametersFile, dataSetFile)` produces the report's
+**dataset** at that path (through BC's own `ReportSaveAsXmlRenderer`, so
+`Codeunit "Library - Report Dataset"` loads it) rather than resolving a layout.
+A dataset is report *execution*, not rendering.
 
 **Layout *selection* is in scope; layout *content* is not.** A report's
 `rendering { layout(Name) { Type; MimeType; LayoutFile; … } }` declarations are

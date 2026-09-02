@@ -39,7 +39,7 @@ using System.Runtime.CompilerServices;
 
 namespace AlRunner;
 
-public static class NavReportSync
+public static partial class NavReportSync
 {
     /// <summary>Diagnostic marker; gated by AL_RUNNER_DIAG_IC=1.</summary>
     public static void Diag(string msg)
@@ -311,7 +311,9 @@ public static class NavReportSync
                 "not-yet-implemented — the runner could not construct report " + reportId +
                 " to run its request page. See docs/scope.md");
 
-        var confirmed = RunRequestPageForHandler(report, reportId, parameters);
+        // offersOk: true — RunRequestPage opens the page with ReportIntent.Parameters, where a
+        // plain OK means "these are the parameters" and is available on every request page.
+        var confirmed = RunRequestPageForHandler(report, reportId, parameters, offersOk: true);
 
         // BC's own RunRequestPageAsync reaches GetReportParameters through
         // RunReportAsync(…, ReportIntent.Parameters, …), which sets NavReport.success when
@@ -442,6 +444,17 @@ public static class NavReportSync
         var parent = BcRuntime.SkeletonSession;
         var instance = CreateReportInstance(meta, parent!, skipRestoreSavedReportSettings: true);
 
+        // BC's NavReport.RunReportAsync: `if (requestWindow.HasValue) UseRequestForm =
+        // requestWindow.Value;`. The static overloads always pass a value (the Cecil rewrite
+        // fills BC's own default, true, for the overloads that omit it), so the caller's
+        // `Report.Run(id, false, …)` is what decides whether a request page opens at all.
+        // Ignoring it made `RequestWindow = false` open one anyway once #2436 taught Run()
+        // to open request pages — which is an "Unhandled UI" error for a test that, quite
+        // reasonably, declared no [RequestPageHandler] because it asked for no request page.
+        var pUseRequestForm = FindProperty(instance.GetType(), "UseRequestForm");
+        if (pUseRequestForm != null && pUseRequestForm.CanWrite && pUseRequestForm.PropertyType == typeof(bool))
+            pUseRequestForm.SetValue(instance, requestWindow);
+
         if (record != null)
         {
             var setTableView = instance.GetType().GetMethods(
@@ -467,7 +480,10 @@ public static class NavReportSync
     /// Returns whether the page was CONFIRMED (the handler invoked OK), which is what
     /// decides whether BC hands the caller parameters or an empty string.
     /// </summary>
-    private static bool RunRequestPageForHandler(object report, int reportId, string? parameters)
+    /// <param name="offersOk">Whether the request page has a plain OK built-in action —
+    /// see RequestPageTestPage.GetBuiltInAction. True for the parameters-capture entry point
+    /// (RunRequestPage); for Report.Run() only when the report is ProcessingOnly.</param>
+    private static bool RunRequestPageForHandler(object report, int reportId, string? parameters, bool offersOk)
     {
         var pRequestPage = FindProperty(report.GetType(), "RequestOptionsPage");
         if (pRequestPage == null) return true;
@@ -482,7 +498,7 @@ public static class NavReportSync
         // Register the request-page surface BC's dispatch will ask the client session for
         // (RunnerTestClientSession.GetPage) — it is keyed by this form, and is also how the
         // handler's OK/Cancel is read back below.
-        var testPage = AlRunner.Patches.RequestPageTestPage.Bind(requestPage, report, reportId);
+        var testPage = AlRunner.Patches.RequestPageTestPage.Bind(requestPage, report, reportId, offersOk);
         if (Environment.GetEnvironmentVariable("AL_RUNNER_DIAG_RP") == "1")
         {
             try
@@ -635,20 +651,49 @@ public static class NavReportSync
         {
             InvokeVirtual(_onInitReport, navReport);
             ApplyCallerTableViewBeforePreReport(navReport);
+
+            // The request page, and what the test's [RequestPageHandler] does with it —
+            // BC's RunReportInternalCoreAsync runs it here, between applying the caller's
+            // table view and any report trigger. See NavReportSync.RunRequestPage.cs.
+            var outcome = RunRequestPageForReportRun(navReport, navReportBase);
+            if (outcome == RequestPageOutcome.Cancelled)
+            {
+                // BC: ReportExecutionResult.Cancel. No trigger runs, no layout is resolved,
+                // and no error is raised — cancelling a request page is an ordinary outcome.
+                if (Environment.GetEnvironmentVariable("AL_RUNNER_DIAG_IC") == "1")
+                    Console.Error.WriteLine("[NavReportSync] SyncRun: request page cancelled — report body not executed");
+                return true;
+            }
+            // BC's RunReportInternalCoreAsync calls this immediately before it builds the
+            // result-set processor, and it is the counterpart of the ApplySetTableView above:
+            // Apply copies TableViewRecord -> Record so triggers and the request-page handler
+            // see the caller's filters, Store copies Record -> TableViewRecord so the ones
+            // they ADDED survive the loop. The data-item loop starts each item from
+            // TableViewRecord (SetDataItemTableView), so anything only on Record is thrown
+            // away — which is how a request page's filter, and a Report.SetTableView applied
+            // to a data item the loop re-seeds, both went missing.
+            StoreCallerTableViewBeforeLoop(navReport);
+
             InvokeVirtual(_onPreReport, navReport);
-            InvokeDataItems(navReport);
+            bool datasetWritten = InvokeDataItems(navReport);
             InvokeVirtual(_onPostReport, navReport);
 
-            // Strict AL semantics: when the AL source declares `ProcessingOnly =
-            // false` (the AL default), Run() must attempt rendering after the
-            // lifecycle triggers. The runner has no service tier and cannot
+            // Strict AL semantics: when the report declares `ProcessingOnly =
+            // false` (the AL default) — in its own AL source, or in the symbol
+            // data of the precompiled dependency it came from — Run() must
+            // attempt rendering after the lifecycle triggers. The runner has no service tier and cannot
             // render layouts, so the rendering attempt must surface as an
             // AL-observable error. We trigger that via NavReport.RDLCLayout —
             // a public static method that forwards to GetLayoutCore (Cecil-
             // rewritten to throw an OOS InvalidOperationException on
             // ThrowError). The error therefore originates from the actual
             // layout-resolution code path, not from a guard at the top of Run.
-            if (!IsProcessingOnly(navReport, navReportBase))
+            //
+            // Unless a dataset was what the run asked for: `TestRequestPage.SaveAsXml`
+            // selects FormResult.Xml, which BC maps to ReportIntent.Download with an Xml
+            // target format and answers with a dataset — no layout is resolved on that
+            // path even on a real service tier (#2436).
+            if (!datasetWritten && !IsProcessingOnly(navReport, navReportBase))
                 InvokeLayoutForReport(navReport, navReportBase);
             return false;
         }
@@ -691,6 +736,25 @@ public static class NavReportSync
         Invoke(_applySetTableViewForAllDataItems, navReport, Array.Empty<object?>());
     }
 
+    private static MethodInfo? _storeSetTableViewForAllDataItems;
+
+    /// <summary>
+    /// BC's own <c>DataItemIterator.StoreSetTableViewForAllDataItems()</c> —
+    /// <c>item.TableViewRecord.RecordImplementation.CopyFiltersSortingMarkList(item.Record)</c>
+    /// for every data item. See the call site for why the loop needs it.
+    /// </summary>
+    private static void StoreCallerTableViewBeforeLoop(object navReport)
+    {
+        Type? iter = navReport.GetType();
+        while (iter != null && iter.Name != "DataItemIterator") iter = iter.BaseType;
+        if (iter == null) return;
+        _storeSetTableViewForAllDataItems ??= iter.GetMethod("StoreSetTableViewForAllDataItems",
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            null, Type.EmptyTypes, null);
+        if (_storeSetTableViewForAllDataItems == null) return;
+        Invoke(_storeSetTableViewForAllDataItems, navReport, Array.Empty<object?>());
+    }
+
     // NavControlException lives in Microsoft.Dynamics.Nav.Types and is
     // internal — match by full type name so we don't need an InternalsVisibleTo
     // bridge. NavReport.Skip/Quit/Cancel/Break and DataItem.Skip/Break/etc.
@@ -705,7 +769,10 @@ public static class NavReportSync
         return false;
     }
 
-    // Looks up ProcessingOnly from the parsed AL source (RecordPatches).
+    // Looks up ProcessingOnly through RecordPatches, which answers from the parsed AL
+    // source when the runner compiled the report and from the dependency .app's
+    // SymbolReference.json when it did not (#2397 — every Base Application report takes
+    // the second path).
     // Falls back to true when the report ID cannot be resolved — defensive
     // so unknown reports do not trip the rendering guard.
     private static bool IsProcessingOnly(object navReport, Type navReportBase)
@@ -840,13 +907,19 @@ public static class NavReportSync
     /// faithful shape for the runner's non-rendering Run(). Only installed when the report
     /// does not already carry a processor.
     /// </summary>
-    private static void InvokeDataItems(object navReport)
+    /// <returns>
+    /// True when the loop wrote a report DATASET, i.e. the run's
+    /// <c>[RequestPageHandler]</c> asked for one with <c>TestRequestPage.SaveAsXml</c> and
+    /// BC's own <c>ReportSaveAsXmlRenderer</c> produced the file. The caller uses this to
+    /// decide whether a layout still has to be resolved — a dataset run resolves none.
+    /// </returns>
+    private static bool InvokeDataItems(object navReport)
     {
         Type? iter = navReport.GetType();
         while (iter != null && iter.Name != "DataItemIterator") iter = iter.BaseType;
-        if (iter == null) return;
+        if (iter == null) return false;
 
-        EnsureResultSetProcessor(navReport, iter);
+        var datasetProcessor = EnsureResultSetProcessor(navReport, iter);
 
         _applyDataItemTableView ??= iter.GetMethod("ApplyDataItemTableViewAndRequestFormFilters",
             BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
@@ -861,30 +934,53 @@ public static class NavReportSync
         if (_applyDataItemTableView != null)
             Invoke(_applyDataItemTableView, navReport, Array.Empty<object?>());
 
+
+        // StartAsync → loop → FinishAsync is the bracket ExecuteDataItemIteratorAsync puts
+        // around LoopRootDataItemsAsync. It is only driven for the dataset renderer: the
+        // NullResultSetProcessor path discards rows either way, and its FinishAsync raises
+        // events the runner never wires up.
+        if (datasetProcessor != null) InvokeProcessorLifecycle(datasetProcessor, "StartAsync");
         AwaitValueTask(Invoke(_loopRootDataItems, navReport, Array.Empty<object?>()));
+        if (datasetProcessor != null) InvokeProcessorLifecycle(datasetProcessor, "FinishAsync");
+        return datasetProcessor != null;
     }
 
     /// <summary>
     /// Give the data-item loop the <c>IResultSetProcessor</c> it writes rows into.
-    /// <c>NullResultSetProcessor</c> is BC's own discard implementation, chosen by BC's
-    /// factory for a layout-less report, so using it here is not a runner stand-in.
+    ///
+    /// When the run's <c>[RequestPageHandler]</c> asked for a dataset with
+    /// <c>TestRequestPage.SaveAsXml</c>, that is BC's own <c>ReportSaveAsXmlRenderer</c> —
+    /// the instance <c>ReportResultSetProcessorFactory.GetTestResultProcessor</c> builds on
+    /// a real service tier — and the rows the loop produces land in the file the test named.
+    /// Otherwise it is <c>NullResultSetProcessor</c>, BC's own discard implementation and
+    /// what its factory returns for a report with no layout, so neither is a runner stand-in.
     /// </summary>
-    private static void EnsureResultSetProcessor(object navReport, Type dataItemIteratorType)
+    /// <returns>The dataset renderer when one was installed, else null.</returns>
+    private static object? EnsureResultSetProcessor(object navReport, Type dataItemIteratorType)
     {
         _resultSetProcessorProp ??= dataItemIteratorType.GetProperty("ResultSetProcessor",
             BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-        if (_resultSetProcessorProp == null) return;
-        if (_resultSetProcessorProp.GetValue(navReport) != null) return;
+        if (_resultSetProcessorProp == null) return null;
+        if (_resultSetProcessorProp.GetValue(navReport) != null) return null;
+
+        var setter = _resultSetProcessorProp.GetSetMethod(nonPublic: true)
+            ?? throw new InvalidOperationException(
+                "DataItemIterator.ResultSetProcessor has no setter — Ncl shape changed; do not commit");
+
+        var datasetProcessor = TryCreateTestDatasetProcessor(navReport);
+        if (datasetProcessor != null)
+        {
+            setter.Invoke(navReport, new[] { datasetProcessor });
+            return datasetProcessor;
+        }
 
         _nullResultSetProcessorType ??= dataItemIteratorType.Assembly
             .GetType("Microsoft.Dynamics.Nav.Runtime.NullResultSetProcessor")
             ?? throw new InvalidOperationException(
                 "NullResultSetProcessor not found in Ncl — Ncl shape changed; do not commit");
 
-        var setter = _resultSetProcessorProp.GetSetMethod(nonPublic: true)
-            ?? throw new InvalidOperationException(
-                "DataItemIterator.ResultSetProcessor has no setter — Ncl shape changed; do not commit");
         setter.Invoke(navReport, new[] { Activator.CreateInstance(_nullResultSetProcessorType) });
+        return null;
     }
 
     /// <summary>
@@ -1140,7 +1236,34 @@ public static class NavReportSync
         {
             Console.Error.WriteLine($"[NavReportSync] captionML seed failed: {ex.Message}");
         }
+        SeedUseRequestFormFromMetadata(navReport, meta);
         return true;
+    }
+
+    /// <summary>
+    /// Replicate the one line of <c>NavReport.EndInitializationAsync</c> that is now
+    /// AL-observable: <c>UseRequestForm = Metadata.UseRequestForm</c>.
+    ///
+    /// The runner blanks <c>EndInitialization</c> (its real body sync-over-asyncs and runs
+    /// metadata-bound side effects the runner supplies itself — see the Cecil rewrite), which
+    /// left <c>UseRequestForm</c> at its <c>false</c> default on every report. That was
+    /// invisible while <c>Report.Run()</c> never opened a request page. It stopped being
+    /// invisible with #2436: <c>UseRequestForm</c> is exactly the flag BC's
+    /// <c>RunReportInternalCoreAsync</c> reads to decide whether to open one, so leaving it
+    /// false made a <c>[RequestPageHandler]</c> unreachable for every report.
+    ///
+    /// Seeded here, at metadata-install time, so AL's own <c>Report.UseRequestPage(false)</c>
+    /// still wins — BC's ordering is the same (EndInitialization runs during construction,
+    /// before any AL statement can touch the report variable).
+    /// </summary>
+    private static void SeedUseRequestFormFromMetadata(object navReport, object metaReport)
+    {
+        var pTarget = FindProperty(navReport.GetType(), "UseRequestForm");
+        if (pTarget == null || !pTarget.CanWrite || pTarget.PropertyType != typeof(bool)) return;
+        var pSource = FindProperty(metaReport.GetType(), "UseRequestForm");
+        if (pSource == null || pSource.PropertyType != typeof(bool)) return;
+        try { pTarget.SetValue(navReport, pSource.GetValue(metaReport)); }
+        catch (TargetInvocationException) { /* a report that refuses the flag keeps its default */ }
     }
 
     /// <summary>

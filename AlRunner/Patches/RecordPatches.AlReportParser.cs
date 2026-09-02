@@ -103,13 +103,28 @@ public static partial class RecordPatches
     }
 
     /// <summary>
-    /// AL-source-derived ProcessingOnly for the given report ID. Returns
-    /// <c>false</c> when the report is unknown — matches the AL default and
-    /// causes the runner to throw an out-of-scope error at Run time (no
-    /// rendering pipeline available without a service tier).
+    /// ProcessingOnly for the given report ID, from whichever source actually describes
+    /// that report.
+    ///
+    /// A source-parsed entry wins, for the same reason it wins everywhere else
+    /// _parsedReports is read (see this file's header): the bundle's own AL is the report
+    /// the runner is really going to run. When there is no source-parsed entry the answer
+    /// comes from the registered dependency .app files' SymbolReference.json — that path
+    /// covers every Base Application / System Application / ISV report, which is all of
+    /// them, since the runner source-compiles none of those (#2397). Before it existed this
+    /// method fell straight through to <c>false</c> for a precompiled report no matter what
+    /// the report declared, so NavReportSync sent genuinely processing-only Base App
+    /// reports (e.g. 950 "Create Time Sheets", which states ProcessingOnly in its symbols)
+    /// down the layout path and they died on the out-of-scope rendering throw.
+    ///
+    /// Still <c>false</c> when neither source describes the report — that is AL's own
+    /// default, and it keeps the rendering guard in place for reports nobody declares
+    /// processing-only.
     /// </summary>
     public static bool IsReportProcessingOnly(int reportId) =>
-        _parsedReports.TryGetValue(reportId, out var p) && p.ProcessingOnly;
+        _parsedReports.TryGetValue(reportId, out var p)
+            ? p.ProcessingOnly
+            : IsDependencyReportProcessingOnly(reportId);
 }
 
 internal record ParsedReport(int Id, string Name, bool IsExtension, bool ProcessingOnly = false)
