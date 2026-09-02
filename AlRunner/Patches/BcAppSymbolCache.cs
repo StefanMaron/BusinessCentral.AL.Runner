@@ -88,7 +88,13 @@ internal static partial class BcAppSymbolCache
     // app declares no permission sets" — so a cached System Application would keep
     // answering `MetadataPermissionSet.Get(<null guid>, 'SUPER')` with "does not exist",
     // the exact #2313 bug, rather than missing the cache.
-    private const int CacheVersion = 18;
+    // v19: TryParseQueryDataItem now strips the module qualifier off RelatedTable (issue
+    // #2295), same normalization CollectReportDataItems already applied to report dataitems.
+    // A v18 payload has the qualified `#<appId>#TableName` form baked into RelatedTable, which
+    // ResolveTableIdByName never matches — so a cached query over a dependency table would
+    // keep failing to build its NCLMetaQuery design and NRE on Open()/SetRange(), the exact
+    // #2295 bug replayed from cache rather than a cache miss.
+    private const int CacheVersion = 19;
     private static readonly ConcurrentDictionary<string, AppSymbols> ProcessCache = new(StringComparer.OrdinalIgnoreCase);
     // Issue #1820 — path -> content-hash memo. ComputeAppContentHash needs to read the
     // WHOLE .app to hash it (unlike the FileInfo.Length/LastWriteTimeUtc stat it replaced,
@@ -886,7 +892,13 @@ internal static partial class BcAppSymbolCache
     private static QueryDataItemSymbol? TryParseQueryDataItem(JsonElement el)
     {
         var name = el.TryGetProperty("Name", out var nameProp) ? nameProp.GetString() ?? string.Empty : string.Empty;
-        var relatedTable = el.TryGetProperty("RelatedTable", out var rtProp) ? rtProp.GetString() ?? string.Empty : string.Empty;
+        // #2295: a dataitem bound to a table from another module (Base Application's Item,
+        // say) arrives module-qualified (#<appIdNoHyphens>#Item), same as a report dataitem —
+        // see StripModuleQualifier's doc comment. Left qualified, ResolveTableIdByName never
+        // matches it, BuildMetaQueryDesign abandons the build, and the query is constructed
+        // with NCLMetaQuery=NULL — every ALSetRangeSafe/Open/Read on it then NREs.
+        var relatedTable = StripModuleQualifier(
+            el.TryGetProperty("RelatedTable", out var rtProp) ? rtProp.GetString() : null) ?? string.Empty;
         int id = el.TryGetProperty("Id", out var idProp) && idProp.TryGetInt32(out var i) ? i : 0;
         var props = SymbolProperties(el);
         props.TryGetValue("SqlJoinType", out var sqlJoinType);
