@@ -30,11 +30,11 @@
 //                          confirmed by MetadataPermissionSetRelationDataProvider,
 //                          which builds the same key with
 //                          `new NavCode(len, permissionSet.Name)`.
-//     field 3 "Name"       NCLMetaPermissionSet.Caption, which is
-//                          `captionStrings?.GetValueOrDefault() ?? string.Empty` —
-//                          so a permission set declaring no Caption has a BLANK
-//                          Name here, NOT its role id. Base Application's "LOCAL"
-//                          is one such set.
+//     field 3 "Name"       the permission set's Caption, falling back to its ROLE ID
+//                          when it declares none — measured on real BC 27.0-28.4
+//                          against Base Application's "LOCAL" (id 1001), one of 167
+//                          Caption-less permission sets across the platform apps.
+//                          See BuildMetadataPermissionSetValue's "name" case.
 //     field 4 "Assignable" NCLMetaPermissionSet.Assignable.
 //
 // WHERE THE ROWS COME FROM HERE
@@ -216,12 +216,27 @@ public static partial class RecordPatches
             case "roleid":
                 return _mpsNavCodeCtor!.Invoke(new object?[] { field.FieldDefinedLength, permissionSet.Name });
             case "name":
-                // NCLMetaPermissionSet.Caption is `?? string.Empty`, so a permission set
-                // declaring no Caption gets a BLANK Name on a real tier — substituting the
-                // role id here would be a nicer-looking lie.
+                // A permission set declaring no Caption is listed with its ROLE ID
+                // substituted for Name, not a blank string. Measured on real BC 27.0-28.4
+                // against Base Application's LOCAL (object id 1001), which declares no
+                // Caption: StefanMaron/BusinessCentral.AL.Language.Tests#102, run
+                // 33660038595 — corpus test
+                // MetadataPermissionSet_CaptionlessRole_NameFallsBackToRoleId.
+                //
+                // This corrects an earlier reading of NCLMetaPermissionSet.Caption
+                // (`captionStrings?.GetValueOrDefault() ?? string.Empty`), which is a
+                // correct account of that ONE property but not of what the table serves:
+                // 167 of the 461 permission sets across the platform apps declare no
+                // Caption (Base Application 7 of 258, System Application 128 of 164,
+                // System.app 23 of 25, Business Foundation 9 of 14), and a real tier lists
+                // none of them blank. Substituting the role id is the measured behaviour,
+                // not a nicer-looking lie.
+                var name = string.IsNullOrEmpty(permissionSet.Caption)
+                    ? permissionSet.Name
+                    : permissionSet.Caption;
                 return _aovNavTextCreateTruncated!.Invoke(null, new object?[]
                 {
-                    field.FieldDefinedLength, permissionSet.Caption ?? string.Empty
+                    field.FieldDefinedLength, name
                 });
             case "assignable":
                 return _mpsNavBooleanCreate!.Invoke(null, new object?[] { permissionSet.Assignable });
