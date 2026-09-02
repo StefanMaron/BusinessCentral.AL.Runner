@@ -4188,6 +4188,40 @@ public static class NclCecilRewrite
             Console.Error.WriteLine("[Cecil] Prepended StampSystemFieldsOnInsert → NavRecord.ALInsertAsync(DataError,bool,bool)");
         }
 
+        // ── NavRecord.ALInsertAsync(DataError, bool, bool) — User Property companion row ──
+        // On a real tier, SystemTableTriggers.OnBeforeInsertAsync's `case 2000000120:` arm
+        // inserts the matching User Property (2000000121) row for every User it accepts, and
+        // BC's own UserManagement.DirectSetUserFieldValue then Gets that row with the RAISING
+        // error level. The runner bypasses BC's trigger dispatch on insert, so the row was
+        // never created. Same prepend shape as AssignAutoIncrement / StampSystemFieldsOnInsert
+        // above; a no-op for every table but User. See AlRunner/Patches/UserTableTriggerPatches.cs
+        // and issue #2353.
+        {
+            var navRecord = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.NavRecord")
+                ?? throw new InvalidOperationException("NavRecord type not found in Ncl");
+            var alInsert3 = navRecord.Methods.FirstOrDefault(m =>
+                m.Name == "ALInsertAsync"
+                && m.Parameters.Count == 3
+                && m.Parameters[0].ParameterType.Name == "DataError"
+                && m.Parameters[1].ParameterType.MetadataType == Mono.Cecil.MetadataType.Boolean
+                && m.Parameters[2].ParameterType.MetadataType == Mono.Cecil.MetadataType.Boolean)
+                ?? throw new InvalidOperationException("NavRecord.ALInsertAsync(DataError,bool,bool) not found");
+
+            var helperMi = typeof(AlRunner.Patches.UserTableTriggerPatches).GetMethod(
+                nameof(AlRunner.Patches.UserTableTriggerPatches.CreateUserPropertyOnUserInsert),
+                BindingFlags.Public | BindingFlags.Static)
+                ?? throw new InvalidOperationException("UserTableTriggerPatches.CreateUserPropertyOnUserInsert not found");
+            var helperRef = asm.MainModule.ImportReference(helperMi);
+
+            var body = alInsert3.Body;
+            var il = body.GetILProcessor();
+            var firstOriginal = body.Instructions[0];
+            il.InsertBefore(firstOriginal, il.Create(OpCodes.Ldarg_0));
+            il.InsertBefore(firstOriginal, il.Create(OpCodes.Call, helperRef));
+            if (body.MaxStackSize < 1) body.MaxStackSize = 1;
+            Console.Error.WriteLine("[Cecil] Prepended CreateUserPropertyOnUserInsert → NavRecord.ALInsertAsync(DataError,bool,bool)");
+        }
+
         // ── NavRecord.ALModifyAsync — SystemModified stamp prepend ──────────────────
         // Stamps only SystemModifiedAt + SystemModifiedBy. NEVER touches
         // SystemCreatedAt / SystemCreatedBy (BC semantics: created fields are
