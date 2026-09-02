@@ -26,21 +26,30 @@ About 70 seconds cold and 6 seconds warm, per runner invocation. 71 of the 246 f
 `AlRunner.Tests` spawn the runner as a subprocess, and the suite spawns it roughly 130
 times, so this is the single largest cost in the C# suite.
 
-## Two classes still violate this. They are debt, not permission.
+## Four classes still carry the floor. Three are debt; one is legitimate.
 
-`InstallBaselineDiskCacheTests` and `InstallSeedDepCompanyCacheTests` still carry the
-property, because both fail outright without it: what they assert is the dependency
-closure itself, and removing the floor today would leave them green while proving
-nothing, which is worse than leaving them slow.
+**Legitimate, and it stays:** `PlaceholderFloorProvisioningTests`. The placeholder
+`1.0.0.0` application floor IS its subject — remove it and nothing is being tested.
 
-**Tracked in #2364.** They are on the list to be reworked, not a precedent to cite. Do
-not add a third. When #2364 lands, this section goes away.
+**Outstanding violations, tracked in #2364, not permission:**
 
-The bar for any claim that a test cannot follow this rule: not "this is easier to write
-with Base App", but "this test's claim is about the Base Application closure, and there
-is no other way to construct the state it needs." Two small source-dependency apps
-produce genuinely different closures; a fixture table seeded by its own install trigger
-produces seeded company data. Reach for those first.
+- `InstallBaselineDiskCacheTests` and `InstallSeedDepCompanyCacheTests` — they test #1867
+  install-baseline caching, and need a closure whose install triggers WRITE ROWS. Without
+  one the runner logs `not persisting: snapshot has 0 DataAccessSource(s)` and the
+  assertions have nothing to observe, so they would pass vacuously.
+- `MissingTestDataDiagnosisTests` — resolves "Source Code Setup" (table 242) against real
+  metadata, asserting BC's own table id so the diagnosis cannot pass by echoing a name back.
+
+None is a precedent to cite. Do not add a fifth. When #2364 lands, this section shrinks to
+the one legitimate case.
+
+**How these four were identified, and how they were nearly missed.** The property was
+removed from all 49 classes and the full suite run. A *partial* local run reported three
+classes; reading it before it finished produced a wrong list, and CI — running to completion
+on all eight legs — found five failures in two further classes. **Do not conclude a set of
+failures from a run that has not finished.** The bar for adding to this list is a completed
+run showing the class fails without the floor, not a reading of what the test looks like it
+needs.
 
 ## Sister rules
 

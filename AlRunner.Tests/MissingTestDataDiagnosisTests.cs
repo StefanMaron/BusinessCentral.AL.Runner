@@ -26,6 +26,13 @@ using Xunit;
 
 namespace AlRunner.Tests;
 
+// #2364 -- the "application" floor in this file's fixtures is an OUTSTANDING VIOLATION of
+// .claude/rules/no-base-app-in-csharp-tests.md, not an exception to it. Every other fixture
+// dropped it (#2358). These tests keep it only because they resolve "Source Code Setup"
+// (table 242) against REAL metadata -- the assertion is on BC's own table id precisely so
+// the diagnosis cannot pass by echoing a name back out of the message. A fixture table
+// carrying its own metadata would serve the same claim without the closure; until someone
+// does that, this stays and is tracked in #2364. Do not copy this floor into a new test.
 public sealed class MissingTestDataDiagnosisTests : IDisposable
 {
     private static readonly string RepoRoot = Path.GetFullPath(
@@ -77,6 +84,7 @@ public sealed class MissingTestDataDiagnosisTests : IDisposable
           "version": "1.0.0.0",
           "dependencies": [],
           "platform": "27.0.0.0",
+          "application": "27.0.0.0",
           "idRanges": [ { "from": 62440, "to": 62449 } ],
           "runtime": "17.0",
           "target": "Cloud"

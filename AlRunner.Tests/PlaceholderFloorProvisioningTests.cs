@@ -51,6 +51,12 @@ using Xunit;
 
 namespace AlRunner.Tests;
 
+// The "application" floor in this file's fixtures is DELIBERATE and must stay.
+// Every other fixture in AlRunner.Tests dropped it (#2358) because it pulls in the whole
+// Base Application closure for nothing -- ~70s cold / ~6s warm per runner invocation.
+// Here the placeholder floor IS the subject of the test: remove it and there is nothing
+// left being tested. This is not a violation of
+// .claude/rules/no-base-app-in-csharp-tests.md; it is the case that rule carves out.
 public sealed class PlaceholderFloorProvisioningTests
 {
     private static readonly string RepoRoot = Path.GetFullPath(
@@ -88,6 +94,7 @@ public sealed class PlaceholderFloorProvisioningTests
           "dependencies": [],
           "idRanges": [ { "from": 61970, "to": 61979 } ],
           "platform": "1.0.0.0",
+          "application": "1.0.0.0",
           "runtime": "14.0"
         }
         """);
