@@ -829,7 +829,10 @@ internal sealed class RunnerPageInstance
         var byRef = new ByRef<NavText>(() => value, v => value = v);
 
         object? result;
-        try { result = trigger.Method.Invoke(trigger.Target, new object?[] { byRef }); }
+        // AwaitTriggerResult, not a bare Invoke: BC emits `trigger OnLookup(...): Boolean` as
+        // `ValueTask<bool>`, so the raw Invoke result never pattern-matches `is true` and every
+        // lookup read as "the user cancelled" — see AwaitTriggerResult's remarks.
+        try { result = AwaitTriggerResult(trigger.Method.Invoke(trigger.Target, new object?[] { byRef })); }
         catch (TargetInvocationException tie) when (tie.InnerException != null)
         {
             System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw();
@@ -1321,7 +1324,9 @@ internal sealed class RunnerPageInstance
                 ?? TryFindActionRefTargetTriggerOnExtension(instance, extensionId, actionId);
             if (match == null) continue;
 
-            try { match.Value.Method.Invoke(match.Value.Target, null); }
+            // AwaitTriggerResult for the same reason Invoke uses it: this OnAction is emitted
+            // async too, so dropping the awaitable swallowed any Error() the action raised.
+            try { AwaitTriggerResult(match.Value.Method.Invoke(match.Value.Target, null)); }
             catch (TargetInvocationException tie) when (tie.InnerException != null)
             {
                 System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw();
@@ -1350,13 +1355,86 @@ internal sealed class RunnerPageInstance
 
     private void Invoke(TriggerMatch trigger)
     {
-        try { trigger.Method.Invoke(trigger.Target, null); }
+        try { AwaitTriggerResult(trigger.Method.Invoke(trigger.Target, null)); }
         catch (TargetInvocationException tie) when (tie.InnerException != null)
         {
             // An Error() inside the AL trigger is the trigger's own outcome, not a runner
             // failure — rethrow it unwrapped so the AL stack survives.
             System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw();
         }
+    }
+
+    /// <summary>
+    /// Block on the Task / ValueTask an AL page trigger returned, and answer with the value it
+    /// produced (null for a void trigger).
+    ///
+    /// BC's AL compiler emits EVERY page trigger as an async method — measured on the Base App's
+    /// precompiled page 9170 "Profile Card": <c>ProfileIdField_a45_OnValidate</c> returns
+    /// <c>ValueTask</c> and <c>RoleCenterIdField_a45_OnLookup</c> returns
+    /// <c>ValueTask&lt;bool&gt;</c>. <c>MethodInfo.Invoke</c> therefore hands back the awaitable,
+    /// not the outcome, and an <c>Error()</c> the trigger raised is parked on it as a faulted
+    /// state rather than thrown. Every call site here used to drop that value on the floor, so:
+    ///
+    /// <list type="bullet">
+    /// <item>a page control's OnValidate could raise, and TestPage SetValue reported success —
+    /// the AL Error() was measurably present (<c>status=Faulted</c>, e.g.
+    /// "You cannot disable the profile that is used as default.") and simply discarded, which is
+    /// the silent-out-of-scope failure loud-failures.md forbids; and</item>
+    /// <item>OnLookup's <c>result is true</c> pattern-matched a <c>ValueTask&lt;bool&gt;</c>
+    /// against a <c>bool</c>, which is never true, so every lookup on such a page reported
+    /// "the user cancelled" no matter what the trigger returned.</item>
+    /// </list>
+    ///
+    /// Blocking is the correct shape here for the same reason it already is in
+    /// <c>CodeunitPatches.AwaitIfTask</c> and <c>CodeunitEventDispatcher.ObserveAsyncResult</c>
+    /// (the two sibling AL dispatchers that already do this): the runner drives AL synchronously,
+    /// so these are complete or complete inline, and <c>GetAwaiter().GetResult()</c> rethrows the
+    /// ORIGINAL exception rather than an AggregateException — which is what the AL caller,
+    /// including <c>asserterror</c>, has to observe.
+    ///
+    /// A trigger that returned an ordinary (non-awaitable) value is passed through unchanged, so
+    /// a future non-async emit shape keeps working.
+    /// </summary>
+    internal static object? AwaitTriggerResult(object? result)
+    {
+        switch (result)
+        {
+            case null:
+                return null;
+            case System.Threading.Tasks.Task task:
+                task.GetAwaiter().GetResult();
+                return TaskResultOrNull(task);
+            case System.Threading.Tasks.ValueTask valueTask:
+                valueTask.GetAwaiter().GetResult();
+                return null;
+        }
+
+        var type = result.GetType();
+        if (type.IsGenericType
+            && type.GetGenericTypeDefinition() == typeof(System.Threading.Tasks.ValueTask<>))
+        {
+            // ValueTask<T> has no non-generic surface to await through, so go via AsTask() —
+            // the same route CodeunitEventDispatcher.ObserveAsyncResult takes.
+            var asTask = type.GetMethod("AsTask", BindingFlags.Public | BindingFlags.Instance)
+                ?? throw new InvalidOperationException(
+                    $"ValueTask<T>.AsTask not found while awaiting an AL page trigger ({type.FullName}) "
+                    + "— BC/runtime shape changed.");
+            var task = (System.Threading.Tasks.Task)asTask.Invoke(result, null)!;
+            task.GetAwaiter().GetResult();
+            return TaskResultOrNull(task);
+        }
+
+        // Not awaitable — an ordinary return value.
+        return result;
+    }
+
+    /// <summary>Task&lt;T&gt;.Result for a completed generic task; null for a plain Task.</summary>
+    private static object? TaskResultOrNull(System.Threading.Tasks.Task task)
+    {
+        var type = task.GetType();
+        return type.IsGenericType
+            ? type.GetProperty("Result", BindingFlags.Public | BindingFlags.Instance)?.GetValue(task)
+            : null;
     }
 
     /// <summary>
