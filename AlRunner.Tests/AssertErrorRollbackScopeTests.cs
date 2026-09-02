@@ -215,4 +215,209 @@ public class AssertErrorRollbackScopeTests
         Assert.Contains("PASS  Codeunit62191.InsertThenModify_UnrelatedError_RowRollsBack", output);
         Assert.Contains("PASS  Codeunit62191.ProcInsertsTwoThenErrors_AllRollsBack", output);
     }
+
+    /// <summary>
+    /// Runner-mechanism test for #2431: two shapes the #2405/#2191 machinery
+    /// (RecordPatches.ForceDurableFailedInserts + SettleAssertErrorScopeWrites, both removed
+    /// by #2431) got wrong.
+    ///
+    /// Shape 1 (F1/F1b): a table whose ONLY write since commit is an Insert(true) whose own
+    /// OnInsert trigger throws must end up with NOTHING written — no phantom row materialised
+    /// from the failed insert's own field buffer, and the key must be immediately free again
+    /// for a plain re-Insert. ForceDurableFailedInserts used to force that row durable anyway,
+    /// on the mistaken belief real BC keeps it; #2431's isolated repro (7 arms, checked
+    /// against real BC 28.4) showed real BC leaves it genuinely absent when nothing else
+    /// preceded it.
+    ///
+    /// Shape 2 (F2/F3): TWO writes to the SAME table within ONE asserterror scope — an
+    /// EARLIER one that lands (Delete), then a LATER one on the SAME table that does not
+    /// (a DeleteAll matching nothing, or a Delete whose own trigger throws) — must still roll
+    /// back the earlier, landed write. SettleAssertErrorScopeWrites used to compare only the
+    /// LAST scoped write's pre-image against current live state and, finding them equal,
+    /// prune the WHOLE table from the general rollback — discarding the earlier landed write
+    /// along with the never-landed one.
+    ///
+    /// The underlying BEHAVIORAL claim (asserterror always rolls back to the true, once-
+    /// captured commit-point baseline, with no per-write or per-table exemption) is a plain
+    /// BC-behaviour claim and belongs upstream — see the StefanMaron/BusinessCentral.AL
+    /// .Language.Tests PR extending TestTriggerRollback.al (Codeunit 60156) per
+    /// .claude/rules/bc-behavior-tests-go-upstream.md. This test pins the RUNNER's OWN
+    /// mechanism (that RollbackToCommitPoint alone, with no compensating machinery, produces
+    /// the right answer) so a regression fails loudly here without depending on the submodule
+    /// pin having moved yet.
+    /// </summary>
+    [SkippableFact]
+    public void TriggerFailure_NoPhantomRow_And_EarlierLandedWriteStillRollsBack()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        var root = Path.Combine(Path.GetTempPath(), "al-runner-assert-error-rollback-2431", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+
+        File.WriteAllText(Path.Combine(root, "app.json"), """
+        {
+          "id": "b2431000-0000-4000-8000-000000002431",
+          "name": "AssertErrorRollbackScope2431",
+          "publisher": "Repro2431",
+          "version": "1.0.0.0",
+          "dependencies": [],
+          "platform": "1.0.0.0",
+          "idRanges": [ { "from": 62201, "to": 62209 } ],
+          "runtime": "14.0"
+        }
+        """);
+
+        File.WriteAllText(Path.Combine(root, "AersProbe2431.al"), """
+        table 62201 "AERS Probe 2431"
+        {
+            DataClassification = SystemMetadata;
+
+            fields
+            {
+                field(1; "Entry No."; Integer) { }
+                field(2; "Should Error"; Boolean) { }
+            }
+
+            keys
+            {
+                key(PK; "Entry No.") { Clustered = true; }
+            }
+
+            trigger OnInsert()
+            begin
+                if "Should Error" then
+                    Error('OnInsert boom');
+            end;
+
+            trigger OnDelete()
+            begin
+                if "Should Error" then
+                    Error('OnDelete boom');
+            end;
+        }
+
+        codeunit 62201 "AERS Tests 2431"
+        {
+            Subtype = Test;
+            TestPermissions = Disabled;
+
+            local procedure Initialize()
+            var
+                Probe: Record "AERS Probe 2431";
+            begin
+                Probe.DeleteAll(false);
+                Commit();
+            end;
+
+            // Shape 1 (F1): the ONLY write since commit is a failing Insert(true) — must
+            // leave nothing behind, no phantom row.
+            [Test]
+            procedure InsertTrue_OnInsertThrows_NothingWritten()
+            var
+                Probe: Record "AERS Probe 2431";
+            begin
+                Initialize();
+                Probe."Entry No." := 1;
+                Probe."Should Error" := true;
+                asserterror Probe.Insert(true);
+
+                if Probe.Count() <> 0 then
+                    Error('ARM5 FAIL: expected Count()=0 after a failing Insert(true) with nothing else since commit, got %1', Probe.Count());
+            end;
+
+            // Shape 1 (F1b): the key must be immediately free again for a plain re-Insert —
+            // this throws NavCSideDuplicateKeyException if a phantom row was left behind.
+            [Test]
+            procedure InsertTrue_OnInsertThrows_KeyIsFreeAgain()
+            var
+                Probe: Record "AERS Probe 2431";
+            begin
+                Initialize();
+                Probe."Entry No." := 1;
+                Probe."Should Error" := true;
+                asserterror Probe.Insert(true);
+
+                Clear(Probe);
+                Probe."Entry No." := 1;
+                Probe.Insert(false);
+
+                if Probe.Count() <> 1 then
+                    Error('ARM6 FAIL: expected Count()=1 after re-Insert onto the freed key, got %1', Probe.Count());
+            end;
+
+            // Shape 2 (F2): Delete row1 (lands) then an empty DeleteAll (matches nothing, same
+            // table) then a plain Error() — row1's landed delete must still roll back.
+            [Test]
+            procedure DeleteLands_ThenEmptyDeleteAll_ThenError_RowRestored()
+            var
+                Probe: Record "AERS Probe 2431";
+                Other: Record "AERS Probe 2431";
+            begin
+                Initialize();
+                Probe."Entry No." := 1;
+                Probe.Insert(false);
+                Commit();
+
+                asserterror DeleteThenEmptyDeleteAllThenError();
+
+                if not Probe.Get(1) then
+                    Error('ARM7 FAIL: expected row 1 to be restored after Delete + empty DeleteAll + unrelated Error(), but it is absent');
+            end;
+
+            local procedure DeleteThenEmptyDeleteAllThenError()
+            var
+                Probe: Record "AERS Probe 2431";
+                Other: Record "AERS Probe 2431";
+            begin
+                Probe.Get(1);
+                Probe.Delete(false);
+                Other.SetRange("Entry No.", 999);
+                Other.DeleteAll(false);
+                Error('boom');
+            end;
+
+            // Shape 2 (F3): Delete row1 (lands, no trigger) then Delete row2 whose OWN
+            // OnDelete trigger throws (same table) — row1's landed delete must still roll
+            // back even though the SAME statement's LAST write on this table never landed.
+            [Test]
+            procedure DeleteLands_ThenDeleteWithFailingTrigger_RowRestored()
+            var
+                Probe: Record "AERS Probe 2431";
+            begin
+                Initialize();
+                Probe."Entry No." := 1;
+                Probe.Insert(false);
+                Probe."Entry No." := 2;
+                Probe."Should Error" := true;
+                Probe.Insert(false);
+                Commit();
+
+                asserterror DeleteBothRows();
+
+                if not Probe.Get(1) then
+                    Error('ARM8 FAIL: expected row 1 to be restored after its landed Delete + a failing Delete on row 2, but it is absent');
+            end;
+
+            local procedure DeleteBothRows()
+            var
+                Probe: Record "AERS Probe 2431";
+            begin
+                Probe.Get(1);
+                Probe.Delete(false);
+                Probe.Get(2);
+                Probe.Delete(true);
+            end;
+        }
+        """);
+
+        var (output, exitCode) = RunRunner(root);
+
+        Assert.True(exitCode == 0,
+            $"Expected all four rollback tests to pass (exit 0); got exit {exitCode}.\n{output}");
+        Assert.DoesNotContain("FAIL", output);
+        Assert.Contains("PASS  Codeunit62201.InsertTrue_OnInsertThrows_NothingWritten", output);
+        Assert.Contains("PASS  Codeunit62201.InsertTrue_OnInsertThrows_KeyIsFreeAgain", output);
+        Assert.Contains("PASS  Codeunit62201.DeleteLands_ThenEmptyDeleteAll_ThenError_RowRestored", output);
+        Assert.Contains("PASS  Codeunit62201.DeleteLands_ThenDeleteWithFailingTrigger_RowRestored", output);
+    }
 }

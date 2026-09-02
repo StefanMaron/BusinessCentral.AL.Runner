@@ -272,26 +272,6 @@ public static partial class BcRuntime
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static void NavMethodScope_AssertError(object self, Action body)
     {
-        // AlRunner#2142: track Insert() attempts made by `body` — the compiled form of the
-        // one statement `asserterror` wraps — separately from any made by earlier,
-        // already-returned statements, so ForceDurableFailedInserts below only ever forces
-        // durable an Insert() this SAME statement made. See
-        // RecordPatches.BeginAssertErrorScope's doc and the file header on
-        // RecordPatches.TransactionSnapshot.cs.
-        AlRunner.Patches.RecordPatches.BeginAssertErrorScope();
-        try
-        {
-            NavMethodScope_AssertErrorCore(self, body);
-        }
-        finally
-        {
-            AlRunner.Patches.RecordPatches.EndAssertErrorScope();
-        }
-    }
-
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    private static void NavMethodScope_AssertErrorCore(object self, Action body)
-    {
         try { body(); }
         catch (Exception ex)
         {
@@ -327,25 +307,14 @@ public static partial class BcRuntime
             // in MiscPatches) can return its message — Assert.ExpectedError / Library
             // Assert depend on this round-trip.
             StoreLastExceptionOnSkeletonSession(effectiveEx);
-            // AlRunner#2191: decide, per table written to WHILE `body` was executing,
-            // whether that write physically landed BEFORE rolling anything back — see
-            // RecordPatches.SettleAssertErrorScopeWrites. Must run before
-            // RollbackToCommitPoint: it prunes _txCommitPoint for tables whose last scoped
-            // write never landed, so the general rollback below leaves those tables alone.
-            AlRunner.Patches.RecordPatches.SettleAssertErrorScopeWrites();
             // BC's own AssertError ends its catch with session.Rollback(): an AL error
             // unwinds the database to the last COMMIT. This replacement exists because the
             // real body's rollback path NREs on the skeleton session, not because the
-            // rollback itself is out of scope — see RecordPatches.TransactionSnapshot.
+            // rollback itself is out of scope — see RecordPatches.TransactionSnapshot. As of
+            // AlRunner#2431 this is the WHOLE rollback mechanism: no per-table pruning, no
+            // "force a failed Insert durable" compensation — see that file's header for why
+            // the two corpus tests that once seemed to need special-casing don't.
             AlRunner.Patches.RecordPatches.RollbackToCommitPoint(_skeletonSession);
-            // AFTER the rollback above (AlRunner#2142): an Insert() this SAME statement
-            // attempted may not have actually landed in the table yet (OnInsert runs before
-            // the physical write completes, in this runner AND in real BC's own decompiled
-            // NavRecord.InsertAsync — see RecordPatches.TransactionSnapshot.cs's file header
-            // for what that does and does not explain), so there's nothing for the rollback
-            // to have undone — but real BC keeps the row anyway. Force it durable now, once
-            // any Modify/Delete rollback for this table has already settled.
-            AlRunner.Patches.RecordPatches.ForceDurableFailedInserts();
             return; /* asserterror passed: body threw something */
         }
         throw new Microsoft.Dynamics.Nav.Types.Exceptions.NavNCLAssertErrorException();

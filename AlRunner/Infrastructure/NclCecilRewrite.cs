@@ -4462,10 +4462,10 @@ public static class NclCecilRewrite
                 BindingFlags.Public | BindingFlags.Static)
                 ?? throw new InvalidOperationException("ALDatabasePatches.NoteRecordWrite not found");
             var bumpRef = asm.MainModule.ImportReference(bumpMi);
-            // ALInsertAsync gets its OWN prepend target (AlRunner#2142): identical
-            // rowversion/write-transaction/rollback-snapshot bookkeeping to NoteRecordWrite,
-            // plus a note of the attempt for RecordPatches.ForceDurableFailedInserts — see
-            // ALDatabasePatches.NoteRecordInsertWrite's doc.
+            // ALInsertAsync gets its OWN prepend target (AlRunner#2142) — as of AlRunner#2431
+            // it is behaviourally identical to NoteRecordWrite; see
+            // ALDatabasePatches.NoteRecordInsertWrite's doc for why the separate method still
+            // exists (a distinct Cecil prepend target).
             var insertBumpMi = typeof(AlRunner.Patches.ALDatabasePatches).GetMethod(
                 nameof(AlRunner.Patches.ALDatabasePatches.NoteRecordInsertWrite),
                 BindingFlags.Public | BindingFlags.Static)
