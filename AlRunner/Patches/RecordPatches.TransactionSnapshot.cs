@@ -98,39 +98,48 @@ public static partial class RecordPatches
     public static void MarkCommitPoint() => _txCommitPoint.Clear();
 
     /// <summary>
-    /// Prepended to SessionTransactionExtensions.EndTransaction(NavSession, bool commit) and
-    /// .EndTransactionWorldAndTransaction(NavSession, bool commit) — see AlRunner#1946.
+    /// Prepended ONLY to SessionTransactionExtensions.EndTransactionWorldAndTransaction(NavSession,
+    /// bool commit) — see AlRunner#1946, revised by #2413. NOT prepended to the plain
+    /// EndTransaction overload; see the "8g" comment in NclCecilRewrite.cs for why.
     ///
-    /// BC's own APIs run their internal work inside an explicit nested transaction. The
-    /// static overload of <c>NavXmlPort.Import</c> is one — decompiled, unmodified Ncl body:
-    /// <c>Session.BeginTransaction(); ...; finally { Session.EndTransaction(commit); }</c> for
-    /// <c>DataError.ThrowError</c>, or <c>Session.BeginTransactionWorldAndTransaction(); ...;
-    /// finally { Session.EndTransactionWorldAndTransaction(commit); }</c> for
-    /// <c>DataError.TrapError</c>. AL's compiler picks <c>TrapError</c> whenever the call's
-    /// boolean result is captured into a variable — e.g. <c>Ok := XmlPort.Import(...)</c> —
-    /// which is the common, idiomatic AL shape, so both extension methods need the hook, not
-    /// just the more obviously-named one.
+    /// BC's own APIs run their internal work inside one of two kinds of nested transaction.
+    /// A TRANSACTION WORLD — <c>Session.BeginTransactionWorldAndTransaction(); ...; finally {
+    /// Session.EndTransactionWorldAndTransaction(commit); }</c>, decompiled, unmodified Ncl
+    /// body of the guarded <c>Codeunit.Run</c> form and of <c>NavXmlPort.Import</c> when AL's
+    /// compiler picks <c>DataError.TrapError</c> (the call's boolean result captured into a
+    /// variable, e.g. <c>Ok := XmlPort.Import(...)</c>, the common idiomatic AL shape) — is
+    /// exactly as durable, from AL's point of view, as an explicit <c>Commit()</c> statement:
+    /// a later, unrelated <c>asserterror</c> in the CALLER must not roll back work an inner
+    /// transaction world already committed.
     ///
-    /// A real <c>commit == true</c> there is exactly as durable, from AL's point of view, as
-    /// an explicit <c>Commit()</c> statement: a later, unrelated <c>asserterror</c> in the
-    /// CALLER must not roll back work an inner API already committed.
+    /// A PLAIN NESTED transaction — <c>Session.BeginTransaction(); ...; finally {
+    /// Session.EndTransaction(commit); }</c>, used by e.g. <c>NavQuery.Open</c>'s
+    /// <c>RunOnBeforeOpenTriggerAsync</c> and by statement-form <c>XmlPort.Import(...)</c>
+    /// (<c>DataError.ThrowError</c>) — is NOT a commit at all: it joins the caller's
+    /// already-open transaction, and <c>EndTransaction(true)</c> at that depth only pops the
+    /// nested level. Nothing reaches the database until the OUTER transaction completes (the
+    /// test framework's own per-test boundary, or an explicit AL <c>Commit()</c>). #2413
+    /// measured this directly against real BC: a write made BEFORE a <c>Query.Open()</c> or a
+    /// statement-form <c>XmlPort.Import</c>, followed by a later, unrelated
+    /// <c>asserterror</c>, IS rolled back on real BC — treating the plain
+    /// <c>EndTransaction(true)</c> as a commit point wrongly kept it durable here.
     ///
-    /// Before this hook, only AL's own <c>Commit()</c> and the per-test isolation boundary
-    /// called <see cref="MarkCommitPoint"/>, so <see cref="RollbackToCommitPoint"/> rolled
-    /// all the way back to test-method start on ANY later trapped error — including rows a
-    /// nested BC API (like XmlPort.Import) had already committed inside its own transaction.
-    /// Observably: <c>XmlPort.Import(id, Stream, Rec)</c> inserts a row, a LATER, unrelated
-    /// statement in the same test method throws (even caught by <c>asserterror</c>), and the
-    /// earlier insert vanished — reproducible with no XmlPort involved at all, just a plain
-    /// <c>Record.Insert()</c> followed by an unrelated failing <c>Record.Delete()</c>.
+    /// Before the #1946 hook, only AL's own <c>Commit()</c> and the per-test isolation
+    /// boundary called <see cref="MarkCommitPoint"/>, so <see cref="RollbackToCommitPoint"/>
+    /// rolled all the way back to test-method start on ANY later trapped error — including
+    /// rows a nested BC transaction WORLD had already committed. #1946 fixed that by hooking
+    /// both extension methods; #2413 narrowed it to just the world-and-transaction one, since
+    /// hooking the plain one over-commits (see the "8g" comment for the reproduction that made
+    /// #1946 believe otherwise).
     ///
     /// This must NOT fire for a plain <c>Record.Insert/Modify/Delete/Rename</c> call — those
-    /// never call <c>EndTransaction</c> themselves (see <see cref="ALDatabasePatches.NoteRecordWrite"/>);
-    /// they just participate in whatever transaction is already open, ended by the test
-    /// framework's own boundary or an explicit AL <c>Commit()</c>. So this only ever marks a
-    /// commit point for a real nested-transaction completion, not for every write — the
-    /// corpus's <c>OnModify_Throws_ValueNotModified</c> (an uncommitted plain
-    /// <c>Insert()</c> IS rolled back by a later trapped error) still holds.
+    /// never call <c>EndTransactionWorldAndTransaction</c> themselves (see
+    /// <see cref="ALDatabasePatches.NoteRecordWrite"/>); they just participate in whatever
+    /// transaction is already open, ended by the test framework's own boundary or an explicit
+    /// AL <c>Commit()</c>. So this only ever marks a commit point for a real transaction-world
+    /// completion, not for every write — the corpus's <c>OnModify_Throws_ValueNotModified</c>
+    /// (an uncommitted plain <c>Insert()</c> IS rolled back by a later trapped error) still
+    /// holds.
     /// </summary>
     public static void NoteTransactionEnd(object? session, bool commit)
     {
