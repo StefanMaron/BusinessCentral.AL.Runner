@@ -264,6 +264,29 @@ jobs:
       - name: Check this workflow's own pull_request trigger list
         run: bash .github/scripts/check_pr_check_triggers.sh
 
+  agent-mcp-tools:
+    name: Agent definitions must allowlist the MCP tools they document
+    runs-on: ubuntu-latest
+    # #2395: impl-agent.md carried a 50-line section headed "Reading BC's own
+    # code: use the `bc-decompiler` MCP server" while its own frontmatter
+    # `tools:` allowlist listed only the mcp__github__* tools. An explicit
+    # allowlist is exhaustive, so every mcp__bc-decompiler__* call returned
+    # "No such tool available". triager.md had the same pair of defects.
+    # Nothing announced it -- an implementation agent discovered it by calling
+    # a tool its own instructions told it to call.
+    #
+    # The check logic lives in check_agent_mcp_tools.py, extracted so it is
+    # unit-tested against synthetic fixtures rather than provable only by
+    # spawning an agent and watching a tool call fail.
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Run check_agent_mcp_tools.py's own unit tests
+        run: python3 .github/scripts/test_check_agent_mcp_tools.py
+
+      - name: Check every agent definition allowlists the MCP tools it documents
+        run: python3 .github/scripts/check_agent_mcp_tools.py
+
   # validate-coverage (docs/coverage.yaml) removed at the v1->v2 cutover: v1 tracked
   # AL-language coverage in a hand-curated YAML the orchestrator validated on every PR.
   # v2's spec is the tests/al-language/ corpus itself -- every AL surface that needs
