@@ -82,7 +82,13 @@ internal static partial class BcAppSymbolCache
     // declares no profiles" — so a cached dependency would leave All Profile empty and
     // every read of it would keep raising "There is no All Profile within the filter",
     // the exact #2317 bug replayed from cache rather than a cache miss.
-    private const int CacheVersion = 17;
+    // v18: AppSymbols gained PermissionSets — the (owning app id, role id, caption,
+    // assignable) tuples the Metadata Permission Set (2000000250) virtual table serves
+    // (issue #2313). A v17 payload deserialises with the list null, which reads as "this
+    // app declares no permission sets" — so a cached System Application would keep
+    // answering `MetadataPermissionSet.Get(<null guid>, 'SUPER')` with "does not exist",
+    // the exact #2313 bug, rather than missing the cache.
+    private const int CacheVersion = 18;
     private static readonly ConcurrentDictionary<string, AppSymbols> ProcessCache = new(StringComparer.OrdinalIgnoreCase);
     // Issue #1820 — path -> content-hash memo. ComputeAppContentHash needs to read the
     // WHOLE .app to hash it (unlike the FileInfo.Length/LastWriteTimeUtc stat it replaced,
@@ -128,8 +134,14 @@ internal static partial class BcAppSymbolCache
         List<ObjectSymbol> Objects, List<ReportSymbol> Reports, List<PageSymbol> Pages,
         // Profiles the .app declares, plus the app's own identity — both feed the
         // "All Profile" (2000000178) virtual table, whose rows are per-app and carry the
-        // declaring app's id and name as columns of their own (#2317).
-        List<ProfileSymbol>? Profiles = null, string? AppId = null, string? AppName = null);
+        // declaring app's id and name as columns of their own (#2317). AppId is also what
+        // attributes a permission set to its owning app (#2313), so nothing here parses the
+        // symbol reference's identity twice.
+        List<ProfileSymbol>? Profiles = null, string? AppId = null, string? AppName = null,
+        // Trailing + optional on purpose: every existing construction site keeps compiling
+        // unchanged, and an older cache payload deserialises as null (read as "not stated",
+        // never as "declares none" — see PermissionSetSymbol).
+        List<PermissionSetSymbol>? PermissionSets = null);
 
     /// <summary>
     /// One profile as SymbolReference.json states it. <c>ProfileId</c> is the profile object's
@@ -148,6 +160,19 @@ internal static partial class BcAppSymbolCache
     internal sealed record ProfileSymbol(
         string ProfileId, string? Caption, string? Description, string? RoleCenterPageName,
         bool Enabled, bool Promoted);
+
+    /// <summary>
+    /// One <c>permissionset</c> object a dependency .app declares, as its
+    /// SymbolReference.json states it — three of the four columns of the Metadata Permission
+    /// Set (2000000250) virtual table (issue #2313). The fourth, "App ID", comes from
+    /// <see cref="AppSymbols.AppId"/>, since every permission set in one symbol reference
+    /// belongs to the same app.
+    ///
+    /// <c>Caption</c> is null when the permission set declares no <c>Caption</c> property.
+    /// <c>Assignable</c> mirrors the declared <c>Assignable</c> property; AL's own default
+    /// for a permissionset that states none is <c>true</c>, which is what the parse applies.
+    /// </summary>
+    internal sealed record PermissionSetSymbol(int Id, string Name, string? Caption, bool Assignable);
 
     /// <summary>
     /// A precompiled dependency's page, as far as SymbolReference.json states it — just
@@ -290,7 +315,8 @@ internal static partial class BcAppSymbolCache
     private sealed record CachePayload(string ContentHash,
         List<ParsedTable> Tables, List<EnumSymbol> Enums, List<QuerySymbol> Queries,
         List<ObjectSymbol>? Objects, List<ReportSymbol>? Reports, List<PageSymbol>? Pages,
-        List<ProfileSymbol>? Profiles = null, string? AppId = null, string? AppName = null);
+        List<ProfileSymbol>? Profiles = null, string? AppId = null, string? AppName = null,
+        List<PermissionSetSymbol>? PermissionSets = null);
 
     /// <summary>
     /// Parse a loose <c>SymbolReference.json</c> file (the raw module JSON, NOT a .app
@@ -308,12 +334,14 @@ internal static partial class BcAppSymbolCache
         var reports = new Dictionary<int, ReportSymbol>();
         var pages = new Dictionary<int, PageSymbol>();
         var profiles = new Dictionary<string, ProfileSymbol>(StringComparer.OrdinalIgnoreCase);
+        var permissionSets = new Dictionary<int, PermissionSetSymbol>();
         using var doc = JsonDocument.Parse(File.ReadAllText(jsonPath));
         VisitSymbolContainer(doc.RootElement, tables, enums, queries, objects, reports, pages, profiles);
+        CollectPermissionSets(doc.RootElement, permissionSets);
         var (appId, appName) = ReadAppIdentity(doc.RootElement);
         return new AppSymbols(tables.Values.ToList(), enums.Values.ToList(), queries.Values.ToList(),
             objects.Values.ToList(), reports.Values.ToList(), pages.Values.ToList(),
-            profiles.Values.ToList(), appId, appName);
+            profiles.Values.ToList(), appId, appName, permissionSets.Values.ToList());
     }
 
     internal static AppSymbols Get(string appPath)
@@ -391,7 +419,8 @@ internal static partial class BcAppSymbolCache
             return new AppSymbols(payload.Tables, payload.Enums, payload.Queries ?? new List<QuerySymbol>(),
                 payload.Objects ?? new List<ObjectSymbol>(), payload.Reports ?? new List<ReportSymbol>(),
                 payload.Pages ?? new List<PageSymbol>(),
-                payload.Profiles ?? new List<ProfileSymbol>(), payload.AppId, payload.AppName);
+                payload.Profiles ?? new List<ProfileSymbol>(), payload.AppId, payload.AppName,
+                payload.PermissionSets ?? new List<PermissionSetSymbol>());
         }
         catch (Exception ex)
         {
@@ -408,7 +437,7 @@ internal static partial class BcAppSymbolCache
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(cachePath)!);
-            var payload = new CachePayload(contentHash, symbols.Tables, symbols.Enums, symbols.Queries, symbols.Objects, symbols.Reports, symbols.Pages, symbols.Profiles, symbols.AppId, symbols.AppName);
+            var payload = new CachePayload(contentHash, symbols.Tables, symbols.Enums, symbols.Queries, symbols.Objects, symbols.Reports, symbols.Pages, symbols.Profiles, symbols.AppId, symbols.AppName, symbols.PermissionSets);
             // #1809 follow-up: cachePath is content-keyed (hash of the .app file),
             // so two subprocesses parsing the same app concurrently used to race a
             // plain File.WriteAllText into the same path. TryRead already treats any
@@ -439,11 +468,13 @@ internal static partial class BcAppSymbolCache
         var reports = new Dictionary<int, ReportSymbol>();
         var pages = new Dictionary<int, PageSymbol>();
         var profiles = new Dictionary<string, ProfileSymbol>(StringComparer.OrdinalIgnoreCase);
+        var permissionSets = new Dictionary<int, PermissionSetSymbol>();
         string? appId = null, appName = null;
         foreach (var json in ReadSymbolReferences(appPath))
         {
             using var doc = JsonDocument.Parse(json);
             VisitSymbolContainer(doc.RootElement, tables, enums, queries, objects, reports, pages, profiles);
+            CollectPermissionSets(doc.RootElement, permissionSets);
             // The .app's own identity, stated once at the root of its SymbolReference.json.
             // First one wins: ReadSymbolReferences can yield more than one module for a
             // package, and the package's own module is the one that comes first.
@@ -452,7 +483,50 @@ internal static partial class BcAppSymbolCache
         }
         return new AppSymbols(tables.Values.ToList(), enums.Values.ToList(), queries.Values.ToList(),
             objects.Values.ToList(), reports.Values.ToList(), pages.Values.ToList(),
-            profiles.Values.ToList(), appId, appName);
+            profiles.Values.ToList(), appId, appName, permissionSets.Values.ToList());
+    }
+
+    /// <summary>
+    /// Collect every <c>permissionset</c> a symbol reference declares, at the root and in
+    /// every nested <c>Namespaces</c> container (BC 26+ nests application objects under
+    /// namespaces, which is why a root-only read of <c>PermissionSets</c> finds two entries
+    /// in the Base Application and none at all in the System Application — issue #2313).
+    ///
+    /// Kept as its own walk rather than another parameter on VisitSymbolContainer: only the
+    /// Metadata Permission Set table reads these, and a second pass over an already-parsed
+    /// JsonDocument costs nothing measurable next to the parse itself.
+    ///
+    /// The owning app id is NOT read here — <see cref="ReadAppIdentity"/> already takes it
+    /// off the same root for <see cref="AppSymbols.AppId"/>, and every permission set in one
+    /// symbol reference belongs to that app.
+    /// </summary>
+    private static void CollectPermissionSets(JsonElement root, Dictionary<int, PermissionSetSymbol> into)
+    {
+        Visit(root);
+
+        void Visit(JsonElement container)
+        {
+            if (container.TryGetProperty("PermissionSets", out var arr) && arr.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var el in arr.EnumerateArray())
+                {
+                    if (!el.TryGetProperty("Id", out var idProp) || !idProp.TryGetInt32(out var id) || id <= 0)
+                        continue;
+                    var name = el.TryGetProperty("Name", out var nameProp) ? nameProp.GetString() : null;
+                    if (string.IsNullOrEmpty(name)) continue;
+                    var props = SymbolProperties(el);
+                    props.TryGetValue("Caption", out var caption);
+                    // AL's `Assignable` defaults to true; only an explicit false flips it
+                    // (Base Application's "LOCAL" states `Assignable = false`, while
+                    // "D365 Basic - Edit" states nothing and is assignable). Table
+                    // 2000000250's own field 4 carries `InitValue = true` for the same reason.
+                    into.TryAdd(id, new PermissionSetSymbol(id, name, caption, !SymbolBoolFalse(props, "Assignable")));
+                }
+            }
+            if (container.TryGetProperty("Namespaces", out var namespaces) && namespaces.ValueKind == JsonValueKind.Array)
+                foreach (var ns in namespaces.EnumerateArray())
+                    Visit(ns);
+        }
     }
 
     /// <summary>

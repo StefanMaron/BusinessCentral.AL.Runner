@@ -1481,6 +1481,24 @@ public static partial class RecordPatches
                 return reportMetaDa;
             }
 
+            // ── Metadata Permission Set system virtual table (2000000250) ───────────────
+            // Virtual on the service tier too (MetadataPermissionSetDataProvider computes
+            // its rows from the permission sets the installed apps declare). An empty store
+            // makes Microsoft's own "Users - Create Super User" (codeunit 9000) fail its
+            // `MetadataPermissionSet.Get(<null guid>, 'SUPER')`, so every AL test that
+            // creates a user dies before it starts (issue #2313).
+            // See RecordPatches.MetadataPermissionSetVirtualTable.cs.
+            if (IsMetadataPermissionSetVirtualTable(table))
+            {
+                if (!perTable.TryGetValue(tableId, out var permSetDa))
+                {
+                    var createdPermSet = _mCreateTempDataAccess!.Invoke(self, new object[] { table })!;
+                    permSetDa = perTable.GetOrAdd(tableId, createdPermSet);
+                }
+                PopulateMetadataPermissionSetVirtualTable(permSetDa, table);
+                return permSetDa;
+            }
+
             if (IsReportDataItemsVirtualTable(table))
             {
                 if (!perTable.TryGetValue(tableId, out var reportDiDa))
