@@ -119,6 +119,15 @@ public static class AlValueCapture
         _series ?? (IReadOnlyList<AlCapturedValue>)Array.Empty<AlCapturedValue>();
 
     /// <summary>
+    /// Issue #2481's behavioural regression gate: incremented UNCONDITIONALLY, first
+    /// thing in <see cref="OnStmtHit"/>/<see cref="OnExit"/>, proving those Cecil-
+    /// rewritten call sites fire regardless of <see cref="Enabled"/>. Paired with
+    /// <see cref="Collect"/>'s emptiness (which stays empty whenever <see
+    /// cref="Enabled"/> stays false) — see AlRunner.Tests/PlainRunInstrumentationGateTests.cs.
+    /// </summary>
+    internal static long CallCount;
+
+    /// <summary>
     /// Feeds the per-execution series from BC's own StmtHit(N) — called from
     /// AlCoverageTracker.OnStmtHit (the same Cecil-prepended hook site --coverage
     /// already uses; see NclCecilRewrite's StmtHit block), NOT itself a Cecil target.
@@ -139,6 +148,7 @@ public static class AlValueCapture
     /// </summary>
     public static void OnStmtHit(NavMethodScope scope, int currentStatementNumber)
     {
+        System.Threading.Interlocked.Increment(ref CallCount);
         if (!Enabled) return;
         if (!scope.IsTopLevelCall) return;
         // NavMethodScope.ExitStatementNumber (int.MaxValue) is written directly by
@@ -172,6 +182,7 @@ public static class AlValueCapture
     /// </summary>
     public static void OnExit(NavMethodScope scope)
     {
+        System.Threading.Interlocked.Increment(ref CallCount);
         if (!Enabled) return;
         // Only the test's own locals — not those of any procedure it calls, which get
         // their own (deeper) scope instances and their own Exit() traffic. IsTopLevelCall
