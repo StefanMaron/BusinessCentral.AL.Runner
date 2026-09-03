@@ -2257,10 +2257,13 @@ public sealed partial class BcCompiler
     /// </summary>
     /// <param name="appRootDir">
     /// The directory containing this dep's own app.json — see the identically-named
-    /// parameter on <see cref="Emit"/> for why (#1899). When omitted, falls back to
-    /// whichever of <paramref name="alFolders"/> already carries an app.json — the same
-    /// directory <c>ivtRefs</c> below is read from — since every current caller of this
-    /// overload passes a single flat directory that already IS the app root.
+    /// parameter on <see cref="Emit"/> for why (#1899). It is also where the manifest behind
+    /// ParseOptions/CompilationOptions and <c>internalsVisibleTo</c> is read from (#2542),
+    /// which matters whenever it is NOT one of <paramref name="alFolders"/>: an app keeping
+    /// its AL under <c>src/</c> arrives here as <c>alFolders = [&lt;app&gt;/src]</c> with the
+    /// manifest one directory up. When omitted, the lookup falls back to whichever of
+    /// <paramref name="alFolders"/> carries an app.json, and never searches parent
+    /// directories — a neighbouring app's manifest is worse than none (#1948).
     /// </param>
     public void EmitDepSymbols(
         IEnumerable<string> alFolders, string moduleName,
@@ -2279,7 +2282,28 @@ public sealed partial class BcCompiler
         // internalsVisibleTo, and the manifest-derived compiler inputs read below
         // (preprocessorSymbols/features/contextSensitiveHelpUrl — #1898/#1940/#1941/#1943),
         // all need it in hand for the ctors themselves.
-        var foundAppJson = dirs.Select(d => Path.Combine(d, "app.json")).FirstOrDefault(File.Exists);
+        //
+        // #2542: prefer appRootDir, exactly as Emit() does for the same question. That
+        // parameter is contractually THIS dep's own app root, and for the in-bundle
+        // sibling-symbols compile it is the only place the manifest can be: EmitSiblingSymbols
+        // passes group.SuiteDir, while group.Paths comes from CollectSuitePaths, which reduces
+        // an app that keeps its AL under src/ to exactly [<app>/src] — a folder with no
+        // app.json in it. Scanning `dirs` alone therefore found nothing for that layout, and
+        // every property below silently fell back to its unset default while the SAME app's
+        // own Emit read them correctly: AL0543 on every ContextSensitiveHelpPage, an #if-guarded
+        // procedure missing from the symbols the dependent binds against, `features` and
+        // `internalsVisibleTo` dropped. Every AL fixture in this repo is flat, the one layout
+        // where the folder scan happens to work, so nothing caught it.
+        //
+        // The fallback still scans `dirs` and still accepts "no manifest" as an answer. What it
+        // must NOT do is climb to `../app.json`, which can resolve to a DIFFERENT app's manifest
+        // — compiling a dep against a neighbour's `features` breaks it in both directions (a dep
+        // omitting noImplicitWith would compile cleanly off a parent that declares it, and one
+        // declaring it would fail off a parent that does not). Pinned by
+        // ManifestFeaturesSubprocessTests' two SourceDependency cases.
+        var foundAppJson = (appRootDir != null && File.Exists(Path.Combine(appRootDir, "app.json")))
+            ? Path.Combine(appRootDir, "app.json")
+            : dirs.Select(d => Path.Combine(d, "app.json")).FirstOrDefault(File.Exists);
         var manifestInputs = ReadManifestCompilerInputs(foundAppJson);
 
         // Preprocessor symbols: same union as Emit() — CLEANSCHEMA1..25, any caller-supplied

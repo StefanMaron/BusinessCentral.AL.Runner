@@ -374,6 +374,46 @@ the exact value will see different results.
 | `Commit()` | Commits current transaction | Establishes a rollback commit-point — see "Transaction semantics" above; not a no-op |
 | `FilterGroup(n)` | Scoped filter groups | Not tracked — `FilterGroup()` is a no-op; all filters apply to group 0 |
 
+### `Record "Time Zone"` — ids follow the HOST, so they are IANA ids on Linux
+
+<a id="time-zone-virtual-table"></a>
+
+The `Time Zone` system virtual table (2000000164) is computed on demand, and BC's own
+`TimeZoneDataProvider` computes it by enumerating the host's
+`TimeZoneInfo.GetSystemTimeZones()` and numbering the results 1..N. That is the whole of
+its implementation — the row set is a property of the machine, not of Business Central.
+
+The runner enumerates the same call. BC in the cloud runs on Windows, so a SaaS tier
+reports Windows ids (`W. Europe Standard Time`); the runner runs on Linux, where the same
+call reports IANA ids (`Europe/Berlin`). `"No."` is a sequence number over that list, so
+the two hosts disagree about the ids **and** about the numbering.
+
+| | Real BC (Windows-hosted) | al-runner (Linux) |
+|---|---|---|
+| `TimeZone.ID` | `W. Europe Standard Time` | `Europe/Berlin` |
+| `TimeZone."No."` | position in the Windows list | position in the IANA list |
+| `TimeZone."Display Name"` | Windows display name | the host's display name |
+
+**This is deliberate and permanent.** The alternative — shipping a hardcoded Windows id
+list so the answers match a Windows tier — was considered and rejected: fabricating
+Windows time zone ids on a Linux host is a silent fake (see
+`.claude/rules/loud-failures.md`), it is wrong in a way no test running on this host could
+catch, and the list goes stale every time Microsoft revises it. When BC's own answer is a
+property of the machine, being faithful to BC's *code* is the honest option.
+
+What this means for a test: assert the **shape** — that `FindSet()` succeeds, that `"No."`
+starts at 1 and increments with no gaps, that every row has a non-blank `ID`, and that
+`Get(1)` agrees with the first row of `FindSet()`. All of that holds on any host. A test
+that asserts a specific zone id is asserting a property of the machine it happens to run
+on, and will not hold across hosts in either direction.
+
+Nothing in the corpus or in `tests/runner-extras/` reads this table today, which is why
+there is no `expect-divergence` entry for it in `tests/expectations/`: that mode declares
+a corpus test that **fails** on the runner, and no such test exists yet. This section is
+the record until one does.
+
+---
+
 ### `Record Date` — an open-ended `Period Start` filter is answered from a materialised window
 
 <a id="date-virtual-table"></a>

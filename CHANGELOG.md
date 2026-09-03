@@ -15,6 +15,16 @@ All notable changes to this project are documented here. Format based on
 - **all-profile:** populate the All Profile system virtual table (2000000178)
 
 ### Fixed
+- **dep-metadata:** carry the SourceObject flags the symbol file states
+- **cli:** print the build's own version, and stop overselling --print-cache-key
+- **phaselog:** report a real peak RSS on macOS instead of a silent zero
+- **rad:** make a namespace clone field-complete instead of naming three properties
+- **virtual-tables:** stop the first virtual table to populate from latching the other two
+- **testpage:** page background tasks refuse loudly instead of crashing (partial progress on #2514)
+- **rad:** stop the incremental fast path shipping a caller bound to the old overload
+- **server:** make affectedOnly coverage attribution request-wide, not per-module
+- **metadata:** carry a table's declared Caption onto its NCLMetaTable
+- **deps:** read a sibling app's manifest from its app root, not just its source folders
 - **testpage:** GoToRecord not-found restore refreshes non-key fields
 - **testpage:** GoToRecord no longer resolves position by field caption
 - **testpage:** TestPage over a temporary SourceTable = Integer opens empty, not the virtual table
@@ -71,6 +81,12 @@ All notable changes to this project are documented here. Format based on
 - **agents:** opening a corpus PR needs no approval
 
 ### Changed
+- Populate the Time Zone (2000000164) virtual table from the host
+- Name this bundle's provisioning gaps again in the run summary
+- Give each runner process its own sibling-symbols directory
+- **roslyn:** parse in parallel and share metadata references across compiles
+- **gc:** run the runner under Server GC
+- Populate the CodeUnit Metadata (2000000137) virtual table
 - **scheduling:** record BcVersionDefaultDocumentationTests' measured weight
 - **subprocess:** drain the async output readers before reading captured stdout
 - **perf:** gate plain-run instrumentation cost on behaviour, not time

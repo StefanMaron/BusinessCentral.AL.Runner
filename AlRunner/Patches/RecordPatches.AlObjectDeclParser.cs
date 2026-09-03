@@ -54,6 +54,27 @@ public static partial class RecordPatches
             if (!ObjectDeclKinds.Contains(kind)) continue;
             if (ObjectIdOf(obj) is not int id) continue;
             var name = IdentText((obj as NavSyntax.ObjectSyntax)?.Name);
+            // Codeunits additionally carry the three object-level properties the
+            // CodeUnit Metadata virtual table (2000000137) reports as real columns —
+            // see RecordPatches.CodeunitMetadataVirtualTable.cs. Every other kind here
+            // is still only its (kind, id, name) tuple.
+            if (obj is NavSyntax.CodeunitSyntax cu)
+            {
+                var props = cu.PropertyList;
+                _parsedObjectDecls[(kind, id)] = new ParsedAlObjectDecl(
+                    kind, id, name,
+                    // As WRITTEN: a bare id, or a table name that may be namespace-
+                    // qualified. Resolving it needs the run's table inventory, which is
+                    // not built yet at parse time, so the consumer resolves it.
+                    TableNo: PropValue(props, "TableNo") is { } t
+                        ? LastNameSegment(t.ToString()?.Trim())
+                        : null,
+                    // AL's default is false; only an explicit `= true` sets it.
+                    SingleInstance: PropIs(props, "SingleInstance", "true"),
+                    // AL's default is Normal when the codeunit declares no Subtype.
+                    Subtype: PropValue(props, "Subtype")?.ToString()?.Trim());
+                continue;
+            }
             _parsedObjectDecls[(kind, id)] = new ParsedAlObjectDecl(kind, id, name);
         }
     }
@@ -62,4 +83,14 @@ public static partial class RecordPatches
     internal static IReadOnlyCollection<ParsedAlObjectDecl> ParsedObjectDecls => _parsedObjectDecls.Values;
 }
 
-internal record ParsedAlObjectDecl(string Kind, int Id, string Name);
+/// <summary>
+/// One AL object declaration parsed from source. <paramref name="TableNo"/>,
+/// <paramref name="SingleInstance"/> and <paramref name="Subtype"/> are only populated for
+/// <c>Codeunit</c>; every other kind leaves them at their defaults, which is also what a
+/// codeunit declaring none of them means. <paramref name="TableNo"/> is the reference AS
+/// WRITTEN (a bare id in text form, or a table name) — resolving it to an id needs the run's
+/// table inventory, which does not exist yet at parse time.
+/// </summary>
+internal record ParsedAlObjectDecl(
+    string Kind, int Id, string Name,
+    string? TableNo = null, bool SingleInstance = false, string? Subtype = null);

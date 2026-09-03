@@ -270,11 +270,17 @@ catch (InvalidOperationException ex)
 string? cacheRootOverride = null;
 // --print-cache-key (issue #1851): a diagnostic/test-support mode. Reaches the SAME
 // ComputeAlCacheKey call, with the SAME arguments, that a real run would use for the
-// first app group it processes — then prints it and exits, before Emit+Compile even
-// starts. Exists so callers that only need to assert a property of the KEY (not of a
-// compiled DLL) don't have to pay for a full cold AL compile to get one. There is no
+// first app group it processes — then prints it and exits, without emitting or compiling
+// that app group. Exists so callers that only need to assert a property of the KEY (not
+// of a compiled DLL) don't have to pay for a full cold AL compile to get one. There is no
 // second/parallel key computation — see the call site below, unchanged from the normal
 // path up to and including the ComputeAlCacheKey call itself.
+//
+// It is NOT free, and the help text must not imply it is. The short-circuit sits inside
+// the per-app-group loop, so RunLayeredPrePass has already built every dependency
+// implementation bundle from source by the time a key is printed. That cost cannot be
+// skipped: the key covers the resolved dependency set, so a run that skipped the pre-pass
+// would print a different key than the run it stands in for.
 bool printCacheKeyOnly = false;
 // Test isolation mode — default matches BC's "Test Runner - Isol. Codeunit" (130450).
 var isolation = AlRunner.TestIsolation.Codeunit;
@@ -1946,6 +1952,17 @@ foreach (var bundle in bundles)
     // without deps doesn't inherit a sibling bundle's Install codeunits.
     AlRunner.InstallTriggerRunner.ResetForNewBundle();
 
+    // Everything about this bundle that says "your package cache cannot serve this run":
+    // dependencies no loader tier can implement (DependencyResolver.UnservableDependencies,
+    // added below where they are printed) plus platform runtime apps found symbol-only
+    // (reported from inside the dependency load, hence the collector). Collected as well as
+    // printed so the run summary can name them again at the end — see Reporter.PrintSummary.
+    // Declared this high because dependency resolution happens far above the bundle's other
+    // per-bucket state, and reset per bundle so one bundle's missing package is not attributed
+    // to every later bundle and every later --watch cycle.
+    var bundleProvisionGaps = new List<string>();
+    AlRunner.Infrastructure.ProvisionGapLog.Reset();
+
     // ── per-bucket dep resolution ──────────────────────────────────────────
     // Hoisted out of the try block below so EmitSiblingSymbols (called later, once
     // per bundle) can pass this bundle's resolved Microsoft-platform closure into
@@ -2036,7 +2053,10 @@ foreach (var bundle in bundles)
                 // certain object-ID-0 failure later, and #1689 is precisely the report that
                 // nothing named it. One line per app, and only for a shape that cannot work.
                 foreach (var u in resolver.UnservableDependencies)
+                {
                     Console.Error.WriteLine(u);
+                    bundleProvisionGaps.Add(u);
+                }
                 // Compiler sees only non-workspace dirs in its .app scanner; the
                 // synthetic workspace dirs are registered as symbols.json-only
                 // sources via SetExtraSymbolDirs (called AFTER SetResolvedDeps,
@@ -2056,6 +2076,9 @@ foreach (var bundle in bundles)
                 // as `dep-load:<Name>` (see DependencyLoader.LoadAll). Wrapping it here too
                 // would nest, and nested stages double-count — see PhaseLog.Stage.
                 var loaded = depLoader.LoadAll(ordered, depRootDir);
+                // Platform runtime apps the load found symbol-only. Read straight after the load
+                // that produces them, before anything else can reset the collector.
+                bundleProvisionGaps.AddRange(AlRunner.Infrastructure.ProvisionGapLog.Collected);
                 // Issue #2239: same as "resolved N dep(s)" above — gated behind --verbose.
                 if (AlRunner.Log.Verbose)
                     Console.WriteLine($"  [{rel}] loaded {loaded.Count} dep assembl(ies)");
@@ -3194,7 +3217,7 @@ foreach (var bundle in bundles)
     if (bundleTests.Count == 0 && bundleErrors.Count > 0) bundleStage = BucketStage.CompileFailed;
     results.Add(new BucketResult(bundleAbs, bundleStage,
         bundleErrors, null, bundleTests,
-        bundleEmit, bundleComp, bundleRun, ranGroupCount));
+        bundleEmit, bundleComp, bundleRun, ranGroupCount, bundleProvisionGaps));
     // Appended here, not buffered to process exit: a run that dies mid-way still
     // yields a row for every bundle it did finish. The row's wall clock covers this
     // whole loop turn, so wall − (emit+compile+run) is the per-bundle overhead
@@ -5025,12 +5048,40 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                     .GroupBy(t => $"{t.Codeunit}.{t.Method}", StringComparer.Ordinal)
                     .ToDictionary(g => g.Key, g => g.Last(), StringComparer.Ordinal);
 
+                // #2535: file-to-object attribution must be REQUEST-WIDE (every bundle's
+                // module unioned into one map), not per-module. `statements` is RUNTIME
+                // coverage — it contains every statement the test actually executed,
+                // including statements in a DEPENDENCY bundle's files (a real cross-app
+                // call, not a hypothetical: see the Pageworks/Pageworks.Test repro in
+                // #2535, mirroring #2492's PeekChangedObjects cross-bundle case on the
+                // CHANGED-object side — see that method's docstring). A per-module map
+                // cannot resolve a path belonging to a sibling bundle's module, so a single
+                // ordinary cross-app helper call made the whole test "unmappable" ->
+                // permanently "unknown" -> the test reran on EVERY future edit no matter
+                // how unrelated, forever. Measured on the real corpus (1012 tests): 897
+                // were unmappable this way, only 9 ever got a real coverage entry, and
+                // every one of those 9 had a coverage-set size of exactly 1 (their own
+                // declaring codeunit only) — so the defect is unmappable cross-bundle
+                // statements, not over-broad coverage sets. Built ONCE per request (not
+                // per bundle) from every module this request has already resolved.
+                var requestWideTrackedObjectsByPath = new Dictionary<string, AffectedObjectId>(StringComparer.Ordinal);
+                foreach (var trackedModuleName in requestModuleByBundle.Values.Distinct(StringComparer.Ordinal))
+                {
+                    var m = emitter.TryGetTrackedObjectsByPath(trackedModuleName);
+                    if (m == null) continue;
+                    foreach (var kv in m)
+                        requestWideTrackedObjectsByPath[kv.Key] = kv.Value;
+                }
+
                 foreach (var (bundlePath, discoveredTests) in requestDiscoveredTestsByBundle)
                 {
                     if (!requestModuleByBundle.TryGetValue(bundlePath, out var moduleName)) continue;
                     if (!requestEnvironmentByBundle.TryGetValue(bundlePath, out var envKey)) continue;
-                    var trackedObjectsByPath = emitter.TryGetTrackedObjectsByPath(moduleName);
-                    if (trackedObjectsByPath == null) continue;
+                    // Still require THIS bundle's own module to have a RAD baseline before
+                    // attributing ITS tests at all — same posture as before #2535, only the
+                    // per-statement lookup below now consults the request-wide map instead
+                    // of just this one module's.
+                    if (emitter.TryGetTrackedObjectsByPath(moduleName) == null) continue;
 
                     var nextCoverage = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
                     var nextUnknown = new HashSet<string>(StringComparer.Ordinal);
@@ -5054,7 +5105,7 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                         var unmappable = false;
                         foreach (var s in statements)
                         {
-                            if (!trackedObjectsByPath.TryGetValue(s.FilePath, out var identity))
+                            if (!requestWideTrackedObjectsByPath.TryGetValue(s.FilePath, out var identity))
                             {
                                 unmappable = true;
                                 break;
@@ -5552,10 +5603,7 @@ static string SanitiseFilename(string name)
 // Shared by --version/-v/-V/version and --help's first line, so a build's
 // self-reported version can never drift between the two surfaces (#2072).
 static string VersionString()
-{
-    var asmVer = typeof(Program).Assembly.GetName().Version?.ToString() ?? "unknown";
-    return $"al-runner v{asmVer}";
-}
+    => $"al-runner v{AlRunner.Infrastructure.RunnerVersion.Informational(typeof(Program).Assembly)}";
 
 static void PrintGuide(TextWriter w)
 {
@@ -6010,9 +6058,12 @@ static void PrintHelp(TextWriter w)
     w.WriteLine("  --print-cache-key       Diagnostic/test-support mode: compute the AL-output cache");
     w.WriteLine("                          key for the first app group of the first bundle exactly as");
     w.WriteLine("                          a real run would, print \"[cache] KEY key=<hash>\", and exit");
-    w.WriteLine("                          before Emit+Compile starts. Requires the cache to be");
-    w.WriteLine("                          enabled (default; not --no-cache). Exit code 2 if no key");
-    w.WriteLine("                          could be computed.");
+    w.WriteLine("                          without emitting or compiling that app group. NOT free: the");
+    w.WriteLine("                          layered dependency pre-pass has already built every");
+    w.WriteLine("                          dependency bundle from source by then, and it cannot be");
+    w.WriteLine("                          skipped, because the key covers the resolved dependency set.");
+    w.WriteLine("                          Requires the cache to be enabled (default; not --no-cache).");
+    w.WriteLine("                          Exit code 2 if no key could be computed.");
     w.WriteLine("  --watch                 Stay resident with warm dependencies and re-run IN-PROCESS");
     w.WriteLine("                          on every .al change (deps loaded once → ~seconds/save, not");
     w.WriteLine("                          a cold re-run). Ctrl+C to quit.");
@@ -7559,8 +7610,13 @@ static void EmitSiblingSymbols(
         .ToHashSet();
     if (targets.Count == 0) return;
 
-    var dir = Path.Combine(Path.GetTempPath(),
-        "al-runner-sibling-symbols", Path.GetFileName(bundleAbs.TrimEnd(Path.DirectorySeparatorChar)));
+    // Per (bundle, process), not per bundle leaf name — see
+    // Infrastructure/SiblingSymbolsDirectory.cs (#2586). The recursive delete below is only
+    // safe because of that: it can now only ever remove THIS process's own directory, where
+    // before two concurrent runners over same-leaf-named bundles deleted each other's symbols
+    // mid-compile. Nobody else cleans up a private directory, so prune old ones first.
+    AlRunner.Infrastructure.SiblingSymbolsDirectory.PruneStale(TimeSpan.FromDays(1));
+    var dir = AlRunner.Infrastructure.SiblingSymbolsDirectory.ForBundle(bundleAbs);
     try
     {
         if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true);
