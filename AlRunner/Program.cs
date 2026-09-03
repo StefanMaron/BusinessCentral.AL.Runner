@@ -1946,6 +1946,17 @@ foreach (var bundle in bundles)
     // without deps doesn't inherit a sibling bundle's Install codeunits.
     AlRunner.InstallTriggerRunner.ResetForNewBundle();
 
+    // Everything about this bundle that says "your package cache cannot serve this run":
+    // dependencies no loader tier can implement (DependencyResolver.UnservableDependencies,
+    // added below where they are printed) plus platform runtime apps found symbol-only
+    // (reported from inside the dependency load, hence the collector). Collected as well as
+    // printed so the run summary can name them again at the end — see Reporter.PrintSummary.
+    // Declared this high because dependency resolution happens far above the bundle's other
+    // per-bucket state, and reset per bundle so one bundle's missing package is not attributed
+    // to every later bundle and every later --watch cycle.
+    var bundleProvisionGaps = new List<string>();
+    AlRunner.Infrastructure.ProvisionGapLog.Reset();
+
     // ── per-bucket dep resolution ──────────────────────────────────────────
     // Hoisted out of the try block below so EmitSiblingSymbols (called later, once
     // per bundle) can pass this bundle's resolved Microsoft-platform closure into
@@ -2036,7 +2047,10 @@ foreach (var bundle in bundles)
                 // certain object-ID-0 failure later, and #1689 is precisely the report that
                 // nothing named it. One line per app, and only for a shape that cannot work.
                 foreach (var u in resolver.UnservableDependencies)
+                {
                     Console.Error.WriteLine(u);
+                    bundleProvisionGaps.Add(u);
+                }
                 // Compiler sees only non-workspace dirs in its .app scanner; the
                 // synthetic workspace dirs are registered as symbols.json-only
                 // sources via SetExtraSymbolDirs (called AFTER SetResolvedDeps,
@@ -2056,6 +2070,9 @@ foreach (var bundle in bundles)
                 // as `dep-load:<Name>` (see DependencyLoader.LoadAll). Wrapping it here too
                 // would nest, and nested stages double-count — see PhaseLog.Stage.
                 var loaded = depLoader.LoadAll(ordered, depRootDir);
+                // Platform runtime apps the load found symbol-only. Read straight after the load
+                // that produces them, before anything else can reset the collector.
+                bundleProvisionGaps.AddRange(AlRunner.Infrastructure.ProvisionGapLog.Collected);
                 // Issue #2239: same as "resolved N dep(s)" above — gated behind --verbose.
                 if (AlRunner.Log.Verbose)
                     Console.WriteLine($"  [{rel}] loaded {loaded.Count} dep assembl(ies)");
@@ -3194,7 +3211,7 @@ foreach (var bundle in bundles)
     if (bundleTests.Count == 0 && bundleErrors.Count > 0) bundleStage = BucketStage.CompileFailed;
     results.Add(new BucketResult(bundleAbs, bundleStage,
         bundleErrors, null, bundleTests,
-        bundleEmit, bundleComp, bundleRun, ranGroupCount));
+        bundleEmit, bundleComp, bundleRun, ranGroupCount, bundleProvisionGaps));
     // Appended here, not buffered to process exit: a run that dies mid-way still
     // yields a row for every bundle it did finish. The row's wall clock covers this
     // whole loop turn, so wall − (emit+compile+run) is the per-bundle overhead
