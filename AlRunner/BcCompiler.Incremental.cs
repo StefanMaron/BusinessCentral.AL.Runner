@@ -674,6 +674,112 @@ public sealed partial class BcCompiler
             ? baseline.ObjectByPath.ToDictionary(kv => kv.Key, kv => ToAffectedObjectId(kv.Value), StringComparer.Ordinal)
             : null;
 
+    /// <summary>
+    /// #2492: a side-effect-free "peek" at which AL objects changed in <paramref name="moduleName"/>'s
+    /// OWN files since its last recorded RAD baseline — no <c>CreateForRad</c>, no <c>Emit</c>, no
+    /// baseline mutation, and (unlike <see cref="TryEmitIncremental"/>) no requirement that the
+    /// resolved dependency set is unchanged, since a dependency-symbol change is not this method's
+    /// concern.
+    ///
+    /// Exists for a multi-<c>sourcePaths</c> server request's affectedOnly selection: a test in
+    /// bundle B can cover an AL object declared in bundle A (a real cross-app call, not a
+    /// hypothetical — see issue #2492's Pageworks/Pageworks.Test repro), so B's own per-file diff
+    /// alone can never tell whether A changed. The caller peeks EVERY bundle in the request BEFORE
+    /// deciding any bundle's coverage-based narrowing, and unions the results — see
+    /// <c>RunAllBundlesForServer</c> in Program.cs.
+    ///
+    /// Returns null when this bundle's own changed-object set cannot be determined with
+    /// confidence — no baseline yet, a touched file could not be parsed/classified, or a
+    /// removed file was not tracked. The caller MUST treat null as "unknown, do not narrow" (the
+    /// same posture <see cref="TryEmitIncremental"/>'s own null-changedObjects fallback already
+    /// takes), never as "nothing changed here". Deliberately over-inclusive rather than precise: a
+    /// rename is reported as BOTH the old and the new identity changing (no vacated/appeared
+    /// pairing), and a removed/added file's declared identity is always included — extra entries
+    /// only cause a test to run that didn't strictly need to, never the silent loss this method
+    /// exists to close.
+    ///
+    /// Deliberately does NOT check the manifest fingerprint <see cref="TryEmitIncremental"/> does
+    /// (identity/version/preprocessor-symbols/features) — that check exists there to decide
+    /// whether the REAL RAD compile is safe to attempt at all, using <c>_currentAppId</c>/
+    /// <c>_currentPublisher</c>/<c>_currentVersion</c>, static state that is only valid while the
+    /// real per-bundle compile flow has scoped it via <c>SetCurrentAppIdentity</c>. A caller
+    /// peeking every bundle in a multi-<c>sourcePaths</c> request UP FRONT, before any bundle's own
+    /// compile has scoped that state, cannot rely on it — and does not need to: an app.json change
+    /// this method fails to notice only means a slightly stale (but still safe, still additive)
+    /// contribution to the caller's union, never a false "nothing changed".
+    /// </summary>
+    internal IReadOnlyList<AffectedObjectId>? PeekChangedObjects(
+        IEnumerable<string> alFolders, string moduleName, string? appRootDir)
+    {
+        if (!_radBaselines.TryGetValue(moduleName, out var baseline))
+            return null;
+
+        var dirs = alFolders.Where(Directory.Exists).Distinct().ToList();
+        var alFiles = dirs.SelectMany(d => AlRunner.Infrastructure.SafeDirectoryScan.Files(d, "*.al")).Distinct().ToList();
+
+        var manifestAppJsonPath = (appRootDir != null && File.Exists(Path.Combine(appRootDir, "app.json")))
+            ? Path.Combine(appRootDir, "app.json")
+            : dirs.Select(d => Path.Combine(d, "app.json")).FirstOrDefault(File.Exists);
+        var manifestInputs = ReadManifestCompilerInputs(manifestAppJsonPath);
+
+        var currentHashes = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var f in alFiles) currentHashes[f] = HashFile(f);
+
+        var addedPaths = new List<string>();
+        var removedPaths = new List<string>();
+        var modifiedPaths = new List<string>();
+        foreach (var kv in currentHashes)
+        {
+            if (!baseline.FileHashByPath.TryGetValue(kv.Key, out var oldHash)) addedPaths.Add(kv.Key);
+            else if (!string.Equals(oldHash, kv.Value, StringComparison.Ordinal)) modifiedPaths.Add(kv.Key);
+        }
+        foreach (var oldPath in baseline.FileHashByPath.Keys)
+            if (!currentHashes.ContainsKey(oldPath)) removedPaths.Add(oldPath);
+
+        if (addedPaths.Count == 0 && removedPaths.Count == 0 && modifiedPaths.Count == 0)
+            return Array.Empty<AffectedObjectId>();
+
+        var parseOpts = RadParseOptions(manifestInputs);
+        var compOpts = RadCompilationOptions(manifestInputs);
+        var changed = new HashSet<RadObjectIdentity>();
+
+        foreach (var path in removedPaths)
+        {
+            if (!baseline.ObjectByPath.TryGetValue(path, out var oldIdentity))
+                return null; // untracked removal — only the real compile path can adjudicate this
+            changed.Add(oldIdentity);
+        }
+
+        foreach (var path in addedPaths.Concat(modifiedPaths))
+        {
+            NavSyntax.SyntaxTree tree;
+            try
+            {
+                var src = File.ReadAllText(path);
+                tree = NavSyntax.SyntaxTree.ParseObjectText(src, path: path, encoding: null!, parseOpts, default);
+            }
+            catch { return null; }
+
+            var (identity, error) = ClassifyDeclaredObject(tree, compOpts);
+            if (identity == null) return null;
+            changed.Add(identity.Value);
+
+            // An in-place rename (path already tracked under a DIFFERENT identity) vacates the
+            // old identity too — report both rather than pairing them, per this method's own
+            // over-inclusive-by-design contract above.
+            if (baseline.ObjectByPath.TryGetValue(path, out var oldIdentityAtSamePath)
+                && IdentityKey(oldIdentityAtSamePath) != IdentityKey(identity.Value))
+                changed.Add(oldIdentityAtSamePath);
+        }
+
+        return changed
+            .OrderBy(i => i.Kind.ToString(), StringComparer.Ordinal)
+            .ThenBy(i => i.Id ?? int.MaxValue)
+            .ThenBy(i => i.Name, StringComparer.Ordinal)
+            .Select(ToAffectedObjectId)
+            .ToArray();
+    }
+
     /// <summary>Projects to the NavCA-free shape Program.cs is allowed to name.
     /// See <see cref="AffectedObjectId"/> for why that boundary exists.</summary>
     private static AffectedObjectId ToAffectedObjectId(RadObjectIdentity id)
