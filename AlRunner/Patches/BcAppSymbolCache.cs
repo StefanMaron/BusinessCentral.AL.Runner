@@ -1131,8 +1131,11 @@ internal static partial class BcAppSymbolCache
                 props.TryGetValue("InitValue", out var initValue);
                 var isAutoIncrement = props.TryGetValue("AutoIncrement", out var autoIncrement)
                     && (autoIncrement == "1" || autoIncrement.Equals("true", StringComparison.OrdinalIgnoreCase));
+                props.TryGetValue("MinValue", out var minValue); // #2495
+                props.TryGetValue("MaxValue", out var maxValue);
                 fields.Add(new ParsedField(fieldId, fieldName, typeName, SymbolTypeLength(typeName), isFlowField, calcFormula,
-                    optionMembers, initValue, isAutoIncrement, IsFlowFilter: isFlowFilter));
+                    optionMembers, initValue, isAutoIncrement, IsFlowFilter: isFlowFilter,
+                    MinValue: minValue, MaxValue: maxValue));
             }
         }
 

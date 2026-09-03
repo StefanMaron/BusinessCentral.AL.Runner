@@ -349,9 +349,18 @@ public static partial class RecordPatches
             relationArms = ParseRelationArms(tr, fname);
         }
 
+        // MinValue / MaxValue (#2495): raw AL expression text, unquoted — these are numeric
+        // literals (e.g. `MinValue = 0;`), never a quoted string, so no unescaping is needed.
+        // Passed through to MetaField.minValue/maxValue (both plain strings); NCL's own
+        // TestPage-control-write validation is what parses and enforces them, so the runner's
+        // only job is carrying the declared text.
+        var minValue = PropValue(props, "MinValue")?.ToString()?.Trim();
+        var maxValue = PropValue(props, "MaxValue")?.ToString()?.Trim();
+
         return new ParsedField(fid, fname, ftype, length, isFlowField, calcFormula,
             optionMembers, initValueText, isAutoIncrement, caption,
-            relationArms, relationValidate, isFlowFilter, obsoleteState, obsoleteReason);
+            relationArms, relationValidate, isFlowFilter, obsoleteState, obsoleteReason,
+            minValue, maxValue);
     }
 
     /// <summary>
@@ -1089,7 +1098,11 @@ internal record ParsedRelationArm(string TableName, string? FieldName, List<Pars
 /// names exactly, so <c>Enum.Parse</c> in BuildMetaField needs no translation table (#1780).</param>
 /// <param name="ObsoleteReason">The declared reason text, unquoted/unescaped, or null when the
 /// field declares no ObsoleteReason (distinct from an explicit empty string).</param>
-internal record ParsedField(int FieldId, string FieldName, string TypeName, int Length, bool IsFlowField = false, ParsedCalcFormula? CalcFormula = null, string? OptionMembers = null, string? InitValueText = null, bool IsAutoIncrement = false, string? Caption = null, List<ParsedRelationArm>? RelationArms = null, bool RelationValidate = true, bool IsFlowFilter = false, string ObsoleteState = "No", string? ObsoleteReason = null);
+/// <param name="MinValue">The declared AL expression text for MinValue (e.g. "0"), or null when
+/// undeclared. Passed through to MetaField.minValue (a string) unparsed — NCL's own field
+/// validation on TestPage SetValue is what evaluates and formats it (#2495).</param>
+/// <param name="MaxValue">Same shape as <see cref="MinValue"/>, for MaxValue.</param>
+internal record ParsedField(int FieldId, string FieldName, string TypeName, int Length, bool IsFlowField = false, ParsedCalcFormula? CalcFormula = null, string? OptionMembers = null, string? InitValueText = null, bool IsAutoIncrement = false, string? Caption = null, List<ParsedRelationArm>? RelationArms = null, bool RelationValidate = true, bool IsFlowFilter = false, string ObsoleteState = "No", string? ObsoleteReason = null, string? MinValue = null, string? MaxValue = null);
 internal record ParsedKey(string Name, List<int> FieldIds);
 
 /// <summary>Which value shape a <see cref="ParsedColumnFilter"/> condition carries — matches
