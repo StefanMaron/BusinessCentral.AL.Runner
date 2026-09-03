@@ -58,13 +58,36 @@
 //   SINGLESERVER, Microsoft's own AL) runs completely unmodified; only the metadata under it
 //   changes, exactly as RecordPatches.MetadataPermissionSetVirtualTable.cs does for its
 //   sibling table.
+//
+// LIVE, NOT SNAPSHOTTED (issue #2473)
+//   An earlier shape of this file populated the store ONCE per provider (a
+//   ConditionalWeakTable-guarded flag) and never again. That was faithful the moment of
+//   first touch, but "Tenant Permission Set" (2000000165) is an ordinarily-writable table —
+//   AL can Insert/Delete/Rename its rows at any time — and on a real service tier every
+//   later Get()/FindSet() against Aggregate Permission Set re-derives the union fresh, so a
+//   row inserted after the first touch IS visible there. The one-shot guard made it
+//   invisible here instead: the actual root of the 14-test "already bound" cascade in
+//   Codeunit134614, not the event-binding mechanism #2393 ruled out. Every touch now clears
+//   this table's OWN store (ClearProviderInPlace, RecordPatches.TransactionSnapshot.cs —
+//   Tenant/Metadata Permission Set themselves are untouched) and redrives the whole union,
+//   so a later delete/rename of the underlying Tenant Permission Set row cannot leave a
+//   ghost behind either — a top-up-only shape (inserting only NEW keys, never removing
+//   stale ones) would have exactly that gap, the same asymmetry
+//   RecordPatches.AllProfileVirtualTable.cs's own banner documents for a table backed by
+//   AL-writable data.
+//
+//   RecordPatches.MetadataPermissionSetVirtualTable.cs's sibling `_mpsPopulatedByProvider`
+//   guard was audited for the same shape and does NOT have this gap: its rows come from
+//   ParsedPermissionSets (this run's own compiled AL source) and each dependency .app's
+//   SymbolReference.json (EnumerateKnownPermissionSets) — both fixed for the lifetime of one
+//   runner invocation, not runtime-writable AL data, so a repeated top-up there can only
+//   ever re-discover the SAME fixed set, never miss a write that happened after first touch.
 
 using System;
 using System.Collections;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Reflection;
-using System.Runtime.CompilerServices;
 using System.Runtime.ExceptionServices;
 using AlRunner.Infrastructure;
 using Microsoft.Dynamics.Nav.Runtime;
@@ -74,12 +97,6 @@ namespace AlRunner.Patches;
 public static partial class RecordPatches
 {
     internal const int AggregatePermissionSetVirtualTableId = 2000000167;
-
-    // Per in-memory-provider guard: the drain below is eager and one-shot, so repeated
-    // population attempts (one per lazy touch of the table) must only ever insert once per
-    // provider instance — the same idempotency shape as
-    // RecordPatches.MetadataPermissionSetVirtualTable.cs's own `_mpsPopulatedByProvider`.
-    private static readonly ConditionalWeakTable<object, object> _apsPopulatedByProvider = new();
 
     private static bool _apsReflectionReady;
     private static Type? _apsProviderType;                    // Microsoft.Dynamics.Nav.Runtime.AggregatePermissionSetDataProvider
@@ -110,10 +127,23 @@ public static partial class RecordPatches
                 "Aggregate Permission Set (virtual table 2000000167)",
                 "aggregate-permission-set-virtual-table — data access has no in-memory provider; see docs/scope.md");
 
-        // One materialisation per provider instance — the drain below is eager and yields the
-        // whole union every call, so a second call would try to insert the same rows again.
-        if (_apsPopulatedByProvider.TryGetValue(store, out _)) return;
-        _apsPopulatedByProvider.AddOrUpdate(store, store);
+        // Recompute the WHOLE union fresh on every touch — on a real service tier
+        // Aggregate Permission Set has no persistent state of its own; every Get()/FindSet()
+        // re-derives from Metadata Permission Set and Tenant Permission Set at that moment
+        // (EagerVirtualDataProvider, see the file banner). An earlier shape here gated on a
+        // one-shot "populate once" flag per provider, so the SECOND and every later touch
+        // was a no-op: a Tenant Permission Set row inserted after the first touch never
+        // appeared (#2473) — the actual root of a 14-test cascade in Microsoft's own
+        // Tests-SINGLESERVER Codeunit134614 (#2357/#2393).
+        //
+        // Clearing this table's OWN store (not Tenant/Metadata Permission Set, which are
+        // untouched) before every redrive, rather than a top-up-only insert, also keeps a
+        // later Tenant Permission Set DELETE/RENAME from leaving a ghost row behind here —
+        // the same asymmetric gap RecordPatches.AllProfileVirtualTable.cs's own banner
+        // warns a top-up-only shape would have for a table backed by AL-writable data.
+        // ClearProviderInPlace (RecordPatches.TransactionSnapshot.cs) only nulls the row
+        // trees, not the "table" metadata field, so the provider stays usable afterward.
+        ClearProviderInPlace(store);
 
         var nclMetadata = _apsSessionNclMetadata!.GetValue(session)
             ?? throw new RunnerOutOfScopeException(

@@ -6,13 +6,5 @@
     "Mode": "expect-fail-known-gap",
     "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2474",
     "Note": "Real BC answers Name = the permission set's own Role ID for a Caption-less permission set. The runner answers the declared name with its original casing instead: expected <ALTPERMISSIONSET>, actual <ALTPermissionSet>. Role ID is a Code[20] column and BC upper-cases a NavCode, so the divergence here is the missing NavCode normalisation, not a missing fallback -- the fallback itself is present (see #2433, which fixed the same fallback for the sibling Metadata Permission Set virtual table). Test passes on real BC 27.0 through 28.4 -- StefanMaron/BusinessCentral.AL.Language.Tests#111. Tracked as #2474; the fix removes this entry."
-  },
-  {
-    "codeunitId": 60931,
-    "CodeunitName": "Test Aggregate Permission Set",
-    "Method": "AggregatePermissionSet_TenantScopeDeclaration_IsPresent",
-    "Mode": "expect-fail-known-gap",
-    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2473",
-    "Note": "The Aggregate Permission Set union is snapshotted once per run and never reflects a later Insert into Tenant Permission Set, so a row written by the test itself is not reachable through the Tenant scope. Real BC recomputes the union per request. Test passes on real BC 27.0 through 28.4 -- StefanMaron/BusinessCentral.AL.Language.Tests#111. Tracked as #2473; the fix removes this entry."
   }
 ]
