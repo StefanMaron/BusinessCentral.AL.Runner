@@ -4,11 +4,14 @@
 //   1. ApplyPolyfillRedirects — string substitutions routing AL-compiler-emitted
 //      references for APIs that don't exist on the real service-tier DLLs to
 //      small in-process polyfill shims (defined inline as PolyfillSource).
+//
+// Post-compile pass (runs only when the real emit needs it):
 //   2. CallSiteArgWrap — fixes the residual call-site ByRef gap BC's emitter
 //      doesn't cover (e.g. `dict.ALGet(K, fieldOfHandleT)` → wraps the field arg
 //      as `new ByRef<T>(() => expr, v => expr = v)`). BC's emitter handles
 //      parameter-declaration ByRef wraps natively at codeanalysis.cs:342854 —
-//      no syntax rewriter needed for those.
+//      no syntax rewriter needed for those. Runs only when an emit reports the
+//      gap (see #2590), so a module without one never pays for it.
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using AlRunner.Rewriters;
@@ -108,33 +111,47 @@ public sealed class BcAssembler
         var refs = SharedMetadataReferences(ReferencePaths());
         Mark($"metadata references ({refs.Count})");
 
-        // Fill BC's call-site ByRef gap. Runs a throwaway compile to find CS1503
-        // 'cannot convert T to ByRef<T>' errors and rewrites only those args.
-        trees = CallSiteArgWrap.Apply(trees, refs).ToList();
-        Mark("CallSiteArgWrap speculative compile");
+        var options = new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary,
+            allowUnsafe: true,
+            concurrentBuild: false,
+            checkOverflow: true,
+            optimizationLevel: OptimizationLevel.Release);
 
-        var compilation = CSharpCompilation.Create(
-            assemblyName,
-            trees,
-            refs,
-            new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary,
-                allowUnsafe: true,
-                concurrentBuild: false,
-                checkOverflow: true,
-                optimizationLevel: OptimizationLevel.Release));
-
-        using var ms = new MemoryStream();
-        var emit = compilation.Emit(ms);
-        Mark("Roslyn bind + IL gen");
-        if (!emit.Success)
+        // Emit first, then fill BC's call-site ByRef gap only when the emit actually
+        // reports one — see CallSiteArgWrap's header for why this pass is no longer
+        // speculative (#2590). Bounded at 6 emits total (an initial attempt plus up to 5
+        // rewrite-and-retry cycles), mirroring the round budget the old speculative
+        // diagnose-and-rewrite loop used before every real compile.
+        const int MaxAttempts = 6;
+        byte[]? bytes = null;
+        IReadOnlyList<string> errors = Array.Empty<string>();
+        for (var attempt = 0; attempt < MaxAttempts; attempt++)
         {
-            var errs = emit.Diagnostics
+            var compilation = CSharpCompilation.Create(assemblyName, trees, refs, options);
+            using var ms = new MemoryStream();
+            var emit = compilation.Emit(ms);
+            if (emit.Success)
+            {
+                bytes = ms.ToArray();
+                errors = Array.Empty<string>();
+                break;
+            }
+
+            errors = emit.Diagnostics
                 .Where(d => d.Severity == DiagnosticSeverity.Error)
                 .Select(d => d.ToString())
                 .ToList();
-            return new CompileResult(null, errs);
+
+            if (attempt == MaxAttempts - 1) break;
+            var rewritten = CallSiteArgWrap.TryRewrite(trees, emit.Diagnostics);
+            // Null means the failure is NOT a ByRef gap — a genuine compile error, which
+            // must be reported as itself rather than retried into a misleading message.
+            if (rewritten == null) break;
+            trees = rewritten.ToList();
         }
-        var bytes = ms.ToArray();
+        Mark("Roslyn bind + IL gen (+ CallSiteArgWrap on demand)");
+        if (bytes == null)
+            return new CompileResult(null, errors);
         if (Environment.GetEnvironmentVariable("AL_RUNNER_DUMP_BC_ASM") == "1")
         {
             try
