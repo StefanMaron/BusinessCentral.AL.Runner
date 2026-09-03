@@ -27,59 +27,30 @@
 // NavMethodScope.StatementNumber (read BEFORE Exit()'s own `statementNumber =
 // int.MaxValue` sentinel write).
 //
-// DIFF PLUS WRITE SET ON EVERY OBSERVATION — the actual "one record per execution":
+// DIFF PLUS WRITE SET ON EVERY OBSERVATION:
 //
-// Capturing every [NavName] field on every StmtHit and emitting all of them
-// unconditionally would produce (fields x statements) records for a test that touches
-// none of them repeatedly — noise, and a different order of runtime cost per statement
-// than the old "walk once at Exit" design. Two things earn a record at an observation:
-//   1. the field's value (or capture error) CHANGED since the last observation — the
-//      diff, which needs no knowledge of the source; and
-//   2. the statement that just finished ASSIGNS the field (its write set, from the AL
-//      syntax tree — AlWriteSetModel.cs / AlMemberSyntaxIndex.CollectWrites), whether or
-//      not the value changed. This is what makes "x := 5 ran again while x was already
-//      5" a record: the contract agreed on SShadowS/ALchemist#1 for #2074/#2056 is full
-//      fidelity by default, because a consumer answering "what was x at iteration 7"
-//      cannot reconstruct it from a change-only series.
-// A field neither changed nor assigned still gets nothing — an untouched local is not
-// "executed into existing". What syntax cannot see (a `var` parameter of a user
-// procedure, a receiver mutated inside an expression) falls back to the diff alone; see
-// AlWriteSetModel.cs.
+// A field earns a record when its value (or capture error) changed since the last
+// observation, or when the statement that just finished assigns it (its write set from
+// the AL syntax, AlWriteSetModel.cs), changed or not. That is the full-fidelity contract
+// agreed on SShadowS/ALchemist#1 for #2074/#2056: `x := 5` while x was 5 is a record. A
+// field neither changed nor assigned gets nothing.
 //
-// PER SCOPE INSTANCE, NOT PROCESS-GLOBAL:
+// PER SCOPE INSTANCE:
 //
-// The last-known map and the last statement id live in a frame per NavMethodScope
-// INSTANCE (AlScopeFrames). A single global pair was wrong the moment the top-level
-// scope called a procedure: the callee's `s` was diffed against the caller's `s` (both
-// are [NavName] fields keyed by the AL name), the callee's first observation was never a
-// baseline, and its first records were attributed to the CALLER's last statement id.
-// IsTopLevelCall is true for every scope of the run's root object (StackDepth only grows
-// across an application-object boundary — see AlDapSession.cs), so all of them are
-// captured, each against its own frame.
+// The last-known map and last statement id live in a frame per NavMethodScope instance
+// (AlScopeFrames); a global pair diffed a callee's locals against the caller's same-named
+// ones. IsTopLevelCall is true for every scope of the run's root object (StackDepth only
+// grows across an application-object boundary, see AlDapSession.cs), so all are captured.
 //
-// THE FIRST OBSERVATION IS A BASELINE, NEVER EMITTED (with one measured exception):
+// THE FIRST OBSERVATION IS A BASELINE, NEVER EMITTED, with one measured exception:
 //
-// The very first StmtHit call in a scope fires before ANY statement has run, so every
-// field is still at its declared-default value — nothing produced that state, so no
-// statement earns credit for it (see OnStmtHit's `isBaseline` handling). The exception
-// (#2056): BC emits a `for`/`foreach` loop's variable initialisation BEFORE the loop
-// statement's own StmtHit (measured on the statement table: `i = 1` is observed AT the
-// `for` statement's hit, attributed to the statement before it), so when the loop is the
-// scope's FIRST statement the baseline already sees the initial value. AL locals always
-// start at their type's default, so a CLR primitive/string that is non-default at the
-// baseline can only have been assigned by statement 0's pre-hit part — it is emitted,
-// attributed to statement 0 (DiffAndUpdate's AssignedBeforeFirstHit). Without this,
-// iteration 1 of a leading `for` loop has no loop variable at all. This is also
-// why an AL local that is declared but NEVER assigned anywhere in the scope now gets NO
-// record at all — a real, deliberate behaviour change from the pre-#2074 snapshot, which
-// walked every [NavName] field unconditionally at Exit() regardless of whether it was
-// ever touched. Under "one record per execution", an untouched local was never executed
-// into existing, so it has no execution to report. Existing callers that read only the
-// LAST entry per variable name for straight-line (single-assignment-per-variable) code
-// see the identical values as before; see ServerTests for the updated assertions and
-// AlStatementTableTests for the corollary statementId-precision fix (a variable's own
-// LAST entry is now attributed to the statement that actually produced it, not
-// uniformly to the scope's last statement the way the pre-#2074 design did).
+// The first StmtHit fires before any statement ran, so every field is at its default and
+// nothing produced that state. Except that BC assigns a for/foreach variable BEFORE the
+// loop statement's own hit, so a leading `for` shows `i = 1` at the baseline. AL locals
+// start at their type's default, so a CLR primitive or non-empty string that is
+// non-default at the baseline was assigned by statement 0 before its hit; it is emitted,
+// attributed to statement 0 (AssignedBeforeFirstHit). A local declared but never
+// assigned gets no record at all.
 using System.Reflection;
 using Microsoft.Dynamics.Nav.Runtime;
 
@@ -109,19 +80,14 @@ public static class AlValueCapture
     /// not — same pattern as AlCoverageTracker.Enabled.</summary>
     public static volatile bool Enabled;
 
-    // The flat series is one ordered list for the whole invocation (every scope's
-    // records, in observation order); the diff STATE is per scope instance — see the
-    // file header and AlScopeFrames.
+    // One ordered series for the whole invocation; diff state is per scope instance.
     private static volatile List<AlCapturedValue>? _series;
 
     private sealed class CaptureState
     {
-        // Last observed (value, captureError) per AL local name of THIS scope instance,
-        // used to detect a genuine change between one observation and the next.
+        // Last observed (value, captureError) per local of this scope instance.
         public readonly Dictionary<string, (object? Value, string? Error)> LastKnown = new();
-        // This scope instance's most recent StmtHit id — "what just finished running", the
-        // producing statement the NEXT observation's records are attributed to. -1 means
-        // "no StmtHit observed yet" (the pending-baseline state).
+        // The statement that just finished; -1 until the first StmtHit (baseline pending).
         public int LastStatementId = -1;
     }
 
@@ -161,10 +127,8 @@ public static class AlValueCapture
     /// the one whose side effect this observation reflects (see the file header for why
     /// that is N's PREVIOUS statement, not N itself).
     ///
-    /// Returns the records THIS observation produced (empty when disabled, not the
-    /// top-level scope, or nothing changed) so AlIterationTracker (#2056) can file them
-    /// under the loop iteration they belong to; the same records are also appended to
-    /// the flat series Collect() returns.
+    /// Returns the records this observation produced (also appended to the series), so
+    /// AlIterationTracker can file them under the right iteration.
     /// </summary>
     public static IReadOnlyList<AlCapturedValue> OnStmtHit(NavMethodScope scope, int currentStatementNumber)
     {
@@ -179,11 +143,8 @@ public static class AlValueCapture
         var scopeName = scope.ScopeName ?? "?";
         var state = _frames.GetOrPush(scope).State;
         bool isBaseline = state.LastStatementId < 0;
-        // The statement that just finished: the producing statement for whatever this
-        // observation shows, and the one whose write set forces records for the locals
-        // it assigns even when their value did not change (see the file header). A
-        // baseline can only carry values statement 0 itself produced before its hit, so
-        // THAT is the producing statement for those.
+        // Attribute to the statement that just finished; a baseline's values came from
+        // statement 0 itself (see the file header).
         var previous = state.LastStatementId;
         var assigned = isBaseline ? null : AssignedBetween(scope.GetType(), previous, currentStatementNumber);
         var changed = DiffAndUpdate(scopeName, isBaseline ? currentStatementNumber : previous,
@@ -209,8 +170,7 @@ public static class AlValueCapture
     /// </summary>
     public static void OnExit(NavMethodScope scope)
     {
-        // #2056: every scope exit — captured or not — also ends whatever loop instances
-        // that scope still had open (AlIterationTracker self-gates on its own flag).
+        // Every scope exit also ends its open loop instances (AlIterationTracker self-gates).
         IReadOnlyList<AlCapturedValue> changed = Array.Empty<AlCapturedValue>();
         // Only the test's own locals — not those of any procedure it calls, which get
         // their own (deeper) scope instances and their own Exit() traffic. IsTopLevelCall
@@ -223,9 +183,7 @@ public static class AlValueCapture
             // Read BEFORE Exit()'s own body runs, so this is the real last-executed statement
             // index, not the int.MaxValue sentinel Exit() is about to write.
             var statementId = scope.StatementNumber;
-            // This scope's frame ends here. A scope whose body never called StmtHit at all
-            // (a degenerate empty trigger) has no frame: an empty last-known map makes
-            // DiffAndUpdate report every field once, the pre-#2074 backstop.
+            // No frame (a body that never called StmtHit): an empty map reports every field once.
             var frame = _frames.Pop(scope);
             var lastKnown = frame?.State.LastKnown ?? new Dictionary<string, (object?, string?)>();
             var assigned = AlScopeSyntaxResolver.Resolve(scope.GetType())?.Writes.TargetsOf(statementId);
@@ -268,12 +226,8 @@ public static class AlValueCapture
     /// the file header); that one is returned, attributed to <paramref
     /// name="attributionStatementId"/>, which the caller passes as statement 0 itself.
     ///
-    /// <paramref name="assigned"/> is the write set of the statement that just finished
-    /// (AlWriteSetTable.TargetsOf; null at a baseline or when the scope has no syntax
-    /// info): a field in it is returned even when its value did NOT change, because the
-    /// statement executed and assigned it — the "one record per execution" the #2056
-    /// contract asks for. Matched case-insensitively, as AL identifiers are. A field
-    /// neither changed nor assigned is still skipped.
+    /// A field in <paramref name="assigned"/> (the finished statement's write set) is
+    /// returned even when unchanged; a field neither changed nor assigned is skipped.
     /// </summary>
     internal static List<AlCapturedValue> DiffAndUpdate(
         string scopeName, int attributionStatementId,
@@ -299,9 +253,7 @@ public static class AlValueCapture
         return changed;
     }
 
-    // The write set of the statement that just finished, plus the counted-loop variables
-    // assigned between it and the statement about to run (AlLoopScopeTable.
-    // LoopVariablesAssignedBefore) - null when the scope has no syntax info at all.
+    // The finished statement's write set plus loop variables assigned before `current`.
     private static IReadOnlySet<string>? AssignedBetween(Type scopeType, int previous, int current)
     {
         var syntax = AlScopeSyntaxResolver.Resolve(scopeType);
@@ -316,8 +268,7 @@ public static class AlValueCapture
         return merged ?? writes;
     }
 
-    // AL identifiers are case-insensitive; the set from AlWriteSetTable already is, but a
-    // caller-supplied set may not be, so fall back to a case-insensitive scan.
+    // AL identifiers are case-insensitive; a caller-supplied set may not be.
     private static bool WasAssigned(IReadOnlySet<string>? assigned, string name)
     {
         if (assigned == null || assigned.Count == 0) return false;
@@ -327,15 +278,9 @@ public static class AlValueCapture
         return false;
     }
 
-    /// <summary>
-    /// True when a raw field value at the scope's FIRST observation proves an assignment
-    /// already ran: AL locals start at their type's default, so a non-default CLR
-    /// primitive or non-empty string cannot be the declared default. Deliberately
-    /// limited to types whose default is unambiguous — a BC value-type wrapper's
-    /// ToString() of its default may be non-empty, and reporting that as "produced by
-    /// statement 0" would be a fake value (.claude/rules/loud-failures.md cuts both
-    /// ways: never fabricate, never drop).
-    /// </summary>
+    /// <summary>A non-default primitive at the first observation was assigned by statement 0
+    /// before its hit; a BC value-type wrapper's ToString() of its default may be non-empty,
+    /// so only primitives and strings count.</summary>
     private static bool AssignedBeforeFirstHit(object? raw) => raw switch
     {
         null => false,
@@ -361,9 +306,7 @@ public static class AlValueCapture
         string scopeName, string name, int statementId, Func<object?> readField) =>
         CaptureField(scopeName, name, statementId, readField, out _);
 
-    /// <summary>Same as the overload above, also handing back the raw CLR value that was
-    /// read (null when the read threw) — DiffAndUpdate's baseline rule needs the raw
-    /// value's TYPE, which the wire value no longer carries.</summary>
+    /// <summary>As above, also returning the raw CLR value (null when the read threw).</summary>
     internal static AlCapturedValue CaptureField(
         string scopeName, string name, int statementId, Func<object?> readField, out object? raw)
     {

@@ -1,57 +1,22 @@
-// AlLoopModel — the static half of `iterationTracking` (issue #2056): what a loop IS,
-// in terms the runtime segmenter (AlIterationSegmenter) can check against BC's own
-// StmtHit(N) stream.
+// Static loop model for iterationTracking (#2056): AlLoopSite is a loop as parsed from
+// AL syntax, AlLoopSiteTable the same loop resolved to a scope class's statement ids.
 //
-// Two layers:
-//   AlLoopSite       — one loop statement in AL SOURCE, from BC's syntax tree
-//                      (AlMemberSyntaxIndex): kind, loop variable, and the TEXT RANGES of
-//                      its header (the part that runs per evaluation / at entry) and of
-//                      each body statement. Source-only; knows nothing about ids.
-//   AlLoopSiteTable  — the same loop RESOLVED against one compiled scope class's
-//                      [SourceSpans] table (AlLoopScopeTable.Build): which statement ids
-//                      are header ids, which are body ids, and which single event opens
-//                      an iteration (the "marker", see below). This is what the segmenter
-//                      consumes; it never touches source text.
+// BC instruments loops like this (measured on the statement table, see ServerExecuteIterationsTests):
+//   for / foreach   one id for the statement, hit once at entry; body ids once per pass
+//   while           the condition is hit per evaluation, including the final false one
+//   repeat          body ids per pass, then the until-condition per evaluation
+//   do begin..end   the closing `end` gets an id, hit once after the loop; `break` has none
+// Ids are numbered in document order.
 //
-// HOW BC INSTRUMENTS LOOPS — measured, not assumed (al-runner's own `coverage:true`
-// statement table for each shape, see ServerExecuteIterationsTests):
-//   for / foreach   ONE statement id spanning the whole statement, hit ONCE at entry. The
-//                   body's ids are hit once per iteration. There is NO per-iteration
-//                   header hit — the increment/next-element step is not instrumented.
-//   while           the condition is a CStmtHit, hit once PER EVALUATION including the
-//                   final false one; the `while` keyword itself has no id.
-//   repeat          body ids per pass, then the until-condition's CStmtHit per
-//                   evaluation; the `repeat` keyword has no id.
-//   begin..end body a `for ... do begin ... end` additionally gets an id on the closing
-//                   `end`, hit ONCE after the loop finishes (normally or via `break`, not
-//                   via `exit`). It is inside the loop statement's span but outside every
-//                   body statement's span, so Build classifies it as neither header nor
-//                   body — i.e. as the first "outside" hit that ends the loop instance.
-//   break           no id at all. `exit` has one. `if` conditions are CStmtHits per
-//                   evaluation; a `case` statement has one id per evaluation.
-//   ids are assigned in document order (pre-order), so an `if`'s condition id is lower
-//                   than its branch ids and a nested loop's own id is lower than its body's.
-//
-// THE MARKER — which event opens a new iteration. Every iteration executes the body's
-// first statement exactly once, so that statement's FIRST id (its condition, for an
-// `if`/`case`; itself, for a plain statement) fires once per iteration. Two exceptions
-// make "first body statement" a rule rather than a lookup:
-//   - if the first body statement is itself a loop, its own ids fire MANY times per
-//     enclosing iteration (a nested `while`'s condition, a nested `repeat`'s body), so
-//     the marker is "the nested loop ENTERS" (MarkerNestedSiteIndex), which the
-//     segmenter observes exactly once per enclosing iteration;
-//   - if the first body statement carries no id (e.g. `break;`), the next one is used.
-// A loop whose body has NO instrumented statement at all (an empty body) cannot have
-// its iterations counted from the hit stream; Build records WHY in Unsegmentable and
-// the wire reports it as such rather than as "0 iterations" (.claude/rules/
-// loud-failures.md — never a silently wrong segmentation).
+// An iteration opens when the body's first statement is hit (the "marker"). If that
+// statement is itself a loop, the marker is that loop's entry, because its own ids fire
+// several times per pass. A body with no instrumented statement is unsegmentable and
+// reported as such, never counted.
 namespace AlRunner.Infrastructure;
 
 public enum AlLoopKind { For, ForEach, While, Repeat }
 
-/// <summary>A 0-based (line, column) position in an AL source file — the same
-/// coordinate space BC's [SourceSpans] decode to (AlSourceSpanCodec) and its syntax
-/// tree's GetLineSpan() reports, so the two can be compared directly.</summary>
+/// <summary>0-based (line, column): the coordinate space both [SourceSpans] and the syntax tree use.</summary>
 public readonly record struct AlTextPosition(int Line, int Column) : IComparable<AlTextPosition>
 {
     public int CompareTo(AlTextPosition other) =>
@@ -63,23 +28,16 @@ public readonly record struct AlTextPosition(int Line, int Column) : IComparable
     public static bool operator >=(AlTextPosition a, AlTextPosition b) => a.CompareTo(b) >= 0;
 }
 
-/// <summary>An inclusive 0-based text range. Statement membership is decided by the
-/// statement's START position falling inside the range — a `for` statement's own
-/// [SourceSpans] entry spans the whole statement (body included), so end-containment
-/// would misfile it.</summary>
+/// <summary>Inclusive 0-based range. Membership is by a statement's start, since a `for` statement's span covers its body.</summary>
 public readonly record struct AlTextRange(AlTextPosition Start, AlTextPosition End)
 {
     public bool ContainsStart(AlTextPosition p) => Start <= p && p <= End;
 }
 
-/// <summary>One statement of a loop body, in document order, `begin..end` blocks
-/// flattened. <c>NestedSiteIndex</c> is set when the statement IS a loop (its site
-/// index in the same member's site list).</summary>
+/// <summary>A body statement in document order, blocks flattened. NestedSiteIndex is set when it is a loop.</summary>
 public readonly record struct AlLoopBodyStatement(AlTextRange Range, int? NestedSiteIndex);
 
-/// <summary>One loop statement in AL source, from the syntax tree — see the file
-/// header. <c>Index</c> is its position in the owning member's site list (document
-/// order); <c>ParentIndex</c> the lexically enclosing loop's, if any.</summary>
+/// <summary>A loop as parsed from AL. Index is its position in the member's site list.</summary>
 public sealed record AlLoopSite(
     int Index,
     AlLoopKind Kind,
@@ -89,9 +47,7 @@ public sealed record AlLoopSite(
     IReadOnlyList<AlLoopBodyStatement> Body,
     int? ParentIndex);
 
-/// <summary>One loop site resolved against a compiled scope's statement ids — what
-/// AlIterationSegmenter checks each StmtHit(N) against. See the file header for the
-/// header/body/marker rules.</summary>
+/// <summary>A loop resolved to one scope class's statement ids.</summary>
 public sealed class AlLoopSiteTable
 {
     public AlLoopSiteTable(
@@ -114,29 +70,24 @@ public sealed class AlLoopSiteTable
 
     public int Index { get; }
     public AlLoopKind Kind { get; }
-    /// <summary>The `for`/`foreach` control variable's AL name; null for while/repeat.
-    /// Drives the capture split rule in AlIterationSegmenter.</summary>
+    /// <summary>The for/foreach control variable; null for while/repeat.</summary>
     public string? LoopVariable { get; }
-    /// <summary>1-based AL source lines of the loop statement (first line of the
-    /// keyword to last line of the body).</summary>
+    /// <summary>1-based source lines of the loop statement.</summary>
     public int StartLine { get; }
     public int EndLine { get; }
-    /// <summary>Statement ids that fire at entry (`for`/`foreach`) or per evaluation
-    /// (`while`/`until` condition) — inside the loop but not an iteration's body.</summary>
+    /// <summary>Ids hit at entry (for/foreach) or per evaluation (while/until condition).</summary>
     public IReadOnlySet<int> HeaderIds { get; }
-    /// <summary>Statement ids inside the body, nested loops' ids included.</summary>
+    /// <summary>Ids inside the body, nested loops included.</summary>
     public IReadOnlySet<int> BodyIds { get; }
-    /// <summary>The body statement id whose hit opens an iteration — or null when the
-    /// first body statement is a nested loop (<see cref="MarkerNestedSiteIndex"/>).</summary>
+    /// <summary>The body statement whose hit opens an iteration, unless the body starts with a loop.</summary>
     public int? MarkerStatementId { get; }
-    /// <summary>The nested loop site whose ENTRY opens an iteration of this loop.</summary>
+    /// <summary>The nested loop whose entry opens an iteration of this one.</summary>
     public int? MarkerNestedSiteIndex { get; }
     public int? ParentIndex { get; }
-    /// <summary>Non-null when iterations cannot be counted for this loop, with the
-    /// reason; such a loop still reports that it was entered, never a fake count.</summary>
+    /// <summary>Why iterations cannot be counted for this loop, or null.</summary>
     public string? Unsegmentable { get; }
 
-    /// <summary>Lexically nested loops (direct children). Wired by AlLoopScopeTable.</summary>
+    /// <summary>Directly nested loops.</summary>
     public IReadOnlyList<AlLoopSiteTable> Children => _children;
     private readonly List<AlLoopSiteTable> _children = new();
     internal void AddChild(AlLoopSiteTable child) => _children.Add(child);
@@ -144,8 +95,7 @@ public sealed class AlLoopSiteTable
     public bool Owns(int statementId) => HeaderIds.Contains(statementId) || BodyIds.Contains(statementId);
 }
 
-/// <summary>Every loop of one compiled scope class, plus the scope's own [SourceSpans]
-/// so executed statement ids can be turned back into AL lines on the wire.</summary>
+/// <summary>Every loop of one scope class, plus its [SourceSpans] for line resolution.</summary>
 public sealed class AlLoopScopeTable
 {
     public AlLoopScopeTable(IReadOnlyList<AlLoopSiteTable> sites, long[] spans)
@@ -162,7 +112,7 @@ public sealed class AlLoopScopeTable
     }
 
     public IReadOnlyList<AlLoopSiteTable> Sites { get; }
-    /// <summary>Loops not nested inside another loop of this scope.</summary>
+    /// <summary>Loops not nested in another loop of this scope.</summary>
     public IReadOnlyList<AlLoopSiteTable> Roots { get; }
     public long[] Spans { get; }
 
@@ -174,15 +124,11 @@ public sealed class AlLoopScopeTable
     }
 
     /// <summary>
-    /// The `for`/`foreach` loop variables that were assigned between the statement
-    /// <paramref name="previous"/> just finished and statement <paramref name="current"/>
-    /// about to run - i.e. <paramref name="current"/> opens a pass of a counted loop
-    /// (its first body statement, following into a nested loop's entry when the body
-    /// starts with one) and <paramref name="previous"/> is not that loop's header, so this
-    /// is not the first pass (the header's own hit already observed the initial value;
-    /// see AlValueCapture's header). AlValueCapture adds these to the write set so a
-    /// `foreach` element equal to the previous one still gets its record: for a `for`
-    /// the increment always changes the value, for a `foreach` it may not.
+    /// The for/foreach loop variables assigned between statement <paramref name="previous"/>
+    /// finishing and <paramref name="current"/> starting: <paramref name="current"/> opens a pass and
+    /// <paramref name="previous"/> is not that loop's header (the first pass is observed at the
+    /// header hit). Needed for a foreach over equal consecutive elements, which the value diff
+    /// cannot see.
     /// </summary>
     public IEnumerable<string> LoopVariablesAssignedBefore(int current, int previous)
     {
@@ -195,17 +141,10 @@ public sealed class AlLoopScopeTable
         }
     }
 
-    // `current` opens a pass of `site`: it is the site's marker statement, or - when the
-    // body starts with a nested loop - that nested loop's ENTRY. What "entry" is depends
-    // on the nested kind, because its ids fire more than once per enclosing pass:
-    //   for/foreach  its header fires exactly once per entry: any header hit is an entry.
-    //   while        its condition fires per evaluation; a mid-pass re-evaluation always
-    //                follows one of its own body statements, an entry never does.
-    //   repeat       no header before the body; its first statement fires per pass. A
-    //                pass that follows the until-condition is a re-pass, not an entry.
-    //                (A repeat that IS the whole enclosing body re-enters right after its
-    //                final until-condition too, which this cannot tell apart; the diff
-    //                still reports the enclosing loop variable's change for a `for`.)
+    // `current` opens a pass of `site`: its marker, or the entry of the nested loop the body
+    // starts with. A nested for/foreach header fires once per entry; a nested while condition
+    // also fires mid-pass, but then always after one of its own body statements; a nested
+    // repeat's first statement also fires after its until-condition.
     private bool OpensPassOf(AlLoopSiteTable site, int current, int previous)
     {
         if (site.MarkerStatementId is int m) return m == current;
@@ -226,8 +165,7 @@ public sealed class AlLoopScopeTable
         return false;
     }
 
-    /// <summary>1-based AL line of a statement id, or null when the id is outside the
-    /// span table (BC shape drift — reported as absent, never as a fake line).</summary>
+    /// <summary>1-based line of a statement id; null when the id is outside the span table.</summary>
     public int? LineOf(int statementId)
     {
         if (statementId < 0 || statementId >= Spans.Length) return null;
@@ -235,13 +173,9 @@ public sealed class AlLoopScopeTable
     }
 
     /// <summary>
-    /// Resolves syntax-level sites against a compiled scope's [SourceSpans]: a statement
-    /// id belongs to a site's header when its span STARTS inside one of the site's
-    /// header ranges, and to its body when it starts inside one of the body statements'
-    /// ranges (nested loops' ids therefore belong to every enclosing body too). The
-    /// marker is derived per the file header. <paramref name="instrumented"/> restricts
-    /// which indices are considered (BC emits a trailing never-instrumented sentinel
-    /// entry — see AlCoverageInstrumentedStatements); null means every index.
+    /// Resolves parsed sites against a scope's [SourceSpans]: an id is a header id when its span
+    /// starts in a header range, a body id when it starts in a body statement. <paramref
+    /// name="instrumented"/> excludes BC's trailing never-instrumented sentinel entry.
     /// </summary>
     public static AlLoopScopeTable Build(IReadOnlyList<AlLoopSite> sites, long[] spans, IEnumerable<int>? instrumented = null)
     {

@@ -167,17 +167,10 @@ public sealed class ServerRequest
     [JsonPropertyName("perTestCoverage")] public bool? PerTestCoverage { get; set; }
 
     /// <summary>
-    /// #2056: `execute` only. When true, each test result additionally carries
-    /// `iterations[]` — one entry per loop INSTANCE entered during the run (a loop in a
-    /// procedure called three times appears three times), each with one `steps[]` entry
-    /// per iteration holding that iteration's own `capturedValues` (the SAME records the
-    /// flat per-test series has, bucketed — never a delta, never a snapshot of every
-    /// local), its Message() calls, and the AL lines it executed; nested loops carry
-    /// `parentLoopId`/`parentIteration` naming the loop instance and iteration that were
-    /// active when they were entered, across procedure calls. Present as `[]` when the
-    /// run looped nowhere; absent entirely when not requested. Independent of
-    /// `captureValues` (without it, steps carry lines and messages only). See
-    /// docs/server-mode.md "Loop iterations" and Infrastructure/AlIterationTracker.cs.
+    /// #2056, `execute` only: each test result carries `iterations[]`, one entry per loop
+    /// instance with one step per iteration (that iteration's capturedValues, messages and
+    /// executed lines) and parent links across procedure calls. `[]` when nothing looped,
+    /// absent when not requested. See docs/server-mode.md "Loop iterations".
     /// </summary>
     [JsonPropertyName("iterationTracking")] public bool? IterationTracking { get; set; }
     /// <summary>
@@ -505,12 +498,8 @@ public static class ServerProtocol
         statementId = m.StatementId,
     };
 
-    // One loop instance on the wire (#2056) — see ServerRequest.IterationTracking's doc
-    // comment for the contract. `file` is the same path identity `coverage[].file`
-    // uses; `loopLine`/`loopEndLine` are the loop statement's 1-based source lines.
-    // parentLoopId/parentIteration are null-omitted for a root loop, and
-    // iterationCount is null-omitted exactly when `unsegmentable` is present (the loop
-    // was entered but its iterations cannot be counted — never a fake 0).
+    // One loop instance on the wire (#2056). parentLoopId/parentIteration are omitted for a
+    // root loop; iterationCount is omitted exactly when `unsegmentable` is present.
     private static object ToWire(Infrastructure.AlLoopRecord l) => new
     {
         loopId = l.LoopId,

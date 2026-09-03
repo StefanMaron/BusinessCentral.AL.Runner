@@ -4,24 +4,9 @@ using Xunit;
 namespace AlRunner.Tests;
 
 /// <summary>
-/// Issue #2056: `iterationTracking` on `--server` `execute`. ALchemist's iteration
-/// stepping (SShadowS/ALchemist#1) needs, per loop, one segment per iteration carrying
-/// the captured values, Message() calls and executed lines that iteration produced,
-/// with nested loops linked to the enclosing loop's iteration. Until this landed the
-/// only source of that data was ALchemist's own fork of this runner.
-///
-/// End-to-end against real compiled + executed AL, through the wire: spawns the runner
-/// in --server mode (needs the BC artifact cache; reports Skipped, not Passed, when
-/// absent, via TestArtifacts). The pure state-machine and classification mechanics are
-/// proven without BC in AlIterationSegmenterTests / AlMemberSyntaxIndexTests; this class
-/// proves the two halves meet BC's actual instrumentation.
-///
-/// Ghost-test guard: every positive assertion names a SPECIFIC iteration count, value,
-/// message text, line or parent iteration. An implementation that emits one iteration
-/// per statement hit fails every count; one that attributes every value to the newest
-/// iteration fails the per-iteration value assertions; one that ignores nesting fails
-/// the parentLoopId/parentIteration facts; one that flattens called procedures into
-/// the caller fails the callee-instance assertions.
+/// #2056: `iterationTracking` on `--server` `execute`, end to end on the wire against real
+/// compiled AL. Needs the BC artifact cache (Skipped when absent). The pure mechanics
+/// are covered in AlIterationSegmenterTests and AlMemberSyntaxIndexTests.
 /// </summary>
 public class ServerExecuteIterationsTests : IClassFixture<SharedCliServer>
 {

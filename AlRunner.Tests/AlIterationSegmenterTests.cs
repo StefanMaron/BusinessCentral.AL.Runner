@@ -1,27 +1,7 @@
-// Issue #2056: `iterationTracking` — pair loop iterations with captured values, messages
-// and executed lines, so a consumer (ALchemist's iteration stepping) can answer "which
-// iteration produced this value" and step through iterations, nested loops included.
-//
-// These are pure C# unit tests against AlIterationSegmenter — the state machine that
-// turns BC's own StmtHit(N) stream into loop instances and iterations, given a
-// per-scope AlLoopScopeTable (which statement ids are a loop's header, which are its
-// body, and which event opens an iteration). No BC artifact needed; this is the
-// runner's own mechanism, not AL/BC behaviour (.claude/rules/
-// bc-behavior-tests-go-upstream.md). The end-to-end wire proof against real compiled AL
-// loops lives in ServerExecuteIterationsTests (needs the BC artifact cache).
-//
-// The hit streams below are NOT invented: each one is the statement-id sequence BC's
-// compiler actually emits for that loop shape, read off al-runner's own statement table
-// (`coverage:true`) for the AL in ServerExecuteIterationsTests — e.g. a `for` statement
-// carries ONE id hit once at entry and its body ids once per iteration; a `while`
-// condition is a CStmtHit per evaluation INCLUDING the final false one; a `repeat`'s
-// until-condition is hit after each body pass. See AlLoopScopeTable's doc comment.
-//
-// Ghost-test guard: every positive assertion names a SPECIFIC iteration count, step
-// membership, parent linkage or capture placement. A segmenter that opens one iteration
-// per hit, or never closes one, fails the counts; one that ignores nesting fails the
-// parent assertions; one that attaches every capture to the newest step fails the
-// split-rule tests.
+// #2056: AlIterationSegmenter, the state machine behind iterationTracking, driven with
+// synthetic hit streams. Each stream is the statement-id sequence BC actually emits for
+// that loop shape (read off al-runner's statement table for the AL in
+// ServerExecuteIterationsTests). No BC artifact needed.
 using AlRunner.Infrastructure;
 using Xunit;
 

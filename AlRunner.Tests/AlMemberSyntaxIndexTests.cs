@@ -1,16 +1,8 @@
-// Issue #2056: `iterationTracking`, the STATIC half. AlMemberSyntaxIndex reads loop
-// statements out of BC's own AL syntax tree (kind, loop variable, header and body
-// ranges, nesting), and AlLoopScopeTable.Build resolves them against a compiled scope's
-// [SourceSpans] table into the header/body/marker id sets AlIterationSegmenter consumes.
-//
-// The span tables used below are NOT invented: each `Measured*` fixture is the
-// statement table al-runner itself reports (`coverage:true`) for the AL source embedded
-// next to it, transcribed to 0-based positions. That is what makes these tests prove
-// the classification against BC's real instrumentation rather than against a guess.
-//
-// Parsing needs Microsoft.Dynamics.Nav.CodeAnalysis.dll: the BcEngineCollection
-// fixture makes it resolvable in-process and reports Skipped (never Passed) when the
-// BC artifacts are not provisioned. The pure Build tests at the end need no engine.
+// #2056: AlMemberSyntaxIndex (loops and write sets from AL syntax) and the tables built
+// from them. The span fixtures are al-runner's own statement tables for the embedded
+// sources, transcribed to 0-based positions, so classification is checked against BC's
+// real instrumentation. Parsing needs the BC artifacts (BcEngineCollection); the pure
+// Build tests at the end do not.
 using AlRunner.Infrastructure;
 using Xunit;
 
@@ -26,9 +18,7 @@ public sealed class AlMemberSyntaxIndexTests
     private void RequireEngine() =>
         TestArtifacts.SkipIf(!_engine.Ready, _engine.SkipReason ?? "the in-process BC engine is not ready (see BcEngineCollection).");
 
-    // ---------------------------------------------------------------------------------
     // Fixture 1: one procedure per loop shape. Line numbers matter, see Measured*.
-    // ---------------------------------------------------------------------------------
     internal const string LoopShapesSource = """
 codeunit 60300 LoopShapes
 {
@@ -140,9 +130,7 @@ codeunit 60300 LoopShapes
 }
 """;
 
-    // ---------------------------------------------------------------------------------
-    // Fixture 2: nested-first-statement shapes and foreach. See Measured*.
-    // ---------------------------------------------------------------------------------
+    // Fixture 2: nested-first-statement shapes and foreach.
     internal const string LoopShapes2Source = """
 codeunit 60301 LoopShapes2
 {
@@ -502,10 +490,7 @@ table 60302 "Loop Trigger Fixture"
         Assert.Equal(1, t.MarkerStatementId);
     }
 
-    // ---------------------------------------------------------------------------------
-    // Fixture 3: statement write sets (issue #2056 full-fidelity captures). One statement
-    // per line so a target set can be looked up by the line it starts on.
-    // ---------------------------------------------------------------------------------
+    // Fixture 3: write sets, one statement per line so targets can be looked up by line.
     internal const string WriteShapesSource = """
 codeunit 60315 WriteShapes
 {

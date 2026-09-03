@@ -5040,14 +5040,9 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
         // so a captureValues:true request never leaves the flag on for a later request
         // that didn't ask for it (the flag is process-global, same as AlCoverageTracker.Enabled).
         AlRunner.Infrastructure.AlValueCapture.Enabled = req.CaptureValues == true;
-        // #2056: `iterationTracking:true` — loop iteration segmentation. The loop
-        // STRUCTURE comes from the bundle's AL syntax (parsed here, once per request,
-        // with the bundle's own preprocessor symbols); the segmentation itself rides the
-        // same StmtHit hook coverage/capturedValues already use. Scoped to THIS request
-        // like the flags above; RunFirstCodeunitOnRun resets+collects it per bundle.
+        // #2056: loop iteration segmentation, scoped to this request like the flags above.
         AlRunner.Infrastructure.AlIterationTracker.Enabled = req.IterationTracking == true;
-        // The syntax-backed facts both captureValues (statement write sets) and
-        // iterationTracking (loop tables) resolve against — one parse per request.
+        // Syntax facts for captureValues (write sets) and iterationTracking (loops): one parse per request.
         if (req.CaptureValues == true || req.IterationTracking == true)
             AlRunner.Infrastructure.AlScopeSyntaxResolver.Configure(
                 AlRunner.Infrastructure.AlMemberSyntaxIndex.Build(sourcePaths),
@@ -5286,7 +5281,7 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
             AlRunner.Infrastructure.AlValueCapture.Enabled
                 ? AlRunner.Infrastructure.AlValueCapture.Collect()
                 : null;
-        // #2056: same per-bundle reset/collect bracket as AlValueCapture above.
+        // #2056: same per-bundle bracket as AlValueCapture.
         AlRunner.Infrastructure.AlIterationTracker.Reset();
         IReadOnlyList<AlRunner.Infrastructure.AlLoopRecord>? Iterations() =>
             AlRunner.Infrastructure.AlIterationTracker.Enabled

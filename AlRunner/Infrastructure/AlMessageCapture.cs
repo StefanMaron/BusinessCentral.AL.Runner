@@ -59,8 +59,7 @@ public static class AlMessageCapture
     {
         var message = new AlCapturedMessage(text, scopeName, statementId);
         (_messages ??= new List<AlCapturedMessage>()).Add(message);
-        // #2056: also file it under the loop iteration executing right now (no-op unless
-        // the request asked for iterationTracking) — see AlIterationTracker.OnMessage.
+        // #2056: also file it under the current loop iteration (self-gated).
         AlIterationTracker.OnMessage(message);
     }
 

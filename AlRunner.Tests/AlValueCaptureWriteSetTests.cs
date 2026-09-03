@@ -1,14 +1,6 @@
-// Issue #2056 (agreed contract on SShadowS/ALchemist#1, carried into #2074's issue text):
-// full fidelity by default. `--capture-values` emits ONE RECORD PER EXECUTION of a
-// statement that assigns a local, whether or not the value changed, so a consumer can
-// answer "what was x at iteration 7" when iteration 7 ran `x := 5` and x was already 5.
-// The previous rule emitted only on a value change and documented the gap as accepted.
-//
-// Pure C# tests against AlValueCapture.DiffAndUpdate's `assigned` parameter (the write
-// set of the statement that just finished, from AlMemberSyntaxIndex) and against
-// AlScopeFrames (per-scope-instance capture state, so a callee's locals are never diffed
-// against a same-named local of its caller). No BC artifact needed; the wire proof lives
-// in ServerExecuteCapturedValuesSeriesTests / ServerExecuteIterationsTests.
+// #2056 full-fidelity captures: DiffAndUpdate's `assigned` parameter (a record per
+// execution of an assigning statement, changed or not) and AlScopeFrames (per-scope
+// diff state). No BC artifact needed; the wire proof is in the ServerExecute* classes.
 using AlRunner.Infrastructure;
 using Xunit;
 

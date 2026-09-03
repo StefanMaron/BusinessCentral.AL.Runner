@@ -1,35 +1,15 @@
-// AlMemberSyntaxIndex - the syntax facts the capture hooks need about every AL
-// trigger/procedure in a bundle, read with BC's own syntax tree (issue #2056):
-//   - its LOOPS (AlLoopSite: kind, loop variable, header range, body statements,
-//     nesting) for iterationTracking - BC's [SourceSpans] carry file/line/column per
-//     statement but nothing says "these statements form a loop body", and the StmtHit
-//     stream alone cannot tell a nested loop's repeat from its parent's (AlLoopModel.cs);
-//   - its statement WRITE SETS (AlStatementWrites) for full-fidelity captureValues -
-//     which locals each statement assigns, so a same-value re-assignment is still a
-//     record (AlWriteSetModel.cs).
-//
-// Parsed once per `execute` request that asks for captureValues or iterationTracking
-// (HandleServerExecute), with the same preprocessor symbols BcCompiler.Emit uses for the
-// bundle, so `#if` regions resolve the way they did when the code was compiled. Cost:
-// one SyntaxTree.ParseObjectText per .al file, the same call the compiler already made -
-// independent of the compile cache on purpose, since a cache HIT skips BcCompiler
-// entirely and this index must still exist.
-//
-// Lookup is by (file, member name) - the same identity AlCoverageTracker resolves a
-// scope class to (AlCoverageSourceMap for the file, [NavName] on the scope type for the
-// member). Field/action triggers can share a name within one object (two fields'
-// OnValidate), so FindMember disambiguates by which member body contains the scope's
-// first statement.
+// Per-member facts from BC's AL syntax tree (#2056): loops (AlLoopSite) for
+// iterationTracking and statement write sets (AlStatementWrites) for captureValues.
+// Parsed once per execute request with the bundle's preprocessor symbols, independent
+// of the compile cache. Lookup is by (file, member name); same-named triggers are told
+// apart by statement position.
 using Microsoft.Dynamics.Nav.CodeAnalysis;
 using NavCA = Microsoft.Dynamics.Nav.CodeAnalysis;
 using NavSyntax = Microsoft.Dynamics.Nav.CodeAnalysis.Syntax;
 
 namespace AlRunner.Infrastructure;
 
-/// <summary>One AL trigger/procedure: the loops in its body (document order; nested
-/// loops after their parent) and the write set of every assigning statement in it.
-/// <c>Sites</c>/<c>Writes</c> are empty for a member without loops/assignments - still
-/// listed, so a lookup can tell "found, nothing there" from "no such member".</summary>
+/// <summary>One trigger/procedure: its loops and assigning statements. Both empty for a member without any.</summary>
 public sealed record AlMemberSyntax(
     string FilePath,
     string Name,
@@ -39,8 +19,7 @@ public sealed record AlMemberSyntax(
 
 public sealed class AlMemberSyntaxIndex
 {
-    // Built-ins whose FIRST argument is by reference. Not a list of every by-ref BC
-    // function - only the ones whose whole purpose is to assign that argument.
+    // Built-ins whose first argument is by reference.
     private static readonly HashSet<string> ByRefFirstArgumentBuiltins =
         new(StringComparer.OrdinalIgnoreCase) { "Clear", "Evaluate" };
 
@@ -48,9 +27,7 @@ public sealed class AlMemberSyntaxIndex
 
     private AlMemberSyntaxIndex() { }
 
-    /// <summary>Scans every *.al file under <paramref name="roots"/> (recursively, the
-    /// same walk AlCoverageSourceMap.Build does) and indexes its members. Each root's own
-    /// app.json supplies that bundle's preprocessor symbols, as in BcCompiler.</summary>
+    /// <summary>Indexes every *.al file under the roots, with each root's app.json preprocessor symbols.</summary>
     public static AlMemberSyntaxIndex Build(IEnumerable<string> roots)
     {
         var members = new List<AlMemberSyntax>();
@@ -82,13 +59,7 @@ public sealed class AlMemberSyntaxIndex
         return index;
     }
 
-    /// <summary>
-    /// The member named <paramref name="memberName"/> in <paramref name="filePath"/>, or
-    /// null when there is none. When several members share the name (field triggers),
-    /// <paramref name="statementStart"/> - any statement position of the scope being
-    /// resolved, e.g. its statement 0 - picks the one whose body contains it; with no
-    /// position, or none containing it, null (never a guess).
-    /// </summary>
+    /// <summary>The named member in the file; among same-named triggers, the one whose body contains the position. Null rather than a guess.</summary>
     public AlMemberSyntax? FindMember(string filePath, string memberName, AlTextPosition? statementStart)
     {
         if (!_byFile.TryGetValue(NormalizePath(filePath), out var members)) return null;
@@ -104,12 +75,11 @@ public sealed class AlMemberSyntaxIndex
         return matches == 1 ? single : null;
     }
 
-    /// <summary>The loops of the member <see cref="FindMember"/> resolves, or null.</summary>
+    /// <summary>The loops of the member FindMember resolves, or null.</summary>
     public IReadOnlyList<AlLoopSite>? FindSites(string filePath, string memberName, AlTextPosition? statementStart) =>
         FindMember(filePath, memberName, statementStart)?.Sites;
 
-    /// <summary>Parses ONE AL file's text. <paramref name="preprocessorSymbols"/> defaults
-    /// to the compiler's baseline set (CLEANSCHEMA1..25 plus any --define symbols).</summary>
+    /// <summary>Parses one file. Symbols default to the compiler's baseline set.</summary>
     public static IReadOnlyList<AlMemberSyntax> Parse(string source, string filePath, IEnumerable<string>? preprocessorSymbols = null)
     {
         var parseOpts = new NavCA.ParseOptions(
@@ -131,8 +101,7 @@ public sealed class AlMemberSyntaxIndex
         return result;
     }
 
-    // Same union BcCompiler.Emit builds for the bundle: CLEANSCHEMA1..25, caller --define
-    // symbols, and the bundle's own app.json symbols (#1943).
+    // Same union BcCompiler.Emit uses.
     private static IReadOnlyList<string> PreprocessorSymbols(string? appJsonPath)
     {
         var manifest = BcCompiler.ReadManifestCompilerInputs(appJsonPath);
@@ -149,9 +118,7 @@ public sealed class AlMemberSyntaxIndex
 
     // ---------------------------------------------------------------- write sets
 
-    /// <summary>Every statement in <paramref name="body"/> (all nesting levels, blocks
-    /// themselves excluded) that assigns something - see AlWriteSetModel.cs's header
-    /// for what counts. Statements that write nothing are not listed.</summary>
+    /// <summary>Every assigning statement in the body, all nesting levels; see AlWriteSetModel.cs for what counts.</summary>
     internal static IReadOnlyList<AlStatementWrites> CollectWrites(NavSyntax.BlockSyntax body)
     {
         var result = new List<AlStatementWrites>();
@@ -168,16 +135,12 @@ public sealed class AlMemberSyntaxIndex
     {
         NavSyntax.AssignmentStatementSyntax a => RootLocal(a.Target),
         NavSyntax.CompoundAssignmentStatementSyntax c => RootLocal(c.Target),
-        // for/foreach: NOT here. The loop variable's initial value is observed at the
-        // loop statement's own hit (BC assigns it before that hit), and each later pass
-        // is handled by AlLoopScopeTable.LoopVariablesAssignedBefore - a write set on the
-        // loop statement would only duplicate the initial value at the first body hit.
+        // for/foreach loop variables are handled by AlLoopScopeTable.LoopVariablesAssignedBefore.
         NavSyntax.ExpressionStatementSyntax { Expression: NavSyntax.InvocationExpressionSyntax inv } => InvocationWriteTarget(inv),
         _ => null,
     };
 
-    // `x.Add(5)` / `Rec.Insert()` write their receiver; `Clear(x)` / `Evaluate(x, s)`
-    // write their first argument. A bare user-procedure call claims nothing.
+    // A method-call statement writes its receiver; Clear/Evaluate write their first argument.
     private static string? InvocationWriteTarget(NavSyntax.InvocationExpressionSyntax inv)
     {
         switch (inv.Expression)
@@ -192,9 +155,7 @@ public sealed class AlMemberSyntaxIndex
         }
     }
 
-    // The local an expression ultimately names: `Rec.Amount` and `arr[1]` root at `Rec`
-    // and `arr`; a parenthesised expression at whatever it wraps. Anything else (a
-    // literal, a call result) names no local.
+    // The local an expression names: `Rec.Amount` and `arr[1]` root at Rec and arr.
     private static string? RootLocal(SyntaxNode? expr) => expr switch
     {
         null => null,
@@ -276,7 +237,7 @@ public sealed class AlMemberSyntaxIndex
         return index;
     }
 
-    // `begin ... end` is itself a statement in AL's grammar; the loop body is its statements.
+    // A begin..end block is a statement in AL; the body is its statements.
     private static IEnumerable<NavSyntax.StatementSyntax> Flatten(NavSyntax.StatementSyntax? stmt)
     {
         if (stmt == null) yield break;

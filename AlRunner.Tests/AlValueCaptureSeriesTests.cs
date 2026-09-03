@@ -97,12 +97,9 @@ public sealed class AlValueCaptureSeriesTests
         Assert.Equal("Touched", entry.VariableName);
     }
 
-    // --- Baseline exception (#2056): a value that is already non-default at the FIRST
-    // observation was assigned by statement 0 BEFORE its own StmtHit. Measured: BC emits
-    // a `for` loop's `i := 1` ahead of the `for` statement's hit, so when the loop is the
-    // scope's first statement the baseline sees i = 1 and the old rule swallowed it —
-    // leaving iteration 1 without its loop variable. AL locals always start at their
-    // type's default, so a non-default primitive at the baseline can only mean this. ---
+    // --- Baseline exception (#2056): BC assigns a for variable before the for statement's
+    // own hit, so a leading for shows i = 1 at the baseline; a non-default primitive there
+    // can only mean an assignment already ran. ---
 
     [Fact]
     public void DiffAndUpdate_Baseline_PrimitiveAlreadyNonDefault_EmittedAsProducedByTheFirstStatement()

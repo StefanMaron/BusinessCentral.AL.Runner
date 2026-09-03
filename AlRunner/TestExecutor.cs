@@ -104,11 +104,8 @@ public sealed record TestResult(string Codeunit, string Method, TestOutcome Outc
                                 // pattern alone is not evidence. Message, FullException,
                                 // AlCallStack, Outcome and Exception are all untouched by it.
                                 string? Diagnosis = null,
-                                // #2056: only ever non-null when the caller asked for
-                                // iterationTracking (server `execute` — see Program.cs's
-                                // RunFirstCodeunitOnRun/HandleServerExecute and
-                                // AlIterationTracker). Null means "not requested"; an empty
-                                // list IS how "requested, nothing looped" is represented.
+                                // #2056: non-null only when execute asked for iterationTracking;
+                                // empty means requested, nothing looped.
                                 IReadOnlyList<Infrastructure.AlLoopRecord>? Iterations = null);
 
 public sealed class TestExecutor
