@@ -1,0 +1,58 @@
+[
+  {
+    "codeunitId": 60624,
+    "CodeunitName": "Test TmpInt ListPart",
+    "Method": "TempIntegerPart_SelfLoaded_FirstRowIsNumberOne",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2634",
+    "Note": "Surfaced by the al-language pin bump landing alongside issue #2201's fix (StefanMaron/BusinessCentral.AL.Language.Tests commit 3661f1d, #121) -- unrelated to #2201's own claim. Real BC formats the Integer virtual table's Number field as '10.00' on the first row of a self-loaded SourceTable Integer ListPart; the runner answers '10'. Not investigated further; tracked as #2634."
+  },
+  {
+    "codeunitId": 60835,
+    "CodeunitName": "Test Install Event Dispatch",
+    "Method": "TestInstallEvent_SubscriberRanDuringInstall",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2635",
+    "Note": "Surfaced by the al-language pin bump landing alongside issue #2201's fix (StefanMaron/BusinessCentral.AL.Language.Tests commit d5f3f4f, #129) -- unrelated to #2201's own claim. A subscriber to an integration event raised from OnInstallAppPerCompany never runs during the runner's install-trigger dispatch. Not investigated further; tracked as #2635."
+  },
+  {
+    "codeunitId": 60835,
+    "CodeunitName": "Test Install Event Dispatch",
+    "Method": "TestInstallEvent_SeededExactlyOneRow",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2635",
+    "Note": "Same gap as TestInstallEvent_SubscriberRanDuringInstall in this file -- the unrun subscriber seeds zero rows instead of one. Tracked as #2635."
+  },
+  {
+    "codeunitId": 60958,
+    "CodeunitName": "Test Feature Key Table",
+    "Method": "Record_FeatureKey_FindSet_AnswersRows",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2636",
+    "Note": "Surfaced by the al-language pin bump landing alongside issue #2201's fix (StefanMaron/BusinessCentral.AL.Language.Tests commit 63d94fd, #132) -- unrelated to #2201's own claim. The runner has no materialisation for the Feature Key virtual table (2000000211) yet, so it answers zero rows. Tracked as #2636."
+  },
+  {
+    "codeunitId": 60958,
+    "CodeunitName": "Test Feature Key Table",
+    "Method": "Record_FeatureKey_EveryRowHasAnIdThatGetRoundTrips",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2636",
+    "Note": "Same gap as Record_FeatureKey_FindSet_AnswersRows in this file -- no rows to round-trip an id from. Tracked as #2636."
+  },
+  {
+    "codeunitId": 60958,
+    "CodeunitName": "Test Feature Key Table",
+    "Method": "Record_FeatureKey_ModifyingAReadOnlyColumn_RaisesNamingTheField",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2636",
+    "Note": "Same gap as Record_FeatureKey_FindSet_AnswersRows in this file -- no row to attempt the modify against. Tracked as #2636."
+  },
+  {
+    "codeunitId": 60263,
+    "CodeunitName": "TPSF Tests",
+    "Method": "TwoControlsOverOneField_AnswerIndependently",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2637",
+    "Note": "Surfaced by the al-language pin bump landing alongside issue #2201's fix (StefanMaron/BusinessCentral.AL.Language.Tests commit 66a2e2d, #128) -- unrelated to #2201's own claim. Two TestPage controls bound to the same source field do not answer independently. Not investigated further; tracked as #2637."
+  }
+]
