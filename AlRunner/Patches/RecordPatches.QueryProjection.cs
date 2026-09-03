@@ -1057,6 +1057,34 @@ public static partial class RecordPatches
     /// value (every row in a real group shares it by construction); aggregated columns compute
     /// over the whole group via ComputeAggregate.
     /// </summary>
+    // Issue #2575: a query column's ReverseSign property negates the value it reads. Reuses
+    // BC's OWN NCLMetaCalculationFormula.NegateValue switch (internal static
+    // FlowFieldsHelper.NegateValue(NavValue, NavType) — the same method FlowFieldPatches.cs
+    // uses for `CalcFormula = -sum(...)`) rather than a local `-x`, so the numeric coercion for
+    // each NavType matches BC's own (precompiled-dll-respect: reuse the service-tier's own
+    // negation logic instead of re-deriving it). column.NavType already resolves to the
+    // column's declared/source-field type (used elsewhere via NavValue.CreateNavValueFromObject),
+    // so no separate type lookup is needed.
+    private static MethodInfo? _mFlowFieldsHelperNegateValue;
+    private static bool _flowFieldsHelperNegateValueResolved;
+    private static NavValue? ApplyReverseSign(NCLMetaQueryColumn column, NavValue? value)
+    {
+        if (value == null || !column.ReverseSign) return value;
+        if (!_flowFieldsHelperNegateValueResolved)
+        {
+            _flowFieldsHelperNegateValueResolved = true;
+            var t = typeof(NCLMetaQueryColumn).Assembly.GetType("Microsoft.Dynamics.Nav.Runtime.FlowFieldsHelper");
+            _mFlowFieldsHelperNegateValue = t?.GetMethods(BindingFlags.NonPublic | BindingFlags.Static)
+                .FirstOrDefault(m => m.Name == "NegateValue" && m.GetParameters().Length == 2);
+        }
+        if (_mFlowFieldsHelperNegateValue == null)
+            throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+                "Query column ReverseSign",
+                "query-reversesign-negatevalue-missing — Microsoft.Dynamics.Nav.Runtime." +
+                "FlowFieldsHelper.NegateValue(NavValue,NavType) not found on this BC build; see docs/scope.md");
+        return (NavValue?)_mFlowFieldsHelperNegateValue.Invoke(null, new object?[] { value, column.NavType });
+    }
+
     private static ReadOnlyRecordBuffer BuildRow(object nclMetaQuery, ProjectionPlan plan, IReadOnlyList<ReadOnlyRecordBuffer> groupRows)
     {
         var fields = new object?[plan.SlotCount];
@@ -1074,12 +1102,12 @@ public static partial class RecordPatches
             // follow-up rather than guessed at here.
             if (c.FlowFieldMeta != null && groupRows.Count > 0)
             {
-                fields[c.QuerySlot] = FlowFieldPatches.CalcOneFlowFieldForQueryRow(groupRows[0], c.FlowFieldMeta);
+                fields[c.QuerySlot] = ApplyReverseSign(c.Column, FlowFieldPatches.CalcOneFlowFieldForQueryRow(groupRows[0], c.FlowFieldMeta));
                 continue;
             }
             if (c.TableSlot < 0 || groupRows.Count == 0 || c.TableSlot >= groupRows[0].FieldCount)
                 continue; // unsupported column (ConstValue) → leave at NavValue default
-            fields[c.QuerySlot] = groupRows[0][c.TableSlot];
+            fields[c.QuerySlot] = ApplyReverseSign(c.Column, groupRows[0][c.TableSlot]);
         }
         // ReadOnlyRecordBuffer(NCLMetaApplicationObject, params NavValue[])
         return (ReadOnlyRecordBuffer)_ctorReadOnlyRecordBuffer!.Invoke(
@@ -1127,6 +1155,16 @@ public static partial class RecordPatches
     /// </summary>
     private static NavValue? ComputeAggregateCore(AggregationType aggregation, NCLMetaQueryColumn column, int rowCountInGroup, IEnumerable<NavValue?> sourceValues)
     {
+        // Issue #2575: ReverseSign negates each SOURCE row's value before it is aggregated —
+        // consistent with the plain (non-aggregated) column case in BuildRow/ResolveComboValue,
+        // where the column always yields the negated value regardless of what reads it. Sum and
+        // Average are linear (negate-then-sum == sum-then-negate for any mix of signs), Min/Max
+        // are NOT (min(-x) == -max(x)), so which side of the aggregation the negation happens on
+        // is observable there; negating the source values keeps every AggregationType consistent
+        // with a single rule instead of special-casing Min/Max. Count is untouched: it counts
+        // rows, not values, and a sign flip has no effect on how many rows there are.
+        if (column.ReverseSign && aggregation != AggregationType.Count)
+            sourceValues = sourceValues.Select(v => ApplyReverseSign(column, v));
         switch (aggregation)
         {
             case AggregationType.Count:

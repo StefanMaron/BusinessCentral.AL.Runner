@@ -386,7 +386,12 @@ internal static partial class BcAppSymbolCache
     // RecordPatches.TryParseColumnFilterText in RecordPatches.NclMetaQueryBuilder.BuildMetaQueryDesign
     // once every column's id is known (a ColumnFilter condition may name any query column of
     // the same dataitem, not just the column that declares the property).
-    internal sealed record QueryColumnSymbol(int Id, string Name, string SourceColumn, string? Caption, string? Method, string? ColumnFilter);
+    // ReverseSign (#2575) is the AL `ReverseSign = true;` boolean property — negates the
+    // column's value (RecordPatches.NclMetaQueryBuilder.AddColumn sets the design metadata's
+    // ReverseSign so NCLMetaQueryColumn.CreateFromDesignMetadata carries it through; the actual
+    // negation happens where the value is produced, in RecordPatches.QueryProjection.cs /
+    // AlRunner.QueryJoin.JoinExecutor).
+    internal sealed record QueryColumnSymbol(int Id, string Name, string SourceColumn, string? Caption, string? Method, string? ColumnFilter, bool ReverseSign);
 
     // #1820: ContentHash replaces Length/LastWriteUtcTicks. The KEY (below, in Get) already
     // switched from mtime to a content hash, so an old Length/LastWriteUtcTicks payload can
@@ -1140,7 +1145,8 @@ internal static partial class BcAppSymbolCache
             props.TryGetValue("Caption", out var caption);
             props.TryGetValue("Method", out var method); // issue #2137 — Method = Sum/Count/Average/Min/Max
             props.TryGetValue("ColumnFilter", out var columnFilter); // issue #2418
-            result.Add(new QueryColumnSymbol(id, name, sourceColumn, caption, method, columnFilter));
+            var reverseSign = SymbolBool(props, "ReverseSign"); // issue #2575
+            result.Add(new QueryColumnSymbol(id, name, sourceColumn, caption, method, columnFilter, reverseSign));
         }
         return result;
     }
