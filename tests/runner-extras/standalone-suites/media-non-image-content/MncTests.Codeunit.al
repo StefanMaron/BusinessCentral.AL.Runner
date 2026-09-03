@@ -78,13 +78,22 @@ codeunit 62042 "MNC Tests"
         Asset."No." := 'IMG-1';
         Asset.Insert();
 
-        // 'iVBORw0KGgo=' decodes to the 8-byte PNG signature 89 50 4E 47 0D 0A 1A 0A. Written
-        // through Base64Convert because AL's OutStream.Write is typed — it cannot emit single
-        // raw bytes. Real image content, so the runner must say plainly that it cannot decode
-        // one here rather than storing it as a blob a caller would read back as an image that
-        // never decoded.
+        // '/9j/' decodes to the 3-byte JPEG SOI marker FF D8 FF. Written through
+        // Base64Convert because AL's OutStream.Write is typed — it cannot emit single raw
+        // bytes. Real (if truncated) image content of a format the runner still cannot
+        // decode, so it must say plainly that it cannot decode one here rather than storing
+        // it as a blob a caller would read back as an image that never decoded.
+        //
+        // Deliberately NOT the PNG signature anymore (#2570): PNG got its own narrower,
+        // structural-validation-based path (see MediaPatches.TryClassifyStructuralPng and
+        // tests/al-language/media/TestMediaPngImport.al upstream) which — correctly —
+        // does NOT refuse a mere PNG-signature-only truncated stream as "this platform
+        // cannot decode PNG"; it reports the more specific "not a valid image" (the
+        // signature is present but there is no valid chunk data behind it). JPEG has no
+        // such carve-out, so it stays the fixture for "an image format this platform
+        // genuinely cannot decode."
         TempBlob.CreateOutStream(ContentOutStream);
-        Base64Convert.FromBase64('iVBORw0KGgo=', ContentOutStream);
+        Base64Convert.FromBase64('/9j/', ContentOutStream);
         TempBlob.CreateInStream(ContentInStream);
 
         asserterror Asset.Content.ImportStream(ContentInStream, 'MNC image');
