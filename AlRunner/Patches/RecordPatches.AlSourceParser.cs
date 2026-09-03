@@ -557,6 +557,23 @@ public static partial class RecordPatches
     /// Drop any cached NCLMetaTable built for <paramref name="baseTableName"/> before its
     /// tableextension fields were known, so the next lookup rebuilds it with them merged.
     /// No-op when the table has not been built yet (the common, in-order case).
+    ///
+    /// Also drops the table from <see cref="_fieldTriggersWiredTables"/> (issue #2463):
+    /// <c>WireFieldTriggerHandlersForTable</c>/<c>WireFieldTriggerHandlersAll</c> wire a
+    /// table's OWN compiled <c>[FieldTriggerHandler]</c> OnValidate/OnLookup methods onto
+    /// the CURRENT NCLMetaTable instance's NCLMetaField.EventTriggerDataValue, and guard
+    /// against re-wiring with a tableId-keyed "already wired" set. That guard does not know
+    /// the metatable it wired was just replaced by a brand-new instance here — the new
+    /// instance's fields carry no ValidateHandler at all, so every OnValidate body on that
+    /// table (even on a precompiled Base App table with no involvement in the eviction)
+    /// silently stops running for the rest of the process. Measured on a precompiled table
+    /// (Purchase Line) evicted+rebuilt mid-run by an unrelated tableextension field merge:
+    /// `Validate(Quantity, ...)` set the field but every side effect the compiled trigger
+    /// computes (Outstanding Quantity, Qty. to Receive, Qty. to Invoice, ...) stayed at its
+    /// pre-Validate value, with no error and no diagnostic — the same "wiring survives the
+    /// table it was wired for" family as #2197/#2412 (table-level DB triggers) and #2453
+    /// (TestPageFactory's record-construction chokepoint), just for the table's own
+    /// compiled field-trigger methods instead of an event subscriber.
     /// </summary>
     private static void EvictCachedMetaTableForBaseTable(string baseTableName)
     {
@@ -565,9 +582,12 @@ public static partial class RecordPatches
             if (!string.Equals(kvp.Value.TableName, baseTableName, StringComparison.OrdinalIgnoreCase))
                 continue;
             if (_metaTableCache.TryRemove(kvp.Key, out _))
+            {
+                _fieldTriggersWiredTables.TryRemove(kvp.Key, out _);
                 Console.Error.WriteLine(
                     $"[TableExt] evicted stale NCLMetaTable {kvp.Key} '{baseTableName}' " +
                     $"(built before its tableextension fields were parsed)");
+            }
         }
     }
 
