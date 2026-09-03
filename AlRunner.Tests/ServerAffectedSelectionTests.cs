@@ -180,4 +180,153 @@ public class ServerAffectedSelectionTests
         Assert.Equal(1, ran + skipped);
         Assert.Equal(1, summary.GetProperty("total").GetInt32());
     }
+
+    // #2539: procedure granularity. Two tests cover the SAME object but call DIFFERENT
+    // procedures of it — before #2539, affectedOnly's coverage keys are whole-object, so
+    // editing EITHER procedure reran BOTH tests (AffectedOnly_ChangedObjectRunsOnlyIntersectingTests
+    // above already proves object-level narrowing works across DIFFERENT objects; this proves
+    // narrowing works WITHIN one object, across its procedures).
+    private static string MakeMultiProcBundle()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "al-runner-server-affected-scope", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Combine(dir, "app.json"), """
+        {
+          "id": "c357c8d5-5f6a-4f52-9e06-6f42ca7e9999",
+          "name": "Server Affected Scope Probe",
+          "publisher": "AL Runner",
+          "version": "1.0.0.0",
+          "dependencies": [],
+          "platform": "1.0.0.0",
+          "idRanges": [ { "from": 60260, "to": 60269 } ],
+          "runtime": "14.0"
+        }
+        """);
+        File.WriteAllText(Path.Combine(dir, "Multi.Codeunit.al"), """
+        codeunit 60260 "Affected Multi Proc SX"
+        {
+            procedure ValueA(): Integer
+            begin
+                exit(1);
+            end;
+
+            procedure ValueB(): Integer
+            begin
+                exit(2);
+            end;
+        }
+        """);
+        File.WriteAllText(Path.Combine(dir, "Tests.Codeunit.al"), """
+        codeunit 60261 "Affected Multi Proc Tests SX"
+        {
+            Subtype = Test;
+
+            [Test]
+            procedure OnlyA()
+            var
+                H: Codeunit "Affected Multi Proc SX";
+            begin
+                if H.ValueA() <> 1 then
+                    Error('OnlyA failed');
+            end;
+
+            [Test]
+            procedure OnlyB()
+            var
+                H: Codeunit "Affected Multi Proc SX";
+            begin
+                if H.ValueB() <> 2 then
+                    Error('OnlyB failed');
+            end;
+        }
+        """);
+        return dir;
+    }
+
+    [SkippableFact]
+    public async Task AffectedOnly_ProcedureGranularity_EditingOneProcedureRunsOnlyItsTest()
+    {
+        TestArtifacts.SkipIfMissing();
+        var bundle = MakeMultiProcBundle();
+        await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
+
+        await server.SendRequestStreamingAsync(RunTestsRequest(bundle, affectedOnly: true));
+
+        // Edit ONLY ValueA's begin..end body — a genuine, executable statement change, still
+        // returning 1 so OnlyA keeps passing. Deliberately does NOT touch ValueA's own local
+        // `var` section: a local declaration sits outside the procedure's BodyRange exactly
+        // like an object-level one, so it widens too (a MORE conservative posture than the
+        // issue's rule 2 strictly requires, but a safe one) — this test isolates the
+        // executable-statement case specifically.
+        File.WriteAllText(Path.Combine(bundle, "Multi.Codeunit.al"), """
+        codeunit 60260 "Affected Multi Proc SX"
+        {
+            procedure ValueA(): Integer
+            begin
+                if 1 = 1 then;
+                exit(1);
+            end;
+
+            procedure ValueB(): Integer
+            begin
+                exit(2);
+            end;
+        }
+        """);
+
+        var lines = await server.SendRequestStreamingAsync(RunTestsRequest(bundle, affectedOnly: true));
+        var (events, summary) = ProtocolV2Streaming.Split(lines);
+
+        Assert.True(summary.TryGetProperty("selection", out var selection), string.Join(" | ", lines));
+        Assert.False(selection.GetProperty("forcedFull").GetBoolean());
+        // [THEN] only the test that calls ValueA reruns, even though both tests cover the
+        // SAME object — object-level attribution alone (pre-#2539) cannot tell ValueA from
+        // ValueB and reruns both.
+        Assert.Equal(1, selection.GetProperty("ran").GetInt32());
+        Assert.Equal(1, selection.GetProperty("skipped").GetInt32());
+        Assert.Single(events);
+        Assert.EndsWith(".OnlyA", events[0].GetProperty("name").GetString(), StringComparison.Ordinal);
+        Assert.Equal("pass", events[0].GetProperty("status").GetString());
+    }
+
+    [SkippableFact]
+    public async Task AffectedOnly_ProcedureGranularity_NonStatementEditWidensToWholeObject()
+    {
+        TestArtifacts.SkipIfMissing();
+        var bundle = MakeMultiProcBundle();
+        await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
+
+        await server.SendRequestStreamingAsync(RunTestsRequest(bundle, affectedOnly: true));
+
+        // A NON-STATEMENT edit: an object-level variable declaration, which sits OUTSIDE
+        // every procedure's begin..end and carries no StmtHit. This MUST widen to the whole
+        // object — the safety-net rule #2539's issue calls out explicitly — so BOTH tests
+        // rerun, not just neither or an arbitrary one.
+        File.WriteAllText(Path.Combine(bundle, "Multi.Codeunit.al"), """
+        codeunit 60260 "Affected Multi Proc SX"
+        {
+            var
+                Dummy: Integer;
+
+            procedure ValueA(): Integer
+            begin
+                exit(1);
+            end;
+
+            procedure ValueB(): Integer
+            begin
+                exit(2);
+            end;
+        }
+        """);
+
+        var lines = await server.SendRequestStreamingAsync(RunTestsRequest(bundle, affectedOnly: true));
+        var (events, summary) = ProtocolV2Streaming.Split(lines);
+
+        Assert.True(summary.TryGetProperty("selection", out var selection), string.Join(" | ", lines));
+        Assert.False(selection.GetProperty("forcedFull").GetBoolean());
+        Assert.Equal(2, selection.GetProperty("ran").GetInt32());
+        Assert.Equal(0, selection.GetProperty("skipped").GetInt32());
+        Assert.Equal(2, events.Count);
+    }
 }
