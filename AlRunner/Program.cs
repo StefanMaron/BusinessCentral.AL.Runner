@@ -3558,7 +3558,11 @@ return strictExitCode ? computedExitCode : 0;
         Func<Assembly, IReadOnlyList<TestResult>> runStep,
         System.Threading.CancellationToken cancellationToken = default,
         bool useIncrementalChangeModel = false,
-        Action<string, string, string, IReadOnlyList<AffectedObjectId>?, string?>? beforeRun = null)
+        // #2539: 6th arg is the REQUEST-WIDE procedure-granular peek (PeekChangedScopes,
+        // unioned across every bundle — see requestWideChangedScopes), appended by the
+        // effectiveBeforeRun wrap below. RunBundleForServer's own (5-arg) beforeRun delegate
+        // is unchanged, since it has no access to that request-wide list.
+        Action<string, string, string, IReadOnlyList<AffectedObjectId>?, string?, IReadOnlyList<AffectedScopeId>?>? beforeRun = null)
     {
         // Server requests share a process, so give each request the same fresh
         // NumberSequence lifetime as a standalone CLI/watch execution.
@@ -3657,9 +3661,25 @@ return strictExitCode ? computedExitCode : 0;
         // Per bundle: how many objects its own peek saw change, or null when the peek could not
         // answer for it. See ChangedDependencyForcesFullCompile below.
         var peekedChangedCountByBundle = new Dictionary<string, int?>(StringComparer.OrdinalIgnoreCase);
-        if (useIncrementalChangeModel && sourcePaths.Length > 1)
+        // #2539: procedure-granular peek, unioned across EVERY bundle in the request — the
+        // scope-level mirror of requestWideChangedObjects above, and for the same reason:
+        // Pageworks/Pageworks.Test is a real repro where the edited procedure lives in the
+        // DEPENDENCY bundle and the tests that could narrow live in the SEPARATE test bundle,
+        // so restricting this signal to "a bundle's own peek only" would leave the #2535-fixed
+        // multi-bundle shape with zero additional narrowing from #2539. Unlike
+        // requestWideChangedObjects, a single uncertain/null bundle does NOT null the whole
+        // list — this signal is a pure OPTIMIZATION on top of the object-level keys
+        // BuildAffectedChangedKeys always falls back to, so one bundle's peek failing only
+        // costs that bundle's own refinement, never anyone's correctness. Also unlike
+        // requestWideChangedObjects, populated even for a single-bundle request — procedure
+        // narrowing is useful there too, so it is not gated on sourcePaths.Length > 1.
+        // peekedChangedCountByBundle stays only populated where requestWideChangedObjects is
+        // non-null (i.e. sourcePaths.Length > 1) below — its only consumer,
+        // ChangedLaterDependencyBundles, already no-ops on fewer than two bundles.
+        var requestWideChangedScopes = new List<AffectedScopeId>();
+        if (useIncrementalChangeModel)
         {
-            requestWideChangedObjects = new List<AffectedObjectId>();
+            if (sourcePaths.Length > 1) requestWideChangedObjects = new List<AffectedObjectId>();
             foreach (var peekBundleDir in sourcePaths)
             {
                 var peekAbs = Path.GetFullPath(peekBundleDir);
@@ -3669,6 +3689,11 @@ return strictExitCode ? computedExitCode : 0;
                 foreach (var suite in EnumerateSuites(peekAbs))
                     peekPaths.AddRange(CollectSuitePaths(suite, peekBucketRoot));
                 peekPaths = peekPaths.Distinct().ToList();
+
+                var peekedScopes = emitter.PeekChangedScopes(peekPaths, peekModuleName, peekBucketRoot);
+                if (peekedScopes != null) requestWideChangedScopes.AddRange(peekedScopes);
+
+                if (requestWideChangedObjects == null) continue; // single-bundle request: no cross-bundle union needed
 
                 var peeked = emitter.PeekChangedObjects(peekPaths, peekModuleName, peekBucketRoot);
                 // #2603: the same peek answers a second question — "did THIS bundle change this
@@ -3682,9 +3707,10 @@ return strictExitCode ? computedExitCode : 0;
                     // Null the whole union: every bundle below then merges nothing new in and
                     // keeps whatever its OWN cycle already decided, same as before this fix —
                     // never worse than the pre-#2492 behaviour, only better when every bundle's
-                    // own change set peeks clean.
+                    // own change set peeks clean. #2539: keep peeking later bundles' OWN scopes
+                    // above regardless — that signal is independent of this union.
                     requestWideChangedObjects = null;
-                    break;
+                    continue;
                 }
                 requestWideChangedObjects.AddRange(peeked);
             }
@@ -3728,7 +3754,11 @@ return strictExitCode ? computedExitCode : 0;
         // Same forward-only, `sourcePaths`-order limitation as the selection half above, and for
         // the same reason. #2571 tracks the order-independent version.
         string? sawFallbackReason = null;
-        var effectiveBeforeRun = beforeRun;
+        // #2539: explicitly typed as the 5-arg shape RunBundleForServer actually calls (see
+        // its own beforeRun parameter below) — `beforeRun` itself is now 6-arg (carries the
+        // ownChangedScopes lookup), so `var effectiveBeforeRun = beforeRun` would infer the
+        // wrong delegate type here.
+        Action<string, string, string, IReadOnlyList<AffectedObjectId>?, string?>? effectiveBeforeRun = null;
         if (beforeRun != null)
         {
             var union = requestWideChangedObjects;
@@ -3741,7 +3771,11 @@ return strictExitCode ? computedExitCode : 0;
                         : null);
                 if (changeModelFallbackReason != null)
                     sawFallbackReason ??= $"{moduleName}: {changeModelFallbackReason}";
-                beforeRun(bundlePath, moduleName, selectionEnvironmentKey, merged, effectiveFallbackReason);
+                // #2539: the SAME request-wide scope list for every bundle — narrowing an
+                // object changed in bundle A is legitimate for a test in bundle B exactly
+                // when A's change is legitimate for B's overlap check at all (i.e. it is
+                // already present in `merged` above, via the object-level union).
+                beforeRun(bundlePath, moduleName, selectionEnvironmentKey, merged, effectiveFallbackReason, requestWideChangedScopes);
             };
         }
 
@@ -4876,6 +4910,61 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
             ? $"{id.Kind} {id.Id.Value} {id.Name}"
             : $"{id.Kind} {id.Name}";
 
+    // #2539: the SAME compound key both the changed side (below) and the coverage-attribution
+    // side (the collectPerTestForSelection loop) must build for a specific changed procedure —
+    // an object-level key plus its scope name, separated so it can never collide with a bare
+    // ToAffectedObjectKey result (no AL identifier can contain "::").
+    static string ToAffectedScopeKey(string objectKey, string scopeName) => $"{objectKey}::proc:{scopeName}";
+
+    /// <summary>
+    /// Builds the set affectedOnly's overlap check compares a test's coveredObjects against —
+    /// object-level keys by default (identical to pre-#2539 behaviour), REFINED to a
+    /// procedure-level compound key wherever <paramref name="requestWideChangedScopes"/> (the
+    /// REQUEST-WIDE <c>PeekChangedScopes</c> union — every bundle in the request, not just
+    /// this one, mirroring #2492's own object-level union) confidently narrowed that SAME
+    /// object this cycle. An object <paramref name="requestWideChangedScopes"/> explicitly
+    /// widened (a null-ScopeName entry) is NEVER narrowed, even if some other entry for the
+    /// same object looks narrow — the widen always wins. An object with NO entry in
+    /// <paramref name="requestWideChangedScopes"/> at all (its own bundle's peek was
+    /// uncertain, or #2539's scope-level peek simply hasn't run for it) falls back to the
+    /// plain object-level key — the same safe default as pre-#2539.
+    /// </summary>
+    static HashSet<string>? BuildAffectedChangedKeys(
+        IReadOnlyList<AffectedObjectId>? changedObjects, IReadOnlyList<AffectedScopeId>? requestWideChangedScopes)
+    {
+        if (changedObjects == null) return null;
+
+        var widenedObjectKeys = new HashSet<string>(StringComparer.Ordinal);
+        var scopesByObjectKey = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+        if (requestWideChangedScopes != null)
+        {
+            foreach (var sc in requestWideChangedScopes)
+            {
+                var objKey = ToAffectedObjectKey(sc.Object);
+                if (sc.ScopeName == null) { widenedObjectKeys.Add(objKey); continue; }
+                if (!scopesByObjectKey.TryGetValue(objKey, out var list))
+                    scopesByObjectKey[objKey] = list = new List<string>();
+                list.Add(sc.ScopeName);
+            }
+        }
+
+        var keys = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var id in changedObjects)
+        {
+            var objKey = ToAffectedObjectKey(id);
+            if (!widenedObjectKeys.Contains(objKey)
+                && scopesByObjectKey.TryGetValue(objKey, out var scopes) && scopes.Count > 0)
+            {
+                foreach (var s in scopes) keys.Add(ToAffectedScopeKey(objKey, s));
+            }
+            else
+            {
+                keys.Add(objKey);
+            }
+        }
+        return keys;
+    }
+
     // Sets executor.Isolation from req.TestIsolation (see #1616), falling back to
     // defaultServerIsolation when the request doesn't specify one. Returns an
     // error response string on an unrecognised mode, else null.
@@ -5051,13 +5140,12 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                 },
                 cts.Token,
                 affectedOnly,
-                (bundlePath, moduleName, selectionEnvironmentKey, changedObjects, changeModelFallbackReason) =>
+                (bundlePath, moduleName, selectionEnvironmentKey, changedObjects, changeModelFallbackReason, ownChangedScopes) =>
                 {
                     activeBundleKey = bundlePath;
                     requestModuleByBundle[bundlePath] = moduleName;
                     requestEnvironmentByBundle[bundlePath] = selectionEnvironmentKey;
-                    activeChangedObjectKeys = changedObjects?.Select(ToAffectedObjectKey)
-                        .ToHashSet(StringComparer.Ordinal);
+                    activeChangedObjectKeys = BuildAffectedChangedKeys(changedObjects, ownChangedScopes);
                     activeChangedObjectDisplay = (changedObjects ?? Array.Empty<AffectedObjectId>())
                         .Select(ToAffectedObjectDisplay)
                         .Distinct(StringComparer.Ordinal)
@@ -5227,7 +5315,17 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                                 unmappable = true;
                                 break;
                             }
-                            coveredObjects.Add(ToAffectedObjectKey(identity));
+                            var objKey = ToAffectedObjectKey(identity);
+                            coveredObjects.Add(objKey);
+                            // #2539: ALSO record the procedure-level compound key for this
+                            // statement's scope, so a test whose coverage never leaves the one
+                            // procedure that changed can be selected WITHOUT the plain
+                            // object-level key matching every other test that merely touched a
+                            // DIFFERENT procedure of the same object. The plain object-level key
+                            // stays too — it is what makes a WIDENED (whole-object) changed
+                            // entry still match every test that covered the object at all.
+                            if (!string.IsNullOrEmpty(s.ScopeName))
+                                coveredObjects.Add(ToAffectedScopeKey(objKey, s.ScopeName));
                         }
 
                         if (unmappable || coveredObjects.Count == 0)

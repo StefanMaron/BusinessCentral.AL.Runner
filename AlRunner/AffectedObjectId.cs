@@ -22,3 +22,12 @@ namespace AlRunner;
 /// Keep Kind a plain string. Every consumer only ever formats it.
 /// </summary>
 internal readonly record struct AffectedObjectId(string Kind, int? Id, string Name);
+
+/// <summary>
+/// #2539: one changed AL PROCEDURE (or, when <see cref="ScopeName"/> is null, one changed
+/// whole OBJECT — the widened fallback for a non-statement edit, an added/removed file, or
+/// any case <c>PeekChangedScopes</c> cannot attribute with confidence). Carries no NavCA
+/// type for the exact same reason <see cref="AffectedObjectId"/> does not — see that type's
+/// doc comment.
+/// </summary>
+internal readonly record struct AffectedScopeId(AffectedObjectId Object, string? ScopeName);

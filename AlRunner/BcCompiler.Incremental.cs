@@ -190,6 +190,14 @@ internal sealed class RadBaseline
     public required string SharedRefsFingerprint;
     public required NavSymRef.ModuleDefinition ModuleDef;
     public required Dictionary<string, string> FileHashByPath;
+    // #2539: the raw AL source text at the same cycle FileHashByPath's hash was taken,
+    // so a later PeekChangedScopes call can line-diff a modified file against what it
+    // looked like last cycle without re-compiling. Mirrors FileHashByPath's own
+    // path set exactly (populated/pruned together everywhere FileHashByPath is).
+    // Bounded cost: one extra copy of the bundle's own AL source text, proportional to
+    // source size only (not test count) — unlike per-test coverage sets, this does not
+    // grow with the suite.
+    public required Dictionary<string, string> FileContentByPath;
     public required Dictionary<string, RadObjectIdentity> ObjectByPath;
     public required Dictionary<string, EmittedSource> SourceByKey;
     public required BcEmitOutput LastOutput;
@@ -250,6 +258,18 @@ public sealed partial class BcCompiler
     {
         using var stream = File.OpenRead(path);
         return Convert.ToHexString(SHA256.HashData(stream));
+    }
+
+    // #2539: text form of a baseline'd file, for PeekChangedScopes' line-diff. Null (mapped
+    // to "" by callers) rather than throwing on a transient read failure — the baseline
+    // still records the path/hash either way, and a missing/wrong content cache entry only
+    // ever costs a widen (PeekChangedScopes' TryNarrowToChangedScopes treats "no old text"
+    // as "can't diff"), never a silent test loss.
+    private static string? ReadFileTextSafe(string path)
+    {
+        try { return File.ReadAllText(path); }
+        catch (IOException) { return null; }
+        catch (UnauthorizedAccessException) { return null; }
     }
 
     /// <summary>
@@ -672,6 +692,11 @@ public sealed partial class BcCompiler
         foreach (var path in addedPaths.Concat(modifiedPaths)) newFileHashByPath[path] = currentHashes[path];
         foreach (var path in removedPaths) newFileHashByPath.Remove(path);
 
+        var newFileContentByPath = new Dictionary<string, string>(baseline.FileContentByPath, StringComparer.Ordinal);
+        foreach (var path in addedPaths.Concat(modifiedPaths))
+            newFileContentByPath[path] = ReadFileTextSafe(path) ?? "";
+        foreach (var path in removedPaths) newFileContentByPath.Remove(path);
+
         // Rebuilt purely from the final classified buckets (vacated/renamePairs/appeared) —
         // these already cover every path-level change: `vacated` holds both originally-removed
         // files AND in-place-modified files whose old identity never found a rename partner,
@@ -699,6 +724,7 @@ public sealed partial class BcCompiler
             ManifestFingerprint = manifestFingerprint, SharedRefsFingerprint = sharedRefsFingerprint,
             ModuleDef = mergedModuleDef,
             FileHashByPath = newFileHashByPath,
+            FileContentByPath = newFileContentByPath,
             ObjectByPath = newObjectByPath,
             SourceByKey = newSourceByKey,
             LastOutput = output,
@@ -828,6 +854,197 @@ public sealed partial class BcCompiler
         => new(id.Kind.ToString(), id.Id, id.Name);
 
     /// <summary>
+    /// #2539: <see cref="PeekChangedObjects"/> at PROCEDURE granularity. Same side-effect-free
+    /// contract (no <c>CreateForRad</c>, no <c>Emit</c>, no baseline mutation) and the same
+    /// over-inclusive-by-design posture: every entry returned is either a specific changed
+    /// procedure/trigger (<see cref="AffectedScopeId.ScopeName"/> set) or a WHOLE-OBJECT widen
+    /// (<c>ScopeName</c> null) — the caller may safely treat a null-scope entry exactly like a
+    /// <see cref="PeekChangedObjects"/> entry, and null-scope is always the fallback when this
+    /// method is not confident.
+    ///
+    /// Procedure granularity is sound because an added/modified line has NO prior coverage
+    /// record only within the enclosing procedure it lands in — widening a narrowed-down
+    /// change to that whole procedure (never to a single statement/line) means a test that
+    /// executed the procedure at all is always a candidate, so a genuinely-affected test is
+    /// never silently dropped. Three cases MUST widen to the whole OBJECT instead, matching
+    /// #2539's issue body exactly:
+    ///   1. Added/removed files — every procedure in a wholly new file is "new"; no per-
+    ///      procedure record can exist for any of it.
+    ///   2. Non-statement edits — variable declarations, procedure SIGNATURES (a changed
+    ///      return type or parameter list touches the declaration line, which sits OUTSIDE
+    ///      <see cref="AlRunner.Infrastructure.AlMemberSyntax.BodyRange"/>, so it never
+    ///      matches any member and this method widens automatically), table fields, page
+    ///      properties, attributes — none carry a StmtHit.
+    ///   3. Any uncertainty at all: the changed line range spans more than one procedure,
+    ///      falls in neither, this file's old text was never cached (no
+    ///      <c>RadBaseline.FileContentByPath</c> entry), or an in-place rename (the file now
+    ///      declares a DIFFERENT object than baseline recorded at that path).
+    ///
+    /// Returns null under the exact same conditions <see cref="PeekChangedObjects"/> does
+    /// (no baseline yet, an untracked removal, an unclassifiable touched file) — the caller
+    /// MUST treat null as "unknown, do not narrow", never as "nothing changed".
+    /// </summary>
+    internal IReadOnlyList<AffectedScopeId>? PeekChangedScopes(
+        IEnumerable<string> alFolders, string moduleName, string? appRootDir)
+    {
+        if (!_radBaselines.TryGetValue(moduleName, out var baseline))
+            return null;
+
+        var dirs = alFolders.Where(Directory.Exists).Distinct().ToList();
+        var alFiles = dirs.SelectMany(d => AlRunner.Infrastructure.SafeDirectoryScan.Files(d, "*.al")).Distinct().ToList();
+
+        var manifestAppJsonPath = (appRootDir != null && File.Exists(Path.Combine(appRootDir, "app.json")))
+            ? Path.Combine(appRootDir, "app.json")
+            : dirs.Select(d => Path.Combine(d, "app.json")).FirstOrDefault(File.Exists);
+        var manifestInputs = ReadManifestCompilerInputs(manifestAppJsonPath);
+
+        var currentHashes = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var f in alFiles) currentHashes[f] = HashFile(f);
+
+        var addedPaths = new List<string>();
+        var removedPaths = new List<string>();
+        var modifiedPaths = new List<string>();
+        foreach (var kv in currentHashes)
+        {
+            if (!baseline.FileHashByPath.TryGetValue(kv.Key, out var oldHash)) addedPaths.Add(kv.Key);
+            else if (!string.Equals(oldHash, kv.Value, StringComparison.Ordinal)) modifiedPaths.Add(kv.Key);
+        }
+        foreach (var oldPath in baseline.FileHashByPath.Keys)
+            if (!currentHashes.ContainsKey(oldPath)) removedPaths.Add(oldPath);
+
+        if (addedPaths.Count == 0 && removedPaths.Count == 0 && modifiedPaths.Count == 0)
+            return Array.Empty<AffectedScopeId>();
+
+        var parseOpts = RadParseOptions(manifestInputs);
+        var compOpts = RadCompilationOptions(manifestInputs);
+        var changed = new List<AffectedScopeId>();
+        var seenWhole = new HashSet<RadObjectIdentity>();
+        void AddWhole(RadObjectIdentity id)
+        {
+            if (seenWhole.Add(id)) changed.Add(new AffectedScopeId(ToAffectedObjectId(id), null));
+        }
+
+        foreach (var path in removedPaths)
+        {
+            if (!baseline.ObjectByPath.TryGetValue(path, out var oldIdentity))
+                return null; // untracked removal — only the real compile path can adjudicate this
+            AddWhole(oldIdentity);
+        }
+
+        // Rule 1: a wholly new file — every procedure in it is new, no prior record exists.
+        foreach (var path in addedPaths)
+        {
+            NavSyntax.SyntaxTree tree;
+            try
+            {
+                var src = File.ReadAllText(path);
+                tree = NavSyntax.SyntaxTree.ParseObjectText(src, path: path, encoding: null!, parseOpts, default);
+            }
+            catch { return null; }
+            var (identity, _) = ClassifyDeclaredObject(tree, compOpts);
+            if (identity == null) return null;
+            AddWhole(identity.Value);
+        }
+
+        foreach (var path in modifiedPaths)
+        {
+            NavSyntax.SyntaxTree tree;
+            string newSrc;
+            try
+            {
+                newSrc = File.ReadAllText(path);
+                tree = NavSyntax.SyntaxTree.ParseObjectText(newSrc, path: path, encoding: null!, parseOpts, default);
+            }
+            catch { return null; }
+
+            var (identity, _) = ClassifyDeclaredObject(tree, compOpts);
+            if (identity == null) return null;
+
+            // An in-place rename (this path now declares a DIFFERENT identity than baseline
+            // recorded there) — same over-inclusive treatment as PeekChangedObjects: report
+            // BOTH the vacated old identity and the new one, whole-object, no attempt to narrow.
+            if (baseline.ObjectByPath.TryGetValue(path, out var oldIdentityAtSamePath)
+                && IdentityKey(oldIdentityAtSamePath) != IdentityKey(identity.Value))
+            {
+                AddWhole(oldIdentityAtSamePath);
+                AddWhole(identity.Value);
+                continue;
+            }
+
+            if (!baseline.FileContentByPath.TryGetValue(path, out var oldSrc))
+            {
+                AddWhole(identity.Value); // rule 3: no cached old text to diff against
+                continue;
+            }
+
+            var scopeName = TryNarrowToChangedScope(oldSrc, newSrc, path);
+            if (scopeName == null)
+            {
+                AddWhole(identity.Value); // rules 2/3: signature/non-statement edit, or uncertain
+                continue;
+            }
+            changed.Add(new AffectedScopeId(ToAffectedObjectId(identity.Value), scopeName));
+        }
+
+        return changed
+            .OrderBy(c => c.Object.Kind, StringComparer.Ordinal)
+            .ThenBy(c => c.Object.Id ?? int.MaxValue)
+            .ThenBy(c => c.Object.Name, StringComparer.Ordinal)
+            .ThenBy(c => c.ScopeName ?? "", StringComparer.Ordinal)
+            .ToArray();
+    }
+
+    /// <summary>
+    /// The single procedure/trigger a MODIFIED file's changed lines fall entirely within, or
+    /// null when the change cannot be attributed to exactly one (multiple members, no member
+    /// at all — a signature/declaration/property edit — or the change window could not be
+    /// computed). Uses a plain common-prefix/common-suffix line trim, not a full diff: it is
+    /// deliberately over-inclusive when a file has more than one disjoint edit (the trim then
+    /// reports one span covering from the first to the last differing line, which can include
+    /// unchanged lines in between) — safe, because a wider window can only make this method
+    /// find MORE than one containing member and widen to the whole object, never attribute to
+    /// the WRONG single procedure.
+    /// </summary>
+    private static string? TryNarrowToChangedScope(string oldSrc, string newSrc, string path)
+    {
+        var oldLines = SplitLines(oldSrc);
+        var newLines = SplitLines(newSrc);
+        var minLen = Math.Min(oldLines.Length, newLines.Length);
+
+        var prefix = 0;
+        while (prefix < minLen && string.Equals(oldLines[prefix], newLines[prefix], StringComparison.Ordinal))
+            prefix++;
+
+        var suffix = 0;
+        while (suffix < minLen - prefix
+               && string.Equals(oldLines[oldLines.Length - 1 - suffix], newLines[newLines.Length - 1 - suffix], StringComparison.Ordinal))
+            suffix++;
+
+        var changeStartLine = prefix; // 0-based, inclusive
+        var changeEndLineExclusive = newLines.Length - suffix;
+        if (changeEndLineExclusive <= changeStartLine)
+            return null; // nothing left in the NEW file to attribute (e.g. a pure deletion at the boundary)
+        var changeEndLine = changeEndLineExclusive - 1; // 0-based, inclusive
+
+        IReadOnlyList<AlRunner.Infrastructure.AlMemberSyntax> members;
+        try { members = AlRunner.Infrastructure.AlMemberSyntaxIndex.Parse(newSrc, path); }
+        catch { return null; }
+
+        // Membership by LINE only (not column) — the diff above is already line-granular, so
+        // comparing at line granularity introduces no additional imprecision.
+        string? found = null;
+        foreach (var m in members)
+        {
+            if (m.BodyRange.Start.Line > changeStartLine || changeEndLine > m.BodyRange.End.Line) continue;
+            if (found != null) return null; // spans/touches more than one member — widen
+            found = m.QualifiedName;
+        }
+        return found;
+    }
+
+    private static string[] SplitLines(string text) => text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
+
+    /// <summary>
     /// Called by <see cref="Emit"/> after a clean success, when its caller passed
     /// <c>trackIncrementalBaseline: true</c>. Builds the (Kind,Id-or-Name)-keyed state
     /// <see cref="TryEmitIncremental"/> needs for the NEXT cycle, for every object kind (see
@@ -938,6 +1155,8 @@ public sealed partial class BcCompiler
 
         var fileHashByPath = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var f in alFiles) fileHashByPath[f] = HashFile(f);
+        var fileContentByPath = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var f in alFiles) fileContentByPath[f] = ReadFileTextSafe(f) ?? "";
 
         var manifestFingerprint = RadManifestFingerprint(appId, publisher, version, manifestInputs, manifestAppJsonPath);
         var sharedRefsFingerprint = string.Join(",", specs.Select(s => $"{s.AppId}:{s.Version}").OrderBy(s => s, StringComparer.Ordinal));
@@ -948,6 +1167,7 @@ public sealed partial class BcCompiler
             ManifestFingerprint = manifestFingerprint, SharedRefsFingerprint = sharedRefsFingerprint,
             ModuleDef = moduleDef,
             FileHashByPath = fileHashByPath,
+            FileContentByPath = fileContentByPath,
             ObjectByPath = objectByPath,
             SourceByKey = sourceByKey,
             LastOutput = fullOutput,
