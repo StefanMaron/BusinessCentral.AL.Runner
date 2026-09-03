@@ -87,6 +87,7 @@ All notable changes to this project are documented here. Format based on
 - **agents:** opening a corpus PR needs no approval
 
 ### Changed
+- **reporter:** pin ProvisionGapLog's discovery order, the one property #2597 left uncovered
 - stop superseded runs from holding job slots
 - **compile:** run CallSiteArgWrap only when the real emit needs it
 - **guard:** the silent-skip guard could not see the multi-line shape
