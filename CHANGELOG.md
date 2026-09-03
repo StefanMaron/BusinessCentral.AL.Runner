@@ -7,6 +7,7 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **server:** iterationTracking on execute pairs loop iterations with values, messages and lines
 - **report:** resolve request-page controls against the report globals they bind to
 - **report:** run the request page from Report.Run and write the dataset it asks for
 - **record:** implement the Date system virtual table (2000000007)
@@ -14,6 +15,7 @@ All notable changes to this project are documented here. Format based on
 - **all-profile:** populate the All Profile system virtual table (2000000178)
 
 ### Fixed
+- Aggregate Permission Set redrives its union on every Get()/Find() request
 - **testpage:** enforce field MinValue/MaxValue on TestPage SetValue
 - **server:** stop affectedOnly from silently narrowing a sibling bundle when a dependency's incremental cycle can't be attributed
 - **record:** keep field-trigger wiring alive across a tableextension-forced NCLMetaTable rebuild
