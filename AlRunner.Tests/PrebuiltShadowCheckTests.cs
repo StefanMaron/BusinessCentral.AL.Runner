@@ -121,3 +121,225 @@ public class PrebuiltShadowCheckTests
             PrebuiltShadowCheck.NewestAlSourceUtc(Path.Combine(Path.GetTempPath(), "definitely-not-here-" + Guid.NewGuid().ToString("N"))));
     }
 }
+
+/// <summary>
+/// The staleness verdict moved from mtime to CONTENT (issue #2610).
+///
+/// Mtime answers a different question: git writes mtimes at checkout, so their ordering says
+/// which file was last touched on this machine, not which bytes are current. It is wrong in both
+/// directions, and the two directions cost different things — a false STALE is a needless full
+/// compile, a false FRESH is a developer testing bytes they never wrote. Both are pinned below.
+/// </summary>
+public class PrebuiltShadowContentCheckTests
+{
+    private static string NewTempDir()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "prebuilt-shadow-content", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        return dir;
+    }
+
+    private const string CodeunitA = "codeunit 50100 \"A\"\n{\n    procedure P(): Integer begin exit(1); end;\n}\n";
+    private const string CodeunitB = "codeunit 50101 \"B\"\n{\n    procedure Q(): Integer begin exit(2); end;\n}\n";
+
+    /// <summary>A bundle directory holding the given AL sources, in nested folders, because a real
+    /// bundle has a directory layout and a package does not.</summary>
+    private static string WriteBundle(params string[] sources)
+    {
+        var dir = NewTempDir();
+        for (var i = 0; i < sources.Length; i++)
+        {
+            var sub = Path.Combine(dir, "src", "group" + i);
+            Directory.CreateDirectory(sub);
+            File.WriteAllText(Path.Combine(sub, $"Object{i}.al"), sources[i]);
+        }
+        return dir;
+    }
+
+    /// <summary>A NAVX .app carrying the given AL under flat src/*.al entries, the way alc packages it.</summary>
+    private static string WriteAppWithAl(params string[] sources)
+    {
+        var dir = NewTempDir();
+        using var ms = new MemoryStream();
+        using (var zip = new System.IO.Compression.ZipArchive(ms, System.IO.Compression.ZipArchiveMode.Create, leaveOpen: true))
+        {
+            var manifest = zip.CreateEntry("NavxManifest.xml");
+            using (var s = manifest.Open())
+                s.Write(System.Text.Encoding.UTF8.GetBytes(
+                    "<?xml version=\"1.0\" encoding=\"utf-8\"?>"
+                    + "<Package xmlns=\"http://schemas.microsoft.com/navx/2015/manifest\">"
+                    + $"<App Id=\"{Guid.NewGuid()}\" Name=\"N\" Publisher=\"P\" Version=\"1.0.0.0\"/>"
+                    + "<Dependencies/></Package>"));
+            for (var i = 0; i < sources.Length; i++)
+            {
+                var e = zip.CreateEntry($"src/Packaged{i}.al");
+                using var es = e.Open();
+                es.Write(System.Text.Encoding.UTF8.GetBytes(sources[i]));
+            }
+        }
+        var zipBytes = ms.ToArray();
+        var bytes = new byte[8 + zipBytes.Length];
+        bytes[0] = (byte)'N'; bytes[1] = (byte)'A'; bytes[2] = (byte)'V'; bytes[3] = (byte)'X';
+        BitConverter.TryWriteBytes(bytes.AsSpan(4, 4), (uint)8);
+        zipBytes.CopyTo(bytes, 8);
+        var path = Path.Combine(dir, "prebuilt.app");
+        File.WriteAllBytes(path, bytes);
+        return path;
+    }
+
+    // ---- content decides, and it beats mtime in both directions ------------------
+
+    /// <summary>
+    /// The defect that motivated this. The package's mtime is NEWER than every source file, which
+    /// the old check read as "package is current" — and its AL differs, so the run compiled bytes
+    /// the developer never wrote.
+    /// </summary>
+    [Fact]
+    public void PackageNewerThanSourceButDifferentContent_IsStale()
+    {
+        var bundle = WriteBundle(CodeunitA, CodeunitB);
+        var app = WriteAppWithAl(CodeunitA, CodeunitB.Replace("exit(2)", "exit(999)"));
+        File.SetLastWriteTimeUtc(app, DateTime.UtcNow.AddDays(1));
+
+        var verdict = PrebuiltShadowCheck.Evaluate(app, bundle);
+
+        Assert.True(verdict.Stale, "content differs, so the package must not shadow the source");
+        Assert.Contains("differs", verdict.Reason, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The other direction, which costs a needless full compile: a fresh clone or worktree switch
+    /// rewrites every source mtime to now, so a package built from exactly this source reads as
+    /// stale under mtime ordering. Its content is identical, so it is not.
+    /// </summary>
+    [Fact]
+    public void PackageOlderThanSourceButIdenticalContent_IsNotStale()
+    {
+        var bundle = WriteBundle(CodeunitA, CodeunitB);
+        var app = WriteAppWithAl(CodeunitA, CodeunitB);
+        File.SetLastWriteTimeUtc(app, DateTime.UtcNow.AddDays(-30));
+
+        var verdict = PrebuiltShadowCheck.Evaluate(app, bundle);
+
+        Assert.False(verdict.Stale, "the package ships exactly this AL, so it is current whatever the mtimes say");
+        Assert.Contains("identical", verdict.Reason, StringComparison.Ordinal);
+    }
+
+    /// <summary>Line endings and a leading BOM are rewritten by git and editors with no AL change,
+    /// and BC compiles either identically, so they must not read as drift.</summary>
+    [Fact]
+    public void CrlfAndBomDifferences_AreNotContentDrift()
+    {
+        var bundle = WriteBundle(CodeunitA, CodeunitB);
+        var app = WriteAppWithAl("﻿" + CodeunitA.Replace("\n", "\r\n"), CodeunitB.Replace("\n", "\r\n"));
+
+        Assert.False(PrebuiltShadowCheck.Evaluate(app, bundle).Stale);
+    }
+
+    /// <summary>Layout is excluded on purpose: a package flattens sources to src/&lt;name&gt;.al
+    /// while the bundle keeps its folders, and AL object identity is in the source text, never in
+    /// the filename. So a pure rename compiles to the same output and is not drift.</summary>
+    [Fact]
+    public void FileNamesAndFolders_DoNotAffectTheVerdict()
+    {
+        var bundle = NewTempDir();
+        Directory.CreateDirectory(Path.Combine(bundle, "deeply", "nested"));
+        File.WriteAllText(Path.Combine(bundle, "deeply", "nested", "TotallyDifferentName.al"), CodeunitA);
+        File.WriteAllText(Path.Combine(bundle, "Another.al"), CodeunitB);
+
+        Assert.False(PrebuiltShadowCheck.Evaluate(WriteAppWithAl(CodeunitB, CodeunitA), bundle).Stale);
+    }
+
+    /// <summary>An object added to the bundle and missing from the package is drift, and this is
+    /// the case a hash over only the package's own files would miss.</summary>
+    [Fact]
+    public void AnObjectPresentInTheBundleAndMissingFromThePackage_IsStale()
+    {
+        var bundle = WriteBundle(CodeunitA, CodeunitB);
+        var app = WriteAppWithAl(CodeunitA);
+        File.SetLastWriteTimeUtc(app, DateTime.UtcNow.AddDays(1));
+
+        Assert.True(PrebuiltShadowCheck.Evaluate(app, bundle).Stale);
+    }
+
+    /// <summary>And the mirror: an object deleted from the bundle but still shipped in the package.</summary>
+    [Fact]
+    public void AnObjectDeletedFromTheBundleButStillInThePackage_IsStale()
+    {
+        var bundle = WriteBundle(CodeunitA);
+        var app = WriteAppWithAl(CodeunitA, CodeunitB);
+        File.SetLastWriteTimeUtc(app, DateTime.UtcNow.AddDays(1));
+
+        Assert.True(PrebuiltShadowCheck.Evaluate(app, bundle).Stale);
+    }
+
+    // ---- the mtime fallback, for the shape with nothing to compare ---------------
+
+    /// <summary>
+    /// A symbols-only package ships no src/*.al, so there is nothing to compare and mtime is all
+    /// that is left. Both directions, so the fallback is not just "returns something".
+    /// </summary>
+    [Theory]
+    // A package written 30 days ago against source written now: source is newer, so stale.
+    [InlineData(-30, true)]
+    // A package written after the source: not stale, and the prebuilt keeps winning.
+    [InlineData(30, false)]
+    public void PackageWithNoAlSource_FallsBackToMtimeOrdering(int packageAgeDays, bool expectedStale)
+    {
+        var bundle = WriteBundle(CodeunitA);
+        var app = WriteAppWithAl(); // manifest only
+        File.SetLastWriteTimeUtc(app, DateTime.UtcNow.AddDays(packageAgeDays));
+
+        var verdict = PrebuiltShadowCheck.Evaluate(app, bundle);
+
+        Assert.Equal(expectedStale, verdict.Stale);
+        Assert.Contains("no AL source in the package", verdict.Reason, StringComparison.Ordinal);
+    }
+
+    /// <summary>A bundle with no AL at all cannot be compared either, and nothing can be newer
+    /// than the package, so the package keeps winning — the pre-existing contract.</summary>
+    [Fact]
+    public void BundleWithNoAlSource_FallsBackToMtimeAndKeepsThePrebuilt()
+    {
+        var bundle = NewTempDir();
+        var app = WriteAppWithAl(CodeunitA);
+
+        var verdict = PrebuiltShadowCheck.Evaluate(app, bundle);
+
+        Assert.False(verdict.Stale);
+        Assert.Contains("no AL source in the package", verdict.Reason, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A damaged package in some unrelated package cache must not end the run. It has no
+    /// comparable content, so the verdict falls back to mtime — and with source newer, to "stale",
+    /// which means "compile from source", the safe direction.
+    /// </summary>
+    [Fact]
+    public void UnreadablePackage_FallsBackToMtimeRatherThanThrowing()
+    {
+        var bundle = WriteBundle(CodeunitA);
+        var dir = NewTempDir();
+        var app = Path.Combine(dir, "corrupt.app");
+        File.WriteAllBytes(app, System.Text.Encoding.UTF8.GetBytes("NAVX not really a package at all"));
+        File.SetLastWriteTimeUtc(app, DateTime.UtcNow.AddDays(-30));
+
+        var verdict = PrebuiltShadowCheck.Evaluate(app, bundle);
+
+        Assert.True(verdict.Stale);
+        Assert.Contains("no AL source in the package", verdict.Reason, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void PrebuiltAlContentHash_IsNullForAPackageWithNoAlSource()
+        => Assert.Null(PrebuiltShadowCheck.PrebuiltAlContentHash(WriteAppWithAl()));
+
+    [Fact]
+    public void SourceAlContentHash_IsNullForADirectoryWithNoAlSource()
+        => Assert.Null(PrebuiltShadowCheck.SourceAlContentHash(NewTempDir()));
+
+    [Fact]
+    public void SourceAlContentHash_IsNullForAMissingDirectory()
+        => Assert.Null(PrebuiltShadowCheck.SourceAlContentHash(
+            Path.Combine(Path.GetTempPath(), "no-such-dir-" + Guid.NewGuid().ToString("N"))));
+}
