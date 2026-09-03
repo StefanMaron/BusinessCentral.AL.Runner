@@ -15,6 +15,7 @@ All notable changes to this project are documented here. Format based on
 - **all-profile:** populate the All Profile system virtual table (2000000178)
 
 ### Fixed
+- **virtual-tables:** stop the first virtual table to populate from latching the other two
 - **testpage:** page background tasks refuse loudly instead of crashing (partial progress on #2514)
 - **rad:** stop the incremental fast path shipping a caller bound to the old overload
 - **server:** make affectedOnly coverage attribution request-wide, not per-module
