@@ -180,6 +180,15 @@ public static partial class RecordPatches
         _parsedXmlPorts.Clear();
         _parsedObjectDecls.Clear();
         _parsedObjectCaptions.Clear();
+        // Both keyed by (AppId, Name), both populated by the same per-file sweep
+        // (ParseSourceFileIntoAllExtractors) as every dict above — an edited re-run that
+        // renames or removes a profile/permission set must not keep serving the stale
+        // declaration, the same reason _parsedTables/_parsedPages/_parsedObjectDecls are
+        // cleared here. _parsedProfiles was missing this before #2357 — the same "current
+        // bundle source" gap that left permission sets unattributed also left profiles
+        // able to go stale across a --server reload.
+        _parsedProfiles.Clear();
+        _parsedPermissionSets.Clear();
         _metaFormCache.Clear();
         // #1957: the "already (successfully|un-)loaded" bookkeeping is a statement about
         // the NCLMetaForm instances _metaFormCache.Clear() just discarded — it must go
@@ -238,6 +247,10 @@ public static partial class RecordPatches
         // its "All Profile" row carries the declaring app's id and name, which are only
         // knowable from the app.json that owns the file (#2317).
         TryParseProfileFile(text, filePath);
+        // Permission sets need the file PATH for the same reason profiles do — their
+        // "Metadata Permission Set" row carries the declaring app's id, only knowable from
+        // the app.json that owns the file (#2357).
+        TryParsePermissionSetFile(text, filePath);
     }
 
     /// <summary>
@@ -1611,6 +1624,32 @@ public static partial class RecordPatches
                 }
                 PopulateMetadataPermissionSetVirtualTable(permSetDa, table);
                 return permSetDa;
+            }
+
+            // ── Aggregate Permission Set system virtual table (2000000167) ──────────────
+            // Virtual on the service tier too: its rows are the UNION of System-scope
+            // (Metadata Permission Set, 2000000250 — just above) and Tenant-scope (Tenant
+            // Permission Set, 2000000165) rows, computed by BC's own
+            // AggregatePermissionSetDataProvider, driven directly by reflection. An empty
+            // store made every `Record "Aggregate Permission Set".Get(...)` fail "does not
+            // exist" — the root of a 14-test "already bound" cascade in Microsoft's own
+            // Tests-SINGLESERVER bucket (issue #2357, ruled out as a binding-mechanism
+            // defect by #2393). See RecordPatches.AggregatePermissionSetVirtualTable.cs.
+            if (IsAggregatePermissionSetVirtualTable(table))
+            {
+                if (!perTable.TryGetValue(tableId, out var aggPermSetDa))
+                {
+                    var createdAggPermSet = _mCreateTempDataAccess!.Invoke(self, new object[] { table })!;
+                    aggPermSetDa = perTable.GetOrAdd(tableId, createdAggPermSet);
+                }
+                var aggPermSetSession = _fDasSession?.GetValue(self)
+                    ?? throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+                        "Aggregate Permission Set (virtual table 2000000167)",
+                        "aggregate-permission-set-virtual-table — DataAccessSource has no skeleton "
+                        + "session, so BC's own AggregatePermissionSetDataProvider cannot be "
+                        + "constructed; see docs/scope.md");
+                PopulateAggregatePermissionSetVirtualTable(aggPermSetDa, table, aggPermSetSession);
+                return aggPermSetDa;
             }
 
             if (IsReportDataItemsVirtualTable(table))

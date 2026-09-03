@@ -127,10 +127,27 @@ public static partial class RecordPatches
     /// on a real tier — <c>PermissionSetGroupObjectMetadataSummaries</c> is a dictionary
     /// keyed by it — so the first declaration wins here rather than two apps producing two
     /// rows.
+    /// <para>
+    /// Two sources, same "source-compiled wins" rule <see cref="RecordPatches.AllProfileVirtualTable"/>
+    /// already applies to profiles: permission sets the runner compiled from THIS run's own
+    /// AL source (<see cref="RecordPatches.AlPermissionSetParser"/>) come first, then
+    /// permission sets declared by a precompiled dependency .app fill in whatever the
+    /// source did not already declare. Without the first source, a permission set declared
+    /// only in the bundle under test — as Microsoft's own Tests-SINGLESERVER bucket does
+    /// with `permissionset 134611 TestSet` — could never appear here, because it has no
+    /// .app to read a SymbolReference.json from (#2357).
+    /// </para>
     /// </summary>
     private static IEnumerable<(BcAppSymbolCache.PermissionSetSymbol PermissionSet, Guid OwningAppId)> EnumerateKnownPermissionSets()
     {
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        // 1. Permission sets the runner compiled from source.
+        foreach (var p in ParsedPermissionSets)
+            if (seen.Add(p.Name))
+                yield return (new BcAppSymbolCache.PermissionSetSymbol(p.Id, p.Name, p.Caption, p.Assignable), p.AppId);
+
+        // 2. Permission sets declared by precompiled dependency .app packages.
         foreach (var appPath in _bcAppPaths.ToArray())
         {
             List<BcAppSymbolCache.PermissionSetSymbol> permissionSets;
@@ -215,7 +232,21 @@ public static partial class RecordPatches
                     IsPermissionSetAppIdNull(permissionSet.Name) ? Guid.Empty : owningAppId
                 });
             case "roleid":
-                return _mpsNavCodeCtor!.Invoke(new object?[] { field.FieldDefinedLength, permissionSet.Name });
+                // NavCode(maxLength, value) does NOT truncate — it requires value.Length <=
+                // maxLength already and a later ModifyLength(shorter) on an over-length value
+                // throws NavNCLStringLengthExceededException rather than losing data (#2357).
+                // A real permissionset object's declared NAME can exceed Code[20] — the
+                // System Application itself ships one 22 characters long ("System Execute -
+                // Basic") — and AL's own Code[N] assignment semantics truncate silently, the
+                // same way `SomeCode20Var := SomeLongerText;` does anywhere else in AL. Match
+                // that here rather than passing the untruncated symbol name through.
+                return _mpsNavCodeCtor!.Invoke(new object?[]
+                {
+                    field.FieldDefinedLength,
+                    permissionSet.Name.Length > field.FieldDefinedLength
+                        ? permissionSet.Name.Substring(0, field.FieldDefinedLength)
+                        : permissionSet.Name
+                });
             case "name":
                 // Measured against real BC 27.0-28.4 (StefanMaron/BusinessCentral.AL.Language.Tests#102,
                 // StefanMaron/BusinessCentral.AL.Runner#2388): a permission set declaring no Caption is

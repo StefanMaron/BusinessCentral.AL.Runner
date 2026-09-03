@@ -1,0 +1,24 @@
+{
+  "id": "a1b2c3d4-e5f6-4708-9a1b-2c3d4e5f6072",
+  "name": "Runner Tests Fixture - Aggregate Permission Set",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Regression test: the Aggregate Permission Set virtual table (2000000167) must be populated (#2357).",
+  "description": "Proves Record \"Aggregate Permission Set\".Get() finds a permission set THIS bundle declares from source (not just one shipped in a precompiled .app), and that Get() on an undeclared role id fails rather than silently succeeding. See AggregatePermissionSetVirtualTableTests.cs for the runner-mechanism claim this pins.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "platform": "1.0.0.0",
+  "idRanges": [
+    {
+      "from": 60700,
+      "to": 60799
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}
