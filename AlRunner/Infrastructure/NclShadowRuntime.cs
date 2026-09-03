@@ -248,13 +248,28 @@ public static class NclShadowRuntime
         return shadowDll;
     }
 
+    // #2489: the issue's own field observation of "incomplete published dir" listed
+    // al-runner.dll / al-runner.exe / al-runner.deps.json / al-runner.pdb /
+    // .al-runner-shadow-source as the files variously missing — not just the entry DLL.
+    // A dir missing ONLY al-runner.deps.json still fails to `dotnet exec` (hostfxr needs
+    // it to resolve the app's dependency closure), so checking just the marker + entry
+    // DLL + Ncl.dll would report such a dir "complete" and let it stay sticky. Check the
+    // two manifests every dotnet-exec launch actually needs; al-runner.pdb/.exe are
+    // debug/native-host conveniences a missing copy doesn't stop `dotnet exec` from
+    // working, so they're not required here.
+    private static readonly string[] RequiredManifestNames =
+    {
+        "al-runner.deps.json", "al-runner.runtimeconfig.json",
+    };
+
     /// <summary>
     /// True when <paramref name="shadowDir"/> is a fully-built, reusable shadow dir for
     /// <paramref name="origFull"/>: marker present and pointing at this exact install, plus
-    /// the entry assembly and Ncl.dll both on disk. Pulled out of the reuse-check in
-    /// <see cref="EnsureShadowDir"/> so <see cref="PublishShadowDir"/> can use the SAME
-    /// definition of "complete" to decide between adopting a sibling's already-published
-    /// dir and self-healing one that publish left incomplete (#2489).
+    /// the entry assembly, its deps/runtimeconfig manifests, and Ncl.dll all on disk.
+    /// Pulled out of the reuse-check in <see cref="EnsureShadowDir"/> so
+    /// <see cref="PublishShadowDir"/> can use the SAME definition of "complete" to decide
+    /// between adopting a sibling's already-published dir and self-healing one that
+    /// publish left incomplete (#2489).
     /// </summary>
     internal static bool IsShadowDirComplete(string shadowDir, string origFull)
     {
@@ -263,10 +278,11 @@ public static class NclShadowRuntime
         var shadowNcl = Path.Combine(shadowDir, NclFileName);
         try
         {
-            return File.Exists(markerPath)
-                && File.ReadAllText(markerPath) == origFull
-                && File.Exists(shadowDll)
-                && File.Exists(shadowNcl);
+            if (!File.Exists(markerPath) || File.ReadAllText(markerPath) != origFull) return false;
+            if (!File.Exists(shadowDll) || !File.Exists(shadowNcl)) return false;
+            foreach (var name in RequiredManifestNames)
+                if (!File.Exists(Path.Combine(shadowDir, name))) return false;
+            return true;
         }
         catch (IOException)
         {

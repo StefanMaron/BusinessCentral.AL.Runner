@@ -8819,7 +8819,7 @@ public static class NclCecilRewrite
             var sourceInfo = new FileInfo(sourcePath);
             var destInfo = new FileInfo(destPath);
             if (sourceInfo.Length != destInfo.Length) return false;
-            return File.ReadAllBytes(sourcePath).AsSpan().SequenceEqual(File.ReadAllBytes(destPath));
+            return ReadAllBytesWithRetry(sourcePath).AsSpan().SequenceEqual(ReadAllBytesWithRetry(destPath));
         }
         catch (IOException) { return false; }
         catch (UnauthorizedAccessException) { return false; }

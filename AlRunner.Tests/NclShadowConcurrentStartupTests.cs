@@ -31,6 +31,8 @@ public sealed class NclShadowConcurrentStartupTests
         File.WriteAllText(Path.Combine(dir, MarkerFileName), origFull);
         File.WriteAllBytes(Path.Combine(dir, EntryDllName), dllBytes ?? new byte[] { 1, 2, 3 });
         File.WriteAllBytes(Path.Combine(dir, NclFileName), new byte[] { 4, 5, 6 });
+        File.WriteAllText(Path.Combine(dir, "al-runner.deps.json"), "{}");
+        File.WriteAllText(Path.Combine(dir, "al-runner.runtimeconfig.json"), "{}");
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -146,6 +148,29 @@ public sealed class NclShadowConcurrentStartupTests
         finally { Directory.Delete(dir, recursive: true); }
     }
 
+    /// <summary>Negative + regression pin: the issue's own field observation listed
+    /// al-runner.deps.json among the files variously missing from an incomplete
+    /// published dir. A dir with the entry DLL and Ncl.dll present but the deps
+    /// manifest missing still fails `dotnet exec` (hostfxr needs it), so it must not be
+    /// reported complete.</summary>
+    [Fact]
+    public void IsShadowDirComplete_DepsManifestMissing_ReturnsFalse()
+    {
+        var dir = NewTempDir("complete-missing-deps");
+        try
+        {
+            Directory.CreateDirectory(dir);
+            File.WriteAllText(Path.Combine(dir, MarkerFileName), @"C:\install\any");
+            File.WriteAllBytes(Path.Combine(dir, EntryDllName), new byte[] { 1 });
+            File.WriteAllBytes(Path.Combine(dir, NclFileName), new byte[] { 1 });
+            File.WriteAllText(Path.Combine(dir, "al-runner.runtimeconfig.json"), "{}");
+            // al-runner.deps.json deliberately absent.
+
+            Assert.False(NclShadowRuntime.IsShadowDirComplete(dir, @"C:\install\any"));
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
     [Fact]
     public void IsShadowDirComplete_MarkerPointsAtDifferentInstall_ReturnsFalse()
     {
@@ -247,8 +272,8 @@ public sealed class NclShadowConcurrentStartupTests
 
             // No leftover ".stale." dir from the self-heal (best-effort cleanup succeeded
             // in this uncontended scenario).
-            Assert.Empty(Directory.GetDirectories(root)
-                .Where(d => Path.GetFileName(d).Contains(".stale.", StringComparison.OrdinalIgnoreCase)));
+            Assert.DoesNotContain(Directory.GetDirectories(root),
+                d => Path.GetFileName(d).Contains(".stale.", StringComparison.OrdinalIgnoreCase));
         }
         finally { Directory.Delete(root, recursive: true); }
     }
@@ -393,8 +418,9 @@ public sealed class NclShadowConcurrentStartupTests
                 try { NclShadowRuntime.PublishShadowDir(td, shadowDir, origFull); }
                 catch (Exception ex) { exceptions.Add(ex); }
             })).ToArray();
-            Task.WaitAll(tasks, TimeSpan.FromSeconds(30));
+            var allCompleted = Task.WaitAll(tasks, TimeSpan.FromSeconds(30));
 
+            Assert.True(allCompleted, "all N publishers must finish within the timeout");
             Assert.Empty(exceptions);
             Assert.True(NclShadowRuntime.IsShadowDirComplete(shadowDir, origFull),
                 "the published dir must be complete after N concurrent publishers race to the same key");
