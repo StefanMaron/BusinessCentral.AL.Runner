@@ -409,6 +409,11 @@ public static class NclCecilRewrite
         "Microsoft.Dynamics.Nav.Runtime.ALTaskScheduler::ALCanCreateTask/1",
         "Microsoft.Dynamics.Nav.Runtime.ALTaskScheduler::CanCreateTask/1",
         "Microsoft.Dynamics.Nav.Runtime.ALTaskScheduler::CheckCodeUnit/2",
+        // ALCompiler.DotNetToNavInStream — mirror of the DotNetToNavOutStream fallback
+        // above (#2576): same skeleton SharedObjects issue, structurally identical real
+        // body (three branches: null → Default, Stream → NavStreamProvider-backed
+        // instance, else → NavNCLConversionException), just the InStream direction.
+        "Microsoft.Dynamics.Nav.Runtime.ALCompiler::DotNetToNavInStream/2",
     };
 
     /// <summary>
@@ -2443,6 +2448,29 @@ public static class NclCecilRewrite
             ReplaceBodyWithHelper(asm.MainModule, dotNetToNavOutStream,
                 nameof(AlRunner.BcRuntime.ALCompiler_DotNetToNavOutStream));
             Console.Error.WriteLine("[Cecil] Rewrote ALCompiler.DotNetToNavOutStream → BcRuntime helper (skeleton SharedObjects fallback)");
+        }
+
+        // ALCompiler.DotNetToNavInStream (#2576) — same fix as DotNetToNavOutStream just
+        // above, InStream direction. Decompiling both methods off the same cached Ncl
+        // (bc281, Microsoft.Dynamics.Nav.Runtime.ALCompiler.DotNetToNavInStream /
+        // .DotNetToNavOutStream) shows they are STRUCTURALLY IDENTICAL — same three
+        // branches (null → Default, Stream → NavStreamProvider-backed instance, else →
+        // NavNCLConversionException), only the NavInStream/NavOutStream type differs —
+        // so this is the same skeleton-SharedObjects gap the OutStream side already
+        // fixed, not a new investigation. RED→GREEN:
+        // tests/runner-extras/standalone-suites/dotnet-instream (added in this PR); the
+        // upstream BC-behaviour claim is pinned in
+        // StefanMaron/BusinessCentral.AL.Language.Tests#137
+        // (tests/al-language/streams/TestDotNetInStream.al).
+        {
+            var alCompilerType = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.ALCompiler")
+                ?? throw new InvalidOperationException("ALCompiler not found in Ncl — shape changed");
+            var dotNetToNavInStream = alCompilerType.Methods.FirstOrDefault(m =>
+                m.Name == "DotNetToNavInStream" && m.Parameters.Count == 2)
+                ?? throw new InvalidOperationException("ALCompiler.DotNetToNavInStream/2 not found — shape changed");
+            ReplaceBodyWithHelper(asm.MainModule, dotNetToNavInStream,
+                nameof(AlRunner.BcRuntime.ALCompiler_DotNetToNavInStream));
+            Console.Error.WriteLine("[Cecil] Rewrote ALCompiler.DotNetToNavInStream → BcRuntime helper (skeleton SharedObjects fallback)");
         }
 
         // NavHttpClient egress (ALGet/ALPost/ALPut/ALDelete/ALPatch + their *Async and
