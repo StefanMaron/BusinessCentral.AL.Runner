@@ -9,7 +9,7 @@ namespace AlRunner;
 ///
 /// One JSON object per line. stdin = requests, stdout = responses.
 ///   request : {command, sourcePaths[], packagePaths[], stubPaths[], code, captureValues,
-///              coverage, perTestCoverage, testIsolation}
+///              coverage, perTestCoverage, affectedOnly, testIsolation}
 ///   runTests: STREAMING (protocol-v2.schema.json — see #1641) — zero or more
 ///             {"type":"test", name, status, durationMs, message, errorKind,
 ///             stackFrames, stackTrace} lines, one per completed test as it
@@ -17,6 +17,7 @@ namespace AlRunner;
 ///             {"type":"summary", exitCode, passed, failed, errors,
 ///             total, cached, cancelled|omitted, changedFiles|omitted,
 ///             compilationErrors|omitted, coverage|omitted, perTestCoverage|omitted,
+///             selection|omitted,
 ///             wallSeconds|omitted, protocolVersion:2} line.
 ///             `cancelled` (true) is present only when a concurrent `cancel`
 ///             command actually stopped the run before every test ran; omitted
@@ -33,7 +34,7 @@ namespace AlRunner;
 ///             shape (#1613/#1614), reused verbatim rather than inventing a new one.
 ///   execute : {exitCode, tests:[{name,status,durationMs,message,stackTrace,
 ///              capturedValues|omitted}], messages|omitted, compilationErrors|null,
-///              coverage|omitted} —
+///              coverage|omitted, selection|omitted} —
 ///              single response, not streamed (matches v1: only runTests streams).
 ///              `capturedValues` (#1640) is present per test only when the request
 ///              set `captureValues:true`; each entry is {scopeName, variableName,
@@ -165,6 +166,13 @@ public sealed class ServerRequest
     /// </summary>
     [JsonPropertyName("perTestCoverage")] public bool? PerTestCoverage { get; set; }
     /// <summary>
+    /// Run only tests affected by AL object changes since this server process's previous
+    /// successful run for the same bundle (issue #2441). Conservative by design:
+    /// whenever the runner cannot positively prove a safe affected subset, it runs all
+    /// tests and reports that as a forced-full selection with a reason.
+    /// </summary>
+    [JsonPropertyName("affectedOnly")] public bool? AffectedOnly { get; set; }
+    /// <summary>
     /// "codeunit" (default) | "test"/"method" | "disabled" — see <see cref="TestIsolationParser"/>.
     /// Null = the server's existing default (TestIsolation.Codeunit), matching the
     /// CLI's own default. Threaded into PipelineOptions.TestIsolation-equivalent
@@ -191,6 +199,14 @@ public sealed record ServerRunResult(
         => new(Array.Empty<TestResult>(), exitCode, false,
                new List<CompilationErrorGroup> { new(file, new List<string> { message }) }, hashes);
 }
+
+public sealed record ServerSelection(
+    string Mode,
+    int Ran,
+    int Skipped,
+    IReadOnlyList<string> ChangedObjects,
+    bool ForcedFull,
+    string? Reason);
 
 public static class ServerProtocol
 {
@@ -297,6 +313,7 @@ public static class ServerProtocol
         IReadOnlyList<CompilationErrorGroup>? compilationErrors = null,
         bool cancelled = false,
         double? wallSeconds = null,
+        ServerSelection? selection = null,
         IReadOnlyList<Infrastructure.AlCoverageTracker.AlStatementRecord>? statementTable = null,
         IReadOnlyDictionary<string, List<Infrastructure.AlCoverageTracker.AlStatementRecord>>? perTestStatementTable = null)
     {
@@ -311,6 +328,15 @@ public static class ServerProtocol
             cached,
             cancelled = cancelled ? (bool?)true : null,
             changedFiles = cached ? null : changedFiles,
+            selection = selection == null ? null : new
+            {
+                mode = selection.Mode,
+                ran = selection.Ran,
+                skipped = selection.Skipped,
+                changedObjects = selection.ChangedObjects,
+                forcedFull = selection.ForcedFull,
+                reason = selection.Reason,
+            },
             compilationErrors = compilationErrors is { Count: > 0 }
                 ? compilationErrors.Select(g => new { file = g.File, errors = g.Errors })
                 : null,
@@ -333,6 +359,7 @@ public static class ServerProtocol
         int exitCode,
         IReadOnlyList<Infrastructure.AlCapturedMessage>? messages = null,
         IReadOnlyList<CompilationErrorGroup>? compilationErrors = null,
+        ServerSelection? selection = null,
         IReadOnlyList<Infrastructure.AlCoverageTracker.AlStatementRecord>? statementTable = null,
         IReadOnlyDictionary<string, List<Infrastructure.AlCoverageTracker.AlStatementRecord>>? perTestStatementTable = null)
     {
@@ -341,6 +368,15 @@ public static class ServerProtocol
             exitCode,
             tests = tests.Select(ToWire),
             messages = messages is { Count: > 0 } ? messages.Select(ToWire) : null,
+            selection = selection == null ? null : new
+            {
+                mode = selection.Mode,
+                ran = selection.Ran,
+                skipped = selection.Skipped,
+                changedObjects = selection.ChangedObjects,
+                forcedFull = selection.ForcedFull,
+                reason = selection.Reason,
+            },
             compilationErrors = compilationErrors is { Count: > 0 }
                 ? compilationErrors.Select(g => new { file = g.File, errors = g.Errors })
                 : null,

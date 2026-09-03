@@ -194,13 +194,11 @@ dispatch, and report/request-page variables support a limited standalone surface
   a handler that cancels leaves the report body unexecuted, and one that calls
   `TestRequestPage.SaveAsXml(parametersFile, dataSetFile)` gets the report's dataset written
   to that file (so `Codeunit "Library - Report Dataset"` can load it) instead of a layout.
-  Two differences from real BC remain:
-    - A request page whose handler reads or writes a **control** bound to a report global
-      (`RequestPage.ShowAmountsInLCY.SetValue(true)`) is refused with
-      `out-of-scope: TestRequestPage control … request-page-control`. Resolving one needs the
-      request page's `NavForm.SourceExpressions` table, which the runner only builds for
-      forms it drives as a `TestPage`. Tracked in
-      [#2442](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2442).
+  A handler can also read and write the request page's **controls**
+  (`RequestPage.ShowAmountsInLCY.SetValue(true)`): a request-page control is bound to one of
+  the report's own globals, and it resolves through BC's own `NavForm.SourceExpressions`
+  binding table, so a write lands on that global and the report body reads it back.
+  One difference from real BC remains:
     - When no declared handler matches the request page, the runner continues WITHOUT
       opening one rather than raising BC's `Unhandled UI` error. It cannot yet tell "the
       test declared no handler" apart from "handler lookup did not reach us", and refusing
