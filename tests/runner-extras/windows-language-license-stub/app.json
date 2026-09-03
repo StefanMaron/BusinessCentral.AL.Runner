@@ -1,0 +1,18 @@
+{
+  "id": "3d81f4a7-6c25-4b19-9e07-5f2ab84c1d63",
+  "name": "Runner Extras - Windows Language License Stub",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Issue #2581: the six license-derived and four installed-resource columns of the Windows Language virtual table (2000000045) have no source on the runner, so their values are CHOSEN. This suite pins the choice so it cannot change silently.",
+  "description": "What the Windows Language table says about a language - its name, tag, abbreviated name and OEM code page - is plain BC behaviour and is covered upstream in the al-language corpus. This suite deliberately asserts none of that. It asserts only what exists because this is the runner: that the license-derived columns answer permitted, and that the installed-resource columns answer none. Both are declared divergences, not faithful substitutions - real BC has no no-license answer to copy, since get_License() throws. See docs/limitations.md and the header of AlRunner/Patches/RecordPatches.WindowsLanguageVirtualTable.cs.",
+  "dependencies": [],
+  "idRanges": [
+    {
+      "from": 64546,
+      "to": 64555
+    }
+  ],
+  "platform": "27.0.0.0",
+  "runtime": "15.0",
+  "target": "Cloud"
+}
