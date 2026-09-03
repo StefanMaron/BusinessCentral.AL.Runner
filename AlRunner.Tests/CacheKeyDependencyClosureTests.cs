@@ -93,7 +93,9 @@ public sealed class CacheKeyDependencyClosureTests : IDisposable
 
     /// <summary>
     /// Fast path: runs the fixture in `--print-cache-key` mode, which reaches the exact same
-    /// ComputeAlCacheKey call a real run would (see Program.cs) and exits before Emit+Compile.
+    /// ComputeAlCacheKey call a real run would (see Program.cs) and exits without emitting or
+    /// compiling that app group. It is not free — the layered dependency pre-pass has already
+    /// run by then; see PrintCacheKeyHelp_DoesNotClaimItRunsBeforeThePrePass.
     /// This is what the two behavioural tests below use — they only ever assert a property of
     /// the key string, so there is nothing lost by not paying for the compile.
     /// </summary>

@@ -25,9 +25,15 @@
     Both properties are required together — disabling only #1 still leaves the SourceLink
     auto-import changing the DLL's debug-directory bytes across commits.
 
-    Nothing in this repo reads the informational version at runtime: al-runner's version
-    flag reports Assembly.GetName().Version (AssemblyVersion, e.g. "2.0.0.0"), not the
-    informational version.
+    al-runner's version flag DOES read the informational version at runtime, since #2552.
+    AssemblyVersion is a numeric quad that cannot carry a prerelease suffix, so reading it
+    printed "2.0.0.0" for a 2.0.0-preview.1 build. AlRunner.Infrastructure.RunnerVersion
+    strips SemVer build metadata (everything after '+'), so the commit sha the pack-time
+    override below appends does not reach that line, and the version flag prints the same
+    string whether the assembly was built here or packed for release.
+
+    That is a version STRING read at runtime, not the DLL's bytes. It has no bearing on the
+    two properties below, which exist to keep those bytes stable across commits.
 
     DO NOT DELETE THESE AS "REDUNDANT" IF YOU SEE THEM OVERRIDDEN ELSEWHERE. The published
     NuGet package (publish.yml's `dotnet pack AlRunner/`, PackAsTool=true, pushed to

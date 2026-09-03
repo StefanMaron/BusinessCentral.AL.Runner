@@ -270,11 +270,17 @@ catch (InvalidOperationException ex)
 string? cacheRootOverride = null;
 // --print-cache-key (issue #1851): a diagnostic/test-support mode. Reaches the SAME
 // ComputeAlCacheKey call, with the SAME arguments, that a real run would use for the
-// first app group it processes — then prints it and exits, before Emit+Compile even
-// starts. Exists so callers that only need to assert a property of the KEY (not of a
-// compiled DLL) don't have to pay for a full cold AL compile to get one. There is no
+// first app group it processes — then prints it and exits, without emitting or compiling
+// that app group. Exists so callers that only need to assert a property of the KEY (not
+// of a compiled DLL) don't have to pay for a full cold AL compile to get one. There is no
 // second/parallel key computation — see the call site below, unchanged from the normal
 // path up to and including the ComputeAlCacheKey call itself.
+//
+// It is NOT free, and the help text must not imply it is. The short-circuit sits inside
+// the per-app-group loop, so RunLayeredPrePass has already built every dependency
+// implementation bundle from source by the time a key is printed. That cost cannot be
+// skipped: the key covers the resolved dependency set, so a run that skipped the pre-pass
+// would print a different key than the run it stands in for.
 bool printCacheKeyOnly = false;
 // Test isolation mode — default matches BC's "Test Runner - Isol. Codeunit" (130450).
 var isolation = AlRunner.TestIsolation.Codeunit;
@@ -5597,10 +5603,7 @@ static string SanitiseFilename(string name)
 // Shared by --version/-v/-V/version and --help's first line, so a build's
 // self-reported version can never drift between the two surfaces (#2072).
 static string VersionString()
-{
-    var asmVer = typeof(Program).Assembly.GetName().Version?.ToString() ?? "unknown";
-    return $"al-runner v{asmVer}";
-}
+    => $"al-runner v{AlRunner.Infrastructure.RunnerVersion.Informational(typeof(Program).Assembly)}";
 
 static void PrintGuide(TextWriter w)
 {
@@ -6055,9 +6058,12 @@ static void PrintHelp(TextWriter w)
     w.WriteLine("  --print-cache-key       Diagnostic/test-support mode: compute the AL-output cache");
     w.WriteLine("                          key for the first app group of the first bundle exactly as");
     w.WriteLine("                          a real run would, print \"[cache] KEY key=<hash>\", and exit");
-    w.WriteLine("                          before Emit+Compile starts. Requires the cache to be");
-    w.WriteLine("                          enabled (default; not --no-cache). Exit code 2 if no key");
-    w.WriteLine("                          could be computed.");
+    w.WriteLine("                          without emitting or compiling that app group. NOT free: the");
+    w.WriteLine("                          layered dependency pre-pass has already built every");
+    w.WriteLine("                          dependency bundle from source by then, and it cannot be");
+    w.WriteLine("                          skipped, because the key covers the resolved dependency set.");
+    w.WriteLine("                          Requires the cache to be enabled (default; not --no-cache).");
+    w.WriteLine("                          Exit code 2 if no key could be computed.");
     w.WriteLine("  --watch                 Stay resident with warm dependencies and re-run IN-PROCESS");
     w.WriteLine("                          on every .al change (deps loaded once → ~seconds/save, not");
     w.WriteLine("                          a cold re-run). Ctrl+C to quit.");
