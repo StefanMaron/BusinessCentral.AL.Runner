@@ -6,6 +6,21 @@ on:
   pull_request:
     branches: [main]
 
+
+# Two agents pushing to the same branch used to leave BOTH runs holding job slots: every
+# push queued a fresh 8-leg matrix while the superseded one kept running. Measured on
+# 2026-09-03 with several agents active -- 33 runs queued against 4 in progress, of which
+# ~11 were superseded duplicates (one branch had 3 PR Checks and 2 Test Matrices queued at
+# once, and `main` had SEVEN matrices queued, one per merge).
+#
+# cancel-in-progress is deliberately TRUE for pull_request and FALSE for a push to main.
+# A superseded commit's PR verdict is worthless, and cancelling it also makes the stale-verdict
+# trap in ci-verdicts.md harder to hit. A push to main is different: each main commit keeps its
+# own verdict, so a bad commit cannot be masked by a later merge cancelling its run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   bc-tests:
     # The matrix itself lives in bc-tests.yml so the release path (publish.yml)
