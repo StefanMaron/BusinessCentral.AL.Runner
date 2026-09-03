@@ -1,0 +1,24 @@
+{
+  "id": "a1b2c3d4-e5f6-4708-9a1b-2c3d4e5f6164",
+  "name": "Runner Tests Fixture - Time Zone Virtual Table",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Regression test: the Time Zone virtual table (2000000164) must be populated from the host (#2584).",
+  "description": "Proves Record \"Time Zone\" answers rows numbered 1..N with non-blank ids, on whatever host the runner is on. Asserts SHAPE only, never a specific zone id: the row set is a property of the host OS, which is exactly the documented divergence. See CodeunitMetadataVirtualTableTests.cs's sibling, TimeZoneVirtualTableTests.cs, for the runner-mechanism claim this pins.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "platform": "1.0.0.0",
+  "idRanges": [
+    {
+      "from": 60780,
+      "to": 60799
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}
