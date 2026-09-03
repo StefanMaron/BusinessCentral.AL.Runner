@@ -159,6 +159,15 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             // while leaving dispatch order exactly as it was, which is the tail the gate
             // exists to prevent. Carry the observed maximum instead.
             ["StartupOutputReexecDedupTests"] = 61,
+            // #2498: measured 46.6s (27.5) to 62.3s (28.4) on run 33732947853 — it crosses
+            // the 60s freshness threshold only on the slower leg, so it tripped
+            // check-collection-weights.py on 28.4 while staying under it on 27.5. Same
+            // shape as StartupOutputReexecDedupTests directly above, and the same rule
+            // applies: carry the observed MAXIMUM, not the low end. Rounding down to 46
+            // would satisfy the gate while still dispatching it near
+            // UnmeasuredWeightSeconds, which is the single-threaded tail #1887 exists to
+            // prevent.
+            ["BcVersionDefaultDocumentationTests"] = 62,
             // #2178: 3 tests, each spawning a real runner subprocess over a three-app source
             // chain (two of them compile all three apps cold). Measured 53.3s (28.3) to
             // 90.5s (27.5) across the eight legs of its first CI run, where it was absent
