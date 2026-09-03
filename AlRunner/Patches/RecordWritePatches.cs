@@ -735,6 +735,32 @@ public static partial class BcRuntime
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static void StampSystemFieldsOnModify(Microsoft.Dynamics.Nav.Runtime.NavRecord self)
     {
+        // Feature Key (2000000211) is populated READ-ONLY from BC's own FeatureKeyDataProvider
+        // (RecordPatches.FeatureKeyVirtualTable.cs, #2585). Real BC's provider implements
+        // Modify: it rejects changes to nine read-only fields by name, enforces the one-way
+        // rule, and writes the new state through to table 2000000210. None of that is
+        // implemented here, and our rows live in a temp store whose Modify would ACCEPT the
+        // write and put it nowhere — a Modify that appears to succeed and changes nothing,
+        // which is the silent no-op .claude/rules/loud-failures.md exists to prevent. Refuse
+        // loudly instead, before the write happens.
+        //
+        // Deliberately here rather than in the provider: this is the one prepend site every
+        // NavRecord.ALModifyAsync already routes through, so it costs no new Cecil rewrite.
+        // It is a table-id equality check on a path that already reads MetaTable.
+        try
+        {
+            if (self.MetaTable?.TableId == AlRunner.Patches.RecordPatches.FeatureKeyVirtualTableId)
+                throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+                    "Feature Key (system table 2000000211) — Modify",
+                    "feature-key-modify — the runner serves this table read-only from BC's own "
+                    + "FeatureKeyDataProvider. Real BC's Modify writes the new state through to "
+                    + "table 2000000210; that write path is not implemented, so accepting this "
+                    + "Modify would change nothing while appearing to succeed. Reading the table "
+                    + "works. See docs/scope.md and AlRunner#2585");
+        }
+        catch (AlRunner.Infrastructure.RunnerOutOfScopeException) { throw; }
+        catch { /* a metatable we cannot read is not a reason to block an ordinary modify */ }
+
         try
         {
             var meta = self.MetaTable;
