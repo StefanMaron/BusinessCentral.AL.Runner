@@ -162,6 +162,8 @@ public static partial class BcRuntime
         // Without the closing half the runner left its single write-transaction flag set and
         // refused every later guarded Codeunit.Run in the same caller. See
         // ALDatabasePatches.EndGuardedRunTransaction and AlRunner#2332.
+        if (guarded) ALDatabasePatches.BeginGuardedRunTransaction();
+
         bool ran = false;
         try
         {
@@ -173,6 +175,16 @@ public static partial class BcRuntime
         {
             System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw(tie.InnerException);
             return default;
+        }
+        catch when (guarded)
+        {
+            // BC's DoRunAsync `errorLevel != DataError.ThrowError` branch wraps OnRun in
+            // `catch (NavBaseException) { /* suppressed */ }` — the guarded (Boolean-result-
+            // consumed) form of `Codeunit.Run` traps its inner error and returns false,
+            // exactly like the static form's `catch when (trap)` in NavCodeunit_RunCodeunit
+            // below. Before this, only the static spelling trapped; the instance spelling
+            // (`SomeCodeunitVar.Run(Rec)`) rethrew at the AL caller instead. See AlRunner#2334.
+            return new System.Threading.Tasks.ValueTask<bool>(false);
         }
         finally
         {
@@ -202,8 +214,10 @@ public static partial class BcRuntime
         if (guarded)
             ALDatabasePatches.ThrowIfWriteTransactionStarted();
 
-        // The closing half of the same bracket — see NavCodeunit_DoRunAsync above and
-        // ALDatabasePatches.EndGuardedRunTransaction.
+        // The opening/closing halves of the same bracket — see NavCodeunit_DoRunAsync above
+        // and ALDatabasePatches.BeginGuardedRunTransaction / EndGuardedRunTransaction.
+        if (guarded) ALDatabasePatches.BeginGuardedRunTransaction();
+
         bool ran = false;
         try
         {

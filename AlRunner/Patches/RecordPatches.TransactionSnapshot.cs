@@ -170,7 +170,16 @@ public static partial class RecordPatches
         {
             if (!perTable.TryGetValue(tableId, out var dataAccess)) continue;
             var key = (source, tableId);
-            if (_txCommitPoint.ContainsKey(key)) continue;
+
+            // Two independent "first write since X" trackers can both need this same
+            // pre-write image: the top-level commit-point tracker (X = last real commit),
+            // and the innermost open transaction-world scope, if any (X = that scope's own
+            // entry) — see PushTransactionWorldScope. Capture once, store into whichever of
+            // the two haven't already seen a write to this table.
+            var needsCommitPointSnapshot = !_txCommitPoint.ContainsKey(key);
+            var scopeDict = _txScopeStack.Count > 0 ? _txScopeStack.Peek() : null;
+            var needsScopeSnapshot = scopeDict != null && !scopeDict.ContainsKey(key);
+            if (!needsCommitPointSnapshot && !needsScopeSnapshot) continue;
 
             var provider = GetDataProvider(dataAccess);
             if (provider == null || provider.GetType().Name != "TempTableDataProvider") continue;
@@ -187,7 +196,80 @@ public static partial class RecordPatches
                     if (row is TempTableRecordBuffer buffer)
                         rows.Add(CloneValues(buffer.ToArray()));
 
-            _txCommitPoint[key] = new BaselineTable(tableId, metaTable, rows.ToArray());
+            var baseline = new BaselineTable(tableId, metaTable, rows.ToArray());
+            if (needsCommitPointSnapshot) _txCommitPoint[key] = baseline;
+            if (needsScopeSnapshot) scopeDict![key] = baseline;
+        }
+    }
+
+    // ── Nested transaction-world scopes (a guarded Codeunit.Run's own commit/rollback
+    // bracket) ──────────────────────────────────────────────────────────────────────────
+    // BC's BeginTransactionWorldAndTransaction / EndTransactionWorldAndTransaction(commit)
+    // push and pop a LOGICAL transaction around a guarded Codeunit.Run's own OnRun — see
+    // ALDatabasePatches.BeginGuardedRunTransaction / EndGuardedRunTransaction and
+    // AlRunner#2334. A commit==false pop must restore ONLY the rows THIS scope itself wrote
+    // — rolling all the way back to the last real commit point would also discard whatever
+    // the CALLER left uncommitted before entering the guarded run, which BC does not do.
+    // That needs its own, non-refreshing entry image per open scope, tracked independently
+    // of _txCommitPoint's "since the last real commit" one — hence the stack, and the
+    // dual-write in NoteTransactionWrite above.
+    //
+    // NOT verified against real BC: nested guarded runs (a guarded Codeunit.Run whose OnRun
+    // itself calls another guarded Codeunit.Run). PopTransactionWorldScope's commit==true
+    // branch forgets any OLDER snapshot an enclosing scope holds for a table this scope
+    // itself touched, so a LATER failure in the enclosing scope cannot undo the inner
+    // scope's already-committed write — reasoned from "a transaction-world commit is as
+    // durable as an explicit Commit()" (see NoteTransactionEnd below), not measured against
+    // a real BC service tier. This shape is not exercised by any known corpus or
+    // runner-extras test today.
+    private static readonly Stack<Dictionary<(object Source, int TableId), BaselineTable>> _txScopeStack = new();
+
+    /// <summary>
+    /// Open a new transaction-world scope — the runner's replacement for BC's
+    /// <c>Session.BeginTransactionWorldAndTransaction()</c>. Call before invoking the guarded
+    /// run's OnRun; pair with <see cref="PopTransactionWorldScope"/> in a finally.
+    /// </summary>
+    public static void PushTransactionWorldScope() => _txScopeStack.Push(new());
+
+    /// <summary>
+    /// Close the innermost transaction-world scope — the runner's replacement for BC's
+    /// <c>Session.EndTransactionWorldAndTransaction(commit)</c>.
+    ///
+    /// <paramref name="restore"/> == true (commit == false): restore every table this scope
+    /// wrote to back to its image at scope entry, undoing exactly this scope's own writes.
+    ///
+    /// <paramref name="restore"/> == false (commit == true): the scope's writes are now as
+    /// durable as an explicit Commit() (see NoteTransactionEnd) — forget any older snapshot
+    /// any enclosing scope, or the top-level commit-point tracker, is still holding for the
+    /// tables this scope touched, so neither can roll a durably-committed write back past
+    /// this point.
+    /// </summary>
+    public static void PopTransactionWorldScope(bool restore)
+    {
+        if (_txScopeStack.Count == 0) return; // defensive; Begin/End must always pair
+        var scope = _txScopeStack.Pop();
+        if (scope.Count == 0) return;
+
+        if (restore)
+        {
+            foreach (var ((source, tableId), saved) in scope)
+            {
+                if (!_dataAccessByTable.TryGetValue(source, out var perTable)) continue;
+                if (!perTable.TryGetValue(tableId, out var dataAccess)) continue;
+                var provider = GetDataProvider(dataAccess);
+                if (provider == null || provider.GetType().Name != "TempTableDataProvider") continue;
+
+                ClearProviderInPlace(provider);
+                InsertRows(provider, saved.MetaTable, saved.Rows);
+            }
+            return;
+        }
+
+        foreach (var key in scope.Keys)
+        {
+            _txCommitPoint.Remove(key);
+            foreach (var enclosing in _txScopeStack)
+                enclosing.Remove(key);
         }
     }
 
