@@ -14,13 +14,5 @@
     "Mode": "expect-fail-known-gap",
     "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2636",
     "Note": "Feature Key rows ARE materialised now -- PR 2615 routed the table to BC's own FeatureKeyDataProvider and closed issue 2585, and the two sibling entries for FindSet and Get round-tripping were removed when that landed. What remains is only the WRITE path: real BC's Modify writes new feature state through to table 2000000210, which is not implemented here, so a Modify lands in the temp store and goes nowhere instead of raising. Measured at pin 040fbdd. The linked issue's title still says the table answers no rows; that half is fixed and only the write path is open. Passes on real BC on all eight corpus versions -- StefanMaron/BusinessCentral.AL.Language.Tests#132."
-  },
-  {
-    "codeunitId": 60263,
-    "CodeunitName": "TPSF Tests",
-    "Method": "TwoControlsOverOneField_AnswerIndependently",
-    "Mode": "expect-fail-known-gap",
-    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2637",
-    "Note": "Surfaced by the al-language pin bump landing alongside issue #2201's fix (StefanMaron/BusinessCentral.AL.Language.Tests commit 66a2e2d, #128) -- unrelated to #2201's own claim. Two TestPage controls bound to the same source field do not answer independently. Not investigated further; tracked as #2637."
   }
 ]
