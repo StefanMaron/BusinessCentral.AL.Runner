@@ -135,9 +135,24 @@ internal static class TestPageFactory
             return null;
         }
 
-        return (NavRecord)ctor.Invoke(new object?[]
+        var record = (NavRecord)ctor.Invoke(new object?[]
         {
             owner, metaTable, isTemporary, null, null, SecurityFiltering.Ignored
         });
+
+        // Register tableextensions on THIS record instance, same as the other three
+        // record-construction sites (RecordPatches.CreateObjectInstance.cs,
+        // NavRecordRefPatches.cs, RecordPatches.cs's NavRecordHandle.CreateTarget) — issue
+        // #2490: a TestPage's own Rec is built here, directly via the concrete Record{Id}
+        // ctor, bypassing NCLMetaTable.CreateObjectInstance entirely, so without this call an
+        // extension field's OnValidate trigger (wired at the metatable/field level by
+        // WireFieldTriggerHandlersForTable/WireExtensionValidateHandlers, HandlerType =
+        // TableExtension{extId}) had no registered extension instance of that type to dispatch
+        // to on THIS record, and BC's own InvokeFieldTriggerHandlerAsync fell back to casting
+        // the record itself — an InvalidCastException naming the base Record{tableId} type
+        // and the extension type it could not find.
+        RecordPatches.RegisterParsedTableExtensions(record, tableId);
+
+        return record;
     }
 }
