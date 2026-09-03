@@ -585,11 +585,16 @@ public static partial class RecordPatches
                 // carry {"Name":"InitValue","Value":" "} for exactly this shape — so
                 // stripping the outer quotes (and un-doubling AL's "" escape) is
                 // observably equivalent to real BC. Symbol-loaded fields already
-                // arrive unquoted and pass through unchanged; classic Option fields
-                // are untouched (their OptionMembers are captured with the same
-                // quoting as their InitValue, so the pair stays internally
-                // consistent).
-                else if (tn.StartsWith("Enum", StringComparison.OrdinalIgnoreCase)
+                // arrive unquoted and pass through unchanged.
+                //
+                // Classic Option fields (#2345): OptionMembers is now ALSO parsed
+                // unquoted (RecordPatches.AlSourceParser.cs), so a quoted-identifier
+                // InitValue on an Option field needs the same unquoting to stay
+                // consistent with the member list it is matched against — the pair
+                // used to both carry quotes (internally consistent but wrong,
+                // matching real BC only by symmetry); now both carry none.
+                else if ((tn.StartsWith("Enum", StringComparison.OrdinalIgnoreCase)
+                        || tn.Equals("Option", StringComparison.OrdinalIgnoreCase))
                     && iv.Length >= 2 && iv.StartsWith("\"") && iv.EndsWith("\""))
                 {
                     iv = iv.Substring(1, iv.Length - 2).Replace("\"\"", "\"");
