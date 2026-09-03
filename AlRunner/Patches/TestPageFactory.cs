@@ -42,11 +42,17 @@ internal static class TestPageFactory
             return null;
         }
 
-        // isTemporary: false — TestPage over a temporary-source-table page is not this
-        // path's concern today; only the plain-page-variable caller below currently needs
-        // it (issue #1719's Page 700 "Error Messages"), and changing this one's shape is
-        // out of scope for that fix.
-        var record = TryBuildBlankRecord(owner, tableId, isTemporary: false, out var recordWhy);
+        // isTemporary must match the page's own SourceTableTemporary declaration — same
+        // resolver the plain-page-variable caller below already uses (issue #1719's Page
+        // 700 "Error Messages"). A TestPage over a page declaring SourceTableTemporary =
+        // true must get its own empty temporary rowset, exactly like every other
+        // temporary-source-table page: GetDataAccessForTableCore's `if (isTemporary)`
+        // branch short-circuits BEFORE any of the virtual-table population blocks
+        // (Field/AllObj/Integer/AllProfile/...), so leaving this hardcoded false was what
+        // routed a temporary Integer source to the runner's materialised Integer virtual
+        // table (window [-1000..100000]) instead of a private empty buffer — issue #2516.
+        var isTemporary = RecordPatches.ResolveSourceTableTemporaryForAnyPage(pageId);
+        var record = TryBuildBlankRecord(owner, tableId, isTemporary, out var recordWhy);
         if (record == null)
         {
             why = $"page {pageId}: {recordWhy}";
