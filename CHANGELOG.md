@@ -14,6 +14,8 @@ All notable changes to this project are documented here. Format based on
 - **all-profile:** populate the All Profile system virtual table (2000000178)
 
 ### Fixed
+- **record:** populate the Aggregate Permission Set virtual table
+- **events:** clear manually-bound event subscriptions at the codeunit/test boundary
 - **page-metadata:** reconstruct subpage parts for a precompiled dependency page
 - **page-metadata:** emit SourceObject and Expressions for a dependency page with no source table
 - **testpage:** inject lazy trigger/validate subscribers at TestPageFactory's record construction site
@@ -50,6 +52,7 @@ All notable changes to this project are documented here. Format based on
 - **agents:** opening a corpus PR needs no approval
 
 ### Changed
+- **perf:** gate plain-run instrumentation cost on behaviour, not time
 - Fix page-variable TestPage option enumeration
 - Fix `--server` single-bundle dependency resolution parity for sibling source apps
 - Server mode: add affected-only `runTests` selection with conservative forced-full fallback

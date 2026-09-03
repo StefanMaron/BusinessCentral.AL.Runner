@@ -108,6 +108,15 @@ public static class AlValueCapture
         _series ?? (IReadOnlyList<AlCapturedValue>)Array.Empty<AlCapturedValue>();
 
     /// <summary>
+    /// Issue #2481's behavioural regression gate: incremented UNCONDITIONALLY, first
+    /// thing in <see cref="OnStmtHit"/>/<see cref="OnExit"/>, proving those Cecil-
+    /// rewritten call sites fire regardless of <see cref="Enabled"/>. Paired with
+    /// <see cref="Collect"/>'s emptiness (which stays empty whenever <see
+    /// cref="Enabled"/> stays false) — see AlRunner.Tests/PlainRunInstrumentationGateTests.cs.
+    /// </summary>
+    internal static long CallCount;
+
+    /// <summary>
     /// Feeds the per-execution series from BC's own StmtHit(N) — called from
     /// AlCoverageTracker.OnStmtHit (the same Cecil-prepended hook site --coverage
     /// already uses; see NclCecilRewrite's StmtHit block), NOT itself a Cecil target.
@@ -131,6 +140,7 @@ public static class AlValueCapture
     /// </summary>
     public static IReadOnlyList<AlCapturedValue> OnStmtHit(NavMethodScope scope, int currentStatementNumber)
     {
+        System.Threading.Interlocked.Increment(ref CallCount);
         if (!Enabled) return Array.Empty<AlCapturedValue>();
         if (!scope.IsTopLevelCall) return Array.Empty<AlCapturedValue>();
         // NavMethodScope.ExitStatementNumber (int.MaxValue) is written directly by
@@ -185,7 +195,9 @@ public static class AlValueCapture
     /// </summary>
     public static void OnExit(NavMethodScope scope)
     {
-        // Every scope exit also ends its open loop instances (AlIterationTracker self-gates).
+        System.Threading.Interlocked.Increment(ref CallCount);
+        // #2056: every scope exit also ends its open loop instances (AlIterationTracker
+        // self-gates), so this must run even when captureValues is off.
         IReadOnlyList<AlCapturedValue> changed = Array.Empty<AlCapturedValue>();
         // Only the test's own locals — not those of any procedure it calls, which get
         // their own (deeper) scope instances and their own Exit() traffic. IsTopLevelCall

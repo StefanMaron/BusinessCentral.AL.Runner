@@ -275,6 +275,18 @@ public static class AlDapSession
         _pauseGate?.Release();
     }
 
+    /// <summary>Issue #2481's behavioural regression gate: incremented UNCONDITIONALLY,
+    /// first thing, proving the Cecil-rewritten call site fires on every AL statement
+    /// regardless of <see cref="Enabled"/>.</summary>
+    internal static long CallCount;
+
+    /// <summary>Incremented only once execution passes the <c>!Enabled || _detached</c>
+    /// gate above — i.e. only when this call actually did breakpoint/step evaluation
+    /// work (took <see cref="_bpLock"/>, walked the step-depth chain, …). Stays zero for
+    /// the lifetime of a process that never had an active --dap session, however many
+    /// statements ran. See AlRunner.Tests/PlainRunInstrumentationGateTests.cs.</summary>
+    internal static long WorkPerformedCount;
+
     /// <summary>
     /// Hook target for the Cecil-rewritten NavMethodScope.StmtHit(int)/CStmtHit(int[,
     /// bool]) — public static, exactly (NavMethodScope, int) so the rewrite can forward
@@ -285,7 +297,9 @@ public static class AlDapSession
     /// </summary>
     public static void OnStmtHit(NavMethodScope scope, int currentStatementNumber)
     {
+        System.Threading.Interlocked.Increment(ref CallCount);
         if (!Enabled || _detached) return;
+        System.Threading.Interlocked.Increment(ref WorkPerformedCount);
         // Same ExitStatementNumber guard as AlCoverageTracker.OnStmtHit — Exit() writes
         // int.MaxValue directly, StmtHit never receives it from generated code.
         if (currentStatementNumber == int.MaxValue) return;
