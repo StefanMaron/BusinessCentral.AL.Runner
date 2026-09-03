@@ -40,6 +40,14 @@ public static partial class RecordPatches
     // Lazy fallback index: tableId → (appPath, alSource). Built only when symbols miss.
     private static Dictionary<int, (string AppPath, string Source)>? _bcTableIndex;
     private static Dictionary<int, (string AppPath, ParsedTable Table)>? _bcSymbolTableIndex;
+    // tableId → the Caption that table's .app declares, or null when it declares none.
+    // SymbolReference.json records a table's Caption on its Objects[] entry, not on the
+    // Tables[] entry _bcSymbolTableIndex is built from, so this is a second dictionary
+    // filled from the same scan rather than another field on that tuple. Read by
+    // ResolveTableCaption (RecordPatches.AlObjectCaptionParser.cs) so a PRECOMPILED
+    // dependency table's declared caption reaches the NCLMetaTable the runner builds for
+    // it, the same way a source-parsed table's does.
+    private static Dictionary<int, string?>? _bcSymbolTableCaptions;
     // Query symbol index: queryId → QuerySymbol, built from registered .app SymbolReference.json.
     private static Dictionary<int, BcAppSymbolCache.QuerySymbol>? _bcSymbolQueryIndex;
     // Raw SymbolReference.json files registered as query-symbol-only sources (the bundle's
@@ -75,6 +83,10 @@ public static partial class RecordPatches
     {
         _bcTableIndex = null;
         _bcSymbolTableIndex = null;
+        // Built in the same pass as _bcSymbolTableIndex and gated on it being null, so it
+        // has to be dropped together with it or a warm --server/--watch reload would serve
+        // the previous registration epoch's captions.
+        _bcSymbolTableCaptions = null;
         _bcSymbolQueryIndex = null;
         _bcSymbolExtensionIndexBuilt = false;
     }
@@ -177,7 +189,13 @@ public static partial class RecordPatches
                 _bcMissCache.Add(tableId);
                 return false;
             }
-            // Parse the source slice that contains this table id.
+            // Parse the source slice that contains this table id. The table parser reads the
+            // structural shape (fields, keys, properties it knows); the object-caption parser
+            // is a separate extractor and owns the object's top-level Caption. This path is
+            // lazy and per-id, so it does not go through ParseAllRegisteredSourceFiles, which
+            // is where the two normally run together (#1903). Without the second call a table
+            // reached only through this fallback would have its caption silently dropped.
+            TryParseObjectCaptionFile(entry.Source);
             TryParseTableFile(entry.Source);
             if (_parsedTables.ContainsKey(tableId))
             {
@@ -328,6 +346,8 @@ public static partial class RecordPatches
                     {
                         if (_parsedTables.ContainsKey(id)) continue;
                         if (!alreadySeenSources.Add(entry.Source)) continue;
+                        // Same pairing as the lazy per-id path above — see its comment.
+                        TryParseObjectCaptionFile(entry.Source);
                         TryParseTableFile(entry.Source);
                         if (_parsedTables.ContainsKey(id)) parsedNow++;
                     }
@@ -470,13 +490,23 @@ public static partial class RecordPatches
     {
         if (_bcSymbolTableIndex != null) return;
         var idx = new Dictionary<int, (string, ParsedTable)>();
+        var captions = new Dictionary<int, string?>();
         foreach (var appPath in _bcAppPaths)
         {
             try
             {
-                foreach (var table in BcAppSymbolCache.Get(appPath).Tables)
+                var symbols = BcAppSymbolCache.Get(appPath);
+                foreach (var table in symbols.Tables)
                     if (!idx.ContainsKey(table.TableId))
                         idx[table.TableId] = (appPath, table);
+                // Same first-app-wins rule as the table index above, so the two dictionaries
+                // cannot disagree about which .app a given table id came from. TryAdd rather
+                // than an indexer assignment: the value may legitimately be null (the table
+                // declares no Caption), and null must still claim the id so a later .app's
+                // same-id caption does not overwrite it.
+                foreach (var obj in symbols.Objects)
+                    if (string.Equals(obj.Kind, "Table", StringComparison.OrdinalIgnoreCase))
+                        captions.TryAdd(obj.Id, obj.Caption);
             }
             catch (Exception ex)
             {
@@ -484,6 +514,7 @@ public static partial class RecordPatches
             }
         }
         _bcSymbolTableIndex = idx;
+        _bcSymbolTableCaptions = captions;
         if (idx.Count > 0)
             Console.Error.WriteLine($"[RecordPatches] BcAppFallback: indexed {idx.Count} symbol table id(s) across {_bcAppPaths.Count} BC .app file(s)");
         // Co-build the extension index whenever the table index is (re)built.
