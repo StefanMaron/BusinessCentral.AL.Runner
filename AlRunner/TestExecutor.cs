@@ -380,6 +380,23 @@ public sealed class TestExecutor
         }
         using (AlRunner.Infrastructure.PhaseLog.AppStage("install-seed-set-test-assembly"))
             InstallTriggerRunner.SetTestAssembly(assembly);
+        // #2592: arm subscriber injection before ANY Install trigger below —
+        // RunDependenciesOnly() a few lines down (on a dep-company-baseline cache
+        // MISS) and RunTestAssemblyOnly() unconditionally after it. Both dep
+        // assemblies (registered via SetDependencyAssemblies before this method
+        // runs) and this bundle's own assembly (just set above) are already loaded
+        // in AppDomain by this point, so their [EventSubscriber] codeunits are
+        // visible to reflection — but PopulateNclMetadataCache's initial InjectAll
+        // ran earlier, at Register() time, before either was loaded. Without this
+        // call an Install trigger that raises an integration event dispatches to
+        // no subscribers: the publisher's static <Event>_Scope is still empty, so
+        // BC's own publisher code takes its "no subscribers" early exit. The
+        // per-test-codeunit loop below re-arms the same idempotent call for
+        // subscribers whose class is discovered only later (e.g. a [Test]
+        // codeunit's own containing type), so this does not replace that call —
+        // it just closes the window before the FIRST Install trigger runs.
+        using (AlRunner.Infrastructure.PhaseLog.AppStage("install-seed-arm-event-subscribers"))
+            AlRunner.Patches.EventSubscriberPatches.InjectAllUsingStoredLookup();
         // #1867: install-seed-run-install-triggers + install-seed-ensure-company-initialized
         // were 62.4% + 20.1% = 82.5% of run_ms (#1866's own APP STAGES measurement), and both
         // are re-executing the SAME dependency assemblies' Install triggers / the SAME
