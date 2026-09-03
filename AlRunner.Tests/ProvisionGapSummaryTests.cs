@@ -135,6 +135,42 @@ public sealed class ProvisionGapLogTests
     }
 
     [Fact]
+    public void Report_KeepsDiscoveryOrder()
+    {
+        var original = Console.Error;
+        try
+        {
+            Console.SetError(TextWriter.Null);
+            ProvisionGapLog.Reset();
+
+            // Deliberately NOT in alphabetical order. Written the obvious way — "first",
+            // "second", "third" — the three strings sort into the order they were added, so the
+            // assertion passes against an implementation that sorts and proves only that three
+            // things came back. Measured: with sorted inputs, replacing the getter with
+            // OrderBy(...) still passed.
+            ProvisionGapLog.Report("zeta app resolved symbol-only");
+            ProvisionGapLog.Report("alpha app has neither a DLL nor AL source");
+            ProvisionGapLog.Report("mid app resolved symbol-only");
+
+            // The fourth property of this collector, alongside "records", "reset clears" and
+            // "Collected is a copy" below. It is observable end to end: PrintSummary dedupes with
+            // Enumerable.Distinct, which keeps first-occurrence order, so the summary lists gaps
+            // in the same order as the stderr blocks thousands of lines above it — which is what
+            // lets a reader match the two up. Every other assertion in this class uses a single
+            // entry, so nothing else here would notice a reordering.
+            Assert.Equal(
+                new[]
+                {
+                    "zeta app resolved symbol-only",
+                    "alpha app has neither a DLL nor AL source",
+                    "mid app resolved symbol-only",
+                },
+                ProvisionGapLog.Collected);
+        }
+        finally { Console.SetError(original); }
+    }
+
+    [Fact]
     public void Collected_IsACopy_SoALaterResetDoesNotEmptyWhatACallerAlreadyRead()
     {
         var original = Console.Error;
