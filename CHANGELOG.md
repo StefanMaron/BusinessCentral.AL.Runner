@@ -14,6 +14,7 @@ All notable changes to this project are documented here. Format based on
 - **all-profile:** populate the All Profile system virtual table (2000000178)
 
 ### Fixed
+- **testpage:** resolve TestPage controls bound to tableextension fields
 - **runtime:** seed NavSession.DocumentStorageService so it never NREs
 - local Codeunit-var manual bindings and TransactionModel::AutoRollback
 - **page-metadata:** resolve a bundle page's SourceTable against a dependency's precompiled table
