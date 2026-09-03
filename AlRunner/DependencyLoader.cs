@@ -126,7 +126,10 @@ public sealed class DependencyLoader
             if (microsoftSourceOnly && AlRunner.Infrastructure.ProvisioningCheck.IsKnownPlatformRuntimeApp(m.Name))
             {
                 var bcVer = AlRunner.Infrastructure.BcArtifacts.SelectedVersion.ToString();
-                Console.Error.WriteLine(
+                // Reported, not just printed: this block predicts the run's failure exactly, and
+                // on a long run it scrolls thousands of lines above the summary the caller reads.
+                // Still loud on stderr — see Infrastructure/ProvisionGapLog.cs (#2587).
+                AlRunner.Infrastructure.ProvisionGapLog.Report(
                     AlRunner.Infrastructure.ProvisioningCheck.BuildPlatformAppMissingR2RMessage(
                         m.Publisher, m.Name, m.Version.ToString(), path, bcVer));
                 continue;
