@@ -1122,21 +1122,35 @@ public sealed class TestExecutor
         _testAttrCache = new();
 
     /// <summary>
-    /// Read the [NavTest] attribute's TransactionModel property off <paramref name="m"/> —
-    /// discovered by TYPE NAME, matching this file's own convention (see the header comment:
-    /// "We discover by attribute name to avoid coupling to specific BC types") rather than a
-    /// hard `Microsoft.Dynamics.Nav.Runtime.NavTestAttribute` reference, since a multi-bundle
-    /// run can have more than one Ncl assembly-load-context loaded. If it is
-    /// TestTransactionModel.AutoRollback, roll the row store back to this test's own commit
-    /// point (RunOne's own MarkCommitPoint() call, right before m.Invoke) — see the call
-    /// site's comment for why this has to happen here rather than through BC's own dispatch.
+    /// If <paramref name="m"/> carries [TransactionModel(TransactionModel::AutoRollback)],
+    /// roll the row store back to this test's own commit point (RunOne's own
+    /// MarkCommitPoint() call, right before m.Invoke) — see the call site's comment for why
+    /// this has to happen here rather than through BC's own dispatch.
     /// </summary>
     private static void ApplyTestTransactionModel(MethodInfo m)
+    {
+        if (IsAutoRollback(m))
+            AlRunner.Patches.RecordPatches.RollbackToCommitPoint(BcRuntime.SkeletonSession);
+    }
+
+    /// <summary>
+    /// True when <paramref name="m"/>'s [NavTest] attribute declares
+    /// TransactionModel::AutoRollback — discovered by TYPE NAME, matching this file's own
+    /// convention (see the header comment: "We discover by attribute name to avoid coupling
+    /// to specific BC types") rather than a hard
+    /// `Microsoft.Dynamics.Nav.Runtime.NavTestAttribute` reference, since a multi-bundle run
+    /// can have more than one Ncl assembly-load-context loaded. Split out from
+    /// ApplyTestTransactionModel as a pure decision with no BC-engine dependency, so it can
+    /// be pinned directly (see TestTransactionModelDetectionTests.cs) without needing the
+    /// in-process engine bootstrap ApplyTestTransactionModel's own RollbackToCommitPoint call
+    /// requires.
+    /// </summary>
+    internal static bool IsAutoRollback(MethodInfo m)
     {
         var attr = _testAttrCache.GetOrAdd(m, static mi =>
             mi.GetCustomAttributes(inherit: false)
               .FirstOrDefault(a => a.GetType().Name is "NavTestAttribute" or "TestAttribute"));
-        if (attr == null) return;
+        if (attr == null) return false;
 
         var prop = attr.GetType().GetProperty("TransactionModel",
             BindingFlags.Public | BindingFlags.Instance);
@@ -1144,9 +1158,7 @@ public sealed class TestExecutor
         // TestTransactionModel.AutoRollback = 1 (AutoCommit=0, AutoRollback=1, None=2) —
         // compared by NAME, not by casting to the real enum type, for the same
         // assembly-load-context reason as the attribute-name lookup above.
-        if (value == null || value.ToString() != "AutoRollback") return;
-
-        AlRunner.Patches.RecordPatches.RollbackToCommitPoint(BcRuntime.SkeletonSession);
+        return value != null && value.ToString() == "AutoRollback";
     }
 
     // Issue #2070 root cause: this watchdog's clock is WALL-CLOCK time on the AL
