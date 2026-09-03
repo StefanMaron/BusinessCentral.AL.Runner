@@ -70,7 +70,14 @@ using System.Reflection;
 
 namespace AlRunner.Patches;
 
-public static class RowVersionPatches
+// NOTE: partial — the SystemId half (issue #2573: duplicate-SystemId Insert and
+// SystemId-corrupting Modify) lives in RowVersionPatches.SystemIdIntegrity.cs. Both
+// halves share the SAME two Cecil prepend hooks (OnBeforeInsert/OnBeforeModify are
+// the ONLY prepend hooks NclCecilRewrite.cs wires onto TempTableDataProvider.Insert/
+// Modify with the (this, companyToken, recordBuffer) argSlots:3 shape), so the
+// SystemId logic is called from inside these same two methods rather than adding new
+// prepend call sites. See that file for the SystemId-specific audit.
+public static partial class RowVersionPatches
 {
     // Strictly increasing, process-wide, never 0 — rowversion semantics. Starts at 1
     // so the very first stamped row already answers HasBeenInserted = true.
@@ -78,17 +85,29 @@ public static class RowVersionPatches
 
     private static PropertyInfo? _pMetaTable;      // MutableRecordBuffer.MetaTable
     private static PropertyInfo? _pTimestampField; // NCLMetaTable.TimestampField (internal)
-    private static PropertyInfo? _pFieldIndex;     // NCLMetaField.FieldIndex
-    private static PropertyInfo? _pItem;           // MutableRecordBuffer.this[int]
+    private static PropertyInfo? _pFieldIndex;     // NCLMetaField.FieldIndex (shared with SystemIdField resolution)
+    private static PropertyInfo? _pItem;           // MutableRecordBuffer.this[int] (shared with SystemId writes)
     private static MethodInfo? _mCreate;           // NavBigInteger.Create(long)
 
     /// <summary>Cecil prepend on TempTableDataProvider.Insert — (this, companyToken, recordBuffer).</summary>
     public static void OnBeforeInsert(object? provider, int companyToken, object? recordBuffer)
-        => Stamp(provider, recordBuffer);
+    {
+        // #2573: refuse a second Insert carrying an already-used explicit SystemId
+        // BEFORE BC's own Insert body runs. Must run before Stamp() — the rowversion
+        // stamp is pointless work for an insert that is about to be refused.
+        CheckNoDuplicateSystemId(provider, recordBuffer);
+        Stamp(provider, recordBuffer);
+    }
 
     /// <summary>Cecil prepend on TempTableDataProvider.Modify — same first three arg slots.</summary>
     public static void OnBeforeModify(object? provider, int companyToken, object? recordBuffer)
-        => Stamp(provider, recordBuffer);
+    {
+        // #2573: force the incoming buffer's SystemId back to the stored value BEFORE
+        // BC's own Modify body runs its unconditional per-field copy (see
+        // RowVersionPatches.SystemIdIntegrity.cs for why that copy includes SystemId).
+        PreserveSystemIdOnModify(provider, recordBuffer);
+        Stamp(provider, recordBuffer);
+    }
 
     private static void Stamp(object? provider, object? recordBuffer)
     {
