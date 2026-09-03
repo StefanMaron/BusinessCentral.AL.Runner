@@ -1,6 +1,9 @@
-// AlCompilerStreamPatches — replacement for ALCompiler.DotNetToNavOutStream.
+// AlCompilerStreamPatches — replacement for ALCompiler.DotNetToNavOutStream AND
+// ALCompiler.DotNetToNavInStream (#2576 — the InStream direction).
 //
-// The real body (Ncl.dll, runtime engine — ours to patch) is:
+// The real bodies (Ncl.dll, runtime engine — ours to patch) are structurally identical,
+// confirmed by decompiling both off the same cached Ncl assembly — only the
+// NavOutStream/NavInStream type differs:
 //
 //     public static NavOutStream DotNetToNavOutStream(ITreeObject parentOfResult, NavDotNet obj)
 //     {
@@ -11,19 +14,30 @@
 //         throw new NavNCLConversionException(obj.GetType(), typeof(NavOutStream));
 //     }
 //
-// On the headless skeleton `Session.Company` / `Company.SharedObjects` is null, so any
-// AL code that marshals a .NET Stream into an OutStream dies with an NRE (or an
-// ArgumentNullException from the TreeObject base ctor when Company exists but
-// SharedObjects is null). The hottest consumer is System Application CU 1279
-// "Cryptography Management Impl." GenerateHash(InStream, HashAlgorithmType), which wraps
-// a .NET MemoryStream in a NavDotNet and calls this method before hashing.
+//     public static NavInStream DotNetToNavInStream(ITreeObject parentOfResult, NavDotNet obj)
+//     {
+//         if (obj == null) return NavInStream.Default(parentOfResult);
+//         if (obj.Value is Stream stream)
+//             return new NavInStream(parentOfResult,
+//                 new NavStreamProvider(stream, parentOfResult.Tree.Session.Company.SharedObjects));
+//         throw new NavNCLConversionException(obj.GetType(), typeof(NavInStream));
+//     }
 //
-// SCOPE AUDIT (loud-failures rule): this replacement is observably equivalent to the
-// real BC behaviour for in-scope test code. It reproduces the real body's three branches
-// exactly (null → Default, Stream → NavOutStream over a NavStreamProvider, anything else
-// → NavNCLConversionException with the same argument types). The ONLY divergence is the
-// shared-object container the NavStreamProvider is parented to: the real session
-// container when present, otherwise the same process-wide skeleton
+// On the headless skeleton `Session.Company` / `Company.SharedObjects` is null, so any
+// AL code that marshals a .NET Stream into an OutStream OR an InStream dies with an NRE
+// (or an ArgumentNullException from the TreeObject base ctor when Company exists but
+// SharedObjects is null). The hottest OutStream consumer is System Application CU 1279
+// "Cryptography Management Impl." GenerateHash(InStream, HashAlgorithmType), which wraps
+// a .NET MemoryStream in a NavDotNet and calls DotNetToNavOutStream before hashing; the
+// InStream direction is the natural shape after any in-process .NET interop that hands
+// back a stream AL code then wants to read from.
+//
+// SCOPE AUDIT (loud-failures rule): both replacements are observably equivalent to the
+// real BC behaviour for in-scope test code. Each reproduces its real body's three
+// branches exactly (null → Default, Stream → an instance over a NavStreamProvider,
+// anything else → NavNCLConversionException with the same argument types). The ONLY
+// divergence is the shared-object container the NavStreamProvider is parented to: the
+// real session container when present, otherwise the same process-wide skeleton
 // TreeSharedObjectContainer every other stream/record Target patch in this runner uses
 // (NavRecordRef.get_Target, NavStream.get_Target, ...). The container only governs
 // tree-disposal bookkeeping, never stream content — the AL-observable bytes are the
@@ -37,8 +51,10 @@ public static partial class BcRuntime
 {
     private static PropertyInfo? _pNavDotNetValue;
     private static MethodInfo? _mNavOutStreamDefault;
+    private static MethodInfo? _mNavInStreamDefault;
     private static ConstructorInfo? _ctorNavStreamProviderFromStream;
     private static ConstructorInfo? _ctorNavOutStream;
+    private static ConstructorInfo? _ctorNavInStream;
     private static ConstructorInfo? _ctorNavNclConversionException;
 
     private static Assembly NclAssembly()
@@ -94,6 +110,65 @@ public static partial class BcRuntime
             _ctorNavNclConversionException = tEx.GetConstructor(new[] { typeof(Type), typeof(Type) })!;
         }
         throw (Exception)_ctorNavNclConversionException.Invoke(new object[] { obj.GetType(), tNavOutStream });
+    }
+
+    /// <summary>
+    /// #2576 — mirror of <see cref="ALCompiler_DotNetToNavOutStream"/>, InStream direction.
+    /// Same three branches, same NavStreamProvider/shared-object-container plumbing; only
+    /// the target type (NavInStream vs NavOutStream) differs. See the file header for the
+    /// side-by-side decompiled bodies that make this a mechanical mirror, not a new design.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static object ALCompiler_DotNetToNavInStream(object parentOfResult, object? obj)
+    {
+        var navNcl = NclAssembly();
+        var tNavInStream = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NavInStream")!;
+        var tITreeObject = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.ITreeObject")!;
+
+        if (obj == null)
+        {
+            _mNavInStreamDefault ??= tNavInStream.GetMethod("Default",
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static,
+                null, new[] { tITreeObject }, null)!;
+            return _mNavInStreamDefault.Invoke(null, new[] { parentOfResult })!;
+        }
+
+        _pNavDotNetValue ??= obj.GetType().GetProperty("Value",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)!;
+        var value = _pNavDotNetValue.GetValue(obj);
+        if (value is System.IO.Stream stream)
+        {
+            var container = ResolveSharedObjectContainer(parentOfResult);
+            if (_ctorNavStreamProviderFromStream == null)
+            {
+                var tProvider = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NavStreamProvider")!;
+                var tIContainer = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.ITreeSharedObjectContainer")!;
+                _ctorNavStreamProviderFromStream = tProvider.GetConstructor(
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+                    null, new[] { typeof(System.IO.Stream), tIContainer }, null)!;
+            }
+            // Same NavStreamProvider type the OutStream direction uses above — it is
+            // shared infrastructure, not tied to In vs Out.
+            var provider = _ctorNavStreamProviderFromStream.Invoke(new object[] { stream, container });
+            if (_ctorNavInStream == null)
+            {
+                var tINavStreamProvider = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.INavStreamProvider")!;
+                _ctorNavInStream = tNavInStream.GetConstructor(
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+                    null, new[] { tITreeObject, tINavStreamProvider }, null)!;
+            }
+            return _ctorNavInStream.Invoke(new[] { parentOfResult, provider })!;
+        }
+
+        // Faithful to the real body: unsupported inner value → NavNCLConversionException.
+        if (_ctorNavNclConversionException == null)
+        {
+            var tEx = AppDomain.CurrentDomain.GetAssemblies()
+                .Select(a => a.GetType("Microsoft.Dynamics.Nav.Types.Exceptions.NavNCLConversionException"))
+                .First(t => t != null)!;
+            _ctorNavNclConversionException = tEx.GetConstructor(new[] { typeof(Type), typeof(Type) })!;
+        }
+        throw (Exception)_ctorNavNclConversionException.Invoke(new object[] { obj.GetType(), tNavInStream });
     }
 
     // Resolve the ITreeSharedObjectContainer the real body reads from
