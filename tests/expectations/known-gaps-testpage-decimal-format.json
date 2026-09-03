@@ -1,0 +1,10 @@
+[
+  {
+    "codeunitId": 60624,
+    "CodeunitName": "Test TmpInt ListPart",
+    "Method": "TempIntegerPart_SelfLoaded_FirstRowIsNumberOne",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2632",
+    "Note": "Reading a page control bound to a Decimal field through TestPage.Value() returns the raw unformatted number (\"10\") instead of real BC's two-decimal formatting (\"10.00\"). Carried in by a submodule pin bump unrelated to this test's own claim (issue #2345, an Option-field OptionMembers quoting fix) -- this test's own assertion about a temporary-Integer-sourced page's self-loaded rows passes; only the Decimal-formatting half fails, which is the same gap #2632 and #2534 already track. Tracked as #2632; the fix removes this entry."
+  }
+]
