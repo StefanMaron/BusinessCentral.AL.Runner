@@ -41,6 +41,18 @@
 // the fork report (credited in #2573) identified — not just the one AL shape that
 // happened to trigger it there.
 //
+// ── NOT covered here: TempTableDataProvider.ModifyAll (issue #2644) ─────────────
+//
+// AL's Record.ModifyAll routes through a THIRD provider method, not the two Cecil
+// prepends this file adds to (Insert/Modify). Its body has the identical shape --
+// `row[item3.Key] = item3.Value` for every field in the update dictionary, no
+// SystemId exclusion (decompiled, BC 28.1 Ncl.dll) -- and a local compile probe
+// confirms `Rec.ModifyAll(SystemId, NewGuidValue)` is accepted, not rejected, so
+// it is reachable from ordinary AL. Left as a follow-up rather than fixed here:
+// ModifyAll has no existing prepend hook, and adding one needs
+// AlRunner/Infrastructure/NclCecilRewrite.cs, which was locked by an in-flight PR
+// while this fix was being written. See #2644.
+//
 // ── Why this is observably equivalent to real BC (loud-failures.md audit) ────────
 //
 // Both halves are gated the same way rowversion stamping is (BlobStoreIsolationPatches
