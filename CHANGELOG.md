@@ -15,6 +15,7 @@ All notable changes to this project are documented here. Format based on
 - **all-profile:** populate the All Profile system virtual table (2000000178)
 
 ### Fixed
+- **startup:** make ncl-shadow publish/prune safe under concurrent al-runner startups
 - **codeunit:** trap and roll back a failed guarded Codeunit.Run for both call spellings
 - **rad:** make the RAD baseline namespace-aware, fixing the empty ModuleDefinition
 - Aggregate Permission Set redrives its union on every Get()/Find() request
