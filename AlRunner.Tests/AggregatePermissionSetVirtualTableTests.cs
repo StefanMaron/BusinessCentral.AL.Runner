@@ -96,6 +96,11 @@ public sealed class AggregatePermissionSetVirtualTableTests
             // Negative: an undeclared role id still fails, not a silent success.
             Assert.Contains(
                 "PASS  Codeunit60702.AggregatePermissionSet_GetOnUndeclaredRoleId_Fails", stdout);
+            // #2473: the table must NOT snapshot at first touch -- a Tenant Permission Set
+            // row inserted after an earlier touch must be visible on a later one, and a
+            // subsequently deleted row must not remain a ghost.
+            Assert.Contains(
+                "PASS  Codeunit60702.AggregatePermissionSet_TenantRowInsertedAfterEarlierTouch_IsVisible", stdout);
             Assert.DoesNotContain("FAIL", stdout);
         }
         finally
