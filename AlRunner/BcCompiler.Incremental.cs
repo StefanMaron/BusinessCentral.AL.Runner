@@ -968,10 +968,29 @@ public sealed partial class BcCompiler
         var clone = CloneContainerShallow(container);
         foreach (var (propName, kind) in RadMergeablePropertiesByKind)
         {
-            var keysToExclude = new HashSet<string>(exclude.Where(e => e.Kind == kind).Select(IdentityElementKeyOf));
-            if (keysToExclude.Count == 0) continue;
             var prop = RadContainerProperty(propName);
             if (prop.GetValue(container) is not Array arr) continue;
+            var keysToExclude = new HashSet<string>(exclude.Where(e => e.Kind == kind).Select(IdentityElementKeyOf));
+            if (keysToExclude.Count == 0)
+            {
+                // #2479: nothing of THIS kind is being excluded from THIS container — but the
+                // property must still be copied onto the clone. `CloneContainerShallow`'s
+                // NamespaceDefinition branch (unlike ModuleDefinition's own BC-provided Clone())
+                // only ever sets Id/Name/Namespaces, so any kind this loop does not otherwise
+                // touch is left at its CLR default (null) on a namespace clone. A namespaced
+                // bundle where the touched/excluded object is a Codeunit and an untouched
+                // sibling is any OTHER kind (Table, Report, Page, …) previously lost that
+                // sibling's entire array here — the self-loader then handed BC's binder a
+                // namespace with a null Tables/Reports/… array, and CreateForRad's codegen
+                // crashed deep inside EmitFieldInitializer with "Unexpected value 'None' of type
+                // NavTypeKind" (a symbol that resolves far enough for name lookup but was never
+                // given a real TypeKind). A same-kind sibling (Codeunit referencing Codeunit) was
+                // never affected, because excluding the touched Codeunit already forced this
+                // loop's Codeunits branch to run and (correctly) reassign the property. See
+                // BcCompilerIncrementalCrossKindSiblingTests for the RED/GREEN proof.
+                prop.SetValue(clone, arr);
+                continue;
+            }
             var elemType = prop.PropertyType.GetElementType()!;
             var kept = arr.Cast<object>().Where(item => !keysToExclude.Contains(ElementKey(item, kind))).ToList();
             var result = Array.CreateInstance(elemType, kept.Count);
@@ -1055,12 +1074,28 @@ public sealed partial class BcCompiler
     /// Shallow-clones a container (ModuleDefinition OR NamespaceDefinition — both implement
     /// <see cref="NavSymRef.IObjectContainerDefinition"/>) WITHOUT sharing any mutable array
     /// reference with the original: <see cref="CloneModuleDefinition"/>'s <c>MemberwiseClone</c>
-    /// copies the <c>Namespaces</c> array reference as-is, and <c>NamespaceDefinition</c> has no
-    /// <c>Clone()</c> of its own (confirmed by decompile) — every caller here immediately
-    /// overwrites every mergeable property AND <c>Namespaces</c> with a freshly built array
-    /// (see <see cref="ExcludeObjectsRecursive"/>/<see cref="MergeContainerRecursive"/>), so a
-    /// bare property copy is sufficient: nothing this file's recursion does ever ends up
-    /// mutating a value still reachable from <paramref name="container"/>'s own original tree.
+    /// copies every property (including every mergeable array) verbatim, but
+    /// <c>NamespaceDefinition</c> has no <c>Clone()</c> of its own (confirmed by decompile), so
+    /// this hand-rolled branch sets ONLY <c>Id</c>/<c>Name</c>/<c>Namespaces</c> — every
+    /// mergeable-array property starts out unset (CLR default, i.e. null) on a namespace clone.
+    ///
+    /// #2479: that means EVERY caller here MUST explicitly set every mergeable property on the
+    /// result, for every kind — not just the kinds it is actually excluding/merging — or a
+    /// namespace-nested kind the caller had no reason to touch this cycle silently loses its
+    /// entire array. <see cref="MergeContainerRecursive"/> always does
+    /// (`prop.SetValue(merged, result)` runs unconditionally for every kind in
+    /// <see cref="RadMergeablePropertiesByKind"/>). <see cref="ExcludeObjectsRecursive"/> did NOT
+    /// before this fix — it skipped `prop.SetValue` entirely whenever nothing of that kind was
+    /// being excluded, so a namespaced bundle where the touched object was a Codeunit left every
+    /// OTHER kind's array null on the clone. BC's binder resolved a reference into a null Tables/
+    /// Reports/… array far enough to bind a symbol, but never gave it a real
+    /// <c>NavTypeKind</c> — <c>Compilation.Emit</c> crashed deep inside
+    /// <c>CodeGenerator.EmitFieldInitializer</c> with "Unexpected value 'None' of type
+    /// NavTypeKind" the first time an untouched, namespace-nested, non-Codeunit sibling (Table,
+    /// Report, Page, …) was referenced from the edited object's own syntax tree. See
+    /// BcCompilerIncrementalCrossKindSiblingTests for the RED/GREEN proof — a same-kind sibling
+    /// (Codeunit referencing Codeunit) never hit this, because excluding the touched Codeunit
+    /// already forced the Codeunits property to be set.
     /// </summary>
     private static NavSymRef.IObjectContainerDefinition CloneContainerShallow(NavSymRef.IObjectContainerDefinition container)
         => container switch
