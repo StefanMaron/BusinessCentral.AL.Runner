@@ -216,7 +216,7 @@ public static partial class RecordPatches
                         return null;
                     }
                 }
-                AddColumn(di, id: col.Id, name: col.Name, fieldNo: fieldNo, index: resultColumnIndex++, caption: col.Caption, method: col.Method);
+                AddColumn(di, id: col.Id, name: col.Name, fieldNo: fieldNo, index: resultColumnIndex++, caption: col.Caption, method: col.Method, reverseSign: col.ReverseSign);
                 columnIdByName[col.Name] = col.Id;
                 if (!string.IsNullOrEmpty(col.ColumnFilter))
                     pendingColumnFilters.Add(col.ColumnFilter!);
@@ -409,7 +409,7 @@ public static partial class RecordPatches
 
     private static MethodInfo? _mMultiLanguageParse;
 
-    private static void AddColumn(object dataItem, int id, string name, int fieldNo, int index, string? caption = null, string? method = null)
+    private static void AddColumn(object dataItem, int id, string name, int fieldNo, int index, string? caption = null, string? method = null, bool reverseSign = false)
     {
         var col = Activator.CreateInstance(_tMetaQueryColumn!)!;
         SetProp(col, "Id", id);
@@ -417,6 +417,13 @@ public static partial class RecordPatches
         SetProp(col, "FieldNo", fieldNo);
         SetProp(col, "QueryColumnIndex", index);
         SetProp(col, "FilterOnly", false);
+        // Issue #2575: the AL `ReverseSign = true` property. NCLMetaQueryColumn.
+        // CreateFromDesignMetadata (RecordPatches.NclMetaQueryBuilder's runtime counterpart)
+        // reads MetaQueryColumn.ReverseSign verbatim into the real NCLMetaQueryColumn's own
+        // ReverseSign property — the value QueryProjection/JoinExecutor read to negate the
+        // column's projected value. Left at the design object's own default (false) when absent,
+        // same convention as FieldTotalingMethod above.
+        SetProp(col, "ReverseSign", reverseSign);
         // Issue #2137: the AL `Method = Sum/Count/Average/Min/Max` property, carried verbatim
         // from the compiled column's SymbolReference.json Properties bag. MetaQueryColumn.
         // FieldTotalingMethod (Microsoft.Dynamics.Nav.Types.AggregationType) is what

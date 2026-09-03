@@ -62,6 +62,16 @@ public static class JoinExecutor
     private static PropertyInfo? _pColColumnIndex;
     private static PropertyInfo? _pColColumnType;
     private static PropertyInfo? _pColAggregationType;
+    // Issue #2575: NCLMetaQueryColumn.ReverseSign/NavType — read reflectively (same
+    // isolation-boundary rule as everything else in this file) so a plain (non-aggregated)
+    // column in a JOIN query negates its value the same way the single-dataitem path
+    // (RecordPatches.QueryProjection.cs's ApplyReverseSign) does. The AGGREGATE case needs no
+    // separate handling here: ctx.ComputeAggregate forwards to the shared ComputeAggregateCore,
+    // which already applies ReverseSign to every source value before aggregating.
+    private static PropertyInfo? _pColReverseSign;
+    private static PropertyInfo? _pColNavType;
+    private static MethodInfo? _mNegateValue;
+    private static bool _negateValueResolved;
     private static PropertyInfo? _pColParentDataItem;
     private static PropertyInfo? _pFieldColumnIndex;
     private static PropertyInfo? _pFieldFieldClass;
@@ -109,6 +119,8 @@ public static class JoinExecutor
         // None/Sum/Count/Average/Min/Max) — issue #2146. Read by .ToString() rather than a
         // typed enum since this assembly touches no Ncl type directly.
         _pColAggregationType = tCol.GetProperty("AggregationType", F);
+        _pColReverseSign = tCol.GetProperty("ReverseSign", F);
+        _pColNavType = tCol.GetProperty("NavType", F);
         _pColParentDataItem = tCol.GetProperty("ParentDataItem", F)!;
         _pFieldColumnIndex = tField.GetProperty("ColumnIndex", F)!;
         _pFieldFieldClass = tField.GetProperty("FieldClass", F);
@@ -283,7 +295,7 @@ public static class JoinExecutor
                         }
                         else
                         {
-                            fields[col.QuerySlot] = ctx.CalcFlowFieldForRow(ownerBuf, col.FlowFieldMeta);
+                            fields[col.QuerySlot] = ApplyReverseSign(ctx, col.ColumnObj, ctx.CalcFlowFieldForRow(ownerBuf, col.FlowFieldMeta));
                         }
                         continue;
                     }
@@ -298,7 +310,7 @@ public static class JoinExecutor
                         continue;
                     }
                     if (col.TableSlot < BufFieldCount(buf))
-                        fields[col.QuerySlot] = BufGet(buf, col.TableSlot);
+                        fields[col.QuerySlot] = ApplyReverseSign(ctx, col.ColumnObj, BufGet(buf, col.TableSlot));
                 }
                 projected.Add(fields);
             }
@@ -464,12 +476,12 @@ public static class JoinExecutor
         {
             if (!combo.TryGetValue(col.OwnerName, out var ownerBuf) || ownerBuf == null)
                 return ctx.TypedDefaultForField(col.FlowFieldMeta);
-            return ctx.CalcFlowFieldForRow(ownerBuf, col.FlowFieldMeta);
+            return ApplyReverseSign(ctx, col.ColumnObj, ctx.CalcFlowFieldForRow(ownerBuf, col.FlowFieldMeta));
         }
         if (!combo.TryGetValue(col.OwnerName, out var buf) || buf == null)
             return col.SourceField != null ? ctx.TypedDefaultForField(col.SourceField) : null;
         if (col.TableSlot < 0 || col.TableSlot >= BufFieldCount(buf)) return null;
-        return BufGet(buf, col.TableSlot);
+        return ApplyReverseSign(ctx, col.ColumnObj, BufGet(buf, col.TableSlot));
     }
 
     /// <summary>
@@ -595,6 +607,37 @@ public static class JoinExecutor
     // result by every other Normal column, mirroring RecordPatches.QueryProjection.cs's
     // single-dataitem GROUP BY.
     private static string AggregationOf(object col) => _pColAggregationType?.GetValue(col)?.ToString() ?? "None";
+
+    /// <summary>
+    /// Issue #2575: negate <paramref name="value"/> (a boxed NavValue) if the column declares
+    /// ReverseSign = true — the JOIN-path counterpart of RecordPatches.QueryProjection.cs's
+    /// ApplyReverseSign, needed here because a plain (non-aggregated) column's value in a JOIN
+    /// query is produced directly in this file rather than routed back through al-runner.
+    /// Reuses BC's own internal FlowFieldsHelper.NegateValue(NavValue, NavType) — same method
+    /// FlowFieldPatches.cs uses for `CalcFormula = -sum(...)` — via reflection, matching the
+    /// all-Ncl-access-is-reflection rule for this isolated assembly.
+    /// </summary>
+    private static object? ApplyReverseSign(JoinContext ctx, object columnObj, object? value)
+    {
+        if (value == null) return value;
+        var reverse = _pColReverseSign?.GetValue(columnObj) as bool? ?? false;
+        if (!reverse) return value;
+        if (!_negateValueResolved)
+        {
+            _negateValueResolved = true;
+            var asm = columnObj.GetType().Assembly;
+            var tHelper = asm.GetType("Microsoft.Dynamics.Nav.Runtime.FlowFieldsHelper");
+            _mNegateValue = tHelper?.GetMethods(BindingFlags.NonPublic | BindingFlags.Static)
+                .FirstOrDefault(m => m.Name == "NegateValue" && m.GetParameters().Length == 2);
+        }
+        if (_mNegateValue == null)
+            throw ctx.OutOfScope(
+                "Query column ReverseSign (JOIN)",
+                "query-reversesign-negatevalue-missing — Microsoft.Dynamics.Nav.Runtime." +
+                "FlowFieldsHelper.NegateValue(NavValue,NavType) not found on this BC build; see docs/scope.md");
+        var navType = _pColNavType?.GetValue(columnObj);
+        return _mNegateValue.Invoke(null, new object?[] { value, navType });
+    }
 
     private static JoinProjectionPlan BuildJoinProjectionPlan(JoinContext ctx, object queryDef)
     {
