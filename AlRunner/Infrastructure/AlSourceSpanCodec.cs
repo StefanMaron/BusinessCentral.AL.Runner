@@ -36,6 +36,19 @@ public static class AlSourceSpanCodec
     }
 
     /// <summary>
+    /// Inverse of <see cref="Decode"/>: packs four 0-based components into one
+    /// SourceSpans entry. Used by tests that need a span table shaped exactly like
+    /// BC's without compiling AL (e.g. AlMemberSyntaxIndexTests); production code only
+    /// ever decodes what the compiler emitted.
+    /// </summary>
+    internal static long Encode(int fromLine, int fromColumn, int toLine, int toColumn)
+    {
+        ulong v = ((ulong)(ushort)fromLine << 48) | ((ulong)(ushort)fromColumn << 32)
+                | ((ulong)(ushort)toLine << 16) | (ushort)toColumn;
+        return unchecked((long)v);
+    }
+
+    /// <summary>
     /// The AL stack-trace "line L" for a statement: its from-line relative to the
     /// enclosing method's SignatureSpan from-line. Matches BC's own service-tier output
     /// format exactly (verified against AlCallStackCapture's pre-existing behaviour,

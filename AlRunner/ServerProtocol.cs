@@ -9,7 +9,7 @@ namespace AlRunner;
 ///
 /// One JSON object per line. stdin = requests, stdout = responses.
 ///   request : {command, sourcePaths[], packagePaths[], stubPaths[], code, captureValues,
-///              coverage, perTestCoverage, affectedOnly, testIsolation}
+///              coverage, perTestCoverage, affectedOnly, iterationTracking, testIsolation}
 ///   runTests: STREAMING (protocol-v2.schema.json — see #1641) — zero or more
 ///             {"type":"test", name, status, durationMs, message, errorKind,
 ///             stackFrames, stackTrace} lines, one per completed test as it
@@ -33,7 +33,7 @@ namespace AlRunner;
 ///             already finished) at the moment the cancel was processed — the v1
 ///             shape (#1613/#1614), reused verbatim rather than inventing a new one.
 ///   execute : {exitCode, tests:[{name,status,durationMs,message,stackTrace,
-///              capturedValues|omitted}], messages|omitted, compilationErrors|null,
+///              capturedValues|omitted, iterations|omitted}], messages|omitted, compilationErrors|null,
 ///              coverage|omitted, selection|omitted} —
 ///              single response, not streamed (matches v1: only runTests streams).
 ///              `capturedValues` (#1640) is present per test only when the request
@@ -165,6 +165,14 @@ public sealed class ServerRequest
     /// behaviour, field omitted from the response.
     /// </summary>
     [JsonPropertyName("perTestCoverage")] public bool? PerTestCoverage { get; set; }
+
+    /// <summary>
+    /// #2056, `execute` only: each test result carries `iterations[]`, one entry per loop
+    /// instance with one step per iteration (that iteration's capturedValues, messages and
+    /// executed lines) and parent links across procedure calls. `[]` when nothing looped,
+    /// absent when not requested. See docs/server-mode.md "Loop iterations".
+    /// </summary>
+    [JsonPropertyName("iterationTracking")] public bool? IterationTracking { get; set; }
     /// <summary>
     /// Run only tests affected by AL object changes since this server process's previous
     /// successful run for the same bundle (issue #2441). Conservative by design:
@@ -358,6 +366,7 @@ public static class ServerProtocol
         IReadOnlyList<TestResult> tests,
         int exitCode,
         IReadOnlyList<Infrastructure.AlCapturedMessage>? messages = null,
+        IReadOnlyDictionary<int, (int Loop, int Iteration)>? messageTags = null,
         IReadOnlyList<CompilationErrorGroup>? compilationErrors = null,
         ServerSelection? selection = null,
         IReadOnlyList<Infrastructure.AlCoverageTracker.AlStatementRecord>? statementTable = null,
@@ -367,7 +376,7 @@ public static class ServerProtocol
         {
             exitCode,
             tests = tests.Select(ToWire),
-            messages = messages is { Count: > 0 } ? messages.Select(ToWire) : null,
+            messages = messages is { Count: > 0 } ? messages.Select((m, i) => ToWire(m, Tag(messageTags, i))) : null,
             selection = selection == null ? null : new
             {
                 mode = selection.Mode,
@@ -462,8 +471,16 @@ public static class ServerProtocol
         durationMs = (long)t.Duration.TotalMilliseconds,
         message = t.Message,
         stackTrace = (t.AlCallStack ?? t.FullException)?.TrimEnd(),
-        capturedValues = t.CapturedValues?.Select(ToWire),
+        capturedValues = t.CapturedValues?.Select((v, i) => ToWire(v, Tag(t.CaptureTags, i))),
+        loops = t.Loops?.Select(ToWire),
+        unresolvedScopes = t.UnresolvedScopes is { Count: > 0 } ? t.UnresolvedScopes : null,
     };
+
+    // The (loop, iteration) an indexed flat record belongs to, or null when it was
+    // produced outside any loop (its `loop`/`iteration` are then omitted from the wire).
+    private static (int Loop, int Iteration)? Tag(
+        IReadOnlyDictionary<int, (int Loop, int Iteration)>? tags, int index) =>
+        tags != null && tags.TryGetValue(index, out var t) ? t : null;
 
     // One captured AL local on the wire — the shape protocol-v2.schema.json already
     // reserves for TestEvent.capturedValues (see the schema's top-level description),
@@ -471,21 +488,58 @@ public static class ServerProtocol
     // captureError (#2043) is null-omitted (WhenWritingNull) on the common path — only
     // present when the field read or its ToString() threw, so it never gets confused
     // with a genuinely null AL variable (which has value:null and no captureError key).
-    private static object ToWire(Infrastructure.AlCapturedValue v) => new
+    private static object ToWire(Infrastructure.AlCapturedValue v, (int Loop, int Iteration)? tag = null) => new
     {
         scopeName = v.ScopeName,
         variableName = v.VariableName,
         value = v.Value,
         statementId = v.StatementId,
         captureError = v.CaptureError,
+        loop = tag?.Loop,
+        iteration = tag?.Iteration,
     };
 
     // One Message() call on the wire (#2117) — see the class doc comment for `execute`'s
     // `messages` shape and the id-space `statementId` shares with `capturedValues`/`coverage`.
-    private static object ToWire(Infrastructure.AlCapturedMessage m) => new
+    private static object ToWire(Infrastructure.AlCapturedMessage m, (int Loop, int Iteration)? tag = null) => new
     {
         text = m.Text,
         scopeName = m.ScopeName,
         statementId = m.StatementId,
+        loop = tag?.Loop,
+        iteration = tag?.Iteration,
+    };
+
+    // One loop instance on the wire (#2056). Ids are integers unique per response. The
+    // values and messages each iteration produced are NOT copied here: they live in the
+    // flat `capturedValues`/`messages`, tagged with this loop id and iteration index (a
+    // consumer filters those by the tags). parentLoop is omitted for a root loop,
+    // parentIteration before the parent's first pass; iterationCount is omitted exactly
+    // when `unsegmentable` (a stable code) is present; closedBy says how the instance ended.
+    private static object ToWire(Infrastructure.AlLoopRecord l) => new
+    {
+        id = l.Id,
+        scope = l.ScopeName,
+        file = l.FilePath,
+        line = l.Line,
+        column = l.Column,
+        endLine = l.EndLine,
+        endColumn = l.EndColumn,
+        parentLoop = l.ParentLoop,
+        parentIteration = l.ParentIteration,
+        iterationCount = l.IterationCount,
+        closedBy = l.ClosedBy switch
+        {
+            Infrastructure.AlLoopEnd.Exit => "exit",
+            Infrastructure.AlLoopEnd.ScopeExit => "scopeExit",
+            _ => "unfinished",
+        },
+        iterations = l.Iterations.Select(it => new
+        {
+            index = it.Index,
+            statements = it.Statements,
+            lines = it.Lines,
+        }),
+        unsegmentable = l.Unsegmentable,
     };
 }

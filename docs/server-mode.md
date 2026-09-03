@@ -229,6 +229,47 @@ variable: a genuinely null variable is reported with `value:null` and
 omitted from the array — that would be indistinguishable from "this variable
 does not exist" (`.claude/rules/loud-failures.md`).
 
+#### One record per execution, not per change
+
+Since #2056 the series is **full fidelity**: a local gets a record every time a
+statement that assigns it has executed, whether or not the value changed, and
+every time its value changed for any other reason. `x := 5; x := 5;` is two
+records; `for i := 1 to 3 do x := 5;` is three more. This is the contract agreed
+on SShadowS/ALchemist#1: a consumer answering "what was `x` at iteration 7"
+cannot reconstruct that from a change-only series.
+
+The "assigns it" half is best-effort write inference from the bundle's own
+syntax (one parse per request, same preprocessor symbols as the compile): the
+target of `:=` and `+=` (the ROOT local for `Rec.Amount :=` and `arr[1] :=`),
+the receiver of a method-call statement (`l.Add(5);`, `Rec.Insert();`, assumed
+to mutate it), the first argument of `Clear(x);` and `Evaluate(x, s);`, the
+`var` arguments of a call to a procedure of the same object (`Fill(x);`), and a
+`for`/`foreach` loop variable at the start of every pass. What syntax cannot
+see is left to the value diff alone: a receiver mutated inside an expression
+(`n := Rec.Next();`), a call into another object, a global. Those still report
+every real change; only a same-value re-assignment through one of them goes
+unreported. A local neither assigned nor changed still gets nothing, so an
+untouched local never appears.
+
+Two more properties of the series, both since #2056:
+
+- **Every scope is diffed against itself.** A procedure called from the
+  run's `OnRun`, or a table trigger it fires, has its own capture state: its
+  locals are compared with their own previous observation (never with a
+  same-named local of the caller), its first observation is its own baseline,
+  and its records carry its own statement ids. Recursion gives each activation
+  its own state too. A record variable's value is its primary key.
+- **A `for` variable is attributed to the `for` statement.** BC assigns a
+  `for` variable before the loop statement's own hit, so at that hit the loop
+  variable is read and recorded with the `for` statement's id, whatever its
+  value (a leading `for i := 0 to 2` records `i = 0`); everything else observed
+  there is the previous statement's effect. A `foreach` assigns its element
+  after the header hit, so its variable is recorded at the first body hit,
+  attributed to the `foreach` statement. A parameter's value at entry was
+  produced by no statement and is never a record. One thing the observation
+  model cannot separate: `i := 1; for i := 1 to 3` is seen once and attributed
+  to the `for`.
+
 ### Per-statement hit counts (`coverage`)
 
 `coverage: true` (#2042) opts into a per-statement hit-count + position table on
@@ -285,7 +326,128 @@ does not exist" (`.claude/rules/loud-failures.md`).
   the same "requested vs found nothing" distinction `capturedValues` already
   makes.
 
-### Affected-only test selection (`affectedOnly`)
+### Loop iterations (`iterationTracking`)
+
+`iterationTracking: true` (#2056, `execute` only) opts into per-iteration
+segmentation of every loop the run entered. It is what a consumer needs to
+answer "which iteration produced this value" and to step through iterations
+(SShadowS/ALchemist#1). Each test result gains a `loops` array, one entry per
+**loop instance** (a `for` inside a procedure called three times appears three
+times, each with its own id and parent). The values and messages a pass
+produced are NOT copied into it: they stay in the flat `capturedValues` and
+top-level `messages`, each record tagged with the `loop` id and `iteration`
+index it belongs to. A loop's `iterations[]` carry only what the flat series
+cannot, the statements and lines that ran. A consumer builds an iteration's
+view by filtering the flat series on `loop` and `iteration`.
+
+```json
+{"command":"execute","captureValues":true,"iterationTracking":true,
+ "code":"codeunit 50102 X3 { trigger OnRun() var i: Integer; total: Integer; begin total := 0; for i := 1 to 3 do begin total := total + i; Message(Format(total)); end; end; }"}
+```
+
+```json
+{"exitCode":0,"tests":[{"name":"Codeunit50102.OnRun","status":"pass","durationMs":24,
+ "capturedValues":[
+   {"scopeName":"OnRun","variableName":"total","value":0,"statementId":0},
+   {"scopeName":"OnRun","variableName":"i","value":1,"statementId":1,"loop":0,"iteration":1},
+   {"scopeName":"OnRun","variableName":"total","value":1,"statementId":2,"loop":0,"iteration":1},
+   {"scopeName":"OnRun","variableName":"i","value":2,"statementId":3,"loop":0,"iteration":2},
+   {"scopeName":"OnRun","variableName":"total","value":3,"statementId":2,"loop":0,"iteration":2},
+   ... i=3, total=6 tagged loop 0 iteration 3 ...],
+ "loops":[{
+   "id":0,"scope":"OnRun","file":"/tmp/.../Scratch.al",
+   "line":1,"column":87,"endLine":1,"endColumn":160,
+   "iterationCount":3,"closedBy":"exit",
+   "iterations":[
+     {"index":1,"statements":[2,3],"lines":[1]},
+     {"index":2,"statements":[2,3],"lines":[1]},
+     {"index":3,"statements":[2,3],"lines":[1]}]}]}],
+ "messages":[
+   {"text":"1","scopeName":"OnRun","statementId":3,"loop":0,"iteration":1},
+   {"text":"3","scopeName":"OnRun","statementId":3,"loop":0,"iteration":2},
+   {"text":"6","scopeName":"OnRun","statementId":3,"loop":0,"iteration":3}]}
+```
+
+- **Tags, not copies.** A `capturedValues` or `messages` record carries `loop`
+  (a loop id) and `iteration` (a 1-based index) when it was produced inside a
+  loop, both omitted when it was not (`total := 0` above, and a `Message()`
+  after the loop). Filtering the flat series by a loop id and iteration index
+  reconstructs exactly that iteration's values and messages, in order. The full-
+  fidelity rule still holds: a local a pass assigned is tagged to it with its
+  value, changed or not; one it neither assigned nor changed is not (see "One
+  record per execution" above).
+- **Where a value lands.** `--capture-values` observes a statement's effect at
+  the NEXT statement's hit, so the last statement of one pass is observed at the
+  first hit of the next. Values are tagged with the pass that produced them; a
+  `for`/`foreach` loop variable's new value (the one thing that runs between two
+  passes with no hit of its own) with the pass it opens. Whatever a
+  `while`/`until` condition produces (`Rec.Next()`, a `Message()`, a loop in a
+  procedure it calls) is tagged with the pass that condition opens, or with the
+  last pass when it ends the loop. A `repeat` has no hit before its first pass,
+  so pass 1 opens with the state the loop entered with: after
+  `if Rec.FindSet() then repeat`, `Rec` on its first row is tagged to pass 1.
+- **Ids are integers, unique per response.** `id`, `parentLoop` and a record's
+  `loop` are integers, distinct across the whole response so a top-level message
+  tag is unambiguous even across multiple bundles.
+- **`iterations[].statements`** are the AL statement ids that ran in that pass,
+  the id-space `coverage[].statements[].id` uses for the loop's `scope`;
+  **`iterations[].lines`** their 1-based lines. Both are the loop's own scope
+  only, nested loops' lines included (a called procedure's statements belong to
+  that procedure's own loop instances). A `while` condition is counted in the
+  pass it ended; the final, false evaluation in the last pass.
+- **Nesting is dynamic, not lexical.** `parentLoop`/`parentIteration` name the
+  loop instance and iteration that were *active when this instance was
+  entered*, across procedure calls: a loop inside a procedure called from
+  iteration 2 of an outer loop reports `parentLoop` = that outer instance's id
+  and `parentIteration: 2`. A loop entered while the parent's condition was
+  being evaluated belongs to the pass that evaluation opens, or to the last pass
+  when it ends the parent. `parentLoop` is omitted for a loop with no enclosing
+  active loop; `parentIteration` is omitted when the parent had no pass yet.
+  Instances are listed in entry order. A loop in a table field trigger is listed
+  under BC's scope name for it, `Number - OnValidate`, and its `capturedValues`
+  are the trigger's own locals.
+- **`line`/`column`/`endLine`/`endColumn`** are the loop statement's 1-based
+  source range; `file` is the same path identity `coverage[].file` uses.
+  `iterationCount` counts passes whose body began, so a `for i := 1 to 0`
+  reports `iterationCount: 0` with no iterations, and a `break`/`exit` mid-pass
+  still counts that pass (its values up to the exit are tagged to it).
+  **`closedBy`** says how the instance ended: `exit` (the first statement after
+  the loop ran), `scopeExit` (the procedure returned or `exit`ed from inside
+  it), or `unfinished` (an error unwound through it, or the run ended): a last
+  pass under `unfinished` is partial.
+- **Unsegmentable loops are said so, never guessed.** Some shapes give the hit
+  stream nothing to count passes on; such a loop is still listed, with
+  `iterationCount` omitted and `unsegmentable` set to a stable code:
+  `emptyBody` (`for i := 1 to 3 do ;`); `soleNestedRepeat`, when the whole body
+  is a nested `repeat` (its re-entry and its next pass both follow its
+  until-condition); `soleNestedWhileWithBreak`, when the whole body is a nested
+  `while` containing `break` (its re-entry can follow one of its own body
+  statements, like a re-evaluation); `soleNestedUnsegmentable`, when the whole
+  body is a nested loop that is itself unsegmentable. Add a statement to the
+  outer body and all three segment normally.
+- **`unresolvedScopes`** (on the test result, omitted when empty) lists bundle
+  scopes as `scope@file` whose member could not be matched in the parsed source;
+  loops in them are not tracked. Scopes outside the bundle (dependency apps) are
+  never tracked and never listed.
+- Independent of `captureValues` (without it there are no `capturedValues` to
+  tag, but the loops, their `statements`/`lines`, and message tags are all
+  still present). `loops` is omitted entirely when the request did not set
+  `iterationTracking: true`; a present but empty `loops: []` means "asked,
+  nothing looped".
+
+- **How it works.** Loop *structure* comes from BC's own syntax tree (the same
+  `ParseObjectText` the compiler runs, once per request, with the bundle's own
+  preprocessor symbols): which statements are a loop's header, which are its
+  body, and which one opens an iteration. Segmentation then rides the existing
+  `StmtHit` hook `coverage`/`capturedValues` already use: BC hits a `for` once
+  at entry and its body once per pass, a `while`/`until` condition once per
+  evaluation. No new Cecil rewrite. See `AlRunner/Infrastructure/AlLoopModel.cs`
+  for the measured instrumentation shapes and `AlIterationSegmenter.cs` for the
+  state machine.
+- **`capturedValues` changed alongside this.** Full-fidelity records, per-scope
+  diff state and the leading-`for` baseline rule all landed with #2056; they are
+  described under `execute`'s `capturedValues` above, because they apply to the
+  flat series whether or not `iterationTracking` is on.
 
 `affectedOnly: true` (runTests) narrows execution to tests affected by AL object
 changes since the previous successful run of the same bundle in this server

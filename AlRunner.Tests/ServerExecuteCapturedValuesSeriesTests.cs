@@ -173,4 +173,248 @@ public class ServerExecuteCapturedValuesSeriesTests : IClassFixture<SharedCliSer
         Assert.False(tests[0].TryGetProperty("capturedValues", out _),
             $"capturedValues must be absent when captureValues wasn't requested: {r}");
     }
+
+    // #2056: a `for` loop as the scope's FIRST statement. BC assigns `i := 1` before the
+    // `for` statement's own StmtHit (measured), so the baseline observation already sees
+    // it; the pre-#2056 rule swallowed it and the series started at i = 2. Proven here on
+    // the wire: the loop variable's initial value is present, first, and attributed to the
+    // `for` statement (statement 0) — the one whose pre-hit part produced it.
+    [SkippableFact]
+    public async Task Execute_ForLoopAsFirstStatement_LoopVariableInitialValueIsInTheSeries()
+    {
+        TestArtifacts.SkipIfMissing();
+        var server = await _fixture.GetAsync();
+        var r = await server.SendAsync(JsonSerializer.Serialize(new
+        {
+            command = "execute",
+            captureValues = true,
+            code = "codeunit 60314 \"CV Leading For SX\" { trigger OnRun() var i: Integer; s: Integer; " +
+                   "begin for i := 1 to 3 do s := s + i; end; }",
+        }));
+        var d = JsonSerializer.Deserialize<JsonElement>(r);
+        Assert.False(d.TryGetProperty("error", out _), $"unexpected error response: {r}");
+        Assert.Equal(0, d.GetProperty("exitCode").GetInt32());
+
+        var series = d.GetProperty("tests")[0].GetProperty("capturedValues").EnumerateArray()
+            .Where(v => v.GetProperty("variableName").GetString() == "i")
+            .Select(v => (Value: v.GetProperty("value").GetInt32(), Stmt: v.GetProperty("statementId").GetInt32()))
+            .ToList();
+        Assert.Equal(new[] { 1, 2, 3 }, series.Select(e => e.Value).ToArray());
+        Assert.Equal(0, series[0].Stmt); // produced by the `for` statement itself, before its hit
+        // A local that really was untouched at the baseline is still never invented.
+        var sAtBaseline = d.GetProperty("tests")[0].GetProperty("capturedValues").EnumerateArray()
+            .Where(v => v.GetProperty("variableName").GetString() == "s")
+            .Select(v => v.GetProperty("value").GetInt32()).ToList();
+        Assert.Equal(new[] { 1, 3, 6 }, sAtBaseline);
+    }
+
+    // #2056 full-fidelity contract: one record per EXECUTION of an assigning statement,
+    // whether or not the value changed. The exact shape SShadowS used to reject
+    // change-only on the issue thread: x := 5 twice in a row, x := 5 and flag := true
+    // three times inside a loop, then x := 6.
+    [SkippableFact]
+    public async Task Execute_SameValueReassignments_OneRecordPerExecution_NotPerChange()
+    {
+        TestArtifacts.SkipIfMissing();
+        var server = await _fixture.GetAsync();
+        var r = await server.SendAsync(JsonSerializer.Serialize(new
+        {
+            command = "execute",
+            captureValues = true,
+            code = "codeunit 60316 \"CV Same Value SX\" { trigger OnRun() var i: Integer; x: Integer; flag: Boolean; " +
+                   "begin x := 5; x := 5; for i := 1 to 3 do begin x := 5; flag := true; end; x := 6; end; }",
+        }));
+        var d = JsonSerializer.Deserialize<JsonElement>(r);
+        Assert.False(d.TryGetProperty("error", out _), $"unexpected error response: {r}");
+        Assert.Equal(0, d.GetProperty("exitCode").GetInt32());
+
+        var all = d.GetProperty("tests")[0].GetProperty("capturedValues").EnumerateArray().ToList();
+        var x = all.Where(v => v.GetProperty("variableName").GetString() == "x")
+            .Select(v => (Value: v.GetProperty("value").GetInt32(), Stmt: v.GetProperty("statementId").GetInt32())).ToList();
+        // ids: 0 x:=5 | 1 x:=5 | 2 for | 3 x:=5 (body) | 4 flag:=true | 5 end | 6 x:=6
+        Assert.Equal(new[] { 5, 5, 5, 5, 5, 6 }, x.Select(e => e.Value).ToArray());
+        Assert.Equal(new[] { 0, 1, 3, 3, 3, 6 }, x.Select(e => e.Stmt).ToArray());
+        var flag = all.Where(v => v.GetProperty("variableName").GetString() == "flag")
+            .Select(v => (Value: v.GetProperty("value").GetBoolean(), Stmt: v.GetProperty("statementId").GetInt32())).ToList();
+        Assert.Equal(new[] { true, true, true }, flag.Select(e => e.Value).ToArray());
+        Assert.All(flag, e => Assert.Equal(4, e.Stmt));
+        // The loop variable is still one record per pass, never duplicated by the rule.
+        var i = all.Where(v => v.GetProperty("variableName").GetString() == "i").Select(v => v.GetProperty("value").GetInt32()).ToArray();
+        Assert.Equal(new[] { 1, 2, 3 }, i);
+    }
+
+    // Per-scope frames: a callee's locals are diffed against the callee's own previous
+    // observation and attributed to the callee's own statements; the caller's frame is
+    // untouched by the call. Before, one global last-known map keyed by AL name meant
+    // Inner's `s` was compared with CallsLooper's `s`, Inner's first observation was
+    // never a baseline (so every local surfaced as a fake record), and those records
+    // carried the CALLER's last statement id.
+    [SkippableFact]
+    public async Task Execute_CalleeLocals_DiffedInTheirOwnScope_AttributedToTheirOwnStatements()
+    {
+        TestArtifacts.SkipIfMissing();
+        var server = await _fixture.GetAsync();
+        var r = await server.SendAsync(JsonSerializer.Serialize(new
+        {
+            command = "execute",
+            captureValues = true,
+            code = "codeunit 60317 \"CV Callee Scope SX\"\n" +
+                   "{\n" +
+                   "    trigger OnRun()\n" +
+                   "    var i: Integer; s: Integer;\n" +
+                   "    begin\n" +
+                   "        for i := 1 to 2 do\n" +
+                   "            s := s + Inner();\n" +
+                   "    end;\n" +
+                   "    local procedure Inner(): Integer\n" +
+                   "    var k: Integer; s: Integer;\n" +
+                   "    begin\n" +
+                   "        for k := 1 to 2 do\n" +
+                   "            s := s + k;\n" +
+                   "        exit(s);\n" +
+                   "    end;\n" +
+                   "}\n",
+        }));
+        var d = JsonSerializer.Deserialize<JsonElement>(r);
+        Assert.False(d.TryGetProperty("error", out _), $"unexpected error response: {r}");
+        Assert.Equal(0, d.GetProperty("exitCode").GetInt32());
+
+        var all = d.GetProperty("tests")[0].GetProperty("capturedValues").EnumerateArray().ToList();
+        (int Value, int Stmt)[] Series(string scope, string name) => all
+            .Where(v => v.GetProperty("scopeName").GetString() == scope && v.GetProperty("variableName").GetString() == name)
+            .Select(v => (v.GetProperty("value").GetInt32(), v.GetProperty("statementId").GetInt32())).ToArray();
+
+        // Caller: s := s + Inner() is statement 1; Inner() returns 1 + 2 = 3, so 3 then 6.
+        Assert.Equal(new[] { 3, 6 }, Series("OnRun", "s").Select(e => e.Value).ToArray());
+        Assert.All(Series("OnRun", "s"), e => Assert.Equal(1, e.Stmt));
+        // Callee, twice: k 1,2 and s 1,3, attributed to Inner's OWN `s := s + k` (statement 1).
+        Assert.Equal(new[] { 1, 2, 1, 2 }, Series("Inner", "k").Select(e => e.Value).ToArray());
+        Assert.Equal(new[] { 1, 3, 1, 3 }, Series("Inner", "s").Select(e => e.Value).ToArray());
+        Assert.All(Series("Inner", "s"), e => Assert.Equal(1, e.Stmt));
+        // No fake records: nothing in Inner ever reads 0 (its locals start at 0 and are
+        // never observed there), and no Inner record carries a statement id Inner does
+        // not have (0..2).
+        Assert.DoesNotContain(all, v => v.GetProperty("scopeName").GetString() == "Inner" && v.GetProperty("value").GetInt32() == 0);
+        Assert.All(all.Where(v => v.GetProperty("scopeName").GetString() == "Inner"),
+            v => Assert.InRange(v.GetProperty("statementId").GetInt32(), 0, 2));
+    }
+
+    // The one loop-variable case the diff alone cannot see: a `foreach` whose next
+    // element equals the current one. The pass still assigned the variable, so the
+    // series carries it (AlLoopScopeTable.LoopVariablesAssignedBefore) - and a `for`
+    // loop's variable is never duplicated by the same rule.
+    [SkippableFact]
+    public async Task Execute_ForEachOverEqualElements_LoopVariableRecordedEveryPass()
+    {
+        TestArtifacts.SkipIfMissing();
+        var server = await _fixture.GetAsync();
+        var r = await server.SendAsync(JsonSerializer.Serialize(new
+        {
+            command = "execute",
+            captureValues = true,
+            code = "codeunit 60320 \"CV ForEach Dup SX\" { trigger OnRun() var l: List of [Integer]; v: Integer; s: Integer; " +
+                   "begin l.Add(5); l.Add(5); l.Add(6); foreach v in l do s := s + v; end; }",
+        }));
+        var d = JsonSerializer.Deserialize<JsonElement>(r);
+        Assert.False(d.TryGetProperty("error", out _), $"unexpected error response: {r}");
+        Assert.Equal(0, d.GetProperty("exitCode").GetInt32());
+        var all = d.GetProperty("tests")[0].GetProperty("capturedValues").EnumerateArray().ToList();
+        var v = all.Where(x => x.GetProperty("variableName").GetString() == "v").Select(x => x.GetProperty("value").GetInt32()).ToArray();
+        Assert.Equal(new[] { 5, 5, 6 }, v);
+        var s = all.Where(x => x.GetProperty("variableName").GetString() == "s").Select(x => x.GetProperty("value").GetInt32()).ToArray();
+        Assert.Equal(new[] { 5, 10, 16 }, s);
+    }
+
+    // A leading `for` starting at the type's default value: `i = 0` is a record, attributed
+    // to the `for` statement, because the statement's own hit is where its loop variable is
+    // read (BC assigns it before that hit) - no value guessing involved.
+    [SkippableFact]
+    public async Task Execute_LeadingForStartingAtZero_LoopVariableStillRecorded()
+    {
+        TestArtifacts.SkipIfMissing();
+        var server = await _fixture.GetAsync();
+        var r = await server.SendAsync(JsonSerializer.Serialize(new
+        {
+            command = "execute",
+            captureValues = true,
+            code = "codeunit 60333 \"CV Zero Start SX\" { trigger OnRun() var i: Integer; s: Integer; " +
+                   "begin for i := 0 to 2 do s := s + 1; end; }",
+        }));
+        var d = JsonSerializer.Deserialize<JsonElement>(r);
+        Assert.False(d.TryGetProperty("error", out _), $"unexpected error response: {r}");
+        var series = d.GetProperty("tests")[0].GetProperty("capturedValues").EnumerateArray()
+            .Where(v => v.GetProperty("variableName").GetString() == "i")
+            .Select(v => (Value: v.GetProperty("value").GetInt32(), Stmt: v.GetProperty("statementId").GetInt32()))
+            .ToList();
+        Assert.Equal(new[] { 0, 1, 2 }, series.Select(e => e.Value).ToArray());
+        Assert.Equal(0, series[0].Stmt);
+    }
+
+    // A non-leading `for`: its loop variable's initial value is attributed to the `for`
+    // statement, not to the statement before it.
+    [SkippableFact]
+    public async Task Execute_NonLeadingFor_LoopVariableAttributedToTheForStatement()
+    {
+        TestArtifacts.SkipIfMissing();
+        var server = await _fixture.GetAsync();
+        var r = await server.SendAsync(JsonSerializer.Serialize(new
+        {
+            command = "execute",
+            captureValues = true,
+            code = "codeunit 60334 \"CV NonLeading For SX\" { trigger OnRun() var i: Integer; t: Integer; " +
+                   "begin t := 5; for i := 1 to 2 do t := t + i; end; }",
+        }));
+        var d = JsonSerializer.Deserialize<JsonElement>(r);
+        Assert.False(d.TryGetProperty("error", out _), $"unexpected error response: {r}");
+        var all = d.GetProperty("tests")[0].GetProperty("capturedValues").EnumerateArray().ToList();
+        var first = all.First(v => v.GetProperty("variableName").GetString() == "i");
+        Assert.Equal(1, first.GetProperty("value").GetInt32());
+        Assert.Equal(1, first.GetProperty("statementId").GetInt32()); // ids: 0 t := 5 | 1 for | 2 body
+        var t5 = all.First(v => v.GetProperty("variableName").GetString() == "t");
+        Assert.Equal(5, t5.GetProperty("value").GetInt32());
+        Assert.Equal(0, t5.GetProperty("statementId").GetInt32());
+    }
+
+    // A parameter's value at entry was not produced by any statement: no record for it.
+    [SkippableFact]
+    public async Task Execute_ProcedureParameter_IsNotReportedAsAnAssignment()
+    {
+        TestArtifacts.SkipIfMissing();
+        var server = await _fixture.GetAsync();
+        var r = await server.SendAsync(JsonSerializer.Serialize(new
+        {
+            command = "execute",
+            captureValues = true,
+            code = "codeunit 60335 \"CV Param SX\" { trigger OnRun() begin Show(42); end; " +
+                   "local procedure Show(n: Integer) var m: Integer; begin m := n + 1; end; }",
+        }));
+        var d = JsonSerializer.Deserialize<JsonElement>(r);
+        Assert.False(d.TryGetProperty("error", out _), $"unexpected error response: {r}");
+        var show = d.GetProperty("tests")[0].GetProperty("capturedValues").EnumerateArray()
+            .Where(v => v.GetProperty("scopeName").GetString() == "Show")
+            .Select(v => $"{v.GetProperty("variableName").GetString()}={v.GetProperty("value")}").ToArray();
+        Assert.Equal(new[] { "m=43" }, show);
+    }
+
+    // A same-object procedure's `var` parameter is a write of the call statement.
+    [SkippableFact]
+    public async Task Execute_VarParameterCall_AssigningTheSameValue_IsStillARecord()
+    {
+        TestArtifacts.SkipIfMissing();
+        var server = await _fixture.GetAsync();
+        var r = await server.SendAsync(JsonSerializer.Serialize(new
+        {
+            command = "execute",
+            captureValues = true,
+            code = "codeunit 60336 \"CV VarParam SX\" { trigger OnRun() var x: Integer; begin x := 5; Fill(x); Fill(x); end; " +
+                   "local procedure Fill(var v: Integer) begin v := 5; end; }",
+        }));
+        var d = JsonSerializer.Deserialize<JsonElement>(r);
+        Assert.False(d.TryGetProperty("error", out _), $"unexpected error response: {r}");
+        var x = d.GetProperty("tests")[0].GetProperty("capturedValues").EnumerateArray()
+            .Where(v => v.GetProperty("scopeName").GetString() == "OnRun" && v.GetProperty("variableName").GetString() == "x")
+            .Select(v => (Value: v.GetProperty("value").GetInt32(), Stmt: v.GetProperty("statementId").GetInt32())).ToList();
+        Assert.Equal(new[] { 5, 5, 5 }, x.Select(e => e.Value).ToArray());   // x := 5, Fill(x), Fill(x)
+        Assert.Equal(new[] { 0, 1, 2 }, x.Select(e => e.Stmt).ToArray());
+    }
 }

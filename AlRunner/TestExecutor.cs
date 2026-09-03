@@ -103,7 +103,16 @@ public sealed record TestResult(string Codeunit, string Method, TestOutcome Outc
                                 // see Infrastructure.MissingTestDataDiagnosis for why a text
                                 // pattern alone is not evidence. Message, FullException,
                                 // AlCallStack, Outcome and Exception are all untouched by it.
-                                string? Diagnosis = null);
+                                string? Diagnosis = null,
+                                // #2056: non-null only when execute asked for iterationTracking;
+                                // empty means requested, nothing looped.
+                                // #2056: the loops of this test's OnRun (iterationTracking), the
+                                // tag map stamping each capturedValues record with its loop+iteration,
+                                // and any bundle scope whose loops could not be tracked. All null when
+                                // iterationTracking was not requested.
+                                IReadOnlyList<Infrastructure.AlLoopRecord>? Loops = null,
+                                IReadOnlyDictionary<int, (int Loop, int Iteration)>? CaptureTags = null,
+                                IReadOnlyList<string>? UnresolvedScopes = null);
 
 public sealed class TestExecutor
 {

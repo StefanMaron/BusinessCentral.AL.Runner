@@ -5168,6 +5168,16 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
         // so a captureValues:true request never leaves the flag on for a later request
         // that didn't ask for it (the flag is process-global, same as AlCoverageTracker.Enabled).
         AlRunner.Infrastructure.AlValueCapture.Enabled = req.CaptureValues == true;
+        // #2056: loop iteration segmentation, scoped to this request like the flags above.
+        AlRunner.Infrastructure.AlIterationTracker.Enabled = req.IterationTracking == true;
+        AlRunner.Infrastructure.AlIterationTracker.ConfigureResponse();
+        // Syntax facts for captureValues (write sets) and iterationTracking (loops): one parse per request.
+        if (req.CaptureValues == true || req.IterationTracking == true)
+            AlRunner.Infrastructure.AlScopeSyntaxResolver.Configure(
+                AlRunner.Infrastructure.AlMemberSyntaxIndex.Build(sourcePaths),
+                AlRunner.Infrastructure.AlCoverageSourceMap.Build(sourcePaths, relativeTo: null));
+        else
+            AlRunner.Infrastructure.AlScopeSyntaxResolver.Clear();
         // #2042: 'coverage:true' on `execute` — same request/response correlation the
         // issue's acceptance criteria need: THIS single `execute` call can enable BOTH
         // captureValues AND coverage together, so a caller can prove statementId lines
@@ -5237,6 +5247,8 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
 
             return AlRunner.ServerProtocol.Execute(allTests, exitCode,
                 AlRunner.Infrastructure.AlMessageCapture.Snapshot(),
+                AlRunner.Infrastructure.AlIterationTracker.Enabled
+                    ? AlRunner.Infrastructure.AlIterationTracker.ResponseMessageTags : null,
                 allCompileErrors.Count > 0 ? allCompileErrors : null,
                 selection: selection,
                 statementTable: statementTable,
@@ -5245,6 +5257,7 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
         finally
         {
             AlRunner.Infrastructure.AlValueCapture.Enabled = false;
+            AlRunner.Infrastructure.AlIterationTracker.Enabled = false;
             AlRunner.Infrastructure.AlCoverageTracker.Enabled = false;
             AlRunner.Infrastructure.AlCoverageTracker.PerTestEnabled = false;
             if (messageCaptureSession != null) messageCaptureSession.ClientCallbackOverride = null;
@@ -5399,6 +5412,20 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
             AlRunner.Infrastructure.AlValueCapture.Enabled
                 ? AlRunner.Infrastructure.AlValueCapture.Collect()
                 : null;
+        // #2056: same per-bundle bracket as AlValueCapture. Collect() drains the segmenter
+        // and advances the response loop-id base, so call it at most once per bundle.
+        AlRunner.Infrastructure.AlIterationTracker.Reset();
+        AlRunner.Infrastructure.AlIterationCollect? _itc = null;
+        AlRunner.Infrastructure.AlIterationCollect Itc() =>
+            _itc ??= AlRunner.Infrastructure.AlIterationTracker.Collect();
+        IReadOnlyList<AlRunner.Infrastructure.AlLoopRecord>? Loops() =>
+            AlRunner.Infrastructure.AlIterationTracker.Enabled ? Itc().Loops : null;
+        IReadOnlyDictionary<int, (int Loop, int Iteration)>? CaptureTags() =>
+            AlRunner.Infrastructure.AlIterationTracker.Enabled ? Itc().CaptureTags : null;
+        IReadOnlyList<string>? UnresolvedScopes() =>
+            AlRunner.Infrastructure.AlIterationTracker.Enabled
+                ? AlRunner.Infrastructure.AlScopeSyntaxResolver.UnresolvedScopes.ToList()
+                : null;
         // #2135: same test-window bracket TestExecutor.RunOne uses for [Test]
         // procedures, applied to `execute`'s single OnRun invocation — the key
         // matches the SAME "{Codeunit}.{Method}" shape (target.Name is the .NET type
@@ -5420,7 +5447,7 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                 System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance, null,
                 Type.EmptyTypes, null)!.Invoke(instance, null);
             return new[] { new TestResult(target.Name, "OnRun", TestOutcome.Pass, null, null, sw.Elapsed,
-                CapturedValues: Captured()) };
+                CapturedValues: Captured(), Loops: Loops(), CaptureTags: CaptureTags(), UnresolvedScopes: UnresolvedScopes()) };
         }
         catch (System.Reflection.TargetInvocationException tex)
         {
@@ -5428,12 +5455,12 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
             var alStack = AlRunner.Infrastructure.AlCallStackCapture.GetCaptured(inner);
             return new[] { new TestResult(target.Name, "OnRun", TestOutcome.Fail,
                 $"{inner.GetType().Name}: {inner.Message}", inner.ToString(), sw.Elapsed, alStack,
-                CapturedValues: Captured()) };
+                CapturedValues: Captured(), Loops: Loops(), CaptureTags: CaptureTags(), UnresolvedScopes: UnresolvedScopes()) };
         }
         catch (Exception ex)
         {
             return new[] { new TestResult(target.Name, "OnRun", TestOutcome.Error,
-                ex.Message, ex.ToString(), sw.Elapsed, CapturedValues: Captured()) };
+                ex.Message, ex.ToString(), sw.Elapsed, CapturedValues: Captured(), Loops: Loops(), CaptureTags: CaptureTags(), UnresolvedScopes: UnresolvedScopes()) };
         }
         finally
         {

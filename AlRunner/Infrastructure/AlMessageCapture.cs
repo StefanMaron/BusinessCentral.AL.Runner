@@ -55,8 +55,15 @@ public static class AlMessageCapture
 
     /// <summary>Called from RunnerClientCallback.DialogMessage. Appends, never replaces —
     /// a loop calling Message() three times must produce three entries, in order.</summary>
-    public static void Record(string text, string scopeName, int statementId) =>
-        (_messages ??= new List<AlCapturedMessage>()).Add(new AlCapturedMessage(text, scopeName, statementId));
+    public static void Record(string text, string scopeName, int statementId)
+    {
+        var message = new AlCapturedMessage(text, scopeName, statementId);
+        var list = _messages ??= new List<AlCapturedMessage>();
+        int index = list.Count;
+        list.Add(message);
+        // #2056: also file it under the current loop iteration (self-gated), by its index.
+        AlIterationTracker.OnMessage(message, index);
+    }
 
     /// <summary>Everything captured since the last Reset(), in call order. Empty (never
     /// null) whether Reset() was never called or nothing was captured — the caller

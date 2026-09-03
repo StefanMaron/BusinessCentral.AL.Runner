@@ -1,0 +1,847 @@
+// #2056: AlMemberSyntaxIndex (loops and write sets from AL syntax) and the tables built
+// from them. The span fixtures are al-runner's own statement tables for the embedded
+// sources, transcribed to 0-based positions, so classification is checked against BC's
+// real instrumentation. Parsing needs the BC artifacts (BcEngineCollection); the pure
+// Build tests at the end do not.
+using AlRunner.Infrastructure;
+using Xunit;
+
+namespace AlRunner.Tests;
+
+[Collection(BcEngineCollection.Name)]
+public sealed class AlMemberSyntaxIndexTests
+{
+    private readonly BcEngineFixture _engine;
+
+    public AlMemberSyntaxIndexTests(BcEngineFixture engine) => _engine = engine;
+
+    private void RequireEngine() =>
+        TestArtifacts.SkipIf(!_engine.Ready, _engine.SkipReason ?? "the in-process BC engine is not ready (see BcEngineCollection).");
+
+    // Fixture 1: one procedure per loop shape. Line numbers matter, see Measured*.
+    internal const string LoopShapesSource = """
+codeunit 60300 LoopShapes
+{
+    trigger OnRun()
+    begin
+        ForTo();
+        ForDownto();
+        WhileDo();
+        RepeatUntil();
+        Nested();
+        WithBreak();
+        WithExit();
+        ZeroIter();
+        Message('DONE');
+    end;
+
+    local procedure ForTo()
+    var
+        i: Integer;
+        t: Integer;
+    begin
+        t := 0;
+        for i := 1 to 3 do
+            t := t + i;
+        t := t * 10;
+    end;
+
+    local procedure ForDownto()
+    var
+        i: Integer;
+        t: Integer;
+    begin
+        for i := 3 downto 1 do begin
+            t := t + i;
+        end;
+    end;
+
+    local procedure WhileDo()
+    var
+        n: Integer;
+    begin
+        n := 3;
+        while n > 0 do begin
+            n := n - 1;
+        end;
+        n := 99;
+    end;
+
+    local procedure RepeatUntil()
+    var
+        n: Integer;
+    begin
+        n := 0;
+        repeat
+            n := n + 1;
+        until n >= 3;
+        n := 99;
+    end;
+
+    local procedure Nested()
+    var
+        i: Integer;
+        j: Integer;
+        s: Integer;
+    begin
+        for i := 1 to 2 do begin
+            s := s + 100;
+            for j := 1 to 2 do
+                s := s + j;
+            s := s + 1000;
+        end;
+    end;
+
+    local procedure WithBreak()
+    var
+        i: Integer;
+        s: Integer;
+    begin
+        for i := 1 to 10 do begin
+            s := s + i;
+            if i = 2 then
+                break;
+        end;
+        s := -1;
+    end;
+
+    local procedure WithExit()
+    var
+        i: Integer;
+        s: Integer;
+    begin
+        for i := 1 to 10 do begin
+            s := s + i;
+            if i = 2 then
+                exit;
+        end;
+        s := -1;
+    end;
+
+    local procedure ZeroIter()
+    var
+        i: Integer;
+        s: Integer;
+    begin
+        for i := 1 to 0 do
+            s := s + 1;
+        s := 7;
+    end;
+}
+""";
+
+    // Fixture 2: nested-first-statement shapes and foreach.
+    internal const string LoopShapes2Source = """
+codeunit 60301 LoopShapes2
+{
+    trigger OnRun()
+    begin
+        ForEachList();
+        IfFirst();
+        WhileFirst();
+        CallsLooper();
+        ForBlockLastAssign();
+        CaseInBody();
+    end;
+
+    local procedure ForEachList()
+    var
+        l: List of [Integer];
+        v: Integer;
+        s: Integer;
+    begin
+        l.Add(5);
+        l.Add(6);
+        foreach v in l do
+            s := s + v;
+        s := 99;
+    end;
+
+    local procedure IfFirst()
+    var
+        i: Integer;
+        s: Integer;
+    begin
+        for i := 1 to 3 do begin
+            if i = 2 then
+                s := s + 10;
+            s := s + 1;
+        end;
+    end;
+
+    local procedure WhileFirst()
+    var
+        i: Integer;
+        n: Integer;
+        s: Integer;
+    begin
+        for i := 1 to 2 do begin
+            while n < 2 do
+                n := n + 1;
+            n := 0;
+            s := s + 1;
+        end;
+    end;
+
+    local procedure Inner(): Integer
+    var
+        k: Integer;
+        s: Integer;
+    begin
+        for k := 1 to 2 do
+            s := s + k;
+        exit(s);
+    end;
+
+    local procedure CallsLooper()
+    var
+        i: Integer;
+        s: Integer;
+    begin
+        for i := 1 to 2 do
+            s := s + Inner();
+    end;
+
+    local procedure ForBlockLastAssign()
+    var
+        i: Integer;
+        s: Integer;
+    begin
+        for i := 1 to 2 do begin
+            s := s + i;
+        end;
+        s := s * 2;
+    end;
+
+    local procedure CaseInBody()
+    var
+        i: Integer;
+        s: Integer;
+    begin
+        for i := 1 to 2 do
+            case i of
+                1:
+                    s := 10;
+                else
+                    s := 20;
+            end;
+    end;
+}
+""";
+
+    /// <summary>Builds a [SourceSpans]-shaped table from 1-based (line, col, endLine, endCol)
+    /// entries as al-runner's statement table prints them; index = statement id.</summary>
+    private static long[] Spans(params (int L1, int C1, int L2, int C2)[] s) =>
+        s.Select(x => AlSourceSpanCodec.Encode(x.L1 - 1, x.C1 - 1, x.L2 - 1, x.C2 - 1)).ToArray();
+
+    // Measured with `coverage:true` against LoopShapesSource (al-runner 2.10.0, BC 28.1).
+    private static readonly long[] MeasuredForTo       = Spans((21, 9, 21, 16), (22, 9, 23, 24), (23, 13, 23, 24), (24, 9, 24, 21));
+    private static readonly long[] MeasuredWhileDo     = Spans((41, 9, 41, 16), (42, 15, 42, 20), (43, 13, 43, 24), (44, 9, 44, 12), (45, 9, 45, 17));
+    private static readonly long[] MeasuredRepeatUntil = Spans((52, 9, 52, 16), (54, 13, 54, 24), (55, 15, 55, 21), (56, 9, 56, 17));
+    private static readonly long[] MeasuredNested      = Spans((65, 9, 70, 13), (66, 13, 66, 26), (67, 13, 68, 28), (68, 17, 68, 28), (69, 13, 69, 27), (70, 9, 70, 12));
+    private static readonly long[] MeasuredZeroIter    = Spans((104, 9, 105, 24), (105, 13, 105, 24), (106, 9, 106, 16));
+    // Measured against LoopShapes2Source.
+    private static readonly long[] MeasuredForEachList = Spans((19, 9, 19, 18), (20, 9, 20, 18), (21, 9, 22, 24), (22, 13, 22, 24), (23, 9, 23, 17));
+    private static readonly long[] MeasuredIfFirst     = Spans((31, 9, 35, 13), (32, 16, 32, 21), (33, 17, 33, 29), (34, 13, 34, 24), (35, 9, 35, 12));
+    private static readonly long[] MeasuredWhileFirst  = Spans((44, 9, 49, 13), (45, 19, 45, 24), (46, 17, 46, 28), (47, 13, 47, 20), (48, 13, 48, 24), (49, 9, 49, 12));
+
+    private static AlMemberSyntax Member(IReadOnlyList<AlMemberSyntax> members, string name) =>
+        Assert.Single(members, m => m.Name == name);
+
+    // --- parsing: what the syntax walk reports ---------------------------------------
+
+    [SkippableFact]
+    public void Parse_ForWithSingleStatementBody_KindVariableHeaderAndBody()
+    {
+        RequireEngine();
+        var members = AlMemberSyntaxIndex.Parse(LoopShapesSource, "LoopShapes.al");
+        var m = Member(members, "ForTo");
+
+        var site = Assert.Single(m.Sites);
+        Assert.Equal(AlLoopKind.For, site.Kind);
+        Assert.Equal("i", site.LoopVariable);
+        Assert.Equal(new AlTextPosition(21, 8), site.Range.Start);      // `for` keyword, 0-based
+        Assert.Equal(22, site.Range.End.Line);                            // ends on the body's line
+        var header = Assert.Single(site.HeaderRanges);
+        Assert.Equal(new AlTextPosition(21, 8), header.Start);
+        Assert.True(header.End < new AlTextPosition(22, 12), $"header must end before the body starts: {header}");
+        var body = Assert.Single(site.Body);
+        Assert.Equal(new AlTextPosition(22, 12), body.Range.Start);
+        Assert.Null(body.NestedSiteIndex);
+        Assert.Null(site.ParentIndex);
+    }
+
+    [SkippableFact]
+    public void Parse_EveryLoopKind_IsRecognised_WithForEachVariable()
+    {
+        RequireEngine();
+        var m1 = AlMemberSyntaxIndex.Parse(LoopShapesSource, "LoopShapes.al");
+        var m2 = AlMemberSyntaxIndex.Parse(LoopShapes2Source, "LoopShapes2.al");
+
+        Assert.Equal(AlLoopKind.While, Assert.Single(Member(m1, "WhileDo").Sites).Kind);
+        Assert.Equal(AlLoopKind.Repeat, Assert.Single(Member(m1, "RepeatUntil").Sites).Kind);
+        var fe = Assert.Single(Member(m2, "ForEachList").Sites);
+        Assert.Equal(AlLoopKind.ForEach, fe.Kind);
+        Assert.Equal("v", fe.LoopVariable);
+        Assert.Null(Assert.Single(Member(m1, "WhileDo").Sites).LoopVariable);
+        // A member with no loop at all is still listed, with no sites, so a scope
+        // lookup can tell "member found, no loops" from "member not found".
+        Assert.Empty(Member(m1, "OnRun").Sites);
+    }
+
+    [SkippableFact]
+    public void Parse_RepeatHeaderIsTheUntilCondition_AfterTheBody()
+    {
+        RequireEngine();
+        var site = Assert.Single(Member(AlMemberSyntaxIndex.Parse(LoopShapesSource, "LoopShapes.al"), "RepeatUntil").Sites);
+        var header = Assert.Single(site.HeaderRanges);
+        var body = Assert.Single(site.Body);
+        Assert.True(header.Start > body.Range.End, $"until-condition {header} must follow the body {body.Range}");
+        Assert.Equal(54, header.Start.Line); // `until n >= 3;` is line 55 (1-based)
+    }
+
+    [SkippableFact]
+    public void Parse_BlockBody_IsFlattened_ToItsStatements()
+    {
+        RequireEngine();
+        var site = Assert.Single(Member(AlMemberSyntaxIndex.Parse(LoopShapesSource, "LoopShapes.al"), "WithBreak").Sites);
+        // begin s := s + i; if i = 2 then break; end  -> two statements, not one block
+        Assert.Equal(2, site.Body.Count);
+        Assert.Equal(78, site.Body[0].Range.Start.Line);
+        Assert.Equal(79, site.Body[1].Range.Start.Line);
+    }
+
+    [SkippableFact]
+    public void Parse_NestedLoops_ParentIndex_AndNestedSiteIndexOnlyWhenTheStatementIsTheLoop()
+    {
+        RequireEngine();
+        var m = Member(AlMemberSyntaxIndex.Parse(LoopShapes2Source, "LoopShapes2.al"), "WhileFirst");
+        Assert.Equal(2, m.Sites.Count);
+        var outer = m.Sites[0];
+        var inner = m.Sites[1];
+        Assert.Equal(AlLoopKind.For, outer.Kind);
+        Assert.Equal(AlLoopKind.While, inner.Kind);
+        Assert.Null(outer.ParentIndex);
+        Assert.Equal(0, inner.ParentIndex);
+        Assert.Equal(3, outer.Body.Count);                 // while; n := 0; s := s + 1
+        Assert.Equal(1, outer.Body[0].NestedSiteIndex);     // the while IS the first statement
+        Assert.Null(outer.Body[1].NestedSiteIndex);
+        Assert.Null(outer.Body[2].NestedSiteIndex);
+    }
+
+    [SkippableFact]
+    public void Parse_FieldTriggersSharingAName_AreSeparateMembers_ResolvedByStatementPosition()
+    {
+        RequireEngine();
+        const string table = """
+table 60302 "Loop Trigger Fixture"
+{
+    fields
+    {
+        field(1; A; Integer)
+        {
+            trigger OnValidate()
+            var
+                i: Integer;
+            begin
+                for i := 1 to 2 do
+                    Rec.A := i;
+            end;
+        }
+        field(2; B; Integer)
+        {
+            trigger OnValidate()
+            var
+                n: Integer;
+            begin
+                while n < 2 do
+                    n := n + 1;
+            end;
+        }
+    }
+}
+""";
+        var members = AlMemberSyntaxIndex.Parse(table, "Fixture.Table.al");
+        var validates = members.Where(m => m.Name == "OnValidate").ToList();
+        Assert.Equal(2, validates.Count);
+        Assert.Equal(AlLoopKind.For, Assert.Single(validates[0].Sites).Kind);
+        Assert.Equal(AlLoopKind.While, Assert.Single(validates[1].Sites).Kind);
+        // BC names a field trigger's scope after the field.
+        Assert.Equal("A - OnValidate", validates[0].QualifiedName);
+        Assert.Equal("B - OnValidate", validates[1].QualifiedName);
+
+        var index = AlMemberSyntaxIndex.FromMembers(members);
+        Assert.Equal(AlLoopKind.While, Assert.Single(index.FindSites("Fixture.Table.al", "B - OnValidate", null)!).Kind);
+        // A plain name with a position still resolves: line 21 (0-based 20: `while n < 2 do`) is field B's trigger.
+        var sites = index.FindSites("Fixture.Table.al", "OnValidate", new AlTextPosition(20, 16));
+        Assert.NotNull(sites);
+        Assert.Equal(AlLoopKind.While, Assert.Single(sites!).Kind);
+        // A plain name with no position and two candidates -> null, never a guess.
+        Assert.Null(index.FindSites("Fixture.Table.al", "OnValidate", null));
+        // Unknown member -> null (distinct from "found, no loops" -> empty).
+        Assert.Null(index.FindSites("Fixture.Table.al", "OnInsert", null));
+        // A procedure's qualified name is its name.
+        Assert.Equal("ForTo", Member(AlMemberSyntaxIndex.Parse(LoopShapesSource, "LoopShapes.al"), "ForTo").QualifiedName);
+    }
+
+    // --- Build: measured tables -> header / body / marker ------------------------------
+
+    [SkippableFact]
+    public void Build_ForTo_HeaderIsTheForStatement_BodyPerIteration_TrailingStatementUnowned()
+    {
+        RequireEngine();
+        var sites = Member(AlMemberSyntaxIndex.Parse(LoopShapesSource, "LoopShapes.al"), "ForTo").Sites;
+        var t = Assert.Single(AlLoopScopeTable.Build(sites, MeasuredForTo).Sites);
+        Assert.Equal(new[] { 1 }, t.HeaderIds.Order().ToArray());
+        Assert.Equal(new[] { 2 }, t.BodyIds.Order().ToArray());
+        Assert.Equal(2, t.MarkerStatementId);
+        Assert.Null(t.MarkerNestedSiteIndex);
+        Assert.Null(t.Unsegmentable);
+        Assert.False(t.Owns(0));
+        Assert.False(t.Owns(3));
+        Assert.Equal(22, t.StartLine);
+        Assert.Equal(23, t.EndLine);
+    }
+
+    [SkippableFact]
+    public void Build_WhileDo_HeaderIsTheCondition_BlockEndIsOutside()
+    {
+        RequireEngine();
+        var sites = Member(AlMemberSyntaxIndex.Parse(LoopShapesSource, "LoopShapes.al"), "WhileDo").Sites;
+        var t = Assert.Single(AlLoopScopeTable.Build(sites, MeasuredWhileDo).Sites);
+        Assert.Equal(new[] { 1 }, t.HeaderIds.Order().ToArray());
+        Assert.Equal(new[] { 2 }, t.BodyIds.Order().ToArray());
+        Assert.Equal(2, t.MarkerStatementId);
+        Assert.False(t.Owns(3)); // the `end` of `do begin ... end`, hit once AFTER the loop
+        Assert.False(t.Owns(4));
+    }
+
+    [SkippableFact]
+    public void Build_RepeatUntil_HeaderIsTheUntilCondition()
+    {
+        RequireEngine();
+        var sites = Member(AlMemberSyntaxIndex.Parse(LoopShapesSource, "LoopShapes.al"), "RepeatUntil").Sites;
+        var t = Assert.Single(AlLoopScopeTable.Build(sites, MeasuredRepeatUntil).Sites);
+        Assert.Equal(new[] { 2 }, t.HeaderIds.Order().ToArray());
+        Assert.Equal(new[] { 1 }, t.BodyIds.Order().ToArray());
+        Assert.Equal(1, t.MarkerStatementId);
+    }
+
+    [SkippableFact]
+    public void Build_Nested_InnerIdsBelongToBothBodies_ChildWiredToParent()
+    {
+        RequireEngine();
+        var sites = Member(AlMemberSyntaxIndex.Parse(LoopShapesSource, "LoopShapes.al"), "Nested").Sites;
+        var table = AlLoopScopeTable.Build(sites, MeasuredNested);
+        Assert.Equal(2, table.Sites.Count);
+        var outer = table.Sites[0];
+        var inner = table.Sites[1];
+        Assert.Equal(new[] { 0 }, outer.HeaderIds.Order().ToArray());
+        Assert.Equal(new[] { 1, 2, 3, 4 }, outer.BodyIds.Order().ToArray());
+        Assert.Equal(1, outer.MarkerStatementId);
+        Assert.Equal(new[] { 2 }, inner.HeaderIds.Order().ToArray());
+        Assert.Equal(new[] { 3 }, inner.BodyIds.Order().ToArray());
+        Assert.Equal(3, inner.MarkerStatementId);
+        Assert.Same(inner, Assert.Single(outer.Children));
+        Assert.Same(outer, Assert.Single(table.Roots));
+        Assert.False(outer.Owns(5)); // block end
+        Assert.Same(outer, table.RootSiteOwning(3));
+    }
+
+    [SkippableFact]
+    public void Build_WhileAsFirstBodyStatement_MarkerIsTheNestedLoopsEntry()
+    {
+        RequireEngine();
+        var sites = Member(AlMemberSyntaxIndex.Parse(LoopShapes2Source, "LoopShapes2.al"), "WhileFirst").Sites;
+        var table = AlLoopScopeTable.Build(sites, MeasuredWhileFirst);
+        var outer = table.Sites[0];
+        Assert.Null(outer.MarkerStatementId);
+        Assert.Equal(1, outer.MarkerNestedSiteIndex);
+        Assert.Equal(new[] { 1, 2, 3, 4 }, outer.BodyIds.Order().ToArray());
+        Assert.Equal(new[] { 1 }, table.Sites[1].HeaderIds.Order().ToArray());
+        Assert.Equal(new[] { 2 }, table.Sites[1].BodyIds.Order().ToArray());
+        Assert.False(outer.Owns(5));
+    }
+
+    [SkippableFact]
+    public void Build_IfAsFirstBodyStatement_MarkerIsItsConditionId()
+    {
+        RequireEngine();
+        var sites = Member(AlMemberSyntaxIndex.Parse(LoopShapes2Source, "LoopShapes2.al"), "IfFirst").Sites;
+        var t = Assert.Single(AlLoopScopeTable.Build(sites, MeasuredIfFirst).Sites);
+        Assert.Equal(new[] { 0 }, t.HeaderIds.Order().ToArray());
+        Assert.Equal(new[] { 1, 2, 3 }, t.BodyIds.Order().ToArray());
+        Assert.Equal(1, t.MarkerStatementId); // the `if` condition: fires once per iteration
+        Assert.False(t.Owns(4));
+    }
+
+    [SkippableFact]
+    public void Build_ForEach_SameShapeAsFor()
+    {
+        RequireEngine();
+        var sites = Member(AlMemberSyntaxIndex.Parse(LoopShapes2Source, "LoopShapes2.al"), "ForEachList").Sites;
+        var t = Assert.Single(AlLoopScopeTable.Build(sites, MeasuredForEachList).Sites);
+        Assert.Equal(new[] { 2 }, t.HeaderIds.Order().ToArray());
+        Assert.Equal(new[] { 3 }, t.BodyIds.Order().ToArray());
+        Assert.Equal(3, t.MarkerStatementId);
+        Assert.Equal("v", t.LoopVariable);
+    }
+
+    [SkippableFact]
+    public void Build_ZeroIterationLoop_StillFullyClassified()
+    {
+        RequireEngine();
+        var sites = Member(AlMemberSyntaxIndex.Parse(LoopShapesSource, "LoopShapes.al"), "ZeroIter").Sites;
+        var t = Assert.Single(AlLoopScopeTable.Build(sites, MeasuredZeroIter).Sites);
+        Assert.Equal(new[] { 0 }, t.HeaderIds.Order().ToArray());
+        Assert.Equal(new[] { 1 }, t.BodyIds.Order().ToArray());
+        Assert.Equal(1, t.MarkerStatementId);
+    }
+
+    // Fixture 3: write sets, one statement per line so targets can be looked up by line.
+    internal const string WriteShapesSource = """
+codeunit 60315 WriteShapes
+{
+    procedure Assigns()
+    var
+        x: Integer;
+        n: Integer;
+        arr: array[3] of Integer;
+        l: List of [Integer];
+        Rec: Record "Write Fixture";
+    begin
+        x := 1;
+        Rec.Amount := 2;
+        Rec."No." := '3';
+        arr[1] := 4;
+        x += 1;
+        l.Add(5);
+        Rec.Insert();
+        Clear(x);
+        Evaluate(n, '1');
+        Helper(x);
+        Helper2(x);
+        if x = 2 then
+            n := 9;
+        case n of
+            1:
+                x := 0;
+        end;
+        while n > 0 do
+            n := n - 1;
+        exit;
+    end;
+    local procedure Helper(var v: Integer)
+    begin
+        v := 0;
+    end;
+    local procedure Helper2(v: Integer)
+    begin
+        n := v;
+    end;
+}
+""";
+
+    private static string[]? WritesOnLine(AlMemberSyntax m, int line0) =>
+        m.Writes.Where(w => w.Start.Line == line0).Select(w => w.Targets.ToArray()).SingleOrDefault();
+
+    [SkippableFact]
+    public void Parse_Writes_AssignmentTargets_ResolveToTheRootLocal()
+    {
+        RequireEngine();
+        var m = Member(AlMemberSyntaxIndex.Parse(WriteShapesSource, "WriteShapes.al"), "Assigns");
+        Assert.Equal(new[] { "x" }, WritesOnLine(m, 10));     // x := 1
+        Assert.Equal(new[] { "Rec" }, WritesOnLine(m, 11));   // Rec.Amount := 2
+        Assert.Equal(new[] { "Rec" }, WritesOnLine(m, 12));   // Rec."No." := '3'
+        Assert.Equal(new[] { "arr" }, WritesOnLine(m, 13));   // arr[1] := 4
+        Assert.Equal(new[] { "x" }, WritesOnLine(m, 14));     // x += 1
+    }
+
+    [SkippableFact]
+    public void Parse_Writes_MethodCallStatements_ReceiverAndByRefBuiltins()
+    {
+        RequireEngine();
+        var m = Member(AlMemberSyntaxIndex.Parse(WriteShapesSource, "WriteShapes.al"), "Assigns");
+        Assert.Equal(new[] { "l" }, WritesOnLine(m, 15));     // l.Add(5)
+        Assert.Equal(new[] { "Rec" }, WritesOnLine(m, 16));   // Rec.Insert()
+        Assert.Equal(new[] { "x" }, WritesOnLine(m, 17));     // Clear(x)
+        Assert.Equal(new[] { "n" }, WritesOnLine(m, 18));     // Evaluate(n, '1')
+        // A same-object procedure's `var` parameter is a write; a value parameter is not.
+        Assert.Equal(new[] { "x" }, WritesOnLine(m, 19));     // Helper(x)   with `var v`
+        Assert.Null(WritesOnLine(m, 20));                     // Helper2(x)  with `v`
+    }
+
+    [SkippableFact]
+    public void Parse_Writes_ControlFlowStatementsWriteNothing_TheirBranchesDo()
+    {
+        RequireEngine();
+        var m = Member(AlMemberSyntaxIndex.Parse(WriteShapesSource, "WriteShapes.al"), "Assigns");
+        Assert.Null(WritesOnLine(m, 21));                     // if x = 2 then
+        Assert.Equal(new[] { "n" }, WritesOnLine(m, 22));     //     n := 9
+        Assert.Null(WritesOnLine(m, 23));                     // case n of
+        Assert.Equal(new[] { "x" }, WritesOnLine(m, 25));     //         x := 0
+        Assert.Null(WritesOnLine(m, 27));                     // while n > 0 do
+        Assert.Equal(new[] { "n" }, WritesOnLine(m, 28));     //     n := n - 1
+        Assert.Null(WritesOnLine(m, 29));                     // exit
+        var helper = Member(AlMemberSyntaxIndex.Parse(WriteShapesSource, "WriteShapes.al"), "Helper");
+        Assert.Equal(new[] { "v" }, WritesOnLine(helper, 33));
+    }
+
+    [SkippableFact]
+    public void Parse_Writes_LoopStatementsClaimNothing_TheirBodiesDo()
+    {
+        RequireEngine();
+        // A loop variable is NOT a write of the loop statement: its initial value is
+        // observed at the statement's own hit, and every later pass is claimed by
+        // AlLoopScopeTable.LoopVariablesAssignedBefore (see that test below).
+        var forTo = Member(AlMemberSyntaxIndex.Parse(LoopShapesSource, "LoopShapes.al"), "ForTo");
+        Assert.Null(WritesOnLine(forTo, 21));                  // for i := 1 to 3 do
+        Assert.Equal(new[] { "t" }, WritesOnLine(forTo, 22));  //     t := t + i
+        var fe = Member(AlMemberSyntaxIndex.Parse(LoopShapes2Source, "LoopShapes2.al"), "ForEachList");
+        Assert.Null(WritesOnLine(fe, 20));                     // foreach v in l do
+        Assert.Equal(new[] { "s" }, WritesOnLine(fe, 21));     //     s := s + v
+    }
+
+    [SkippableFact]
+    public void LoopVariablesAssignedBefore_EveryPassButTheFirst_ForAndForEach()
+    {
+        RequireEngine();
+        var sites = Member(AlMemberSyntaxIndex.Parse(LoopShapesSource, "LoopShapes.al"), "ForTo").Sites;
+        var table = AlLoopScopeTable.Build(sites, MeasuredForTo);
+        // ids: 0 t := 0 | 1 for (header) | 2 body | 3 after
+        Assert.Empty(table.LoopVariablesAssignedBefore(current: 2, previous: 1)); // first pass: header just ran
+        Assert.Equal(new[] { "i" }, table.LoopVariablesAssignedBefore(current: 2, previous: 2).ToArray()); // pass 2+
+        Assert.Empty(table.LoopVariablesAssignedBefore(current: 3, previous: 2)); // leaving the loop
+        Assert.Empty(table.LoopVariablesAssignedBefore(current: 1, previous: 0)); // entering it
+    }
+
+    [SkippableFact]
+    public void LoopVariablesAssignedBefore_BodyStartingWithANestedLoop_FollowsIntoItsEntry()
+    {
+        RequireEngine();
+        var sites = Member(AlMemberSyntaxIndex.Parse(LoopShapes2Source, "LoopShapes2.al"), "WhileFirst").Sites;
+        var table = AlLoopScopeTable.Build(sites, MeasuredWhileFirst);
+        // ids: 0 outer for | 1 while cond (inner header) | 2 inner body | 3 | 4 | 5 end
+        // Outer pass 2 opens at the inner while's condition, previous = `s := s + 1` (4).
+        Assert.Equal(new[] { "i" }, table.LoopVariablesAssignedBefore(current: 1, previous: 4).ToArray());
+        // The inner while re-evaluating its condition mid-pass is NOT an outer pass start.
+        Assert.Empty(table.LoopVariablesAssignedBefore(current: 1, previous: 2));
+        Assert.Empty(table.LoopVariablesAssignedBefore(current: 1, previous: 0)); // outer first pass
+    }
+
+    [SkippableFact]
+    public void ResolveWrites_MeasuredForTo_MapsEachStatementIdToItsTargets()
+    {
+        RequireEngine();
+        var m = Member(AlMemberSyntaxIndex.Parse(LoopShapesSource, "LoopShapes.al"), "ForTo");
+        var table = AlWriteSetTable.Build(m.Writes, MeasuredForTo);
+        Assert.Equal(new[] { "t" }, table.TargetsOf(0).Order().ToArray()); // t := 0
+        Assert.Empty(table.TargetsOf(1));                                   // for i := 1 to 3 do (see LoopVariablesAssignedBefore)
+        Assert.Equal(new[] { "t" }, table.TargetsOf(2).Order().ToArray()); // t := t + i
+        Assert.Equal(new[] { "t" }, table.TargetsOf(3).Order().ToArray()); // t := t * 10
+        Assert.Empty(table.TargetsOf(99));                                  // unknown id: nothing, never a throw
+    }
+
+    [SkippableFact]
+    public void ResolveWrites_ConditionIds_HaveNoStatementAtTheirStart_SoNoTargets()
+    {
+        RequireEngine();
+        // WhileDo: id 1 is the condition `n > 0` (starts mid-line); no statement starts there.
+        var m = Member(AlMemberSyntaxIndex.Parse(LoopShapesSource, "LoopShapes.al"), "WhileDo");
+        var table = AlWriteSetTable.Build(m.Writes, MeasuredWhileDo);
+        Assert.Equal(new[] { "n" }, table.TargetsOf(0).Order().ToArray()); // n := 3
+        Assert.Empty(table.TargetsOf(1));                                   // the condition
+        Assert.Equal(new[] { "n" }, table.TargetsOf(2).Order().ToArray()); // n := n - 1
+        Assert.Empty(table.TargetsOf(3));                                   // block end
+        Assert.Equal(new[] { "n" }, table.TargetsOf(4).Order().ToArray()); // n := 99
+    }
+
+    // --- Build: negative direction, no engine needed ----------------------------------
+
+    [Fact]
+    public void Build_EmptyBody_IsUnsegmentable_WithAReason_NotSilentlyZero()
+    {
+        // for i := 1 to 3 do ;    <- one id for the `for`, none in the body
+        var site = new AlLoopSite(0, AlLoopKind.For, "i",
+            new AlTextRange(new AlTextPosition(8, 8), new AlTextPosition(8, 27)),
+            new[] { new AlTextRange(new AlTextPosition(8, 8), new AlTextPosition(8, 26)) },
+            Array.Empty<AlLoopBodyStatement>(), null, false);
+        var spans = new[] { AlSourceSpanCodec.Encode(8, 8, 8, 27), AlSourceSpanCodec.Encode(9, 8, 9, 14) };
+
+        var t = Assert.Single(AlLoopScopeTable.Build(new[] { site }, spans).Sites);
+        Assert.Equal(new[] { 0 }, t.HeaderIds.Order().ToArray());
+        Assert.Empty(t.BodyIds);
+        Assert.Null(t.MarkerStatementId);
+        Assert.Equal(AlLoopUnsegmentable.EmptyBody, t.Unsegmentable);
+    }
+
+    [Fact]
+    public void Build_RestrictedToInstrumentedIds_IgnoresTheTrailingSentinel()
+    {
+        // BC emits one SourceSpans entry beyond the last StmtHit (the method's closing
+        // `end;`). If it were considered, a loop ending at the method's end could absorb it.
+        var site = new AlLoopSite(0, AlLoopKind.While, null,
+            new AlTextRange(new AlTextPosition(5, 8), new AlTextPosition(6, 20)),
+            new[] { new AlTextRange(new AlTextPosition(5, 8), new AlTextPosition(5, 22)) },
+            new[] { new AlLoopBodyStatement(new AlTextRange(new AlTextPosition(6, 12), new AlTextPosition(6, 20)), null) },
+            null, false);
+        var spans = new[]
+        {
+            AlSourceSpanCodec.Encode(5, 14, 5, 19), // 0: condition
+            AlSourceSpanCodec.Encode(6, 12, 6, 20), // 1: body
+            AlSourceSpanCodec.Encode(6, 12, 6, 20), // 2: a sentinel that happens to share the body's span
+        };
+        var t = Assert.Single(AlLoopScopeTable.Build(new[] { site }, spans, instrumented: new[] { 0, 1 }).Sites);
+        Assert.Equal(new[] { 1 }, t.BodyIds.Order().ToArray());
+        Assert.False(t.Owns(2));
+    }
+
+    [Fact]
+    public void LineOf_OutsideTheSpanTable_IsNullNotAFakeLine()
+    {
+        var table = new AlLoopScopeTable(Array.Empty<AlLoopSiteTable>(), new[] { AlSourceSpanCodec.Encode(3, 0, 3, 5) });
+        Assert.Equal(4, table.LineOf(0));
+        Assert.Null(table.LineOf(1));
+        Assert.Null(table.LineOf(-1));
+    }
+
+    // --- round 3: structurally ambiguous shapes, header variables, break detection ----------
+
+    internal const string SoleBodySource = """
+codeunit 60322 SoleBody
+{
+    procedure ForRepeat()
+    var
+        i: Integer;
+        n: Integer;
+    begin
+        for i := 1 to 2 do
+            repeat
+                n += 1;
+            until n mod 2 = 0;
+    end;
+
+    procedure ForWhileBreak()
+    var
+        i: Integer;
+        n: Integer;
+    begin
+        for i := 1 to 2 do
+            while n < 5 do begin
+                n += 1;
+                if n = 3 then
+                    break;
+            end;
+    end;
+
+    procedure ForWhile()
+    var
+        i: Integer;
+        n: Integer;
+    begin
+        for i := 1 to 2 do
+            while n < 5 do
+                n += 1;
+    end;
+
+    procedure ForEmptyWhile()
+    var
+        i: Integer;
+    begin
+        for i := 1 to 2 do
+            while Next() do ;
+    end;
+
+    local procedure Next(): Boolean
+    begin
+        exit(false);
+    end;
+}
+""";
+
+    // Hand-built spans for SoleBodySource, 1-based (line, col, endLine, endCol) in document order.
+    private static readonly long[] SoleForRepeat     = Spans((8, 9, 11, 30), (10, 17, 10, 23), (11, 19, 11, 30));            // 0 for | 1 n += 1 | 2 until cond
+    private static readonly long[] SoleForWhileBreak = Spans((19, 9, 24, 17), (20, 19, 20, 24), (21, 17, 21, 23), (22, 20, 22, 25), (24, 13, 24, 16)); // 0 for | 1 cond | 2 n += 1 | 3 if cond | 4 end
+    private static readonly long[] SoleForWhile      = Spans((32, 9, 34, 23), (33, 19, 33, 24), (34, 17, 34, 23));            // 0 for | 1 cond | 2 n += 1
+    private static readonly long[] SoleForEmptyWhile = Spans((41, 9, 42, 28), (42, 19, 42, 25));                              // 0 for | 1 cond
+
+    [SkippableFact]
+    public void Parse_ContainsBreak_IsRecordedPerLoop()
+    {
+        RequireEngine();
+        var members = AlMemberSyntaxIndex.Parse(SoleBodySource, "SoleBody.al");
+        Assert.True(Member(members, "ForWhileBreak").Sites[1].ContainsBreak);
+        Assert.False(Member(members, "ForWhileBreak").Sites[0].ContainsBreak); // the break belongs to the inner loop
+        Assert.False(Member(members, "ForWhile").Sites[1].ContainsBreak);
+    }
+
+    [SkippableFact]
+    public void Build_SoleBodyNestedRepeat_MakesTheOuterUnsegmentable_TheInnerStillCounts()
+    {
+        RequireEngine();
+        var sites = Member(AlMemberSyntaxIndex.Parse(SoleBodySource, "SoleBody.al"), "ForRepeat").Sites;
+        var table = AlLoopScopeTable.Build(sites, SoleForRepeat);
+        Assert.Equal(AlLoopUnsegmentable.SoleNestedRepeat, table.Sites[0].Unsegmentable);
+        Assert.Null(table.Sites[1].Unsegmentable);
+        Assert.Equal(1, table.Sites[1].MarkerStatementId);
+    }
+
+    [SkippableFact]
+    public void Build_SoleBodyNestedWhileWithBreak_MakesTheOuterUnsegmentable()
+    {
+        RequireEngine();
+        var sites = Member(AlMemberSyntaxIndex.Parse(SoleBodySource, "SoleBody.al"), "ForWhileBreak").Sites;
+        var table = AlLoopScopeTable.Build(sites, SoleForWhileBreak);
+        Assert.Equal(AlLoopUnsegmentable.SoleNestedWhileWithBreak, table.Sites[0].Unsegmentable);
+        Assert.Null(table.Sites[1].Unsegmentable);
+    }
+
+    [SkippableFact]
+    public void Build_SoleBodyNestedWhileWithoutBreak_StaysSegmentable()
+    {
+        RequireEngine();
+        var sites = Member(AlMemberSyntaxIndex.Parse(SoleBodySource, "SoleBody.al"), "ForWhile").Sites;
+        var table = AlLoopScopeTable.Build(sites, SoleForWhile);
+        Assert.Null(table.Sites[0].Unsegmentable);
+        Assert.Equal(1, table.Sites[0].MarkerNestedSiteIndex);
+    }
+
+    [SkippableFact]
+    public void Build_SoleBodyNestedEmptyWhile_OuterUnsegmentable_AndNoPassStartsAreInferredThroughIt()
+    {
+        RequireEngine();
+        var sites = Member(AlMemberSyntaxIndex.Parse(SoleBodySource, "SoleBody.al"), "ForEmptyWhile").Sites;
+        var table = AlLoopScopeTable.Build(sites, SoleForEmptyWhile);
+        Assert.Equal(AlLoopUnsegmentable.EmptyBody, table.Sites[1].Unsegmentable);
+        Assert.Equal(AlLoopUnsegmentable.SoleNestedUnsegmentable, table.Sites[0].Unsegmentable);
+        // Repeated inner condition hits (previous == current == 1) must not claim `i` was assigned.
+        Assert.Empty(table.LoopVariablesAssignedBefore(current: 1, previous: 1));
+    }
+
+    [SkippableFact]
+    public void LoopVariableOfHeader_ForHeadersOnly_AForEachAssignsAfterItsHeader()
+    {
+        RequireEngine();
+        var forTo = AlLoopScopeTable.Build(Member(AlMemberSyntaxIndex.Parse(LoopShapesSource, "LoopShapes.al"), "ForTo").Sites, MeasuredForTo);
+        Assert.Equal("i", forTo.LoopVariableOfHeader(1));
+        Assert.Null(forTo.LoopVariableOfHeader(0));
+        Assert.Null(forTo.LoopVariableOfHeader(2));
+        var whileDo = AlLoopScopeTable.Build(Member(AlMemberSyntaxIndex.Parse(LoopShapesSource, "LoopShapes.al"), "WhileDo").Sites, MeasuredWhileDo);
+        Assert.Null(whileDo.LoopVariableOfHeader(1));
+        var fe = AlLoopScopeTable.Build(Member(AlMemberSyntaxIndex.Parse(LoopShapes2Source, "LoopShapes2.al"), "ForEachList").Sites, MeasuredForEachList);
+        Assert.Null(fe.LoopVariableOfHeader(2));
+        // ...so a foreach's FIRST pass is where its variable is claimed (previous = its header).
+        Assert.Equal(new[] { "v" }, fe.LoopVariablesAssignedBefore(current: 3, previous: 2).ToArray());
+        Assert.Equal(new[] { "v" }, fe.LoopVariablesAssignedBefore(current: 3, previous: 3).ToArray());
+    }
+
+    [SkippableFact]
+    public void Build_CarriesColumns_ForTheLoopStatement()
+    {
+        RequireEngine();
+        var t = Assert.Single(AlLoopScopeTable.Build(Member(AlMemberSyntaxIndex.Parse(LoopShapesSource, "LoopShapes.al"), "ForTo").Sites, MeasuredForTo).Sites);
+        Assert.Equal(22, t.StartLine);
+        Assert.Equal(9, t.StartColumn);   // `for` at column 9 (1-based)
+        Assert.Equal(23, t.EndLine);
+    }
+}
