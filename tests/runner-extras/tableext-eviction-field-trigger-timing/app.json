@@ -1,0 +1,25 @@
+{
+  "id": "5c8a7d2f-1e93-4b6c-a5d8-3f0b6e9c2a1d",
+  "name": "Runner Extras - TableExt Eviction Field Trigger Timing",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Regression for issue #2463: RecordPatches.EvictCachedMetaTableForBaseTable dropped a base table's cached NCLMetaTable when a tableextension's fields merged in, but did not drop the table from _fieldTriggersWiredTables. The rebuilt NCLMetaTable's fields carried no ValidateHandler at all, so every field OnValidate body on that table silently stopped running for the rest of the process -- Validate(field, x) just set the field, with no error and no diagnostic.",
+  "description": "The dependency app 'dep' declares table \"Tefte T\" (field 2 \"Val\" has an OnValidate trigger writing field 3 \"Computed\" := Val * 2) and an Install-subtype codeunit that materializes a \"Tefte T\" record during its OWN install -- forcing RecordPatches.WireFieldTriggerHandlersForTable to build+wire the table's NCLMetaTable via the standard `Record X` local-variable construction chokepoint, BEFORE this app's tableextension on \"Tefte T\" (adding field 4 \"Extra\") is even parsed. Once this app's AddSourceDir parses that tableextension, RecordPatches.MergeExtensionFields -> EvictCachedMetaTableForBaseTable evicts \"Tefte T\"'s already-built+wired NCLMetaTable so the next lookup rebuilds it with the extension field merged in. Before the fix, the table stayed marked 'already wired' in _fieldTriggersWiredTables across that rebuild, so the REBUILT NCLMetaTable's NCLMetaField for field 2 never got its ValidateHandler set -- Validate(Val, x) silently stopped running the field's OnValidate trigger, for a completely unrelated field on a table the extension never touched. This is the same 'wiring survives the table it was wired for' family as #2197/#2412 (table-level DB-trigger subscribers) and #2453 (TestPageFactory's record-construction chokepoint), here for the table's OWN compiled [FieldTriggerHandler] method rather than an event subscriber. This is a runner-internal caching defect, not a claim about BC behaviour, so it belongs in runner-extras rather than the upstream corpus.",
+  "dependencies": [
+    {
+      "id": "3a6f2e1c-9b84-4a2d-8f6e-1c9a2b7d4e5f",
+      "publisher": "AL Runner",
+      "name": "Runner Extras - TableExt Eviction Field Trigger Timing Dep",
+      "version": "1.0.0.0"
+    }
+  ],
+  "idRanges": [
+    {
+      "from": 65275,
+      "to": 65279
+    }
+  ],
+  "platform": "27.0.0.0",
+  "runtime": "15.0",
+  "target": "Cloud"
+}

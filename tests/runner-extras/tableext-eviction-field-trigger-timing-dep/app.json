@@ -1,0 +1,17 @@
+{
+  "id": "3a6f2e1c-9b84-4a2d-8f6e-1c9a2b7d4e5f",
+  "name": "Runner Extras - TableExt Eviction Field Trigger Timing Dep",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Dependency half of the #2463 regression: declares a table with a field OnValidate trigger and forces its NCLMetaTable to be built+wired during THIS app's own install, before the sibling 'test' app's tableextension is known.",
+  "dependencies": [],
+  "idRanges": [
+    {
+      "from": 65270,
+      "to": 65274
+    }
+  ],
+  "platform": "27.0.0.0",
+  "runtime": "15.0",
+  "target": "Cloud"
+}
