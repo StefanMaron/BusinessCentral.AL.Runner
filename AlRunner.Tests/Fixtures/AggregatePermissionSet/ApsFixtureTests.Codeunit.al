@@ -93,4 +93,50 @@ codeunit 60702 "APS Fixture Tests"
             AggregatePermissionSetAfterDelete.Get(AggregatePermissionSetAfterDelete.Scope::Tenant, EmptyGuid, 'APS NEW TENANT ROLE'),
             'a Tenant Permission Set row deleted after being visible must not remain a ghost row in Aggregate Permission Set');
     end;
+
+    [Test]
+    procedure AggregatePermissionSet_SameRecordVariableReusedAcrossWrite_SeesFreshRow()
+    // CLAIM (runner mechanism, issue #2504): the SAME record variable, reused for a
+    // touch/insert/re-touch sequence -- exactly what TestPage "Permission Sets"' own row
+    // walk does with ONE bound Rec across .First()/.Next() -- must see the fresh row too,
+    // not just a freshly-declared variable's own first touch (#2473's fix alone only
+    // covered that narrower case: a NavRecord resolves its DataAccess wrapper once, on its
+    // own first Get()/Find(), and every LATER call on that SAME instance skipped this
+    // file's populate step entirely before this fix). Real BC's own
+    // VirtualAndTempTransactionalDataCache.TryFind/TryGetByPrimaryKey unconditionally
+    // report a cache miss for every request, so a real service tier recomputes this table
+    // on EVERY Get()/Find(), cached wrapper or not.
+    var
+        AggregatePermissionSet: Record "Aggregate Permission Set";
+        TenantPermissionSet: Record "Tenant Permission Set";
+        EmptyGuid: Guid;
+    begin
+        // First touch on this ONE variable -- primes it, same as any ordinary first Get().
+        if AggregatePermissionSet.Get(AggregatePermissionSet.Scope::System, EmptyGuid, 'NOT A REAL ROLE ID') then;
+
+        if TenantPermissionSet.Get(EmptyGuid, 'APS REUSED VAR ROLE') then
+            TenantPermissionSet.Delete();
+
+        Clear(TenantPermissionSet);
+        TenantPermissionSet."App ID" := EmptyGuid;
+        TenantPermissionSet."Role ID" := 'APS REUSED VAR ROLE';
+        TenantPermissionSet.Name := 'APS Reused Var Role';
+        TenantPermissionSet.Assignable := true;
+        TenantPermissionSet.Insert();
+
+        // SAME variable, second Get() -- this is exactly the shape that stayed stale before
+        // the #2504 fix (only three separate variables proved #2473's own fix worked).
+        Assert.IsTrue(
+            AggregatePermissionSet.Get(AggregatePermissionSet.Scope::Tenant, EmptyGuid, 'APS REUSED VAR ROLE'),
+            'a record variable reused for a second Get() after an intervening write must see the new row, not the state from its own first touch');
+        Assert.AreEqual(
+            'APS Reused Var Role', AggregatePermissionSet.Name,
+            'Name must round-trip from the newly-inserted Tenant Permission Set row, read through the REUSED variable');
+
+        TenantPermissionSet.Delete();
+        // Negative, SAME variable again: a third Get() on it must not see a ghost either.
+        Assert.IsFalse(
+            AggregatePermissionSet.Get(AggregatePermissionSet.Scope::Tenant, EmptyGuid, 'APS REUSED VAR ROLE'),
+            'a record variable reused for a third Get() after the row was deleted must not see a ghost row');
+    end;
 }

@@ -101,6 +101,11 @@ public sealed class AggregatePermissionSetVirtualTableTests
             // subsequently deleted row must not remain a ghost.
             Assert.Contains(
                 "PASS  Codeunit60702.AggregatePermissionSet_TenantRowInsertedAfterEarlierTouch_IsVisible", stdout);
+            // #2504: redriving on DISPATCH alone is not enough -- a record variable REUSED
+            // for a second Get() after an intervening write must see the fresh row too, not
+            // just a freshly-declared variable's own first touch.
+            Assert.Contains(
+                "PASS  Codeunit60702.AggregatePermissionSet_SameRecordVariableReusedAcrossWrite_SeesFreshRow", stdout);
             Assert.DoesNotContain("FAIL", stdout);
         }
         finally

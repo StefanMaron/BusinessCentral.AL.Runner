@@ -82,6 +82,36 @@
 //   SymbolReference.json (EnumerateKnownPermissionSets) — both fixed for the lifetime of one
 //   runner invocation, not runtime-writable AL data, so a repeated top-up there can only
 //   ever re-discover the SAME fixed set, never miss a write that happened after first touch.
+//
+// PER-REQUEST REDRIVE, NOT JUST PER-DISPATCH (issue #2504)
+//   The populate-on-touch shape above only fires from NavDataAccessSource_GetDataAccessForTable
+//   (RecordPatches.cs), which real BC's own RecordImplementation.InitializeImpl calls AT MOST
+//   ONCE per NavRecord instance (`if (dataAccess == null) dataAccess = ...GetDataAccessForTable(...)`,
+//   confirmed by decompiling Ncl.dll) -- every LATER Get()/FindSet() on that SAME instance reads
+//   straight from the already-resolved DataAccess, never re-dispatching. That is fine on a real
+//   service tier: DataAccess.GetVirtualDataAccess ALSO caches its DataAccess wrapper per
+//   (session, tableId), but VirtualAndTempTransactionalDataCache.TryFind/TryGetByPrimaryKey
+//   unconditionally return "miss" for every request (confirmed by decompiling both), so every
+//   single Get()/Find() -- cached wrapper or not -- falls through to the PROVIDER fresh. Real BC
+//   never caches ROWS, only the wrapper OBJECT.
+//
+//   Our TempTableDataProvider is the opposite: it stores materialised rows, and reading them
+//   after the wrapper is cached does NOT re-run this file's populate step. A single record
+//   variable held across a "touch, write elsewhere, touch again" sequence -- exactly what
+//   TestPage "Permission Sets"' own row walk does with ONE bound Rec across `.First()`/`.Next()`
+//   -- stayed stale even with the #2473 fix, which only fixed the FIRST TOUCH OF A NEW VARIABLE
+//   case. Confirmed empirically while proving #2473: a single shared record variable across a
+//   touch->insert->verify sequence stayed stale; three separate variables (each its own first
+//   touch) were required to observe the fix.
+//
+//   DataAccess_AggregatePermissionSetGuardForGet (Get()-by-primary-key, prepended to
+//   DataAccess.InternalTryGetByPrimaryKeyAsync) and the Aggregate-Permission-Set branch added to
+//   DataAccess_IsManagedFindRequest (Find()/FindSet(), RecordPatches.FieldFindIntercept.cs --
+//   the SAME prepend site the Date virtual table's window guard already uses) redrive the store
+//   on EVERY request that targets this table, using the REQUEST's own MetaApplicationObject
+//   rather than a value captured at DataAccess-creation time. This matches real BC's actual
+//   "the wrapper is cached, the rows never are" model instead of trying to catch every place a
+//   NavRecord variable might be reused.
 
 using System;
 using System.Collections;
@@ -339,5 +369,52 @@ public static partial class RecordPatches
             ?? throw new InvalidOperationException("NavSession.NCLMetadata property not found");
 
         _apsReflectionReady = true;
+    }
+
+    private static bool _apsLiveGuardReady;
+    private static PropertyInfo? _apsDataAccessSession;   // DataAccess.Session
+
+    private static void EnsureAggregatePermissionSetLiveGuardReflection(object dataAccess)
+    {
+        if (_apsLiveGuardReady) return;
+        var nclAsm = dataAccess.GetType().Assembly;
+        const string rt = "Microsoft.Dynamics.Nav.Runtime.";
+        var tDataAccess = nclAsm.GetType(rt + "DataAccess")
+            ?? throw new InvalidOperationException("DataAccess type not found in Ncl");
+        _apsDataAccessSession = tDataAccess.GetProperty("Session",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+            ?? throw new InvalidOperationException("DataAccess.Session not found");
+        _apsLiveGuardReady = true;
+    }
+
+    /// <summary>
+    /// Prepended (PrependStaticCall, see NclCecilRewrite) to
+    /// DataAccess.InternalTryGetByPrimaryKeyAsync(PrimaryKeyCacheRequest) -- EVERY table's
+    /// Get()-by-primary-key path, real BC's own InitializeImpl only ever resolves a NavRecord's
+    /// DataAccess wrapper once, so this is the only place a SECOND Get() on an already-open
+    /// variable is ever seen. For every table but Aggregate Permission Set this is one
+    /// dictionary-free int comparison and returns.
+    /// </summary>
+    public static void DataAccess_AggregatePermissionSetGuardForGet(object self, object request)
+    {
+        if (FindRequestTableId(request) != AggregatePermissionSetVirtualTableId) return;
+        RedriveAggregatePermissionSetForRequest(self, request);
+    }
+
+    /// <summary>
+    /// Shared by the Get()-by-key prepend above and the Aggregate-Permission-Set branch in
+    /// DataAccess_IsManagedFindRequest (RecordPatches.FieldFindIntercept.cs, the find/FindSet
+    /// path): repopulate the store fresh for THIS one request, reading the table straight off
+    /// the request's own MetaApplicationObject (an NCLMetaTable for a table-scoped request --
+    /// confirmed NCLMetaTable : NCLMetaApplicationObject by decompiling Ncl.dll) rather than a
+    /// value captured once when the DataAccess wrapper was first created.
+    /// </summary>
+    private static void RedriveAggregatePermissionSetForRequest(object dataAccess, object request)
+    {
+        EnsureAggregatePermissionSetLiveGuardReflection(dataAccess);
+        if (FindRequestMetaApplicationObject(request) is not NCLMetaTable metaTable) return;
+        var session = _apsDataAccessSession!.GetValue(dataAccess);
+        if (session == null) return;
+        PopulateAggregatePermissionSetVirtualTable(dataAccess, metaTable, session);
     }
 }
