@@ -524,28 +524,26 @@ internal sealed class RunnerPageInstance
     /// <summary>
     /// Resolve one identifier inside a control-property expression.
     ///
-    /// Two sources, in BC's own order. A page global is registered in the page's source-expression
-    /// table under the emitted name the metadata carries. A source-table field is not in that table
-    /// at all — the metadata carries the FIELD NAME — so it is read off the record the page is
-    /// bound to. A name in neither is a genuine failure and must not resolve to a default.
+    /// Registered source expressions only. A page global is registered in the page's
+    /// source-expression table under the emitted name the metadata carries, and that is the one
+    /// source this resolves against.
+    ///
+    /// A source-table FIELD reference is deliberately NOT resolved here, even though the metadata
+    /// carries the field name and the record is right there. Measured on all 8 BC versions
+    /// (corpus PR #125's measurement pass): real BC evaluates such an expression as if the field
+    /// held its type default, whatever row the page is on — opening a card on a row with
+    /// Flag = true and on a row with Flag = false produced byte-identical readings of
+    /// `Visible = Rec.Flag`, `Visible = not Rec.Flag` and `Visible = Rec.Value &lt;&gt; ''`.
+    /// Reading the live record would therefore answer something BC does not answer, and a value
+    /// this runner made up is worse than the loud refusal the caller raises instead
+    /// (.claude/rules/loud-failures.md). Issue #2596 tracks it, with the transcripts.
     /// </summary>
     private bool ResolveExpressionIdentifier(string name, bool quoted, out object? value)
     {
-        // An unquoted name can be either; a quoted one is always a field, because the emitted
-        // spelling of a page global never needs quoting. Trying the expression table for both is
-        // harmless and keeps the two paths from having to agree on that.
         var expression = _sourceExpressions[name];
         if (expression != null)
         {
             value = GetValue(expression)?.ClientObject;
-            return true;
-        }
-
-        var metaTable = _record?.MetaTable;
-        if (metaTable != null && metaTable.TryGetFieldByName(name, out var field) && field != null)
-        {
-            var raw = _record!.GetFieldValue(field.FieldNo);
-            value = raw is NavValue navValue ? navValue.ClientObject : raw;
             return true;
         }
 

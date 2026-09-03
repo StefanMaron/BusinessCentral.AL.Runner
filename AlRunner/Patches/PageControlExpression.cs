@@ -25,7 +25,9 @@
 //
 //   - A page global arrives under its emitted name and is registered in the page's
 //     SourceExpressions table. A source-table field arrives as the FIELD NAME and is not in that
-//     table at all, so identifier resolution has two sources, in that order.
+//     table at all. Which of those the caller answers is the caller's decision -- this parser only
+//     asks. RunnerPageInstance answers registered expressions only; see issue #2596 for what real
+//     BC does with a field reference, which is not what reading the live record would give.
 //   - An enum or option comparand is already an ORDINAL (`Kind = 1`), so nothing here has to
 //     resolve an enum member.
 //   - A name needing quoting keeps its AL double quotes (`"Spaced Name"`).
@@ -41,8 +43,8 @@
 // `A = (B and C)` in AL, and why AL code parenthesizes comparisons that it combines. Getting this
 // backwards would silently mis-evaluate expressions that parse either way.
 //
-// Anything this cannot parse, and any identifier that resolves to neither a registered expression
-// nor a field on the source record, is reported to the caller as a failure so it can raise
+// Anything this cannot parse, and any identifier the caller cannot resolve, is reported back as a
+// failure so the caller can raise
 // RunnerOutOfScopeException naming the expression. Per .claude/rules/loud-failures.md, an
 // expression we cannot evaluate must never come back as a default answer: `Visible` and `Editable`
 // ARE the page's contract, and inventing "true" for one makes every test of that contract
@@ -67,8 +69,8 @@ internal static class PageControlExpression
     /// method never guesses a value.
     /// </summary>
     /// <param name="resolve">
-    /// Resolves one identifier to its current value. Returns false when the name is neither a
-    /// registered source expression nor a field on the page's source record.
+    /// Resolves one identifier to its current value. Returns false when the caller does not
+    /// recognise the name.
     /// </param>
     internal static bool TryEvaluateBoolean(
         string text,
@@ -95,9 +97,10 @@ internal static class PageControlExpression
     }
 
     /// <summary>
-    /// Resolve one identifier — a registered source-expression name, or a field name on the
-    /// page's source record — to its current value. <paramref name="quoted"/> says the name
-    /// arrived in AL double quotes, which only ever happens for a field name.
+    /// Resolve one identifier to its current value, and return false when it cannot be resolved.
+    /// What counts as resolvable is the caller's decision, not this parser's.
+    /// <paramref name="quoted"/> says the name arrived in AL double quotes, which the emitted
+    /// spelling of a page global never needs.
     /// </summary>
     internal delegate bool ResolveIdentifier(string name, bool quoted, out object? value);
 
@@ -407,8 +410,7 @@ internal static class PageControlExpression
         private object? Resolve(string name, bool quoted)
         {
             if (_resolve(name, quoted, out var value)) return value;
-            _failure = $"'{name}' is neither an expression the page publishes a binding for "
-                     + "nor a field on its source record";
+            _failure = $"'{name}' is not a name the page publishes a binding for";
             return null;
         }
 

@@ -7,7 +7,8 @@
 //
 // Every literal expression string below was measured, not invented: it is the text the BC 28.1 AL
 // compiler wrote into the metadata for the AL quoted beside it. The mangled `p65901p65901X` names
-// are page globals on page 65901; the bare names are fields on its source table.
+// are page globals on page 65901; the bare names are source-table fields, which appear in the
+// emitted text the same way even though the runner's own resolver does not answer them (#2596).
 
 using AlRunner.Patches;
 using Xunit;
@@ -70,22 +71,21 @@ public sealed class PageControlExpressionTests
     [InlineData("p65901p65901HideIt or p65901p65901Flag2", true)]
     // AL: Visible = not (HideIt or LockIt)
     [InlineData("not ( p65901p65901HideIt or p65901p65901LockIt )", true)]
-    // AL: Visible = Rec.Flag              (a source-table field, not a page global)
+    // A name the resolver supplies from somewhere other than the expression table. The runner's
+    // own resolver answers only registered source expressions -- see RunnerPageInstance and
+    // issue #2596 -- but the parser itself is agnostic about where a name comes from.
     [InlineData("Flag", true)]
-    // AL: Visible = not Rec.Flag
     [InlineData("not Flag", false)]
-    // AL: Visible = Rec.Value <> ''
     [InlineData("Value <> ''", true)]
-    // AL: Visible = Rec."Spaced Name"     (a name that needed AL quotes keeps them)
+    // A name that needed AL quotes keeps them in the emitted text.
     [InlineData("\"Spaced Name\"", true)]
-    // AL: Visible = Rec.Qty > 0
     [InlineData("Qty > 0", true)]
-    // AL: Visible = Rec.Kind = Rec.Kind::Second   (the enum member arrives as its ORDINAL)
+    // An enum comparand arrives as its ORDINAL, so nothing has to resolve an enum member.
     [InlineData("Kind = 1", true)]
     // AL: Visible = (Rec.Value = 'x') or Flag2
     [InlineData("( Value = 'x' ) or p65901p65901Flag2", true)]
     [InlineData("( Value = 'x' ) or p65901p65901LockIt", false)]
-    // AL: Visible = Rec.Qty > 1 + 1       (arithmetic does appear)
+    // Arithmetic does appear in the emitted text.
     [InlineData("Qty > 1 + 1", true)]
     [InlineData("Qty > 4 + 4", false)]
     public void MeasuredShapes_EvaluateToTheirAlAnswer(string text, bool expected)
@@ -163,7 +163,7 @@ public sealed class PageControlExpressionTests
     {
         var failure = Failure("not p65901p65901Missing");
         Assert.Contains("p65901p65901Missing", failure);
-        Assert.Contains("source record", failure);
+        Assert.Contains("publishes a binding for", failure);
     }
 
     [Fact]
