@@ -14,6 +14,8 @@ All notable changes to this project are documented here. Format based on
 - **all-profile:** populate the All Profile system virtual table (2000000178)
 
 ### Fixed
+- **runtime:** seed NavSession.DocumentStorageService so it never NREs
+- local Codeunit-var manual bindings and TransactionModel::AutoRollback
 - **page-metadata:** resolve a bundle page's SourceTable against a dependency's precompiled table
 - **server:** warm-server-reload cluster — precompiled tableextensions, install-baseline restore, affectedOnly env key
 - **query:** apply static ColumnFilter and FlowField+Sum group-by on the JOIN path
@@ -55,6 +57,8 @@ All notable changes to this project are documented here. Format based on
 - **agents:** opening a corpus PR needs no approval
 
 ### Changed
+- **scheduling:** record BcVersionDefaultDocumentationTests' measured weight
+- **subprocess:** drain the async output readers before reading captured stdout
 - **perf:** gate plain-run instrumentation cost on behaviour, not time
 - Fix page-variable TestPage option enumeration
 - Fix `--server` single-bundle dependency resolution parity for sibling source apps

@@ -1,0 +1,19 @@
+{
+  "id": "9c3f6a1d-4b7e-4d2a-8f5c-1a6e9b3d7c40",
+  "name": "Runner Extras - Document Service Session Seed",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Regression for issue #2487: NavSession.DocumentStorageService is never assigned, so every Document Service Management call NREs.",
+  "description": "Base App codeunit 9510 \"Document Service Management\".SetServiceType calls the DotNet NavDocumentServiceHelper.SetDocumentServiceType, which forwards to Ncl.dll's DocumentServiceManagement.SetDocumentServiceType(session, type) -> session.DocumentStorageService.SetDocumentServiceType(type). On the runner's skeleton NavSession that property was never assigned, so it NREd on first touch: 19 of 25 tests in Microsoft's own Tests-SINGLESERVER bucket, codeunit 139101 \"Document Service Mgmt Test\", failed on this one throw before ever reaching the AL business logic under test. The fix seeds NavSession.DocumentStorageService with a real Ncl.dll NavDocumentStorageService instance at session bring-up, mirroring what BC's own DocumentServiceManagement.Reset(session) already does lazily -- not a substitute, the same concrete class real BC uses. This suite pins the runner-internal claim only: SetServiceType/GetServiceType round-trip without NRE-ing, and touching the surface that genuinely needs a document-service handler (not shipped in the platform artifacts the runner provisions) fails with BC's own named, diagnosed exception -- never a bare NullReferenceException. The plain BC-behaviour claims underneath (SetServiceType/GetServiceType semantics, TestConnection/SaveFile/IsServiceUri error text) are Microsoft's own codeunit 9510 and 139101, not owned by this repo or the al-language corpus, so they are not duplicated upstream here.",
+  "dependencies": [],
+  "idRanges": [
+    {
+      "from": 65510,
+      "to": 65519
+    }
+  ],
+  "platform": "27.0.0.0",
+  "application": "27.0.0.0",
+  "runtime": "15.0",
+  "target": "Cloud"
+}

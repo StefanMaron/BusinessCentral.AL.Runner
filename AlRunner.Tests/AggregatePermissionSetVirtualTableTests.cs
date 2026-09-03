@@ -67,6 +67,14 @@ public sealed class AggregatePermissionSetVirtualTableTests
             try { proc.Kill(entireProcessTree: true); } catch { }
             throw new TimeoutException("al-runner did not exit within 120s.");
         }
+        // WaitForExit(int) returns as soon as the process exits and does NOT wait for the
+        // async BeginOutputReadLine/BeginErrorReadLine callbacks to drain -- only the
+        // parameterless overload does. Without this the last stdout lines can still be in
+        // flight when we read outSb, so an Assert.Contains on a line the runner definitely
+        // printed fails intermittently, and more often the more loaded the machine is.
+        // That made main red on a DIFFERENT pre-28.0 leg on three consecutive merges.
+        // 65 of the 67 subprocess-spawning test files here already do this; these two did not.
+        proc.WaitForExit();
         return (proc.ExitCode, outSb.ToString(), errSb.ToString());
     }
 

@@ -217,7 +217,120 @@ public static partial class BcRuntime
             FieldPoke.SetInstance(_fSessCurrentScope, _skeletonSession, parent ?? _skeletonRootScope);
         }
 
+        // #2476: a LOCAL "var X: Codeunit ..." variable's manual event-subscription binding
+        // must be released here — real BC's own NavCodeunit.Dispose(bool) does exactly this
+        // when the codeunit instance is disposed, but the MEMORY LEAK FIX above deliberately
+        // does not cascade a full Dispose() into this scope's children. Must run BEFORE the
+        // detach below, while this scope's own child-handler chain is still intact.
+        UnbindLocalManualSubscriptions(self);
+
         DetachTreeHandlerFromParent(self);
+    }
+
+    /// <summary>
+    /// Unbind any manually-bound event subscription (EventSubscriberInstance = Manual) held by
+    /// a LOCAL Codeunit-typed variable declared in the AL scope that is about to be disposed.
+    ///
+    /// NavMethodScope_Dispose above deliberately does not cascade a full Dispose() into this
+    /// scope's children (see its doc comment — a full cascade corrupted BLOB/stream data that
+    /// legitimately escapes the scope, e.g. a shared render buffer read back by an outer
+    /// caller). That means real BC's own NavCodeunit.Dispose(bool) — which is what removes a
+    /// manually-bound codeunit instance from Session.EventBindings when the codeunit instance
+    /// itself is disposed — never fires for a codeunit resolved through a local AL variable
+    /// here, so its binding survives past the procedure that created it and fires again on the
+    /// next [Test] procedure in the same codeunit (corpus-verified faithless behaviour:
+    /// TestEventManualBinding Contract 10, StefanMaron/BusinessCentral.AL.Language.Tests#110).
+    ///
+    /// This is narrower than the general child-dispose cascade the memory-leak fix avoids: it
+    /// walks only the scope's own DIRECT children looking for NavCodeunitHandle nodes — the
+    /// "var X: Codeunit ..." local-variable handles BC's compiler emits as fields on the
+    /// generated scope class (confirmed by decompiling the runner's own compiled AL output for
+    /// issue #2476's repro: `manualSub = new NavCodeunitHandle((ITreeObject)this, 60001);` on
+    /// the scope's own ctor) — and for each one that already resolved a Target with an active
+    /// manual binding, reproduces the SAME two field writes real BC's own Dispose(bool) makes
+    /// (decompiled, unmodified NCL body): <c>IsSubscriptionBound = false;</c> then
+    /// <c>Session.EventBindings.Remove(this)</c>. Deliberately NOT the public
+    /// NavCodeunit.UnBindSubscription() API — that additionally requires
+    /// MetaCodeunit.IsEventManualBinding, a NCLMetadata lookup Dispose(bool) itself never
+    /// performs, so calling it here would add a check real BC's own disposal path does not
+    /// have. It never touches the handle, its target's other state, or any other child's
+    /// disposal state — only the two fields real BC itself writes for exactly this purpose —
+    /// so it cannot reach the BLOB/stream case the memory-leak fix protects.
+    ///
+    /// A GLOBAL Codeunit-typed variable (declared in the codeunit's own `var` section) is a
+    /// field on the TEST CODEUNIT INSTANCE, not on any per-call method scope, so it is never a
+    /// child of a scope disposed here — its binding correctly survives across [Test] procedures
+    /// within the same codeunit (TestEventManualBinding Contract 9, unchanged), and is only
+    /// cleared at the codeunit/test boundary by
+    /// CodeunitEventDispatcher.ResetEventBindingsForTestBoundary (#2472).
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    internal static void UnbindLocalManualSubscriptions(object? self)
+    {
+        if (self == null) return;
+        if (_fTreeObjTree == null || _fTreeHandlerFirstChildBase == null ||
+            _fTreeHandlerNextSiblingBase == null || _fTreeHandlerHostObject == null)
+            return;
+
+        object? handler;
+        try { handler = _fTreeObjTree.GetValue(self); }
+        catch { return; }
+        if (handler == null) return;
+
+        object? child;
+        try { child = _fTreeHandlerFirstChildBase.GetValue(handler); }
+        catch { return; }
+
+        while (child != null)
+        {
+            // Capture the sibling link BEFORE any mutation below, mirroring
+            // DetachTreeHandlerFromParent's own walk — UnbindManualSubscriptionDirect only
+            // touches EventBindings/IsSubscriptionBound, never the tree's sibling chain, but
+            // reading `next` up front keeps this loop robust regardless.
+            object? next;
+            try { next = _fTreeHandlerNextSiblingBase.GetValue(child); }
+            catch { next = null; }
+
+            try
+            {
+                if (_fTreeHandlerHostObject.GetValue(child) is
+                        Microsoft.Dynamics.Nav.Runtime.NavCodeunitHandle cuHandle
+                    && cuHandle.HasTarget)
+                {
+                    var target = cuHandle.Target;
+                    if (target != null && target.IsSubscriptionBound)
+                        UnbindManualSubscriptionDirect(target);
+                }
+            }
+            catch
+            {
+                // Best-effort: a handle mid-teardown must not abort the sweep for the REST
+                // of this scope's children.
+            }
+
+            child = next;
+        }
+    }
+
+    private static PropertyInfo? _piIsSubscriptionBound;
+
+    /// <summary>
+    /// The two field writes real BC's own NavCodeunit.Dispose(bool) makes when disposing a
+    /// still-bound instance (decompiled, unmodified NCL body) — see
+    /// <see cref="UnbindLocalManualSubscriptions"/>'s doc comment for why this reproduces
+    /// them directly rather than calling the public UnBindSubscription() API. IsSubscriptionBound
+    /// has a public getter but an `internal set`, so the setter needs reflection; Session.
+    /// EventBindings is CodeunitEventDispatcher's own lookup, shared via SessionEventBindings()
+    /// so this file does not carry a second copy of that reflection.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void UnbindManualSubscriptionDirect(Microsoft.Dynamics.Nav.Runtime.NavCodeunit target)
+    {
+        _piIsSubscriptionBound ??= typeof(Microsoft.Dynamics.Nav.Runtime.NavCodeunit)
+            .GetProperty("IsSubscriptionBound", BindingFlags.Public | BindingFlags.Instance);
+        _piIsSubscriptionBound?.GetSetMethod(nonPublic: true)?.Invoke(target, new object?[] { false });
+
+        SessionEventBindings()?.Remove(target);
     }
 
     /// <summary>
