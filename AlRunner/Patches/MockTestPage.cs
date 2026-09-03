@@ -1172,7 +1172,7 @@ internal class LiveNavTestPage : MockITestPage
     {
         if (!ShowsNewRowLine) return false;
 
-        _newRowLineReturnPosition = record.ALGetPosition();
+        _newRowLineReturnPosition = record.ALGetPosition(useCaptions: false);
 
         // The rows either side of the insertion point decide the AutoSplitKey number, and
         // ALInit is about to wipe the row the cursor is on — so the position is captured
@@ -1250,7 +1250,18 @@ internal class LiveNavTestPage : MockITestPage
     // reaches through RequireRecord first.
     private void SnapshotBeforeImage() => _record!.OldRecord.ALAssign(_record);
 
-    public override object? GetBookmark() => RequireRecord("GetBookmark()").ALGetPosition();
+    // useCaptions: false — NavRecord.ALGetPosition()'s default (useCaptions: true) encodes
+    // the position string using field CAPTIONS, and ALSetPosition decodes it through the
+    // same SETVIEW-style filter parser TableViewParser.ParseTableFilters uses for AL filter
+    // views, which resolves each token by caption. On a table with two fields sharing a
+    // caption (legal AL) that decode throws BC's own NavNCLFieldNotFoundException
+    // ("... is ambiguous between multiple fields ...") instead of positioning — real BC
+    // does not throw here (issue #2515). Positioning by field NUMBER, exactly like every
+    // other cursor move in this class (ALSetPosition/GetFieldValue take field numbers, never
+    // captions), sidesteps the ambiguous caption lookup entirely. Both overloads are real
+    // BC's own public API on NavRecord; this only picks the one that matches how the rest of
+    // the runner already talks to a record.
+    public override object? GetBookmark() => RequireRecord("GetBookmark()").ALGetPosition(useCaptions: false);
 
     public override bool GoToBookmark(object bookmark)
     {
@@ -1275,8 +1286,31 @@ internal class LiveNavTestPage : MockITestPage
         if (fieldNos.Length != values.Length) return false;
 
         var record = RequireRecord("locating a row");
-        var original = record.ALGetPosition();
-        var hasCurrent = !string.IsNullOrEmpty(original);
+
+        // Capture the ORIGINAL row's own primary-key field numbers and values (not just a
+        // position string) before scanning moves the cursor away from it. A not-found result
+        // must restore the exact row the page was on — including every NON-key field it was
+        // showing — and NavRecord.ALSetPosition (real BC engine code, unmodified) only writes
+        // the primary-key columns of the record buffer, leaving non-key columns holding
+        // whatever the internal scan below last read (issue #2537: GoToRecord(existing row A)
+        // then GoToRecord(absent row) left the page's non-key field reading row C's value
+        // under key A, because the scan's last MoveNextDataRow landed on C before failing).
+        // Re-finding the original row through the SAME MoveFirst/MoveNextDataRow path the
+        // search below already uses is what refreshes a row's non-key columns correctly (they
+        // go through NavRecord.ALFindFirstAsync/ALNextAsync, not the key-only SetPosition), so
+        // the restore reuses that exact mechanism instead of a raw position write.
+        var hasCurrent = !string.IsNullOrEmpty(record.ALGetPosition(useCaptions: false));
+        int[]? originalKeyFieldNos = null;
+        object?[]? originalKeyValues = null;
+        if (hasCurrent)
+        {
+            var originalPrimaryKey = record.MetaTable?.PrimaryKey;
+            if (originalPrimaryKey != null && originalPrimaryKey.KeyFieldCount > 0)
+            {
+                originalKeyFieldNos = originalPrimaryKey.KeyFieldsList.Select(f => f.FieldNo).ToArray();
+                originalKeyValues = originalKeyFieldNos.Select(fieldNo => ReadClientObject(fieldNo)).ToArray();
+            }
+        }
 
         // Scan the WHOLE rowset, always starting from the first (or last, when searching
         // backward) row — never from wherever the page happens to be positioned. `forward`
@@ -1295,7 +1329,19 @@ internal class LiveNavTestPage : MockITestPage
             hasRow = forward ? MoveNextDataRow() : MovePrevious();
         }
 
-        if (hasCurrent) { record.ALSetPosition(original); Loaded(true); }
+        if (originalKeyFieldNos != null)
+        {
+            // Re-find the original row by its own primary key, walking forward from the top
+            // exactly like the search above — this goes through a real MoveFirst/
+            // MoveNextDataRow load, refreshing every field (not just the key) from the row's
+            // own stored values, instead of a raw key-only ALSetPosition.
+            hasRow = MoveFirst();
+            while (hasRow)
+            {
+                if (Matches(originalKeyFieldNos, originalKeyValues!)) break;
+                hasRow = MoveNextDataRow();
+            }
+        }
         return false;
     }
 

@@ -15,6 +15,8 @@ All notable changes to this project are documented here. Format based on
 - **all-profile:** populate the All Profile system virtual table (2000000178)
 
 ### Fixed
+- **testpage:** GoToRecord not-found restore refreshes non-key fields
+- **testpage:** GoToRecord no longer resolves position by field caption
 - **testpage:** TestPage over a temporary SourceTable = Integer opens empty, not the virtual table
 - **rad:** stop losing a namespace-nested sibling's array on a RAD self-loader clone
 - **startup:** make ncl-shadow publish/prune safe under concurrent al-runner startups
