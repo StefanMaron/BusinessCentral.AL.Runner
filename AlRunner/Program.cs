@@ -5025,12 +5025,40 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                     .GroupBy(t => $"{t.Codeunit}.{t.Method}", StringComparer.Ordinal)
                     .ToDictionary(g => g.Key, g => g.Last(), StringComparer.Ordinal);
 
+                // #2535: file-to-object attribution must be REQUEST-WIDE (every bundle's
+                // module unioned into one map), not per-module. `statements` is RUNTIME
+                // coverage — it contains every statement the test actually executed,
+                // including statements in a DEPENDENCY bundle's files (a real cross-app
+                // call, not a hypothetical: see the Pageworks/Pageworks.Test repro in
+                // #2535, mirroring #2492's PeekChangedObjects cross-bundle case on the
+                // CHANGED-object side — see that method's docstring). A per-module map
+                // cannot resolve a path belonging to a sibling bundle's module, so a single
+                // ordinary cross-app helper call made the whole test "unmappable" ->
+                // permanently "unknown" -> the test reran on EVERY future edit no matter
+                // how unrelated, forever. Measured on the real corpus (1012 tests): 897
+                // were unmappable this way, only 9 ever got a real coverage entry, and
+                // every one of those 9 had a coverage-set size of exactly 1 (their own
+                // declaring codeunit only) — so the defect is unmappable cross-bundle
+                // statements, not over-broad coverage sets. Built ONCE per request (not
+                // per bundle) from every module this request has already resolved.
+                var requestWideTrackedObjectsByPath = new Dictionary<string, AffectedObjectId>(StringComparer.Ordinal);
+                foreach (var trackedModuleName in requestModuleByBundle.Values.Distinct(StringComparer.Ordinal))
+                {
+                    var m = emitter.TryGetTrackedObjectsByPath(trackedModuleName);
+                    if (m == null) continue;
+                    foreach (var kv in m)
+                        requestWideTrackedObjectsByPath[kv.Key] = kv.Value;
+                }
+
                 foreach (var (bundlePath, discoveredTests) in requestDiscoveredTestsByBundle)
                 {
                     if (!requestModuleByBundle.TryGetValue(bundlePath, out var moduleName)) continue;
                     if (!requestEnvironmentByBundle.TryGetValue(bundlePath, out var envKey)) continue;
-                    var trackedObjectsByPath = emitter.TryGetTrackedObjectsByPath(moduleName);
-                    if (trackedObjectsByPath == null) continue;
+                    // Still require THIS bundle's own module to have a RAD baseline before
+                    // attributing ITS tests at all — same posture as before #2535, only the
+                    // per-statement lookup below now consults the request-wide map instead
+                    // of just this one module's.
+                    if (emitter.TryGetTrackedObjectsByPath(moduleName) == null) continue;
 
                     var nextCoverage = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
                     var nextUnknown = new HashSet<string>(StringComparer.Ordinal);
@@ -5054,7 +5082,7 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                         var unmappable = false;
                         foreach (var s in statements)
                         {
-                            if (!trackedObjectsByPath.TryGetValue(s.FilePath, out var identity))
+                            if (!requestWideTrackedObjectsByPath.TryGetValue(s.FilePath, out var identity))
                             {
                                 unmappable = true;
                                 break;
