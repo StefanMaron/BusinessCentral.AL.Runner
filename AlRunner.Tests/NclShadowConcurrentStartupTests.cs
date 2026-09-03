@@ -334,6 +334,47 @@ public sealed class NclShadowConcurrentStartupTests
         finally { Directory.Delete(root, recursive: true); }
     }
 
+    /// <summary>Positive + regression pin: healing must ADD only the files actually
+    /// missing, never overwrite one that already exists at that path — even when its
+    /// content differs from the healing build's. File.Copy(overwrite: true) on an
+    /// EXISTING file truncates-and-rewrites it in place, which corrupts a memory-mapped
+    /// reader (a sibling process with that exact file loaded as an assembly) even though
+    /// that sibling never touched the shadow dir itself past its own startup — confirmed
+    /// as the residual cause of a live CI regression after the whole-directory-swap fix
+    /// (BatchAppIdentityTests: a specific app's compiled test output going missing,
+    /// still reproducing after the swap-vs-in-place fix, until this "never overwrite an
+    /// existing file" tightening landed).</summary>
+    [Fact]
+    public void PublishShadowDir_SelfHeal_NeverOverwritesAnExistingHealableFile()
+    {
+        var root = NewTempDir("publish-selfheal-no-overwrite");
+        try
+        {
+            var origFull = @"C:\install\any";
+            var shadowDir = Path.Combine(root, "key");
+            Directory.CreateDirectory(shadowDir);
+            File.WriteAllText(Path.Combine(shadowDir, MarkerFileName), origFull);
+            // Ncl.dll ALREADY present with distinct content — stands in for a file a
+            // live sibling process might already have memory-mapped.
+            File.WriteAllBytes(Path.Combine(shadowDir, NclFileName), new byte[] { 0x11, 0x22, 0x33 });
+            // al-runner.dll and the manifests deliberately missing — the incomplete shape.
+
+            var tempDir = Path.Combine(root, "key.building.nooverwrite");
+            WriteCompleteShadowDir(tempDir, origFull, dllBytes: new byte[] { 9, 9, 9 });
+            File.WriteAllBytes(Path.Combine(tempDir, NclFileName), new byte[] { 0xAA, 0xBB, 0xCC }); // different content
+
+            NclShadowRuntime.PublishShadowDir(tempDir, shadowDir, origFull);
+
+            // Ncl.dll's PRE-EXISTING bytes must survive untouched — never overwritten,
+            // even though tempDir's copy has different content.
+            Assert.Equal(new byte[] { 0x11, 0x22, 0x33 }, File.ReadAllBytes(Path.Combine(shadowDir, NclFileName)));
+            // The genuinely missing files were still filled in, so the dir IS complete.
+            Assert.True(NclShadowRuntime.IsShadowDirComplete(shadowDir, origFull));
+            Assert.Equal(new byte[] { 9, 9, 9 }, File.ReadAllBytes(Path.Combine(shadowDir, EntryDllName)));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
     /// <summary>Negative: after self-healing, a subsequent EnsureShadowDir-style reuse
     /// check against the now-healed dir reports it reusable — proving the fix actually
     /// un-sticks the state rather than merely not-crashing once.</summary>

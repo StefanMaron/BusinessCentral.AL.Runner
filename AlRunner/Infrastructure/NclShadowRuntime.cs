@@ -364,19 +364,30 @@ public static class NclShadowRuntime
             }
 
             // shadowDir exists but is incomplete — heal in place (see the doc comment
-            // above for why NOT a whole-directory swap): copy every required file from
-            // our own complete tempDir build into shadowDir, then recheck. Best-effort
-            // per file — a sibling doing the exact same heal at the same moment can
-            // transiently collide on one file; the recheck below and the outer retry
-            // loop cover that rather than treating any single copy failure as fatal.
+            // above for why NOT a whole-directory swap): ADD only the required files
+            // that are ACTUALLY MISSING, copied from our own complete tempDir build.
+            // Deliberately never overwrites a file that already exists in shadowDir,
+            // even with content that should be identical (same key => same bytes) —
+            // File.Copy(overwrite: true) on an EXISTING file truncates-and-rewrites it
+            // in place, which is unsafe if a sibling process already has that exact
+            // file memory-mapped (a loaded assembly): the mapped pages would be
+            // corrupted mid-read out from under a process that never touched the
+            // shadow dir itself, well past its own startup. A missing file has no
+            // existing inode to corrupt, so creating it is safe regardless of who else
+            // is running from this directory.
             foreach (var name in HealableFileNames)
             {
-                try { File.Copy(Path.Combine(tempDir, name), Path.Combine(shadowDir, name), overwrite: true); }
-                catch (IOException) { /* transient sibling collision — recheck below, retry if still incomplete */ }
+                var dest = Path.Combine(shadowDir, name);
+                if (File.Exists(dest)) continue;
+                try { File.Copy(Path.Combine(tempDir, name), dest, overwrite: false); }
+                catch (IOException) { /* sibling created it (or is creating it) concurrently — fine either way */ }
                 catch (UnauthorizedAccessException) { /* same */ }
             }
             // Marker goes last, same invariant as the initial build: "marker matches
             // origFull" only becomes true once every other required file is in place.
+            // The marker itself IS safe to overwrite unconditionally — nothing reads it
+            // except this completeness check (never mapped, never a load target), and
+            // origFull is identical across every builder of this key by construction.
             try { File.Copy(Path.Combine(tempDir, MarkerFileName), Path.Combine(shadowDir, MarkerFileName), overwrite: true); }
             catch (IOException) { }
             catch (UnauthorizedAccessException) { }
