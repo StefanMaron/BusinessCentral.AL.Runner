@@ -6277,6 +6277,58 @@ public static class NclCecilRewrite
             }
         }
 
+        // NavForm.GetPart(int) — issue #2201's page-globals shape. GetPart(int) is the one
+        // door BOTH the host's own compiled AL (CurrPage.<part> compiles to
+        // base.Parent.CurrPage.GetPart(controlId) — see MockTestPage.cs's GetPart doc
+        // comment) and the runner's own AdoptFromHost go through to reach a subpage part
+        // object. Appending a call to RunnerFormInit.OnSubpagePartResolved right before every
+        // `ret` — after the original body has already computed its return value, which stays
+        // on the stack for the `ret` untouched — gives the runner a hook at the EARLIEST
+        // point common to both callers, so a page-globals part's OnOpenPage can run before
+        // EITHER side's first real touch, not just before the runner's own.
+        //
+        // Appending after (not guarding before, unlike the block above) is deliberate:
+        // GetPart(int)'s own body must always run for real — it is BC's un-guarded lookup
+        // machinery, used by every page whether the runner is driving it or not — this only
+        // adds an observer, it does not gate anything.
+        //
+        // `dup; call OnSubpagePartResolved; ret` before EVERY ret in a non-void method is
+        // correct regardless of how many return points the JIT/compiler emits: IL
+        // well-formedness guarantees exactly one value is on the evaluation stack
+        // immediately before any `ret` in a non-void method, so this needs no assumption
+        // about a single-return-point shape.
+        {
+            var navFormT = asm.MainModule.Types
+                .FirstOrDefault(t => t.FullName == "Microsoft.Dynamics.Nav.Runtime.NavForm");
+            var getPartM = navFormT?.Methods.FirstOrDefault(m =>
+                m.Name == "GetPart" && m.HasBody && m.Parameters.Count == 1
+                && m.Parameters[0].ParameterType.FullName == "System.Int32"
+                && m.ReturnType.FullName == "Microsoft.Dynamics.Nav.Runtime.NavForm");
+            if (getPartM != null)
+            {
+                var hookRef = asm.MainModule.ImportReference(
+                    typeof(AlRunner.Patches.RunnerFormInit).GetMethod(
+                        nameof(AlRunner.Patches.RunnerFormInit.OnSubpagePartResolved),
+                        BindingFlags.Public | BindingFlags.Static)
+                    ?? throw new InvalidOperationException(
+                        "RunnerFormInit.OnSubpagePartResolved not found — do not commit"));
+
+                var il = getPartM.Body.GetILProcessor();
+                var rets = getPartM.Body.Instructions.Where(i => i.OpCode == OpCodes.Ret).ToList();
+                foreach (var ret in rets)
+                {
+                    il.InsertBefore(ret, il.Create(OpCodes.Dup));
+                    il.InsertBefore(ret, il.Create(OpCodes.Call, hookRef));
+                }
+                getPartM.Body.MaxStackSize = Math.Max(getPartM.Body.MaxStackSize, 3);
+                Console.Error.WriteLine($"[Cecil] Hooked NavForm.GetPart(int) → RunnerFormInit.OnSubpagePartResolved at {rets.Count} return point(s)");
+            }
+            else
+            {
+                Console.Error.WriteLine("[Cecil] WARN: NavForm.GetPart(int) not found — page-globals subpage OnOpenPage ordering (issue #2201) may be wrong");
+            }
+        }
+
         // Diagnostic prepend (gated by env AL_RUNNER_DIAG_IC=1): print marker at
         // entry of each Ncl method called by Report{N}.InitializeComponent.
         {
