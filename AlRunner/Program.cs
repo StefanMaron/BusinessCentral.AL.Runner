@@ -3052,20 +3052,13 @@ foreach (var bundle in bundles)
                 // hiding WHICH type/dependency could not load. Dig out the concrete
                 // LoaderExceptions (per .claude/rules/loud-failures.md) so the developer sees
                 // the real cause — almost always a dependency whose runtime DLL was not built.
-                var rtle = ex as ReflectionTypeLoadException
-                    ?? ex.InnerException as ReflectionTypeLoadException;
-                if (rtle != null)
-                {
-                    var reasons = rtle.LoaderExceptions
-                        .Where(e => e != null).Select(e => e!.Message).Distinct().Take(5).ToList();
-                    bundleErrors.Add(
-                        $"<bundled>: EXEC-FAIL: {ex.Message.Split('\n')[0]} — " +
-                        string.Join(" | ", reasons));
-                }
-                else
-                {
-                    bundleErrors.Add($"<bundled>: EXEC-FAIL: {ex.Message.Split('\n')[0]}");
-                }
+                // Named after the APP GROUP, not the bundle: this catch sits inside the loop
+                // over the bundle's app groups, so it means THIS app contributed zero results
+                // while its siblings ran normally. With "<bundled>" here instead, an app's whole
+                // test set could disappear from a run and no line said whose — and the
+                // TEST-TIMEOUT-ABORT line a few lines up already names its app group.
+                bundleErrors.Add(AlRunner.Infrastructure.ExecFailure.Describe(
+                    asm.GetName().Name ?? $"<asm {runIdx}>", ex));
                 tests = Array.Empty<TestResult>();
             }
             finally
