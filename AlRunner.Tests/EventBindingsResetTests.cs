@@ -29,9 +29,27 @@
 // invoke ResetPerTestState() out of turn.
 using System.Reflection;
 using AlRunner;
+using Microsoft.Dynamics.Nav.Runtime;
 using Xunit;
 
 namespace AlRunner.Tests;
+
+/// <summary>
+/// Minimal stand-in bound entry for the tests below. Session.EventBindings is a real
+/// <c>List&lt;NavCodeunit&gt;</c> (see BcRuntime.cs's skeleton-session init comment), so a
+/// plain <c>object()</c> throws <c>ArgumentException</c> the moment IList.Add tries to
+/// store it — measured for real in CI (#2472). Named <c>Codeunit69002</c> for the same
+/// reason SingleInstanceResetHandleInvalidationTests' Codeunit69001 is: BcRuntime.
+/// FindCodeunitType resolves an id to the type literally named <c>Codeunit{id}</c>, and
+/// 69002 sits outside every AL idRange this repo declares, so it can never collide with a
+/// compiled AL object. Not marked IsEventManualBinding/IsSubscriptionBound — the reset
+/// under test clears the list unconditionally, so it doesn't need a faithful bind/unbind
+/// dance, only a type the list will actually accept.
+/// </summary>
+internal sealed class Codeunit69002 : NavCodeunit
+{
+    public Codeunit69002(ITreeObject parent) : base(parent, 69002) { }
+}
 
 // Loads Ncl types in-process (BcRuntime.SkeletonSession, EventBindings' declaring type),
 // so it shares the serial bc-engine collection with everything else that Cecil-rewrites/
@@ -42,6 +60,16 @@ public class EventBindingsResetTests
     private readonly BcEngineFixture _engine;
 
     public EventBindingsResetTests(BcEngineFixture engine) => _engine = engine;
+
+    private static ITreeObject Root()
+    {
+        var root = BcRuntime.RootTreeStub;
+        Assert.True(root != null,
+            "BcRuntime.RootTreeStub is null after the engine bootstrap — the skeleton tree " +
+            "these stand-in codeunits must be parented on does not exist, so this test cannot " +
+            "run at all.");
+        return root!;
+    }
 
     private static PropertyInfo EventBindingsProperty()
     {
@@ -63,8 +91,9 @@ public class EventBindingsResetTests
 
     /// <summary>
     /// Positive: a non-empty EventBindings list is emptied by the reset. The stand-in
-    /// entries are plain objects, not real bound NavCodeunit instances — the reset (and
-    /// the property this test observes through) only cares that the list is cleared, the
+    /// entries are real NavCodeunit instances (not a plain object() — Session.EventBindings
+    /// is a genuine List&lt;NavCodeunit&gt; and rejects anything else), but not bound via a
+    /// faithful BindSubscription dance — the reset only cares that the list is cleared, the
     /// same as BC's own IList.Clear() would do to any entries a real BindSubscription had
     /// added.
     /// </summary>
@@ -75,8 +104,9 @@ public class EventBindingsResetTests
             _engine.SkipReason ?? "the in-process BC engine is not ready (see BcEngineCollection).");
 
         var bindings = EventBindings();
-        bindings.Add(new object());
-        bindings.Add(new object());
+        var root = Root();
+        bindings.Add(new Codeunit69002(root));
+        bindings.Add(new Codeunit69002(root));
         Assert.Equal(2, bindings.Count);
 
         BcRuntime.ResetEventBindingsForTestBoundary();
