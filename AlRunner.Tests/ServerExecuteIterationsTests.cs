@@ -13,7 +13,7 @@ namespace AlRunner.Tests;
 /// End-to-end against real compiled + executed AL, through the wire: spawns the runner
 /// in --server mode (needs the BC artifact cache; reports Skipped, not Passed, when
 /// absent, via TestArtifacts). The pure state-machine and classification mechanics are
-/// proven without BC in AlIterationSegmenterTests / AlLoopSyntaxIndexTests; this class
+/// proven without BC in AlIterationSegmenterTests / AlMemberSyntaxIndexTests; this class
 /// proves the two halves meet BC's actual instrumentation.
 ///
 /// Ghost-test guard: every positive assertion names a SPECIFIC iteration count, value,
@@ -120,11 +120,12 @@ public class ServerExecuteIterationsTests : IClassFixture<SharedCliServer>
             m => m.GetProperty("text").GetString() == "FINAL_MSG");
         // Executed lines per iteration: the body's two lines, nothing before or after the loop.
         Assert.All(steps, s => Assert.Equal(new[] { 10, 11 }, Lines(s)));
-        // The flat series is untouched: still every execution, still in order.
+        // The flat series is untouched by bucketing: still one record per execution of
+        // an assigning statement, in order, `total := 0` (statement 0) included.
         var flat = t.GetProperty("capturedValues").EnumerateArray()
             .Where(v => v.GetProperty("variableName").GetString() == "total")
             .Select(v => v.GetProperty("value").ToString()).ToArray();
-        Assert.Equal(new[] { "1", "3", "6" }, flat);
+        Assert.Equal(new[] { "0", "1", "3", "6" }, flat);
     }
 
     // --- every loop kind -------------------------------------------------------------------
@@ -446,5 +447,92 @@ public class ServerExecuteIterationsTests : IClassFixture<SharedCliServer>
         // The same file identity coverage uses.
         Assert.Equal(d.GetProperty("coverage").EnumerateArray().Single().GetProperty("file").GetString(),
             loop.GetProperty("file").GetString());
+    }
+
+    // #2056 full-fidelity contract on the steps: an iteration that ran `x := 5` while x
+    // was already 5 still carries x = 5, and `flag := true` while flag was already true
+    // still carries flag = true. This is the shape the iteration table renders one
+    // cell per variable from, with no carry-forward on the consumer's side.
+    [SkippableFact]
+    public async Task Execute_SameValueAssignmentsInsideALoop_EveryIterationCarriesThem()
+    {
+        TestArtifacts.SkipIfMissing();
+        var t = SingleTest(await ExecuteAsync(
+            "codeunit 60318 \"Iter Same Value SX\" { trigger OnRun() var i: Integer; x: Integer; flag: Boolean; " +
+            "begin x := 5; x := 5; for i := 1 to 3 do begin x := 5; flag := true; end; x := 6; end; }"));
+        var loop = Assert.Single(Loops(t, "OnRun"));
+        Assert.Equal(3, loop.GetProperty("iterationCount").GetInt32());
+        var steps = loop.GetProperty("steps").EnumerateArray().ToList();
+        for (int k = 0; k < 3; k++)
+        {
+            Assert.Equal(new[] { (k + 1).ToString() }, Values(steps[k], "i"));
+            Assert.Equal(new[] { "5" }, Values(steps[k], "x"));
+            Assert.Equal(new[] { "True" }, Values(steps[k], "flag"));
+        }
+        // The pre-loop and post-loop assignments are not in any step.
+        Assert.DoesNotContain(steps.SelectMany(s => s.GetProperty("capturedValues").EnumerateArray()),
+            v => v.GetProperty("value").ToString() == "6");
+    }
+
+    [SkippableFact]
+    public async Task Execute_LoopInsideACalledProcedure_StepsCarryTheCalleesOwnValues()
+    {
+        TestArtifacts.SkipIfMissing();
+        const string code =
+            "codeunit 60319 \"Iter Callee Values SX\"\n" +
+            "{\n" +
+            "    trigger OnRun()\n" +
+            "    var i: Integer; s: Integer;\n" +
+            "    begin\n" +
+            "        for i := 1 to 2 do\n" +
+            "            s := s + Inner();\n" +
+            "    end;\n" +
+            "    local procedure Inner(): Integer\n" +
+            "    var k: Integer; s: Integer;\n" +
+            "    begin\n" +
+            "        for k := 1 to 2 do\n" +
+            "            s := s + k;\n" +
+            "        exit(s);\n" +
+            "    end;\n" +
+            "}\n";
+        var t = SingleTest(await ExecuteAsync(code));
+
+        var caller = Assert.Single(Loops(t, "OnRun"));
+        var callerSteps = caller.GetProperty("steps").EnumerateArray().ToList();
+        Assert.Equal(new[] { "1" }, Values(callerSteps[0], "i"));
+        Assert.Equal(new[] { "3" }, Values(callerSteps[0], "s"));   // Inner() returns 1 + 2
+        Assert.Equal(new[] { "2" }, Values(callerSteps[1], "i"));
+        Assert.Equal(new[] { "6" }, Values(callerSteps[1], "s"));
+
+        var callee = Loops(t, "Inner");
+        Assert.Equal(2, callee.Count);
+        foreach (var instance in callee)
+        {
+            var steps = instance.GetProperty("steps").EnumerateArray().ToList();
+            Assert.Equal(new[] { "1" }, Values(steps[0], "k"));
+            Assert.Equal(new[] { "1" }, Values(steps[0], "s"));
+            Assert.Equal(new[] { "2" }, Values(steps[1], "k"));
+            Assert.Equal(new[] { "3" }, Values(steps[1], "s"));
+            // Only the callee's own locals: the caller's loop variable never leaks in.
+            Assert.All(steps, s => Assert.Empty(Values(s, "i")));
+        }
+    }
+
+    [SkippableFact]
+    public async Task Execute_ForEachOverEqualElements_EveryStepCarriesTheElement()
+    {
+        TestArtifacts.SkipIfMissing();
+        var t = SingleTest(await ExecuteAsync(
+            "codeunit 60321 \"Iter ForEach Dup SX\" { trigger OnRun() var l: List of [Integer]; v: Integer; s: Integer; " +
+            "begin l.Add(5); l.Add(5); l.Add(6); foreach v in l do s := s + v; end; }"));
+        var loop = Assert.Single(Loops(t, "OnRun"));
+        var steps = loop.GetProperty("steps").EnumerateArray().ToList();
+        Assert.Equal(3, steps.Count);
+        Assert.Equal(new[] { "5" }, Values(steps[0], "v"));
+        Assert.Equal(new[] { "5" }, Values(steps[1], "v")); // same element as before: still this pass's record
+        Assert.Equal(new[] { "6" }, Values(steps[2], "v"));
+        Assert.Equal(new[] { "5" }, Values(steps[0], "s"));
+        Assert.Equal(new[] { "10" }, Values(steps[1], "s"));
+        Assert.Equal(new[] { "16" }, Values(steps[2], "s"));
     }
 }

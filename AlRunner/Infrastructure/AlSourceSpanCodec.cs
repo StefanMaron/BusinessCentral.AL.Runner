@@ -38,7 +38,7 @@ public static class AlSourceSpanCodec
     /// <summary>
     /// Inverse of <see cref="Decode"/>: packs four 0-based components into one
     /// SourceSpans entry. Used by tests that need a span table shaped exactly like
-    /// BC's without compiling AL (e.g. AlLoopSyntaxIndexTests); production code only
+    /// BC's without compiling AL (e.g. AlMemberSyntaxIndexTests); production code only
     /// ever decodes what the compiler emitted.
     /// </summary>
     internal static long Encode(int fromLine, int fromColumn, int toLine, int toColumn)

@@ -1,7 +1,7 @@
 // AlIterationTracker - the NavMethodScope-facing entry point of `iterationTracking`
-// (issue #2056): resolves each compiled scope class to its loop table once, forwards
-// BC's StmtHit/Exit traffic and Message() calls to AlIterationSegmenter, and turns the
-// result into wire-ready records (file, lines) at collection time.
+// (issue #2056): forwards BC's StmtHit/Exit traffic and Message() calls to
+// AlIterationSegmenter against each scope class's loop table (AlScopeSyntaxResolver),
+// and turns the result into wire-ready records (file, lines) at collection time.
 //
 // Wiring (no new Cecil rewrite - every signal already reaches the runner):
 //   AlCoverageTracker.OnStmtHit  -> OnStmtHit(scope, n, valuesObservedNow)
@@ -10,14 +10,6 @@
 // All three are self-gated by Enabled, so a request that did not ask for
 // iterationTracking pays one volatile-bool read per event - the same shape
 // AlCoverageTracker.Enabled and AlValueCapture.Enabled already have.
-//
-// SCOPE RESOLUTION - a scope Type maps to (file, member) exactly the way the statement
-// table does (AlCoverageTracker.TryResolveScope: [SourceSpans] on the type, object label
-// + id from the type name, file via AlCoverageSourceMap, member via [NavName]), then
-// AlLoopSyntaxIndex.FindSites picks that member's loops and AlLoopScopeTable.Build
-// classifies the scope's instrumented ids. Memoised per Type INCLUDING misses (framework
-// scopes, dependency apps outside the bundle) so the hot path stays one dictionary hit.
-using System.Collections.Concurrent;
 using Microsoft.Dynamics.Nav.Runtime;
 
 namespace AlRunner.Infrastructure;
@@ -55,22 +47,7 @@ public static class AlIterationTracker
     /// running. Gates every hook below; the hook calls themselves are unconditional.</summary>
     public static volatile bool Enabled;
 
-    private sealed record ScopeLoops(AlLoopScopeTable Table, string FilePath, string ScopeName);
-
-    private static AlLoopSyntaxIndex? _index;
-    private static IReadOnlyDictionary<(string Label, int Id), string>? _sourceMap;
-    private static readonly ConcurrentDictionary<Type, ScopeLoops?> _scopes = new();
     private static volatile AlIterationSegmenter? _segmenter;
-
-    /// <summary>Installs the request's loop index and file map (HandleServerExecute) and
-    /// forgets every per-Type resolution from the previous request - a re-sent bundle is
-    /// a new Assembly generation with new scope Types anyway.</summary>
-    public static void Configure(AlLoopSyntaxIndex index, IReadOnlyDictionary<(string Label, int Id), string> sourceMap)
-    {
-        _index = index;
-        _sourceMap = sourceMap;
-        _scopes.Clear();
-    }
 
     /// <summary>Reset before each top-level AL invocation (RunFirstCodeunitOnRun), the
     /// same bracket AlValueCapture.Reset uses.</summary>
@@ -84,14 +61,14 @@ public static class AlIterationTracker
         if (!Enabled) return;
         var seg = _segmenter;
         if (seg == null) return;
-        var resolved = Resolve(scope.GetType());
+        var resolved = AlScopeSyntaxResolver.Resolve(scope.GetType());
         if (resolved == null) return;
-        seg.OnHit(scope, resolved.Table, currentStatementNumber, observed);
+        seg.OnHit(scope, resolved.Loops, currentStatementNumber, observed);
     }
 
     /// <summary>Fed from AlValueCapture.OnExit (the Cecil-prepended NavMethodScope.Exit
     /// hook) for EVERY scope exit, with the final diffed values (empty unless
-    /// captureValues is on and this is the top-level scope).</summary>
+    /// captureValues is on).</summary>
     public static void OnScopeExit(NavMethodScope scope, IReadOnlyList<AlCapturedValue> observed)
     {
         if (!Enabled) return;
@@ -115,7 +92,7 @@ public static class AlIterationTracker
         foreach (var inst in seg.Finish())
         {
             // Resolved when the instance was pushed, so this cannot miss.
-            var info = Resolve(inst.ScopeInstance.GetType())!;
+            var info = AlScopeSyntaxResolver.Resolve(inst.ScopeInstance.GetType())!;
             var steps = new List<AlIterationStep>(inst.Steps.Count);
             foreach (var s in inst.Steps)
             {
@@ -141,38 +118,5 @@ public static class AlIterationTracker
                 Unsegmentable: inst.Site.Unsegmentable));
         }
         return result;
-    }
-
-    private static ScopeLoops? Resolve(Type scopeType)
-    {
-        if (_scopes.TryGetValue(scopeType, out var cached)) return cached;
-        var resolved = ResolveUncached(scopeType);
-        _scopes[scopeType] = resolved;
-        return resolved;
-    }
-
-    private static ScopeLoops? ResolveUncached(Type scopeType)
-    {
-        var index = _index;
-        var sourceMap = _sourceMap;
-        if (index == null || sourceMap == null) return null;
-        if (AlCoverageTracker.TryResolveScope(scopeType, sourceMap) is not { } scope) return null;
-
-        var instrumented = AlCoverageInstrumentedStatements.Find(scopeType);
-        if (instrumented.Count == 0) return null;
-        // Any real statement's position identifies the member body among same-named
-        // triggers; the lowest instrumented id is the body's first statement.
-        int first = instrumented.Min();
-        AlTextPosition? anchor = null;
-        if (first >= 0 && first < scope.Spans.Length)
-        {
-            var (fromLine, fromColumn, _, _) = AlSourceSpanCodec.Decode(scope.Spans[first]);
-            anchor = new AlTextPosition(fromLine, fromColumn);
-        }
-        var sites = index.FindSites(scope.FilePath, scope.ScopeName, anchor);
-        if (sites == null) return null;
-
-        var table = AlLoopScopeTable.Build(sites, scope.Spans, instrumented);
-        return new ScopeLoops(table, scope.FilePath, scope.ScopeName);
     }
 }

@@ -1,43 +1,59 @@
-// AlLoopSyntaxIndex - reads every loop statement out of a bundle's AL source with BC's
-// own syntax tree (issue #2056, `iterationTracking`). This is the ONLY place loop
-// STRUCTURE comes from: BC's [SourceSpans] carry file/line/column per statement but
-// nothing says "these statements form a loop body", and the StmtHit stream alone cannot
-// tell a nested loop's repeat from its parent's (see AlLoopModel.cs's header for why).
+// AlMemberSyntaxIndex - the syntax facts the capture hooks need about every AL
+// trigger/procedure in a bundle, read with BC's own syntax tree (issue #2056):
+//   - its LOOPS (AlLoopSite: kind, loop variable, header range, body statements,
+//     nesting) for iterationTracking - BC's [SourceSpans] carry file/line/column per
+//     statement but nothing says "these statements form a loop body", and the StmtHit
+//     stream alone cannot tell a nested loop's repeat from its parent's (AlLoopModel.cs);
+//   - its statement WRITE SETS (AlStatementWrites) for full-fidelity captureValues -
+//     which locals each statement assigns, so a same-value re-assignment is still a
+//     record (AlWriteSetModel.cs).
 //
-// Parsed once per `execute` request that asks for iterationTracking (HandleServerExecute),
-// with the same preprocessor symbols BcCompiler.Emit uses for the bundle, so `#if`
-// regions resolve the way they did when the code was compiled. Cost: one
-// SyntaxTree.ParseObjectText per .al file, the same call the compiler already made -
+// Parsed once per `execute` request that asks for captureValues or iterationTracking
+// (HandleServerExecute), with the same preprocessor symbols BcCompiler.Emit uses for the
+// bundle, so `#if` regions resolve the way they did when the code was compiled. Cost:
+// one SyntaxTree.ParseObjectText per .al file, the same call the compiler already made -
 // independent of the compile cache on purpose, since a cache HIT skips BcCompiler
 // entirely and this index must still exist.
 //
 // Lookup is by (file, member name) - the same identity AlCoverageTracker resolves a
 // scope class to (AlCoverageSourceMap for the file, [NavName] on the scope type for the
-// member). Field/action triggers can share a name within one object (two fields' OnValidate),
-// so FindSites disambiguates by which member body contains the scope's first statement.
+// member). Field/action triggers can share a name within one object (two fields'
+// OnValidate), so FindMember disambiguates by which member body contains the scope's
+// first statement.
 using Microsoft.Dynamics.Nav.CodeAnalysis;
 using NavCA = Microsoft.Dynamics.Nav.CodeAnalysis;
 using NavSyntax = Microsoft.Dynamics.Nav.CodeAnalysis.Syntax;
 
 namespace AlRunner.Infrastructure;
 
-/// <summary>One AL trigger/procedure and the loops in its body (document order; nested
-/// loops after their parent). <c>Sites</c> is empty for a member without loops - still
-/// listed, so a lookup can tell "found, no loops" from "no such member".</summary>
-public sealed record AlLoopMember(string FilePath, string Name, AlTextRange BodyRange, IReadOnlyList<AlLoopSite> Sites);
+/// <summary>One AL trigger/procedure: the loops in its body (document order; nested
+/// loops after their parent) and the write set of every assigning statement in it.
+/// <c>Sites</c>/<c>Writes</c> are empty for a member without loops/assignments - still
+/// listed, so a lookup can tell "found, nothing there" from "no such member".</summary>
+public sealed record AlMemberSyntax(
+    string FilePath,
+    string Name,
+    AlTextRange BodyRange,
+    IReadOnlyList<AlLoopSite> Sites,
+    IReadOnlyList<AlStatementWrites> Writes);
 
-public sealed class AlLoopSyntaxIndex
+public sealed class AlMemberSyntaxIndex
 {
-    private readonly Dictionary<string, List<AlLoopMember>> _byFile = new(StringComparer.OrdinalIgnoreCase);
+    // Built-ins whose FIRST argument is by reference. Not a list of every by-ref BC
+    // function - only the ones whose whole purpose is to assign that argument.
+    private static readonly HashSet<string> ByRefFirstArgumentBuiltins =
+        new(StringComparer.OrdinalIgnoreCase) { "Clear", "Evaluate" };
 
-    private AlLoopSyntaxIndex() { }
+    private readonly Dictionary<string, List<AlMemberSyntax>> _byFile = new(StringComparer.OrdinalIgnoreCase);
+
+    private AlMemberSyntaxIndex() { }
 
     /// <summary>Scans every *.al file under <paramref name="roots"/> (recursively, the
-    /// same walk AlCoverageSourceMap.Build does) and indexes its loops. Each root's own
+    /// same walk AlCoverageSourceMap.Build does) and indexes its members. Each root's own
     /// app.json supplies that bundle's preprocessor symbols, as in BcCompiler.</summary>
-    public static AlLoopSyntaxIndex Build(IEnumerable<string> roots)
+    public static AlMemberSyntaxIndex Build(IEnumerable<string> roots)
     {
-        var members = new List<AlLoopMember>();
+        var members = new List<AlMemberSyntax>();
         foreach (var root in roots)
         {
             if (!Directory.Exists(root)) continue;
@@ -54,43 +70,47 @@ public sealed class AlLoopSyntaxIndex
         return FromMembers(members);
     }
 
-    public static AlLoopSyntaxIndex FromMembers(IEnumerable<AlLoopMember> members)
+    public static AlMemberSyntaxIndex FromMembers(IEnumerable<AlMemberSyntax> members)
     {
-        var index = new AlLoopSyntaxIndex();
+        var index = new AlMemberSyntaxIndex();
         foreach (var m in members)
         {
             if (!index._byFile.TryGetValue(m.FilePath, out var list))
-                index._byFile[m.FilePath] = list = new List<AlLoopMember>();
+                index._byFile[m.FilePath] = list = new List<AlMemberSyntax>();
             list.Add(m);
         }
         return index;
     }
 
     /// <summary>
-    /// The loops of the member named <paramref name="memberName"/> in <paramref
-    /// name="filePath"/>, or null when no such member exists there. When several members
-    /// share the name (field triggers), <paramref name="statementStart"/> - any statement
-    /// position of the scope being resolved, e.g. its statement 0 - picks the one whose
-    /// body contains it; with no position, or none containing it, null (never a guess).
+    /// The member named <paramref name="memberName"/> in <paramref name="filePath"/>, or
+    /// null when there is none. When several members share the name (field triggers),
+    /// <paramref name="statementStart"/> - any statement position of the scope being
+    /// resolved, e.g. its statement 0 - picks the one whose body contains it; with no
+    /// position, or none containing it, null (never a guess).
     /// </summary>
-    public IReadOnlyList<AlLoopSite>? FindSites(string filePath, string memberName, AlTextPosition? statementStart)
+    public AlMemberSyntax? FindMember(string filePath, string memberName, AlTextPosition? statementStart)
     {
         if (!_byFile.TryGetValue(NormalizePath(filePath), out var members)) return null;
-        AlLoopMember? single = null;
+        AlMemberSyntax? single = null;
         int matches = 0;
         foreach (var m in members)
         {
             if (!string.Equals(m.Name, memberName, StringComparison.OrdinalIgnoreCase)) continue;
             matches++;
             single = m;
-            if (statementStart is { } p && m.BodyRange.ContainsStart(p)) return m.Sites;
+            if (statementStart is { } p && m.BodyRange.ContainsStart(p)) return m;
         }
-        return matches == 1 ? single!.Sites : null;
+        return matches == 1 ? single : null;
     }
+
+    /// <summary>The loops of the member <see cref="FindMember"/> resolves, or null.</summary>
+    public IReadOnlyList<AlLoopSite>? FindSites(string filePath, string memberName, AlTextPosition? statementStart) =>
+        FindMember(filePath, memberName, statementStart)?.Sites;
 
     /// <summary>Parses ONE AL file's text. <paramref name="preprocessorSymbols"/> defaults
     /// to the compiler's baseline set (CLEANSCHEMA1..25 plus any --define symbols).</summary>
-    public static IReadOnlyList<AlLoopMember> Parse(string source, string filePath, IEnumerable<string>? preprocessorSymbols = null)
+    public static IReadOnlyList<AlMemberSyntax> Parse(string source, string filePath, IEnumerable<string>? preprocessorSymbols = null)
     {
         var parseOpts = new NavCA.ParseOptions(
             runtimeVersion: null!,
@@ -100,13 +120,13 @@ public sealed class AlLoopSyntaxIndex
         var root = tree.GetCompilationUnitRoot();
         var normalized = NormalizePath(filePath);
 
-        var result = new List<AlLoopMember>();
+        var result = new List<AlMemberSyntax>();
         foreach (var member in root.DescendantNodes().OfType<NavSyntax.MethodOrTriggerDeclarationSyntax>())
         {
             if (member.Body == null) continue; // a declaration without a body has no statements
             var sites = new List<AlLoopSite>();
             VisitNonLoop(member.Body, parent: null, sites);
-            result.Add(new AlLoopMember(normalized, MemberName(member), Range(member.Body), sites));
+            result.Add(new AlMemberSyntax(normalized, MemberName(member), Range(member.Body), sites, CollectWrites(member.Body)));
         }
         return result;
     }
@@ -126,6 +146,66 @@ public sealed class AlLoopSyntaxIndex
 
     private static string MemberName(NavSyntax.MethodOrTriggerDeclarationSyntax member) =>
         member.Name?.Identifier.ValueText ?? "?";
+
+    // ---------------------------------------------------------------- write sets
+
+    /// <summary>Every statement in <paramref name="body"/> (all nesting levels, blocks
+    /// themselves excluded) that assigns something - see AlWriteSetModel.cs's header
+    /// for what counts. Statements that write nothing are not listed.</summary>
+    internal static IReadOnlyList<AlStatementWrites> CollectWrites(NavSyntax.BlockSyntax body)
+    {
+        var result = new List<AlStatementWrites>();
+        foreach (var stmt in body.DescendantNodes().OfType<NavSyntax.StatementSyntax>())
+        {
+            if (stmt is NavSyntax.BlockSyntax) continue;
+            var target = WriteTargetOf(stmt);
+            if (target != null) result.Add(new AlStatementWrites(Start(stmt), new[] { target }));
+        }
+        return result;
+    }
+
+    private static string? WriteTargetOf(NavSyntax.StatementSyntax stmt) => stmt switch
+    {
+        NavSyntax.AssignmentStatementSyntax a => RootLocal(a.Target),
+        NavSyntax.CompoundAssignmentStatementSyntax c => RootLocal(c.Target),
+        // for/foreach: NOT here. The loop variable's initial value is observed at the
+        // loop statement's own hit (BC assigns it before that hit), and each later pass
+        // is handled by AlLoopScopeTable.LoopVariablesAssignedBefore - a write set on the
+        // loop statement would only duplicate the initial value at the first body hit.
+        NavSyntax.ExpressionStatementSyntax { Expression: NavSyntax.InvocationExpressionSyntax inv } => InvocationWriteTarget(inv),
+        _ => null,
+    };
+
+    // `x.Add(5)` / `Rec.Insert()` write their receiver; `Clear(x)` / `Evaluate(x, s)`
+    // write their first argument. A bare user-procedure call claims nothing.
+    private static string? InvocationWriteTarget(NavSyntax.InvocationExpressionSyntax inv)
+    {
+        switch (inv.Expression)
+        {
+            case NavSyntax.MemberAccessExpressionSyntax ma:
+                return RootLocal(ma.Expression);
+            case NavSyntax.IdentifierNameSyntax id when ByRefFirstArgumentBuiltins.Contains(id.Identifier.ValueText):
+                var args = inv.ArgumentList?.Arguments;
+                return args is { Count: > 0 } ? RootLocal(args.Value[0]) : null;
+            default:
+                return null;
+        }
+    }
+
+    // The local an expression ultimately names: `Rec.Amount` and `arr[1]` root at `Rec`
+    // and `arr`; a parenthesised expression at whatever it wraps. Anything else (a
+    // literal, a call result) names no local.
+    private static string? RootLocal(SyntaxNode? expr) => expr switch
+    {
+        null => null,
+        NavSyntax.IdentifierNameSyntax id => id.Identifier.ValueText,
+        NavSyntax.MemberAccessExpressionSyntax ma => RootLocal(ma.Expression),
+        NavSyntax.ElementAccessExpressionSyntax ea => RootLocal(ea.Expression),
+        NavSyntax.ParenthesizedExpressionSyntax p => RootLocal(p.Expression),
+        _ => null,
+    };
+
+    // ---------------------------------------------------------------- loops
 
     private static bool IsLoop(SyntaxNode node) =>
         node is NavSyntax.ForStatementSyntax or NavSyntax.ForEachStatementSyntax
@@ -153,13 +233,13 @@ public sealed class AlLoopSyntaxIndex
         {
             case NavSyntax.ForStatementSyntax f:
                 kind = AlLoopKind.For;
-                loopVariable = VariableName(f.LoopVariable);
+                loopVariable = RootLocal(f.LoopVariable) ?? f.LoopVariable?.ToString().Trim();
                 header = new AlTextRange(Start(f), End(f.DoKeywordToken));
                 bodyStatements = Flatten(f.Statement);
                 break;
             case NavSyntax.ForEachStatementSyntax fe:
                 kind = AlLoopKind.ForEach;
-                loopVariable = VariableName(fe.IterationVariable);
+                loopVariable = RootLocal(fe.IterationVariable);
                 header = new AlTextRange(Start(fe), End(fe.DoKeywordToken));
                 bodyStatements = Flatten(fe.Statement);
                 break;
@@ -212,12 +292,7 @@ public sealed class AlLoopSyntaxIndex
         }
     }
 
-    private static string? VariableName(SyntaxNode? expr) => expr switch
-    {
-        null => null,
-        NavSyntax.IdentifierNameSyntax id => id.Identifier.ValueText,
-        _ => expr.ToString().Trim(),
-    };
+    // ---------------------------------------------------------------- positions
 
     private static AlTextPosition Start(SyntaxNode node)
     {

@@ -229,6 +229,42 @@ variable: a genuinely null variable is reported with `value:null` and
 omitted from the array — that would be indistinguishable from "this variable
 does not exist" (`.claude/rules/loud-failures.md`).
 
+#### One record per execution, not per change
+
+Since #2056 the series is **full fidelity**: a local gets a record every time a
+statement that assigns it has executed, whether or not the value changed, and
+every time its value changed for any other reason. `x := 5; x := 5;` is two
+records; `for i := 1 to 3 do x := 5;` is three more. This is the contract agreed
+on SShadowS/ALchemist#1: a consumer answering "what was `x` at iteration 7"
+cannot reconstruct that from a change-only series.
+
+The "assigns it" half comes from the bundle's own syntax (one parse per
+request, same preprocessor symbols as the compile): the target of `:=` and
+`+=` (the ROOT local for `Rec.Amount :=` and `arr[1] :=`), the receiver of a
+method-call statement (`l.Add(5);`, `Rec.Insert();`), the first argument of
+`Clear(x);` and `Evaluate(x, s);`, and a `for`/`foreach` loop variable at the
+start of every pass. What syntax cannot see is left to the value diff alone: a
+`var` parameter of a user procedure (`Helper(x);`), a receiver mutated inside an
+expression (`n := Rec.Next();`), a global. Those still report every real
+change; only a same-value re-assignment through one of them goes unreported.
+A local neither assigned nor changed still gets nothing, so an untouched local
+never appears.
+
+Two more properties of the series, both since #2056:
+
+- **Every scope is diffed against itself.** A procedure called from the
+  run's `OnRun` has its own capture state: its locals are compared with their
+  own previous observation (never with a same-named local of the caller), its
+  first observation is its own baseline, and its records carry its own
+  statement ids. Recursion gives each activation its own state too.
+- **A leading `for` keeps its loop variable.** BC assigns a `for`/`foreach`
+  variable before the loop statement's own hit, so when the loop is the scope's
+  first statement the very first observation already sees `i = 1`. A CLR
+  primitive or non-empty string that is non-default at that baseline can only
+  have been assigned by statement 0 before its hit (AL locals start at their
+  type's default), so it is emitted, attributed to statement 0. Every other
+  baseline value is still never emitted.
+
 ### Per-statement hit counts (`coverage`)
 
 `coverage: true` (#2042) opts into a per-statement hit-count + position table on
@@ -320,10 +356,11 @@ one `steps` entry per iteration carrying that iteration's own captured values,
 
 - **A step's `capturedValues` are the SAME records the flat per-test series
   carries, bucketed by the iteration that produced them.** Never a delta and
-  never a snapshot of every local: a value that did not change in an iteration
-  has no record in it, exactly as in the flat series. `messages` entries have
-  the same shape as the top-level `messages` array. Both are complete lists for
-  that iteration, in execution order.
+  never a snapshot of every local: a local the iteration assigned is in it
+  (with its value, changed or not), a local it neither assigned nor changed is
+  not, exactly as in the flat series (see "One record per execution" above).
+  `messages` entries have the same shape as the top-level `messages` array.
+  Both are complete lists for that iteration, in execution order.
 - **Where a value lands.** `--capture-values` observes a statement's effect at
   the NEXT statement's hit, so the last statement of one pass is observed at the
   first hit of the next. Values are filed with the pass that produced them; a
@@ -364,16 +401,10 @@ one `steps` entry per iteration carrying that iteration's own captured values,
   evaluation. No new Cecil rewrite. See `AlRunner/Infrastructure/AlLoopModel.cs`
   for the measured instrumentation shapes and `AlIterationSegmenter.cs` for the
   state machine.
-- **One correction to `capturedValues` came with this.** BC assigns a
-  `for`/`foreach` loop variable *before* the loop statement's own hit, so when
-  the loop is the scope's first statement the very first observation already
-  sees `i = 1`; the previous rule treated that first observation as a silent
-  baseline and never emitted it, leaving the series (and iteration 1) without
-  the loop variable's initial value. A primitive local that is non-default at
-  the baseline can only have been assigned by statement 0 before its hit (AL
-  locals start at their default), so it is now emitted, attributed to statement
-  0. Every other baseline value is still never emitted.
-### Affected-only test selection (`affectedOnly`)
+- **`capturedValues` changed alongside this.** Full-fidelity records, per-scope
+  diff state and the leading-`for` baseline rule all landed with #2056; they are
+  described under `execute`'s `capturedValues` above, because they apply to the
+  flat series whether or not `iterationTracking` is on.
 
 `affectedOnly: true` (runTests) narrows execution to tests affected by AL object
 changes since the previous successful run of the same bundle in this server

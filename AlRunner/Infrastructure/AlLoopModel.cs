@@ -4,7 +4,7 @@
 //
 // Two layers:
 //   AlLoopSite       — one loop statement in AL SOURCE, from BC's syntax tree
-//                      (AlLoopSyntaxIndex): kind, loop variable, and the TEXT RANGES of
+//                      (AlMemberSyntaxIndex): kind, loop variable, and the TEXT RANGES of
 //                      its header (the part that runs per evaluation / at entry) and of
 //                      each body statement. Source-only; knows nothing about ids.
 //   AlLoopSiteTable  — the same loop RESOLVED against one compiled scope class's
@@ -171,6 +171,59 @@ public sealed class AlLoopScopeTable
         foreach (var r in Roots)
             if (r.Owns(statementId)) return r;
         return null;
+    }
+
+    /// <summary>
+    /// The `for`/`foreach` loop variables that were assigned between the statement
+    /// <paramref name="previous"/> just finished and statement <paramref name="current"/>
+    /// about to run - i.e. <paramref name="current"/> opens a pass of a counted loop
+    /// (its first body statement, following into a nested loop's entry when the body
+    /// starts with one) and <paramref name="previous"/> is not that loop's header, so this
+    /// is not the first pass (the header's own hit already observed the initial value;
+    /// see AlValueCapture's header). AlValueCapture adds these to the write set so a
+    /// `foreach` element equal to the previous one still gets its record: for a `for`
+    /// the increment always changes the value, for a `foreach` it may not.
+    /// </summary>
+    public IEnumerable<string> LoopVariablesAssignedBefore(int current, int previous)
+    {
+        foreach (var site in Sites)
+        {
+            if (site.LoopVariable == null || site.Kind is not (AlLoopKind.For or AlLoopKind.ForEach)) continue;
+            if (!OpensPassOf(site, current, previous)) continue;
+            if (site.HeaderIds.Contains(previous)) continue; // first pass: the header hit observed it
+            yield return site.LoopVariable;
+        }
+    }
+
+    // `current` opens a pass of `site`: it is the site's marker statement, or - when the
+    // body starts with a nested loop - that nested loop's ENTRY. What "entry" is depends
+    // on the nested kind, because its ids fire more than once per enclosing pass:
+    //   for/foreach  its header fires exactly once per entry: any header hit is an entry.
+    //   while        its condition fires per evaluation; a mid-pass re-evaluation always
+    //                follows one of its own body statements, an entry never does.
+    //   repeat       no header before the body; its first statement fires per pass. A
+    //                pass that follows the until-condition is a re-pass, not an entry.
+    //                (A repeat that IS the whole enclosing body re-enters right after its
+    //                final until-condition too, which this cannot tell apart; the diff
+    //                still reports the enclosing loop variable's change for a `for`.)
+    private bool OpensPassOf(AlLoopSiteTable site, int current, int previous)
+    {
+        if (site.MarkerStatementId is int m) return m == current;
+        if (site.MarkerNestedSiteIndex is int n && n >= 0 && n < Sites.Count)
+        {
+            var nested = Sites[n];
+            switch (nested.Kind)
+            {
+                case AlLoopKind.For:
+                case AlLoopKind.ForEach:
+                    return nested.HeaderIds.Contains(current);
+                case AlLoopKind.While:
+                    return nested.HeaderIds.Contains(current) && !nested.BodyIds.Contains(previous);
+                case AlLoopKind.Repeat:
+                    return OpensPassOf(nested, current, previous) && !nested.Owns(previous);
+            }
+        }
+        return false;
     }
 
     /// <summary>1-based AL line of a statement id, or null when the id is outside the

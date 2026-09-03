@@ -5046,10 +5046,14 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
         // same StmtHit hook coverage/capturedValues already use. Scoped to THIS request
         // like the flags above; RunFirstCodeunitOnRun resets+collects it per bundle.
         AlRunner.Infrastructure.AlIterationTracker.Enabled = req.IterationTracking == true;
-        if (req.IterationTracking == true)
-            AlRunner.Infrastructure.AlIterationTracker.Configure(
-                AlRunner.Infrastructure.AlLoopSyntaxIndex.Build(sourcePaths),
+        // The syntax-backed facts both captureValues (statement write sets) and
+        // iterationTracking (loop tables) resolve against — one parse per request.
+        if (req.CaptureValues == true || req.IterationTracking == true)
+            AlRunner.Infrastructure.AlScopeSyntaxResolver.Configure(
+                AlRunner.Infrastructure.AlMemberSyntaxIndex.Build(sourcePaths),
                 AlRunner.Infrastructure.AlCoverageSourceMap.Build(sourcePaths, relativeTo: null));
+        else
+            AlRunner.Infrastructure.AlScopeSyntaxResolver.Clear();
         // #2042: 'coverage:true' on `execute` — same request/response correlation the
         // issue's acceptance criteria need: THIS single `execute` call can enable BOTH
         // captureValues AND coverage together, so a caller can prove statementId lines

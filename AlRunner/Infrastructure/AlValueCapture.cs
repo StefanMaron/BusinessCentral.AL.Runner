@@ -27,21 +27,35 @@
 // NavMethodScope.StatementNumber (read BEFORE Exit()'s own `statementNumber =
 // int.MaxValue` sentinel write).
 //
-// DIFF, NOT A FULL WALK, ON EVERY OBSERVATION — the actual "one record per execution":
+// DIFF PLUS WRITE SET ON EVERY OBSERVATION — the actual "one record per execution":
 //
 // Capturing every [NavName] field on every StmtHit and emitting all of them
 // unconditionally would produce (fields x statements) records for a test that touches
 // none of them repeatedly — noise, and a different order of runtime cost per statement
-// than the old "walk once at Exit" design (the issue's own "measure before shipping"
-// warning). Emitting a record only when a field's value (or capture error) actually
-// CHANGED since the last observation gives exactly "one record per execution that
-// produced a new value" — a loop reassigning the SAME field N times still yields N
-// records (each iteration's diff against the previous iteration's value), because each
-// iteration's StmtHit is a SEPARATE observation even when consecutive values coincide...
-// with one accepted, documented gap: two back-to-back iterations that happen to write
-// the IDENTICAL value are indistinguishable from one iteration (see DiffAndUpdate's own
-// doc comment) — the issue itself flags this tradeoff ("cannot answer what x was at
-// iteration 7 if unchanged") and accepts it as "probably enough for the inline series".
+// than the old "walk once at Exit" design. Two things earn a record at an observation:
+//   1. the field's value (or capture error) CHANGED since the last observation — the
+//      diff, which needs no knowledge of the source; and
+//   2. the statement that just finished ASSIGNS the field (its write set, from the AL
+//      syntax tree — AlWriteSetModel.cs / AlMemberSyntaxIndex.CollectWrites), whether or
+//      not the value changed. This is what makes "x := 5 ran again while x was already
+//      5" a record: the contract agreed on SShadowS/ALchemist#1 for #2074/#2056 is full
+//      fidelity by default, because a consumer answering "what was x at iteration 7"
+//      cannot reconstruct it from a change-only series.
+// A field neither changed nor assigned still gets nothing — an untouched local is not
+// "executed into existing". What syntax cannot see (a `var` parameter of a user
+// procedure, a receiver mutated inside an expression) falls back to the diff alone; see
+// AlWriteSetModel.cs.
+//
+// PER SCOPE INSTANCE, NOT PROCESS-GLOBAL:
+//
+// The last-known map and the last statement id live in a frame per NavMethodScope
+// INSTANCE (AlScopeFrames). A single global pair was wrong the moment the top-level
+// scope called a procedure: the callee's `s` was diffed against the caller's `s` (both
+// are [NavName] fields keyed by the AL name), the callee's first observation was never a
+// baseline, and its first records were attributed to the CALLER's last statement id.
+// IsTopLevelCall is true for every scope of the run's root object (StackDepth only grows
+// across an application-object boundary — see AlDapSession.cs), so all of them are
+// captured, each against its own frame.
 //
 // THE FIRST OBSERVATION IS A BASELINE, NEVER EMITTED (with one measured exception):
 //
@@ -95,27 +109,29 @@ public static class AlValueCapture
     /// not — same pattern as AlCoverageTracker.Enabled.</summary>
     public static volatile bool Enabled;
 
-    // Single process-global slots, NOT per-scope: only the OUTERMOST AL call
-    // (IsTopLevelCall) is captured (see the file header), and the runner invokes exactly
-    // one such call at a time — RunFirstCodeunitOnRun's OnRun invocations run strictly
-    // sequentially, matching the same single-slot assumption AlCallStackCapture already
-    // makes for the AL call stack.
+    // The flat series is one ordered list for the whole invocation (every scope's
+    // records, in observation order); the diff STATE is per scope instance — see the
+    // file header and AlScopeFrames.
     private static volatile List<AlCapturedValue>? _series;
-    // Last observed (value, captureError) per AL local name, used to detect a genuine
-    // change between one observation and the next (see DiffAndUpdate). Reset alongside
-    // _series so a new top-level invocation starts with a clean baseline.
-    private static volatile Dictionary<string, (object? Value, string? Error)>? _lastKnown;
-    // The most recent StmtHit's OWN statement id — i.e. "what just finished running", the
-    // producing statement the NEXT observation's diff should be attributed to. -1 means
-    // "no StmtHit observed yet this invocation" (the pending-baseline state).
-    private static volatile int _lastStatementId = -1;
+
+    private sealed class CaptureState
+    {
+        // Last observed (value, captureError) per AL local name of THIS scope instance,
+        // used to detect a genuine change between one observation and the next.
+        public readonly Dictionary<string, (object? Value, string? Error)> LastKnown = new();
+        // This scope instance's most recent StmtHit id — "what just finished running", the
+        // producing statement the NEXT observation's records are attributed to. -1 means
+        // "no StmtHit observed yet" (the pending-baseline state).
+        public int LastStatementId = -1;
+    }
+
+    private static readonly AlScopeFrames<CaptureState> _frames = new(() => new CaptureState());
 
     /// <summary>Reset before each top-level AL invocation whose locals should be captured.</summary>
     public static void Reset()
     {
         _series = new List<AlCapturedValue>();
-        _lastKnown = new Dictionary<string, (object?, string?)>();
-        _lastStatementId = -1;
+        _frames.Clear();
     }
 
     /// <summary>Every value change observed since the last Reset(), in execution order —
@@ -161,16 +177,19 @@ public static class AlValueCapture
 
         AlNavNameReflection.EnsureInit();
         var scopeName = scope.ScopeName ?? "?";
-        var lastKnown = _lastKnown ??= new Dictionary<string, (object?, string?)>();
-        bool isBaseline = _lastStatementId < 0;
-
-        // A baseline can only emit values statement 0 itself produced before its hit (see
-        // the file header), so THAT is the producing statement for those; every later
-        // observation is attributed to the statement that just finished, as before.
-        var changed = DiffAndUpdate(scopeName, isBaseline ? currentStatementNumber : _lastStatementId,
-            NamedFields(scope), lastKnown, isBaseline);
+        var state = _frames.GetOrPush(scope).State;
+        bool isBaseline = state.LastStatementId < 0;
+        // The statement that just finished: the producing statement for whatever this
+        // observation shows, and the one whose write set forces records for the locals
+        // it assigns even when their value did not change (see the file header). A
+        // baseline can only carry values statement 0 itself produced before its hit, so
+        // THAT is the producing statement for those.
+        var previous = state.LastStatementId;
+        var assigned = isBaseline ? null : AssignedBetween(scope.GetType(), previous, currentStatementNumber);
+        var changed = DiffAndUpdate(scopeName, isBaseline ? currentStatementNumber : previous,
+            NamedFields(scope), state.LastKnown, isBaseline, assigned);
         if (changed.Count > 0) (_series ??= new List<AlCapturedValue>()).AddRange(changed);
-        _lastStatementId = currentStatementNumber;
+        state.LastStatementId = currentStatementNumber;
         return changed;
     }
 
@@ -204,9 +223,14 @@ public static class AlValueCapture
             // Read BEFORE Exit()'s own body runs, so this is the real last-executed statement
             // index, not the int.MaxValue sentinel Exit() is about to write.
             var statementId = scope.StatementNumber;
-            var lastKnown = _lastKnown ??= new Dictionary<string, (object?, string?)>();
+            // This scope's frame ends here. A scope whose body never called StmtHit at all
+            // (a degenerate empty trigger) has no frame: an empty last-known map makes
+            // DiffAndUpdate report every field once, the pre-#2074 backstop.
+            var frame = _frames.Pop(scope);
+            var lastKnown = frame?.State.LastKnown ?? new Dictionary<string, (object?, string?)>();
+            var assigned = AlScopeSyntaxResolver.Resolve(scope.GetType())?.Writes.TargetsOf(statementId);
 
-            changed = DiffAndUpdate(scopeName, statementId, NamedFields(scope), lastKnown, isBaseline: false);
+            changed = DiffAndUpdate(scopeName, statementId, NamedFields(scope), lastKnown, isBaseline: false, assigned);
             if (changed.Count > 0) (_series ??= new List<AlCapturedValue>()).AddRange(changed);
         }
         AlIterationTracker.OnScopeExit(scope, changed);
@@ -244,35 +268,63 @@ public static class AlValueCapture
     /// the file header); that one is returned, attributed to <paramref
     /// name="attributionStatementId"/>, which the caller passes as statement 0 itself.
     ///
-    /// KNOWN LIMITATION (named in the issue, accepted as a tradeoff, not a bug): two
-    /// consecutive executions of the SAME statement that happen to write the IDENTICAL
-    /// value are indistinguishable from a single execution — this diff can only tell
-    /// "the value is different from last time", not "a statement ran again". A caller
-    /// that needs "what was x at iteration 7" for an iteration where x did not change
-    /// cannot get that from this series; full per-iteration sampling regardless of value
-    /// was considered and rejected as (fields x statements) noise for the common case —
-    /// see the file header.
+    /// <paramref name="assigned"/> is the write set of the statement that just finished
+    /// (AlWriteSetTable.TargetsOf; null at a baseline or when the scope has no syntax
+    /// info): a field in it is returned even when its value did NOT change, because the
+    /// statement executed and assigned it — the "one record per execution" the #2056
+    /// contract asks for. Matched case-insensitively, as AL identifiers are. A field
+    /// neither changed nor assigned is still skipped.
     /// </summary>
     internal static List<AlCapturedValue> DiffAndUpdate(
         string scopeName, int attributionStatementId,
         IEnumerable<(string Name, Func<object?> ReadField)> fields,
         Dictionary<string, (object? Value, string? Error)> lastKnown,
-        bool isBaseline)
+        bool isBaseline,
+        IReadOnlySet<string>? assigned = null)
     {
         var changed = new List<AlCapturedValue>();
         foreach (var (name, readField) in fields)
         {
             var captured = CaptureField(scopeName, name, attributionStatementId, readField, out var raw);
-            if (lastKnown.TryGetValue(name, out var prev)
-                && Equals(prev.Value, captured.Value) && prev.Error == captured.CaptureError)
+            bool unchanged = lastKnown.TryGetValue(name, out var prev)
+                && Equals(prev.Value, captured.Value) && prev.Error == captured.CaptureError;
+            if (unchanged && !WasAssigned(assigned, name))
             {
-                continue; // no change since the last observation — no execution to report
+                continue; // neither changed nor assigned since the last observation — no execution to report
             }
             lastKnown[name] = (captured.Value, captured.CaptureError);
             if (!isBaseline || (captured.CaptureError == null && AssignedBeforeFirstHit(raw)))
                 changed.Add(captured);
         }
         return changed;
+    }
+
+    // The write set of the statement that just finished, plus the counted-loop variables
+    // assigned between it and the statement about to run (AlLoopScopeTable.
+    // LoopVariablesAssignedBefore) - null when the scope has no syntax info at all.
+    private static IReadOnlySet<string>? AssignedBetween(Type scopeType, int previous, int current)
+    {
+        var syntax = AlScopeSyntaxResolver.Resolve(scopeType);
+        if (syntax == null) return null;
+        var writes = syntax.Writes.TargetsOf(previous);
+        HashSet<string>? merged = null;
+        foreach (var loopVariable in syntax.Loops.LoopVariablesAssignedBefore(current, previous))
+        {
+            merged ??= new HashSet<string>(writes, StringComparer.OrdinalIgnoreCase);
+            merged.Add(loopVariable);
+        }
+        return merged ?? writes;
+    }
+
+    // AL identifiers are case-insensitive; the set from AlWriteSetTable already is, but a
+    // caller-supplied set may not be, so fall back to a case-insensitive scan.
+    private static bool WasAssigned(IReadOnlySet<string>? assigned, string name)
+    {
+        if (assigned == null || assigned.Count == 0) return false;
+        if (assigned.Contains(name)) return true;
+        foreach (var a in assigned)
+            if (string.Equals(a, name, StringComparison.OrdinalIgnoreCase)) return true;
+        return false;
     }
 
     /// <summary>
