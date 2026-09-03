@@ -180,6 +180,15 @@ public static partial class RecordPatches
         _parsedXmlPorts.Clear();
         _parsedObjectDecls.Clear();
         _parsedObjectCaptions.Clear();
+        // Both keyed by (AppId, Name), both populated by the same per-file sweep
+        // (ParseSourceFileIntoAllExtractors) as every dict above — an edited re-run that
+        // renames or removes a profile/permission set must not keep serving the stale
+        // declaration, the same reason _parsedTables/_parsedPages/_parsedObjectDecls are
+        // cleared here. _parsedProfiles was missing this before #2357 — the same "current
+        // bundle source" gap that left permission sets unattributed also left profiles
+        // able to go stale across a --server reload.
+        _parsedProfiles.Clear();
+        _parsedPermissionSets.Clear();
         _metaFormCache.Clear();
         // #1957: the "already (successfully|un-)loaded" bookkeeping is a statement about
         // the NCLMetaForm instances _metaFormCache.Clear() just discarded — it must go
@@ -238,6 +247,10 @@ public static partial class RecordPatches
         // its "All Profile" row carries the declaring app's id and name, which are only
         // knowable from the app.json that owns the file (#2317).
         TryParseProfileFile(text, filePath);
+        // Permission sets need the file PATH for the same reason profiles do — their
+        // "Metadata Permission Set" row carries the declaring app's id, only knowable from
+        // the app.json that owns the file (#2357).
+        TryParsePermissionSetFile(text, filePath);
     }
 
     /// <summary>

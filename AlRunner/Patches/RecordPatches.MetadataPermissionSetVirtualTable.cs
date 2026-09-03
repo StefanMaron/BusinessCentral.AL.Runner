@@ -126,10 +126,27 @@ public static partial class RecordPatches
     /// on a real tier — <c>PermissionSetGroupObjectMetadataSummaries</c> is a dictionary
     /// keyed by it — so the first declaration wins here rather than two apps producing two
     /// rows.
+    /// <para>
+    /// Two sources, same "source-compiled wins" rule <see cref="RecordPatches.AllProfileVirtualTable"/>
+    /// already applies to profiles: permission sets the runner compiled from THIS run's own
+    /// AL source (<see cref="RecordPatches.AlPermissionSetParser"/>) come first, then
+    /// permission sets declared by a precompiled dependency .app fill in whatever the
+    /// source did not already declare. Without the first source, a permission set declared
+    /// only in the bundle under test — as Microsoft's own Tests-SINGLESERVER bucket does
+    /// with `permissionset 134611 TestSet` — could never appear here, because it has no
+    /// .app to read a SymbolReference.json from (#2357).
+    /// </para>
     /// </summary>
     private static IEnumerable<(BcAppSymbolCache.PermissionSetSymbol PermissionSet, Guid OwningAppId)> EnumerateKnownPermissionSets()
     {
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        // 1. Permission sets the runner compiled from source.
+        foreach (var p in ParsedPermissionSets)
+            if (seen.Add(p.Name))
+                yield return (new BcAppSymbolCache.PermissionSetSymbol(p.Id, p.Name, p.Caption, p.Assignable), p.AppId);
+
+        // 2. Permission sets declared by precompiled dependency .app packages.
         foreach (var appPath in _bcAppPaths.ToArray())
         {
             List<BcAppSymbolCache.PermissionSetSymbol> permissionSets;
