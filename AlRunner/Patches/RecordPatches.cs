@@ -1748,6 +1748,36 @@ public static partial class RecordPatches
                 return timeZoneDa;
             }
 
+            // ── Feature Key (2000000211) ─────────────────────────────────────────────────
+            // Routed to BC's OWN FeatureKeyDataProvider: its feature list is a hardcoded static
+            // in Microsoft.Dynamics.Nav.Types, so the rows are BC's rather than a second copy
+            // that would drift. An empty store made Base Application's Feature Management read
+            // every feature as unregistered and silently win the legacy code path.
+            // NOT a claim about any specific feature's shipped state: the 28.1 set measured
+            // here is 14 features, every one State = None. An earlier version of this comment
+            // said CalcOnlyVisibleFlowFields ships AllUsers (ON); that was read off the wrong
+            // Types.dll and is false for 28.1/28.4. Measure BuildFeatureKeys() against the
+            // artifact under test before asserting any feature's state.
+            // POPULATED READ-ONLY: real BC's Modify writes new state through to table
+            // 2000000210, which is not implemented here, so a Modify would land in the temp
+            // store and go nowhere. Issue #2585 tracks the write path.
+            // See RecordPatches.FeatureKeyVirtualTable.cs (#2585).
+            if (IsFeatureKeyVirtualTable(table))
+            {
+                if (!perTable.TryGetValue(tableId, out var featureKeyDa))
+                {
+                    var createdFeatureKey = _mCreateTempDataAccess!.Invoke(self, new object[] { table })!;
+                    featureKeyDa = perTable.GetOrAdd(tableId, createdFeatureKey);
+                }
+                var featureKeySession = _fDasSession?.GetValue(self)
+                    ?? throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+                        "Feature Key (system table 2000000211)",
+                        "feature-key-virtual-table — DataAccessSource has no skeleton session, so "
+                        + "BC's own FeatureKeyDataProvider cannot be constructed; see docs/scope.md");
+                PopulateFeatureKeyVirtualTable(featureKeyDa, table, featureKeySession);
+                return featureKeyDa;
+            }
+
             // ── CodeUnit Metadata (2000000137) ───────────────────────────────────────────
             // Virtual on the service tier too (CodeUnitDataProvider computes one row per
             // codeunit from NCLMetadata). An empty store makes every lookup answer "no such
