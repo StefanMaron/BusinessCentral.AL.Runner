@@ -81,6 +81,22 @@ public static class AlCoverageTracker
     public static void EndTest() => _currentTestKey = null;
 
     /// <summary>
+    /// Issue #2481's behavioural regression gate: incremented UNCONDITIONALLY, first
+    /// thing, on every call — proving the Cecil-rewritten call site actually fires on
+    /// every AL statement, independent of <see cref="Enabled"/>. Paired with <see
+    /// cref="HasRecordedAnyHits"/> (which stays false whenever <see cref="Enabled"/>
+    /// stays false): a plain run must show <c>CallCount &gt; 0</c> (the hook fired) AND
+    /// <c>HasRecordedAnyHits == false</c> (it did no bookkeeping work) — see
+    /// AlRunner.Tests/PlainRunInstrumentationGateTests.cs.
+    /// </summary>
+    internal static long CallCount;
+
+    /// <summary>True once <see cref="_hits"/> has recorded at least one entry — i.e. real
+    /// coverage bookkeeping actually happened. Stays false for the lifetime of a process
+    /// that never sets <see cref="Enabled"/>, however many statements ran.</summary>
+    internal static bool HasRecordedAnyHits => !_hits.IsEmpty;
+
+    /// <summary>
     /// Hook target for the Cecil-rewritten NavMethodScope.StmtHit(int). Public static,
     /// exactly (NavMethodScope, int) so the rewrite can forward `ldarg.0; ldarg.1; call`
     /// without boxing the int. Must stay side-effect-free beyond counting: it runs on
@@ -101,6 +117,7 @@ public static class AlCoverageTracker
     /// </summary>
     public static void OnStmtHit(NavMethodScope scope, int currentStatementNumber)
     {
+        System.Threading.Interlocked.Increment(ref CallCount);
         AlCurrentStatement.Update(scope, currentStatementNumber);
         AlValueCapture.OnStmtHit(scope, currentStatementNumber);
         // NavMethodScope.ExitStatementNumber (int.MaxValue) is written directly by

@@ -3499,6 +3499,25 @@ if (coverageEnabled)
     coverageOut.WriteLine($"Cobertura → {coverageOutputPath}");
 }
 
+// Issue #2481's behavioural regression gate — dumps the per-statement/per-scope
+// instrumentation call counters to stderr so a subprocess-spawning test (which cannot
+// read this process's static fields directly) can assert "the Cecil-rewritten hook
+// fired on every statement, but did zero bookkeeping work" for a plain run. Never
+// printed on a normal run: opt-in via an undocumented env var, not a CLI flag, because
+// this exists for AlRunner.Tests/PlainRunInstrumentationGateTests.cs only. Computing
+// and printing four longs/bools costs nothing worth gating further.
+if (Environment.GetEnvironmentVariable("AL_RUNNER_DUMP_INSTRUMENTATION_COUNTERS") == "1")
+{
+    Console.Error.WriteLine(
+        "[instrumentation-counters] " +
+        $"coverage.CallCount={AlRunner.Infrastructure.AlCoverageTracker.CallCount} " +
+        $"coverage.HasRecordedAnyHits={AlRunner.Infrastructure.AlCoverageTracker.HasRecordedAnyHits} " +
+        $"captureValues.CallCount={AlRunner.Infrastructure.AlValueCapture.CallCount} " +
+        $"captureValues.CollectedCount={AlRunner.Infrastructure.AlValueCapture.Collect().Count} " +
+        $"dap.CallCount={AlRunner.Infrastructure.AlDapSession.CallCount} " +
+        $"dap.WorkPerformedCount={AlRunner.Infrastructure.AlDapSession.WorkPerformedCount}");
+}
+
 // Exit non-zero if anything failed — the default since the v2 cut, matching main/v1.
 // --no-strict-exit restores the old always-0 behaviour for JSON-only consumers.
 return strictExitCode ? computedExitCode : 0;
