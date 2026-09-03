@@ -490,24 +490,67 @@ internal sealed class RunnerPageInstance
         if (string.Equals(raw, "true", StringComparison.OrdinalIgnoreCase) || raw == "1") return true;
         if (string.Equals(raw, "false", StringComparison.OrdinalIgnoreCase) || raw == "0") return false;
 
+        // The whole property text as one registered name. This is the shape a bare page global
+        // takes, it is by far the most common one, and taking it first means the parser below
+        // never sees a name whose own spelling happens to contain grammar characters.
         var expression = _sourceExpressions[raw];
-        if (expression == null)
-            // Loudly, not true-by-default: this property IS the page's read-only contract,
-            // and answering "editable" for one we could not evaluate makes every test of
-            // that contract unfailable. Naming the expression is what makes the gap fixable.
-            throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
-                $"TestPage page {_pageId} element {elementId} — {propertyName}",
-                $"testpage-control-property — the property is bound to expression '{raw}', which "
-                + "the page publishes no binding for, so its value cannot be evaluated. "
-                + "See docs/scope.md");
+        if (expression != null)
+        {
+            var direct = GetValue(expression);
+            return direct?.ClientObject is bool db
+                ? db
+                : throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+                    $"TestPage page {_pageId} element {elementId} — {propertyName}",
+                    $"testpage-control-property — expression '{raw}' evaluated to "
+                    + $"'{direct?.ClientObject ?? "null"}', which is not a Boolean. See docs/scope.md");
+        }
 
-        var value = GetValue(expression);
-        return value?.ClientObject is bool b
-            ? b
-            : throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
-                $"TestPage page {_pageId} element {elementId} — {propertyName}",
-                $"testpage-control-property — expression '{raw}' evaluated to "
-                + $"'{value?.ClientObject ?? "null"}', which is not a Boolean. See docs/scope.md");
+        // Not one bare name, so it is an expression: `not Flag`, `A and B`, `Value <> ''`. The
+        // AL compiler writes the source text of these properties into the metadata with the
+        // identifiers already resolved to their emitted spelling — see PageControlExpression for
+        // the measured shapes and the grammar.
+        if (PageControlExpression.TryEvaluateBoolean(raw, ResolveExpressionIdentifier, out var evaluated, out var why))
+            return evaluated;
+
+        // Loudly, not true-by-default: this property IS the page's read-only contract, and
+        // answering "editable" for one we could not evaluate makes every test of that contract
+        // unfailable. Naming the expression and what went wrong is what makes the gap fixable.
+        throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+            $"TestPage page {_pageId} element {elementId} — {propertyName}",
+            $"testpage-control-property — the property is bound to expression '{raw}', which "
+            + $"cannot be evaluated: {why}. See docs/scope.md");
+    }
+
+    /// <summary>
+    /// Resolve one identifier inside a control-property expression.
+    ///
+    /// Two sources, in BC's own order. A page global is registered in the page's source-expression
+    /// table under the emitted name the metadata carries. A source-table field is not in that table
+    /// at all — the metadata carries the FIELD NAME — so it is read off the record the page is
+    /// bound to. A name in neither is a genuine failure and must not resolve to a default.
+    /// </summary>
+    private bool ResolveExpressionIdentifier(string name, bool quoted, out object? value)
+    {
+        // An unquoted name can be either; a quoted one is always a field, because the emitted
+        // spelling of a page global never needs quoting. Trying the expression table for both is
+        // harmless and keeps the two paths from having to agree on that.
+        var expression = _sourceExpressions[name];
+        if (expression != null)
+        {
+            value = GetValue(expression)?.ClientObject;
+            return true;
+        }
+
+        var metaTable = _record?.MetaTable;
+        if (metaTable != null && metaTable.TryGetFieldByName(name, out var field) && field != null)
+        {
+            var raw = _record!.GetFieldValue(field.FieldNo);
+            value = raw is NavValue navValue ? navValue.ClientObject : raw;
+            return true;
+        }
+
+        value = null;
+        return false;
     }
 
     /// <summary>
