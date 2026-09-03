@@ -453,6 +453,48 @@ reflection), so the runner cannot disagree with the service tier about any of it
 
 ---
 
+### `Record "Windows Language"` — the license and installed-resource columns are chosen values
+
+<a id="windows-language-virtual-table"></a>
+
+The `Windows Language` system virtual table (2000000045) answers sixteen columns. Six come
+from the license and four from installed translation resources, and the runner has neither.
+
+| Column | Real BC | al-runner |
+|---|---|---|
+| `Enabled`, `Globally Enabled`, `Form Enabled`, `Report Enabled`, `Dataport Enabled`, `XMLport Enabled` | `License.HasLanguagePermission(...)` per language | Always **permitted** |
+| `STX File Exist`, `ETX File Exist`, `Help File Exist`, `Localization Exist` | Whether translation resources are installed | Always **none** |
+| `Language ID`, `Primary Language ID`, `Name`, `Abbreviated Name`, `Primary CodePage`, `Language Tag` | From the platform's culture list | The same — read through BC's own `WindowsLanguageHelper` |
+
+**These are declared divergences, not faithful substitutions**, and the distinction is worth
+stating because the runner elsewhere does the opposite. `ALDatabase.ALSid(string)` returns the
+empty string because the host has no Windows identity store and BC's *own* not-mapped result
+is the empty string — there is a defined BC answer to copy. Here there is none: with no
+license BC does not answer `false`, `get_License()` throws. Nothing is being reproduced; a
+value is being chosen.
+
+The license columns answer **permitted** because the runner exists so that AL tests run
+without a license at all. Answering "not permitted" would gate the very business logic those
+tests are there to exercise, turning a missing license into failures that say nothing about
+the AL under test.
+
+The installed-resource columns answer **none** for a different reason: the runner installs no
+BC translation resources, so that is a true statement about this process. It still differs
+from a service tier with localizations installed, so it is recorded here too.
+
+Both are **provisional**. A mockable license is a planned capability; when it arrives, the
+license columns become answerable from it. Each sits behind one named seam —
+`StubbedLicensePermission` and `StubbedLocalizationResources` in
+`AlRunner/Patches/RecordPatches.WindowsLanguageVirtualTable.cs` — so that change is one place,
+and `tests/runner-extras/windows-language-license-stub` asserts the current answers so they
+cannot move quietly.
+
+No `expect-divergence` entry accompanies this: that mode declares a corpus test that fails on
+the runner, and the corpus test for this table deliberately asserts only the six columns that
+do have a source. This section is the record.
+
+---
+
 ## Per-BC-minor engine variants: granularity is per MINOR, not per exact build
 
 Every released `al-runner` binary used to be compiled against exactly one BC minor's

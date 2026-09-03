@@ -1778,6 +1778,23 @@ public static partial class RecordPatches
                 return featureKeyDa;
             }
 
+            // ── Windows Language (2000000045) ────────────────────────────────────────────
+            // Virtual on the service tier too (WindowsLanguageDataProvider iterates BC's own
+            // WindowsLanguageHelper.AllCultures). An empty store made every language lookup
+            // answer "no such language" silently. The six license-derived columns and the four
+            // installed-resource columns throw instead of guessing — see
+            // RecordPatches.WindowsLanguageVirtualTable.cs (#2581).
+            if (IsWindowsLanguageVirtualTable(table))
+            {
+                if (!perTable.TryGetValue(tableId, out var windowsLanguageDa))
+                {
+                    var createdWindowsLanguage = _mCreateTempDataAccess!.Invoke(self, new object[] { table })!;
+                    windowsLanguageDa = perTable.GetOrAdd(tableId, createdWindowsLanguage);
+                }
+                PopulateWindowsLanguageVirtualTable(windowsLanguageDa, table);
+                return windowsLanguageDa;
+            }
+
             // ── CodeUnit Metadata (2000000137) ───────────────────────────────────────────
             // Virtual on the service tier too (CodeUnitDataProvider computes one row per
             // codeunit from NCLMetadata). An empty store makes every lookup answer "no such
