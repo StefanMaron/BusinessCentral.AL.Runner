@@ -96,7 +96,12 @@ internal static partial class BcAppSymbolCache
     // #2295 bug replayed from cache rather than a cache miss.
     // v20: added Reports' data-item DataItemLink / DataItemLinkReference / PrintOnlyIfDetail,
     // without which a nested data item of a precompiled report has no join at all (#2436).
-    private const int CacheVersion = 20;
+    // v21: PageSymbol gained Parts — a precompiled dependency page's subpage PART controls
+    // (issue #2467), each with its raw (unresolved) SubPageLink text. A v20 payload
+    // deserialises with Parts empty, which DependencyPageMetadataXml would read as "this
+    // page has no parts" — every TestPage part on that page refusing out-of-scope again,
+    // silently reverting to the pre-fix behaviour rather than a cache miss.
+    private const int CacheVersion = 21;
     private static readonly ConcurrentDictionary<string, AppSymbols> ProcessCache = new(StringComparer.OrdinalIgnoreCase);
     // Issue #1820 — path -> content-hash memo. ComputeAppContentHash needs to read the
     // WHOLE .app to hash it (unlike the FileInfo.Length/LastWriteTimeUtc stat it replaced,
@@ -208,7 +213,39 @@ internal static partial class BcAppSymbolCache
         // (verified: Base Application 28.1's "Customer List" carries
         // CardPageID = "Customer Card", not a numeric id) — resolved against the run's page
         // inventory at Page Metadata row-build time, same as the source-parsed path.
-        string? CardPageName = null);
+        string? CardPageName = null,
+        // Subpage PART controls (issue #2467), feeding DependencyPageMetadataXml's
+        // reconstructed <Content>. Unlike Controls above, a part's binding is resolved
+        // entirely from THIS XML (RunnerPageInstance.TryGetPartDefinition reads
+        // form.MetadataHelper.InfoPartDefinitions, built by BC's own metadata loader from
+        // Content), not from IL — see TryParsePageSymbol / CollectPagePartSymbols.
+        List<PagePartSymbol>? Parts = null);
+
+    /// <summary>
+    /// One subpage PART control of a precompiled dependency page, as SymbolReference.json
+    /// states it. Identified not by a hardcoded Kind number but by the presence of a
+    /// <c>RelatedPagePartId</c> element — verified against Base Application 28.1: all 1153
+    /// controls carrying one are Kind 6, and no Kind-6 control lacks one, matching this
+    /// file's existing convention of keying off a stated fact rather than an implementation
+    /// detail (see CollectPageControlSymbols' Kind-8 comment for the same reasoning).
+    /// <c>SubFormLink</c> is still raw AL text at this point — field-name -&gt; numeric-id
+    /// resolution needs the PART's own table (a different page's SourceTable) alongside the
+    /// HOST's, so it happens later in DependencyPageMetadataXml, which has both in scope.
+    /// </summary>
+    internal sealed record PagePartSymbol(
+        int Id, string Name, int PagePartId,
+        string? Caption, string? EditableExpr, string? EnabledExpr, string? VisibleExpr, string? ShowFilterExpr,
+        List<PageSubFormLinkSymbol> SubFormLink);
+
+    /// <summary>
+    /// One entry of a part's <c>SubPageLink</c> property, still as AL source text.
+    /// <c>PartFieldName</c> is the part's own field (quotes stripped); <c>Kind</c> is
+    /// "field"/"const"/"filter", exactly the AL keyword, lowercased; <c>Value</c> is
+    /// everything inside the parens verbatim — a parent field name (quotes intact) for
+    /// "field", anything else for "const"/"filter" (the runner does not resolve those; see
+    /// MockTestPage.SubPageLinks, which already refuses non-FIELD links by name).
+    /// </summary>
+    internal sealed record PageSubFormLinkSymbol(string PartFieldName, string Kind, string Value);
 
     /// <summary>
     /// One field control of a precompiled dependency page, as SymbolReference.json states
@@ -714,15 +751,19 @@ internal static partial class BcAppSymbolCache
         bool deleteAllowed = !SymbolBoolFalse(props, "DeleteAllowed");
 
         var controls = new List<PageControlSymbol>();
+        var parts = new List<PagePartSymbol>();
         int seq = 0;
         if (page.TryGetProperty("Controls", out var controlsArr) && controlsArr.ValueKind == JsonValueKind.Array)
             foreach (var c in controlsArr.EnumerateArray())
+            {
                 CollectPageControlSymbols(c, controls, ref seq);
+                CollectPagePartSymbols(c, parts);
+            }
 
         return new PageSymbol(pageId, name!, sourceTableId, sourceTableTemporary,
             string.IsNullOrWhiteSpace(pageType) ? "Card" : pageType!, caption,
             editable, insertAllowed, modifyAllowed, deleteAllowed, controls,
-            string.IsNullOrWhiteSpace(cardPageName) ? null : cardPageName);
+            string.IsNullOrWhiteSpace(cardPageName) ? null : cardPageName, parts);
     }
 
     /// <summary>
@@ -754,6 +795,107 @@ internal static partial class BcAppSymbolCache
         if (control.TryGetProperty("Controls", out var children) && children.ValueKind == JsonValueKind.Array)
             foreach (var child in children.EnumerateArray())
                 CollectPageControlSymbols(child, into, ref sequence);
+    }
+
+    /// <summary>
+    /// Recursively collect every subpage PART control (identified by a <c>RelatedPagePartId</c>
+    /// element — see <see cref="PagePartSymbol"/>'s doc comment) out of a page's <c>Controls</c>
+    /// tree, wherever it nests. All parts are collected into one flat list regardless of
+    /// nesting depth — DependencyPageMetadataXml re-emits them as direct siblings under one
+    /// synthesized container, which BC's own MetadataHelper.InfoPartDefinitions (itself a
+    /// flat view built by walking the WHOLE Content tree) treats identically to however deep
+    /// the real compiled page actually nested them.
+    /// </summary>
+    private static void CollectPagePartSymbols(JsonElement control, List<PagePartSymbol> into)
+    {
+        if (control.TryGetProperty("RelatedPagePartId", out var rel) && rel.ValueKind == JsonValueKind.Object
+            && rel.TryGetProperty("Id", out var relId) && relId.TryGetInt32(out var partPageId) && partPageId > 0)
+        {
+            var name = control.TryGetProperty("Name", out var n) ? n.GetString() : null;
+            int id = control.TryGetProperty("Id", out var idProp) && idProp.TryGetInt32(out var idv) ? idv : 0;
+            if (!string.IsNullOrEmpty(name) && id != 0)
+            {
+                var props = SymbolProperties(control);
+                props.TryGetValue("Caption", out var caption);
+                props.TryGetValue("Editable", out var editable);
+                props.TryGetValue("Enabled", out var enabled);
+                props.TryGetValue("Visible", out var visible);
+                props.TryGetValue("ShowFilter", out var showFilter);
+                props.TryGetValue("SubPageLink", out var subPageLink);
+                into.Add(new PagePartSymbol(id, name!, partPageId,
+                    string.IsNullOrEmpty(caption) ? null : caption,
+                    string.IsNullOrEmpty(editable) ? null : editable,
+                    string.IsNullOrEmpty(enabled) ? null : enabled,
+                    string.IsNullOrEmpty(visible) ? null : visible,
+                    string.IsNullOrEmpty(showFilter) ? null : showFilter,
+                    ParseSubPageLink(subPageLink)));
+            }
+        }
+
+        if (control.TryGetProperty("Controls", out var children) && children.ValueKind == JsonValueKind.Array)
+            foreach (var child in children.EnumerateArray())
+                CollectPagePartSymbols(child, into);
+    }
+
+    private static readonly System.Text.RegularExpressions.Regex SubPageLinkEntryRegex = new(
+        @"^(?<left>""[^""]+""|[A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?<kind>field|const|filter)\((?<val>.*)\)$",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    /// <summary>
+    /// Parse a <c>SubPageLink</c> property's raw AL text — e.g. <c>"Document No." =
+    /// field("No.")</c>, or a comma-separated list of such pairs — into (part field, kind,
+    /// value) triples. Measured across Base Application 28.1's 1311 SubPageLink entries:
+    /// 1168 are <c>field(...)</c>, 140 are <c>const(...)</c>, 3 are <c>filter(...)</c>; an
+    /// entry this cannot parse is simply dropped, which is safe because
+    /// MockTestPage.SubPageLinks already refuses (loudly, by name) a part whose SubFormLink
+    /// list is shorter than the AL declares — never silently unfiltered.
+    /// </summary>
+    private static List<PageSubFormLinkSymbol> ParseSubPageLink(string? text)
+    {
+        var result = new List<PageSubFormLinkSymbol>();
+        if (string.IsNullOrWhiteSpace(text)) return result;
+        foreach (var rawEntry in SplitTopLevelCommas(text))
+        {
+            var entry = rawEntry.Trim();
+            if (entry.Length == 0) continue;
+            var m = SubPageLinkEntryRegex.Match(entry);
+            if (!m.Success) continue;
+            var partField = m.Groups["left"].Value.Trim('"');
+            var kind = m.Groups["kind"].Value.ToLowerInvariant();
+            var value = m.Groups["val"].Value.Trim();
+            result.Add(new PageSubFormLinkSymbol(partField, kind, value));
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Split a SubPageLink's comma-separated entries, ignoring a comma that falls inside a
+    /// quoted field name or inside a nested <c>(...)</c> (e.g. <c>const(Database::"Purchase
+    /// Header")</c> or <c>filter(Open | "X")</c> — neither is comma-separated internally in
+    /// the corpus, but a nested nested-paren value like <c>field("A, B")</c> would otherwise
+    /// split wrongly).
+    /// </summary>
+    private static IEnumerable<string> SplitTopLevelCommas(string text)
+    {
+        var normalized = text.Replace("\r\n", " ").Replace('\n', ' ');
+        var result = new List<string>();
+        int depth = 0;
+        bool inQuotes = false;
+        int start = 0;
+        for (int i = 0; i < normalized.Length; i++)
+        {
+            char c = normalized[i];
+            if (c == '"') inQuotes = !inQuotes;
+            else if (!inQuotes && c == '(') depth++;
+            else if (!inQuotes && c == ')') depth--;
+            else if (!inQuotes && depth == 0 && c == ',')
+            {
+                result.Add(normalized[start..i]);
+                start = i + 1;
+            }
+        }
+        result.Add(normalized[start..]);
+        return result;
     }
 
     private static bool SymbolBool(Dictionary<string, string> props, string name)

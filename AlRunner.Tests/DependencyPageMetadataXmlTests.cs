@@ -246,4 +246,242 @@ public class DependencyPageMetadataXmlTests
             Directory.Delete(dir, recursive: true);
         }
     }
+
+    // Issue #2467 — subpage PART reconstruction. A separate app/fixture from the one above:
+    // resolving a part's SubFormLink needs real Tables (with named Fields) alongside the
+    // Pages, which the shared fixture above deliberately keeps minimal.
+    private const int PartsHostPageId = 88123501;
+    private const int PartsPartPageId = 88123502;
+    private const int PartsHostTableId = 88123520;
+    private const int PartsPartTableId = 88123521;
+    private const int PartsHostPageNoPartsId = 88123503;
+
+    private const string PartsSymbolReference = """
+        {
+          "RuntimeVersion": "15.1",
+          "Tables": [
+            {
+              "Id": 88123520,
+              "Name": "DPX Host Table",
+              "Fields": [ { "Id": 1, "Name": "Host Link Field" } ]
+            },
+            {
+              "Id": 88123521,
+              "Name": "DPX Part Table",
+              "Fields": [ { "Id": 5, "Name": "Part Link Field" } ]
+            }
+          ],
+          "Pages": [
+            {
+              "Id": 88123501,
+              "Name": "DPX Test Host Page",
+              "Properties": [
+                { "Name": "PageType", "Value": "Card" },
+                { "Name": "SourceTable", "Value": "88123520" }
+              ],
+              "Controls": [
+                {
+                  "Kind": 6,
+                  "RelatedPagePartId": { "Name": "", "Id": 88123502 },
+                  "Properties": [
+                    { "Name": "Caption", "Value": "DPX Part Caption" },
+                    { "Name": "Editable", "Value": "PartEditableExpr" },
+                    { "Name": "SubPageLink", "Value": "\"Part Link Field\" = field(\"Host Link Field\")" }
+                  ],
+                  "Id": 88123599,
+                  "Name": "DPXPart"
+                },
+                {
+                  "Kind": 6,
+                  "RelatedPagePartId": { "Name": "", "Id": 88123502 },
+                  "Properties": [
+                    { "Name": "SubPageLink", "Value": "\"Unresolvable Field\" = field(\"No Such Field\")" }
+                  ],
+                  "Id": 88123598,
+                  "Name": "DPXUnresolvablePart"
+                },
+                {
+                  "Kind": 6,
+                  "RelatedPagePartId": { "Name": "", "Id": 88123502 },
+                  "Properties": [
+                    { "Name": "SubPageLink", "Value": "\"Table ID\" = const(88123520)" }
+                  ],
+                  "Id": 88123597,
+                  "Name": "DPXConstPart"
+                }
+              ]
+            },
+            {
+              "Id": 88123502,
+              "Name": "DPX Test Part Page",
+              "Properties": [
+                { "Name": "PageType", "Value": "ListPart" },
+                { "Name": "SourceTable", "Value": "88123521" }
+              ]
+            },
+            {
+              "Id": 88123503,
+              "Name": "DPX Test Host Page Without Parts",
+              "Properties": [
+                { "Name": "PageType", "Value": "Card" },
+                { "Name": "SourceTable", "Value": "88123520" }
+              ]
+            }
+          ]
+        }
+        """;
+
+    private static XmlElement GetPartControl(XmlDocument doc, XmlNamespaceManager ns, int controlId)
+        => (XmlElement)doc.DocumentElement!.SelectSingleNode(
+            $"m:Content/m:Containers/m:Controls[@ID='{controlId}']", ns)!;
+
+    /// <summary>
+    /// The core #2467 fix: a resolvable FIELD SubPageLink must reconstruct as the numeric
+    /// InfopartPageDefinition/SubFormLink shape MockTestPage.SubPageLinks actually consumes
+    /// (FieldID / FilterType="FIELD" / FilterValue as numbers), not the AL text
+    /// SymbolReference.json states it as. Positive half of RED→GREEN: before this fix,
+    /// GetPart(88123599) on this page refused with "testpage-part — could not resolve this
+    /// control to a subpage part" because Content was always empty.
+    /// </summary>
+    [Fact]
+    public void TryBuildDependencyPageMetadata_PartWithResolvableFieldLink_EmitsNumericSubFormLink()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var appPath = WriteApp(dir, PartsSymbolReference);
+            RecordPatches.AddBcAppPath(appPath);
+
+            var xml = RecordPatches.TryBuildDependencyPageMetadata(PartsHostPageId);
+            Assert.NotNull(xml);
+
+            var doc = new XmlDocument();
+            doc.LoadXml(xml!);
+            var ns = new XmlNamespaceManager(doc.NameTable);
+            ns.AddNamespace("m", "urn:schemas-microsoft-com:dynamics:NAV:MetaObjects");
+            var xsi = new XmlNamespaceManager(doc.NameTable);
+
+            var part = GetPartControl(doc, ns, 88123599);
+            Assert.Equal("InfopartPageDefinition",
+                part.GetAttribute("type", "http://www.w3.org/2001/XMLSchema-instance"));
+            Assert.Equal("DPXPart", part.GetAttribute("Name"));
+            Assert.Equal(PartsPartPageId.ToString(), part.GetAttribute("PagePartID"));
+            Assert.Equal("ENU=DPX Part Caption", part.GetAttribute("CaptionML"));
+            Assert.Equal("PartEditableExpr", part.GetAttribute("Editable"));
+
+            var link = (XmlElement)part.SelectSingleNode("m:SubFormLink", ns)!;
+            Assert.Equal("4", link.GetAttribute("FilterGroup"));
+            Assert.Equal("FIELD", link.GetAttribute("FilterType"));
+            // Field 5 is "Part Link Field" on the PART's own table (88123521); field 1 is
+            // "Host Link Field" on the HOST's table (88123520) — this is the actual proof
+            // that both sides resolved against the RIGHT table, not just "some" table.
+            Assert.Equal("5", link.GetAttribute("FieldID"));
+            Assert.Equal("1", link.GetAttribute("FilterValue"));
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// Negative half: a SubPageLink field name this run cannot resolve to a numeric id must
+    /// NOT be silently dropped (which would leave the part unfiltered — showing every row of
+    /// the child table rather than only the parent's, a wrong answer loud-failures.md
+    /// forbids) and must NOT be silently defaulted to some guessed number. It has to come out
+    /// shaped so MockTestPage.SubPageLinks' own existing check — <c>int.TryParse</c> on
+    /// FilterValue — fails and refuses by name.
+    /// </summary>
+    [Fact]
+    public void TryBuildDependencyPageMetadata_PartWithUnresolvableFieldLink_EmitsNonNumericFilterValue()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var appPath = WriteApp(dir, PartsSymbolReference);
+            RecordPatches.AddBcAppPath(appPath);
+
+            var xml = RecordPatches.TryBuildDependencyPageMetadata(PartsHostPageId);
+            var doc = new XmlDocument();
+            doc.LoadXml(xml!);
+            var ns = new XmlNamespaceManager(doc.NameTable);
+            ns.AddNamespace("m", "urn:schemas-microsoft-com:dynamics:NAV:MetaObjects");
+
+            var part = GetPartControl(doc, ns, 88123598);
+            var link = (XmlElement)part.SelectSingleNode("m:SubFormLink", ns)!;
+            Assert.Equal("FIELD", link.GetAttribute("FilterType"));
+            Assert.False(int.TryParse(link.GetAttribute("FilterValue"), out _),
+                "an unresolved field name must not parse as a number — that is what makes " +
+                "MockTestPage.SubPageLinks refuse it by name instead of silently unfiltering the part");
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// A CONST-kind SubPageLink (10.7% of Base Application 28.1's SubPageLink entries,
+    /// measured) is reproduced with its REAL FilterType rather than defaulted to FIELD, so
+    /// MockTestPage.SubPageLinks' existing "only FilterType.FIELD is implemented" refusal
+    /// names the true reason instead of a wrong one.
+    /// </summary>
+    [Fact]
+    public void TryBuildDependencyPageMetadata_PartWithConstLink_PreservesConstFilterType()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var appPath = WriteApp(dir, PartsSymbolReference);
+            RecordPatches.AddBcAppPath(appPath);
+
+            var xml = RecordPatches.TryBuildDependencyPageMetadata(PartsHostPageId);
+            var doc = new XmlDocument();
+            doc.LoadXml(xml!);
+            var ns = new XmlNamespaceManager(doc.NameTable);
+            ns.AddNamespace("m", "urn:schemas-microsoft-com:dynamics:NAV:MetaObjects");
+
+            var part = GetPartControl(doc, ns, 88123597);
+            var link = (XmlElement)part.SelectSingleNode("m:SubFormLink", ns)!;
+            Assert.Equal("CONST", link.GetAttribute("FilterType"));
+            Assert.Equal("88123520", link.GetAttribute("FilterValue"));
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// A page with no parts at all must keep the pre-#2467 shape: Content present but with
+    /// no Containers child — never an empty <c>&lt;Containers&gt;</c> wrapper, which would be
+    /// a needless divergence from what the real compiler emits for such a page.
+    /// </summary>
+    [Fact]
+    public void TryBuildDependencyPageMetadata_PageWithoutParts_ContentHasNoContainers()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var appPath = WriteApp(dir, PartsSymbolReference);
+            RecordPatches.AddBcAppPath(appPath);
+
+            var xml = RecordPatches.TryBuildDependencyPageMetadata(PartsHostPageNoPartsId);
+            var doc = new XmlDocument();
+            doc.LoadXml(xml!);
+            var ns = new XmlNamespaceManager(doc.NameTable);
+            ns.AddNamespace("m", "urn:schemas-microsoft-com:dynamics:NAV:MetaObjects");
+
+            var content = (XmlElement)doc.DocumentElement!.SelectSingleNode("m:Content", ns)!;
+            Assert.Null(content.SelectSingleNode("m:Containers", ns));
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
 }
