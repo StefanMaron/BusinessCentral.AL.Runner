@@ -88,6 +88,38 @@ public static partial class RecordPatches
         return null;
     }
 
+    /// <summary>
+    /// The field's declared MinValue/MaxValue AL text (#2495), straight from the parsed table
+    /// source — same rationale as <see cref="TryGetParsedFieldCaption"/>. NCLMetaField
+    /// (Microsoft.Dynamics.Nav.Runtime) does not expose these at all — CreateFromMetaTable's
+    /// AssignFromMetaTable only copies them into MetaField's OWN validation machinery, not onto
+    /// any property this runner can read back off the constructed NCLMetaField instance
+    /// (confirmed empirically: NCLMetaField has no Min/MaxValue-named member of any accessibility).
+    /// So MinValue/MaxValue enforcement (TestPageMinMaxValue.Check in MockTestPage.cs) reads the
+    /// parse-time source directly, same as Caption does, rather than the runtime metadata object.
+    /// A field not found (extension field merged in under a different table, or a table never
+    /// parsed) answers (null, null) — the caller then simply enforces nothing, matching "field
+    /// declares no MinValue/MaxValue".
+    /// </summary>
+    internal static (string? Min, string? Max) TryGetParsedFieldMinMax(int tableId, int fieldNo)
+    {
+        if (!_parsedTables.TryGetValue(tableId, out var parsed))
+        {
+            // Extension fields for this base table are tracked separately (see
+            // _parsedExtensionFields in BuildNCLMetaTable) and may be the only place a
+            // tableextension-added bounded field's MinValue/MaxValue lives.
+            return (null, null);
+        }
+        foreach (var f in parsed.Fields)
+            if (f.FieldId == fieldNo)
+                return (f.MinValue, f.MaxValue);
+        if (_parsedExtensionFields.TryGetValue(parsed.TableName.ToLowerInvariant(), out var ext))
+            foreach (var f in ext)
+                if (f.FieldId == fieldNo)
+                    return (f.MinValue, f.MaxValue);
+        return (null, null);
+    }
+
     private static NCLMetaTable? BuildNCLMetaTable(int tableId)
     {
         if (!_parsedTables.TryGetValue(tableId, out var parsed))
@@ -489,6 +521,21 @@ public static partial class RecordPatches
             if (p.Name == "obsoleteReason" && !string.IsNullOrEmpty(f.ObsoleteReason))
             {
                 args[i] = f.ObsoleteReason;
+                continue;
+            }
+            // MinValue / MaxValue (#2495): carried through as the declared AL text. NCL's
+            // TestPage-control-write validation path reads NCLMetaField.minValue/maxValue and
+            // does the parse + range check + error-message formatting itself — real BC does
+            // NOT enforce these on Rec.Validate or plain field assignment, only on a page
+            // control write, so this builder's only job is not swallowing the declaration.
+            if (p.Name == "minValue" && !string.IsNullOrEmpty(f.MinValue))
+            {
+                args[i] = f.MinValue;
+                continue;
+            }
+            if (p.Name == "maxValue" && !string.IsNullOrEmpty(f.MaxValue))
+            {
+                args[i] = f.MaxValue;
                 continue;
             }
             if (p.Name == "relations" && relationsObj != null)

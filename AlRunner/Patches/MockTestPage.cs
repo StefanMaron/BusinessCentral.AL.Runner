@@ -1634,6 +1634,82 @@ internal static class TestPageOptionValue
 /// question about what real BC's own text-to-Boolean evaluate accepts on this surface, so it stays
 /// out of scope here and throws loudly rather than guessing.
 /// </summary>
+/// <summary>
+/// Enforces a field's declared <c>MinValue</c>/<c>MaxValue</c> AL properties on a TestPage
+/// control write (issue #2495). Measured against real BC (28.1 / 28.4, see #2490's arm A2):
+/// a Decimal field with <c>MinValue = 0;</c> raises
+/// <c>Validation error for Field: &lt;caption&gt;,  Message = 'The value must be greater than
+/// or equal to 0. Value: -1.00. (Select Refresh to discard errors)'</c> from a TestPage
+/// SetValue, while the SAME write via <c>Rec.Validate</c> or a plain field assignment raises
+/// nothing at all — this is a client/page-layer check, not a table-trigger one, so it must
+/// stay out of NavRecord.ALValidateAsync (which Rec.Validate also calls).
+///
+/// <para>Only numeric field types are checked — MinValue/MaxValue is meaningless on Text/Code/
+/// Boolean/etc., and AL does not let those types declare it.</para>
+///
+/// <para>The bound text is read via <see cref="RecordPatches.TryGetParsedFieldMinMax"/> — the
+/// parse-time source, not the constructed <c>NCLMetaField</c> — because NCLMetaField
+/// (Microsoft.Dynamics.Nav.Runtime) does not expose MinValue/MaxValue on the built runtime
+/// object at all (confirmed empirically: no Min/MaxValue-named member of any accessibility),
+/// even though <c>MetaField</c> (Microsoft.Dynamics.Nav.Types.Metadata, what the runner's
+/// NclMetaTableBuilder constructs FROM) does carry them. Same rationale as
+/// <see cref="RecordPatches.TryGetParsedFieldCaption"/> reading Caption straight from the parsed
+/// table rather than through NCLMetaField's own getter.</para>
+/// </summary>
+internal static class TestPageMinMaxValue
+{
+    internal static void Check(NCLMetaTable table, int fieldNo, NavType fieldType, string rawValue, string caption)
+    {
+        if (fieldType is not (NavType.Decimal or NavType.Integer or NavType.BigInteger)) return;
+        if (!table.TryGetFieldByNo(fieldNo, out var field) || field == null) return;
+
+        var (minText, maxText) = RecordPatches.TryGetParsedFieldMinMax(table.TableId, fieldNo);
+        if (string.IsNullOrEmpty(minText) && string.IsNullOrEmpty(maxText)) return;
+
+        // AL's TestPage SetValue is string-typed for every control, and the generic
+        // ALCompiler.ToNavValue(value) path taken above (there is no per-type conversion for a
+        // Decimal/Integer control here, unlike the Boolean special-case) always produces a
+        // NavText — so the bound check parses the RAW string the test wrote, exactly as BC's own
+        // client-side field validation would before ever constructing a typed NavValue.
+        if (!decimal.TryParse(rawValue, NumberStyles.Any, CultureInfo.InvariantCulture, out var value)) return;
+
+        var isInteger = fieldType is NavType.Integer or NavType.BigInteger;
+
+        if (!string.IsNullOrEmpty(minText) && decimal.TryParse(minText, NumberStyles.Any, CultureInfo.InvariantCulture, out var min)
+            && value < min)
+            throw MakeError(caption, isInteger, "greater than or equal to", minText!, value);
+
+        if (!string.IsNullOrEmpty(maxText) && decimal.TryParse(maxText, NumberStyles.Any, CultureInfo.InvariantCulture, out var max)
+            && value > max)
+            throw MakeError(caption, isInteger, "less than or equal to", maxText!, value);
+    }
+
+    // The offending VALUE renders with the field's decimal places (2 by default for a Decimal,
+    // none for an Integer/BigInteger — measured against real BC, #2490's arm A2: "-1.00"). The
+    // BOUND is echoed as BC declared it (the raw MinValue/MaxValue AL text, e.g. "0"), NOT
+    // reformatted to the field's decimal places — also measured in #2490's arm A2, where the
+    // bound reads "0" while the value reads "-1.00" for the identical Decimal field.
+    private static string FormatValue(decimal d, bool isInteger)
+        => isInteger ? d.ToString("0", CultureInfo.InvariantCulture)
+                     : d.ToString("0.00", CultureInfo.InvariantCulture);
+
+    private static System.Exception MakeError(string caption, bool isInteger, string comparison, string boundText, decimal value)
+    {
+        var msg = $"Validation error for Field: {caption},  Message = 'The value must be {comparison} "
+            + $"{boundText}. Value: {FormatValue(value, isInteger)}. "
+            + "(Select Refresh to discard errors)'";
+
+        var t = System.Type.GetType(
+            "Microsoft.Dynamics.Nav.Types.Exceptions.NavNCLDialogException, Microsoft.Dynamics.Nav.Types");
+        if (t != null)
+        {
+            var ctor = t.GetConstructor(new[] { typeof(string) });
+            if (ctor != null) return (System.Exception)ctor.Invoke(new object[] { msg });
+        }
+        return new System.InvalidOperationException(msg);
+    }
+}
+
 internal static class TestPageBooleanValue
 {
     internal static NavValue Resolve(string value, string context)
@@ -1737,6 +1813,14 @@ internal sealed class LiveNavTestField : ITestField
                 : FieldType == NavType.Boolean
                     ? TestPageBooleanValue.Resolve(value, $"TestPage SetValue (field {_fieldNo})")
                     : ALCompiler.ToNavValue(value);
+
+            // MinValue/MaxValue (#2495): measured against real BC (28.1/28.4), a bounded field's
+            // MinValue/MaxValue is enforced on a TestPage control WRITE, but NOT on Rec.Validate
+            // or a plain field assignment — so this check belongs here, at the page-write layer,
+            // and must not move into ALValidateAsync below (that is also what Rec.Validate calls,
+            // and pulling the check in there would enforce it on Validate too, which real BC does
+            // not). See TestPageMinMaxValue.Check's own doc comment for the exact message shape.
+            TestPageMinMaxValue.Check(_record.MetaTable, _fieldNo, FieldType, value, Caption);
 
             // Setting a field on a page is a VALIDATE, not an assignment. That is what fills in
             // the caption when a user picks an id, and what lets a field refuse a value outright.
