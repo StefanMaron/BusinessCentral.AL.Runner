@@ -15,6 +15,7 @@ All notable changes to this project are documented here. Format based on
 - **all-profile:** populate the All Profile system virtual table (2000000178)
 
 ### Fixed
+- **metadata:** carry a table's declared Caption onto its NCLMetaTable
 - **deps:** read a sibling app's manifest from its app root, not just its source folders
 - **testpage:** GoToRecord not-found restore refreshes non-key fields
 - **testpage:** GoToRecord no longer resolves position by field caption
