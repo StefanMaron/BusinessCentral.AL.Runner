@@ -15,6 +15,7 @@ All notable changes to this project are documented here. Format based on
 - **all-profile:** populate the All Profile system virtual table (2000000178)
 
 ### Fixed
+- **streams:** implement ALCompiler.DotNetToNavInStream (.NET Stream -> AL InStream)
 - **query:** apply the ReverseSign column property instead of ignoring it
 - **scripts:** parse VSTest timestamps on Python 3.9, hold the FIFO portably, and run the script tests
 - **testpage:** TestPage.<part> adopts the host's own subpage instance
