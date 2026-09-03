@@ -77,6 +77,7 @@ All notable changes to this project are documented here. Format based on
 - **agents:** opening a corpus PR needs no approval
 
 ### Changed
+- **roslyn:** parse in parallel and share metadata references across compiles
 - **gc:** run the runner under Server GC
 - Populate the CodeUnit Metadata (2000000137) virtual table
 - **scheduling:** record BcVersionDefaultDocumentationTests' measured weight
