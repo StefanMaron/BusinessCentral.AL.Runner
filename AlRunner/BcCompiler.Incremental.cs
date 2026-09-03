@@ -1208,37 +1208,63 @@ public sealed partial class BcCompiler
             .GetMethod("Clone", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(module, null)!;
 
     /// <summary>
+    /// <c>MemberwiseClone</c>, reached by reflection because it is <c>protected</c> on
+    /// <see cref="object"/>. Used for <c>NamespaceDefinition</c>, which BC gives no <c>Clone()</c>
+    /// of its own (confirmed by decompile) — see <see cref="CloneContainerShallow"/>.
+    /// </summary>
+    private static readonly MethodInfo _memberwiseClone = typeof(object)
+        .GetMethod("MemberwiseClone", BindingFlags.NonPublic | BindingFlags.Instance)!;
+
+    /// <summary>
     /// Shallow-clones a container (ModuleDefinition OR NamespaceDefinition — both implement
     /// <see cref="NavSymRef.IObjectContainerDefinition"/>) WITHOUT sharing any mutable array
-    /// reference with the original: <see cref="CloneModuleDefinition"/>'s <c>MemberwiseClone</c>
-    /// copies every property (including every mergeable array) verbatim, but
-    /// <c>NamespaceDefinition</c> has no <c>Clone()</c> of its own (confirmed by decompile), so
-    /// this hand-rolled branch sets ONLY <c>Id</c>/<c>Name</c>/<c>Namespaces</c> — every
-    /// mergeable-array property starts out unset (CLR default, i.e. null) on a namespace clone.
+    /// reference with the original.
     ///
-    /// #2479: that means EVERY caller here MUST explicitly set every mergeable property on the
-    /// result, for every kind — not just the kinds it is actually excluding/merging — or a
-    /// namespace-nested kind the caller had no reason to touch this cycle silently loses its
-    /// entire array. <see cref="MergeContainerRecursive"/> always does
-    /// (`prop.SetValue(merged, result)` runs unconditionally for every kind in
-    /// <see cref="RadMergeablePropertiesByKind"/>). <see cref="ExcludeObjectsRecursive"/> did NOT
-    /// before this fix — it skipped `prop.SetValue` entirely whenever nothing of that kind was
-    /// being excluded, so a namespaced bundle where the touched object was a Codeunit left every
-    /// OTHER kind's array null on the clone. BC's binder resolved a reference into a null Tables/
-    /// Reports/… array far enough to bind a symbol, but never gave it a real
-    /// <c>NavTypeKind</c> — <c>Compilation.Emit</c> crashed deep inside
-    /// <c>CodeGenerator.EmitFieldInitializer</c> with "Unexpected value 'None' of type
-    /// NavTypeKind" the first time an untouched, namespace-nested, non-Codeunit sibling (Table,
-    /// Report, Page, …) was referenced from the edited object's own syntax tree. See
-    /// BcCompilerIncrementalCrossKindSiblingTests for the RED/GREEN proof — a same-kind sibling
-    /// (Codeunit referencing Codeunit) never hit this, because excluding the touched Codeunit
-    /// already forced the Codeunits property to be set.
+    /// <para><b>Both branches are now field-complete, and that is the point (#2567).</b> The
+    /// namespace branch used to be a hand-rolled object initializer naming <c>Id</c>, <c>Name</c>
+    /// and <c>Namespaces</c> — so every OTHER property came back at its CLR default (null) on a
+    /// namespace clone, and the invariant "every caller must explicitly set every mergeable
+    /// property, for every kind, not just the kinds it is touching" was enforced by nothing but a
+    /// doc comment. #2531 fixed the one caller that violated it
+    /// (<see cref="ExcludeObjectsRecursive"/>); it could not fix the next one, nor a property
+    /// Microsoft adds to <c>NamespaceDefinition</c> that nobody here thinks to add to the
+    /// initializer.</para>
+    ///
+    /// <para>Measured before this change, on the BC this runner links against: a namespace clone
+    /// dropped 16 properties, and one of them — <c>DotNetPackages</c> — is not in
+    /// <see cref="RadMergeablePropertiesByKind"/> at all, so NO caller could have restored it even
+    /// knowing to try. BcCompilerIncrementalContainerCloneTests pins the invariant against the
+    /// TYPE rather than against a property list, so a property BC adds next version is covered the
+    /// day it appears.</para>
+    ///
+    /// <para><b>Why <c>MemberwiseClone</c> rather than a property-by-property reflective copy.</b>
+    /// A property copy carries only what BC chose to expose as a property; <c>MemberwiseClone</c>
+    /// copies every instance FIELD, which is a superset and is exactly what BC's own
+    /// <c>ModuleDefinition.Clone()</c> does. Using it for the namespace branch makes the two
+    /// branches answer the same way instead of being two different notions of "shallow clone".</para>
+    ///
+    /// <para>The unknown-implementation arm stays a throw rather than a generic accept: BC ships
+    /// exactly two implementations of this interface, and a third appearing means BC's model moved
+    /// under us — which must be loud (<c>.claude/rules/loud-failures.md</c>), not silently cloned
+    /// into something with the wrong shape.</para>
+    ///
+    /// <para>Credit: vhn's fork never had the #2531 shape, because
+    /// <c>AlRunner/Rad/ModuleDefinitionOps.ShallowCopy</c> is a generic copy rather than a per-type
+    /// switch. This is that idea applied here.</para>
     /// </summary>
+    /// <summary>Test seam for <see cref="CloneContainerShallow"/> — BcCompilerIncrementalContainerCloneTests
+    /// states the "carries every property" invariant structurally, against the TYPE, rather than
+    /// through a compile that only exercises the properties one scenario happens to touch.</summary>
+    internal static NavSymRef.IObjectContainerDefinition CloneContainerShallowForTests(
+        NavSymRef.IObjectContainerDefinition container) => CloneContainerShallow(container);
+
     private static NavSymRef.IObjectContainerDefinition CloneContainerShallow(NavSymRef.IObjectContainerDefinition container)
         => container switch
         {
+            // BC's own Clone() — already a MemberwiseClone, kept because it is the vendor's own
+            // answer for this type and may one day do more than a field copy.
             NavSymRef.ModuleDefinition module => CloneModuleDefinition(module),
-            NavSymRef.NamespaceDefinition ns => new NavSymRef.NamespaceDefinition { Id = ns.Id, Name = ns.Name, Namespaces = ns.Namespaces },
+            NavSymRef.NamespaceDefinition ns => (NavSymRef.NamespaceDefinition)_memberwiseClone.Invoke(ns, null)!,
             _ => throw new InvalidOperationException($"Unexpected {nameof(NavSymRef.IObjectContainerDefinition)} implementation: {container.GetType().Name}"),
         };
 
