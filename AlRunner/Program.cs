@@ -3684,11 +3684,31 @@ return strictExitCode ? computedExitCode : 0;
         // processed in `sourcePaths` order — the one documented/supported shape is dependency
         // app before test app (see README), which is exactly the order this needs to see the
         // dependency's fallback before deciding the test app's selection.
+        //
+        // #2603: the SAME signal has to gate this request's later bundles' COMPILATION too, not
+        // only their test selection. A bundle whose own files all hash identical to the last cycle
+        // takes TryEmitIncremental's "genuinely zero work: replay the last cycle's result verbatim"
+        // short-circuit — which is correct in isolation and wrong when a DEPENDENCY bundle in the
+        // same request just re-emitted a surface this bundle's generated C# baked member ids
+        // against. Measured: a dependency app that gains an overload correctly falls back to a full
+        // compile (#2548), and the consuming test app, whose own sources did not move, replayed its
+        // previous C# and dispatched the PREVIOUS overload — a green-looking run returning the wrong
+        // answer, visible only because the AL test happened to assert the value.
+        //
+        // So `sawFallbackReason` is hoisted out of the closure below and read by the bundle loop:
+        // once any bundle in this request has fallen back, every later bundle compiles in full
+        // instead of replaying. Conservative on purpose — without an object-reference graph
+        // (#2571) there is no way to ask whether THIS bundle actually binds to what that one
+        // re-emitted, and the failure this prevents is silent while the cost is one full compile of
+        // a bundle whose dependency just changed anyway.
+        //
+        // Same forward-only, `sourcePaths`-order limitation as the selection half above, and for
+        // the same reason. #2571 tracks the order-independent version.
+        string? sawFallbackReason = null;
         var effectiveBeforeRun = beforeRun;
         if (beforeRun != null)
         {
             var union = requestWideChangedObjects;
-            string? sawFallbackReason = null;
             effectiveBeforeRun = (bundlePath, moduleName, selectionEnvironmentKey, changedObjects, changeModelFallbackReason) =>
             {
                 var merged = union == null || changedObjects == null ? changedObjects : changedObjects.Concat(union).ToList();
@@ -3710,8 +3730,10 @@ return strictExitCode ? computedExitCode : 0;
             var relBundle = Path.GetRelativePath(
                 Environment.CurrentDirectory, Path.GetFullPath(bundleDir));
             AlRunner.Infrastructure.PhaseLog.BeginBundle(relBundle, bundleIndex);
+            // #2603: see the comment above `sawFallbackReason`. An earlier bundle fell back, so
+            // this one must not serve its C# from a baseline recorded before that bundle moved.
             var result = RunBundleForServer(bundleDir, requestPackagePaths, runStep,
-                useIncrementalChangeModel,
+                useIncrementalChangeModel && sawFallbackReason == null,
                 effectiveBeforeRun,
                 out var emitElapsed, out var compileElapsed, out var runElapsed);
             AlRunner.Infrastructure.PhaseLog.EndBundle(emitElapsed, compileElapsed, runElapsed);
