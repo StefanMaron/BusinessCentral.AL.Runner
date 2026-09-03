@@ -40,6 +40,15 @@ name: Sync CHANGELOG [Unreleased]
 # documented way publish.yml's release job does — via RELEASE_DEPLOY_KEY, a
 # deploy key with "Always allow" set for it.
 
+# Only one sync may be in flight at a time. Without this, a merge wave starts one
+# run per merged PR, they queue behind the account-wide Actions pool, and each one
+# wakes up holding a CHANGELOG computed against a commit that is no longer the tip.
+# The newest run is always the correct one -- this job's whole purpose is to reflect
+# CURRENT main -- so superseded runs should be cancelled, not merely lose the race.
+concurrency:
+  group: sync-changelog-unreleased
+  cancel-in-progress: true
+
 on:
   push:
     branches: [main]
@@ -77,9 +86,38 @@ jobs:
         id: sync
         run: python3 .github/scripts/generate_changelog.py --unreleased >> "$GITHUB_OUTPUT"
 
+      # #2630: this used to be `git add && git commit && git push origin HEAD:main`, a
+      # plain fast-forward from the commit that triggered the run. Under a merge wave the
+      # run waits minutes in the account-wide Actions queue, main moves, and the push is
+      # rejected with "cannot lock ref refs/heads/main: is at X but expected Y". Measured
+      # on 24 consecutive runs: 11 failed exactly this way. The CHANGELOG content was
+      # never lost -- the next run recomputes it -- but main carried a failed run for a
+      # reason unrelated to the commit under it, and a red main is not announced anywhere.
+      #
+      # Recompute against origin/main rather than rebasing the commit: the section is
+      # derived from `git describe --tags`..HEAD, so what it should say depends on which
+      # commits are on main NOW, not on which were there when this run was scheduled.
       - name: Commit and push if it changed
         if: steps.sync.outputs.changed == 'true'
         run: |
-          git add CHANGELOG.md
-          git commit -m "chore: update changelog [skip ci]"
-          git push origin HEAD:main
+          for attempt in 1 2 3 4 5; do
+            git fetch origin main
+            git checkout -B sync-retry origin/main
+            out=$(python3 .github/scripts/generate_changelog.py --unreleased)
+            echo "$out"
+            case "$out" in
+              *changed=true*) ;;
+              *)
+                echo "nothing left to write against $(git rev-parse --short origin/main) — another run got there first"
+                exit 0
+                ;;
+            esac
+            git add CHANGELOG.md
+            git commit -m "chore: update changelog [skip ci]"
+            if git push origin HEAD:main; then
+              exit 0
+            fi
+            echo "main moved while pushing; recomputing (attempt $attempt of 5)"
+          done
+          echo "::error::main moved under this job 5 times running — something is pushing to main continuously"
+          exit 1
