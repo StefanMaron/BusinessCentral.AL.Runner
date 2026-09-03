@@ -60,16 +60,32 @@ public static class SymbolJsonWriter
 
         if (Environment.GetEnvironmentVariable("ALRUNNER_DUMP_SYMBOLS") == "1")
         {
-            int count = 0;
-            foreach (var prop in new[] { "Codeunits", "Tables", "Pages", "EnumTypes", "XmlPorts", "Reports", "Queries", "Interfaces" })
-            {
-                var p = typeof(ModuleDefinition).GetProperty(prop);
-                if (p?.GetValue(module) is Array arr) count += arr.Length;
-            }
-            Console.Error.WriteLine($"  DEBUG GetModuleDefinition: ModuleDefinition has {count} object(s) populated");
+            // #2507: a namespace-declared object lives under `.Namespaces[...]`, never in the
+            // module's own top-level arrays (BC's converter is faithful about this — it is not a
+            // bug; see BcCompiler.Incremental.cs's header comment). Counting only the top-level
+            // arrays here is exactly the measurement that made #2507 look like "0 populated" for
+            // an app that declares `namespace` almost everywhere, when the true count was
+            // hundreds — so this walks the WHOLE nested tree, matching what
+            // BcCompiler.Incremental.cs's own RAD baseline machinery now does.
+            int count = CountObjectsRecursive(module);
+            Console.Error.WriteLine($"  DEBUG GetModuleDefinition: ModuleDefinition has {count} object(s) populated (including namespace-nested)");
         }
 
         return module;
+    }
+
+    private static int CountObjectsRecursive(IObjectContainerDefinition container)
+    {
+        int count = 0;
+        foreach (var prop in new[] { "Codeunits", "Tables", "Pages", "EnumTypes", "XmlPorts", "Reports", "Queries", "Interfaces" })
+        {
+            var p = typeof(IObjectContainerDefinition).GetProperty(prop);
+            if (p?.GetValue(container) is Array arr) count += arr.Length;
+        }
+        if (container.Namespaces != null)
+            foreach (var ns in container.Namespaces)
+                count += CountObjectsRecursive(ns);
+        return count;
     }
 
     private static ModuleDefinition? TryConvertCompilation(Compilation comp)
