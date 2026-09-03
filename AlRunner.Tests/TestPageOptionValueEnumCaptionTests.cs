@@ -25,6 +25,7 @@
 // then have no caption table to match against and throw instead of resolving.
 using AlRunner;
 using AlRunner.Infrastructure;
+using AlRunner.Patches;
 using Microsoft.Dynamics.Nav.Runtime;
 using Xunit;
 
@@ -32,6 +33,14 @@ namespace AlRunner.Tests;
 
 public sealed class TestPageOptionValueEnumCaptionTests
 {
+    private sealed class FakeExpression(string name, NavValue value)
+    {
+        private NavValue _value = value;
+        public string Name { get; } = name;
+        public NavValue Get() => _value;
+        public void Set(NavValue value) => _value = value;
+    }
+
     // Captions deliberately differ from member names — "Blocks" != "Block" is the whole
     // point; a caption equal to the member name would prove nothing about which table
     // Resolve actually consulted.
@@ -43,6 +52,32 @@ public sealed class TestPageOptionValueEnumCaptionTests
             indexes: new[] { 0, 1, 2 },
             implementations: null,
             captions: new[] { "Fields", "Blocks", "Images" });
+
+    private static RunnerPageInstance BuildPage()
+    {
+        var ctor = typeof(RunnerPageInstance).GetConstructor(
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic,
+            binder: null,
+            types: new[]
+            {
+                typeof(object),
+                typeof(object),
+                typeof(NavRecord),
+                typeof(int),
+                typeof(System.Collections.IDictionary)
+            },
+            modifiers: null)
+            ?? throw new InvalidOperationException("RunnerPageInstance private ctor not found.");
+
+        return (RunnerPageInstance)ctor.Invoke(new object?[]
+        {
+            new object(),
+            new object(),
+            null,
+            1928001,
+            new System.Collections.Generic.Dictionary<string, object?>()
+        });
+    }
 
     [Fact]
     public void EnumCaptions_EnumBackedMetadata_ReturnsDeclaredCaptionsInMemberOrder()
@@ -232,5 +267,33 @@ public sealed class TestPageOptionValueEnumCaptionTests
 
         Assert.Null(TestPageOptionValue.DisplayOrdinal(current, "1", captions: null));
         Assert.Null(TestPageOptionValue.DisplayOrdinal(current, null, captions: null));
+    }
+
+    [Fact]
+    public void PageVariableTestField_EnumControl_AnswersTheBoundOptionsCaptions()
+    {
+        var metadata = BuildEnumMetadata();
+        var field = new PageVariableTestField(
+            BuildPage(),
+            new FakeExpression("Kind", NavOption.Create(metadata, 0)),
+            controlId: 50100);
+
+        Assert.Equal(3, field.OptionCount);
+        Assert.Equal("Fields", field.GetOption(0));
+        Assert.Equal("Blocks", field.GetOption(1));
+        Assert.Equal("Images", field.GetOption(2));
+    }
+
+    [Fact]
+    public void PageVariableTestField_EnumControl_OutOfRangeMemberLookupReturnsEmpty()
+    {
+        var metadata = BuildEnumMetadata();
+        var field = new PageVariableTestField(
+            BuildPage(),
+            new FakeExpression("Kind", NavOption.Create(metadata, 0)),
+            controlId: 50100);
+
+        Assert.Equal(string.Empty, field.GetOption(-1));
+        Assert.Equal(string.Empty, field.GetOption(7));
     }
 }
