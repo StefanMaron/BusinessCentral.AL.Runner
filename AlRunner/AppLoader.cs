@@ -52,7 +52,11 @@ public static class AppLoader
     private static readonly ConcurrentDictionary<string, AppManifest?> _manifestMemo = new(StringComparer.Ordinal);
 
     /// <summary>Test-only: clears the in-process memo so a test can simulate a fresh process.</summary>
-    internal static void ResetManifestMemoForTests() => _manifestMemo.Clear();
+    internal static void ResetManifestMemoForTests()
+    {
+        _manifestMemo.Clear();
+        _symbolReferenceMemo.Clear();
+    }
 
     // Test-only: counts genuine ReadManifestUncached invocations (i.e. BOTH the memo AND
     // the disk index missed) per full .app path — mirrors BcAppSymbolCache
@@ -155,6 +159,11 @@ public static class AppLoader
     }
 
     private static AppManifest? TryReadManifestIndex(string memoKey)
+        => TryReadIndexPayload(memoKey) is { } hit ? hit.Manifest : null;
+
+    /// <summary>The whole index entry, so a caller that needs the symbol-reference flag can see
+    /// whether it was recorded at all rather than inferring false from its absence.</summary>
+    private static (AppManifest Manifest, bool? HasSymbolReference)? TryReadIndexPayload(string memoKey)
     {
         var path = ManifestIndexPath(memoKey);
         if (!File.Exists(path)) return null;
@@ -163,8 +172,11 @@ public static class AppLoader
             var payload = JsonSerializer.Deserialize<ManifestCachePayload>(File.ReadAllText(path));
             var manifest = payload == null ? null : FromPayload(payload);
             if (manifest == null)
+            {
                 PerfTrace.Log($"app-manifests index entry unusable {Path.GetFileName(path)}: payload malformed — reparsing");
-            return manifest;
+                return null;
+            }
+            return (manifest, payload!.HasSymbolReference);
         }
         catch (Exception ex)
         {
@@ -175,13 +187,13 @@ public static class AppLoader
         }
     }
 
-    private static void TryWriteManifestIndex(string memoKey, AppManifest manifest)
+    private static void TryWriteManifestIndex(string memoKey, AppManifest manifest, bool? hasSymbolReference = null)
     {
         try
         {
             var path = ManifestIndexPath(memoKey);
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            var payload = ToPayload(manifest);
+            var payload = ToPayload(manifest, hasSymbolReference);
             // Atomic (temp file + rename) — 4 CI processes can race a write to the SAME
             // key for the SAME shared package cache; a torn write must never be visible.
             AlCacheWriter.AtomicPublish(path, tmp => File.WriteAllText(tmp, JsonSerializer.Serialize(payload)));
@@ -195,19 +207,25 @@ public static class AppLoader
     // JSON-serializable mirror of AppManifest/DependencyRef — Version/Guid round-trip as
     // strings (System.Text.Json has no default converter for System.Version, and keeping
     // Guid as text sidesteps ever depending on that assumption changing).
+    // HasSymbolReference is NULLABLE on purpose. An index entry written before the flag
+    // existed deserializes it as null, and null must mean "not recorded, go and look" — never
+    // false. False is the answer that drops a package from the scan set as unserveable and
+    // produces AL1023 against the whole compilation, so reading an absent field as false would
+    // break exactly the machines carrying a warm cache from an older build.
     private sealed record ManifestCachePayload(
         string Publisher, string Name, string Version, string AppId,
         List<DependencyCachePayload> Dependencies,
-        string? Application, string? Platform);
+        string? Application, string? Platform,
+        bool? HasSymbolReference = null);
 
     private sealed record DependencyCachePayload(
         string AppId, string Name, string Publisher, string Version, bool Optional);
 
-    private static ManifestCachePayload ToPayload(AppManifest m) => new(
+    private static ManifestCachePayload ToPayload(AppManifest m, bool? hasSymbolReference = null) => new(
         m.Publisher, m.Name, m.Version.ToString(), m.AppId.ToString("D"),
         m.Dependencies.Select(d => new DependencyCachePayload(
             d.AppId.ToString("D"), d.Name, d.Publisher, d.Version.ToString(), d.Optional)).ToList(),
-        m.Application?.ToString(), m.Platform?.ToString());
+        m.Application?.ToString(), m.Platform?.ToString(), hasSymbolReference);
 
     private static AppManifest? FromPayload(ManifestCachePayload p)
     {
@@ -233,25 +251,159 @@ public static class AppLoader
     /// source-only .app emitted by InProcessAppPackager returns false here.
     /// Returns false on any read/format error.
     /// </summary>
-    public static bool HasSymbolReference(string appPath)
+    public static bool HasSymbolReference(string appPath) => ReadPackageMeta(appPath).HasSymbolReference;
+
+    // Process-wide memo for the symbol-reference flag, keyed exactly like _manifestMemo. Separate
+    // from it rather than widening its value type, so a ReadManifest-only caller keeps its
+    // current shape and cannot be made to pay for a question it did not ask.
+    private static readonly ConcurrentDictionary<string, bool> _symbolReferenceMemo = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Both metadata questions about one <c>.app</c> — its manifest and whether it carries a
+    /// <c>SymbolReference.json</c> — answered from a single open, and cached together in the
+    /// process memo and the on-disk index.
+    ///
+    /// <para>They look independent and are not: both are answered by the package's central
+    /// directory, and for the R2R packages Microsoft ships, by the same buffered nested
+    /// <c>.app</c>. Asking them separately opened every package twice.</para>
+    ///
+    /// <para>Measured on the al-language corpus with two package caches (459 <c>.app</c> files,
+    /// 117 MB, Microsoft_Base Application 98 MB of it), first uncached
+    /// <c>DeduplicateAppPackageDirs</c> scan of a process: 835 ms, of which
+    /// <see cref="ReadManifest"/> was 0 ms — its on-disk index already answers — and the
+    /// symbol-reference question was 766 ms, because it read the whole package into a
+    /// <c>byte[]</c> to check for one entry name. Streaming it alone took the scan to ~660 ms;
+    /// recording the answer in the index alongside the manifest is what takes it to ~2 ms on
+    /// every process after the first. See issue #2607.</para>
+    /// </summary>
+    public static (AppManifest? Manifest, bool HasSymbolReference) ReadPackageMeta(string appPath)
+    {
+        string fullPath;
+        long length;
+        long mtimeTicks;
+        try
+        {
+            fullPath = Path.GetFullPath(appPath);
+            var fi = new FileInfo(fullPath);
+            if (!fi.Exists) return (null, false);
+            length = fi.Length;
+            mtimeTicks = fi.LastWriteTimeUtc.Ticks;
+        }
+        catch
+        {
+            // Cannot even stat the path — take the uncached read, matching ReadManifest's own
+            // fallback contract (any failure yields a null manifest, never a throw).
+            return ReadPackageMetaUncached(appPath);
+        }
+
+        var memoKey = $"{fullPath}|{length}|{mtimeTicks}";
+        if (_symbolReferenceMemo.TryGetValue(memoKey, out var memoFlag)
+            && _manifestMemo.TryGetValue(memoKey, out var memoManifest))
+            return (memoManifest, memoFlag);
+
+        // Only a FULL index entry can serve this: an entry written before the flag existed has
+        // HasSymbolReference null, and null means "go and look", never false.
+        if (TryReadIndexPayload(memoKey) is { HasSymbolReference: { } storedFlag } hit)
+        {
+            PerfTrace.Log($"app-manifests HIT+symref {Path.GetFileName(fullPath)}");
+            _manifestMemo[memoKey] = hit.Manifest;
+            _symbolReferenceMemo[memoKey] = storedFlag;
+            return (hit.Manifest, storedFlag);
+        }
+
+        _manifestParseInvocationCountByPath.AddOrUpdate(fullPath, 1, static (_, c) => c + 1);
+        var read = ReadPackageMetaUncached(fullPath);
+        PerfTrace.Log($"app-manifests MISS {Path.GetFileName(fullPath)}");
+        _manifestMemo[memoKey] = read.Manifest;
+        _symbolReferenceMemo[memoKey] = read.HasSymbolReference;
+        if (read.Manifest != null)
+            TryWriteManifestIndex(memoKey, read.Manifest, read.HasSymbolReference);
+        return read;
+    }
+
+    /// <summary>Both answers off one <see cref="OpenAppZip"/>, with no caching.</summary>
+    private static (AppManifest? Manifest, bool HasSymbolReference) ReadPackageMetaUncached(string appPath)
     {
         try
         {
-            var bytes = File.ReadAllBytes(appPath);
-            using var zip = OpenZipFromNavx(bytes);
-            if (zip.Entries.Any(e => e.FullName.Equals("SymbolReference.json", StringComparison.OrdinalIgnoreCase)))
-                return true;
-            // R2R nested case: the inner .app carries the SymbolReference.json.
-            var nested = zip.Entries.FirstOrDefault(e =>
-                e.FullName.EndsWith(".app", StringComparison.OrdinalIgnoreCase) && !e.FullName.Contains('/'));
-            if (nested == null) return false;
-            using var ns = nested.Open();
-            using var nms = new MemoryStream();
-            ns.CopyTo(nms);
-            using var innerZip = OpenZipFromNavx(nms.ToArray());
-            return innerZip.Entries.Any(e => e.FullName.Equals("SymbolReference.json", StringComparison.OrdinalIgnoreCase));
+            using var zip = OpenAppZip(appPath);
+            return ReadPackageMetaFromZip(zip);
         }
-        catch { return false; }
+        catch { return (null, false); }
+    }
+
+    /// <summary>
+    /// Manifest and symbol-reference flag off one archive, buffering an R2R package's nested
+    /// <c>.app</c> at most once.
+    ///
+    /// <para>Calling <see cref="ReadManifestFromZip"/> and <see cref="HasSymbolReferenceInZip"/>
+    /// in turn is correct but costs twice: each recurses into the nested <c>.app</c> on its own,
+    /// and a zip ENTRY's stream is forward-only, so each has to copy the inner package out to
+    /// something seekable. Measured, that made the whole package scan SLOWER than asking the two
+    /// questions separately had been.</para>
+    ///
+    /// <para>The two early exits below are the ones that preserve the previous answers exactly.
+    /// A manifest found at the outer level does NOT license skipping the nested archive, because
+    /// the symbol-reference question has its own answer down there; skipping it would report
+    /// false for a package that carries one, and false is what drops a package from the scan set
+    /// and produces AL1023 against the whole compilation.</para>
+    /// </summary>
+    private static (AppManifest? Manifest, bool HasSymbolReference) ReadPackageMetaFromZip(ZipArchive zip)
+    {
+        var symbolReferenceHere = zip.Entries.Any(e =>
+            e.FullName.Equals("SymbolReference.json", StringComparison.OrdinalIgnoreCase));
+        var manifestEntry = zip.Entries.FirstOrDefault(e =>
+            e.FullName.Equals("NavxManifest.xml", StringComparison.OrdinalIgnoreCase));
+
+        AppManifest? ManifestHere()
+        {
+            if (manifestEntry == null) return null;
+            using var s = manifestEntry.Open();
+            return ParseManifestXml(s);
+        }
+
+        // Everything answered at this level — no reason to touch a nested package.
+        if (symbolReferenceHere && manifestEntry != null) return (ManifestHere(), true);
+
+        var nested = zip.Entries.FirstOrDefault(e =>
+            e.FullName.EndsWith(".app", StringComparison.OrdinalIgnoreCase) && !e.FullName.Contains('/'));
+        if (nested == null) return (ManifestHere(), symbolReferenceHere);
+
+        using var nestedStream = nested.Open();
+        using var nms = new MemoryStream();
+        nestedStream.CopyTo(nms);
+        using var innerZip = OpenZipFromNavx(nms.ToArray());
+        var inner = ReadPackageMetaFromZip(innerZip);
+
+        // An outer manifest wins over the nested one, matching ReadManifestFromZip, which only
+        // recurses when the outer archive has no NavxManifest.xml.
+        return (manifestEntry != null ? ManifestHere() : inner.Manifest,
+                symbolReferenceHere || inner.HasSymbolReference);
+    }
+
+    /// <summary>
+    /// One .app's central directory answered for a <c>SymbolReference.json</c> part, following
+    /// exactly one level of R2R nesting — the same shape <see cref="ReadManifestFromZip"/> uses,
+    /// and no deeper, because that is the nesting Microsoft's R2R packaging produces.
+    ///
+    /// <para>The nested .app's bytes are still buffered: a zip ENTRY's stream is
+    /// forward-only, and ZipArchive needs its central directory readable from the end of a
+    /// seekable stream. That copy is bounded by the inner package, which carries no
+    /// <c>publishedartifacts/*.dll</c> — those live only in the outer zip this path no longer
+    /// reads whole.</para>
+    /// </summary>
+    private static bool HasSymbolReferenceInZip(ZipArchive zip)
+    {
+        if (zip.Entries.Any(e => e.FullName.Equals("SymbolReference.json", StringComparison.OrdinalIgnoreCase)))
+            return true;
+        var nested = zip.Entries.FirstOrDefault(e =>
+            e.FullName.EndsWith(".app", StringComparison.OrdinalIgnoreCase) && !e.FullName.Contains('/'));
+        if (nested == null) return false;
+        using var ns = nested.Open();
+        using var nms = new MemoryStream();
+        ns.CopyTo(nms);
+        using var innerZip = OpenZipFromNavx(nms.ToArray());
+        return innerZip.Entries.Any(e => e.FullName.Equals("SymbolReference.json", StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>

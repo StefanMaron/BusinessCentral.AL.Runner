@@ -300,12 +300,17 @@ public static partial class RecordPatches
 
         // Option-type fields: OptionMembers is the comma-separated list BC's
         // NCLOptionMetadata constructor expects. Tokens are trimmed; empty entries are kept
-        // (BC allows blank members, and #1674 depends on that).
+        // (BC allows blank members, and #1674 depends on that). A member declared with AL's
+        // quoted-identifier form (`" "`, `"Work Center"`) still carries its quotes after
+        // Split+Trim -- BC's own compiler strips that quoting, so a token whose member is
+        // named " " reached NCLOptionMetadata as the three characters `" "` instead of a
+        // single space (#2345). Unquote (shared with IdentText above) removes one matched
+        // pair of double quotes per token, same as any other AL identifier.
         string? optionMembers = null;
         if (ftype.Equals("Option", StringComparison.OrdinalIgnoreCase)
             && PropValue(props, "OptionMembers") is { } om)
         {
-            optionMembers = string.Join(",", om.ToString().Split(',').Select(s => s.Trim()));
+            optionMembers = string.Join(",", om.ToString().Split(',').Select(s => Unquote(s.Trim())));
         }
 
         // InitValue is passed to MetaField.initValue as RAW AL TEXT, quotes and all, because

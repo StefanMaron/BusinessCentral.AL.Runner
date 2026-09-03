@@ -774,13 +774,15 @@ public sealed partial class BcCompiler
         return null;
     }
 
-    // Per-file cache of the two zip reads DeduplicateAppPackageDirs performs on every .app
-    // it scans (ReadManifest + HasSymbolReference). Both re-read the WHOLE package from
-    // disk and unzip it — for a 113-package, 138 MB platform-apps dir that is ~1–2.5 s per
-    // scan, and the scan runs on EVERY GetSharedReferences call (it has to: its output is
-    // what the loader signature is computed from). Keyed by path + length + last-write
-    // ticks, so a package rewritten in place (InProcessAppPackager's synthetic .apps, a
-    // --watch rebuild) invalidates its own entry.
+    // Per-file cache of the package read DeduplicateAppPackageDirs performs on every .app it
+    // scans, and the scan runs on EVERY GetSharedReferences call (it has to: its output is what
+    // the loader signature is computed from). Keyed by path + length + last-write ticks, so a
+    // package rewritten in place (InProcessAppPackager's synthetic .apps, a --watch rebuild)
+    // invalidates its own entry.
+    //
+    // AppLoader.ReadPackageMeta keeps the same key across PROCESSES in its on-disk index and
+    // answers both questions off one open; this is the in-process layer in front of it, and the
+    // one ResetSharedReferencesForTests clears so a test can force the scan to re-read.
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<
         string, (long Length, long Ticks, AppManifest? Manifest, bool HasSymbolReference)> _appMetaCache = new();
 
@@ -789,13 +791,13 @@ public sealed partial class BcCompiler
         var path = fi.FullName;
         long len, ticks;
         try { len = fi.Length; ticks = fi.LastWriteTimeUtc.Ticks; }
-        catch { return (AppLoader.ReadManifest(path), AppLoader.HasSymbolReference(path)); }
+        catch { return AppLoader.ReadPackageMeta(path); }
 
         if (_appMetaCache.TryGetValue(path, out var hit) && hit.Length == len && hit.Ticks == ticks)
             return (hit.Manifest, hit.HasSymbolReference);
 
-        var meta = (AppLoader.ReadManifest(path), AppLoader.HasSymbolReference(path));
-        _appMetaCache[path] = (len, ticks, meta.Item1, meta.Item2);
+        var meta = AppLoader.ReadPackageMeta(path);
+        _appMetaCache[path] = (len, ticks, meta.Manifest, meta.HasSymbolReference);
         return meta;
     }
 
@@ -912,6 +914,11 @@ public sealed partial class BcCompiler
         // thing the reader needs told. See DescribeStagedSearchSet.
         var unstaged = new List<UnstagedPackage>();
         var changed = false;
+        // Same BCCOMPILER_TIMING=1 switch and [emit-timing] channel Emit() uses. This scan runs
+        // on every GetSharedReferences call and its cost is invisible from the outside, so it
+        // gets a mark of its own.
+        var scanClock = System.Diagnostics.Stopwatch.StartNew();
+        var scanned = 0;
         foreach (var dir in packageDirs)
         {
             // This one already materialised INSIDE the try (the .ToList()), so unlike its five
@@ -923,6 +930,7 @@ public sealed partial class BcCompiler
             foreach (var appInfo in apps)
             {
                 var app = appInfo.FullName;
+                scanned++;
                 var (m, hasSymbolReference) = ReadAppMeta(appInfo);
                 if (m == null) continue;
                 if (excludeAppId != null && m.AppId == excludeAppId.Value) { changed = true; continue; }
@@ -970,6 +978,9 @@ public sealed partial class BcCompiler
                 inventory.Add(new PackageScanEntry(full, m.AppId, m.Publisher, m.Name, m.Version));
             }
         }
+        if (Environment.GetEnvironmentVariable("BCCOMPILER_TIMING") == "1")
+            Console.Error.WriteLine(
+                $"[emit-timing] package scan: {scanned} apps: {scanClock.ElapsedMilliseconds}ms");
         if (!changed) return packageDirs; // common case — leave the hot path untouched
 
         // Build (or reuse) a staging dir keyed by the exact picked-app set so concurrent /
@@ -2257,10 +2268,13 @@ public sealed partial class BcCompiler
     /// </summary>
     /// <param name="appRootDir">
     /// The directory containing this dep's own app.json — see the identically-named
-    /// parameter on <see cref="Emit"/> for why (#1899). When omitted, falls back to
-    /// whichever of <paramref name="alFolders"/> already carries an app.json — the same
-    /// directory <c>ivtRefs</c> below is read from — since every current caller of this
-    /// overload passes a single flat directory that already IS the app root.
+    /// parameter on <see cref="Emit"/> for why (#1899). It is also where the manifest behind
+    /// ParseOptions/CompilationOptions and <c>internalsVisibleTo</c> is read from (#2542),
+    /// which matters whenever it is NOT one of <paramref name="alFolders"/>: an app keeping
+    /// its AL under <c>src/</c> arrives here as <c>alFolders = [&lt;app&gt;/src]</c> with the
+    /// manifest one directory up. When omitted, the lookup falls back to whichever of
+    /// <paramref name="alFolders"/> carries an app.json, and never searches parent
+    /// directories — a neighbouring app's manifest is worse than none (#1948).
     /// </param>
     public void EmitDepSymbols(
         IEnumerable<string> alFolders, string moduleName,
@@ -2279,7 +2293,28 @@ public sealed partial class BcCompiler
         // internalsVisibleTo, and the manifest-derived compiler inputs read below
         // (preprocessorSymbols/features/contextSensitiveHelpUrl — #1898/#1940/#1941/#1943),
         // all need it in hand for the ctors themselves.
-        var foundAppJson = dirs.Select(d => Path.Combine(d, "app.json")).FirstOrDefault(File.Exists);
+        //
+        // #2542: prefer appRootDir, exactly as Emit() does for the same question. That
+        // parameter is contractually THIS dep's own app root, and for the in-bundle
+        // sibling-symbols compile it is the only place the manifest can be: EmitSiblingSymbols
+        // passes group.SuiteDir, while group.Paths comes from CollectSuitePaths, which reduces
+        // an app that keeps its AL under src/ to exactly [<app>/src] — a folder with no
+        // app.json in it. Scanning `dirs` alone therefore found nothing for that layout, and
+        // every property below silently fell back to its unset default while the SAME app's
+        // own Emit read them correctly: AL0543 on every ContextSensitiveHelpPage, an #if-guarded
+        // procedure missing from the symbols the dependent binds against, `features` and
+        // `internalsVisibleTo` dropped. Every AL fixture in this repo is flat, the one layout
+        // where the folder scan happens to work, so nothing caught it.
+        //
+        // The fallback still scans `dirs` and still accepts "no manifest" as an answer. What it
+        // must NOT do is climb to `../app.json`, which can resolve to a DIFFERENT app's manifest
+        // — compiling a dep against a neighbour's `features` breaks it in both directions (a dep
+        // omitting noImplicitWith would compile cleanly off a parent that declares it, and one
+        // declaring it would fail off a parent that does not). Pinned by
+        // ManifestFeaturesSubprocessTests' two SourceDependency cases.
+        var foundAppJson = (appRootDir != null && File.Exists(Path.Combine(appRootDir, "app.json")))
+            ? Path.Combine(appRootDir, "app.json")
+            : dirs.Select(d => Path.Combine(d, "app.json")).FirstOrDefault(File.Exists);
         var manifestInputs = ReadManifestCompilerInputs(foundAppJson);
 
         // Preprocessor symbols: same union as Emit() — CLEANSCHEMA1..25, any caller-supplied

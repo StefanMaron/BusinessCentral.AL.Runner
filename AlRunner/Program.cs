@@ -270,11 +270,17 @@ catch (InvalidOperationException ex)
 string? cacheRootOverride = null;
 // --print-cache-key (issue #1851): a diagnostic/test-support mode. Reaches the SAME
 // ComputeAlCacheKey call, with the SAME arguments, that a real run would use for the
-// first app group it processes — then prints it and exits, before Emit+Compile even
-// starts. Exists so callers that only need to assert a property of the KEY (not of a
-// compiled DLL) don't have to pay for a full cold AL compile to get one. There is no
+// first app group it processes — then prints it and exits, without emitting or compiling
+// that app group. Exists so callers that only need to assert a property of the KEY (not
+// of a compiled DLL) don't have to pay for a full cold AL compile to get one. There is no
 // second/parallel key computation — see the call site below, unchanged from the normal
 // path up to and including the ComputeAlCacheKey call itself.
+//
+// It is NOT free, and the help text must not imply it is. The short-circuit sits inside
+// the per-app-group loop, so RunLayeredPrePass has already built every dependency
+// implementation bundle from source by the time a key is printed. That cost cannot be
+// skipped: the key covers the resolved dependency set, so a run that skipped the pre-pass
+// would print a different key than the run it stands in for.
 bool printCacheKeyOnly = false;
 // Test isolation mode — default matches BC's "Test Runner - Isol. Codeunit" (130450).
 var isolation = AlRunner.TestIsolation.Codeunit;
@@ -1946,6 +1952,17 @@ foreach (var bundle in bundles)
     // without deps doesn't inherit a sibling bundle's Install codeunits.
     AlRunner.InstallTriggerRunner.ResetForNewBundle();
 
+    // Everything about this bundle that says "your package cache cannot serve this run":
+    // dependencies no loader tier can implement (DependencyResolver.UnservableDependencies,
+    // added below where they are printed) plus platform runtime apps found symbol-only
+    // (reported from inside the dependency load, hence the collector). Collected as well as
+    // printed so the run summary can name them again at the end — see Reporter.PrintSummary.
+    // Declared this high because dependency resolution happens far above the bundle's other
+    // per-bucket state, and reset per bundle so one bundle's missing package is not attributed
+    // to every later bundle and every later --watch cycle.
+    var bundleProvisionGaps = new List<string>();
+    AlRunner.Infrastructure.ProvisionGapLog.Reset();
+
     // ── per-bucket dep resolution ──────────────────────────────────────────
     // Hoisted out of the try block below so EmitSiblingSymbols (called later, once
     // per bundle) can pass this bundle's resolved Microsoft-platform closure into
@@ -2036,7 +2053,10 @@ foreach (var bundle in bundles)
                 // certain object-ID-0 failure later, and #1689 is precisely the report that
                 // nothing named it. One line per app, and only for a shape that cannot work.
                 foreach (var u in resolver.UnservableDependencies)
+                {
                     Console.Error.WriteLine(u);
+                    bundleProvisionGaps.Add(u);
+                }
                 // Compiler sees only non-workspace dirs in its .app scanner; the
                 // synthetic workspace dirs are registered as symbols.json-only
                 // sources via SetExtraSymbolDirs (called AFTER SetResolvedDeps,
@@ -2056,6 +2076,9 @@ foreach (var bundle in bundles)
                 // as `dep-load:<Name>` (see DependencyLoader.LoadAll). Wrapping it here too
                 // would nest, and nested stages double-count — see PhaseLog.Stage.
                 var loaded = depLoader.LoadAll(ordered, depRootDir);
+                // Platform runtime apps the load found symbol-only. Read straight after the load
+                // that produces them, before anything else can reset the collector.
+                bundleProvisionGaps.AddRange(AlRunner.Infrastructure.ProvisionGapLog.Collected);
                 // Issue #2239: same as "resolved N dep(s)" above — gated behind --verbose.
                 if (AlRunner.Log.Verbose)
                     Console.WriteLine($"  [{rel}] loaded {loaded.Count} dep assembl(ies)");
@@ -3029,20 +3052,13 @@ foreach (var bundle in bundles)
                 // hiding WHICH type/dependency could not load. Dig out the concrete
                 // LoaderExceptions (per .claude/rules/loud-failures.md) so the developer sees
                 // the real cause — almost always a dependency whose runtime DLL was not built.
-                var rtle = ex as ReflectionTypeLoadException
-                    ?? ex.InnerException as ReflectionTypeLoadException;
-                if (rtle != null)
-                {
-                    var reasons = rtle.LoaderExceptions
-                        .Where(e => e != null).Select(e => e!.Message).Distinct().Take(5).ToList();
-                    bundleErrors.Add(
-                        $"<bundled>: EXEC-FAIL: {ex.Message.Split('\n')[0]} — " +
-                        string.Join(" | ", reasons));
-                }
-                else
-                {
-                    bundleErrors.Add($"<bundled>: EXEC-FAIL: {ex.Message.Split('\n')[0]}");
-                }
+                // Named after the APP GROUP, not the bundle: this catch sits inside the loop
+                // over the bundle's app groups, so it means THIS app contributed zero results
+                // while its siblings ran normally. With "<bundled>" here instead, an app's whole
+                // test set could disappear from a run and no line said whose — and the
+                // TEST-TIMEOUT-ABORT line a few lines up already names its app group.
+                bundleErrors.Add(AlRunner.Infrastructure.ExecFailure.Describe(
+                    asm.GetName().Name ?? $"<asm {runIdx}>", ex));
                 tests = Array.Empty<TestResult>();
             }
             finally
@@ -3194,7 +3210,7 @@ foreach (var bundle in bundles)
     if (bundleTests.Count == 0 && bundleErrors.Count > 0) bundleStage = BucketStage.CompileFailed;
     results.Add(new BucketResult(bundleAbs, bundleStage,
         bundleErrors, null, bundleTests,
-        bundleEmit, bundleComp, bundleRun, ranGroupCount));
+        bundleEmit, bundleComp, bundleRun, ranGroupCount, bundleProvisionGaps));
     // Appended here, not buffered to process exit: a run that dies mid-way still
     // yields a row for every bundle it did finish. The row's wall clock covers this
     // whole loop turn, so wall − (emit+compile+run) is the per-bundle overhead
@@ -3638,6 +3654,9 @@ return strictExitCode ? computedExitCode : 0;
         // changes that happened in a sibling bundle. Gated on affectedOnly and more than one
         // bundle — a single-bundle request already sees its own full change set.
         List<AffectedObjectId>? requestWideChangedObjects = null;
+        // Per bundle: how many objects its own peek saw change, or null when the peek could not
+        // answer for it. See ChangedDependencyForcesFullCompile below.
+        var peekedChangedCountByBundle = new Dictionary<string, int?>(StringComparer.OrdinalIgnoreCase);
         if (useIncrementalChangeModel && sourcePaths.Length > 1)
         {
             requestWideChangedObjects = new List<AffectedObjectId>();
@@ -3652,6 +3671,10 @@ return strictExitCode ? computedExitCode : 0;
                 peekPaths = peekPaths.Distinct().ToList();
 
                 var peeked = emitter.PeekChangedObjects(peekPaths, peekModuleName, peekBucketRoot);
+                // #2603: the same peek answers a second question — "did THIS bundle change this
+                // cycle?" — which is what lets a bundle listed BEFORE its own dependency decide
+                // safely. Recorded per bundle, not folded into the union.
+                peekedChangedCountByBundle[peekAbs] = peeked?.Count;
                 if (peeked == null)
                 {
                     // Unknown for at least one bundle (no baseline yet, app.json changed, an
@@ -3684,11 +3707,31 @@ return strictExitCode ? computedExitCode : 0;
         // processed in `sourcePaths` order — the one documented/supported shape is dependency
         // app before test app (see README), which is exactly the order this needs to see the
         // dependency's fallback before deciding the test app's selection.
+        //
+        // #2603: the SAME signal has to gate this request's later bundles' COMPILATION too, not
+        // only their test selection. A bundle whose own files all hash identical to the last cycle
+        // takes TryEmitIncremental's "genuinely zero work: replay the last cycle's result verbatim"
+        // short-circuit — which is correct in isolation and wrong when a DEPENDENCY bundle in the
+        // same request just re-emitted a surface this bundle's generated C# baked member ids
+        // against. Measured: a dependency app that gains an overload correctly falls back to a full
+        // compile (#2548), and the consuming test app, whose own sources did not move, replayed its
+        // previous C# and dispatched the PREVIOUS overload — a green-looking run returning the wrong
+        // answer, visible only because the AL test happened to assert the value.
+        //
+        // So `sawFallbackReason` is hoisted out of the closure below and read by the bundle loop:
+        // once any bundle in this request has fallen back, every later bundle compiles in full
+        // instead of replaying. Conservative on purpose — without an object-reference graph
+        // (#2571) there is no way to ask whether THIS bundle actually binds to what that one
+        // re-emitted, and the failure this prevents is silent while the cost is one full compile of
+        // a bundle whose dependency just changed anyway.
+        //
+        // Same forward-only, `sourcePaths`-order limitation as the selection half above, and for
+        // the same reason. #2571 tracks the order-independent version.
+        string? sawFallbackReason = null;
         var effectiveBeforeRun = beforeRun;
         if (beforeRun != null)
         {
             var union = requestWideChangedObjects;
-            string? sawFallbackReason = null;
             effectiveBeforeRun = (bundlePath, moduleName, selectionEnvironmentKey, changedObjects, changeModelFallbackReason) =>
             {
                 var merged = union == null || changedObjects == null ? changedObjects : changedObjects.Concat(union).ToList();
@@ -3702,6 +3745,26 @@ return strictExitCode ? computedExitCode : 0;
             };
         }
 
+        // #2603, the order-independent half. The forward propagation above is only sound while a
+        // bundle's in-request dependencies are compiled BEFORE it — the `sourcePaths` order the
+        // README documents. Measured with that order reversed, the defect returns in full: the
+        // consuming bundle is processed first, `sawFallbackReason` is still null, it replays its
+        // previous C# verbatim, and the run reports BOUND-TO=1 where a cold run gives 2. An
+        // undocumented argument order is still an accepted one, and answering it wrongly in
+        // silence is the thing this whole change exists to stop.
+        //
+        // The request already knows enough to decide this without compiling anything and without
+        // reordering execution (which would change the order test events stream out):
+        //   * which bundles this one declares a dependency on — the same app.json identity read
+        //     RunLayeredPrePass already does to decide which bundles are "impls";
+        //   * whether each of those changed this cycle — the per-bundle peek above.
+        //
+        // The rule: a bundle may use the incremental change model only if every in-request bundle
+        // it depends on either comes BEFORE it (the forward propagation covers it) or is
+        // known-unchanged this cycle. In the documented order the first clause always holds, so
+        // this costs nothing and changes no behaviour there.
+        var forcedFullBundles = ChangedLaterDependencyBundles(sourcePaths, peekedChangedCountByBundle);
+
         var bundleIndex = 0;
         foreach (var bundleDir in sourcePaths)
         {
@@ -3710,14 +3773,91 @@ return strictExitCode ? computedExitCode : 0;
             var relBundle = Path.GetRelativePath(
                 Environment.CurrentDirectory, Path.GetFullPath(bundleDir));
             AlRunner.Infrastructure.PhaseLog.BeginBundle(relBundle, bundleIndex);
+            // #2603: see the two comments above. An earlier bundle fell back, or a dependency of
+            // this bundle is listed after it and changed this cycle — either way this bundle must
+            // not serve its C# from a baseline recorded before that other bundle moved.
             var result = RunBundleForServer(bundleDir, requestPackagePaths, runStep,
-                useIncrementalChangeModel,
+                useIncrementalChangeModel && sawFallbackReason == null
+                    && !forcedFullBundles.Contains(Path.GetFullPath(bundleDir)),
                 effectiveBeforeRun,
                 out var emitElapsed, out var compileElapsed, out var runElapsed);
             AlRunner.Infrastructure.PhaseLog.EndBundle(emitElapsed, compileElapsed, runElapsed);
             results.Add(result);
         }
         return results;
+    }
+
+    /// <summary>
+    /// The bundles in this request that must NOT use the incremental change model because a bundle
+    /// they depend on is listed AFTER them in <paramref name="sourcePaths"/> and changed this cycle.
+    ///
+    /// <para>Issue #2603. A bundle whose own files all hash identical replays its previous
+    /// generated C# verbatim, which bakes the member ids its dependencies' PREVIOUS surfaces
+    /// resolved to. The forward fallback propagation in <c>RunAllBundlesForServer</c> covers a
+    /// dependency compiled earlier in the same request; it cannot cover one compiled later,
+    /// because the signal it reads does not exist yet.</para>
+    ///
+    /// <para>Both inputs are already paid for: the dependency relation is the same app.json
+    /// identity read <see cref="RunLayeredPrePass"/> does, and "did it change" is the per-bundle
+    /// result of the peek <c>RunAllBundlesForServer</c> already performs for #2492's union.
+    /// Nothing here compiles anything, and execution order is deliberately left alone — reordering
+    /// would change the order test events stream out.</para>
+    ///
+    /// <para><b>Fail-closed on an unreadable answer.</b> A dependency whose peek could not answer
+    /// (no baseline yet, app.json changed, an unclassifiable file — <c>PeekChangedObjects</c>
+    /// returns null) counts as changed, and so does one that was never peeked at all. "I do not
+    /// know whether it moved" and "it moved" have the same safe handling; only a positive
+    /// zero-changes answer earns the fast path.</para>
+    ///
+    /// <para>Matching is by declared <c>AppId</c>, falling back to Name+Publisher — the same pair
+    /// <see cref="RunLayeredPrePass"/> uses, and for the same reason: a bundle without a declared
+    /// id still has to be recognisable as somebody's dependency.</para>
+    /// </summary>
+    static HashSet<string> ChangedLaterDependencyBundles(
+        string[] sourcePaths, Dictionary<string, int?> peekedChangedCountByBundle)
+    {
+        var forced = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (sourcePaths.Length < 2 || peekedChangedCountByBundle.Count == 0) return forced;
+
+        var order = new List<string>();
+        var identities = new Dictionary<string, AlRunner.Infrastructure.BundleIdentity>(StringComparer.OrdinalIgnoreCase);
+        foreach (var bundle in sourcePaths)
+        {
+            var abs = Path.GetFullPath(bundle);
+            order.Add(abs);
+            var appJson = Path.Combine(abs, "app.json");
+            if (!File.Exists(appJson))
+            {
+                var root = FindBucketRoot(abs);
+                if (root != null) appJson = Path.Combine(root, "app.json");
+            }
+            if (!File.Exists(appJson)) continue;
+            var id = AlRunner.Infrastructure.InProcessAppPackager.ReadIdentity(appJson);
+            if (id != null) identities[abs] = id;
+        }
+        if (identities.Count < 2) return forced;
+
+        bool ChangedOrUnknown(string abs) =>
+            !peekedChangedCountByBundle.TryGetValue(abs, out var count) || count is not 0;
+
+        for (int i = 0; i < order.Count; i++)
+        {
+            if (!identities.TryGetValue(order[i], out var mine)) continue;
+            for (int j = i + 1; j < order.Count; j++)
+            {
+                if (!identities.TryGetValue(order[j], out var later)) continue;
+                bool dependsOnLater = mine.Dependencies.Any(dep =>
+                    (dep.AppId != Guid.Empty && dep.AppId == later.AppId)
+                    || (string.Equals(dep.Name, later.Name, StringComparison.OrdinalIgnoreCase)
+                        && string.Equals(dep.Publisher, later.Publisher, StringComparison.OrdinalIgnoreCase)));
+                if (dependsOnLater && ChangedOrUnknown(order[j]))
+                {
+                    forced.Add(order[i]);
+                    break;
+                }
+            }
+        }
+        return forced;
     }
 
     // True when `path` is `root` itself or nested somewhere under it. Both are
@@ -5025,12 +5165,40 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                     .GroupBy(t => $"{t.Codeunit}.{t.Method}", StringComparer.Ordinal)
                     .ToDictionary(g => g.Key, g => g.Last(), StringComparer.Ordinal);
 
+                // #2535: file-to-object attribution must be REQUEST-WIDE (every bundle's
+                // module unioned into one map), not per-module. `statements` is RUNTIME
+                // coverage — it contains every statement the test actually executed,
+                // including statements in a DEPENDENCY bundle's files (a real cross-app
+                // call, not a hypothetical: see the Pageworks/Pageworks.Test repro in
+                // #2535, mirroring #2492's PeekChangedObjects cross-bundle case on the
+                // CHANGED-object side — see that method's docstring). A per-module map
+                // cannot resolve a path belonging to a sibling bundle's module, so a single
+                // ordinary cross-app helper call made the whole test "unmappable" ->
+                // permanently "unknown" -> the test reran on EVERY future edit no matter
+                // how unrelated, forever. Measured on the real corpus (1012 tests): 897
+                // were unmappable this way, only 9 ever got a real coverage entry, and
+                // every one of those 9 had a coverage-set size of exactly 1 (their own
+                // declaring codeunit only) — so the defect is unmappable cross-bundle
+                // statements, not over-broad coverage sets. Built ONCE per request (not
+                // per bundle) from every module this request has already resolved.
+                var requestWideTrackedObjectsByPath = new Dictionary<string, AffectedObjectId>(StringComparer.Ordinal);
+                foreach (var trackedModuleName in requestModuleByBundle.Values.Distinct(StringComparer.Ordinal))
+                {
+                    var m = emitter.TryGetTrackedObjectsByPath(trackedModuleName);
+                    if (m == null) continue;
+                    foreach (var kv in m)
+                        requestWideTrackedObjectsByPath[kv.Key] = kv.Value;
+                }
+
                 foreach (var (bundlePath, discoveredTests) in requestDiscoveredTestsByBundle)
                 {
                     if (!requestModuleByBundle.TryGetValue(bundlePath, out var moduleName)) continue;
                     if (!requestEnvironmentByBundle.TryGetValue(bundlePath, out var envKey)) continue;
-                    var trackedObjectsByPath = emitter.TryGetTrackedObjectsByPath(moduleName);
-                    if (trackedObjectsByPath == null) continue;
+                    // Still require THIS bundle's own module to have a RAD baseline before
+                    // attributing ITS tests at all — same posture as before #2535, only the
+                    // per-statement lookup below now consults the request-wide map instead
+                    // of just this one module's.
+                    if (emitter.TryGetTrackedObjectsByPath(moduleName) == null) continue;
 
                     var nextCoverage = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
                     var nextUnknown = new HashSet<string>(StringComparer.Ordinal);
@@ -5054,7 +5222,7 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                         var unmappable = false;
                         foreach (var s in statements)
                         {
-                            if (!trackedObjectsByPath.TryGetValue(s.FilePath, out var identity))
+                            if (!requestWideTrackedObjectsByPath.TryGetValue(s.FilePath, out var identity))
                             {
                                 unmappable = true;
                                 break;
@@ -5552,10 +5720,7 @@ static string SanitiseFilename(string name)
 // Shared by --version/-v/-V/version and --help's first line, so a build's
 // self-reported version can never drift between the two surfaces (#2072).
 static string VersionString()
-{
-    var asmVer = typeof(Program).Assembly.GetName().Version?.ToString() ?? "unknown";
-    return $"al-runner v{asmVer}";
-}
+    => $"al-runner v{AlRunner.Infrastructure.RunnerVersion.Informational(typeof(Program).Assembly)}";
 
 static void PrintGuide(TextWriter w)
 {
@@ -6010,9 +6175,12 @@ static void PrintHelp(TextWriter w)
     w.WriteLine("  --print-cache-key       Diagnostic/test-support mode: compute the AL-output cache");
     w.WriteLine("                          key for the first app group of the first bundle exactly as");
     w.WriteLine("                          a real run would, print \"[cache] KEY key=<hash>\", and exit");
-    w.WriteLine("                          before Emit+Compile starts. Requires the cache to be");
-    w.WriteLine("                          enabled (default; not --no-cache). Exit code 2 if no key");
-    w.WriteLine("                          could be computed.");
+    w.WriteLine("                          without emitting or compiling that app group. NOT free: the");
+    w.WriteLine("                          layered dependency pre-pass has already built every");
+    w.WriteLine("                          dependency bundle from source by then, and it cannot be");
+    w.WriteLine("                          skipped, because the key covers the resolved dependency set.");
+    w.WriteLine("                          Requires the cache to be enabled (default; not --no-cache).");
+    w.WriteLine("                          Exit code 2 if no key could be computed.");
     w.WriteLine("  --watch                 Stay resident with warm dependencies and re-run IN-PROCESS");
     w.WriteLine("                          on every .al change (deps loaded once → ~seconds/save, not");
     w.WriteLine("                          a cold re-run). Ctrl+C to quit.");
@@ -6632,13 +6800,14 @@ static List<string> RunLayeredPrePass(List<string> bundles, List<string> package
             // directory the user passed on the command line — surfacing as a wall of bogus
             // AL0791 / AL0185 diagnostics against source that is perfectly valid, with only
             // the "[layered] ... skipping in-process synthesis" line above to explain it.
-            var prebuiltUtc = File.GetLastWriteTimeUtc(prebuilt);
-            var newestSourceUtc = AlRunner.Infrastructure.PrebuiltShadowCheck.NewestAlSourceUtc(implPath);
-            if (AlRunner.Infrastructure.PrebuiltShadowCheck.SourceIsNewer(prebuiltUtc, newestSourceUtc))
+            // The verdict is on CONTENT, not mtime — see PrebuiltShadowCheck's header for why
+            // mtime ordering answers a different question, and gets it wrong in both directions.
+            var shadow = AlRunner.Infrastructure.PrebuiltShadowCheck.Evaluate(prebuilt, implPath);
+            if (shadow.Stale)
             {
                 Console.WriteLine($"[layered] {implId.Name} {implId.Version} has a prebuilt symbol package " +
-                    $"({Path.GetFileName(prebuilt)}) but it is STALE (source modified {newestSourceUtc:u} > " +
-                    $"package {prebuiltUtc:u}) — synthesizing from source instead.");
+                    $"({Path.GetFileName(prebuilt)}) but it is STALE ({shadow.Reason}) — " +
+                    $"synthesizing from source instead.");
                 continue; // keep implPath: build it from source
             }
 
@@ -7559,8 +7728,13 @@ static void EmitSiblingSymbols(
         .ToHashSet();
     if (targets.Count == 0) return;
 
-    var dir = Path.Combine(Path.GetTempPath(),
-        "al-runner-sibling-symbols", Path.GetFileName(bundleAbs.TrimEnd(Path.DirectorySeparatorChar)));
+    // Per (bundle, process), not per bundle leaf name — see
+    // Infrastructure/SiblingSymbolsDirectory.cs (#2586). The recursive delete below is only
+    // safe because of that: it can now only ever remove THIS process's own directory, where
+    // before two concurrent runners over same-leaf-named bundles deleted each other's symbols
+    // mid-compile. Nobody else cleans up a private directory, so prune old ones first.
+    AlRunner.Infrastructure.SiblingSymbolsDirectory.PruneStale(TimeSpan.FromDays(1));
+    var dir = AlRunner.Infrastructure.SiblingSymbolsDirectory.ForBundle(bundleAbs);
     try
     {
         if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true);

@@ -275,26 +275,56 @@ public class TestArtifactsGateTests
     /// Passed — a green tick meaning "asserted nothing". Nothing in this assembly may
     /// do that; the unavailable branch must raise a visible skip.
     /// </summary>
+    /// <summary>
+    /// The shapes a silent skip takes in C# source. Exposed as a function over TEXT so the
+    /// detector itself can be tested against synthetic inputs — see
+    /// <see cref="SilentSkipDetectorTests"/>. As inline regexes it could only ever be tested by
+    /// the suite's own contents, which means a hole in it stays invisible for exactly as long as
+    /// nobody happens to write the shape it misses.
+    /// </summary>
+    internal static IEnumerable<string> FindSilentSkipReturns(string sourceText)
+    {
+        foreach (var shape in SilentSkipShapes)
+            foreach (Match m in shape.Matches(sourceText))
+                yield return m.Value.Split('\n')[0].Trim();
+    }
+
+    /// <summary>
+    /// Two shapes: a "[skip] …" report followed by a return, and a bare <c>return;</c> whose
+    /// trailing comment admits it is skipping or has nothing to assert.
+    ///
+    /// <para>The first one used to be <c>\[skip\][^\n]*\breturn;</c> with
+    /// <see cref="RegexOptions.None"/>, and <c>[^\n]*</c> cannot cross the newline between the
+    /// report and the return — so it only ever matched the one-line form
+    /// <c>{ WriteLine("[skip] …"); return; }</c> and was blind to the far more common
+    ///
+    /// <code>
+    /// Console.Error.WriteLine($"[skip] …");
+    /// return;
+    /// </code>
+    ///
+    /// which is the same defect written over two lines. Widened to a bounded
+    /// <see cref="RegexOptions.Singleline"/> match: bounded, so a "[skip]" string and an
+    /// unrelated <c>return;</c> hundreds of lines apart are not reported as one offence.</para>
+    /// </summary>
+    private static readonly Regex[] SilentSkipShapes =
+    {
+        new(@"\[skip\].{0,400}?\breturn;", RegexOptions.Singleline),
+        new(@"\breturn;\s*//[^\n]*\b(skip|not provisioned|no artifacts|nothing to assert|nothing to prove)\b",
+            RegexOptions.IgnoreCase),
+    };
+
     [Fact]
     public void NoTestSilentlyReturnsWhenItsEnvironmentIsUnavailable()
     {
-        // Both shapes the suite used: a "[skip] …" line followed by return, and a
-        // bare `return;` whose trailing comment admits it is skipping / has nothing
-        // to assert.
-        var shapes = new[]
-        {
-            new Regex(@"\[skip\][^\n]*\breturn;", RegexOptions.None),
-            new Regex(@"\breturn;\s*//[^\n]*\b(skip|not provisioned|no artifacts|nothing to assert|nothing to prove)\b",
-                RegexOptions.IgnoreCase),
-        };
-
         var offenders = new List<string>();
         foreach (var (file, text) in TestSources())
         {
-            if (file == "TestArtifactsGateTests.cs") continue; // the regexes above are literals here
-            foreach (var shape in shapes)
-                foreach (Match m in shape.Matches(text))
-                    offenders.Add($"{file}: {m.Value.Split('\n')[0].Trim()}");
+            // The regexes above, and the synthetic offenders SilentSkipDetectorTests feeds them,
+            // are literals in these two files.
+            if (file is "TestArtifactsGateTests.cs" or "SilentSkipDetectorTests.cs") continue;
+            foreach (var hit in FindSilentSkipReturns(text))
+                offenders.Add($"{file}: {hit}");
         }
 
         Assert.True(offenders.Count == 0,

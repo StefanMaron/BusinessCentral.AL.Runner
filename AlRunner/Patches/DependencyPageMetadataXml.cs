@@ -146,6 +146,24 @@ public static partial class RecordPatches
                 if (!page.InsertAllowed) w.WriteAttributeString("InsertAllowed", "0");
                 if (!page.ModifyAllowed) w.WriteAttributeString("ModifyAllowed", "0");
                 if (!page.DeleteAllowed) w.WriteAttributeString("DeleteAllowed", "0");
+                // The three flags the AL compiler writes here alongside SourceTable, all
+                // three defaulting to false, so only a true one is written — the same
+                // "state what the symbol file states, default the rest" rule as above.
+                //
+                // Measured by compiling a page declaring all three and reading back the
+                // metadata the compiler captured for it, on BC 28.1:
+                //     <SourceObject AutoSplitKey="1" DelayedInsert="1"
+                //                   MultipleNewLines="1" SourceTable="65940" />
+                //
+                // AutoSplitKey is the one with teeth. RunnerPageInstance.NeedsAutoSplitKey
+                // reads form.MasterPage.PageProperties.SourceObject.AutoSplitKey, so
+                // omitting it here read false for every page shipping precompiled in a
+                // dependency .app, BC's client half of AutoSplitKey silently did not run,
+                // and per the note in MockTestPage the first new row then lands at line
+                // no. 0 and the second fails on a duplicate primary key.
+                if (page.AutoSplitKey) w.WriteAttributeString("AutoSplitKey", "1");
+                if (page.MultipleNewLines) w.WriteAttributeString("MultipleNewLines", "1");
+                if (page.DelayedInsert) w.WriteAttributeString("DelayedInsert", "1");
             }
             // The attributes above only mean anything alongside a SourceTable, so a page
             // without one gets the bare element the compiler itself emits — not

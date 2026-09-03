@@ -204,8 +204,13 @@ public static partial class RecordPatches
 
             // Build MetaTable via named-parameter ctor.  The public ctor takes many
             // named params with defaults; we resolve by name and fall back to defaults.
+            // #2545 — the table's own declared Caption. Null when it declares none, which is
+            // the common case and leaves the ctor's caption parameters unset so BC's own
+            // object-name fallback stands. See ResolveTableCaption.
+            var tableCaption = ResolveTableCaption(tableId);
+
             var defaultMetaTable = CallMetaTableCtor(tableId, parsed.TableName, fields, allKeys.ToArray(),
-                parsed.IsTableTypeTemporary, parsed.DataPerCompany, lookupFormId);
+                parsed.IsTableTypeTemporary, parsed.DataPerCompany, tableCaption, lookupFormId);
             if (defaultMetaTable == null) return null;
 
             // NavAppGroup.BaseGroup
@@ -312,7 +317,7 @@ public static partial class RecordPatches
     }
 
     private static object? CallMetaTableCtor(int id, string name, object[] fields, object[] allKeys,
-        bool isTableTypeTemporary, bool isDataPerCompany, int lookupFormId = 0)
+        bool isTableTypeTemporary, bool isDataPerCompany, string? caption, int lookupFormId = 0)
     {
         if (_tMetaTable == null) return null;
         var ctor = _tMetaTable.GetConstructors()
@@ -327,6 +332,21 @@ public static partial class RecordPatches
             var p = ps[i];
             if (p.Name == "id") { args[i] = id; continue; }
             if (p.Name == "name") { args[i] = name; continue; }
+            // #2545 — the table's declared Caption, the exact shape BuildMetaField already
+            // uses for a FIELD's caption one level down. BC answers Rec.TableCaption() and
+            // RecordRef.Caption() from the MetaTable's MERGED caption MultiLanguage, and
+            // falls back to the object NAME when there is none — so leaving these unset did
+            // not produce an empty caption, it produced the name, which looks plausible and
+            // is the harder failure to notice. Both parameters are set: the plain `caption`
+            // string is not what BC's merged read consults, and the ML is not what a plain
+            // caption read consults. A table with no declared Caption leaves both unset so
+            // BC's own name fallback stands.
+            if (p.Name == "caption" && !string.IsNullOrEmpty(caption)) { args[i] = caption; continue; }
+            if (p.Name == "captionML" && !string.IsNullOrEmpty(caption))
+            {
+                var ml = BuildEnuMultiLanguage(p.ParameterType, caption!);
+                if (ml != null) { args[i] = ml; continue; }
+            }
             if (p.Name == "fields")
             {
                 // ImmutableArray<MetaField>
@@ -585,11 +605,16 @@ public static partial class RecordPatches
                 // carry {"Name":"InitValue","Value":" "} for exactly this shape — so
                 // stripping the outer quotes (and un-doubling AL's "" escape) is
                 // observably equivalent to real BC. Symbol-loaded fields already
-                // arrive unquoted and pass through unchanged; classic Option fields
-                // are untouched (their OptionMembers are captured with the same
-                // quoting as their InitValue, so the pair stays internally
-                // consistent).
-                else if (tn.StartsWith("Enum", StringComparison.OrdinalIgnoreCase)
+                // arrive unquoted and pass through unchanged.
+                //
+                // Classic Option fields (#2345): OptionMembers is now ALSO parsed
+                // unquoted (RecordPatches.AlSourceParser.cs), so a quoted-identifier
+                // InitValue on an Option field needs the same unquoting to stay
+                // consistent with the member list it is matched against — the pair
+                // used to both carry quotes (internally consistent but wrong,
+                // matching real BC only by symmetry); now both carry none.
+                else if ((tn.StartsWith("Enum", StringComparison.OrdinalIgnoreCase)
+                        || tn.Equals("Option", StringComparison.OrdinalIgnoreCase))
                     && iv.Length >= 2 && iv.StartsWith("\"") && iv.EndsWith("\""))
                 {
                     iv = iv.Substring(1, iv.Length - 2).Replace("\"\"", "\"");

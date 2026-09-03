@@ -309,6 +309,36 @@ public static partial class BcRuntime
         //    already built around _skeletonRootScope.
         var disposedField = navTenantType.GetField("disposed", BindingFlags.NonPublic | BindingFlags.Instance);
         if (disposedField != null) FieldPoke.SetInstance(disposedField, _skeletonSystemTenant, false);
+
+        // 3½. Seed NavTenant.disposingGate (a `readonly ManualResetGate` field initialiser BC's
+        //      real ctor runs as `disposingGate = new ManualResetGate();`, skipped along with
+        //      every other field initialiser by GetUninitializedObject). NavTenant.IsTenantDismounting
+        //      reads `!disposingGate.IsOpen` directly — no null-conditional — so it NREs on the
+        //      skeleton the moment anything calls NavTenant.CanCreateSession, which
+        //      NavSession.Open() (via CheckPreconditions) always does. That path is unreachable
+        //      for the runner's ROOT session (never opened through NavSession.Open — it is built
+        //      via GetUninitializedObject too), but a page background task's synchronous child
+        //      session IS opened for real (NavChildSessionTaskRuntime<T>.RunAsync ->
+        //      childSession.Open()) against this SAME skeleton tenant — see issue #2514.
+        //      A freshly-constructed ManualResetGate is the faithful default: BC's own ctor
+        //      creates one exactly the same way, and its default state is open (not dismounting).
+        var disposingGateField = navTenantType.GetField("disposingGate", BindingFlags.NonPublic | BindingFlags.Instance);
+        if (disposingGateField != null)
+        {
+            try
+            {
+                var gate = Activator.CreateInstance(disposingGateField.FieldType, nonPublic: true);
+                if (gate != null) FieldPoke.SetInstance(disposingGateField, _skeletonSystemTenant, gate);
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine(
+                    $"[BcRuntime] InjectSkeletonSystemTenant: could not construct {disposingGateField.FieldType.FullName} "
+                    + $"for tenant.disposingGate ({ex.GetType().Name}: {ex.Message}) — NavSession.Open() against this tenant will still NRE");
+            }
+        }
+        else
+            Console.Error.WriteLine("[BcRuntime] InjectSkeletonSystemTenant: NavTenant.disposingGate field NOT FOUND — NavSession.Open() will still NRE");
         var treeBackingField = navTenantType.GetField("<Tree>k__BackingField",
             BindingFlags.NonPublic | BindingFlags.Instance);
         if (treeBackingField != null && _skeletonRootScope != null)
@@ -320,6 +350,42 @@ public static partial class BcRuntime
             if (rootScopeTree != null)
                 FieldPoke.SetInstance(treeBackingField, _skeletonSystemTenant, rootScopeTree);
         }
+
+        // 3½. Seed NavTenant.Diagnostics (the `diagnostics` readonly field) with the same
+        //      ambient NavDiagnostics instance session.Diagnostics is wired to below. NavTenant's
+        //      real ctor does `diagnostics = NavDiagnostics.CreateSectionDiagnostics(...)`
+        //      (Ncl NavTenant.cs ~line 555); GetUninitializedObject skips that, so the skeleton
+        //      tenant's diagnostics field stays null. That is invisible on every path that reads
+        //      NavTenant.Diagnostics through DiagnosticsResolver.GetMostSpecificInstance(this)
+        //      (it falls back to the ambient ScopedDiagnostics), but NavSession's own ctor reads
+        //      `this.tenant.Diagnostics` DIRECTLY as the `parent` argument to
+        //      NavDiagnostics.CreateScopedDiagnostics — no resolver fallback — so a null tenant
+        //      diagnostics throws ArgumentNullException('parent') the moment anything constructs
+        //      a fresh NavSession against this tenant. That is exactly the CHILD session a page
+        //      background task's synchronous execution path builds
+        //      (NavChildSessionTaskRuntime<T>.RunAsync -> new NavSession(parentSession.Tenant, …)),
+        //      surfacing as CurrPage.EnqueueBackgroundTask throwing under a TestPage — see #2514.
+        var tenantDiagField = navTenantType.GetField("diagnostics", BindingFlags.NonPublic | BindingFlags.Instance);
+        if (tenantDiagField != null)
+        {
+            var tDiagForTenant = navNcl.GetType("Microsoft.Dynamics.Nav.Diagnostic.NavDiagnostics")
+                ?? AppDomain.CurrentDomain.GetAssemblies()
+                    .Select(a => a.GetType("Microsoft.Dynamics.Nav.Diagnostic.NavDiagnostics"))
+                    .FirstOrDefault(t => t != null);
+            var ambientForTenant = tDiagForTenant?.GetProperty("GetMostSpecificInstance",
+                    BindingFlags.Public | BindingFlags.Static)?.GetValue(null)
+                ?? tDiagForTenant?.GetField("GetMostSpecificInstance",
+                    BindingFlags.Public | BindingFlags.Static)?.GetValue(null);
+            if (ambientForTenant != null)
+            {
+                FieldPoke.SetInstance(tenantDiagField, _skeletonSystemTenant, ambientForTenant);
+                Console.Error.WriteLine("[BcRuntime] InjectSkeletonSystemTenant: tenant.Diagnostics wired to ambient NavDiagnostics");
+            }
+            else
+                Console.Error.WriteLine("[BcRuntime] InjectSkeletonSystemTenant: NavDiagnostics.GetMostSpecificInstance NOT resolved — tenant.Diagnostics stays null");
+        }
+        else
+            Console.Error.WriteLine("[BcRuntime] InjectSkeletonSystemTenant: NavTenant.diagnostics field NOT FOUND — child NavSession construction will still throw");
 
         // 4. Wire skeleton NCLMetadata into the skeleton SystemTenant's `nclMetadata` field.
         var stNclField = systemTenantType.GetField("nclMetadata", BindingFlags.NonPublic | BindingFlags.Instance);

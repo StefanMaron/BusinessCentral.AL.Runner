@@ -539,4 +539,24 @@ public sealed class PhaseLogIntegrationTests : IDisposable
         Assert.True(proc.GetProperty("wall_ms").GetInt64() > 0);
         Assert.True(proc.GetProperty("peak_rss_bytes").GetInt64() > 8L * 1024 * 1024);
     }
+
+    /// <summary>
+    /// The behavioral half of the Server GC contract (#2577): a real runner process, launched
+    /// the way every other spawn in this suite launches it, must observe
+    /// <c>GCSettings.IsServerGC</c> true. <see cref="ServerGcConfigTests"/> asserts the shipped
+    /// runtimeconfig declares it; this asserts the declaration actually reaches the process.
+    /// A phase log is the only channel that can carry the answer out of a subprocess whose
+    /// stdout several tests here assert on verbatim.
+    /// </summary>
+    [Fact]
+    public void TheRunnerProcess_RunsUnderServerGc()
+    {
+        var (_, exit) = RunRaw(_logPath, "--version");
+        Assert.Equal(0, exit);
+
+        var proc = Assert.Single(ReadRecords(_logPath, "process"));
+        Assert.True(proc.GetProperty("server_gc").GetBoolean(),
+            "the runner process ran under Workstation GC — see AlRunner.csproj's "
+            + "ServerGarbageCollection note for what that costs");
+    }
 }

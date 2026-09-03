@@ -1,0 +1,24 @@
+{
+  "id": "a1b2c3d4-e5f6-4708-9a1b-2c3d4e5f6137",
+  "name": "Runner Tests Fixture - CodeUnit Metadata Virtual Table",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Regression test: the CodeUnit Metadata virtual table (2000000137) must be populated (#2544).",
+  "description": "Proves Record \"CodeUnit Metadata\".Get() finds a codeunit THIS bundle compiles from source, and that TableNo / SingleInstance / Subtype come from each codeunit's own AL declaration rather than a fixed row. What the table answers on real BC is proven upstream in the al-language corpus; see CodeunitMetadataVirtualTableTests.cs for the runner-mechanism claim this pins.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "platform": "1.0.0.0",
+  "idRanges": [
+    {
+      "from": 60760,
+      "to": 60799
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}

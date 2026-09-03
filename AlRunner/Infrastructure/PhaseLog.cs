@@ -99,6 +99,16 @@ public sealed class PhaseLogRecord
     public long PeakRssBytes { get; set; }
     public int ExitCode { get; set; }
 
+    /// <summary>
+    /// Whether this process ran under Server GC. A cold AL compile is GC-throughput-bound
+    /// (see AlRunner.csproj's ServerGarbageCollection note for the measurement), so "which GC
+    /// was this" is the first question to ask of a phase log reporting an implausibly slow
+    /// emit — and it cannot be answered from outside the process, because the setting can come
+    /// from the shipped runtimeconfig, a DOTNET_gcServer environment variable, or a host that
+    /// embeds its own config.
+    /// </summary>
+    public bool ServerGc { get; set; }
+
     // ── Bundle-row and app-row only. Named slices of the row's turn that are NOT
     // already reported elsewhere on it — for a bundle row, the block #1828 exists to
     // attribute (work outside every app group); for an app row, the block #1861
@@ -145,6 +155,7 @@ public sealed class PhaseLogRecord
             Num(sb, "patches_ms", PatchesMs);
             Num(sb, "peak_rss_bytes", PeakRssBytes);
             Num(sb, "exit_code", ExitCode);
+            Bool(sb, "server_gc", ServerGc);
         }
         // Bundle and app rows only, and only when something was measured: a process
         // row's once-per-process costs already have their own named fields, and an
@@ -174,6 +185,11 @@ public sealed class PhaseLogRecord
         {
             Sep(b);
             b.Append('"').Append(k).Append("\":").Append(v.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        }
+        static void Bool(StringBuilder b, string k, bool v)
+        {
+            Sep(b);
+            b.Append('"').Append(k).Append("\":").Append(v ? "true" : "false");
         }
     }
 }
@@ -505,6 +521,7 @@ public static class PhaseLog
             row = Process_;
             row.ExitCode = Environment.ExitCode;
             row.PeakRssBytes = PeakRssBytes();
+            row.ServerGc = System.Runtime.GCSettings.IsServerGC;
             // Measured from OS process start, so it includes host startup and the
             // full-opt JIT that <TieredCompilation>false</TieredCompilation> forces —
             // exactly the residual #1825 wants to size.
@@ -530,8 +547,11 @@ public static class PhaseLog
     /// <summary>
     /// This process's resident-set high-water mark in bytes. Linux reads VmHWM from
     /// /proc/self/status — the kernel's own high-water mark, which .NET's
-    /// PeakWorkingSet64 does not surface on Unix. Falls back to the framework
-    /// property elsewhere.
+    /// PeakWorkingSet64 does not surface on Unix. macOS reads getrusage's ru_maxrss,
+    /// because .NET does not implement PeakWorkingSet64 there at all: it returns 0,
+    /// and a silent zero is worse than a missing field, since the aggregate built on
+    /// top presents it as a measurement of a run that used no memory. Falls back to
+    /// the framework property elsewhere.
     /// </summary>
     public static long PeakRssBytes()
     {
@@ -546,7 +566,25 @@ public static class PhaseLog
                     if (long.TryParse(kb, out var v)) return v * 1024;
                 }
             }
+
             using var self = System.Diagnostics.Process.GetCurrentProcess();
+
+            if (OperatingSystem.IsMacOS())
+            {
+                var maxRss = DarwinPeakRssBytes();
+                // A high-water mark cannot be below the current working set. That check is
+                // what catches the live hazard, which is a units error rather than a wrong
+                // number: ru_maxrss is BYTES on Darwin and KILOBYTES on Linux, so reading
+                // the Linux convention on a Mac produces a value about 1024x too small —
+                // one that sails past any "greater than a few MB" floor while being wrong.
+                // It also catches a wrong field offset, which would read some other member
+                // of struct rusage. On either failure, fall back to the current working
+                // set: a real measurement and a valid lower bound on the peak, rather than
+                // a made-up number or a zero.
+                if (maxRss >= self.WorkingSet64) return maxRss;
+                return self.WorkingSet64;
+            }
+
             return self.PeakWorkingSet64;
         }
         catch
@@ -554,6 +592,47 @@ public static class PhaseLog
             return 0;
         }
     }
+
+    /// <summary>
+    /// <c>getrusage(RUSAGE_SELF).ru_maxrss</c> on Darwin, already in bytes there.
+    ///
+    /// The P/Invoke declares the WHOLE <c>struct rusage</c> and reads one explicit offset.
+    /// That is not tidiness: getrusage writes the entire structure, so a declaration
+    /// carrying only the field being read would let the kernel write past the buffer.
+    ///
+    /// The layout is the same on both Darwin ABIs. Darwin's <c>timeval</c> is an 8-byte
+    /// <c>tv_sec</c> plus a 4-byte <c>tv_usec</c> plus 4 bytes of padding = 16; <c>ru_utime</c>
+    /// and <c>ru_stime</c> take the first 32 bytes, putting <c>ru_maxrss</c> at offset 32;
+    /// fourteen more <c>long</c>s follow, for 144 in total, on x86_64 and arm64 alike.
+    /// <c>RUSAGE_SELF</c> is 0.
+    /// </summary>
+    private static long DarwinPeakRssBytes()
+    {
+        try
+        {
+            var usage = default(DarwinRusage);
+            return getrusage(RusageSelf, ref usage) == 0 ? usage.MaxRss : 0;
+        }
+        catch
+        {
+            // DllNotFoundException / EntryPointNotFoundException on anything that is not
+            // the Darwin libc. The caller falls back rather than reporting a zero.
+            return 0;
+        }
+    }
+
+    private const int RusageSelf = 0;
+
+    [System.Runtime.InteropServices.StructLayout(
+        System.Runtime.InteropServices.LayoutKind.Explicit, Size = 144)]
+    private struct DarwinRusage
+    {
+        [System.Runtime.InteropServices.FieldOffset(32)]
+        public long MaxRss;
+    }
+
+    [System.Runtime.InteropServices.DllImport("libc", SetLastError = true)]
+    private static extern int getrusage(int who, ref DarwinRusage usage);
 
     /// <summary>
     /// Appends one complete record under an exclusive open, so concurrent writers in

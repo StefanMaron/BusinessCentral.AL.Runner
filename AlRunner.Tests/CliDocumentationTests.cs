@@ -318,6 +318,19 @@ public sealed class CliDocumentationTests
         Assert.True(baseExit == 0, $"--version must exit 0. exit={baseExit}\n{baseErr}");
         Assert.Matches(new Regex(@"^al-runner v\S+"), baseOut.Trim());
 
+        // The version must carry the build's own version string, not the numeric quad that
+        // drops a prerelease suffix (#2552). AlRunner.csproj is at a prerelease version, so
+        // the printed line has to differ from what Assembly.GetName().Version would give.
+        var numericOnly = new Regex(@"^al-runner v\d+\.\d+\.\d+\.\d+$");
+        Assert.False(numericOnly.IsMatch(baseOut.Trim()),
+            "--version printed a bare numeric quad: "
+            + $"'{baseOut.Trim()}'. AlRunner.csproj declares a prerelease <Version>, so the "
+            + "suffix that says WHICH build this is has been dropped. See RunnerVersion.");
+
+        // And it must never carry SemVer build metadata: publish.yml packs the release with
+        // the commit sha appended, and that must not reach this line.
+        Assert.DoesNotContain("+", baseOut.Trim(), StringComparison.Ordinal);
+
         foreach (var spelling in new[] { "-v", "-V", "version" })
         {
             var (exit, stdout, stderr) = RunCli(spelling);
@@ -573,5 +586,55 @@ public sealed class CliDocumentationTests
             Assert.NotEmpty(paths); // the surfaces DO cite paths; an empty scrape is a broken test
             foreach (var p in paths) yield return (flag, p);
         }
+    }
+
+    /// <summary>
+    /// --print-cache-key's help said it exits "before Emit+Compile starts", which reads as
+    /// "this is cheap". It is not: the short-circuit sits inside the per-app-group loop, so
+    /// RunLayeredPrePass has already built every dependency implementation bundle from source
+    /// by the time a key is printed. That cost cannot be skipped either, because the key
+    /// covers the resolved dependency set — a run that skipped the pre-pass would print a
+    /// different key than the run it stands in for.
+    ///
+    /// This asserts the ordering against Program.cs rather than trusting the prose, so the
+    /// claim and the code cannot drift apart again. It reads source text, which is brittle by
+    /// nature; the failure message names both anchors so a rename is a two-minute fix rather
+    /// than a puzzle.
+    /// </summary>
+    [Fact]
+    public void PrintCacheKeyHelp_DoesNotClaimItRunsBeforeThePrePass()
+    {
+        var source = File.ReadAllText(Path.Combine(RepoRoot, "AlRunner", "Program.cs"));
+
+        const string prePass = "packageCacheDirs = RunLayeredPrePass(bundles";
+        const string shortCircuit = "if (printCacheKeyOnly)";
+
+        var prePassAt = source.IndexOf(prePass, StringComparison.Ordinal);
+        var shortCircuitAt = source.IndexOf(shortCircuit, StringComparison.Ordinal);
+
+        Assert.True(prePassAt >= 0,
+            $"could not find '{prePass}' in Program.cs — if RunLayeredPrePass was renamed, "
+            + "update this test and re-check what --print-cache-key's help claims.");
+        Assert.True(shortCircuitAt >= 0,
+            $"could not find '{shortCircuit}' in Program.cs — if the short-circuit moved, "
+            + "update this test and re-check what --print-cache-key's help claims.");
+        Assert.True(prePassAt < shortCircuitAt,
+            "the --print-cache-key short-circuit now runs BEFORE the layered pre-pass. That "
+            + "would make the flag genuinely cheap, so the help text should be rewritten to "
+            + "say so — this test exists to make that a deliberate edit.");
+    }
+
+    /// <summary>
+    /// The help must not tell a caller the flag exits before Emit+Compile "starts", which is
+    /// the specific wording that made it sound free.
+    /// </summary>
+    [Fact]
+    public void PrintCacheKeyHelp_SaysItIsNotFree()
+    {
+        var (_, stdout, _) = RunCli("--help");
+
+        Assert.Contains("--print-cache-key", stdout, StringComparison.Ordinal);
+        Assert.DoesNotContain("before Emit+Compile starts", stdout, StringComparison.Ordinal);
+        Assert.Contains("NOT free", stdout, StringComparison.Ordinal);
     }
 }

@@ -42,6 +42,9 @@
 //     per source file, so the marker has to be in the same file as the class declaration,
 //   * a marker that appears only in a computed/concatenated string.
 // Those are the honest limits. The guard narrows the footgun; #1712 closes it.
+using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Text.RegularExpressions;
@@ -66,21 +69,103 @@ public class ParserStaticsIsolationGuardTests
     /// <summary>
     /// Returns an actionable violation message, or null when the class is fine.
     /// </summary>
+    /// <summary>
+    /// The collections a parse-statics-touching class may live in. What makes a collection
+    /// safe here is <c>DisableParallelization = true</c> on its <c>[CollectionDefinition]</c>,
+    /// not its name: xUnit runs every non-parallelizable collection serially, after all the
+    /// parallel ones and one at a time — measured on this suite's own trace, where both of
+    /// these start at t=521.9 s (see CollectionCostOrderer.cs). A class in either one
+    /// therefore has the process-wide parse dictionaries to itself, which is the entire
+    /// property this guard exists to require.
+    ///
+    /// <para><see cref="BcEngineCollection"/> earns its place because a class can only carry
+    /// ONE <c>[Collection]</c>, and a test that drives the in-process BC engine needs
+    /// <see cref="BcEngineFixture"/> — which only that collection supplies. Before this,
+    /// such a class had no way to satisfy the guard at all: joining
+    /// <see cref="RecordPatchesSerialCollection"/> would have cost it the fixture it cannot
+    /// run without. VirtualTableBitClearingTests (#2543) is the case that surfaced it.</para>
+    ///
+    /// <para>Pinned by <see cref="EverySerialCollection_ReallyDisablesParallelization"/>, so
+    /// this list cannot quietly start naming a collection that runs in parallel.</para>
+    /// </summary>
+    internal static readonly string[] SerialCollectionNames =
+    {
+        RecordPatchesSerialCollection.Name,
+        BcEngineCollection.Name,
+    };
+
     internal static string? FindViolation(string className, string? collectionName, string sourceText)
     {
         if (!TouchesParseStatics(sourceText)) return null;
-        if (collectionName == RecordPatchesSerialCollection.Name) return null;
+        if (collectionName is not null && Array.IndexOf(SerialCollectionNames, collectionName) >= 0)
+            return null;
 
         return $"{className} reaches the RecordPatches AL parse statics (a \"_parsed…\" / " +
                $"\"TryParse…File\" reflection literal, or ResetForReload) but is " +
                (collectionName is null
                    ? "in no xunit collection"
                    : $"in collection \"{collectionName}\"") +
-               $". Add [Collection(RecordPatchesSerialCollection.Name)] to it — the parsers " +
-               "publish into process-wide static dictionaries on RecordPatches and xunit runs " +
-               "collections in parallel, so a concurrent class can clear or repopulate them " +
-               "between your write and your read (see #1696 for the four-of-five-CI-legs " +
-               "failure this produced, and #1712 for the real fix).";
+               $". Add [Collection(RecordPatchesSerialCollection.Name)] to it — or " +
+               $"[Collection(BcEngineCollection.Name)] if it also needs the in-process BC " +
+               "engine fixture. The parsers publish into process-wide static dictionaries on " +
+               "RecordPatches and xunit runs collections in parallel, so a concurrent class " +
+               "can clear or repopulate them between your write and your read (see #1696 for " +
+               "the four-of-five-CI-legs failure this produced, and #1712 for the real fix).";
+    }
+
+    /// <summary>
+    /// The allowance above rests entirely on <c>DisableParallelization = true</c>. Read that
+    /// flag off each collection's own <c>[CollectionDefinition]</c> rather than trusting the
+    /// comment, so flipping it on either collection fails here instead of silently reopening
+    /// the #1696 race for every class that joined on this guard's say-so.
+    /// </summary>
+    [Fact]
+    public void EverySerialCollection_ReallyDisablesParallelization()
+    {
+        // Read the attribute as DATA: xunit's CollectionDefinitionAttribute takes the
+        // collection name as a constructor argument and exposes no Name property, so
+        // GetCustomAttribute<T>() can tell us DisableParallelization but not which
+        // collection it belongs to. CustomAttributeData carries both.
+        var definitions = new Dictionary<string, (string TypeName, bool DisableParallelization)>(StringComparer.Ordinal);
+        foreach (var type in typeof(ParserStaticsIsolationGuardTests).Assembly.GetTypes())
+        {
+            foreach (var data in CustomAttributeData.GetCustomAttributes(type))
+            {
+                if (data.AttributeType != typeof(CollectionDefinitionAttribute)) continue;
+                if (data.ConstructorArguments.Count != 1) continue;
+                if (data.ConstructorArguments[0].Value is not string name) continue;
+                var disabled = data.NamedArguments
+                    .Any(a => a.MemberName == nameof(CollectionDefinitionAttribute.DisableParallelization)
+                              && a.TypedValue.Value is true);
+                definitions[name] = (type.Name, disabled);
+            }
+        }
+
+        foreach (var name in SerialCollectionNames)
+        {
+            Assert.True(definitions.TryGetValue(name, out var definition),
+                $"SerialCollectionNames lists \"{name}\", but no [CollectionDefinition] in this " +
+                "assembly declares it. The guard cannot vouch for a collection it cannot find.");
+            Assert.True(definition.DisableParallelization,
+                $"collection \"{name}\" ({definition.TypeName}) is accepted by this guard, but its " +
+                "[CollectionDefinition] no longer sets DisableParallelization = true. Either " +
+                "restore that, or drop it from SerialCollectionNames — a parallel collection " +
+                "gives a class no exclusive access to the parse statics, which is the whole " +
+                "property the guard requires (#1696).");
+        }
+    }
+
+    /// <summary>
+    /// The negative half of the allowance: a collection that is NOT in the list is still a
+    /// violation. Without this, SerialCollectionNames could grow to cover everything and every
+    /// other assertion in this file would keep passing.
+    /// </summary>
+    [Fact]
+    public void FindViolation_StillFlagsAParallelCollection()
+    {
+        Assert.DoesNotContain("some-other-collection", SerialCollectionNames);
+        Assert.NotNull(FindViolation(
+            "HypotheticalNewParserTests", "some-other-collection", ViolatingClassSource));
     }
 
     // This file necessarily CONTAINS the marker literals — the synthetic fixtures below spell

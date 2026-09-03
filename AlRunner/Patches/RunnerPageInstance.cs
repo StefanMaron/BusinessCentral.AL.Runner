@@ -44,6 +44,7 @@ internal sealed class RunnerPageInstance
     private readonly NavRecord? _record;
     private readonly int _pageId;
     private readonly System.Collections.IDictionary _sourceExpressions;
+    private Dictionary<string, object?> _expressionValuesAtOpen;
 
     // Lazily-constructed NavFormExtension instances for the pageextensions that extend
     // this page (issue #1923) — one per extension id, built on first trigger lookup and
@@ -71,6 +72,42 @@ internal sealed class RunnerPageInstance
         _record = record;
         _pageId = pageId;
         _sourceExpressions = sourceExpressions;
+        _expressionValuesAtOpen = SnapshotExpressionValues(sourceExpressions);
+    }
+
+    /// <summary>
+    /// Every registered source expression's value as it stands when the page is built.
+    ///
+    /// A control's OWN Visible is answered from this, not from the live table — measured on
+    /// all 8 BC versions through corpus PR #125: after a TestPage changes a page global that
+    /// a control's Visible is bound to, BC keeps reporting the value from when the page was
+    /// opened, while the same control's Editable and Enabled do follow the change. A group's
+    /// Visible follows it too (corpus TestPageFieldVisibleGroup_Tests flips a group after
+    /// open and is green on real BC), so only the control's own Visible is frozen here.
+    ///
+    /// Snapshotting the VALUES rather than eagerly evaluating every control's expression
+    /// keeps the loud failure where it belongs: an expression that cannot be evaluated still
+    /// raises at the read that asks for it, naming the control, instead of turning one
+    /// unreadable property into a page-construction failure for the whole page.
+    /// </summary>
+    internal static Dictionary<string, object?> SnapshotExpressionValues(System.Collections.IDictionary expressions)
+    {
+        var snapshot = new Dictionary<string, object?>(StringComparer.Ordinal);
+        foreach (System.Collections.DictionaryEntry entry in expressions)
+        {
+            if (entry.Key is not string name || entry.Value == null) continue;
+            try
+            {
+                snapshot[name] = GetValue(entry.Value)?.ClientObject;
+            }
+            catch
+            {
+                // One expression that cannot be read at open time must not cost the page its
+                // whole snapshot. Omitting it means the control bound to it falls back to the
+                // live value, which is what this did before the snapshot existed.
+            }
+        }
+        return snapshot;
     }
 
     internal object Form => _form;
@@ -559,10 +596,10 @@ internal sealed class RunnerPageInstance
 
     /// <summary>Editable for a data-bound control, combined with the page's own state.</summary>
     internal bool ControlEditable(int controlId)
-        => PageEditable && EvaluateProperty(ControlDefinition(controlId)?.Editable, "Editable", controlId);
+        => PageEditable && EvaluateProperty(ControlDefinition(controlId)?.Editable, "Editable", controlId, atOpen: false);
 
     internal bool ControlEnabled(int controlId)
-        => EvaluateProperty(ControlDefinition(controlId)?.Enabled, "Enabled", controlId);
+        => EvaluateProperty(ControlDefinition(controlId)?.Enabled, "Enabled", controlId, atOpen: false);
 
     /// <summary>
     /// A control's effective visibility is its own <c>Visible</c> combined with EVERY
@@ -582,7 +619,9 @@ internal sealed class RunnerPageInstance
     /// </summary>
     internal bool ControlVisible(int controlId)
     {
-        if (!EvaluateProperty(ControlDefinition(controlId)?.Visible, "Visible", controlId))
+        // atOpen: the control's OWN Visible is the one property real BC does not re-evaluate
+        // after the page is open. See SnapshotExpressionValues.
+        if (!EvaluateProperty(ControlDefinition(controlId)?.Visible, "Visible", controlId, atOpen: true))
             return false;
 
         if (_form is not NavForm form) return true;
@@ -607,7 +646,10 @@ internal sealed class RunnerPageInstance
             if (parent is not Microsoft.Dynamics.Nav.Types.Metadata.ControlGroupDefinition group)
                 return true;
 
-            if (!EvaluateProperty(group.Visible, "Visible", group.ID))
+            // LIVE, unlike the control's own Visible above. Corpus
+            // TestPageFieldVisibleGroup_Tests flips a group's Visible expression after the
+            // page is open and reads a field inside it as newly visible, green on real BC.
+            if (!EvaluateProperty(group.Visible, "Visible", group.ID, atOpen: false))
                 return false;
 
             currentId = group.ID;
@@ -681,10 +723,13 @@ internal sealed class RunnerPageInstance
         => raw != null && (string.Equals(raw, "false", StringComparison.OrdinalIgnoreCase) || raw == "0");
 
     internal bool ActionEnabled(int actionId)
-        => EvaluateProperty(ActionDefinition(actionId)?.Enabled, "Enabled", actionId);
+        => EvaluateProperty(ActionDefinition(actionId)?.Enabled, "Enabled", actionId, atOpen: false);
 
+    // Live, like every other property except a CONTROL's own Visible. An action's own Visible
+    // has not been measured against real BC either way, so it keeps the behaviour it had
+    // rather than inheriting a freeze from a measurement that was not about it.
     internal bool ActionVisible(int actionId)
-        => EvaluateProperty(ActionDefinition(actionId)?.Visible, "Visible", actionId);
+        => EvaluateProperty(ActionDefinition(actionId)?.Visible, "Visible", actionId, atOpen: false);
 
     private Microsoft.Dynamics.Nav.Types.Metadata.ControlDefinition? ControlDefinition(int controlId)
         => _form is NavForm form && form.MetadataHelper.TryGetControlDefinitionById(controlId, out var d) ? d : null;
@@ -696,7 +741,7 @@ internal sealed class RunnerPageInstance
     /// Resolve one of the boolean control properties. Absent means the AL declared none, and
     /// the AL default for all three is true.
     /// </summary>
-    private bool EvaluateProperty(string? raw, string propertyName, int elementId)
+    private bool EvaluateProperty(string? raw, string propertyName, int elementId, bool atOpen)
     {
         if (string.IsNullOrEmpty(raw)) return true;
 
@@ -707,24 +752,87 @@ internal sealed class RunnerPageInstance
         if (string.Equals(raw, "true", StringComparison.OrdinalIgnoreCase) || raw == "1") return true;
         if (string.Equals(raw, "false", StringComparison.OrdinalIgnoreCase) || raw == "0") return false;
 
-        var expression = _sourceExpressions[raw];
-        if (expression == null)
-            // Loudly, not true-by-default: this property IS the page's read-only contract,
-            // and answering "editable" for one we could not evaluate makes every test of
-            // that contract unfailable. Naming the expression is what makes the gap fixable.
-            throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
-                $"TestPage page {_pageId} element {elementId} — {propertyName}",
-                $"testpage-control-property — the property is bound to expression '{raw}', which "
-                + "the page publishes no binding for, so its value cannot be evaluated. "
-                + "See docs/scope.md");
+        // The whole property text as one registered name. This is the shape a bare page global
+        // takes, it is by far the most common one, and taking it first means the parser below
+        // never sees a name whose own spelling happens to contain grammar characters.
+        if (atOpen && _expressionValuesAtOpen.TryGetValue(raw, out var frozen))
+            return frozen is bool fb
+                ? fb
+                : throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+                    $"TestPage page {_pageId} element {elementId} — {propertyName}",
+                    $"testpage-control-property — expression '{raw}' evaluated to "
+                    + $"'{frozen ?? "null"}', which is not a Boolean. See docs/scope.md");
 
-        var value = GetValue(expression);
-        return value?.ClientObject is bool b
-            ? b
-            : throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
-                $"TestPage page {_pageId} element {elementId} — {propertyName}",
-                $"testpage-control-property — expression '{raw}' evaluated to "
-                + $"'{value?.ClientObject ?? "null"}', which is not a Boolean. See docs/scope.md");
+        var expression = _sourceExpressions[raw];
+        if (expression != null)
+        {
+            var direct = GetValue(expression);
+            return direct?.ClientObject is bool db
+                ? db
+                : throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+                    $"TestPage page {_pageId} element {elementId} — {propertyName}",
+                    $"testpage-control-property — expression '{raw}' evaluated to "
+                    + $"'{direct?.ClientObject ?? "null"}', which is not a Boolean. See docs/scope.md");
+        }
+
+        // Not one bare name, so it is an expression: `not Flag`, `A and B`, `Value <> ''`. The
+        // AL compiler writes the source text of these properties into the metadata with the
+        // identifiers already resolved to their emitted spelling — see PageControlExpression for
+        // the measured shapes and the grammar.
+        if (PageControlExpression.TryEvaluateBoolean(
+                raw,
+                atOpen ? ResolveExpressionIdentifierAtOpen : ResolveExpressionIdentifier,
+                out var evaluated, out var why))
+            return evaluated;
+
+        // Loudly, not true-by-default: this property IS the page's read-only contract, and
+        // answering "editable" for one we could not evaluate makes every test of that contract
+        // unfailable. Naming the expression and what went wrong is what makes the gap fixable.
+        throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+            $"TestPage page {_pageId} element {elementId} — {propertyName}",
+            $"testpage-control-property — the property is bound to expression '{raw}', which "
+            + $"cannot be evaluated: {why}. See docs/scope.md");
+    }
+
+    /// <summary>
+    /// Resolve one identifier inside a control-property expression.
+    ///
+    /// Registered source expressions only. A page global is registered in the page's
+    /// source-expression table under the emitted name the metadata carries, and that is the one
+    /// source this resolves against.
+    ///
+    /// A source-table FIELD reference is deliberately NOT resolved here, even though the metadata
+    /// carries the field name and the record is right there. Measured on all 8 BC versions
+    /// (corpus PR #125's measurement pass): real BC evaluates such an expression as if the field
+    /// held its type default, whatever row the page is on — opening a card on a row with
+    /// Flag = true and on a row with Flag = false produced byte-identical readings of
+    /// `Visible = Rec.Flag`, `Visible = not Rec.Flag` and `Visible = Rec.Value &lt;&gt; ''`.
+    /// Reading the live record would therefore answer something BC does not answer, and a value
+    /// this runner made up is worse than the loud refusal the caller raises instead
+    /// (.claude/rules/loud-failures.md). Issue #2596 tracks it, with the transcripts.
+    /// </summary>
+    /// <summary>
+    /// The same resolution as <see cref="ResolveExpressionIdentifier"/>, but answering from the
+    /// open-time snapshot. Used only for a control's own Visible — the one property real BC
+    /// does not re-evaluate after the page is open.
+    /// </summary>
+    private bool ResolveExpressionIdentifierAtOpen(string name, bool quoted, out object? value)
+    {
+        if (_expressionValuesAtOpen.TryGetValue(name, out value)) return true;
+        return ResolveExpressionIdentifier(name, quoted, out value);
+    }
+
+    private bool ResolveExpressionIdentifier(string name, bool quoted, out object? value)
+    {
+        var expression = _sourceExpressions[name];
+        if (expression != null)
+        {
+            value = GetValue(expression)?.ClientObject;
+            return true;
+        }
+
+        value = null;
+        return false;
     }
 
     /// <summary>
@@ -1113,7 +1221,17 @@ internal sealed class RunnerPageInstance
     /// missing record rather than a trigger that never ran.
     /// </summary>
     internal void RaiseOnOpenPage()
-        => InvokeRecordTrigger("OnOpenPage", Type.EmptyTypes, Array.Empty<object>());
+    {
+        InvokeRecordTrigger("OnOpenPage", Type.EmptyTypes, Array.Empty<object>());
+
+        // Re-take the open-time snapshot AFTER the trigger, not before. OnOpenPage is where a
+        // page seeds the globals its control properties are bound to, and the constructor runs
+        // well before it — snapshotting only there froze every such global at its type default,
+        // which the corpus caught immediately: the five TPCE tests whose global is true at open
+        // all failed. The constructor still takes one, so a page whose OnOpenPage never runs
+        // still has a snapshot rather than none.
+        _expressionValuesAtOpen = SnapshotExpressionValues(_sourceExpressions);
+    }
 
     /// <summary>
     /// Run the page's OnQueryClosePage / OnClosePage triggers, in BC's order. OnQueryClosePage

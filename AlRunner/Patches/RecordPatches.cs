@@ -1730,6 +1730,42 @@ public static partial class RecordPatches
                 return pageMetaDa;
             }
 
+            // ── Time Zone (2000000164) ───────────────────────────────────────────────────
+            // Virtual on the service tier too (TimeZoneDataProvider enumerates the HOST's
+            // TimeZoneInfo.GetSystemTimeZones() and numbers them 1..N). An empty store made
+            // every read answer "no such time zone" silently. The runner enumerates the same
+            // host call BC does, which on Linux means IANA ids where a Windows-hosted tier
+            // reports Windows ids — a deliberate, permanent divergence recorded in
+            // docs/limitations.md. See RecordPatches.TimeZoneVirtualTable.cs (#2584).
+            if (IsTimeZoneVirtualTable(table))
+            {
+                if (!perTable.TryGetValue(tableId, out var timeZoneDa))
+                {
+                    var createdTimeZone = _mCreateTempDataAccess!.Invoke(self, new object[] { table })!;
+                    timeZoneDa = perTable.GetOrAdd(tableId, createdTimeZone);
+                }
+                PopulateTimeZoneVirtualTable(timeZoneDa, table);
+                return timeZoneDa;
+            }
+
+            // ── CodeUnit Metadata (2000000137) ───────────────────────────────────────────
+            // Virtual on the service tier too (CodeUnitDataProvider computes one row per
+            // codeunit from NCLMetadata). An empty store makes every lookup answer "no such
+            // codeunit", so Get() silently returns false and FindSet() raises — and a
+            // TableRelation to this table refuses a codeunit that really is in the run.
+            // The last missing member of the Table/Page/Report Metadata family above.
+            // See RecordPatches.CodeunitMetadataVirtualTable.cs (#2544).
+            if (IsCodeunitMetadataVirtualTable(table))
+            {
+                if (!perTable.TryGetValue(tableId, out var codeunitMetaDa))
+                {
+                    var createdCodeunitMeta = _mCreateTempDataAccess!.Invoke(self, new object[] { table })!;
+                    codeunitMetaDa = perTable.GetOrAdd(tableId, createdCodeunitMeta);
+                }
+                PopulateCodeunitMetadataVirtualTable(codeunitMetaDa, table);
+                return codeunitMetaDa;
+            }
+
             // ── Page Control Field (2000000192) ──────────────────────────────────────────
             // Virtual on the service tier too: one row per field control declared on a
             // page, INCLUDING controls declared Visible = false. An empty store made every
