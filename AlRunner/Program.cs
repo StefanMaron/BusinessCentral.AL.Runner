@@ -3626,6 +3626,82 @@ return strictExitCode ? computedExitCode : 0;
         // REQUEST (not per process lifetime) — server sessions have no single
         // "argument order" the way a CLI invocation does, and nothing downstream reads
         // it across requests.
+        // #2492: a test in one bundle can cover an AL object declared in ANOTHER bundle in
+        // this SAME multi-sourcePaths request — a real cross-app dependency call, not a
+        // hypothetical (the Pageworks/Pageworks.Test repro in that issue). Each bundle's own
+        // affectedOnly selection below only ever sees ITS OWN changed-object set, so a change
+        // to a DEPENDENCY app silently narrowed away every test in a DEPENDENT app that
+        // covered it — a green run reporting fewer tests than a from-scratch run, with no
+        // error. Peek every bundle's own changed-object set BEFORE any bundle's selection
+        // decision (cheap: file-hash diff + parsing only the touched files, no BC Compilation/
+        // Emit — see PeekChangedObjects), and union them so each bundle's overlap check can see
+        // changes that happened in a sibling bundle. Gated on affectedOnly and more than one
+        // bundle — a single-bundle request already sees its own full change set.
+        List<AffectedObjectId>? requestWideChangedObjects = null;
+        if (useIncrementalChangeModel && sourcePaths.Length > 1)
+        {
+            requestWideChangedObjects = new List<AffectedObjectId>();
+            foreach (var peekBundleDir in sourcePaths)
+            {
+                var peekAbs = Path.GetFullPath(peekBundleDir);
+                var peekBucketRoot = FindBucketRoot(peekAbs) ?? peekAbs;
+                var peekModuleName = $"V2_{Path.GetFileName(peekAbs)}";
+                var peekPaths = new List<string>();
+                foreach (var suite in EnumerateSuites(peekAbs))
+                    peekPaths.AddRange(CollectSuitePaths(suite, peekBucketRoot));
+                peekPaths = peekPaths.Distinct().ToList();
+
+                var peeked = emitter.PeekChangedObjects(peekPaths, peekModuleName, peekBucketRoot);
+                if (peeked == null)
+                {
+                    // Unknown for at least one bundle (no baseline yet, app.json changed, an
+                    // unclassifiable file) — cannot safely narrow ANYWHERE in this request.
+                    // Null the whole union: every bundle below then merges nothing new in and
+                    // keeps whatever its OWN cycle already decided, same as before this fix —
+                    // never worse than the pre-#2492 behaviour, only better when every bundle's
+                    // own change set peeks clean.
+                    requestWideChangedObjects = null;
+                    break;
+                }
+                requestWideChangedObjects.AddRange(peeked);
+            }
+        }
+        // #2492, second half: the union above widens what a bundle SEES as changed, but this
+        // corpus's per-test coverage only ever attributes a passing test to the codeunit that
+        // DECLARES it — a helper (same-app OR cross-app) it calls into never appears in its
+        // coveredObjects set (confirmed empirically: of 1012 tests, only the handful whose
+        // OWN declaring codeunit id happened to be in `changedObjects` had ANY coverage entry
+        // at all; every other test's statement-to-object mapping missed and fell back to
+        // "unknown", which is why they were never at risk). For the few tests that DO have an
+        // entry, the union above cannot help them — their entry never mentions the sibling
+        // bundle's changed object no matter how complete the union is, because the entry was
+        // never built from statements INSIDE that object to begin with. So when a sibling
+        // bundle's own incremental cycle fell back to a full rebuild (changeModelFallbackReason
+        // != null) this cycle, coverage-based narrowing cannot be trusted to have seen whatever
+        // that bundle's tests actually depend on — propagate that bundle's fallback as a reason
+        // for EVERY bundle processed AFTER it in this SAME request, so their own narrowing is
+        // disabled (forcedFull) instead of silently trusting an attribution gap. Bundles are
+        // processed in `sourcePaths` order — the one documented/supported shape is dependency
+        // app before test app (see README), which is exactly the order this needs to see the
+        // dependency's fallback before deciding the test app's selection.
+        var effectiveBeforeRun = beforeRun;
+        if (beforeRun != null)
+        {
+            var union = requestWideChangedObjects;
+            string? sawFallbackReason = null;
+            effectiveBeforeRun = (bundlePath, moduleName, selectionEnvironmentKey, changedObjects, changeModelFallbackReason) =>
+            {
+                var merged = union == null || changedObjects == null ? changedObjects : changedObjects.Concat(union).ToList();
+                var effectiveFallbackReason = changeModelFallbackReason
+                    ?? (sawFallbackReason != null
+                        ? $"an earlier bundle in this request fell back this cycle ({sawFallbackReason})"
+                        : null);
+                if (changeModelFallbackReason != null)
+                    sawFallbackReason ??= $"{moduleName}: {changeModelFallbackReason}";
+                beforeRun(bundlePath, moduleName, selectionEnvironmentKey, merged, effectiveFallbackReason);
+            };
+        }
+
         var bundleIndex = 0;
         foreach (var bundleDir in sourcePaths)
         {
@@ -3636,7 +3712,7 @@ return strictExitCode ? computedExitCode : 0;
             AlRunner.Infrastructure.PhaseLog.BeginBundle(relBundle, bundleIndex);
             var result = RunBundleForServer(bundleDir, requestPackagePaths, runStep,
                 useIncrementalChangeModel,
-                beforeRun,
+                effectiveBeforeRun,
                 out var emitElapsed, out var compileElapsed, out var runElapsed);
             AlRunner.Infrastructure.PhaseLog.EndBundle(emitElapsed, compileElapsed, runElapsed);
             results.Add(result);
