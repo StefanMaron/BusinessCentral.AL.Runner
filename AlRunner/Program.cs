@@ -7587,8 +7587,13 @@ static void EmitSiblingSymbols(
         .ToHashSet();
     if (targets.Count == 0) return;
 
-    var dir = Path.Combine(Path.GetTempPath(),
-        "al-runner-sibling-symbols", Path.GetFileName(bundleAbs.TrimEnd(Path.DirectorySeparatorChar)));
+    // Per (bundle, process), not per bundle leaf name — see
+    // Infrastructure/SiblingSymbolsDirectory.cs (#2586). The recursive delete below is only
+    // safe because of that: it can now only ever remove THIS process's own directory, where
+    // before two concurrent runners over same-leaf-named bundles deleted each other's symbols
+    // mid-compile. Nobody else cleans up a private directory, so prune old ones first.
+    AlRunner.Infrastructure.SiblingSymbolsDirectory.PruneStale(TimeSpan.FromDays(1));
+    var dir = AlRunner.Infrastructure.SiblingSymbolsDirectory.ForBundle(bundleAbs);
     try
     {
         if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true);
