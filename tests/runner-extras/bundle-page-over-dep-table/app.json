@@ -1,0 +1,25 @@
+{
+  "id": "3f6c2b9a-8a4e-4d2c-9c7b-1e6f4a2c5501",
+  "name": "Runner Extras - Bundle Page Over Dependency Table",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Proves issue #2452: a bundle-compiled page whose SourceTable names a table shipping precompiled in a dependency .app resolves and builds a live record, not a navigation mock.",
+  "description": "Kept as its OWN app group (not folded into microsoft-dependencies or standalone-suites) because both of those already declare a `Record \"Payment Method\"`/`Record Resource` variable elsewhere in the suite, which pre-populates RecordPatches._parsedTables by TABLE ID during that OTHER codeunit's compile — masking the exact by-NAME resolution gap this suite exists to prove (GetSourceTableIdForPage's by-name loop against _parsedTables only ever sees a bundle-parsed table; the fix falls back to TryPopulateParsedTableByName's dependency lookup). This suite's only Record variable of the target table type is INSIDE the codeunit that also declares the page, so the by-name fallback is the only path that can populate it.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "idRanges": [
+    {
+      "from": 65500,
+      "to": 65509
+    }
+  ],
+  "platform": "1.0.0.0",
+  "application": "27.0.0.0",
+  "runtime": "14.0",
+  "features": []
+}
