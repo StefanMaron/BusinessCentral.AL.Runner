@@ -1991,7 +1991,7 @@ internal sealed class PageVariableTestField : ITestField
     public int ValidationErrorCount => 0;
     public long LastUsedValidationErrorId => 0;
     public long MaxValidationErrorId => 0;
-    public int OptionCount => 0;
+    public int OptionCount => CurrentOption() is { } option ? TestPageOptionValue.Count(option) : 0;
 
     // See LiveNavTestField — a control bound to a page variable declares the same properties
     // as one bound to a record field, and they are read the same way.
@@ -2028,7 +2028,11 @@ internal sealed class PageVariableTestField : ITestField
         => TestPageOptionValue.DisplayOrdinal(CurrentOption(), value,
                CurrentOption() is { } option ? _page.TryGetOptionCaptions(_controlId, option) : null)
            ?? Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty;
-    public string GetOption(int index) => string.Empty;
+    public string GetOption(int index)
+        => CurrentOption() is { } option
+            ? TestPageOptionValue.MemberAt(option, index,
+                _page.TryGetOptionCaptions(_controlId, option))
+            : string.Empty;
 }
 
 /// <summary>Minimal ITestField implementation — all reads return safe defaults.</summary>
