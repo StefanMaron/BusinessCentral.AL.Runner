@@ -141,6 +141,16 @@ public static partial class RecordPatches
             EnsureDateWindowCoversRequest(self, request);
             return false;
         }
+        if (tableId == AggregatePermissionSetVirtualTableId)
+        {
+            // Find()/FindSet() side of issue #2504: this table's rows are recomputed on
+            // EVERY request on a real service tier, not just at DataAccess-wrapper-creation
+            // time -- see RecordPatches.AggregatePermissionSetVirtualTable.cs's "PER-REQUEST
+            // REDRIVE" banner. Redrive, then fall through to the ORIGINAL InnerFindAsync,
+            // which now reads a fresh store.
+            RedriveAggregatePermissionSetForRequest(self, request);
+            return false;
+        }
         return tableId == FieldFindTableId;
     }
 
@@ -168,6 +178,23 @@ public static partial class RecordPatches
             return _pMaoObjIdLight!.GetValue(mao) is int i ? i : -1;
         }
         catch { return -1; }
+    }
+
+    /// <summary>
+    /// The request's own MetaApplicationObject -- an NCLMetaTable for a table-scoped request
+    /// (NCLMetaTable : NCLMetaApplicationObject). Shares the light reflection
+    /// FindRequestTableId resolves. Used by RecordPatches.AggregatePermissionSetVirtualTable.cs
+    /// to redrive against the table the CURRENT request names, not one captured earlier.
+    /// </summary>
+    private static object? FindRequestMetaApplicationObject(object request)
+    {
+        try
+        {
+            _ = FindRequestTableId(request); // ensures _pReqMaoLight is resolved
+            if (!_lightReady) return null;
+            return _pReqMaoLight!.GetValue(request);
+        }
+        catch { return null; }
     }
 
     /// <summary>

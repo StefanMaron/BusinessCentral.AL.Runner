@@ -7376,6 +7376,24 @@ public static class NclCecilRewrite
                 H(recordPatches, "DataAccess_DateWindowGuardForCount"),
                 argSlots: 2); // `this` — the DataAccess — and the count request
 
+            // ── DataAccess.InternalTryGetByPrimaryKeyAsync — Aggregate Permission Set live
+            //    redrive (issue #2504) ──────────────────────────────────────────────────
+            // Record.Get() with a full primary key never reaches InnerFindAsync at all — it
+            // takes DataAccess's OWN primary-key path (InternalTryGetByPrimaryKeyAsync →
+            // provider.TryGetByPrimaryKeyAsync/TryGetBySystemIdAsync, confirmed by decompiling
+            // Ncl.dll), so the InnerFindAsync guard above never sees a plain Get(). Real BC's
+            // own VirtualAndTempTransactionalDataCache.TryGetByPrimaryKey unconditionally
+            // returns Unknown (a cache miss) for every request, so a real service tier
+            // recomputes this table on every single Get() too, not only the first. We target
+            // InternalTryGetByPrimaryKeyAsync (not the tiny public TryGetByPrimaryKeyAsync,
+            // which just forwards to it) for the same R2R-inlining reason InnerFindAsync is
+            // targeted over FindAsync above. For every table but Aggregate Permission Set this
+            // is one int comparison and returns; the original body then runs unchanged.
+            PrependStaticCall(nclMod,
+                ByParams(Rt + "DataAccess", "InternalTryGetByPrimaryKeyAsync", "PrimaryKeyCacheRequest"),
+                H(recordPatches, "DataAccess_AggregatePermissionSetGuardForGet"),
+                argSlots: 2); // `this` — the DataAccess — and the primary-key request
+
             // ── NavDatabase / NavRecordId collation comparers ───────────────────
             ReplaceBodyWithHelper(nclMod,
                 FindNclMethod(nclMod, Rt + "NavDatabase", "get_CollationAwareStringComparer", 0),
