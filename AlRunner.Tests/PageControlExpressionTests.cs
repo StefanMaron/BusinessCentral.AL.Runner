@@ -202,6 +202,30 @@ public sealed class PageControlExpressionTests
     public void CharacterOutsideTheGrammar_Fails()
         => Assert.Contains("not part of the client-expression grammar", Failure("Flag & Flag"));
 
+    // A comparison against an operand this cannot read must fail rather than pick an ordering.
+    // Nothing in ordinary AL produces one -- a blank Text arrives as "" and a zero Decimal as 0,
+    // both measured -- so a null here means the identifier resolved to something unrecognized,
+    // and inventing an answer would write a made-up value into a page's contract.
+    [Fact]
+    public void ComparisonAgainstAnUnreadableOperand_Fails()
+    {
+        var resolver = Resolver(("Opaque", new object()), ("Flag", true));
+        Assert.Contains("cannot compare", Failure("Opaque = Flag", resolver));
+    }
+
+    // The counterpart: a blank string and a zero really do compare as values, so tightening the
+    // rule above must not have made ordinary data fail.
+    [Theory]
+    [InlineData("Blank = ''", true)]
+    [InlineData("Blank <> ''", false)]
+    [InlineData("Zero > 0", false)]
+    [InlineData("Zero = 0", true)]
+    public void BlankAndZero_CompareAsValuesNotAsMissing(string text, bool expected)
+    {
+        var resolver = Resolver(("Blank", ""), ("Zero", 0m));
+        Assert.Equal(expected, Eval(text, resolver));
+    }
+
     [Fact]
     public void DivisionByZero_Fails()
         => Assert.Contains("divide by zero", Failure("Qty / 0 = 1"));

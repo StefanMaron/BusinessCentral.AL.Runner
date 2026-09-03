@@ -489,12 +489,12 @@ internal static class PageControlExpression
             {
                 order = a.CompareTo(b);
             }
-            else if (left == null || right == null)
-            {
-                order = left == null && right == null ? 0 : 1;
-            }
             else
             {
+                // No invented ordering for a missing operand. AL has no null here — a blank Text
+                // arrives as "" and a zero Decimal as 0, both measured — so a null means the
+                // identifier resolved to something this does not understand, and answering the
+                // comparison anyway would put a value the runner made up into a page's contract.
                 _failure = $"'{op}' was applied to '{Describe(left)}' and '{Describe(right)}', "
                          + "which this cannot compare";
                 return null;
