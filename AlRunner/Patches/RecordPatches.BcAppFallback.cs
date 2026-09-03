@@ -55,6 +55,31 @@ public static partial class RecordPatches
     private static readonly HashSet<int> _bcMissCache = new();
 
     /// <summary>
+    /// Drop every lazily-built BC .app index so the next lookup rebuilds them from
+    /// <see cref="_bcAppPaths"/> from scratch — including <see cref="_bcSymbolExtensionIndexBuilt"/>,
+    /// which is what actually re-triggers <see cref="EnsureBcSymbolExtensionIndex"/> (its only
+    /// call site is inside <see cref="EnsureBcSymbolTableIndex"/>, gated by
+    /// <c>_bcSymbolTableIndex != null</c> — so nulling the table index without ALSO resetting
+    /// the extension-built flag would still short-circuit the merge).
+    ///
+    /// Two callers, and #2478 was exactly this pair being out of sync: <see cref="AddBcAppPath"/>
+    /// already invalidated all four fields inline when a NEW .app was registered; <c>ResetForReload</c>
+    /// (RecordPatches.cs) independently reset only <c>_bcSymbolExtensionIndexBuilt</c>, leaving
+    /// <c>_bcSymbolTableIndex</c> populated — so on a warm --server/--watch reload,
+    /// EnsureBcSymbolTableIndex's own-index guard returned early forever, and the extension merge
+    /// silently never ran again for the rest of the process's life. Routing both call sites
+    /// through one method makes that divergence impossible to reintroduce.
+    /// Must be called while holding <see cref="_bcTableIndexLock"/>.
+    /// </summary>
+    private static void InvalidateBcAppIndexes()
+    {
+        _bcTableIndex = null;
+        _bcSymbolTableIndex = null;
+        _bcSymbolQueryIndex = null;
+        _bcSymbolExtensionIndexBuilt = false;
+    }
+
+    /// <summary>
     /// Register a BC dependency .app path so its AL table sources can be used
     /// as a fallback when a test's own src/ doesn't define a referenced table.
     /// Called from Program.cs after DependencyLoader.LoadAll.
@@ -86,10 +111,7 @@ public static partial class RecordPatches
                         enumSymbol.DefaultImplementations?.ToArray(),
                         enumSymbol.UnknownImplementations?.ToArray());
                 // Invalidate the indexes so newly-added .app gets picked up on next miss.
-                _bcTableIndex = null;
-                _bcSymbolTableIndex = null;
-                _bcSymbolQueryIndex = null;
-                _bcSymbolExtensionIndexBuilt = false;
+                InvalidateBcAppIndexes();
             }
         }
     }
