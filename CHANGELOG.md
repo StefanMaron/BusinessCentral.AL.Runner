@@ -15,6 +15,7 @@ All notable changes to this project are documented here. Format based on
 - **all-profile:** populate the All Profile system virtual table (2000000178)
 
 ### Fixed
+- **rad:** stop the incremental fast path shipping a caller bound to the old overload
 - **server:** make affectedOnly coverage attribution request-wide, not per-module
 - **metadata:** carry a table's declared Caption onto its NCLMetaTable
 - **deps:** read a sibling app's manifest from its app root, not just its source folders
