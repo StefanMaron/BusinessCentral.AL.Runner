@@ -36,6 +36,15 @@ public class PageBackgroundTaskInlineTests
     private static readonly string ProjectPath = Path.Combine(RepoRoot, "AlRunner");
 
     private static (string output, int exit) RunRunner(params string[] bundles)
+        => RunRunnerTimed(bundles) is var (output, exit, _) ? (output, exit) : default;
+
+    /// <summary>
+    /// Same as <see cref="RunRunner"/>, but also reports wall-clock elapsed time so a caller
+    /// can assert "the process exited promptly" rather than just "it exited before the 180s
+    /// safety-net timeout fired" — see
+    /// <see cref="PageBackgroundTask_ProcessExitsPromptly_NoSchedulerLoopHang"/>.
+    /// </summary>
+    private static (string output, int exit, TimeSpan elapsed) RunRunnerTimed(params string[] bundles)
     {
         var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
         args.Append(TestBuildConfig.BcVersionArg);
@@ -47,6 +56,7 @@ public class PageBackgroundTaskInlineTests
             UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
         };
         var sb = new StringBuilder();
+        var sw = System.Diagnostics.Stopwatch.StartNew();
         var p = Process.Start(psi)!;
         p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
         p.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
@@ -54,7 +64,8 @@ public class PageBackgroundTaskInlineTests
         p.BeginErrorReadLine();
         if (!p.WaitForExit(180_000)) { try { p.Kill(true); } catch { } throw new TimeoutException("runner hung"); }
         p.WaitForExit();
-        lock (sb) return (sb.ToString(), p.ExitCode);
+        sw.Stop();
+        lock (sb) return (sb.ToString(), p.ExitCode, sw.Elapsed);
     }
 
     [SkippableFact]
@@ -320,5 +331,147 @@ public class PageBackgroundTaskInlineTests
         Assert.Contains("PASS  Codeunit62517.EnqueueBackgroundTask_HandledErrorDoesNotPropagate", output);
         Assert.Contains("PASS  Codeunit62517.EnqueueBackgroundTask_UnhandledErrorPropagates", output);
         Assert.Contains("PASS  Codeunit62517.RunPageBackgroundTask_WorkerInsert_RefusedByReadOnlySession", output);
+    }
+
+    /// <summary>
+    /// Regression test for issue #2650: on main between #2541 and #2628, a bundle containing
+    /// page-background-task tests printed its summary and then never exited. `dotnet-stack
+    /// report` on the hung process showed managed Main had already returned; the only
+    /// non-pool managed thread still alive was
+    /// Microsoft.Dynamics.Nav.Runtime.ExecutionScheduler.SchedulerLoop — a FOREGROUND thread
+    /// (`new Thread(SchedulerLoop) { ... }`, no `IsBackground = true`), which keeps the
+    /// process alive until `ExecutionScheduler.Dispose()` is called. #2541's seeds
+    /// (NavTenant.Diagnostics / CanCreateSession → true / the ServerForm registry) let the
+    /// OLD, loud-refusal EnqueueBackgroundTask reach far enough into real BC's own dispatch
+    /// body to reach `NavChildSessionTaskRuntime&lt;PageBackgroundChildSessionTask&gt;.RunAsync`
+    /// -&gt; `NavEnvironment.Instance.ExecutionScheduler.RegisterExecutionUnit(childSession)`,
+    /// lazily constructing the (foreground-threaded) scheduler, BEFORE the loud-refusal throw
+    /// fired -- and nothing ever disposed it afterward.
+    ///
+    /// #2628 replaces the whole NavForm.EnqueueBackgroundTask / NavTestPage.ALRunPageBackgroundTask
+    /// dispatch bodies (see RunnerPageBackgroundTaskGap.cs / NclCecilRewrite.cs) with an inline
+    /// reimplementation that never constructs a NavChildSessionTaskRuntime&lt;T&gt; and never
+    /// calls RegisterExecutionUnit at all -- so ExecutionScheduler's lazy singleton is never
+    /// touched by this surface, and the foreground thread is never started in the first place.
+    /// Proven here empirically (not just by code inspection): the runner process, spawned as a
+    /// real subprocess against a bundle whose page enqueues a page background task, must exit
+    /// well within the safety-net timeout, not just eventually.
+    /// </summary>
+    [SkippableFact]
+    public void PageBackgroundTask_ProcessExitsPromptly_NoSchedulerLoopHang()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        var root = Path.Combine(Path.GetTempPath(), "al-runner-pbt-shutdown-2650", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+
+        File.WriteAllText(Path.Combine(root, "app.json"), """
+        {
+          "id": "b2650000-0000-4000-8000-000000002650",
+          "name": "PageBackgroundTaskShutdown2650",
+          "publisher": "Repro2650",
+          "version": "1.0.0.0",
+          "dependencies": [],
+          "platform": "1.0.0.0",
+          "idRanges": [ { "from": 62650, "to": 62654 } ],
+          "runtime": "14.0"
+        }
+        """);
+
+        // Deliberately the same shape the original hang was found in: a "usage counts" style
+        // codeunit whose page enqueues a page background task from OnAfterGetCurrRecord.
+        File.WriteAllText(Path.Combine(root, "ShutdownProbe.al"), """
+        table 62650 "PBTS Row"
+        {
+            DataClassification = SystemMetadata;
+            fields
+            {
+                field(1; "No."; Code[20]) { }
+            }
+            keys
+            {
+                key(PK; "No.") { Clustered = true; }
+            }
+        }
+
+        codeunit 62651 "PBTS Worker"
+        {
+            trigger OnRun()
+            var
+                Results: Dictionary of [Text, Text];
+            begin
+                Results.Add('Count', '1');
+                Page.SetBackgroundTaskResult(Results);
+            end;
+        }
+
+        page 62652 "PBTS Card"
+        {
+            PageType = Card;
+            SourceTable = "PBTS Row";
+            ApplicationArea = All;
+            UsageCategory = None;
+
+            layout
+            {
+                area(Content)
+                {
+                    field("No."; Rec."No.") { ApplicationArea = All; }
+                }
+            }
+
+            trigger OnAfterGetCurrRecord()
+            var
+                Args: Dictionary of [Text, Text];
+            begin
+                CurrPage.EnqueueBackgroundTask(TaskId, Codeunit::"PBTS Worker", Args, 5000);
+            end;
+
+            trigger OnPageBackgroundTaskCompleted(TaskId: Integer; Results: Dictionary of [Text, Text])
+            begin
+            end;
+
+            var
+                TaskId: Integer;
+        }
+
+        codeunit 62653 "PBTS Tests"
+        {
+            Subtype = Test;
+            TestPermissions = Disabled;
+
+            [Test]
+            procedure UsageCounts_OpenView_EnqueuesAndCompletes()
+            var
+                Row: Record "PBTS Row";
+                Card: TestPage "PBTS Card";
+            begin
+                Row.DeleteAll();
+                Row.Init();
+                Row."No." := 'PBTS-1';
+                Row.Insert();
+
+                Card.OpenView();
+                Card.Close();
+            end;
+        }
+        """);
+
+        var (output, exitCode, elapsed) = RunRunnerTimed(root);
+
+        Assert.True(exitCode == 0,
+            $"Expected the page-background-task shutdown probe to pass (exit 0); got exit {exitCode}.\n{output}");
+        Assert.DoesNotContain("FAIL", output);
+        Assert.Contains("PASS  Codeunit62653.UsageCounts_OpenView_EnqueuesAndCompletes", output);
+
+        // The regression: NOT whether the test passed, but whether the PROCESS exited. #2650's
+        // hang left the process alive indefinitely after printing this exact summary — 30s is
+        // generous headroom over the ~1-2s this bundle otherwise takes, while still catching a
+        // real foreground-thread hang (which would run past RunRunnerTimed's own 180s
+        // safety-net and throw TimeoutException instead of reaching this assertion at all).
+        Assert.True(elapsed < TimeSpan.FromSeconds(30),
+            $"Expected the runner process to exit within 30s of a page-background-task bundle " +
+            $"finishing; it took {elapsed.TotalSeconds:F1}s -- possible ExecutionScheduler." +
+            $"SchedulerLoop foreground-thread hang (issue #2650).\n{output}");
     }
 }
