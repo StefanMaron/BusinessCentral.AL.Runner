@@ -14,6 +14,7 @@ All notable changes to this project are documented here. Format based on
 - **all-profile:** populate the All Profile system virtual table (2000000178)
 
 ### Fixed
+- **page-metadata:** reconstruct subpage parts for a precompiled dependency page
 - **page-metadata:** emit SourceObject and Expressions for a dependency page with no source table
 - **testpage:** inject lazy trigger/validate subscribers at TestPageFactory's record construction site
 - **testpage:** render an Option/Enum ordinal as the control's text in ValueToString
