@@ -237,23 +237,41 @@ public static partial class RecordPatches
 
     private const int TableTypesVirtualBit = 0x8;
     private static FieldInfo? _fNclMetaTableTableTypes;
-    private static readonly HashSet<int> _virtualBitCleared = new();
 
-    private static void ClearVirtualBit(NCLMetaTable fieldMetaTable)
+    /// <summary>
+    /// Clear the Virtual bit on <paramref name="metaTable"/>, preserving every other
+    /// TableTypes bit, so BC's RecordImplementation find takes the NORMAL (temp-table)
+    /// DataAccess path over the store the caller has populated.
+    ///
+    /// <para>Shared by three callers, each handing in a DIFFERENT metatable: Field
+    /// (2000000041), Integer (2000000026) and Date (2000000007). It used to carry a
+    /// <c>_virtualBitCleared</c> memo keyed on the constant <c>FieldVirtualTableId</c> for all
+    /// three, so whichever populated first inserted 2000000041 and the other two returned
+    /// early without ever touching their own metatable — measured on BC 28.1, a bundle
+    /// reading Date then Integer then Field cleared the bit on Date alone and left it set on
+    /// the other two. The same memo was process-static with nothing resetting it, so after
+    /// <see cref="ResetForReload"/> discarded <c>_metaTableCache</c> the fresh metatable a
+    /// warm --watch/--server cycle rebuilt was short-circuited too.</para>
+    ///
+    /// <para>No memo now: the "already clear" test one line down answers the question for the
+    /// instance actually passed in, which is what the memo was approximating, and cannot
+    /// latch one table's answer onto another's. The only other thing it saved was a
+    /// reflection lookup, and that is still cached in <see cref="_fNclMetaTableTableTypes"/>.
+    /// See issue #2543 and VirtualTableBitClearingTests.</para>
+    /// </summary>
+    internal static void ClearVirtualBit(NCLMetaTable metaTable)
     {
-        if (_virtualBitCleared.Contains(FieldVirtualTableId)) return;
-        _fNclMetaTableTableTypes ??= fieldMetaTable.GetType()
+        _fNclMetaTableTableTypes ??= metaTable.GetType()
             .GetField("tableTypes", BindingFlags.NonPublic | BindingFlags.Instance);
         if (_fNclMetaTableTableTypes == null) return;
 
-        var cur = _fNclMetaTableTableTypes.GetValue(fieldMetaTable);
+        var cur = _fNclMetaTableTableTypes.GetValue(metaTable);
         if (cur == null) return;
         // tableTypes is the [Flags] enum NCLMetaTable.TableTypes (underlying int).
         var curInt = Convert.ToInt32(cur);
-        if ((curInt & TableTypesVirtualBit) == 0) { _virtualBitCleared.Add(FieldVirtualTableId); return; }
+        if ((curInt & TableTypesVirtualBit) == 0) return;
         var cleared = Enum.ToObject(_fNclMetaTableTableTypes.FieldType, curInt & ~TableTypesVirtualBit);
-        FieldPoke.SetInstance(_fNclMetaTableTableTypes, fieldMetaTable, cleared);
-        _virtualBitCleared.Add(FieldVirtualTableId);
+        FieldPoke.SetInstance(_fNclMetaTableTableTypes, metaTable, cleared);
     }
 
     private static void EnsureDataAccessProviderReflection(object dataAccess)
