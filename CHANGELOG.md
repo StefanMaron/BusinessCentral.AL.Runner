@@ -14,6 +14,7 @@ All notable changes to this project are documented here. Format based on
 - **all-profile:** populate the All Profile system virtual table (2000000178)
 
 ### Fixed
+- **page-metadata:** resolve a bundle page's SourceTable against a dependency's precompiled table
 - **server:** warm-server-reload cluster — precompiled tableextensions, install-baseline restore, affectedOnly env key
 - **query:** apply static ColumnFilter and FlowField+Sum group-by on the JOIN path
 - **record:** populate the Aggregate Permission Set virtual table
