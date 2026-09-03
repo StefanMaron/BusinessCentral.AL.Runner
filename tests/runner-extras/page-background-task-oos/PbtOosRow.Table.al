@@ -1,4 +1,4 @@
-table 65600 "Pbtoos Row"
+table 63700 "Pbtoos Row"
 {
     fields
     {

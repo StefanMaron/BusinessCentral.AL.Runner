@@ -1,4 +1,4 @@
-page 65601 "Pbtoos NoTrigger Card"
+page 63701 "Pbtoos NoTrigger Card"
 {
     PageType = Card;
     SourceTable = "Pbtoos Row";

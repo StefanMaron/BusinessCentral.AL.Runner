@@ -1,4 +1,4 @@
-page 65600 "Pbtoos Card"
+page 63700 "Pbtoos Card"
 {
     PageType = Card;
     SourceTable = "Pbtoos Row";

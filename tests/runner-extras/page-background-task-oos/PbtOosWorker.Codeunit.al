@@ -1,4 +1,4 @@
-codeunit 65600 "Pbtoos Worker"
+codeunit 63700 "Pbtoos Worker"
 {
     // The runner's RunnerOutOfScopeException fires before this codeunit ever runs (see
     // PbtOosTest.Codeunit.al) -- its body only needs to compile, never execute.

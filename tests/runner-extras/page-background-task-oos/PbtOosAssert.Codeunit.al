@@ -1,6 +1,6 @@
 // Standalone Assert codeunit — this suite must stand alone (tests/runner-extras/README.md),
 // it does not import from tests/al-language.
-codeunit 65602 "Pbtoos Assert"
+codeunit 63702 "Pbtoos Assert"
 {
     procedure ExpectedError(Fragment: Text)
     begin
