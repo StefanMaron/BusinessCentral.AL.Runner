@@ -650,6 +650,22 @@ public sealed partial class BcCompiler
             if (!baseline.SourceByKey.ContainsKey(kv.Key)) unionedSources.Add(kv.Value);
 
         var deltaModuleDef = SymbolJsonWriter.GetModuleDefinition(radComp);
+
+        // #2548: the ONE hole in this file's "an unmodified caller is always safe" argument, and
+        // it is silent. See OverloadAddedUnderAnExistingName for the mechanism. Checked here
+        // because this is the first point where BOTH serialized surfaces exist, and the last
+        // point at which returning null is still free — nothing below has been committed yet.
+        if (OverloadAddedUnderAnExistingName(baseline.ModuleDef, deltaModuleDef, allChangedIdentities) is { } overloaded)
+        {
+            fallbackReason =
+                $"{overloaded} gained a procedure under a name it already declared (an added overload). "
+                + "That moves which member id an UNMODIFIED caller binds to without moving any existing "
+                + "member's own id, so reusing the caller's cached C# would leave it dispatching the "
+                + "previous overload — silently, since that member still exists. Falling back to a full "
+                + "compile for this cycle";
+            return null;
+        }
+
         var mergedModuleDef = MergeModuleDefinition(baseline.ModuleDef, allChangedIdentities, deltaModuleDef);
 
         var newFileHashByPath = new Dictionary<string, string>(baseline.FileHashByPath, StringComparer.Ordinal);
@@ -1065,6 +1081,127 @@ public sealed partial class BcCompiler
 
     /// <summary>Same format as <see cref="ElementKey"/> ("id:&lt;n&gt;"/"name:&lt;x&gt;"), derived from a <see cref="RadObjectIdentity"/> instead of a reflected element.</summary>
     private static string IdentityElementKeyOf(RadObjectIdentity id) => id.Id.HasValue ? "id:" + id.Id.Value : "name:" + id.Name;
+
+    /// <summary>
+    /// Names the first changed object that gained a procedure under a name it ALREADY declared,
+    /// or null when none did. Issue #2548 — the one edit shape this file's header argument does
+    /// not cover, and the only one whose damage is silent.
+    ///
+    /// <para><b>The mechanism.</b> BC's <c>MethodSymbol.CalculateMethodIdForNewVersions</c> is
+    /// method-local: adding <c>Which(Integer)</c> beside <c>Which(Decimal)</c> moves neither the
+    /// Decimal overload's id nor its <c>case</c> label in the re-emitted callee's <c>OnInvoke</c>
+    /// switch. What moves is the id the CALLER bakes — an Integer argument used to widen to
+    /// <c>Which(Decimal)</c> and now binds to <c>Which(Integer)</c>. An un-rebound caller
+    /// therefore dispatches a member that still exists and gets the PREVIOUS overload's answer:
+    /// no <c>NavNCLMissingMethodException</c>, no diagnostic, no log line. Every other breaking
+    /// edit retires or moves an existing id and is loud at the call site, exactly as this file's
+    /// header describes.</para>
+    ///
+    /// <para><b>Why a full-compile fallback rather than a rebind.</b> Rebinding needs to know who
+    /// the callers ARE, which needs an object-reference graph this fast path does not maintain.
+    /// Falling back is correct, is already this path's answer to everything it cannot prove safe,
+    /// and costs one cycle on an edit shape that is rare next to ordinary body edits.</para>
+    ///
+    /// <para><b>Why the comparison is serialized-against-serialized.</b> Both sides come out of
+    /// <c>SymbolJsonWriter.GetModuleDefinition</c>-shaped module definitions, so both describe the
+    /// same public surface under the same rules — in particular BC serializes no <c>local</c>
+    /// method on either side, so adding a local overload (which no other object can call, and
+    /// which therefore cannot move anyone's baked id) does not trip this. Comparing the new
+    /// SYNTAX against the old serialized surface would, and would fall back for nothing.</para>
+    ///
+    /// <para><b>Deliberately narrow.</b> Only "a name that already had at least one member now has
+    /// more" triggers. A procedure added under a NEW name changes no existing call site's overload
+    /// resolution and moves no id, so it stays on the fast path; so does a body edit, a rename, and
+    /// a signature change (loud at runtime). An object absent from, or ambiguous in, either
+    /// definition is skipped rather than treated as a trigger: an ADDED object has no baseline copy
+    /// and no pre-existing callers, and a kind with no <c>Methods</c> array has no member ids for
+    /// anyone to bake.</para>
+    ///
+    /// <para>Credit: the hazard and the compiler contract under it were found and pinned by Mikkel
+    /// Mansa Vilhelmsen (vhn) in his AL Runner fork.</para>
+    /// </summary>
+    private static string? OverloadAddedUnderAnExistingName(
+        NavSymRef.ModuleDefinition before, NavSymRef.ModuleDefinition after, IReadOnlySet<RadObjectIdentity> changed)
+    {
+        if (changed.Count == 0) return null;
+        var previousByObject = RadMethodNameCounts(before, changed);
+        if (previousByObject.Count == 0) return null;
+        var currentByObject = RadMethodNameCounts(after, changed);
+
+        foreach (var (id, previous) in previousByObject)
+        {
+            if (previous == null || previous.Count == 0) continue;
+            if (!currentByObject.TryGetValue(id, out var current) || current == null) continue;
+            foreach (var (name, count) in current)
+                if (previous.TryGetValue(name, out var had) && count > had)
+                    return $"{id.Kind} '{id.Name}'";
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// How many serialized methods each object in <paramref name="wanted"/> declares under each
+    /// name, in one pass over <paramref name="module"/> — every namespace depth included (#2507).
+    ///
+    /// <para>One pass, not one per identity: a bulk change (a branch switch, a bulk rename) can put
+    /// hundreds of objects in the change set, and asking per identity would re-walk the whole
+    /// module — reflection <c>GetValue</c> over every element of every kind array — once per one of
+    /// them.</para>
+    ///
+    /// <para>An object missing from the result was not found. A null VALUE is "found, but cannot be
+    /// counted" — present more than once (ambiguous), no readable <c>Methods</c> array, or a member
+    /// with no usable name. Both are non-answers to
+    /// <see cref="OverloadAddedUnderAnExistingName"/> and neither is "no methods", which is an
+    /// empty dictionary. Names are counted case-insensitively because AL identifiers are.</para>
+    /// </summary>
+    private static Dictionary<RadObjectIdentity, Dictionary<string, int>?> RadMethodNameCounts(
+        NavSymRef.ModuleDefinition module, IReadOnlySet<RadObjectIdentity> wanted)
+    {
+        var byKindAndKey = new Dictionary<(NavCA.SymbolKind Kind, string Key), RadObjectIdentity>();
+        foreach (var id in wanted)
+            if (RadMergeablePropertiesByKind.Any(p => p.Kind == id.Kind))
+                byKindAndKey[(id.Kind, IdentityElementKeyOf(id))] = id;
+
+        var result = new Dictionary<RadObjectIdentity, Dictionary<string, int>?>();
+        if (byKindAndKey.Count == 0) return result;
+
+        var kindsWanted = byKindAndKey.Keys.Select(k => k.Kind).ToHashSet();
+        foreach (var container in EnumerateContainers(module))
+        {
+            foreach (var (propName, kind) in RadMergeablePropertiesByKind)
+            {
+                if (!kindsWanted.Contains(kind)) continue;
+                if (RadContainerProperty(propName).GetValue(container) is not Array arr) continue;
+                foreach (var item in arr)
+                {
+                    if (item == null) continue;
+                    if (!byKindAndKey.TryGetValue((kind, ElementKey(item, kind)), out var id)) continue;
+                    // A second copy of a key is ambiguous: which one answers would be decided by
+                    // array order rather than by the edit. Refuse to answer for it.
+                    result[id] = result.ContainsKey(id) ? null : RadMemberNameCounts(item);
+                }
+            }
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// One serialized object's method-name multiset, or null when a member cannot be named — see
+    /// <see cref="RadMethodNameCounts"/> for how null is read.
+    /// </summary>
+    private static Dictionary<string, int>? RadMemberNameCounts(object element)
+    {
+        if (element.GetType().GetProperty("Methods")?.GetValue(element) is not Array methods) return null;
+        var counts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var method in methods)
+        {
+            if (method == null) continue;
+            if (method.GetType().GetProperty("Name")?.GetValue(method) is not string name || name.Length == 0)
+                return null;
+            counts[name] = counts.TryGetValue(name, out var n) ? n + 1 : 1;
+        }
+        return counts;
+    }
 
     private static NavSymRef.ModuleDefinition CloneModuleDefinition(NavSymRef.ModuleDefinition module)
         => (NavSymRef.ModuleDefinition)typeof(NavSymRef.ModuleDefinition)
