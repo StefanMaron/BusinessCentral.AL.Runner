@@ -21,6 +21,11 @@
 // or to the last iteration when it ends the loop; what a repeat's entry observes is the
 // state its first pass starts with. Executed ids are recorded in every open iteration of
 // the scope.
+//
+// Records are not copied into steps: each capture carries its index into the per-test
+// flat series (AlValueCapture.Collect) and each message its index into the response
+// message list (AlMessageCapture.Snapshot). A step keeps the values too, but only so the
+// pure tests can assert on them; the wire reads the indices and tags the flat records.
 namespace AlRunner.Infrastructure;
 
 /// <summary>How a loop instance ended: the first statement after the loop, the scope
@@ -31,13 +36,21 @@ internal sealed class AlIterationSegmenter
 {
     private static readonly StringComparer NameComparer = StringComparer.OrdinalIgnoreCase;
 
+    internal readonly record struct Cap(AlCapturedValue Value, int Index);
+    internal readonly record struct Msg(AlCapturedMessage Value, int Index);
+
     /// <summary>One iteration of one loop instance.</summary>
     internal sealed class Step
     {
         public int Iteration { get; init; }
-        public List<AlCapturedValue> Captures { get; } = new();
-        public List<AlCapturedMessage> Messages { get; } = new();
+        internal List<Cap> Caps { get; } = new();
+        internal List<Msg> Msgs { get; } = new();
         public List<int> StatementIds { get; } = new();
+
+        public IEnumerable<AlCapturedValue> Captures => Caps.Select(c => c.Value);
+        public IEnumerable<int> CaptureIndices => Caps.Select(c => c.Index);
+        public IEnumerable<AlCapturedMessage> Messages => Msgs.Select(m => m.Value);
+        public IEnumerable<int> MessageIndices => Msgs.Select(m => m.Index);
     }
 
     /// <summary>One dynamic entry into a loop site.</summary>
@@ -71,46 +84,46 @@ internal sealed class AlIterationSegmenter
         internal Step? Open { get; private set; }
         internal bool Pending { get; private set; }
         internal bool HeaderSeen { get; set; }
-        private List<AlCapturedValue>? _carry;
-        private List<AlCapturedValue>? _pendingCaptures;
-        private List<AlCapturedMessage>? _pendingMessages;
+        private List<Cap>? _carry;
+        private List<Cap>? _pendingCaptures;
+        private List<Msg>? _pendingMessages;
         private List<LoopInstance>? _pendingChildren;
 
         internal bool IsCounted => Site.IsCounted;
         internal bool Owns(int statementId) => Site.Owns(statementId);
-        private bool IsLoopVariable(AlCapturedValue v) => NameComparer.Equals(v.VariableName, Site.LoopVariable);
+        private bool IsLoopVariable(Cap c) => NameComparer.Equals(c.Value.VariableName, Site.LoopVariable);
 
         /// <summary>Values go to the open iteration, else to the pending condition.</summary>
-        internal void Attach(IReadOnlyList<AlCapturedValue> observed)
+        internal void Attach(IReadOnlyList<Cap> observed)
         {
             if (observed.Count == 0) return;
-            if (Open != null) Open.Captures.AddRange(observed);
+            if (Open != null) Open.Caps.AddRange(observed);
             else if (Pending) (_pendingCaptures ??= new()).AddRange(observed);
         }
 
-        internal void AttachMessage(AlCapturedMessage message)
+        internal void AttachMessage(Msg message)
         {
-            if (Open != null) Open.Messages.Add(message);
+            if (Open != null) Open.Msgs.Add(message);
             else if (Pending) (_pendingMessages ??= new()).Add(message);
         }
 
-        internal void Carry(IEnumerable<AlCapturedValue> loopVariableValues)
+        internal void Carry(IEnumerable<Cap> loopVariableValues)
         {
             foreach (var v in loopVariableValues) (_carry ??= new()).Add(v);
         }
 
-        internal IReadOnlyList<AlCapturedValue> TakeCarry()
+        internal IReadOnlyList<Cap> TakeCarry()
         {
             var c = _carry;
             _carry = null;
-            return c ?? (IReadOnlyList<AlCapturedValue>)Array.Empty<AlCapturedValue>();
+            return c ?? (IReadOnlyList<Cap>)Array.Empty<Cap>();
         }
 
         internal void AddPendingChild(LoopInstance child) => (_pendingChildren ??= new()).Add(child);
 
         /// <summary>A header hit: values go to the open iteration, or (for/foreach entry) the loop
         /// variable is carried into the first one; then the iteration closes and a condition is pending.</summary>
-        internal void OnHeader(IReadOnlyList<AlCapturedValue> observed)
+        internal void OnHeader(IReadOnlyList<Cap> observed)
         {
             if (Open != null) Attach(observed);
             else if (IsCounted && Site.LoopVariable != null) Carry(observed.Where(IsLoopVariable));
@@ -129,15 +142,15 @@ internal sealed class AlIterationSegmenter
             Open = null;
         }
 
-        internal void StartIteration(IReadOnlyList<AlCapturedValue> observed)
+        internal void StartIteration(IReadOnlyList<Cap> observed)
         {
-            IEnumerable<AlCapturedValue> toNew;
+            IEnumerable<Cap> toNew;
             if (Open != null)
             {
                 // for/foreach: no header hit between passes, so split by the loop variable.
-                IEnumerable<AlCapturedValue> toPrev = IsCounted ? observed.Where(v => !IsLoopVariable(v)) : observed;
-                toNew = IsCounted ? observed.Where(IsLoopVariable) : Array.Empty<AlCapturedValue>();
-                Open.Captures.AddRange(toPrev);
+                IEnumerable<Cap> toPrev = IsCounted ? observed.Where(v => !IsLoopVariable(v)) : observed;
+                toNew = IsCounted ? observed.Where(IsLoopVariable) : Array.Empty<Cap>();
+                Open.Caps.AddRange(toPrev);
                 CloseStep();
             }
             else if (IsCounted)
@@ -153,15 +166,15 @@ internal sealed class AlIterationSegmenter
 
             Count++;
             Open = new Step { Iteration = Count };
-            if (_carry != null) { Open.Captures.AddRange(_carry); _carry = null; }
-            if (_pendingCaptures != null) { Open.Captures.AddRange(_pendingCaptures); _pendingCaptures = null; }
-            if (_pendingMessages != null) { Open.Messages.AddRange(_pendingMessages); _pendingMessages = null; }
+            if (_carry != null) { Open.Caps.AddRange(_carry); _carry = null; }
+            if (_pendingCaptures != null) { Open.Caps.AddRange(_pendingCaptures); _pendingCaptures = null; }
+            if (_pendingMessages != null) { Open.Msgs.AddRange(_pendingMessages); _pendingMessages = null; }
             if (_pendingChildren != null)
             {
                 foreach (var c in _pendingChildren) c.ParentIteration = Count;
                 _pendingChildren = null;
             }
-            Open.Captures.AddRange(toNew);
+            Open.Caps.AddRange(toNew);
             Pending = false;
         }
 
@@ -172,8 +185,8 @@ internal sealed class AlIterationSegmenter
             if (Steps.Count > 0)
             {
                 var last = Steps[^1];
-                if (_pendingCaptures != null) last.Captures.AddRange(_pendingCaptures);
-                if (_pendingMessages != null) last.Messages.AddRange(_pendingMessages);
+                if (_pendingCaptures != null) last.Caps.AddRange(_pendingCaptures);
+                if (_pendingMessages != null) last.Msgs.AddRange(_pendingMessages);
             }
             _pendingCaptures = null;
             _pendingMessages = null;
@@ -183,14 +196,45 @@ internal sealed class AlIterationSegmenter
         }
     }
 
-    private static readonly IReadOnlyList<AlCapturedValue> NoCaptures = Array.Empty<AlCapturedValue>();
+    private static readonly IReadOnlyList<Cap> NoCaptures = Array.Empty<Cap>();
 
     private readonly List<LoopInstance> _stack = new();
     private readonly List<LoopInstance> _all = new();
     private readonly Dictionary<object, int> _lastHit = new(ReferenceEqualityComparer.Instance);
     private int _nextId;
+    private int _captureIndex;   // next per-test flat-series index
+    private int _testMsgIndex;   // fallback message index for the record-only test overload
+
+    // Test-friendly overload: assigns sequential message indices (tests do not assert them).
+    public void OnMessage(AlCapturedMessage message) => OnMessage(message, _testMsgIndex++);
 
     public void OnHit(object scopeInstance, AlLoopScopeTable table, int statementId, IReadOnlyList<AlCapturedValue> observed)
+    {
+        var caps = new List<Cap>(observed.Count);
+        foreach (var v in observed) caps.Add(new Cap(v, _captureIndex++));
+        OnHitInternal(scopeInstance, table, statementId, caps);
+    }
+
+    public void OnScopeExit(object scopeInstance, IReadOnlyList<AlCapturedValue> observed)
+    {
+        var caps = new List<Cap>(observed.Count);
+        foreach (var v in observed) caps.Add(new Cap(v, _captureIndex++));
+        UnwindStaleAbove(scopeInstance);
+        bool consumed = false;
+        while (TopOf(scopeInstance) is { } top)
+        {
+            if (!consumed) { top.Attach(caps); consumed = true; }
+            Pop(AlLoopEnd.ScopeExit);
+        }
+        _lastHit.Remove(scopeInstance);
+    }
+
+    public void OnMessage(AlCapturedMessage message, int index)
+    {
+        if (_stack.Count > 0) _stack[^1].AttachMessage(new Msg(message, index));
+    }
+
+    private void OnHitInternal(object scopeInstance, AlLoopScopeTable table, int statementId, IReadOnlyList<Cap> observed)
     {
         UnwindStaleAbove(scopeInstance);
         bool consumed = false;
@@ -219,9 +263,6 @@ internal sealed class AlIterationSegmenter
             {
                 if (IsReentry(cur, scopeInstance))
                 {
-                    // The same site entered again with no outer statement in between (its body
-                    // is the enclosing loop's whole body): end this instance and let the parent
-                    // open its next pass with a fresh one.
                     if (!consumed) { cur.Attach(observed); consumed = true; }
                     Pop(AlLoopEnd.Exit);
                     cur = TopOf(scopeInstance);
@@ -235,13 +276,13 @@ internal sealed class AlIterationSegmenter
 
             // Entering a nested for/foreach: its loop variable's initial value arrives with
             // this hit; split it off for the child.
-            List<AlCapturedValue>? childCarry = null;
+            List<Cap>? childCarry = null;
             if (!consumed && child != null && child.IsCounted && child.LoopVariable != null
                 && child.HeaderIds.Contains(statementId))
             {
-                childCarry = observed.Where(v => NameComparer.Equals(v.VariableName, child.LoopVariable)).ToList();
+                childCarry = observed.Where(v => NameComparer.Equals(v.Value.VariableName, child.LoopVariable)).ToList();
                 if (childCarry.Count > 0)
-                    observed = observed.Where(v => !NameComparer.Equals(v.VariableName, child.LoopVariable)).ToList();
+                    observed = observed.Where(v => !NameComparer.Equals(v.Value.VariableName, child.LoopVariable)).ToList();
             }
 
             bool boundary = cur.Open == null
@@ -285,21 +326,15 @@ internal sealed class AlIterationSegmenter
         }
     }
 
-    public void OnScopeExit(object scopeInstance, IReadOnlyList<AlCapturedValue> observed)
+    private void UnwindStaleAbove(object scopeInstance)
     {
-        UnwindStaleAbove(scopeInstance);
-        bool consumed = false;
-        while (TopOf(scopeInstance) is { } top)
-        {
-            if (!consumed) { top.Attach(observed); consumed = true; }
-            Pop(AlLoopEnd.ScopeExit);
-        }
-        _lastHit.Remove(scopeInstance);
-    }
-
-    public void OnMessage(AlCapturedMessage message)
-    {
-        if (_stack.Count > 0) _stack[^1].AttachMessage(message);
+        int deepest = -1;
+        for (int i = 0; i < _stack.Count; i++)
+            if (ReferenceEquals(_stack[i].ScopeInstance, scopeInstance)) { deepest = i; break; }
+        if (deepest < 0) return;
+        int own = deepest;
+        while (own + 1 < _stack.Count && ReferenceEquals(_stack[own + 1].ScopeInstance, scopeInstance)) own++;
+        while (_stack.Count - 1 > own) Pop(AlLoopEnd.Unfinished);
     }
 
     /// <summary>Closes what is still open; instances in entry order.</summary>
@@ -311,18 +346,6 @@ internal sealed class AlIterationSegmenter
 
     private LoopInstance? TopOf(object scopeInstance) =>
         _stack.Count > 0 && ReferenceEquals(_stack[^1].ScopeInstance, scopeInstance) ? _stack[^1] : null;
-
-    // Instances of other scopes above this scope's own belong to callees that never exited.
-    private void UnwindStaleAbove(object scopeInstance)
-    {
-        int deepest = -1;
-        for (int i = 0; i < _stack.Count; i++)
-            if (ReferenceEquals(_stack[i].ScopeInstance, scopeInstance)) { deepest = i; break; }
-        if (deepest < 0) return;
-        int own = deepest;
-        while (own + 1 < _stack.Count && ReferenceEquals(_stack[own + 1].ScopeInstance, scopeInstance)) own++;
-        while (_stack.Count - 1 > own) Pop(AlLoopEnd.Unfinished);
-    }
 
     private LoopInstance Push(object scopeInstance, AlLoopScopeTable table, AlLoopSiteTable site)
     {
@@ -341,8 +364,6 @@ internal sealed class AlIterationSegmenter
         var top = _stack[^1];
         _stack.RemoveAt(_stack.Count - 1);
         top.Close(how);
-        // A loop variable observed at a header whose loop never opened a pass belongs to
-        // the enclosing iteration of the same scope.
         var carry = top.TakeCarry();
         if (carry.Count > 0 && _stack.Count > 0 && ReferenceEquals(_stack[^1].ScopeInstance, top.ScopeInstance))
             _stack[^1].Attach(carry);

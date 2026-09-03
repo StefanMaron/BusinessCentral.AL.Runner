@@ -58,9 +58,11 @@ public static class AlMessageCapture
     public static void Record(string text, string scopeName, int statementId)
     {
         var message = new AlCapturedMessage(text, scopeName, statementId);
-        (_messages ??= new List<AlCapturedMessage>()).Add(message);
-        // #2056: also file it under the current loop iteration (self-gated).
-        AlIterationTracker.OnMessage(message);
+        var list = _messages ??= new List<AlCapturedMessage>();
+        int index = list.Count;
+        list.Add(message);
+        // #2056: also file it under the current loop iteration (self-gated), by its index.
+        AlIterationTracker.OnMessage(message, index);
     }
 
     /// <summary>Everything captured since the last Reset(), in call order. Empty (never

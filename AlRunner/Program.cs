@@ -5042,6 +5042,7 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
         AlRunner.Infrastructure.AlValueCapture.Enabled = req.CaptureValues == true;
         // #2056: loop iteration segmentation, scoped to this request like the flags above.
         AlRunner.Infrastructure.AlIterationTracker.Enabled = req.IterationTracking == true;
+        AlRunner.Infrastructure.AlIterationTracker.ConfigureResponse();
         // Syntax facts for captureValues (write sets) and iterationTracking (loops): one parse per request.
         if (req.CaptureValues == true || req.IterationTracking == true)
             AlRunner.Infrastructure.AlScopeSyntaxResolver.Configure(
@@ -5118,6 +5119,8 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
 
             return AlRunner.ServerProtocol.Execute(allTests, exitCode,
                 AlRunner.Infrastructure.AlMessageCapture.Snapshot(),
+                AlRunner.Infrastructure.AlIterationTracker.Enabled
+                    ? AlRunner.Infrastructure.AlIterationTracker.ResponseMessageTags : null,
                 allCompileErrors.Count > 0 ? allCompileErrors : null,
                 selection: selection,
                 statementTable: statementTable,
@@ -5281,13 +5284,17 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
             AlRunner.Infrastructure.AlValueCapture.Enabled
                 ? AlRunner.Infrastructure.AlValueCapture.Collect()
                 : null;
-        // #2056: same per-bundle bracket as AlValueCapture.
+        // #2056: same per-bundle bracket as AlValueCapture. Collect() drains the segmenter
+        // and advances the response loop-id base, so call it at most once per bundle.
         AlRunner.Infrastructure.AlIterationTracker.Reset();
-        IReadOnlyList<AlRunner.Infrastructure.AlLoopRecord>? Iterations() =>
-            AlRunner.Infrastructure.AlIterationTracker.Enabled
-                ? AlRunner.Infrastructure.AlIterationTracker.Collect()
-                : null;
-        IReadOnlyList<string>? IterationsUnresolved() =>
+        AlRunner.Infrastructure.AlIterationCollect? _itc = null;
+        AlRunner.Infrastructure.AlIterationCollect Itc() =>
+            _itc ??= AlRunner.Infrastructure.AlIterationTracker.Collect();
+        IReadOnlyList<AlRunner.Infrastructure.AlLoopRecord>? Loops() =>
+            AlRunner.Infrastructure.AlIterationTracker.Enabled ? Itc().Loops : null;
+        IReadOnlyDictionary<int, (int Loop, int Iteration)>? CaptureTags() =>
+            AlRunner.Infrastructure.AlIterationTracker.Enabled ? Itc().CaptureTags : null;
+        IReadOnlyList<string>? UnresolvedScopes() =>
             AlRunner.Infrastructure.AlIterationTracker.Enabled
                 ? AlRunner.Infrastructure.AlScopeSyntaxResolver.UnresolvedScopes.ToList()
                 : null;
@@ -5312,7 +5319,7 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                 System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance, null,
                 Type.EmptyTypes, null)!.Invoke(instance, null);
             return new[] { new TestResult(target.Name, "OnRun", TestOutcome.Pass, null, null, sw.Elapsed,
-                CapturedValues: Captured(), Iterations: Iterations(), IterationsUnresolved: IterationsUnresolved()) };
+                CapturedValues: Captured(), Loops: Loops(), CaptureTags: CaptureTags(), UnresolvedScopes: UnresolvedScopes()) };
         }
         catch (System.Reflection.TargetInvocationException tex)
         {
@@ -5320,12 +5327,12 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
             var alStack = AlRunner.Infrastructure.AlCallStackCapture.GetCaptured(inner);
             return new[] { new TestResult(target.Name, "OnRun", TestOutcome.Fail,
                 $"{inner.GetType().Name}: {inner.Message}", inner.ToString(), sw.Elapsed, alStack,
-                CapturedValues: Captured(), Iterations: Iterations(), IterationsUnresolved: IterationsUnresolved()) };
+                CapturedValues: Captured(), Loops: Loops(), CaptureTags: CaptureTags(), UnresolvedScopes: UnresolvedScopes()) };
         }
         catch (Exception ex)
         {
             return new[] { new TestResult(target.Name, "OnRun", TestOutcome.Error,
-                ex.Message, ex.ToString(), sw.Elapsed, CapturedValues: Captured(), Iterations: Iterations(), IterationsUnresolved: IterationsUnresolved()) };
+                ex.Message, ex.ToString(), sw.Elapsed, CapturedValues: Captured(), Loops: Loops(), CaptureTags: CaptureTags(), UnresolvedScopes: UnresolvedScopes()) };
         }
         finally
         {

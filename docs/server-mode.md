@@ -331,11 +331,14 @@ Two more properties of the series, both since #2056:
 `iterationTracking: true` (#2056, `execute` only) opts into per-iteration
 segmentation of every loop the run entered. It is what a consumer needs to
 answer "which iteration produced this value" and to step through iterations
-(SShadowS/ALchemist#1): each test result gains an `iterations` array with one
-entry per **loop instance** (a `for` inside a procedure called three times
-appears three times, each with its own id and parent), and each instance has
-one `steps` entry per iteration carrying that iteration's own captured values,
-`Message()` calls and executed lines.
+(SShadowS/ALchemist#1). Each test result gains a `loops` array, one entry per
+**loop instance** (a `for` inside a procedure called three times appears three
+times, each with its own id and parent). The values and messages a pass
+produced are NOT copied into it: they stay in the flat `capturedValues` and
+top-level `messages`, each record tagged with the `loop` id and `iteration`
+index it belongs to. A loop's `iterations[]` carry only what the flat series
+cannot, the statements and lines that ran. A consumer builds an iteration's
+view by filtering the flat series on `loop` and `iteration`.
 
 ```json
 {"command":"execute","captureValues":true,"iterationTracking":true,
@@ -343,66 +346,75 @@ one `steps` entry per iteration carrying that iteration's own captured values,
 ```
 
 ```json
-{"exitCode":0,"tests":[{"name":"X3.OnRun","status":"pass","durationMs":9,
- "capturedValues":[ ...the flat series, unchanged... ],
- "iterations":[{
-   "loopId":"L0","scope":"OnRun","file":"/tmp/.../Scratch.al",
-   "loopLine":1,"loopColumn":95,"loopEndLine":1,"loopEndColumn":161,
+{"exitCode":0,"tests":[{"name":"Codeunit50102.OnRun","status":"pass","durationMs":24,
+ "capturedValues":[
+   {"scopeName":"OnRun","variableName":"total","value":0,"statementId":0},
+   {"scopeName":"OnRun","variableName":"i","value":1,"statementId":1,"loop":0,"iteration":1},
+   {"scopeName":"OnRun","variableName":"total","value":1,"statementId":2,"loop":0,"iteration":1},
+   {"scopeName":"OnRun","variableName":"i","value":2,"statementId":3,"loop":0,"iteration":2},
+   {"scopeName":"OnRun","variableName":"total","value":3,"statementId":2,"loop":0,"iteration":2},
+   ... i=3, total=6 tagged loop 0 iteration 3 ...],
+ "loops":[{
+   "id":0,"scope":"OnRun","file":"/tmp/.../Scratch.al",
+   "line":1,"column":87,"endLine":1,"endColumn":160,
    "iterationCount":3,"closedBy":"exit",
-   "steps":[
-     {"iteration":1,
-      "capturedValues":[{"scopeName":"OnRun","variableName":"i","value":1,"statementId":0},
-                        {"scopeName":"OnRun","variableName":"total","value":1,"statementId":2}],
-      "messages":[{"text":"1","scopeName":"OnRun","statementId":3}],
-      "linesExecuted":[1],"statementsExecuted":[2,3]},
-     {"iteration":2, "capturedValues":[ ...i=2, total=3... ], "messages":[ ... ], "linesExecuted":[1], "statementsExecuted":[2,3]},
-     {"iteration":3, "capturedValues":[ ...i=3, total=6... ], "messages":[ ... ], "linesExecuted":[1], "statementsExecuted":[2,3]}]}]}],
- "messages":[ ...all four calls, unchanged... ]}
+   "iterations":[
+     {"index":1,"statements":[2,3],"lines":[1]},
+     {"index":2,"statements":[2,3],"lines":[1]},
+     {"index":3,"statements":[2,3],"lines":[1]}]}]}],
+ "messages":[
+   {"text":"1","scopeName":"OnRun","statementId":3,"loop":0,"iteration":1},
+   {"text":"3","scopeName":"OnRun","statementId":3,"loop":0,"iteration":2},
+   {"text":"6","scopeName":"OnRun","statementId":3,"loop":0,"iteration":3}]}
 ```
 
-- **A step's `capturedValues` are the SAME records the flat per-test series
-  carries, bucketed by the iteration that produced them.** Never a delta and
-  never a snapshot of every local: a local the iteration assigned is in it
-  (with its value, changed or not), a local it neither assigned nor changed is
-  not, exactly as in the flat series (see "One record per execution" above).
-  `messages` entries have the same shape as the top-level `messages` array.
-  Both are complete lists for that iteration, in execution order.
+- **Tags, not copies.** A `capturedValues` or `messages` record carries `loop`
+  (a loop id) and `iteration` (a 1-based index) when it was produced inside a
+  loop, both omitted when it was not (`total := 0` above, and a `Message()`
+  after the loop). Filtering the flat series by a loop id and iteration index
+  reconstructs exactly that iteration's values and messages, in order. The full-
+  fidelity rule still holds: a local a pass assigned is tagged to it with its
+  value, changed or not; one it neither assigned nor changed is not (see "One
+  record per execution" above).
 - **Where a value lands.** `--capture-values` observes a statement's effect at
   the NEXT statement's hit, so the last statement of one pass is observed at the
-  first hit of the next. Values are filed with the pass that produced them; a
+  first hit of the next. Values are tagged with the pass that produced them; a
   `for`/`foreach` loop variable's new value (the one thing that runs between two
-  passes with no hit of its own) is filed with the pass it opens. Whatever a
+  passes with no hit of its own) with the pass it opens. Whatever a
   `while`/`until` condition produces (`Rec.Next()`, a `Message()`, a loop in a
-  procedure it calls) is filed with the pass that condition opens, or with the
+  procedure it calls) is tagged with the pass that condition opens, or with the
   last pass when it ends the loop. A `repeat` has no hit before its first pass,
   so pass 1 opens with the state the loop entered with: after
-  `if Rec.FindSet() then repeat`, pass 1 carries `Rec` on its first row.
-- **`linesExecuted`** are the 1-based AL lines of every statement that ran in
-  that iteration, nested loops' lines included, in the loop's own scope only (a
-  called procedure's statements belong to that procedure's own loop instances);
-  **`statementsExecuted`** are the same statements as ids, the id-space
-  `coverage[].statements[].id` uses for that `scope`. A `while` condition is
-  filed with the pass it ended; the final, false evaluation with the last pass.
-- **Nesting is dynamic, not lexical.** `parentLoopId`/`parentIteration` name the
+  `if Rec.FindSet() then repeat`, `Rec` on its first row is tagged to pass 1.
+- **Ids are integers, unique per response.** `id`, `parentLoop` and a record's
+  `loop` are integers, distinct across the whole response so a top-level message
+  tag is unambiguous even across multiple bundles.
+- **`iterations[].statements`** are the AL statement ids that ran in that pass,
+  the id-space `coverage[].statements[].id` uses for the loop's `scope`;
+  **`iterations[].lines`** their 1-based lines. Both are the loop's own scope
+  only, nested loops' lines included (a called procedure's statements belong to
+  that procedure's own loop instances). A `while` condition is counted in the
+  pass it ended; the final, false evaluation in the last pass.
+- **Nesting is dynamic, not lexical.** `parentLoop`/`parentIteration` name the
   loop instance and iteration that were *active when this instance was
   entered*, across procedure calls: a loop inside a procedure called from
-  iteration 2 of an outer loop reports `parentLoopId` = that outer instance and
-  `parentIteration: 2`. A loop entered while the parent's condition was being
-  evaluated belongs to the pass that evaluation opens, or to the last pass when
-  it ends the parent. `parentLoopId` is omitted for a loop with no enclosing
+  iteration 2 of an outer loop reports `parentLoop` = that outer instance's id
+  and `parentIteration: 2`. A loop entered while the parent's condition was
+  being evaluated belongs to the pass that evaluation opens, or to the last pass
+  when it ends the parent. `parentLoop` is omitted for a loop with no enclosing
   active loop; `parentIteration` is omitted when the parent had no pass yet.
-  Instances are listed in entry order. A loop in a table field trigger is
-  listed under BC's scope name for it, `Number - OnValidate`, and its steps
-  carry the trigger's own locals.
-- **`loopLine`/`loopColumn`/`loopEndLine`/`loopEndColumn`** are the loop
-  statement's 1-based source range; `file` is the same path identity
-  `coverage[].file` uses. `iterationCount` counts passes whose body began, so a
-  `for i := 1 to 0` reports `iterationCount: 0` with no steps, and a
-  `break`/`exit` mid-pass still counts that pass (its values up to the exit are
-  in its step). **`closedBy`** says how the instance ended: `exit` (the first
-  statement after the loop ran), `scopeExit` (the procedure returned or
-  `exit`ed from inside it), or `unfinished` (an error unwound through it, or
-  the run ended): a last pass under `unfinished` is partial.
+  Instances are listed in entry order. A loop in a table field trigger is listed
+  under BC's scope name for it, `Number - OnValidate`, and its `capturedValues`
+  are the trigger's own locals.
+- **`line`/`column`/`endLine`/`endColumn`** are the loop statement's 1-based
+  source range; `file` is the same path identity `coverage[].file` uses.
+  `iterationCount` counts passes whose body began, so a `for i := 1 to 0`
+  reports `iterationCount: 0` with no iterations, and a `break`/`exit` mid-pass
+  still counts that pass (its values up to the exit are tagged to it).
+  **`closedBy`** says how the instance ended: `exit` (the first statement after
+  the loop ran), `scopeExit` (the procedure returned or `exit`ed from inside
+  it), or `unfinished` (an error unwound through it, or the run ended): a last
+  pass under `unfinished` is partial.
 - **Unsegmentable loops are said so, never guessed.** Some shapes give the hit
   stream nothing to count passes on; such a loop is still listed, with
   `iterationCount` omitted and `unsegmentable` set to a stable code:
@@ -413,14 +425,16 @@ one `steps` entry per iteration carrying that iteration's own captured values,
   statements, like a re-evaluation); `soleNestedUnsegmentable`, when the whole
   body is a nested loop that is itself unsegmentable. Add a statement to the
   outer body and all three segment normally.
-- **`iterationsUnresolved`** (on the test result, omitted when empty) lists
-  bundle scopes as `scope@file` whose member could not be matched in the parsed
-  source; loops in them are not tracked. Scopes outside the bundle (dependency
-  apps) are never tracked and never listed.
-- Independent of `captureValues` (without it, steps carry `messages` and
-  `linesExecuted` with empty `capturedValues`). `iterations` is omitted entirely
-  when the request didn't set `iterationTracking: true`; a present but empty
-  `iterations: []` means "asked, nothing looped".
+- **`unresolvedScopes`** (on the test result, omitted when empty) lists bundle
+  scopes as `scope@file` whose member could not be matched in the parsed source;
+  loops in them are not tracked. Scopes outside the bundle (dependency apps) are
+  never tracked and never listed.
+- Independent of `captureValues` (without it there are no `capturedValues` to
+  tag, but the loops, their `statements`/`lines`, and message tags are all
+  still present). `loops` is omitted entirely when the request did not set
+  `iterationTracking: true`; a present but empty `loops: []` means "asked,
+  nothing looped".
+
 - **How it works.** Loop *structure* comes from BC's own syntax tree (the same
   `ParseObjectText` the compiler runs, once per request, with the bundle's own
   preprocessor symbols): which statements are a loop's header, which are its
