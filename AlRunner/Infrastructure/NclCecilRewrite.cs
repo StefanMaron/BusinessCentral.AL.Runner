@@ -1099,101 +1099,93 @@ public static class NclCecilRewrite
         }
         Console.Error.WriteLine("[Cecil] Rewrote NavTenant.CanCreateSession(bool) → return true (issue #2514)");
 
-        // NavSession.Open(bool, byte[], bool) — prefix with RunnerChildSessionOpen.TryFastOpen.
+        // Page background task SYNCHRONOUS execution → loud RunnerOutOfScopeException.
         //
-        // A page background task's synchronous execution opens a REAL child NavSession (see
-        // the CanCreateSession rewrite above for the full chain). Open()'s real body then does
-        // `Permissions = new NavUserPermissions(Authenticator.User, this)`, which dereferences
-        // session.Company — not yet set at that point in BC's own real body either, except a
-        // REAL service tier's NavUserPermissions ctor resolves it through machinery
-        // (PermissionManager, tenant database) the runner does not have. Insert a prefix: if
-        // this is a child session, TryFastOpen inherits Permissions/Company from ParentSession
-        // (see that class's header comment for why that is the faithful runner answer) and the
-        // real body never runs; otherwise the real body runs completely unchanged. Issue #2514.
+        // Issue #2514 investigation: both CurrPage.EnqueueBackgroundTask (from an AL trigger)
+        // and TestPage.RunPageBackgroundTask run their child task synchronously in BC's own
+        // test framework (PageBackgroundTask.CanPageBackgroundTaskRunAsync is false without a
+        // real scheduler), which opens a REAL child NavSession and really Open()s it
+        // (NavChildSessionTaskRuntime<T>.RunAsync -> childSession.Open() ->
+        // childSession.OpenCompanyAsync(...)). That is a full service-tier session/company
+        // bootstrap (SQL connection state, tenant database bring-up, permission-manager
+        // resolution) the runner's in-process, no-SQL skeleton cannot faithfully answer.
+        //
+        // Three real, VERIFIED skeleton gaps were found and fixed on the way in (kept, see
+        // above and MetadataPatches.cs): NavTenant.Diagnostics was never seeded (this alone
+        // was CurrPage.EnqueueBackgroundTask's originally-reported ArgumentNullException);
+        // NavTestPageBase.get_ServerForm() handed PageBackgroundTask's ctor a tree-less
+        // uninitialised NavForm instead of the TestPage's real live one (this was
+        // TestPage.RunPageBackgroundTask's originally-reported "Parent.Tree cannot be null");
+        // NavTenant.CanCreateSession's real body assumes a live SQL-backed tenant database.
+        // Past those three, NavSession.Open()'s real body reaches `NavUserPermissions..ctor`,
+        // then OpenCompanyAsync's real connection bootstrap, which throws
+        // NavNCLConnectionNotOpenedException from inside the child session's own execution —
+        // a further, DEEPER layer whose exact throw site (a bare, frame-stripped
+        // NavSession.CheckConnectionIsOpen() call, likely R2R-inlined) was not pinned down
+        // inside this investigation's budget. Rather than keep patching individual NavSession
+        // internals one exception at a time — precompiled-dll-respect.md's mandate is to
+        // faithfully run real business logic, not to reimplement a service tier's session
+        // bootstrap piecemeal — this refuses loudly at the ONE choke point BOTH AL surfaces
+        // share (loud-failures.md: an in-scope, not-yet-implemented surface must throw, never
+        // silently misbehave), naming the AL-visible API each one actually calls.
+        //
+        // Two separate call sites (NOT the shared generic NavChildSessionTaskRuntime<T>.RunAsync
+        // itself, which the runner may use for other child-session shapes elsewhere) so the
+        // thrown message names the exact AL statement the developer wrote:
+        //   - NavForm.EnqueueBackgroundTask(NavSession, PageBackgroundTask, ...) — the static
+        //     dispatcher CurrPage.EnqueueBackgroundTask funnels through.
+        //   - NavTestPage.ALRunPageBackgroundTask(PageBackgroundTask, bool) — the internal
+        //     static helper both TestPage.RunPageBackgroundTask() overloads funnel through.
         var navSessionTypeForOpen = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.NavSession")
             ?? throw new InvalidOperationException("NavSession type not found in Ncl.dll — Ncl shape changed; do not commit");
-        var openMethodForBackgroundTask = navSessionTypeForOpen.Methods
-            .FirstOrDefault(m => m.Name == "Open" && m.Parameters.Count == 3 && m.HasBody)
-            ?? throw new InvalidOperationException("NavSession.Open(bool, byte[], bool) not found — Ncl shape changed; do not commit");
+        _ = navSessionTypeForOpen; // kept for future layer-5 work; unused directly by the throws below.
+
+        var throwEnqueueMethodInfo = typeof(AlRunner.Patches.RunnerPageBackgroundTaskGap)
+            .GetMethod(nameof(AlRunner.Patches.RunnerPageBackgroundTaskGap.ThrowEnqueueBackgroundTaskNotYetImplemented),
+                BindingFlags.Public | BindingFlags.Static)
+            ?? throw new InvalidOperationException("RunnerPageBackgroundTaskGap.ThrowEnqueueBackgroundTaskNotYetImplemented not found — do not commit");
+        var throwRunPbtMethodInfo = typeof(AlRunner.Patches.RunnerPageBackgroundTaskGap)
+            .GetMethod(nameof(AlRunner.Patches.RunnerPageBackgroundTaskGap.ThrowRunPageBackgroundTaskNotYetImplemented),
+                BindingFlags.Public | BindingFlags.Static)
+            ?? throw new InvalidOperationException("RunnerPageBackgroundTaskGap.ThrowRunPageBackgroundTaskNotYetImplemented not found — do not commit");
+
+        var navFormTypeForPbt = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.NavForm")
+            ?? throw new InvalidOperationException("NavForm type not found in Ncl.dll — Ncl shape changed; do not commit");
+        var enqueueDispatchMethod = navFormTypeForPbt.Methods
+            .FirstOrDefault(m => m.Name == "EnqueueBackgroundTask" && m.Parameters.Count == 3
+                              && m.Parameters[0].ParameterType.Name == "NavSession" && m.HasBody)
+            ?? throw new InvalidOperationException(
+                "NavForm.EnqueueBackgroundTask(NavSession, PageBackgroundTask, IPageBackgroundTaskCompletionTrigger) not found — Ncl shape changed; do not commit");
         {
-            var tryFastOpenMethodInfo = typeof(AlRunner.Patches.RunnerChildSessionOpen)
-                .GetMethod(nameof(AlRunner.Patches.RunnerChildSessionOpen.TryFastOpen), BindingFlags.Public | BindingFlags.Static)
-                ?? throw new InvalidOperationException("RunnerChildSessionOpen.TryFastOpen not found — do not commit");
-            var tryFastOpenRef = asm.MainModule.ImportReference(tryFastOpenMethodInfo);
-
-            var body = openMethodForBackgroundTask.Body;
+            var body = enqueueDispatchMethod.Body;
+            body.Instructions.Clear();
+            body.Variables.Clear();
+            body.ExceptionHandlers.Clear();
             var il = body.GetILProcessor();
-            var firstOriginal = body.Instructions[0];
-            var fallThrough = il.Create(OpCodes.Nop);
-
-            var newInstructions = new[]
-            {
-                il.Create(OpCodes.Ldarg_0),
-                il.Create(OpCodes.Call, tryFastOpenRef),
-                il.Create(OpCodes.Brfalse_S, fallThrough),
-                il.Create(OpCodes.Ret),
-                fallThrough,
-            };
-            for (int i = newInstructions.Length - 1; i >= 0; i--)
-                il.InsertBefore(firstOriginal, newInstructions[i]);
-
-            if (body.MaxStackSize < 1) body.MaxStackSize = 1;
+            il.Append(il.Create(OpCodes.Call, asm.MainModule.ImportReference(throwEnqueueMethodInfo)));
+            il.Append(il.Create(OpCodes.Throw));
+            body.MaxStackSize = 1;
         }
-        Console.Error.WriteLine("[Cecil] Prefixed NavSession.Open(bool, byte[], bool) → RunnerChildSessionOpen.TryFastOpen (issue #2514)");
+        Console.Error.WriteLine("[Cecil] Rewrote NavForm.EnqueueBackgroundTask(NavSession,...) → RunnerOutOfScopeException (issue #2514)");
 
-        // NavSession.OpenCompanyAsync(string, bool, bool) — short-circuit for a child session.
-        //
-        // NavChildSessionTaskRuntime<T>.RunAsync calls `await childSession.OpenCompanyAsync(…)`
-        // right after Open() returns, unconditionally, for every child session including a page
-        // background task's. Its real body is a full company-open bootstrap (SQL connection,
-        // locking, tenant database bring-up) that throws NavNCLConnectionNotOpenedException the
-        // moment it reaches any of that — there is no service tier behind it. The runner's own
-        // ROOT session never calls this method at all (built via GetUninitializedObject with its
-        // company field-poked directly, same as RunnerChildSessionOpen.TryFastOpen already does
-        // for a child session's `company` field above) — nothing downstream of THIS call's return
-        // value dereferences it (it is BC's own internal bookkeeping handle, never AL-visible),
-        // so returning an already-completed, empty result is a faithful "already open" answer
-        // for the same reason skipping the rest of Open()'s real bootstrap was: the runner's
-        // child session shares its parent's in-memory company state, there is no separate
-        // connection to open. Issue #2514.
-        var openCompanyAsyncMethod = navSessionTypeForOpen.Methods
-            .FirstOrDefault(m => m.Name == "OpenCompanyAsync" && m.Parameters.Count == 3 && m.HasBody)
-            ?? throw new InvalidOperationException("NavSession.OpenCompanyAsync(string, bool, bool) not found — Ncl shape changed; do not commit");
+        var navTestPageTypeForPbt = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.NavTestPage")
+            ?? throw new InvalidOperationException("NavTestPage type not found in Ncl.dll — Ncl shape changed; do not commit");
+        var runPbtDispatchMethod = navTestPageTypeForPbt.Methods
+            .FirstOrDefault(m => m.Name == "ALRunPageBackgroundTask" && m.Parameters.Count == 2
+                              && m.Parameters[0].ParameterType.Name == "PageBackgroundTask" && m.HasBody)
+            ?? throw new InvalidOperationException(
+                "NavTestPage.ALRunPageBackgroundTask(PageBackgroundTask, bool) not found — Ncl shape changed; do not commit");
         {
-            var isChildSessionGetter = navSessionTypeForOpen.Methods
-                .FirstOrDefault(m => m.Name == "get_IsChildSession" && m.Parameters.Count == 0)
-                ?? throw new InvalidOperationException("NavSession.get_IsChildSession not found — Ncl shape changed; do not commit");
-
-            var openCompanyAsyncInfo = typeof(Microsoft.Dynamics.Nav.Runtime.NavSession)
-                .GetMethod("OpenCompanyAsync", BindingFlags.Public | BindingFlags.Instance,
-                    binder: null, types: new[] { typeof(string), typeof(bool), typeof(bool) }, modifiers: null)
-                ?? throw new InvalidOperationException("NavSession.OpenCompanyAsync(string,bool,bool) MethodInfo not found via reflection");
-            var valueTaskGenericArg = openCompanyAsyncInfo.ReturnType.GetGenericArguments()[0];
-            var valueTaskCtorInfo = openCompanyAsyncInfo.ReturnType.GetConstructor(new[] { valueTaskGenericArg })
-                ?? throw new InvalidOperationException("ValueTask<T>(T) ctor not found via reflection");
-            var valueTaskCtorRef = asm.MainModule.ImportReference(valueTaskCtorInfo);
-
-            var body = openCompanyAsyncMethod.Body;
+            var body = runPbtDispatchMethod.Body;
+            body.Instructions.Clear();
+            body.Variables.Clear();
+            body.ExceptionHandlers.Clear();
             var il = body.GetILProcessor();
-            var firstOriginal = body.Instructions[0];
-            var fallThrough = il.Create(OpCodes.Nop);
-
-            var newInstructions = new[]
-            {
-                il.Create(OpCodes.Ldarg_0),
-                il.Create(OpCodes.Call, isChildSessionGetter),
-                il.Create(OpCodes.Brfalse_S, fallThrough),
-                il.Create(OpCodes.Ldnull),
-                il.Create(OpCodes.Newobj, valueTaskCtorRef),
-                il.Create(OpCodes.Ret),
-                fallThrough,
-            };
-            for (int i = newInstructions.Length - 1; i >= 0; i--)
-                il.InsertBefore(firstOriginal, newInstructions[i]);
-
-            if (body.MaxStackSize < 1) body.MaxStackSize = 1;
+            il.Append(il.Create(OpCodes.Call, asm.MainModule.ImportReference(throwRunPbtMethodInfo)));
+            il.Append(il.Create(OpCodes.Throw));
+            body.MaxStackSize = 1;
         }
-        Console.Error.WriteLine("[Cecil] Prefixed NavSession.OpenCompanyAsync(string, bool, bool) → completed empty ValueTask for a child session (issue #2514)");
+        Console.Error.WriteLine("[Cecil] Rewrote NavTestPage.ALRunPageBackgroundTask(PageBackgroundTask,bool) → RunnerOutOfScopeException (issue #2514)");
 
         // ── NavTestPage / NavTestPageBase vtable-dispatch cluster fix ─────────────────────────
         //

@@ -1,0 +1,19 @@
+{
+  "id": "726567b6-139f-4384-beda-454c89cef4e6",
+  "name": "Runner Extras - Page Background Task Out Of Scope",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Issue #2514: CurrPage.EnqueueBackgroundTask and TestPage.RunPageBackgroundTask both run their child task synchronously through a real child NavSession/company bootstrap the runner's in-process skeleton cannot yet answer, so both must refuse loudly with RunnerOutOfScopeException naming the exact AL API instead of crashing on an unrelated internal NRE/ArgumentNullException.",
+  "description": "This is deliberately NOT a claim about BC's own page-background-task behaviour (that belongs upstream once the runner can actually execute one) -- it asserts only the runner-specific contract: which API name and reason the refusal carries, and that the refusal happens before any AL-visible side effect the caller could mistake for partial success. See RunnerPageBackgroundTaskGap (AlRunner/Patches) and NclCecilRewrite.cs's rewrite of NavForm.EnqueueBackgroundTask / NavTestPage.ALRunPageBackgroundTask.",
+  "dependencies": [],
+  "idRanges": [
+    {
+      "from": 65600,
+      "to": 65609
+    }
+  ],
+  "platform": "27.0.0.0",
+  "application": "27.0.0.0",
+  "runtime": "15.0",
+  "target": "Cloud"
+}
