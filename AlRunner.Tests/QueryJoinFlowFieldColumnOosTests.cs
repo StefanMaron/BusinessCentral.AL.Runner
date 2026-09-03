@@ -251,8 +251,8 @@ public class QueryJoinFlowFieldColumnOosTests
     """;
 
     // FlowField column + a #2146 implicit GROUP BY (another column Method = Sum) in the SAME
-    // join -- unmeasured combination (no oracle case), so the runner must still throw loudly
-    // rather than silently read a null/default GROUP BY key for the FlowField column.
+    // join -- #2455 gave ResolveComboValue a FlowField branch, so this now groups correctly
+    // instead of throwing (verified against real BC 28.4, see #2455).
     private const string GroupByShape = """
     table 62490 "Qjf3 Line"
     {
@@ -312,13 +312,14 @@ public class QueryJoinFlowFieldColumnOosTests
         Subtype = Test;
 
         [Test]
-        procedure JoinWithFlowFieldColumnAndGroupBy_ThrowsOutOfScope_InsteadOfSilentlyDefaulting()
+        procedure JoinWithFlowFieldColumnAndGroupBy_ReadsGroupedFlowFieldValue()
         var
             Qjf3Header: Record "Qjf3 Header";
             Qjf3Line: Record "Qjf3 Line";
             Qjf3Link: Record "Qjf3 Link";
             Q: Query "QJF3 Join FlowField Group";
             Total: Decimal;
+            SumQty: Integer;
         begin
             Qjf3Header.Init(); Qjf3Header."No." := 'H1'; Qjf3Header.Insert();
             Qjf3Line.Init(); Qjf3Line."Entry No." := 1; Qjf3Line."Header No." := 'H1'; Qjf3Line.Amount := 7.25; Qjf3Line.Insert();
@@ -328,11 +329,12 @@ public class QueryJoinFlowFieldColumnOosTests
             if not Q.Read() then
                 Error('expected one row');
             Total := Q.TotalAmount;
+            SumQty := Q.SumQty;
+            if Q.Read() then
+                Error('expected exactly one group');
             Q.Close();
-            // If the runner ever silently returns a value here instead of throwing, this
-            // assertion catches it directly.
-            if Total <> 7.25 then
-                Error('Expected the runner to throw RunnerOutOfScopeException (see #2423), not silently read %1', Total);
+            if (Total <> 7.25) or (SumQty <> 2) then
+                Error('Expected group TotalAmount=7.25 SumQty=2, got %1/%2', Total, SumQty);
         end;
     }
     """;
@@ -364,23 +366,16 @@ public class QueryJoinFlowFieldColumnOosTests
     }
 
     [SkippableFact]
-    public void JoinWithFlowFieldColumnAndGroupBy_ThrowsLoudOutOfScope_InsteadOfSilentlyDefaulting()
+    public void JoinWithFlowFieldColumnAndGroupBy_ReadsGroupedFlowFieldValue()
     {
         TestArtifacts.SkipIfMissing();
 
-        var bundle = WriteBundle("QJF3 2423 Repro", "62490", "62499", GroupByShape);
+        var bundle = WriteBundle("QJF3 2455 Repro", "62490", "62499", GroupByShape);
         var (output, exitCode) = RunRunner(bundle);
 
         Assert.DoesNotContain("EMIT-EXCLUDED", output);
         Assert.DoesNotContain("COMPILE FAIL", output);
-        // The decisive assertions: the test FAILS at runtime because
-        // RunnerOutOfScopeException propagates before the AL Error() call could ever fire,
-        // and the failure carries the #2423 loud-failure guard's own reason string -- not a
-        // silently-wrong AL-level "Expected the runner..." message, and not any unrelated
-        // crash.
-        Assert.Contains("query-join-flowfield-column-with-groupby-not-implemented", output);
-        Assert.Contains("see docs/scope.md", output);
-        Assert.DoesNotContain("Expected the runner to throw", output);
-        Assert.Contains("0P/1F/0E", output);
+        Assert.DoesNotContain("query-join-flowfield-column-with-groupby-not-implemented", output);
+        Assert.Contains("1P/0F/0E", output);
     }
 }

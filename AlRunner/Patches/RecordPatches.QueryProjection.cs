@@ -812,13 +812,12 @@ public static partial class RecordPatches
         EnsureFilterReflection();
         var fam = request.GetType().GetProperty("FiltersAndMarks", BindingFlags.Public | BindingFlags.Instance)?
             .GetValue(request);
-        if (fam == null) return rows;
-        var filters = _tFiltersAndMarks!.GetProperty("Filters", BindingFlags.Public | BindingFlags.Instance)!
-            .GetValue(fam);
-        if (filters == null) return rows;
-        var items = (Array?)_tFilterFieldDictionary!.GetProperty("Items", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?
+        object? filters = null;
+        if (fam != null)
+            filters = _tFiltersAndMarks!.GetProperty("Filters", BindingFlags.Public | BindingFlags.Instance)!
+                .GetValue(fam);
+        var items = filters == null ? null : (Array?)_tFilterFieldDictionary!.GetProperty("Items", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?
             .GetValue(filters);
-        if (items == null || items.Length == 0) return rows; // no runtime filters → unchanged.
 
         // Build (projectionSlot, FilterExpression) pairs.
         //
@@ -836,26 +835,50 @@ public static partial class RecordPatches
         // populates them into), so this now evaluates against the real filtered value.
         var slotMap = ComputeJoinColumnSlotMap(queryDef);
         var conds = new List<(int slot, object expr)>();
-        foreach (var item in items)
+        // #2444: runtime-filtered column ids — a runtime SetRange/SetFilter on a column
+        // REPLACES its static ColumnFilter (same rule TranslateQueryFilters applies on the
+        // single-dataitem path, #2418), so the static-ColumnFilter pass below skips these.
+        var runtimeFilteredColumnIds = new HashSet<int>();
+        if (items != null)
+            foreach (var item in items)
+            {
+                // Tuple<INavFieldMetadata, FilterExpression>
+                var key = item!.GetType().GetProperty("Item1")!.GetValue(item);
+                var expr = item.GetType().GetProperty("Item2")!.GetValue(item);
+                if (expr == null) continue;
+                if (key == null || _tNCLMetaQueryColumn == null || !_tNCLMetaQueryColumn.IsInstanceOfType(key))
+                    // A non-query-column key on a query request should not occur; refuse to guess.
+                    throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+                        "NavQuery (multi-dataitem join)",
+                        "query-join-runtime-filter-on-nonprojected-column — a runtime filter is keyed by a " +
+                        $"non-query-column ({key?.GetType().Name ?? "null"}); cannot evaluate post-projection; see docs/scope.md");
+                if (!slotMap.TryGetValue(key, out var slot))
+                    // The filtered column isn't in ANY dataitem's QueryColumns of this query
+                    // definition — should not occur (the filter dictionary is keyed by columns that
+                    // came from this same query), but refuse to guess rather than silently drop it.
+                    throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+                        "NavQuery (multi-dataitem join)",
+                        "query-join-runtime-filter-unresolved-column — a runtime filter's column could not be " +
+                        "located in the query's own DataItems/QueryColumns; see docs/scope.md");
+                runtimeFilteredColumnIds.Add(((NCLMetaQueryColumn)key).Id);
+                conds.Add((slot, expr));
+            }
+
+        // #2444: the multi-dataitem JOIN path's equivalent of #2418's static ColumnFilter
+        // handling on the single-dataitem path — NCLMetaQuery.ColumnFilters conditions are
+        // evaluated against the already-projected join row exactly like a runtime filter above
+        // (this method runs post-projection/post-aggregation, so an aggregated column's static
+        // ColumnFilter is naturally a HAVING-equivalent check here — no separate having-filter
+        // list needed, unlike TranslateQueryFilters' pre-aggregation WHERE path).
+        var staticColumnFilters = GetStaticColumnFilters(nclMetaQuery);
+        foreach (var (col, expr) in staticColumnFilters)
         {
-            // Tuple<INavFieldMetadata, FilterExpression>
-            var key = item!.GetType().GetProperty("Item1")!.GetValue(item);
-            var expr = item.GetType().GetProperty("Item2")!.GetValue(item);
-            if (expr == null) continue;
-            if (key == null || _tNCLMetaQueryColumn == null || !_tNCLMetaQueryColumn.IsInstanceOfType(key))
-                // A non-query-column key on a query request should not occur; refuse to guess.
+            if (runtimeFilteredColumnIds.Contains(col.Id)) continue;
+            if (!slotMap.TryGetValue(col, out var slot))
                 throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
                     "NavQuery (multi-dataitem join)",
-                    "query-join-runtime-filter-on-nonprojected-column — a runtime filter is keyed by a " +
-                    $"non-query-column ({key?.GetType().Name ?? "null"}); cannot evaluate post-projection; see docs/scope.md");
-            if (!slotMap.TryGetValue(key, out var slot))
-                // The filtered column isn't in ANY dataitem's QueryColumns of this query
-                // definition — should not occur (the filter dictionary is keyed by columns that
-                // came from this same query), but refuse to guess rather than silently drop it.
-                throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
-                    "NavQuery (multi-dataitem join)",
-                    "query-join-runtime-filter-unresolved-column — a runtime filter's column could not be " +
-                    "located in the query's own DataItems/QueryColumns; see docs/scope.md");
+                    "query-join-static-columnfilter-unresolved-column — a static ColumnFilter's column " +
+                    "could not be located in the query's own DataItems/QueryColumns; see docs/scope.md");
             conds.Add((slot, expr));
         }
         if (conds.Count == 0) return rows;
