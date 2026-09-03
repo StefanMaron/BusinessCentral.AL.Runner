@@ -6683,13 +6683,14 @@ static List<string> RunLayeredPrePass(List<string> bundles, List<string> package
             // directory the user passed on the command line — surfacing as a wall of bogus
             // AL0791 / AL0185 diagnostics against source that is perfectly valid, with only
             // the "[layered] ... skipping in-process synthesis" line above to explain it.
-            var prebuiltUtc = File.GetLastWriteTimeUtc(prebuilt);
-            var newestSourceUtc = AlRunner.Infrastructure.PrebuiltShadowCheck.NewestAlSourceUtc(implPath);
-            if (AlRunner.Infrastructure.PrebuiltShadowCheck.SourceIsNewer(prebuiltUtc, newestSourceUtc))
+            // The verdict is on CONTENT, not mtime — see PrebuiltShadowCheck's header for why
+            // mtime ordering answers a different question, and gets it wrong in both directions.
+            var shadow = AlRunner.Infrastructure.PrebuiltShadowCheck.Evaluate(prebuilt, implPath);
+            if (shadow.Stale)
             {
                 Console.WriteLine($"[layered] {implId.Name} {implId.Version} has a prebuilt symbol package " +
-                    $"({Path.GetFileName(prebuilt)}) but it is STALE (source modified {newestSourceUtc:u} > " +
-                    $"package {prebuiltUtc:u}) — synthesizing from source instead.");
+                    $"({Path.GetFileName(prebuilt)}) but it is STALE ({shadow.Reason}) — " +
+                    $"synthesizing from source instead.");
                 continue; // keep implPath: build it from source
             }
 
