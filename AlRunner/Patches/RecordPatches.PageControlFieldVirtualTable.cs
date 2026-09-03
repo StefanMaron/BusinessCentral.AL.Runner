@@ -198,7 +198,10 @@ public static partial class RecordPatches
             return (0, 0);
 
         var fieldName = Unquote(fieldRef);
-        var field = table.Fields.FirstOrDefault(f => NamesEqual(f.FieldName, fieldName));
+        // GetAllFieldsIncludingExtensions, not table.Fields alone: a dependency page's control
+        // can be bound to a field a tableextension added to this table (source-parsed here, in
+        // a sibling app, or precompiled in another dependency .app) — see #2490.
+        var field = GetAllFieldsIncludingExtensions(table).FirstOrDefault(f => NamesEqual(f.FieldName, fieldName));
         return field != null ? (sourceTableId, field.FieldId) : (0, 0);
     }
 }

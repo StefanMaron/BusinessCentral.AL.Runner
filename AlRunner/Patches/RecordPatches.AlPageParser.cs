@@ -363,9 +363,14 @@ public static partial class RecordPatches
 
         static void BindControls(IReadOnlyDictionary<int, string> controls, ParsedTable table, Dictionary<int, int> result)
         {
+            // GetAllFieldsIncludingExtensions, not table.Fields alone: a control bound to a
+            // field a tableextension added (source-parsed here, in a sibling app, or
+            // precompiled in a dependency .app) must resolve exactly like one bound to the
+            // table's own field — see #2490.
+            var allFields = RecordPatches.GetAllFieldsIncludingExtensions(table);
             foreach (var kvp in controls)
             {
-                var field = table.Fields.FirstOrDefault(f => NamesEqual(f.FieldName, kvp.Value));
+                var field = allFields.FirstOrDefault(f => NamesEqual(f.FieldName, kvp.Value));
                 if (field != null) result[kvp.Key] = field.FieldId;
             }
         }

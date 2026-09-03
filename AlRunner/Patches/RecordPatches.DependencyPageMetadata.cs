@@ -118,7 +118,9 @@ public static partial class RecordPatches
             TryPopulateParsedTableFromBcApps(tableId);
             _parsedTables.TryGetValue(tableId, out table);
         }
-        var field = table?.Fields.FirstOrDefault(f =>
+        // GetAllFieldsIncludingExtensions, not table.Fields alone — see #2490: a SubPageLink
+        // field name may be one a tableextension added, same as a page control's binding.
+        var field = table == null ? null : GetAllFieldsIncludingExtensions(table).FirstOrDefault(f =>
             string.Equals(f.FieldName, fieldName, StringComparison.OrdinalIgnoreCase));
         return field?.FieldId;
     }

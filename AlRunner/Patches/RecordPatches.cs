@@ -151,6 +151,31 @@ public static partial class RecordPatches
         EvictCachedMetaTableForBaseTable(baseTableName);
     }
 
+    /// <summary>
+    /// A parsed table's own fields PLUS every field any tableextension has merged onto it
+    /// (<see cref="_parsedExtensionFields"/>, keyed by table name — the extension may be
+    /// AL-source-parsed in this bundle or a dependency's, or precompiled in a dependency
+    /// .app; <see cref="MergeExtensionFields"/> is the single writer for both). De-duplicated
+    /// by field id the same way <see cref="RecordPatches.NclMetaTableBuilder"/> does when it
+    /// builds the runtime NCLMetaTable, so a control-binding lookup and the record's own
+    /// field layout never disagree about which fields a table has (issue #2490: a TestPage
+    /// control bound to an extension field threw <c>testpage-control-binding</c> because
+    /// <see cref="GetPageControlFieldMap"/> and <see cref="TryResolveDependencyFieldId"/> each
+    /// searched only <c>ParsedTable.Fields</c> — the base table's own declared fields — and
+    /// never looked at <c>_parsedExtensionFields</c> at all, even though the record itself
+    /// already carries the extension's fields via this same dictionary).
+    /// </summary>
+    internal static IEnumerable<ParsedField> GetAllFieldsIncludingExtensions(ParsedTable table)
+    {
+        if (!_parsedExtensionFields.TryGetValue(table.TableName.ToLowerInvariant(), out var extFields)
+            || extFields.Count == 0)
+            return table.Fields;
+
+        var baseFieldIds = new HashSet<int>(table.Fields.Select(f => f.FieldId));
+        var extFieldsNew = extFields.Where(f => !baseFieldIds.Contains(f.FieldId));
+        return table.Fields.Concat(extFieldsNew);
+    }
+
     // Set to true once Register() has been called.
     private static bool _registered;
 
