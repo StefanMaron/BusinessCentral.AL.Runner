@@ -113,6 +113,16 @@ internal sealed class RunnerPageInstance
     internal object Form => _form;
 
     /// <summary>
+    /// The record this instance is actually bound to — null for a record-less page. Needed
+    /// by callers of <see cref="AdoptFromHost"/>: when adoption reuses an ALREADY-bound
+    /// record (a SourceTableTemporary part the host already populated), that record can
+    /// differ from whatever the caller was about to bind, and the caller's OWN record
+    /// variable must follow this one rather than the one it almost passed in — see
+    /// MockTestPage.GetPart, issue #2201.
+    /// </summary>
+    internal NavRecord? Record => _record;
+
+    /// <summary>
     /// Whether the AL opened this page as a LOOKUP (<c>Picker.LookupMode(true)</c>), which
     /// decides whether its closing built-in actions are OK/Cancel or LookupOK/LookupCancel.
     /// Read off BC's own NavForm.LookupMode, so it reflects whatever the AL actually set.
@@ -319,6 +329,213 @@ internal sealed class RunnerPageInstance
             if (Environment.GetEnvironmentVariable("AL_RUNNER_TRACE_PAGE_METADATA") == "1")
                 Console.Out.WriteLine(inner.StackTrace);
             return null;
+        }
+    }
+
+    // Subpage NavForm objects AdoptFromHost has already run BC's own metadata-load
+    // machinery against, so a second touch (another TestPage access, or the host's own AL
+    // reaching CurrPage.<part> after this ran) reuses the SAME reified wrapper instead of
+    // re-registering every source expression ("An item with the same key has already been
+    // added"). Weak and instance-keyed for the same reason RunnerFormInit's tables are: a
+    // form that goes out of scope must not be kept alive by this cache.
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<object, RunnerPageInstance> _reifiedSubpages = new();
+
+    /// <summary>
+    /// The subpage object the HOST's own AL owns for <paramref name="controlId"/> — the
+    /// same NavForm the host's compiled AL reaches through <c>CurrPage.&lt;part&gt;</c>, via
+    /// BC's own <c>NavForm.GetPart(int)</c> (backed by <c>RegisterUIPart</c>/<c>uiParts</c>:
+    /// one NavForm per control, lazily built and cached the first time EITHER side asks for
+    /// it). Building a second, disconnected page object for the same control — which
+    /// TestPageFactory.TryBuild/TryBuildRecordless still do — is issue #2201: TestPage.&lt;part&gt;
+    /// and the host AL's own CurrPage.&lt;part&gt;.Page were two different instances, invisible
+    /// for a Rec-bound part (its state lives in the shared record) but not for one bound to
+    /// page globals.
+    ///
+    /// The object <c>NavForm.GetPart(int)</c> hands back may never have been through a real
+    /// metadata load: nothing in Ncl.dll drives <c>SetSourceTable</c>/<c>EnsureMetadataLoaded</c>
+    /// on a subpage part on the caller's behalf — SubFormLink application is client/NST-side,
+    /// which the runner reimplements itself (see <c>LiveNavTestPart</c>'s SubPageLink handling
+    /// in MockTestPage.cs). This method brings the object up to the same live state
+    /// <see cref="TryCreate"/> gives a freshly built page, but only the FIRST time this method
+    /// reifies a given form — <see cref="_reifiedSubpages"/> remembers which ones it already
+    /// drove, so a later call gets the cached wrapper instead of double-registering.
+    ///
+    /// Returns null — the caller falls back to TryBuild/TryBuildRecordless exactly as it did
+    /// before this existed — when the host has no NavForm at all (a top-level page the
+    /// runner never built as a compiled AL object), the control names no part on that host
+    /// (BC's own uiParts lookup fails), or reifying the adopted object throws.
+    /// </summary>
+    internal static RunnerPageInstance? AdoptFromHost(
+        object? hostForm, int controlId, int partPageId, NavRecord? recordToBind, bool recordless)
+    {
+        var trace = Environment.GetEnvironmentVariable("AL_RUNNER_TRACE_PAGE_METADATA") == "1";
+        if (hostForm is not Microsoft.Dynamics.Nav.Runtime.NavForm host)
+        {
+            if (trace) Console.Out.WriteLine($"[RunnerPageInstance] AdoptFromHost control {controlId}: hostForm is {hostForm?.GetType().FullName ?? "null"}, not a NavForm");
+            return null;
+        }
+
+        Microsoft.Dynamics.Nav.Runtime.NavForm subForm;
+        try { subForm = host.GetPart(controlId); }
+        catch (Exception ex)
+        {
+            if (trace) Console.Out.WriteLine($"[RunnerPageInstance] AdoptFromHost control {controlId} on host page {host.FormId}: GetPart threw {ex.GetType().Name}: {ex.Message}");
+            return null;
+        }
+        if (subForm == null)
+        {
+            if (trace) Console.Out.WriteLine($"[RunnerPageInstance] AdoptFromHost control {controlId} on host page {host.FormId}: GetPart returned null");
+            return null;
+        }
+
+        if (_reifiedSubpages.TryGetValue(subForm, out var cached))
+        {
+            if (trace) Console.Out.WriteLine($"[RunnerPageInstance] AdoptFromHost control {controlId}: reused cached reified subpage");
+            return cached;
+        }
+        if (trace) Console.Out.WriteLine($"[RunnerPageInstance] AdoptFromHost control {controlId}: adopted subpage {subForm.GetType().FullName}, reifying (recordless={recordless})");
+
+        // A SourceTableTemporary part's own record is NOT something SetSourceTable hands it
+        // — the compiled Page{partPageId} class binds its OWN temporary Rec at construction,
+        // independent of any caller-supplied record (that is what let the host's own AL push
+        // rows into it via CurrPage.<part>.Page.SetRows BEFORE this method ever ran — the
+        // SourceTableTemporary shape in issue #2201's report). Calling SetSourceTable with a
+        // freshly built EMPTY record here would silently discard every row the host already
+        // wrote. So: if the object already carries a bound record — from its own
+        // construction, or because a previous caller (host or runner) already reified it —
+        // reuse it as-is and skip SetSourceTable/EnsureMetadataLoaded entirely, exactly the
+        // way Adopt() below already does for a modal page BC built itself.
+        // NavForm.SourceTable's GETTER lazily calls EnsureMetadataLoaded() itself when unset
+        // — reading it here to CHECK whether the form is already bound would trigger exactly
+        // the metadata load (with a freshly built, empty record) this whole check exists to
+        // avoid. SourceTableWithoutLoadingMetadata reads the same backing field with no such
+        // side effect.
+        var existingRecord = recordless ? null : ReadProperty(subForm, "SourceTableWithoutLoadingMetadata") as NavRecord;
+        var alreadyLive = existingRecord != null;
+        if (trace) Console.Out.WriteLine($"[RunnerPageInstance] AdoptFromHost control {controlId}: existingRecord={(existingRecord == null ? "null" : existingRecord.GetType().FullName)} alreadyLive={alreadyLive}");
+        if (!alreadyLive)
+        {
+            try
+            {
+                // Must precede the calls below: the guarded NavForm bodies check this and
+                // no-op for anyone else (RunnerFormInit.cs). Mirrors TryCreate/
+                // TryCreateRecordless, which mark a form they just constructed themselves —
+                // here the form was constructed by BC's own NavForm.GetPart instead, so it
+                // was never marked.
+                RunnerFormInit.MarkRealInit(subForm);
+                if (recordless)
+                    Invoke(subForm, "EnsureMetadataLoaded", Array.Empty<object?>());
+                else
+                    Invoke(subForm, "SetSourceTable", new object?[] { recordToBind, false });
+            }
+            catch (Exception ex)
+            {
+                var inner = ex is TargetInvocationException tie ? tie.InnerException ?? ex : ex;
+                // stdout on purpose — see TryCreate's identical reasoning above.
+                Console.Out.WriteLine(
+                    $"[RunnerPageInstance] part page {partPageId} (control {controlId}): could not reify "
+                    + $"the host's own subpage object ({inner.GetType().Name}: {inner.Message}); falling "
+                    + "back to a freshly constructed part page");
+                if (Environment.GetEnvironmentVariable("AL_RUNNER_TRACE_PAGE_METADATA") == "1")
+                    Console.Out.WriteLine(inner.StackTrace);
+                return null;
+            }
+        }
+
+        var expressions = ReadProperty(subForm, "SourceExpressions") as System.Collections.IDictionary;
+        if (expressions == null) return null;
+
+        var record = recordless ? null : (existingRecord ?? ReadProperty(subForm, "SourceTableWithoutLoadingMetadata") as NavRecord);
+        var instance = new RunnerPageInstance(subForm, subForm, record, partPageId, expressions);
+        _reifiedSubpages.Add(subForm, instance);
+
+        // Raise the part's own OnOpenPage exactly once — the FIRST time ANY caller (the
+        // host's own AL touching CurrPage.<part>, or the runner adopting on the TestPage's
+        // behalf) reifies this instance — not once per TestPage-side touch. Issue #2201's
+        // report: with the object now SHARED, running it again on a later touch would
+        // clobber whatever the host's AL already wrote through the same instance.
+        if (!alreadyLive) instance.RaiseOnOpenPage();
+
+        return instance;
+    }
+
+    /// <summary>
+    /// Cecil-injected hook on <c>NavForm.GetPart(int)</c> (see NclCecilRewrite.cs) — called
+    /// with the resolved subpage NavForm on EVERY successful <c>GetPart</c>, from EITHER
+    /// caller: the host's own compiled AL touching <c>CurrPage.&lt;part&gt;</c> (that is
+    /// exactly what <c>GetPart(int)</c> compiles to — see MockTestPage.cs's GetPart doc), or
+    /// <see cref="AdoptFromHost"/> reaching the same object on the TestPage's behalf.
+    ///
+    /// WHY THIS EXISTS (issue #2201's page-globals shape, the part AdoptFromHost alone could
+    /// not fix). A plain field write inside a part's own procedure —
+    /// <c>CurrPage.&lt;part&gt;.Page.SetTag(...)</c> — compiles to
+    /// <c>NavApplicationObjectBase.Invoke(methodId, args)</c>, which never touches
+    /// <c>EnsureMetadataLoaded</c> at all (measured: no call chain from <c>Invoke</c> reaches
+    /// it). So when the HOST's own <c>OnOpenPage</c> writes through a page-globals part
+    /// before the TestPage side ever asks for it, there is no signal AdoptFromHost's own
+    /// "already touched" check (used successfully for the Rec-bound/temporary shapes) can
+    /// observe — and running the part's OWN <c>OnOpenPage</c> later, when the TestPage side
+    /// finally does ask, clobbers whatever the host already wrote.
+    ///
+    /// <c>GetPart(int)</c> is the one call BOTH sides are guaranteed to go through to reach
+    /// the object AT ALL (it is what <c>TryGetUIPart</c>/<c>RegisterUIPart</c> caches one
+    /// instance per control against), which makes it the earliest point common to both
+    /// callers — running the part's OnOpenPage here, before returning the object to
+    /// EITHER caller, is what makes "the subpage opens with its host" (the architectural
+    /// invariant the corpus's own subpages-overview doc describes) hold regardless of which
+    /// side asks first.
+    ///
+    /// DELIBERATELY NARROW to a page that declares NO SourceTable. A Rec-bound or
+    /// SourceTableTemporary part already reifies correctly and lazily via
+    /// <see cref="AdoptFromHost"/> — the object's OWN record binding IS the "has this been
+    /// used" signal there, verified against real BC (StefanMaron/BusinessCentral.AL.Language.Tests
+    /// codeunit 60807). Eagerly running <c>EnsureMetadataLoaded</c>/<c>SetSourceTable</c> for
+    /// those from inside a hook fired deep in arbitrary NAV internals would need a
+    /// caller-supplied record this hook has no safe way to build (record construction needs
+    /// the full <c>TestPageFactory</c> machinery, table-id resolution, tableextension
+    /// registration — heavy, TestPage-construction-time-only machinery, not something to run
+    /// from an arbitrary re-entrant call site), so this does not attempt it — those shapes
+    /// keep going through the existing, already-correct path unchanged.
+    ///
+    /// Never throws: this runs inside BC's own IL, on a call path the AL author's trigger
+    /// code did not ask to be re-entered from. A failure here silently leaves the object
+    /// un-reified early; AdoptFromHost's own lazy path is still there as a fallback.
+    /// </summary>
+    internal static void EnsureRecordlessPartReifiedEagerly(object? formObj)
+    {
+        try
+        {
+            if (formObj is not Microsoft.Dynamics.Nav.Runtime.NavForm form) return;
+            if (_reifiedSubpages.TryGetValue(form, out _)) return;
+
+            var pageId = form.FormId;
+
+            // Only the page-globals shape — see the doc comment above.
+            if (RecordPatches.ResolvePageDeclaresSourceTableForAnyPage(pageId)) return;
+
+            // No metadata this runner can build a control tree from at all (neither a
+            // source-compiled page nor a precompiled dependency's page) — EnsureMetadataLoaded
+            // would just no-op (ShouldResolveMasterPage refuses) and SourceExpressions would
+            // stay permanently empty. Nothing to gain from marking it "reified" here; leave it
+            // for the existing refusal path (TryGetPartDefinition / TryBuildRecordless) to
+            // answer with its usual named OOS reason instead of a silent early exit.
+            if (!AlPageMetadataRegistry.TryGet(pageId, out _) && !RecordPatches.HasDependencyPageMetadata(pageId))
+                return;
+
+            RunnerFormInit.MarkRealInit(form);
+            Invoke(form, "EnsureMetadataLoaded", Array.Empty<object?>());
+
+            var expressions = ReadProperty(form, "SourceExpressions") as System.Collections.IDictionary;
+            if (expressions == null) return;
+
+            var instance = new RunnerPageInstance(form, form, null, pageId, expressions);
+            if (_reifiedSubpages.TryGetValue(form, out _)) return; // lost a race with itself — never observed re-entrantly in practice, but cheap to guard
+            _reifiedSubpages.Add(form, instance);
+            instance.RaiseOnOpenPage();
+        }
+        catch
+        {
+            // Never let a hook running deep inside NAV internals throw — see doc comment.
         }
     }
 

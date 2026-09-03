@@ -172,4 +172,18 @@ public static class RunnerFormInit
         try { return form != null && _sourceExpressionForms.TryGetValue(form, out _); }
         catch { return false; }
     }
+
+    /// <summary>
+    /// Cecil-injected call appended to <c>NavForm.GetPart(int)</c> (see NclCecilRewrite.cs),
+    /// right before it returns — the one door BOTH the host's own compiled AL
+    /// (<c>CurrPage.&lt;part&gt;</c>) and the runner's own <c>AdoptFromHost</c> go through to
+    /// reach a subpage part object. Public because Cecil-injected IL calls it across an
+    /// assembly boundary from the (rewritten) Ncl.dll; the actual logic lives on
+    /// <c>RunnerPageInstance</c>, an internal type, so it is reached through this public
+    /// forwarder rather than made public itself. See
+    /// <c>RunnerPageInstance.EnsureRecordlessPartReifiedEagerly</c> for the full rationale
+    /// (issue #2201's page-globals shape).
+    /// </summary>
+    public static void OnSubpagePartResolved(object? form)
+        => AlRunner.Patches.RunnerPageInstance.EnsureRecordlessPartReifiedEagerly(form);
 }
