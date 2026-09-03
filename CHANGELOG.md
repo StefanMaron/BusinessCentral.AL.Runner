@@ -55,6 +55,7 @@ All notable changes to this project are documented here. Format based on
 - **agents:** opening a corpus PR needs no approval
 
 ### Changed
+- **subprocess:** drain the async output readers before reading captured stdout
 - **perf:** gate plain-run instrumentation cost on behaviour, not time
 - Fix page-variable TestPage option enumeration
 - Fix `--server` single-bundle dependency resolution parity for sibling source apps
