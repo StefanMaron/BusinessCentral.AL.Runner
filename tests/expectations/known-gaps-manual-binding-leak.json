@@ -1,0 +1,18 @@
+[
+  {
+    "codeunitId": 60240,
+    "CodeunitName": "Test Event Manual Binding",
+    "Method": "ManualSubscriber_Test10b_PriorTestsLocalVariableBindingDoesNotFireHere",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2476",
+    "Note": "A manual subscriber bound via a LOCAL variable in a previous [Test] procedure on the same codeunit still fires here: the runner never releases the binding when the local variable goes out of scope at procedure return, unlike real BC, which disposes the underlying instance at that point. Swept in by the #112 corpus pin bump (StefanMaron/BusinessCentral.AL.Language.Tests#110); tracked as #2476, the fix removes this entry."
+  },
+  {
+    "codeunitId": 60245,
+    "CodeunitName": "Test Manual Bind No Cross CU",
+    "Method": "PriorCodeunitsLeakedBindingDoesNotFireHere",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2476",
+    "Note": "Same manual-subscriber leak as ManualSubscriber_Test10b_PriorTestsLocalVariableBindingDoesNotFireHere above, observed across a codeunit boundary: a binding left over from codeunit 60244 (deliberately never unbound) still fires in codeunit 60245, even though TestIsolation = Codeunit should start each new test codeunit with no manual event bindings left over from the previous one. Swept in by the #112 corpus pin bump (StefanMaron/BusinessCentral.AL.Language.Tests#110); tracked as #2476, the fix removes this entry."
+  }
+]

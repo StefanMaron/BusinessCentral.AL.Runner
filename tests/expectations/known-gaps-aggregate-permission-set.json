@@ -1,0 +1,26 @@
+[
+  {
+    "codeunitId": 60931,
+    "CodeunitName": "Test Aggregate Permission Set",
+    "Method": "AggregatePermissionSet_ThisAppsDeclaredPermissionSet_IsPresentWithItsDeclaredMetadata",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2473",
+    "Note": "Aggregate Permission Set (and sibling one-shot virtual tables) snapshot at first touch and never reflect later writes -- the corpus app's own declared permission set is registered after the virtual table's first Get()/SetRange() populates its snapshot, so a later Get() for that row still finds nothing. Swept in by the #112 corpus pin bump (StefanMaron/BusinessCentral.AL.Language.Tests#111); tracked as #2473, the fix removes this entry."
+  },
+  {
+    "codeunitId": 60931,
+    "CodeunitName": "Test Aggregate Permission Set",
+    "Method": "AggregatePermissionSet_PermissionSetDeclaringNoCaption_NameFallsBackToRoleId",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2474",
+    "Note": "Metadata/Aggregate Permission Set: Name is empty (not the Role ID) when a permission set declares no Caption -- real BC substitutes the Role ID as the Name fallback; the runner leaves it blank. Swept in by the #112 corpus pin bump (StefanMaron/BusinessCentral.AL.Language.Tests#111); tracked as #2474, the fix removes this entry."
+  },
+  {
+    "codeunitId": 60931,
+    "CodeunitName": "Test Aggregate Permission Set",
+    "Method": "AggregatePermissionSet_TenantScopeDeclaration_IsPresent",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2473",
+    "Note": "Same snapshot-at-first-touch gap as AggregatePermissionSet_ThisAppsDeclaredPermissionSet_IsPresentWithItsDeclaredMetadata above: a Tenant-scope permission set row declared by this app is not present because the virtual table's snapshot was taken before it was registered. Swept in by the #112 corpus pin bump (StefanMaron/BusinessCentral.AL.Language.Tests#111); tracked as #2473, the fix removes this entry."
+  }
+]
