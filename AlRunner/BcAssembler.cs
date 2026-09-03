@@ -29,6 +29,29 @@ public sealed class BcAssembler
     // Run the full compile pass on a thread with 64 MB stack to avoid SIGSEGV.
     private const int CompileStackSize = 64 * 1024 * 1024;
 
+    /// <summary>
+    /// Parse options for BC-generated C#. <c>CSharpParseOptions.Default</c> carries
+    /// <c>DocumentationMode.Parse</c>, so the lexer builds structured XML-doc trivia for every
+    /// <c>///</c> comment. BC's emitter writes none, and nothing downstream reads doc comments,
+    /// so both the scan and the trivia nodes it would allocate are pure overhead.
+    /// </summary>
+    /// <remarks>
+    /// The language version is pinned rather than left at <see cref="LanguageVersion.Default"/>,
+    /// which resolves to whatever the referenced Roslyn package's newest major happens to be — so
+    /// a routine package bump silently changes the language BC's generated C# is parsed as. That
+    /// is not hypothetical: C# 14 made <c>field</c> a contextual keyword inside property accessor
+    /// bodies, which is exactly the kind of identifier an AL-to-C# emitter produces. Pinned at the
+    /// version the corpus has actually been compiled under; raising it is a deliberate change that
+    /// needs a corpus run behind it.
+    /// </remarks>
+    /// <summary>Test seam: the options every generated source is parsed with.</summary>
+    internal static CSharpParseOptions GeneratedParseOptionsForTests => GeneratedParseOptions;
+
+    private static readonly CSharpParseOptions GeneratedParseOptions =
+        CSharpParseOptions.Default
+            .WithDocumentationMode(DocumentationMode.None)
+            .WithLanguageVersion(LanguageVersion.CSharp13);
+
     public CompileResult Compile(string assemblyName, IEnumerable<EmittedSource> sources)
     {
         CompileResult? result = null;
@@ -47,23 +70,48 @@ public sealed class BcAssembler
 
     private CompileResult CompileCore(string assemblyName, IEnumerable<EmittedSource> sources)
     {
+        // Same BCCOMPILER_TIMING=1 switch and [emit-timing] channel BcCompiler.Emit uses, because
+        // the two halves of a compile are only comparable when they are measured the same way.
+        // The Roslyn half used to be one opaque number; splitting it is what showed that the
+        // three costs this change addresses are 6% of it and CallSiteArgWrap's throwaway compile
+        // is 47% (see #2589 and #2590 for the table).
+        bool timing = Environment.GetEnvironmentVariable("BCCOMPILER_TIMING") == "1";
+        var timer = System.Diagnostics.Stopwatch.StartNew();
+        void Mark(string phase)
+        {
+            if (timing)
+                Console.Error.WriteLine(
+                    $"[emit-timing] {assemblyName}: {phase}: {timer.ElapsedMilliseconds}ms "
+                    + $"(heap {GC.GetTotalMemory(false) / (1024 * 1024)}MB)");
+            timer.Restart();
+        }
+
         var sourceList = sources.ToList();
         if (Environment.GetEnvironmentVariable("DUMP_CS") == "1")
             foreach (var s in sourceList)
                 File.WriteAllText(Path.Combine(Path.GetTempPath(), $"gen_{s.Name}.cs"), s.Code);
-        var trees = sourceList
-            .Select(s => CSharpSyntaxTree.ParseText(
-                ApplyPolyfillRedirects(s.Code), path: s.Name + ".cs"))
-            .ToList();
-        // Inject helpers for runtime-API mismatches between alc-emit and the
-        // service-tier DLLs. PolyfillRedirects above route callers here.
-        trees.Add(CSharpSyntaxTree.ParseText(PolyfillSource, path: "_polyfill.cs"));
 
-        var refs = ReferencePaths().Select(p => MetadataReference.CreateFromFile(p)).ToList();
+        // One tree per AL object, parsed in parallel. Parsing a file has no dependency on any
+        // other file, and a whole-module compile has thousands of them, so this is the one pass
+        // in CompileCore that fans out without changing what the compiler sees: results land in
+        // a fixed array slot, so the tree ORDER handed to CSharpCompilation.Create is identical
+        // to the sequential form, whatever order the workers finish in. Roslyn folds tree order
+        // into member ordering and diagnostic ordering, so that is not a detail.
+        var trees = new List<SyntaxTree>(ParseInParallel(sourceList))
+        {
+            // Helpers for runtime-API mismatches between alc-emit and the service-tier DLLs.
+            // PolyfillRedirects route callers here.
+            CSharpSyntaxTree.ParseText(PolyfillSource, GeneratedParseOptions, path: "_polyfill.cs"),
+        };
+        Mark($"Roslyn parse {trees.Count} sources");
+
+        var refs = SharedMetadataReferences(ReferencePaths());
+        Mark($"metadata references ({refs.Count})");
 
         // Fill BC's call-site ByRef gap. Runs a throwaway compile to find CS1503
         // 'cannot convert T to ByRef<T>' errors and rewrites only those args.
         trees = CallSiteArgWrap.Apply(trees, refs).ToList();
+        Mark("CallSiteArgWrap speculative compile");
 
         var compilation = CSharpCompilation.Create(
             assemblyName,
@@ -77,6 +125,7 @@ public sealed class BcAssembler
 
         using var ms = new MemoryStream();
         var emit = compilation.Emit(ms);
+        Mark("Roslyn bind + IL gen");
         if (!emit.Success)
         {
             var errs = emit.Diagnostics
@@ -97,6 +146,102 @@ public sealed class BcAssembler
             catch { /* best-effort */ }
         }
         return new CompileResult(bytes, Array.Empty<string>());
+    }
+
+    /// <summary>
+    /// Parses every source into its own syntax tree, applying the polyfill redirects first, with
+    /// the work spread over at most <see cref="Environment.ProcessorCount"/> threads.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately dedicated threads sized <see cref="CompileStackSize"/>, not a
+    /// <c>Parallel.For</c> over the thread pool. <see cref="Compile"/> runs this whole method on
+    /// a 64 MB-stack thread precisely because Roslyn's recursion on generated code has overflowed
+    /// the default stack here before; handing the parse to pool threads would put it back on a
+    /// default-sized stack and quietly give that guarantee up. The parse of one AL object is
+    /// shallow enough that it has never been the overflow, but "has never been" is not the same
+    /// claim as "cannot be", and a stack overflow is a SIGSEGV with no managed stack to read.
+    /// </remarks>
+    internal static SyntaxTree[] ParseInParallel(IReadOnlyList<EmittedSource> sources)
+    {
+        var parsed = new SyntaxTree[sources.Count];
+        SyntaxTree ParseOne(int i) => CSharpSyntaxTree.ParseText(
+            ApplyPolyfillRedirects(sources[i].Code), GeneratedParseOptions,
+            path: sources[i].Name + ".cs");
+
+        // Below this size the thread setup costs more than the parse it would overlap.
+        const int ParallelThreshold = 8;
+        var workers = Math.Min(Environment.ProcessorCount, sources.Count);
+        if (workers <= 1 || sources.Count < ParallelThreshold)
+        {
+            for (var i = 0; i < sources.Count; i++) parsed[i] = ParseOne(i);
+            return parsed;
+        }
+
+        var next = -1;
+        Exception? failure = null;
+        var threads = new Thread[workers];
+        for (var w = 0; w < workers; w++)
+        {
+            threads[w] = new Thread(() =>
+            {
+                try
+                {
+                    int i;
+                    while ((i = Interlocked.Increment(ref next)) < sources.Count)
+                        parsed[i] = ParseOne(i);
+                }
+                catch (Exception ex) { Interlocked.CompareExchange(ref failure, ex, null); }
+            }, CompileStackSize);
+            threads[w].Start();
+        }
+        foreach (var t in threads) t.Join();
+        if (failure != null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+        return parsed;
+    }
+
+    /// <summary>
+    /// One <see cref="MetadataReference"/> per (path, last-write, length), shared by every
+    /// compile in the process.
+    ///
+    /// <para><see cref="MetadataReference.CreateFromFile(string, MetadataReferenceProperties, DocumentationProvider)"/>
+    /// reads and indexes the whole PE metadata of the file it is given, and this list is ~195
+    /// unchanging assemblies: every BC service-tier DLL plus the .NET shared framework. Recreating
+    /// them per app group meant a bundle of N app groups paid it N times, and a <c>--watch</c>
+    /// session paid it again on every cycle for files that cannot have moved. Roslyn is designed
+    /// for these to be shared — a MetadataReference is immutable and its underlying metadata is
+    /// reference-counted — so caching also keeps one copy of that metadata in memory instead of
+    /// one per live compilation.</para>
+    ///
+    /// <para>Keyed on the file's stamp as well as its path, never the path alone: a
+    /// <c>--bc-version</c> switch, or a rebuilt <c>al-runner.dll</c> (which is itself in the
+    /// list), points the same path at different bytes, and serving the old metadata would compile
+    /// AL against a version no longer on disk.</para>
+    /// </summary>
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<
+        (string Path, long Ticks, long Length), MetadataReference> _metadataReferenceCache = new();
+
+    internal static List<MetadataReference> SharedMetadataReferences(IEnumerable<string> paths)
+    {
+        var refs = new List<MetadataReference>();
+        foreach (var path in paths)
+        {
+            (string Path, long Ticks, long Length) key;
+            try
+            {
+                var info = new FileInfo(path);
+                key = (path, info.LastWriteTimeUtc.Ticks, info.Length);
+            }
+            catch (IOException)
+            {
+                // No readable stamp — take the uncached path rather than key on a guess.
+                refs.Add(MetadataReference.CreateFromFile(path));
+                continue;
+            }
+            refs.Add(_metadataReferenceCache.GetOrAdd(
+                key, static k => MetadataReference.CreateFromFile(k.Path)));
+        }
+        return refs;
     }
 
     private IEnumerable<string> ReferencePaths()
