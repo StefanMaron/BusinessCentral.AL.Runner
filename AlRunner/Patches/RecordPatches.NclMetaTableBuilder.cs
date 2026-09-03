@@ -228,6 +228,16 @@ public static partial class RecordPatches
                     if (f != null)
                         AlRunner.Infrastructure.FieldPoke.SetInstance(f, built, triggerHandler);
                 }
+                // NOTE: table-level trigger-subscriber injection (EventSubscriberPatches
+                // .InjectTriggerSubsForTable) is deliberately NOT called here. This method runs
+                // INSIDE _metaTableCache.GetOrAdd(tableId, BuildNCLMetaTable) — the cache entry for
+                // tableId does not exist yet. BuildSubscription's NavEventSubscription ctor resolves
+                // the publisher's application object via NCLMetadata.GetMetaApplicationObject, which
+                // re-enters EnsureTableInMetadataCache(tableId) → the same GetOrAdd(tableId, ...) →
+                // BuildNCLMetaTable(tableId) again, recursing until the stack overflows (measured:
+                // issue #2197 investigation). Callers invoke it AFTER GetOrAdd has returned, at the
+                // same call sites as InjectValidateSubsForTable — see RecordPatches.cs,
+                // RecordPatches.CreateObjectInstance.cs, NavRecordRefPatches.cs.
 
                 // Field-level OnValidate/OnLookup trigger wiring is deferred to
                 // SetTestAssembly time — the AL-emitted Record<id> CLR type that

@@ -101,4 +101,25 @@ public static partial class RecordPatches
         }
         return null;
     }
+
+    /// <summary>
+    /// Numeric field id for <paramref name="fieldName"/> on <paramref name="tableId"/>
+    /// (issue #2467 — resolving a dependency part's SubPageLink field names to the numbers
+    /// BC's own compiled metadata carries). Reuses the SAME table-symbol machinery
+    /// RecordPatches.BcAppFallback.cs already builds for FlowField CalcFormula source-table
+    /// resolution (_parsedTables / TryPopulateParsedTableFromBcApps) — this is a second
+    /// caller of it, not new lookup infrastructure. Null when the table or field is unknown.
+    /// </summary>
+    internal static int? TryResolveDependencyFieldId(int tableId, string fieldName)
+    {
+        if (tableId <= 0 || string.IsNullOrWhiteSpace(fieldName)) return null;
+        if (!_parsedTables.TryGetValue(tableId, out var table))
+        {
+            TryPopulateParsedTableFromBcApps(tableId);
+            _parsedTables.TryGetValue(tableId, out table);
+        }
+        var field = table?.Fields.FirstOrDefault(f =>
+            string.Equals(f.FieldName, fieldName, StringComparison.OrdinalIgnoreCase));
+        return field?.FieldId;
+    }
 }

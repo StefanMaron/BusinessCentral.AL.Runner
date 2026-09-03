@@ -63,13 +63,53 @@ public sealed class RunnerTestClientSession : ITestClientSession
         // source-expression table and never touches the record at all.
         var record = ReadProperty(form, "SourceTable") as NavRecord;
 
-        return new AlRunner.LiveNavTestPage(
+        var live = new AlRunner.LiveNavTestPage(
             record,
             RecordPatches.GetPageControlFieldMap(pageId),
             RecordPatches.GetInsertAllowedForPage(pageId),
             RunnerPageInstance.Adopt(form, pageId),
             _session,
             pageId);
+
+        // This wrapper is built AFTER the underlying form already opened — the code that
+        // positions a TestPage the AL test opened itself (RunnerTestPageState.MarkOpened)
+        // never runs on this path, so without this the page a [PageHandler]/[ModalPageHandler]
+        // receives sits on no row at all, even when its view has one. A real client positions
+        // on the first row (or the implicit new-row line, if the view has none — see
+        // LiveNavTestPage.MoveFirst) the moment a page is shown, before any AL handler code
+        // runs. Issue #2392: Base App's ApprovalCommentsHandler writes a field straight after
+        // being handed the page — no New()/First() of its own — which needs exactly this.
+        //
+        // GUARDED on IsUnpositioned: `record` is the underlying form's OWN record, and
+        // `Page.SetRecord(specific row); Page.RunModal();` — corpus CU60848
+        // RunModal_OpensOnTheRecordSetByTheCaller — already positions it before this method
+        // ever runs. Calling MoveFirst() unconditionally re-queried the table from scratch and
+        // silently overwrote the caller's chosen row with whatever sorts first, which is
+        // exactly what that corpus test exists to catch (measured: it did, on first push of
+        // this fix). Only reposition a record nothing has touched yet.
+        if (record != null && IsUnpositioned(record)) live.MoveFirst();
+
+        return live;
+    }
+
+    /// <summary>
+    /// Whether <paramref name="record"/> is still at its Init() default — every primary-key
+    /// field zero/blank — as opposed to already holding a specific row's values (via
+    /// Page.SetRecord, or any other caller-side positioning that does not go through
+    /// LiveNavTestPage.MoveFirst itself).
+    /// </summary>
+    internal static bool IsUnpositioned(NavRecord record)
+    {
+        var primaryKey = record.MetaTable?.PrimaryKey;
+        if (primaryKey == null) return true;
+        for (var i = 0; i < primaryKey.KeyFieldCount; i++)
+        {
+            var fieldNo = primaryKey.KeyFieldsList[i].FieldNo;
+            if (record.MetaTable!.TryGetFieldByNo(fieldNo, out var field)
+                && !record.GetFieldValue(field).IsZeroOrEmpty)
+                return false;
+        }
+        return true;
     }
 
     private object? RegisteredForm(Guid handle)

@@ -156,8 +156,23 @@ public static partial class RecordPatches
     {
         EnsureGetDataAccessForQueryReflection(self);
 
-        var includedTables = (System.Collections.IEnumerable)_pQueryDefIncludedTables!.GetValue(queryDefinition)!;
-        var tableList = includedTables.Cast<object>().ToList();
+        // #2300: NOT NCLMetaQueryDefinition.IncludedTables. That BC-real property calls
+        // NCLMetaQueryDefinition.GetAllDataItems, which for a FlowField-calculation synthesized
+        // dataitem (SubQueryDefinition != null — see JoinExecutor.cs's field comment) does NOT
+        // skip it, it recurses into dataItem.SubQueryDefinition.DataItems and includes THAT
+        // table too (real BC needs it there for its own SQL sub-query). This runner never runs
+        // that sub-query — the FlowField column is computed directly instead (FlowFieldPatches.
+        // CalcOneFlowFieldForQueryRow) — so from here a query with one real dataitem plus a
+        // FlowField column must still resolve to ONE table, not two, or the "all tables share
+        // one DataAccess" check below wrongly routes it into the multi-dataitem JOIN path.
+        var tableList = new List<object>();
+        var rawDataItems = (System.Collections.IEnumerable)_pQueryDefDataItems2!.GetValue(queryDefinition)!;
+        foreach (var di in rawDataItems)
+        {
+            if (_pDataItemSubQueryDefinition2?.GetValue(di) != null) continue;
+            var t = _pDataItemMetaTable2b!.GetValue(di);
+            if (t != null) tableList.Add(t);
+        }
 
         // Resolve each included table's DataAccess via the (already-hooked) per-table route.
         var accesses = new List<object>();
@@ -186,6 +201,10 @@ public static partial class RecordPatches
         return accesses[0];
     }
 
+    private static PropertyInfo? _pQueryDefDataItems2;
+    private static PropertyInfo? _pDataItemSubQueryDefinition2;
+    private static PropertyInfo? _pDataItemMetaTable2b;
+
     private static void EnsureGetDataAccessForQueryReflection(object dataAccessSource)
     {
         if (_pQueryDefIncludedTables != null) return;
@@ -195,6 +214,17 @@ public static partial class RecordPatches
         _pQueryDefIncludedTables = tQueryDef.GetProperty("IncludedTables",
             BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
             ?? throw new InvalidOperationException("NCLMetaQueryDefinition.IncludedTables not found");
+        // #2300: DataItems is internal (no InternalsVisibleTo from al-runner.dll), so it must be
+        // read by reflection here, unlike IncludedTables' sibling fields above which happen to be
+        // reachable directly elsewhere in this file.
+        _pQueryDefDataItems2 = tQueryDef.GetProperty("DataItems",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+            ?? throw new InvalidOperationException("NCLMetaQueryDefinition.DataItems not found");
+        var tDataItem = nclAsm.GetType(rt + "NCLMetaQueryDataItem")!;
+        _pDataItemSubQueryDefinition2 = tDataItem.GetProperty("SubQueryDefinition",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+        _pDataItemMetaTable2b = tDataItem.GetProperty("MetaTable",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
         var tDataAccess = nclAsm.GetType(rt + "DataAccess")!;
         _pDataAccessDataProvider = tDataAccess.GetProperty("DataProvider",
             BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
@@ -288,6 +318,7 @@ public static partial class RecordPatches
     private static Type? _tFilterFieldDictionary;
     private static Type? _tUnaryFilterExpr;
     private static Type? _tBinaryFilterExpr;
+    private static Type? _tWildcardFilterExpr;
     private static Type? _tFilterExpr;
     private static Type? _tNavFieldMetadata;
     private static bool _filterReflectionReady;
@@ -301,6 +332,14 @@ public static partial class RecordPatches
     private static PropertyInfo? _pDataItemQueryColumnsQ;
     private static PropertyInfo? _pColColumnTypeQ;
     private static PropertyInfo? _pColColumnIndexQ2;
+    // #2423: same discriminator JoinExecutor.cs uses (SubQueryDefinition != null marks the
+    // FlowField-calculation synthesized dataitem) plus its Name, for the loud-failure guard
+    // ComputeJoinColumnSlotMap's own copy of BuildJoinProjectionPlan's algorithm must carry too.
+    private static PropertyInfo? _pDataItemSubQueryDefinitionQ;
+    private static PropertyInfo? _pDataItemNameQ;
+    // #2423: mirrors JoinExecutor's own _pDataItemSourceFlowField — distinguishes the
+    // FlowField-calculation synthesized sub-dataitem from any other synthesized-subquery shape.
+    private static PropertyInfo? _pDataItemSourceFlowFieldQ;
 
     private static void EnsureFilterReflection()
     {
@@ -311,6 +350,7 @@ public static partial class RecordPatches
         _tFilterFieldDictionary = asm.GetType(rt + "FilterFieldDictionary");
         _tUnaryFilterExpr = asm.GetType(rt + "UnaryFilterExpression");
         _tBinaryFilterExpr = asm.GetType(rt + "BinaryFilterExpression");
+        _tWildcardFilterExpr = asm.GetType(rt + "WildcardFilterExpression");
         _tFilterExpr = asm.GetType(rt + "FilterExpression");
         _tNavFieldMetadata = asm.GetType(rt + "INavFieldMetadata");
         _tNCLMetaQueryColumn = asm.GetType(rt + "NCLMetaQueryColumn");
@@ -320,6 +360,9 @@ public static partial class RecordPatches
         _pQueryDefDataItemsQ = _tNCLMetaQueryDefinition?.GetProperty("DataItems", anyInstance);
         _pDataItemQueryColumnsQ = _tNCLMetaQueryDataItem?.GetProperty("QueryColumns", anyInstance);
         _pColColumnTypeQ = _tNCLMetaQueryColumn?.GetProperty("ColumnType", anyInstance);
+        _pDataItemSubQueryDefinitionQ = _tNCLMetaQueryDataItem?.GetProperty("SubQueryDefinition", anyInstance);
+        _pDataItemNameQ = _tNCLMetaQueryDataItem?.GetProperty("Name", anyInstance);
+        _pDataItemSourceFlowFieldQ = _tNCLMetaQueryDataItem?.GetProperty("SourceFlowField", anyInstance);
         _filterReflectionReady = true;
     }
 
@@ -342,6 +385,27 @@ public static partial class RecordPatches
         var map = new Dictionary<object, int>();
         if (_pQueryDefDataItemsQ == null || _pDataItemQueryColumnsQ == null) return map;
         var dataItems = ((System.Collections.IEnumerable)_pQueryDefDataItemsQ.GetValue(queryDef)!).Cast<object>().ToList();
+
+        // #2423: mirrors JoinExecutor.BuildJoinProjectionPlan's own guard EXACTLY (this method's
+        // own doc comment requires the two algorithms to change together). The FlowField-
+        // calculation synthesized sub-dataitem (SubQueryDefinition != null, SourceFlowField !=
+        // null) IS now given a slot below like any other column — its ColumnIndex is unaffected
+        // by how JoinExecutor computes its VALUE (via ctx.CalcFlowFieldForRow, not TableSlot), so
+        // this mirror needs no FlowField-specific branch of its own, only the throw removed for
+        // that shape. A synthesized sub-dataitem that is NOT the FlowField-calculation shape
+        // (SourceFlowField == null — some other synthesized-subquery shape this runner does not
+        // otherwise support in the join path) still throws loudly rather than guess.
+        foreach (var diCheck in dataItems)
+        {
+            if (_pDataItemSubQueryDefinitionQ?.GetValue(diCheck) == null) continue;
+            if (_pDataItemSourceFlowFieldQ?.GetValue(diCheck) != null) continue; // FlowField calc — gets a slot below.
+            var subDataItemName = _pDataItemNameQ?.GetValue(diCheck) as string ?? "<unknown>";
+            throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+                "NavQuery (multi-dataitem join with a synthesized sub-dataitem)",
+                $"query-join-synthesized-subquery-not-implemented -- dataitem '{subDataItemName}' is a " +
+                "synthesized sub-dataitem (SubQueryDefinition != null) that is not a FlowField-calculation " +
+                "sub-query; this runner does not support this join sub-shape in-memory; see docs/scope.md");
+        }
 
         int maxSlot = -1;
         foreach (var di in dataItems)
@@ -401,59 +465,113 @@ public static partial class RecordPatches
         EnsureFilterReflection();
         var filtersAndMarks = request.GetType().GetProperty("FiltersAndMarks", BindingFlags.Public | BindingFlags.Instance)!
             .GetValue(request);
-        if (filtersAndMarks == null) return request;
-        var filters = _tFiltersAndMarks!.GetProperty("Filters", BindingFlags.Public | BindingFlags.Instance)!
-            .GetValue(filtersAndMarks);
-        if (filters == null) return request;
+        object? filters = null;
+        if (filtersAndMarks != null)
+            filters = _tFiltersAndMarks!.GetProperty("Filters", BindingFlags.Public | BindingFlags.Instance)!
+                .GetValue(filtersAndMarks);
 
         // FilterFieldDictionary.Items : Tuple<INavFieldMetadata, FilterExpression>[]
-        var items = (Array?)_tFilterFieldDictionary!.GetProperty("Items", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?
+        var items = filters == null ? null : (Array?)_tFilterFieldDictionary!.GetProperty("Items", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?
             .GetValue(filters);
-        if (items == null || items.Length == 0) return request; // no field filters → nothing to do.
 
         var translatedTuples = new List<object>();
         bool anyTranslated = false;
-        foreach (var item in items)
-        {
-            // Tuple<INavFieldMetadata, FilterExpression>
-            var key = item!.GetType().GetProperty("Item1")!.GetValue(item);
-            var expr = item.GetType().GetProperty("Item2")!.GetValue(item);
-            if (key != null && _tNCLMetaQueryColumn != null && _tNCLMetaQueryColumn.IsInstanceOfType(key))
+        // #2418: query columns that already carry a RUNTIME (SetRange/SetFilter) filter — a
+        // runtime filter on a column REPLACES its static ColumnFilter (verified against real
+        // BC 28.4, see #2418), so the static-ColumnFilter pass below skips these entirely.
+        var runtimeFilteredColumnIds = new HashSet<int>();
+        if (items != null)
+            foreach (var item in items)
             {
-                if (((NCLMetaQueryColumn)key).AggregationType != AggregationType.None)
+                // Tuple<INavFieldMetadata, FilterExpression>
+                var key = item!.GetType().GetProperty("Item1")!.GetValue(item);
+                var expr = item.GetType().GetProperty("Item2")!.GetValue(item);
+                if (key != null && _tNCLMetaQueryColumn != null && _tNCLMetaQueryColumn.IsInstanceOfType(key))
                 {
-                    // HAVING-clause filter — exclude from the WHERE-style push-down (pushing it
-                    // unchanged would make FindImplementation try to cast this NCLMetaQueryColumn
-                    // key to NCLMetaField and fail; retargeting it to the source field would
-                    // filter raw pre-aggregation rows, which is the #2137-class bug). Hand it
-                    // back for post-aggregation evaluation instead.
-                    havingFilters.Add((key!, expr!));
-                    anyTranslated = true;
-                    continue;
-                }
+                    runtimeFilteredColumnIds.Add(((NCLMetaQueryColumn)key).Id);
+                    if (((NCLMetaQueryColumn)key).AggregationType != AggregationType.None)
+                    {
+                        // HAVING-clause filter — exclude from the WHERE-style push-down (pushing it
+                        // unchanged would make FindImplementation try to cast this NCLMetaQueryColumn
+                        // key to NCLMetaField and fail; retargeting it to the source field would
+                        // filter raw pre-aggregation rows, which is the #2137-class bug). Hand it
+                        // back for post-aggregation evaluation instead.
+                        havingFilters.Add((key!, expr!));
+                        anyTranslated = true;
+                        continue;
+                    }
 
-                var srcField = key.GetType().GetProperty("SourceTableField", BindingFlags.Public | BindingFlags.Instance)!.GetValue(key);
-                if (srcField != null && expr != null)
-                {
-                    var srcCtx = srcField.GetType().GetProperty("ExpressionContext", BindingFlags.Public | BindingFlags.Instance)!.GetValue(srcField);
-                    var retargeted = RetargetFilterExpression(expr, srcCtx!);
-                    translatedTuples.Add(MakeFieldTuple(srcField, retargeted));
-                    anyTranslated = true;
-                    continue;
+                    var srcField = key.GetType().GetProperty("SourceTableField", BindingFlags.Public | BindingFlags.Instance)!.GetValue(key);
+                    if (srcField != null && expr != null)
+                    {
+                        var srcCtx = srcField.GetType().GetProperty("ExpressionContext", BindingFlags.Public | BindingFlags.Instance)!.GetValue(srcField);
+                        var retargeted = RetargetFilterExpression(expr, srcCtx!);
+                        translatedTuples.Add(MakeFieldTuple(srcField, retargeted));
+                        anyTranslated = true;
+                        continue;
+                    }
                 }
+                translatedTuples.Add(item); // already table-keyed or no source — keep as-is.
             }
-            translatedTuples.Add(item); // already table-keyed or no source — keep as-is.
+
+        // #2418: static `ColumnFilter` conditions (NCLMetaQuery.ColumnFilters, built in
+        // NclMetaQueryBuilder.BuildMetaQueryDesign from the AL `ColumnFilter` property) — same
+        // WHERE/HAVING routing as a runtime filter on that column, applied only when no runtime
+        // filter already targets it (a runtime filter REPLACES the static one, never combines).
+        var staticColumnFilters = GetStaticColumnFilters(metaAppObj!);
+        foreach (var (col, expr) in staticColumnFilters)
+        {
+            if (runtimeFilteredColumnIds.Contains(col.Id)) continue;
+            if (col.AggregationType != AggregationType.None)
+            {
+                havingFilters.Add((col, expr));
+                anyTranslated = true;
+                continue;
+            }
+            if (col.SourceTableField != null)
+            {
+                var retargeted = RetargetFilterExpression(expr, col.SourceTableField.ExpressionContext);
+                translatedTuples.Add(MakeFieldTuple(col.SourceTableField, retargeted));
+                anyTranslated = true;
+            }
         }
+
         if (!anyTranslated) return request;
 
         // Build FilterFieldDictionary(IEnumerable<Tuple<INavFieldMetadata, FilterExpression>>)
         var newFilters = BuildFilterFieldDictionary(translatedTuples);
-        var markedRecords = _tFiltersAndMarks.GetProperty("MarkedRecords", BindingFlags.Public | BindingFlags.Instance)!.GetValue(filtersAndMarks);
-        var newFam = Activator.CreateInstance(_tFiltersAndMarks, newFilters, markedRecords)!;
+        var markedRecords = filtersAndMarks == null ? null
+            : _tFiltersAndMarks!.GetProperty("MarkedRecords", BindingFlags.Public | BindingFlags.Instance)!.GetValue(filtersAndMarks);
+        var newFam = Activator.CreateInstance(_tFiltersAndMarks!, newFilters, markedRecords)!;
         return CloneRequestWithFilters(request, newFam);
     }
 
     private static Type? _tNCLMetaQueryColumn;
+    private static PropertyInfo? _pNCLMetaQueryColumnFilters; // #2418
+
+    /// <summary>
+    /// The query's static <c>ColumnFilter</c> conditions — <c>NCLMetaQuery.ColumnFilters</c>
+    /// (a <c>ReadOnlyCollection&lt;Tuple&lt;NCLMetaQueryColumn, FilterExpression&gt;&gt;</c>),
+    /// built by BC's own <c>BuildFilterExpressionCollection</c> from the design-time
+    /// <c>MetaQuery.ColumnFilters</c> list <c>NclMetaQueryBuilder.BuildMetaQueryDesign</c>
+    /// populates (#2418). The property is <c>internal</c> to Ncl.dll, hence reflection.
+    /// Never null on a real <c>NCLMetaQuery</c> — an empty collection when the query declares
+    /// no <c>ColumnFilter</c> at all.
+    /// </summary>
+    private static IEnumerable<(NCLMetaQueryColumn Column, object Expr)> GetStaticColumnFilters(object metaAppObj)
+    {
+        _pNCLMetaQueryColumnFilters ??= _tNCLMetaQuery!.GetProperty("ColumnFilters",
+            BindingFlags.NonPublic | BindingFlags.Instance);
+        var raw = _pNCLMetaQueryColumnFilters?.GetValue(metaAppObj) as System.Collections.IEnumerable;
+        if (raw == null) yield break;
+        foreach (var tuple in raw)
+        {
+            var col = tuple!.GetType().GetProperty("Item1")!.GetValue(tuple);
+            var expr = tuple.GetType().GetProperty("Item2")!.GetValue(tuple);
+            if (col is NCLMetaQueryColumn c && expr != null)
+                yield return (c, expr);
+        }
+    }
 
     private static object MakeFieldTuple(object field, object expr)
     {
@@ -503,7 +621,25 @@ public static partial class RecordPatches
                 .First(c => c.GetParameters().Length == 3 && c.GetParameters()[0].ParameterType.Name == "FilterExpressionType");
             return ctor.Invoke(new object?[] { exprType, newLeft, newRight });
         }
-        // Other expression kinds (wildcard/fieldEqualsField/etc.) are not produced by
+        // #2299: Query.SetFilter(<col>, 'ABC*') on a query column DOES produce a
+        // WildcardFilterExpression (SetRange with an exact value produces the Unary/Binary
+        // shapes above, but a filter containing wildcard characters does not). Left
+        // unretargeted, its ExpressionContext.Metadata stays the NCLMetaQueryColumn key, and
+        // BC's own TempTableDataProvider.RecordBufferEvaluatorVisitor.Evaluate unconditionally
+        // casts `(NCLMetaField)expressionContext.Metadata` for the wildcard branch — an
+        // InvalidCastException at the first Read(), not a silent non-match. Rebuild it against
+        // the retargeted (real table field) context the same way Unary/Binary already are.
+        if (_tWildcardFilterExpr!.IsInstanceOfType(expr))
+        {
+            // public WildcardFilterExpression(bool isNegated, string pattern, bool isCaseAndAccentInsensitive, FilterExpressionContext expressionContext)
+            var isNegated = t.GetProperty("IsNegated", BindingFlags.Public | BindingFlags.Instance)!.GetValue(expr);
+            var pattern = t.GetProperty("Pattern", BindingFlags.Public | BindingFlags.Instance)!.GetValue(expr);
+            var isCaseAndAccentInsensitive = t.GetProperty("IsCaseAndAccentInsensitive", BindingFlags.Public | BindingFlags.Instance)!.GetValue(expr);
+            var ctor = _tWildcardFilterExpr.GetConstructors()
+                .First(c => c.GetParameters().Length == 4 && c.GetParameters()[0].ParameterType == typeof(bool));
+            return ctor.Invoke(new object?[] { isNegated, pattern, isCaseAndAccentInsensitive, targetCtx });
+        }
+        // Other expression kinds (fieldEqualsField/fullText/etc.) are not produced by
         // single-column SetRange/SetFilter; leave them (will not match a table field and
         // is a documented follow-up if a test relies on them).
         return expr;
@@ -790,6 +926,12 @@ public static partial class RecordPatches
         // straight to NavValue.CreateNavValueFromObject / FlowFieldPatches.TypedDefaultForField
         // to produce a value of the COLUMN's own declared type, not the source field's.
         public NCLMetaQueryColumn Column = null!;
+        // #2300: non-null when SourceTableField.FieldClass == FlowField. A FlowField has no
+        // stored slot in the table's row buffer (TableSlot's ColumnIndex points at storage that
+        // was never written), so BuildRow computes it directly via FlowFieldPatches instead of
+        // reading the buffer, the same way BC's own query engine computes it via a synthesized
+        // OuterApply sub-query this runner has no SQL to execute.
+        public NCLMetaField? FlowFieldMeta;
     }
 
     private sealed class ProjectionPlan
@@ -902,6 +1044,16 @@ public static partial class RecordPatches
                 fields[c.QuerySlot] = ComputeAggregate(c, groupRows);
                 continue;
             }
+            // #2300: a non-aggregated FlowField column — compute directly rather than reading
+            // the (never-written) buffer slot. Method=Sum/etc. on a FlowField SOURCE column is
+            // routed through ComputeAggregate above instead, which still reads the buffer slot;
+            // that combination is unmeasured (no oracle case covers it) and left as a documented
+            // follow-up rather than guessed at here.
+            if (c.FlowFieldMeta != null && groupRows.Count > 0)
+            {
+                fields[c.QuerySlot] = FlowFieldPatches.CalcOneFlowFieldForQueryRow(groupRows[0], c.FlowFieldMeta);
+                continue;
+            }
             if (c.TableSlot < 0 || groupRows.Count == 0 || c.TableSlot >= groupRows[0].FieldCount)
                 continue; // unsupported column (ConstValue) → leave at NavValue default
             fields[c.QuerySlot] = groupRows[0][c.TableSlot];
@@ -1008,6 +1160,16 @@ public static partial class RecordPatches
         return ComputeAggregateCore(column.AggregationType, column, rawValues.Length, values);
     }
 
+    /// <summary>
+    /// Adapter for AlRunner.QueryJoin.JoinContext.CalcFlowFieldForRow (#2423): the isolated
+    /// JoinExecutor hands back the OWNER dataitem's own row buffer (boxed) and the FlowField's
+    /// NCLMetaField (boxed) for a JOIN that also selects a FlowField column; forwards to the
+    /// same FlowFieldPatches.CalcOneFlowFieldForQueryRow the single-real-dataitem path (#2300)
+    /// uses, so the aggregation/formula math is not duplicated across the assembly boundary.
+    /// </summary>
+    private static object? Join_CalcFlowFieldForRow(object rowBuffer, object flowFieldMeta)
+        => FlowFieldPatches.CalcOneFlowFieldForQueryRow(rowBuffer, (NCLMetaField)flowFieldMeta);
+
     private static Type? _tNavValue;
     private static Array ToNavValueArray(object?[] values)
     {
@@ -1015,6 +1177,27 @@ public static partial class RecordPatches
         var arr = Array.CreateInstance(_tNavValue, values.Length);
         for (int i = 0; i < values.Length; i++) arr.SetValue(values[i], i);
         return arr;
+    }
+
+    private static PropertyInfo? _pDataItemSourceFlowField;
+    private static bool _sourceFlowFieldResolved;
+
+    /// <summary>
+    /// #2300: NCLMetaQueryDataItem.SourceFlowField (internal — reflection required, same as
+    /// every other internal Ncl member this file already reaches this way). Non-null on the
+    /// synthesized FlowField-calculation sub-dataitem BC's own NCLMetaQuery.
+    /// CreateSubQueryForFlowFieldCalculation builds; identifies WHICH FlowField NCLMetaField
+    /// this dataitem's own aggregate result column stands in for.
+    /// </summary>
+    private static NCLMetaField? GetSourceFlowField(object dataItem)
+    {
+        if (!_sourceFlowFieldResolved)
+        {
+            _sourceFlowFieldResolved = true;
+            _pDataItemSourceFlowField = dataItem.GetType().GetProperty("SourceFlowField",
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+        }
+        return _pDataItemSourceFlowField?.GetValue(dataItem) as NCLMetaField;
     }
 
     private static ProjectionPlan BuildProjectionPlan(object nclMetaQuery)
@@ -1031,29 +1214,57 @@ public static partial class RecordPatches
             if (querySlot > maxSlot) maxSlot = querySlot;
 
             int tableSlot = -1;
-            // SourceTableField throws NotSupportedException for a ConstValue column (no
-            // source field at all — pre-existing, documented follow-up, unrelated to #2137);
-            // treat that as "unsupported → leave at default", same as before this fix.
-            try
+            NCLMetaField? flowFieldMeta = null;
+
+            // #2300: a column whose dataitem is a FlowField-calculation synthesized subquery
+            // (SUB$<dataitem>$<column>, DataItemLinkType.OuterApply) represents the OUTER
+            // "TotalAmount"-style result — the very column AL's compiled Id/ColumnIndex expect
+            // (CreateSubQueryForFlowFieldCalculation builds it with flowFieldColumn.Id/
+            // .QueryColumnIndex verbatim). ITS OWN AggregationType is Sum/Count/etc — BC's
+            // SQL groups it away inside the sub-query, invisibly to the outer projection — and
+            // its SourceTableField resolves to the SOURCE field on the SUB-QUERY's OWN inner
+            // table (e.g. "Qff Line".Amount), not a field on THIS row's table at all. Reading
+            // that field's ColumnIndex against the CURRENT (outer-table) row buffer is exactly
+            // the #2300 corruption: whatever real, unrelated field happens to sit at that slot
+            // on the OUTER table (observed: the table's own SystemId, a Guid) gets returned
+            // instead. This must be checked and handled BEFORE the generic aggregation/
+            // TableSlot branches below, which would otherwise take it first.
+            var sourceFlowField = GetSourceFlowField(col.ParentDataItem);
+            if (sourceFlowField != null)
             {
-                if (col.ColumnType != QueryColumnType.ConstValue)
-                {
-                    var srcField = col.SourceTableField;
-                    if (srcField != null) tableSlot = srcField.ColumnIndex;
-                }
+                flowFieldMeta = sourceFlowField;
             }
-            catch { tableSlot = -1; }
+            else
+            {
+                // SourceTableField throws NotSupportedException for a ConstValue column (no
+                // source field at all — pre-existing, documented follow-up, unrelated to #2137);
+                // treat that as "unsupported → leave at default", same as before this fix.
+                try
+                {
+                    if (col.ColumnType != QueryColumnType.ConstValue)
+                    {
+                        var srcField = col.SourceTableField;
+                        if (srcField != null) tableSlot = srcField.ColumnIndex;
+                    }
+                }
+                catch { tableSlot = -1; }
+            }
 
             var aggregation = col.AggregationType;
-            if (aggregation != AggregationType.None) hasAggregate = true;
+            // A FlowField-calculation column is computed whole (FlowFieldPatches.
+            // CalcOneFlowFieldForQueryRow), independent of the runner's OWN #2137 GROUP BY —
+            // its Sum/Count/etc AggregationType describes what BC's SQL sub-query does
+            // INTERNALLY, not an aggregation this projection layer must additionally perform.
+            if (flowFieldMeta == null && aggregation != AggregationType.None) hasAggregate = true;
 
             columnPlans.Add(new ColumnPlan
             {
                 QuerySlot = querySlot,
                 TableSlot = tableSlot,
-                Aggregation = aggregation,
-                IsGroupKey = aggregation == AggregationType.None && col.ColumnType == QueryColumnType.Normal,
+                Aggregation = flowFieldMeta == null ? aggregation : AggregationType.None,
+                IsGroupKey = flowFieldMeta == null && aggregation == AggregationType.None && col.ColumnType == QueryColumnType.Normal,
                 Column = col,
+                FlowFieldMeta = flowFieldMeta,
             });
         }
         return new ProjectionPlan { SlotCount = maxSlot + 1, Columns = columnPlans.ToArray(), HasAggregate = hasAggregate };

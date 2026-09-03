@@ -150,7 +150,7 @@ assembly for `[NavEventSubscriber]` methods at startup and calls matching subscr
 **What works:**
 - Custom `[IntegrationEvent]` / `[BusinessEvent]` publishers with any subscriber signature.
 - Subscribers that receive `var` parameters (e.g. `var Rec: Record X`, `var IsHandled: Boolean`) — the rewriter forwards all event parameters, and `var` arguments are wrapped in `ByRef<T>` so mutations propagate back to the publisher.
-- `IncludeSender = true` — the sender codeunit instance is prepended as the first argument.
+- `IncludeSender = true` — the sender codeunit instance is bound to the subscriber's sender parameter regardless of its position in the declared parameter list (matching real BC — #2348).
 - Database event subscribers (`OnAfterModify`, `OnBeforeInsert`, etc.) receive `Rec` and can read or modify fields; the mutations are visible to the caller after the trigger returns.
 
 ### No UI rendering
@@ -189,7 +189,20 @@ dispatch, and report/request-page variables support a limited standalone surface
   [#1918](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/1918); pass an
   explicit page id in the meantime.
 - Request pages can be handled via `[RequestPageHandler]`, but this is handler dispatch
-  only, not real request-page rendering.
+  only, not real request-page rendering. `Report.Run()` / `RunModal()` open the request page
+  and route it to the declared handler, exactly as a real service tier does under test:
+  a handler that cancels leaves the report body unexecuted, and one that calls
+  `TestRequestPage.SaveAsXml(parametersFile, dataSetFile)` gets the report's dataset written
+  to that file (so `Codeunit "Library - Report Dataset"` can load it) instead of a layout.
+  A handler can also read and write the request page's **controls**
+  (`RequestPage.ShowAmountsInLCY.SetValue(true)`): a request-page control is bound to one of
+  the report's own globals, and it resolves through BC's own `NavForm.SourceExpressions`
+  binding table, so a write lands on that global and the report body reads it back.
+  One difference from real BC remains:
+    - When no declared handler matches the request page, the runner continues WITHOUT
+      opening one rather than raising BC's `Unhandled UI` error. It cannot yet tell "the
+      test declared no handler" apart from "handler lookup did not reach us", and refusing
+      on the second would break reports that run fine today.
 - Report variables support `Run()`, `RunRequestPage()`, `SetTableView()`, and
   helper procedures. Report triggers execute: `OnPreReport`, `OnPreDataItem`,
   `OnAfterGetRecord` (once per row in the in-memory table), `OnPostDataItem`, and
@@ -200,12 +213,10 @@ dispatch, and report/request-page variables support a limited standalone surface
 - The static `Report.Run(id[, requestWindow[, systemPrinter[, record]]])` /
   `Report.RunModal(id, ...)` forms (called on the `Report` codeunit-like object, without
   first declaring a report variable) execute the report the same way the report-variable
-  form does — construct the report from its id, then run the same trigger lifecycle.
-  `requestWindow` / `systemPrinter` are accepted but not acted on: no dialog is ever raised
-  from `Run`/`RunModal` (request pages are handler dispatch only, see above); a report that
-  needs its request page's `[RequestPageHandler]` to fire should call the static/instance
-  `RunRequestPage()` explicitly. The `Report.Run(ReportRunOptions)` overload is not
-  implemented and throws `out-of-scope: static NavReport.Run`.
+  form does — construct the report from its id, then run the same trigger lifecycle, and
+  open the request page when `requestWindow` says to. `systemPrinter` is accepted but not
+  acted on: nothing prints. The `Report.Run(ReportRunOptions)` overload is not implemented
+  and throws `out-of-scope: static NavReport.Run`.
 
 ### No debugger infrastructure
 

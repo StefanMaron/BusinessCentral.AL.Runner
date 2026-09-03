@@ -1,0 +1,19 @@
+{
+  "id": "8e4d2b71-5c9a-4f3e-b1d6-2a7c9e0f6b83",
+  "name": "Runner Extras - DB Trigger Inject Timing",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Regression for issue #2197: a table-level DB-trigger subscriber (OnBeforeDeleteEvent) on a precompiled Base App table was silently inert when that table's NCLMetaTable was first built INSIDE the subscribing test's own codeunit.",
+  "description": "The general BC-language claim -- an OnBeforeDeleteEvent subscriber on a table fires on Delete(true) -- is plain BC behaviour and is already covered upstream in the al-language corpus (tests/al-language/record/TestTableEventDispatch.al, codeunit 60208), which subscribes against a corpus-owned fixture table (ALT Triggered, id 60002). That fixture table is PARSED from the bundle's own AL source, so PopulateNclMetadataCache (RecordPatches.NclMetadataCachePopulator.cs) builds its NCLMetaTable EAGERLY at bundle start, before any test codeunit runs -- the corpus test can never exercise the lazy-build ordering this suite is about. This suite's claim only exists because of that runner-internal distinction: table-level trigger subscribers (Insert/Modify/Delete/Rename ordinals) used to be injected ONLY in bulk passes over metatables ALREADY built (once per bundle, once per test codeunit -- EventSubscriberPatches.DoInject); a precompiled Base App table (Job / Job Task) first touched mid-codeunit -- the runner's lazy build on first Record touch -- missed every pass that could have served that codeunit, and its subscriber stayed silently unwired unless a LATER codeunit happened to touch the table first and re-ran the bulk pass before the subscribing codeunit ran. Whether a subscriber fired depended on test-codeunit ORDER, not on the table or the subscriber -- and there was no diagnostic in either state (loud-failures.md violation). The fix adds a lazy per-table injection path for trigger-ordinal subscribers (EventSubscriberPatches.InjectTriggerSubsForTable), mirroring the one field-validate subscribers already had (InjectValidateSubsForTable). This suite is deliberately the ONLY runner-extras bundle referencing Job/\"Job Task\" (checked at authoring time) so the lazy-build path is guaranteed to trigger regardless of what else runs in the same process.",
+  "dependencies": [],
+  "idRanges": [
+    {
+      "from": 65250,
+      "to": 65259
+    }
+  ],
+  "platform": "27.0.0.0",
+  "application": "27.0.0.0",
+  "runtime": "15.0",
+  "target": "Cloud"
+}

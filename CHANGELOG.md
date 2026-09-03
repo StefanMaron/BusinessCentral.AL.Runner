@@ -7,11 +7,34 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **report:** resolve request-page controls against the report globals they bind to
+- **report:** run the request page from Report.Run and write the dataset it asks for
 - **record:** implement the Date system virtual table (2000000007)
 - **record:** serve the Metadata Permission Set virtual table (2000000250)
 - **all-profile:** populate the All Profile system virtual table (2000000178)
 
 ### Fixed
+- **events:** clear manually-bound event subscriptions at the codeunit/test boundary
+- **page-metadata:** reconstruct subpage parts for a precompiled dependency page
+- **page-metadata:** emit SourceObject and Expressions for a dependency page with no source table
+- **testpage:** inject lazy trigger/validate subscribers at TestPageFactory's record construction site
+- **testpage:** render an Option/Enum ordinal as the control's text in ValueToString
+- **test-exec:** make an unreachable null-instance branch throw, not break
+- **report:** read ProcessingOnly from dependency symbols, not only parsed AL source
+- **query:** apply a query column's static ColumnFilter property
+- **query:** compute a JOIN's FlowField column instead of throwing OOS
+- **rollback:** a plain nested BC transaction is not a commit point
+- **record:** asserterror rollback no longer materializes a phantom failed-Insert row or discards an earlier landed write on the same table
+- **permissions:** a Caption-less permission set's Name falls back to its Role ID
+- **hooks:** nudge on shell READS of C# too, not just searches
+- **query:** normalize a module-qualified RelatedTable on Query dataitems
+- **testpage:** position a page on its first row (or new-row line) the moment it opens
+- **rollback:** scope asserterror rollback refresh to landed writes
+- **query:** compute single-dataitem FlowField query columns instead of NRE-ing or corrupting the value
+- **test-exec:** make a watchdog-timeout suite abort loud, not silent
+- **query:** retarget wildcard filters on query columns to the source field
+- **events:** bind IncludeSender to the sender parameter at any position
+- **events:** lazily inject table-trigger subscribers at metatable-build time
 - **agents:** allowlist the bc-decompiler MCP tools the agent definitions already document
 - **testpage:** await the AL page trigger's ValueTask so a control's OnValidate error is not silently discarded
 - **page:** dispatch non-modal Page.Run instead of NREing on a null ServiceConnection
@@ -28,6 +51,9 @@ All notable changes to this project are documented here. Format based on
 - **agents:** opening a corpus PR needs no approval
 
 ### Changed
+- Fix page-variable TestPage option enumeration
+- Fix `--server` single-bundle dependency resolution parity for sibling source apps
+- Server mode: add affected-only `runTests` selection with conservative forced-full fallback
 - **tests:** stop loading the Base Application closure in fixtures that never read it
 - **orchestrating-a-session:** capture the coordinator contract so it stops being re-explained
 - **agents:** make code navigation the path agents are actually told about

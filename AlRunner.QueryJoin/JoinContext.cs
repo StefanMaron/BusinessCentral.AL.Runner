@@ -50,6 +50,16 @@ public sealed class JoinContext
     /// </summary>
     public required Func<object /*column*/, object?[] /*rawValues*/, object?> ComputeAggregate;
 
+    /// <summary>
+    /// #2423: (queryRowBuffer as object, NCLMetaField as object) → the calculated FlowField
+    /// value (boxed NavValue, or null). Bridges to al-runner's FlowFieldPatches.
+    /// CalcOneFlowFieldForQueryRow (#2300) so a JOIN that also selects a FlowField column
+    /// computes it the same way the single-real-dataitem path does, instead of reading an
+    /// unrelated TableSlot on the FlowField's source table (which this join never reads a row
+    /// buffer for at all).
+    /// </summary>
+    public required Func<object /*rowBuffer*/, object /*flowFieldMeta*/, object?> CalcFlowFieldForRow;
+
     /// <summary>Diagnostic log sink (al-runner's QLog).</summary>
     public required Action<string> Log;
 

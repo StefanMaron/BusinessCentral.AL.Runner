@@ -102,6 +102,49 @@ public static partial class RecordPatches
         return null;
     }
 
+    // ── ProcessingOnly for a report the runner never source-compiled ─────────
+
+    /// <summary>
+    /// Ids of every report that a loaded dependency's SymbolReference.json declares
+    /// <c>ProcessingOnly</c> on. Reports the symbol files describe WITHOUT the property, and
+    /// reports no symbol file describes at all, are both absent — AL's default for
+    /// ProcessingOnly is false, so "absent" and "stated false" are the same answer here and
+    /// a set is the whole representation needed.
+    /// </summary>
+    private static HashSet<int>? _depProcessingOnlyReportIds;
+
+    /// <summary>
+    /// Generation the set above was built from. The registered-.app list grows as
+    /// dependencies load, and this question is first asked well before the last one is
+    /// registered, so a set memoized without this key would freeze an early, short answer
+    /// for the rest of the run.
+    /// </summary>
+    private static int _depProcessingOnlyBuiltFrom = -1;
+
+    /// <summary>
+    /// Whether a PRECOMPILED dependency declares <c>ProcessingOnly</c> on this report.
+    /// This is the only route to the property for a Base Application / System Application /
+    /// ISV report: the runner never parses their AL source, so <c>_parsedReports</c> cannot
+    /// hold them, and an R2R .app ships no compiled metadata form of its objects. The
+    /// symbol file is the compiler's own statement of the property, so nothing here is
+    /// inferred — a report the symbol files do not describe simply is not in the set.
+    /// </summary>
+    internal static bool IsDependencyReportProcessingOnly(int reportId)
+    {
+        var generation = _bcAppPaths.Count;
+        var set = _depProcessingOnlyReportIds;
+        if (set == null || _depProcessingOnlyBuiltFrom != generation)
+        {
+            set = new HashSet<int>();
+            foreach (var symbol in EnumerateBcAppReportSymbols())
+                if (symbol.ProcessingOnly)
+                    set.Add(symbol.Id);
+            _depProcessingOnlyReportIds = set;
+            _depProcessingOnlyBuiltFrom = generation;
+        }
+        return set.Contains(reportId);
+    }
+
     // ── column source expressions ────────────────────────────────────────────
 
     // `column(Name; Expression)` — the name is a plain or quoted AL identifier, the
@@ -183,7 +226,9 @@ public static partial class RecordPatches
     /// emit produces for a source-compiled report. Data items are flat siblings carrying
     /// their nesting as <c>DataItemIndent</c> — the same encoding the emitted XML uses.
     /// </summary>
-    private static string EmitReportXml(
+    // internal, not private, so DependencyReportDataItemLinkTests can assert the document
+    // for one report symbol without a whole loaded dependency set behind it.
+    internal static string EmitReportXml(
         BcAppSymbolCache.ReportSymbol report, Dictionary<string, string>? sourceExprByColumn)
     {
         var settings = new XmlWriterSettings { Indent = true, Encoding = new UTF8Encoding(false) };
@@ -236,6 +281,17 @@ public static partial class RecordPatches
         w.WriteElementString("DataItemVarName", di.Name);
         if (!string.IsNullOrEmpty(di.DataItemTableView))
             w.WriteElementString("DataItemTableView", di.DataItemTableView);
+        // The parent-child join. DataItemIterator.SetDataItemLink resolves the reference by
+        // DataItemVarName and hands the link string to RecordDataItemLink, which parses it
+        // with BC's own TableViewParser — so the AL spelling the symbol file states
+        // (`"Applied Vend. Ledger Entry No." = field("Entry No.")`) is what it wants.
+        // Omitting them left every nested data item of a precompiled report unrestricted.
+        if (!string.IsNullOrEmpty(di.DataItemLink))
+            w.WriteElementString("DataItemLink", di.DataItemLink);
+        if (!string.IsNullOrEmpty(di.DataItemLinkReference))
+            w.WriteElementString("DataItemLinkReference", di.DataItemLinkReference);
+        if (di.PrintOnlyIfDetail)
+            w.WriteElementString("PrintOnlyIfDetail", "1");
         if (!string.IsNullOrEmpty(di.RequestFilterFields))
             w.WriteElementString("ReqFilterFields", di.RequestFilterFields);
 
@@ -256,8 +312,7 @@ public static partial class RecordPatches
         if (col.Id != 0)
             w.WriteElementString("ID", col.Id.ToString(System.Globalization.CultureInfo.InvariantCulture));
         w.WriteElementString("FriendlyFieldName", col.Name);
-        if (CanonicalNavTypeName(col.TypeName) is { } fieldType)
-            w.WriteElementString("FieldType", fieldType);
+        w.WriteElementString("FieldType", DataSetColumnNavTypeName(col.TypeName));
 
         // FieldNo is only stated when the expression is a plain field of the data item's own
         // table. A computed column (`Format(...)`, a variable, a nested record's field) has
@@ -287,8 +342,8 @@ public static partial class RecordPatches
     /// Matching against the live enum (rather than a hand-written table) also means a type
     /// this BC version added needs no change here.
     ///
-    /// Returns null for a type the enum does not know, so the column is emitted without a
-    /// FieldType instead of with an unparseable one.
+    /// Returns null for a type the enum does not know; see
+    /// <see cref="DataSetColumnNavTypeName"/> for what the caller writes then.
     /// </summary>
     private static string? CanonicalNavTypeName(string? typeName)
     {
@@ -303,6 +358,50 @@ public static partial class RecordPatches
                 if (string.Equals(member, name, StringComparison.OrdinalIgnoreCase))
                     return member;
             return null;
+        });
+    }
+
+    private static readonly ConcurrentDictionary<string, string> _dataSetColumnNavTypeNames = new();
+    private static System.Reflection.MethodInfo? _tryResolveClrType;
+
+    /// <summary>
+    /// The <c>FieldType</c> to write for a report column, which is not quite the AL type of
+    /// the column's source expression.
+    ///
+    /// A report column's FieldType has to be a type a DATASET COLUMN can hold, because
+    /// <c>NavDataSetBuilder.AddColumnToDataTable</c> turns it into a CLR column type through
+    /// <c>CommonTypeInformation.ResolveClrType</c> — and that throws
+    /// <c>ArgumentException: UnsupportedType</c> for anything it has no mapping for, which
+    /// kills the whole dataset over one column. The symbol file states the AL type instead,
+    /// and some AL types are not dataset types at all: a column whose source expression is a
+    /// <c>Label</c> arrives as "Label", and there is no such dataset column. Report 407
+    /// "Purchase - Receipt" alone has 23 of them.
+    ///
+    /// Text is the honest answer for those: a Label's value IS text, and it is what the
+    /// column renders as in the dataset. The four types
+    /// <c>AddColumnToDataTable</c> special-cases before calling ResolveClrType (RecordID,
+    /// Option, Duration, Enum) are passed through untouched — it already knows they are
+    /// string columns and never asks ResolveClrType about them.
+    ///
+    /// Asking the live <c>TryResolveClrType</c> rather than listing types here means a type
+    /// a future BC version adds to the dataset needs no change, and one it removes degrades
+    /// to Text instead of throwing.
+    /// </summary>
+    private static string DataSetColumnNavTypeName(string? typeName)
+    {
+        var canonical = CanonicalNavTypeName(typeName);
+        if (canonical == null) return "Text";
+        return _dataSetColumnNavTypeNames.GetOrAdd(canonical, static name =>
+        {
+            if (name is "RecordID" or "Option" or "Duration" or "Enum") return name;
+            if (_navTypeEnum == null) return "Text";
+            _tryResolveClrType ??= _navTypeEnum.Assembly
+                .GetType("Microsoft.Dynamics.Nav.Types.CommonTypeInformation")?
+                .GetMethod("TryResolveClrType", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+            if (_tryResolveClrType == null) return "Text";
+            var args = new object?[] { Enum.Parse(_navTypeEnum, name), null };
+            try { return _tryResolveClrType.Invoke(null, args) is true ? name : "Text"; }
+            catch (System.Reflection.TargetInvocationException) { return "Text"; }
         });
     }
 
