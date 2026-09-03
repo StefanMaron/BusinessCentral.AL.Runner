@@ -493,12 +493,23 @@ public static partial class BcRuntime
             throw new InvalidOperationException(
                 "NavTestPage has no 3-arg constructor — Ncl shape changed");
 
-        var page = CreateTestPageClient(self, objId);
-        return ctor.Invoke(new object[] { self, objId, page });
+        var page = CreateTestPageClient(self, objId, out var liveForm);
+        var testPage = ctor.Invoke(new object[] { self, objId, page });
+
+        // Register the real live NavForm (RunnerPageInstance.Form) this TestPage was built
+        // over, keyed by the NavTestPage instance itself, so NavTestPageBase.get_ServerForm()
+        // (Cecil-rewritten below) can hand PageBackgroundTask/EnqueueBackgroundTask a form
+        // whose ITreeObject.Tree is real instead of an uninitialised stub with a null Tree —
+        // see RunnerServerFormRegistry and issue #2514.
+        if (liveForm != null)
+            RunnerServerFormRegistry.Register(testPage, liveForm);
+
+        return testPage;
     }
 
-    private static Microsoft.Dynamics.Nav.Types.ITestPage CreateTestPageClient(object self, object objId)
+    private static Microsoft.Dynamics.Nav.Types.ITestPage CreateTestPageClient(object self, object objId, out object? liveForm)
     {
+        liveForm = null;
         var idProp = objId.GetType().GetProperty("ObjectNumber",
             BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
         var pageId = idProp?.GetValue(objId) is int value ? value : 0;
@@ -522,7 +533,8 @@ public static partial class BcRuntime
                     pageDeclaresSourceTable: RecordPatches.ResolvePageDeclaresSourceTableForAnyPage(pageId)))
         {
             case TestPageClientKind.LiveOverRecord:
-                return new LiveNavTestPage(built!.Record, RecordPatches.GetPageControlFieldMap(pageId),
+                liveForm = built!.Page?.Form;
+                return new LiveNavTestPage(built.Record, RecordPatches.GetPageControlFieldMap(pageId),
                     RecordPatches.GetInsertAllowedForPage(pageId), built.Page, self, pageId);
 
             // LiveNavTestPage over a null record is not a silent fake: every Rec-dependent
@@ -531,6 +543,7 @@ public static partial class BcRuntime
             // triggers — all a no-SourceTable page can legally offer — work.
             case TestPageClientKind.LiveRecordless
                 when TestPageFactory.TryBuildRecordless(self, pageId) is { } recordless:
+                liveForm = recordless.Form;
                 return new LiveNavTestPage(null, RecordPatches.GetPageControlFieldMap(pageId),
                     RecordPatches.GetInsertAllowedForPage(pageId), recordless, self, pageId);
         }

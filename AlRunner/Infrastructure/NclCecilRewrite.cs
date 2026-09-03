@@ -1000,12 +1000,20 @@ public static class NclCecilRewrite
         var getTypeFromHandleMethodInfo = typeof(Type)
             .GetMethod("GetTypeFromHandle", new[] { typeof(RuntimeTypeHandle) })
             ?? throw new InvalidOperationException("Type.GetTypeFromHandle not found via reflection");
-        var getUninitMethodInfo = typeof(System.Runtime.CompilerServices.RuntimeHelpers)
-            .GetMethod("GetUninitializedObject", new[] { typeof(Type) })
-            ?? throw new InvalidOperationException("RuntimeHelpers.GetUninitializedObject not found via reflection");
+        // Resolve or create — issue #2514: an unconditional GetUninitializedObject(NavForm)
+        // has a null ITreeObject.Tree, which is faithful for GetAutoFormatStringAsync (whose
+        // rewritten body never dereferences `this`) but throws "Parent.Tree cannot be null"
+        // the moment PageBackgroundTask/EnqueueBackgroundTask try to root a child scope under
+        // it. RunnerServerFormRegistry.ResolveOrCreateUninitialized hands back the TestPage's
+        // real live NavForm (real Tree) when TestPageFactory built one, and only falls back
+        // to the tree-less stub when it didn't — see that class's header comment.
+        var resolveOrCreateMethodInfo = typeof(AlRunner.Patches.RunnerServerFormRegistry)
+            .GetMethod(nameof(AlRunner.Patches.RunnerServerFormRegistry.ResolveOrCreateUninitialized),
+                BindingFlags.Public | BindingFlags.Static)
+            ?? throw new InvalidOperationException("RunnerServerFormRegistry.ResolveOrCreateUninitialized not found — do not commit");
 
         var getTypeFromHandleRef = asm.MainModule.ImportReference(getTypeFromHandleMethodInfo);
-        var getUninitRef          = asm.MainModule.ImportReference(getUninitMethodInfo);
+        var resolveOrCreateRef    = asm.MainModule.ImportReference(resolveOrCreateMethodInfo);
         var navFormTypeRef         = asm.MainModule.ImportReference(navFormType);
         var serverformFieldRef     = asm.MainModule.ImportReference(serverformField);
 
@@ -1022,9 +1030,10 @@ public static class NclCecilRewrite
             //   brtrue.s RETURN          ; already set — return it
             //   pop
             //   ldarg.0                  ; this (for stfld)
+            //   ldarg.0                  ; testPageBase (for ResolveOrCreateUninitialized)
             //   ldtoken NavForm
             //   call Type.GetTypeFromHandle
-            //   call RuntimeHelpers.GetUninitializedObject
+            //   call RunnerServerFormRegistry.ResolveOrCreateUninitialized(object, Type)
             //   castclass NavForm
             //   stfld serverform
             //   ldarg.0
@@ -1040,18 +1049,151 @@ public static class NclCecilRewrite
             il.Append(il.Create(OpCodes.Brtrue_S, retInstr));   // non-null → return it
             il.Append(il.Create(OpCodes.Pop));
             il.Append(il.Create(OpCodes.Ldarg_0));              // this (for stfld)
+            il.Append(il.Create(OpCodes.Ldarg_0));              // testPageBase arg
             il.Append(il.Create(OpCodes.Ldtoken,  navFormTypeRef));
             il.Append(il.Create(OpCodes.Call,     getTypeFromHandleRef));
-            il.Append(il.Create(OpCodes.Call,     getUninitRef));
+            il.Append(il.Create(OpCodes.Call,     resolveOrCreateRef));
             il.Append(il.Create(OpCodes.Castclass, navFormTypeRef));
             il.Append(il.Create(OpCodes.Stfld,   serverformFieldRef));
             il.Append(il.Create(OpCodes.Ldarg_0));
             il.Append(il.Create(OpCodes.Ldfld,   serverformFieldRef));
             il.Append(retInstr);
 
-            body.MaxStackSize = 2;
+            body.MaxStackSize = 3;
         }
-        Console.Error.WriteLine("[Cecil] Rewrote NavTestPageBase.get_ServerForm → return RuntimeHelpers.GetUninitializedObject(NavForm) when null");
+        Console.Error.WriteLine("[Cecil] Rewrote NavTestPageBase.get_ServerForm → RunnerServerFormRegistry.ResolveOrCreateUninitialized (issue #2514)");
+
+        // NavTenant.CanCreateSession(bool) → return true unconditionally.
+        //
+        // Issue #2514: a page background task run synchronously (the shape BC's own test
+        // framework always takes — PageBackgroundTask.CanPageBackgroundTaskRunAsync is false
+        // without a real service-tier scheduler) opens a REAL child NavSession
+        // (NavChildSessionTaskRuntime<T>.RunAsync -> childSession.Open()), unlike the runner's
+        // root session, which is built via GetUninitializedObject and never goes through
+        // NavSession.Open() at all. NavSession.Open() -> CheckPreconditions ->
+        // NavTenant.CanCreateSession(), whose real body (RefreshState -> Monitor.TryEnter on a
+        // `stateLock` object, then FailedToMount/IsTenantDismounting/State checks against a live
+        // NavDatabase) exists to answer "is the SQL-backed tenant database currently mounted and
+        // operational" — a question that presupposes a service tier the runner does not have.
+        // Every one of those preconditions is unconditionally true in the runner's single
+        // always-mounted, never-dismounting, never-syncing skeleton tenant (FailedToMount is
+        // never set, IsTenantDismounting reflects an always-open ManualResetGate, State never
+        // reaches Mounting/NonOperational) — "return true" is what CanCreateSession's own real
+        // body would answer for that tenant if it could reach the check at all; the rewrite
+        // just skips the SQL-shaped machinery that gets it there.
+        var navTenantTypeForSession = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.NavTenant")
+            ?? throw new InvalidOperationException("NavTenant type not found in Ncl.dll — Ncl shape changed; do not commit");
+        var canCreateSessionMethod = navTenantTypeForSession.Methods
+            .FirstOrDefault(m => m.Name == "CanCreateSession" && m.Parameters.Count == 1 && m.HasBody)
+            ?? throw new InvalidOperationException(
+                "NavTenant.CanCreateSession(bool) not found — Ncl shape changed; do not commit");
+        {
+            var body = canCreateSessionMethod.Body;
+            body.Instructions.Clear();
+            body.Variables.Clear();
+            body.ExceptionHandlers.Clear();
+            var il = body.GetILProcessor();
+            il.Append(il.Create(OpCodes.Ldc_I4_1));
+            il.Append(il.Create(OpCodes.Ret));
+            body.MaxStackSize = 1;
+        }
+        Console.Error.WriteLine("[Cecil] Rewrote NavTenant.CanCreateSession(bool) → return true (issue #2514)");
+
+        // NavSession.Open(bool, byte[], bool) — prefix with RunnerChildSessionOpen.TryFastOpen.
+        //
+        // A page background task's synchronous execution opens a REAL child NavSession (see
+        // the CanCreateSession rewrite above for the full chain). Open()'s real body then does
+        // `Permissions = new NavUserPermissions(Authenticator.User, this)`, which dereferences
+        // session.Company — not yet set at that point in BC's own real body either, except a
+        // REAL service tier's NavUserPermissions ctor resolves it through machinery
+        // (PermissionManager, tenant database) the runner does not have. Insert a prefix: if
+        // this is a child session, TryFastOpen inherits Permissions/Company from ParentSession
+        // (see that class's header comment for why that is the faithful runner answer) and the
+        // real body never runs; otherwise the real body runs completely unchanged. Issue #2514.
+        var navSessionTypeForOpen = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.NavSession")
+            ?? throw new InvalidOperationException("NavSession type not found in Ncl.dll — Ncl shape changed; do not commit");
+        var openMethodForBackgroundTask = navSessionTypeForOpen.Methods
+            .FirstOrDefault(m => m.Name == "Open" && m.Parameters.Count == 3 && m.HasBody)
+            ?? throw new InvalidOperationException("NavSession.Open(bool, byte[], bool) not found — Ncl shape changed; do not commit");
+        {
+            var tryFastOpenMethodInfo = typeof(AlRunner.Patches.RunnerChildSessionOpen)
+                .GetMethod(nameof(AlRunner.Patches.RunnerChildSessionOpen.TryFastOpen), BindingFlags.Public | BindingFlags.Static)
+                ?? throw new InvalidOperationException("RunnerChildSessionOpen.TryFastOpen not found — do not commit");
+            var tryFastOpenRef = asm.MainModule.ImportReference(tryFastOpenMethodInfo);
+
+            var body = openMethodForBackgroundTask.Body;
+            var il = body.GetILProcessor();
+            var firstOriginal = body.Instructions[0];
+            var fallThrough = il.Create(OpCodes.Nop);
+
+            var newInstructions = new[]
+            {
+                il.Create(OpCodes.Ldarg_0),
+                il.Create(OpCodes.Call, tryFastOpenRef),
+                il.Create(OpCodes.Brfalse_S, fallThrough),
+                il.Create(OpCodes.Ret),
+                fallThrough,
+            };
+            for (int i = newInstructions.Length - 1; i >= 0; i--)
+                il.InsertBefore(firstOriginal, newInstructions[i]);
+
+            if (body.MaxStackSize < 1) body.MaxStackSize = 1;
+        }
+        Console.Error.WriteLine("[Cecil] Prefixed NavSession.Open(bool, byte[], bool) → RunnerChildSessionOpen.TryFastOpen (issue #2514)");
+
+        // NavSession.OpenCompanyAsync(string, bool, bool) — short-circuit for a child session.
+        //
+        // NavChildSessionTaskRuntime<T>.RunAsync calls `await childSession.OpenCompanyAsync(…)`
+        // right after Open() returns, unconditionally, for every child session including a page
+        // background task's. Its real body is a full company-open bootstrap (SQL connection,
+        // locking, tenant database bring-up) that throws NavNCLConnectionNotOpenedException the
+        // moment it reaches any of that — there is no service tier behind it. The runner's own
+        // ROOT session never calls this method at all (built via GetUninitializedObject with its
+        // company field-poked directly, same as RunnerChildSessionOpen.TryFastOpen already does
+        // for a child session's `company` field above) — nothing downstream of THIS call's return
+        // value dereferences it (it is BC's own internal bookkeeping handle, never AL-visible),
+        // so returning an already-completed, empty result is a faithful "already open" answer
+        // for the same reason skipping the rest of Open()'s real bootstrap was: the runner's
+        // child session shares its parent's in-memory company state, there is no separate
+        // connection to open. Issue #2514.
+        var openCompanyAsyncMethod = navSessionTypeForOpen.Methods
+            .FirstOrDefault(m => m.Name == "OpenCompanyAsync" && m.Parameters.Count == 3 && m.HasBody)
+            ?? throw new InvalidOperationException("NavSession.OpenCompanyAsync(string, bool, bool) not found — Ncl shape changed; do not commit");
+        {
+            var isChildSessionGetter = navSessionTypeForOpen.Methods
+                .FirstOrDefault(m => m.Name == "get_IsChildSession" && m.Parameters.Count == 0)
+                ?? throw new InvalidOperationException("NavSession.get_IsChildSession not found — Ncl shape changed; do not commit");
+
+            var openCompanyAsyncInfo = typeof(Microsoft.Dynamics.Nav.Runtime.NavSession)
+                .GetMethod("OpenCompanyAsync", BindingFlags.Public | BindingFlags.Instance,
+                    binder: null, types: new[] { typeof(string), typeof(bool), typeof(bool) }, modifiers: null)
+                ?? throw new InvalidOperationException("NavSession.OpenCompanyAsync(string,bool,bool) MethodInfo not found via reflection");
+            var valueTaskGenericArg = openCompanyAsyncInfo.ReturnType.GetGenericArguments()[0];
+            var valueTaskCtorInfo = openCompanyAsyncInfo.ReturnType.GetConstructor(new[] { valueTaskGenericArg })
+                ?? throw new InvalidOperationException("ValueTask<T>(T) ctor not found via reflection");
+            var valueTaskCtorRef = asm.MainModule.ImportReference(valueTaskCtorInfo);
+
+            var body = openCompanyAsyncMethod.Body;
+            var il = body.GetILProcessor();
+            var firstOriginal = body.Instructions[0];
+            var fallThrough = il.Create(OpCodes.Nop);
+
+            var newInstructions = new[]
+            {
+                il.Create(OpCodes.Ldarg_0),
+                il.Create(OpCodes.Call, isChildSessionGetter),
+                il.Create(OpCodes.Brfalse_S, fallThrough),
+                il.Create(OpCodes.Ldnull),
+                il.Create(OpCodes.Newobj, valueTaskCtorRef),
+                il.Create(OpCodes.Ret),
+                fallThrough,
+            };
+            for (int i = newInstructions.Length - 1; i >= 0; i--)
+                il.InsertBefore(firstOriginal, newInstructions[i]);
+
+            if (body.MaxStackSize < 1) body.MaxStackSize = 1;
+        }
+        Console.Error.WriteLine("[Cecil] Prefixed NavSession.OpenCompanyAsync(string, bool, bool) → completed empty ValueTask for a child session (issue #2514)");
 
         // ── NavTestPage / NavTestPageBase vtable-dispatch cluster fix ─────────────────────────
         //
@@ -1112,14 +1254,14 @@ public static class NclCecilRewrite
 
         // 2. NavTestPage.Open(ViewMode) — replace body with: ldarg.0; ldarg.1; call NavTestPageBase.Open; ret
         {
-            var openMethod = navTestPageType.Methods
+            var openTestPageViewModeMethod = navTestPageType.Methods
                 .FirstOrDefault(m => m.Name == "Open" && m.Parameters.Count == 1)
                 ?? throw new InvalidOperationException("NavTestPage.Open(ViewMode) not found");
             var baseOpenMethod = navTestPageBaseType.Methods
                 .FirstOrDefault(m => m.Name == "Open" && m.Parameters.Count == 1)
                 ?? throw new InvalidOperationException("NavTestPageBase.Open(ViewMode) not found");
 
-            var body = openMethod.Body;
+            var body = openTestPageViewModeMethod.Body;
             body.Instructions.Clear();
             body.Variables.Clear();
             body.ExceptionHandlers.Clear();
