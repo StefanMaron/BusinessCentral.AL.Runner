@@ -5553,6 +5553,16 @@ static string SanitiseFilename(string name)
 // self-reported version can never drift between the two surfaces (#2072).
 static string VersionString()
 {
+    // Prefer the informational version: it is what `dotnet pack -p:Version=...` stamps,
+    // so it carries the package version including any prerelease/local suffix
+    // (2.10.0-local.<sha>), whereas AssemblyVersion is always the 4-part numeric form
+    // (2.10.0.0) and cannot tell a locally packed dev build from the nuget.org release.
+    var infoVer = typeof(Program).Assembly
+        .GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
+        .OfType<System.Reflection.AssemblyInformationalVersionAttribute>()
+        .FirstOrDefault()?.InformationalVersion;
+    if (!string.IsNullOrWhiteSpace(infoVer))
+        return $"al-runner v{infoVer}";
     var asmVer = typeof(Program).Assembly.GetName().Version?.ToString() ?? "unknown";
     return $"al-runner v{asmVer}";
 }

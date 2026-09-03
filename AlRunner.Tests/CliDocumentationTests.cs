@@ -356,6 +356,38 @@ public sealed class CliDocumentationTests
     }
 
     /// <summary>
+    /// --version printed only the 4-part AssemblyVersion (2.10.0.0), so a locally packed
+    /// dev build and the nuget.org release of the same line answered identically and the
+    /// prerelease/local suffix that `dotnet pack -p:Version=...` stamps into the
+    /// informational version was invisible from the CLI (issue #2536). The printed
+    /// version must be the built assembly's informational version, verbatim.
+    /// </summary>
+    [Fact]
+    public void Version_PrintsInformationalVersion()
+    {
+        var runnerDll = Path.Combine(RepoRoot, "AlRunner", "bin", TestBuildConfig.Configuration,
+            TestBuildConfig.Framework, "al-runner.dll");
+        var expected = FileVersionInfo.GetVersionInfo(runnerDll).ProductVersion;
+        Assert.False(string.IsNullOrWhiteSpace(expected), $"No informational version stamped in {runnerDll}");
+
+        var (exit, stdout, stderr) = RunCli("--version");
+        Assert.True(exit == 0, $"--version must exit 0. exit={exit}\n{stderr}");
+        Assert.Equal($"al-runner v{expected}", stdout.Trim());
+    }
+
+    /// <summary>
+    /// Negative: the informational version is never the bare 4-part AssemblyVersion the
+    /// old code printed. A build without a stamped informational version would fall back
+    /// to it, so this guards that the pipeline's stamp actually reaches the binary.
+    /// </summary>
+    [Fact]
+    public void Version_IsNotTheBareFourPartAssemblyVersion()
+    {
+        var (_, stdout, _) = RunCli("--version");
+        Assert.DoesNotMatch(new Regex(@"^al-runner v\d+\.\d+\.\d+\.\d+$"), stdout.Trim());
+    }
+
+    /// <summary>
     /// The REPORTING A RUNNER GAP section is the replacement for telemetry (#1643,
     /// closed as not-planned). It must actually be able to produce a report: a
     /// caller with only the binary needs the repository URL, and the section must
