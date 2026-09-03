@@ -52,6 +52,7 @@ All notable changes to this project are documented here. Format based on
 - **agents:** opening a corpus PR needs no approval
 
 ### Changed
+- **perf:** gate plain-run instrumentation cost on behaviour, not time
 - Fix page-variable TestPage option enumeration
 - Fix `--server` single-bundle dependency resolution parity for sibling source apps
 - Server mode: add affected-only `runTests` selection with conservative forced-full fallback
