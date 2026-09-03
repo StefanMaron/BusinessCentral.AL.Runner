@@ -135,6 +135,32 @@
 // issue's own list of forced-fallback conditions names it) — a file that declares one falls
 // through ClassifyDeclaredObject's every branch and returns null, landing on the ordinary
 // "declares 0 classifiable object(s)" fallback with no special-casing needed.
+//
+// SymbolReference.ModuleDefinition nests namespace-declared objects — never trust the
+// top-level kind arrays alone (issue #2507)
+// -----------------------------------------------------------------------------------------
+// Confirmed by decompiling SerializableSymbolModelConverter: `ConvertModuleToSerializableSymbolModel`
+// populates a ModuleDefinition's OWN Codeunits/Tables/Pages/etc. arrays from
+// `moduleSymbol.GlobalNamespace.SymbolMap` — the GLOBAL namespace's DIRECT children only.
+// An object declared inside a `namespace Foo.Bar;` block is NOT a direct child of the global
+// namespace; it lives under a chain of nested `NamespaceDefinition` nodes instead
+// (`ModuleDefinition.Namespaces[i].Namespaces[j]....Codeunits`, built recursively by
+// `ConvertNamespaces`/`SetContainerObjects`), and BC's converter is faithful about this — it is
+// not a bug in BC. `Compilation.GetDeclaredApplicationObjectSymbols()` does NOT have this split
+// (it walks `ModuleSymbol.SymbolMap`, which recurses through every namespace level itself), which
+// is why that API and `SymbolJsonWriter.GetModuleDefinition` on the SAME compilation can report
+// wildly different counts (140 declared objects vs. 0 in the top-level arrays) for an app that
+// declares `namespace` in (nearly) every file — the modern `al new` default, and true of the real
+// corpus this was diagnosed against. `RecordIncrementalBaseline`/`ExcludeObjects`/
+// `MergeModuleDefinition` below therefore never touch a ModuleDefinition's or NamespaceDefinition's
+// kind-array properties without ALSO recursing into `.Namespaces` — see `RadMergeablePropertiesByKind`
+// (reflects on `IObjectContainerDefinition`, the interface BOTH ModuleDefinition and
+// NamespaceDefinition implement, precisely so the same by-kind filtering logic applies at every
+// namespace depth without duplicating it) and the namespace-matching-by-`Name` step in
+// `MergeContainerRecursive`. A `NamespaceDefinition` itself is never a RAD object with its own
+// (Kind,Id-or-Name) identity — it is purely structural, so it is matched across old/delta trees by
+// its own `Name` (BC never sets `NamespaceDefinition.Id` — confirmed in `ConvertNamespaces`), never
+// excluded/merged as if it were a changed application object.
 using System.Collections.Immutable;
 using System.Reflection;
 using System.Security.Cryptography;
@@ -858,11 +884,17 @@ public sealed partial class BcCompiler
             if (!claimedPaths.Add(resolved)) { objectByPath.Remove(resolved); return; } // a genuine second id-less object in one file
             objectByPath[resolved] = new RadObjectIdentity(kind, null, name);
         }
-        if (moduleDef.Interfaces != null) foreach (var e in moduleDef.Interfaces) TrackIdless(e.ReferenceSourceFileName, e.Name, NavCA.SymbolKind.Interface);
-        if (moduleDef.ControlAddIns != null) foreach (var e in moduleDef.ControlAddIns) TrackIdless(e.ReferenceSourceFileName, e.Name, NavCA.SymbolKind.ControlAddIn);
-        if (moduleDef.Profiles != null) foreach (var e in moduleDef.Profiles) TrackIdless(e.ReferenceSourceFileName, e.Name, NavCA.SymbolKind.Profile);
-        if (moduleDef.PageCustomizations != null) foreach (var e in moduleDef.PageCustomizations) TrackIdless(e.ReferenceSourceFileName, e.Name, NavCA.SymbolKind.PageCustomization);
-        if (moduleDef.ProfileExtensions != null) foreach (var e in moduleDef.ProfileExtensions) TrackIdless(e.ReferenceSourceFileName, e.Name, NavCA.SymbolKind.ProfileExtension);
+        // #2507: a namespace-declared id-less object lives under `.Namespaces[...]`, not the
+        // module's own top-level arrays — walk every container in the tree, not just the root
+        // (see this file's header comment on ModuleDefinition namespace nesting).
+        foreach (var container in EnumerateContainers(moduleDef))
+        {
+            if (container.Interfaces != null) foreach (var e in container.Interfaces) TrackIdless(e.ReferenceSourceFileName, e.Name, NavCA.SymbolKind.Interface);
+            if (container.ControlAddIns != null) foreach (var e in container.ControlAddIns) TrackIdless(e.ReferenceSourceFileName, e.Name, NavCA.SymbolKind.ControlAddIn);
+            if (container.Profiles != null) foreach (var e in container.Profiles) TrackIdless(e.ReferenceSourceFileName, e.Name, NavCA.SymbolKind.Profile);
+            if (container.PageCustomizations != null) foreach (var e in container.PageCustomizations) TrackIdless(e.ReferenceSourceFileName, e.Name, NavCA.SymbolKind.PageCustomization);
+            if (container.ProfileExtensions != null) foreach (var e in container.ProfileExtensions) TrackIdless(e.ReferenceSourceFileName, e.Name, NavCA.SymbolKind.ProfileExtension);
+        }
 
         // Entitlement: no ModuleDefinition representation at all — recovered from the ALREADY-
         // PARSED syntax trees this compilation holds (no extra parse).
@@ -921,22 +953,35 @@ public sealed partial class BcCompiler
         compilerFeatures: manifestInputs.CompilerFeatures,
         contextSensitiveHelpUrl: manifestInputs.ContextSensitiveHelpUrl);
 
-    /// <summary>Shallow-clones a ModuleDefinition with the given objects removed from every mergeable array property, keyed by <see cref="ElementKey"/> (id when the kind has one, else name).</summary>
+    /// <summary>
+    /// Clones a ModuleDefinition with the given objects removed from every mergeable array
+    /// property, keyed by <see cref="ElementKey"/> (id when the kind has one, else name) —
+    /// recursing into <c>.Namespaces</c> at every depth (issue #2507: a namespace-declared
+    /// object never appears in the top-level arrays at all — see this file's header comment).
+    /// Never mutates <paramref name="module"/> or any of its descendants.
+    /// </summary>
     private static NavSymRef.ModuleDefinition ExcludeObjects(NavSymRef.ModuleDefinition module, IReadOnlySet<RadObjectIdentity> exclude)
+        => (NavSymRef.ModuleDefinition)ExcludeObjectsRecursive(module, exclude);
+
+    private static NavSymRef.IObjectContainerDefinition ExcludeObjectsRecursive(NavSymRef.IObjectContainerDefinition container, IReadOnlySet<RadObjectIdentity> exclude)
     {
-        var clone = CloneModuleDefinition(module);
+        var clone = CloneContainerShallow(container);
         foreach (var (propName, kind) in RadMergeablePropertiesByKind)
         {
             var keysToExclude = new HashSet<string>(exclude.Where(e => e.Kind == kind).Select(IdentityElementKeyOf));
             if (keysToExclude.Count == 0) continue;
-            var prop = typeof(NavSymRef.ModuleDefinition).GetProperty(propName)!;
-            if (prop.GetValue(module) is not Array arr) continue;
+            var prop = RadContainerProperty(propName);
+            if (prop.GetValue(container) is not Array arr) continue;
             var elemType = prop.PropertyType.GetElementType()!;
             var kept = arr.Cast<object>().Where(item => !keysToExclude.Contains(ElementKey(item, kind))).ToList();
             var result = Array.CreateInstance(elemType, kept.Count);
             for (int i = 0; i < kept.Count; i++) result.SetValue(kept[i], i);
             prop.SetValue(clone, result);
         }
+        if (container.Namespaces != null)
+            clone.Namespaces = container.Namespaces
+                .Select(ns => (NavSymRef.NamespaceDefinition)ExcludeObjectsRecursive(ns, exclude))
+                .ToArray();
         return clone;
     }
 
@@ -944,28 +989,57 @@ public sealed partial class BcCompiler
     /// (old module, minus the just-changed objects) UNION (delta module's definitions for
     /// exactly those objects) — see this file's header comment for why this must be a manual
     /// merge rather than trusting the delta compilation's own conversion to be complete.
+    /// Recurses into <c>.Namespaces</c> at every depth, matching an old namespace against its
+    /// delta counterpart BY NAME (a `namespace` block has no (Kind,Id-or-Name) identity of its
+    /// own — see this file's header comment) — a namespace delta declares ONLY THIS cycle
+    /// touches is brought in wholesale (everything under it is, by construction, part of
+    /// <paramref name="changed"/>, since <c>SymbolJsonWriter.GetModuleDefinition</c> on a RAD
+    /// compilation reflects only source-declared objects — see its own doc comment).
     /// </summary>
     private static NavSymRef.ModuleDefinition MergeModuleDefinition(
         NavSymRef.ModuleDefinition oldModule, IReadOnlySet<RadObjectIdentity> changed, NavSymRef.ModuleDefinition delta)
+        => (NavSymRef.ModuleDefinition)MergeContainerRecursive(oldModule, changed, delta);
+
+    private static NavSymRef.IObjectContainerDefinition MergeContainerRecursive(
+        NavSymRef.IObjectContainerDefinition oldContainer, IReadOnlySet<RadObjectIdentity> changed, NavSymRef.IObjectContainerDefinition? deltaContainer)
     {
-        var merged = CloneModuleDefinition(oldModule);
+        var merged = CloneContainerShallow(oldContainer);
         foreach (var (propName, kind) in RadMergeablePropertiesByKind)
         {
             var changedKeys = new HashSet<string>(changed.Where(c => c.Kind == kind).Select(IdentityElementKeyOf));
-            var prop = typeof(NavSymRef.ModuleDefinition).GetProperty(propName)!;
+            var prop = RadContainerProperty(propName);
             var elemType = prop.PropertyType.GetElementType()!;
 
             var kept = new List<object>();
-            if (prop.GetValue(oldModule) is Array oldArr)
+            if (prop.GetValue(oldContainer) is Array oldArr)
                 foreach (var item in oldArr)
                     if (!changedKeys.Contains(ElementKey(item, kind))) kept.Add(item);
-            if (changedKeys.Count > 0 && prop.GetValue(delta) is Array deltaArr)
+            if (changedKeys.Count > 0 && deltaContainer != null && prop.GetValue(deltaContainer) is Array deltaArr)
                 foreach (var item in deltaArr)
                     if (changedKeys.Contains(ElementKey(item, kind))) kept.Add(item);
 
             var result = Array.CreateInstance(elemType, kept.Count);
             for (int i = 0; i < kept.Count; i++) result.SetValue(kept[i], i);
             prop.SetValue(merged, result);
+        }
+
+        var oldNamespaces = oldContainer.Namespaces ?? Array.Empty<NavSymRef.NamespaceDefinition>();
+        var deltaNamespaces = deltaContainer?.Namespaces ?? Array.Empty<NavSymRef.NamespaceDefinition>();
+        if (oldNamespaces.Length > 0 || deltaNamespaces.Length > 0)
+        {
+            var deltaByName = deltaNamespaces.ToDictionary(n => n.Name ?? "", StringComparer.Ordinal);
+            var mergedNamespaces = new List<NavSymRef.NamespaceDefinition>();
+            var seenNames = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var oldNs in oldNamespaces)
+            {
+                seenNames.Add(oldNs.Name ?? "");
+                deltaByName.TryGetValue(oldNs.Name ?? "", out var deltaNs);
+                mergedNamespaces.Add((NavSymRef.NamespaceDefinition)MergeContainerRecursive(oldNs, changed, deltaNs));
+            }
+            foreach (var (name, deltaNs) in deltaByName)
+                if (!seenNames.Contains(name))
+                    mergedNamespaces.Add(deltaNs); // wholly new namespace this cycle — everything under it is already "changed" by construction
+            merged.Namespaces = mergedNamespaces.Count > 0 ? mergedNamespaces.ToArray() : null;
         }
         return merged;
     }
@@ -978,10 +1052,54 @@ public sealed partial class BcCompiler
             .GetMethod("Clone", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(module, null)!;
 
     /// <summary>
-    /// ModuleDefinition array properties this fast path merges/excludes objects from — every
-    /// id-bearing kind, plus the 5 id-less kinds ModuleDefinition DOES represent (see this
-    /// file's header comment). Entitlement is deliberately absent: ModuleDefinition has no
-    /// Entitlements array at all.
+    /// Shallow-clones a container (ModuleDefinition OR NamespaceDefinition — both implement
+    /// <see cref="NavSymRef.IObjectContainerDefinition"/>) WITHOUT sharing any mutable array
+    /// reference with the original: <see cref="CloneModuleDefinition"/>'s <c>MemberwiseClone</c>
+    /// copies the <c>Namespaces</c> array reference as-is, and <c>NamespaceDefinition</c> has no
+    /// <c>Clone()</c> of its own (confirmed by decompile) — every caller here immediately
+    /// overwrites every mergeable property AND <c>Namespaces</c> with a freshly built array
+    /// (see <see cref="ExcludeObjectsRecursive"/>/<see cref="MergeContainerRecursive"/>), so a
+    /// bare property copy is sufficient: nothing this file's recursion does ever ends up
+    /// mutating a value still reachable from <paramref name="container"/>'s own original tree.
+    /// </summary>
+    private static NavSymRef.IObjectContainerDefinition CloneContainerShallow(NavSymRef.IObjectContainerDefinition container)
+        => container switch
+        {
+            NavSymRef.ModuleDefinition module => CloneModuleDefinition(module),
+            NavSymRef.NamespaceDefinition ns => new NavSymRef.NamespaceDefinition { Id = ns.Id, Name = ns.Name, Namespaces = ns.Namespaces },
+            _ => throw new InvalidOperationException($"Unexpected {nameof(NavSymRef.IObjectContainerDefinition)} implementation: {container.GetType().Name}"),
+        };
+
+    /// <summary>
+    /// <see cref="RadMergeablePropertiesByKind"/> reflects on <see cref="NavSymRef.IObjectContainerDefinition"/>
+    /// itself (not <c>ModuleDefinition</c>) so the SAME <see cref="PropertyInfo"/> works whether
+    /// <paramref name="propName"/> is being read/written on a <c>ModuleDefinition</c> (the
+    /// module root) or a <c>NamespaceDefinition</c> (any nested namespace level) — both
+    /// implement the interface with the identical property set (confirmed by decompile), and
+    /// .NET reflection through an interface-typed <see cref="PropertyInfo"/> dispatches
+    /// correctly to whichever concrete type the instance actually is.
+    /// </summary>
+    private static PropertyInfo RadContainerProperty(string propName)
+        => typeof(NavSymRef.IObjectContainerDefinition).GetProperty(propName)!;
+
+    /// <summary>
+    /// Depth-first walk of <paramref name="root"/> and every <c>NamespaceDefinition</c> nested
+    /// under it (issue #2507) — the container itself first, then each child's own subtree.
+    /// </summary>
+    private static IEnumerable<NavSymRef.IObjectContainerDefinition> EnumerateContainers(NavSymRef.IObjectContainerDefinition root)
+    {
+        yield return root;
+        if (root.Namespaces == null) yield break;
+        foreach (var ns in root.Namespaces)
+            foreach (var descendant in EnumerateContainers(ns))
+                yield return descendant;
+    }
+
+    /// <summary>
+    /// ModuleDefinition/NamespaceDefinition array properties this fast path merges/excludes
+    /// objects from — every id-bearing kind, plus the 5 id-less kinds ModuleDefinition DOES
+    /// represent (see this file's header comment). Entitlement is deliberately absent: neither
+    /// type has an Entitlements array at all.
     /// </summary>
     private static readonly (string PropertyName, NavCA.SymbolKind Kind)[] RadMergeablePropertiesByKind =
     {
