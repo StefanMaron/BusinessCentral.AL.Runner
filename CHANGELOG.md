@@ -15,6 +15,7 @@ All notable changes to this project are documented here. Format based on
 - **all-profile:** populate the All Profile system virtual table (2000000178)
 
 ### Fixed
+- **server:** make affectedOnly coverage attribution request-wide, not per-module
 - **metadata:** carry a table's declared Caption onto its NCLMetaTable
 - **deps:** read a sibling app's manifest from its app root, not just its source folders
 - **testpage:** GoToRecord not-found restore refreshes non-key fields
@@ -73,6 +74,7 @@ All notable changes to this project are documented here. Format based on
 - **agents:** opening a corpus PR needs no approval
 
 ### Changed
+- Populate the CodeUnit Metadata (2000000137) virtual table
 - **scheduling:** record BcVersionDefaultDocumentationTests' measured weight
 - **subprocess:** drain the async output readers before reading captured stdout
 - **perf:** gate plain-run instrumentation cost on behaviour, not time
