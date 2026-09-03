@@ -1172,7 +1172,7 @@ internal class LiveNavTestPage : MockITestPage
     {
         if (!ShowsNewRowLine) return false;
 
-        _newRowLineReturnPosition = record.ALGetPosition();
+        _newRowLineReturnPosition = record.ALGetPosition(useCaptions: false);
 
         // The rows either side of the insertion point decide the AutoSplitKey number, and
         // ALInit is about to wipe the row the cursor is on — so the position is captured
@@ -1250,7 +1250,18 @@ internal class LiveNavTestPage : MockITestPage
     // reaches through RequireRecord first.
     private void SnapshotBeforeImage() => _record!.OldRecord.ALAssign(_record);
 
-    public override object? GetBookmark() => RequireRecord("GetBookmark()").ALGetPosition();
+    // useCaptions: false — NavRecord.ALGetPosition()'s default (useCaptions: true) encodes
+    // the position string using field CAPTIONS, and ALSetPosition decodes it through the
+    // same SETVIEW-style filter parser TableViewParser.ParseTableFilters uses for AL filter
+    // views, which resolves each token by caption. On a table with two fields sharing a
+    // caption (legal AL) that decode throws BC's own NavNCLFieldNotFoundException
+    // ("... is ambiguous between multiple fields ...") instead of positioning — real BC
+    // does not throw here (issue #2515). Positioning by field NUMBER, exactly like every
+    // other cursor move in this class (ALSetPosition/GetFieldValue take field numbers, never
+    // captions), sidesteps the ambiguous caption lookup entirely. Both overloads are real
+    // BC's own public API on NavRecord; this only picks the one that matches how the rest of
+    // the runner already talks to a record.
+    public override object? GetBookmark() => RequireRecord("GetBookmark()").ALGetPosition(useCaptions: false);
 
     public override bool GoToBookmark(object bookmark)
     {
@@ -1275,7 +1286,7 @@ internal class LiveNavTestPage : MockITestPage
         if (fieldNos.Length != values.Length) return false;
 
         var record = RequireRecord("locating a row");
-        var original = record.ALGetPosition();
+        var original = record.ALGetPosition(useCaptions: false);
         var hasCurrent = !string.IsNullOrEmpty(original);
 
         // Scan the WHOLE rowset, always starting from the first (or last, when searching
