@@ -106,7 +106,14 @@ internal static partial class BcAppSymbolCache
     // deserialises with all three at their defaults, which reads as "every dependency codeunit
     // declares no TableNo, is not SingleInstance, and is Subtype Normal" — a silent wrong
     // answer for Base Application codeunits rather than a cache miss.
-    private const int CacheVersion = 22;
+    // v23: PageSymbol gained AutoSplitKey / MultipleNewLines / DelayedInsert — the three
+    // <SourceObject> flags the AL compiler writes alongside SourceTable, which
+    // DependencyPageMetadataXml was dropping (issue #2550). A v22 payload deserialises with
+    // all three false, which reads as "no dependency page uses AutoSplitKey" — and BC's
+    // client half of AutoSplitKey then silently does not run, so the first new row on such a
+    // page lands at line no. 0 and the second fails on a duplicate primary key. A wrong
+    // answer replayed from cache rather than a cache miss, which is why this needs the bump.
+    private const int CacheVersion = 23;
     private static readonly ConcurrentDictionary<string, AppSymbols> ProcessCache = new(StringComparer.OrdinalIgnoreCase);
     // Issue #1820 — path -> content-hash memo. ComputeAppContentHash needs to read the
     // WHOLE .app to hash it (unlike the FileInfo.Length/LastWriteTimeUtc stat it replaced,
@@ -219,6 +226,11 @@ internal static partial class BcAppSymbolCache
         // CardPageID = "Customer Card", not a numeric id) — resolved against the run's page
         // inventory at Page Metadata row-build time, same as the source-parsed path.
         string? CardPageName = null,
+        // The three <SourceObject> flags the AL compiler writes alongside SourceTable, all
+        // three defaulting to false in AL. Measured on Base Application 28.1's
+        // SymbolReference.json: of its 2610 pages, 234 state AutoSplitKey, 116 state
+        // MultipleNewLines and 303 state DelayedInsert, as "1"/"0" property values.
+        bool AutoSplitKey = false, bool MultipleNewLines = false, bool DelayedInsert = false,
         // Subpage PART controls (issue #2467), feeding DependencyPageMetadataXml's
         // reconstructed <Content>. Unlike Controls above, a part's binding is resolved
         // entirely from THIS XML (RunnerPageInstance.TryGetPartDefinition reads
@@ -780,6 +792,11 @@ internal static partial class BcAppSymbolCache
         bool insertAllowed = !SymbolBoolFalse(props, "InsertAllowed");
         bool modifyAllowed = !SymbolBoolFalse(props, "ModifyAllowed");
         bool deleteAllowed = !SymbolBoolFalse(props, "DeleteAllowed");
+        // These three default to FALSE in AL, so only an explicit "1"/"true" sets them —
+        // SymbolBool, not the SymbolBoolFalse the four above use.
+        bool autoSplitKey = SymbolBool(props, "AutoSplitKey");
+        bool multipleNewLines = SymbolBool(props, "MultipleNewLines");
+        bool delayedInsert = SymbolBool(props, "DelayedInsert");
 
         var controls = new List<PageControlSymbol>();
         var parts = new List<PagePartSymbol>();
@@ -794,7 +811,8 @@ internal static partial class BcAppSymbolCache
         return new PageSymbol(pageId, name!, sourceTableId, sourceTableTemporary,
             string.IsNullOrWhiteSpace(pageType) ? "Card" : pageType!, caption,
             editable, insertAllowed, modifyAllowed, deleteAllowed, controls,
-            string.IsNullOrWhiteSpace(cardPageName) ? null : cardPageName, parts);
+            string.IsNullOrWhiteSpace(cardPageName) ? null : cardPageName,
+            autoSplitKey, multipleNewLines, delayedInsert, parts);
     }
 
     /// <summary>
