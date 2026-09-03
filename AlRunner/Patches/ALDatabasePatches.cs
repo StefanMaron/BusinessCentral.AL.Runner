@@ -107,6 +107,17 @@ public static class ALDatabasePatches
     }
 
     /// <summary>
+    /// BC's TransactionManager PUSH of the nested logical transaction a GUARDED
+    /// <c>Codeunit.Run</c> opens — the counterpart of <see cref="EndGuardedRunTransaction"/>.
+    /// Call before invoking the guarded run's OnRun, for BOTH the instance form
+    /// (<c>CodeunitPatches.NavCodeunit_DoRunAsync</c>) and the static form
+    /// (<c>CodeunitPatches.NavCodeunit_RunCodeunit</c>) — see AlRunner#2334, which is exactly
+    /// about those two spellings of the same AL construct having drifted apart.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static void BeginGuardedRunTransaction() => RecordPatches.PushTransactionWorldScope();
+
+    /// <summary>
     /// BC's TransactionManager end of the nested logical transaction a GUARDED
     /// <c>Codeunit.Run</c> opens — the other half of
     /// <see cref="ThrowIfWriteTransactionStarted"/>, which only models the entry guard.
@@ -115,9 +126,11 @@ public static class ALDatabasePatches
     /// (decompiled Ncl.dll):
     ///
     ///     activeSession.BeginTransactionWorldAndTransaction();
+    ///     RecordState recordState = record?.CreateRecordState();
+    ///     recordState?.BackupTableAndRecordHandle();
     ///     try     { OnRun(record); result = true; }
-    ///     catch (NavBaseException) { /* suppressed */ }
-    ///     finally { activeSession.EndTransactionWorldAndTransaction(result); }
+    ///     catch (NavBaseException) { recordState?.RestoreRecord(); }
+    ///     finally { recordState?.Dispose(); activeSession.EndTransactionWorldAndTransaction(result); }
     ///
     /// TransactionManager.BeginTransaction PUSHES a new LogicalTransaction; EndTransactionImpl
     /// POPS it, committing when `commit` is true. So the run codeunit's writes set
@@ -139,18 +152,26 @@ public static class ALDatabasePatches
     /// the run's rows back. ALDatabase_ALCommit is precisely that: clear the write-transaction
     /// flag, and mark a commit point.
     ///
-    /// NOT modelled: the <c>commit == false</c> half. BC's EndTransactionWorldAndTransaction(false)
-    /// rolls the failed run's own rows back; the runner's snapshot store cannot express a
-    /// rollback to the scope's ENTRY state (RecordPatches.NoteTransactionWrite re-baselines on
-    /// every write, so RollbackToCommitPoint only restores the state before the LAST write per
-    /// table). Rather than half-restore, this leaves the failure path exactly as it behaves
-    /// today, tracked as its own gap — see AlRunner#2334.
+    /// The <c>commit == false</c> half (AlRunner#2334): restore every table THIS scope wrote
+    /// to, back to its image at scope entry — see RecordPatches.PushTransactionWorldScope /
+    /// PopTransactionWorldScope for the scope-relative (not commit-point-relative) snapshot
+    /// this needed. The <c>RecordState.RestoreRecord()</c> half above — reverting the PASSED
+    /// record VARIABLE's own in-memory field values, distinct from the table row — is NOT
+    /// modelled; the runner has no equivalent of BC's RecordState backup/restore for a single
+    /// AL record variable. Left as a follow-up if a test needs it.
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static void EndGuardedRunTransaction(bool commit)
     {
-        if (!commit) return;
-        ALDatabase_ALCommit();
+        if (commit)
+        {
+            RecordPatches.PopTransactionWorldScope(restore: false);
+            ALDatabase_ALCommit();
+        }
+        else
+        {
+            RecordPatches.PopTransactionWorldScope(restore: true);
+        }
     }
 
     /// <summary>
