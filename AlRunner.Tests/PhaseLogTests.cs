@@ -424,4 +424,32 @@ public sealed class PhaseLogTests : IDisposable
         var rss = PhaseLog.PeakRssBytes();
         Assert.True(rss > 8 * 1024 * 1024, $"peak RSS looks stubbed: {rss} bytes");
     }
+
+    /// <summary>
+    /// Peak RSS must be in BYTES on every platform, and the floor above cannot check that.
+    /// The live hazard is a units error, not a wrong number: the field this reads is bytes
+    /// on Darwin and kilobytes on Linux, so reading one convention on the other platform
+    /// produces a value about 1024x off — and a value 1024x too small still clears an
+    /// "8 MB" floor on a process using several GB.
+    ///
+    /// A high-water mark can never be below the current working set, and the current
+    /// working set of this test process is a real number in real bytes from a source this
+    /// code does not touch. So that comparison pins the units from below on all three
+    /// platforms at once, without an upper bound: a ratio ceiling would be a flake on a
+    /// loaded CI machine, where the suite spawns runner subprocesses and does heavy AL
+    /// compiles, peaks high, and then releases.
+    /// </summary>
+    [Fact]
+    public void PeakRssBytes_IsInBytes_AndNotBelowTheCurrentWorkingSet()
+    {
+        using var self = System.Diagnostics.Process.GetCurrentProcess();
+        var live = self.WorkingSet64;
+        var peak = PhaseLog.PeakRssBytes();
+
+        Assert.True(live > 0, $"the test's own working set should be readable, got {live}");
+        Assert.True(peak >= live,
+            $"peak RSS {peak} is below this process's current working set {live}; "
+            + "a high-water mark cannot be, so the value is in the wrong units or read "
+            + "from the wrong field");
+    }
 }
