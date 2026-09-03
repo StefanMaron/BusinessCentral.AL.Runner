@@ -42,6 +42,8 @@ al-runner --server [--package-cache PATH ...] [--cache DIR]
   "code": "...",                // execute only (inline AL); mutually exclusive with sourcePaths
   "captureValues": false,       // execute only — see #1640
   "coverage": false,            // runTests + execute — per-statement hit counts + position table, see #2042
+  "perTestCoverage": false,     // runTests + execute — per-test statement attribution, see #2135
+  "affectedOnly": false,        // runTests: select only tests affected by object changes since the previous run (#2441)
   "testIsolation": "codeunit"   // optional: "codeunit" (default) | "test"/"method" | "disabled"
                                  // — see #1616. Applies to this request only; a later
                                  // request that omits the field falls back to the
@@ -104,6 +106,13 @@ streams `test` lines across all of them before the one final `summary`.
   omitted otherwise (never emitted as `false`).
 - `coverage` (#2042) is present on the summary only when the request set
   `coverage: true` — see "Per-statement hit counts (`coverage`)" below.
+- `selection` (#2441) is present on the summary when the request set
+  `affectedOnly: true`: `{mode:"affected", ran, skipped, changedObjects[],
+  forcedFull, reason|null}`.
+  - `forcedFull:false` means the run used affected-only selection and `ran + skipped`
+    equals the discovered tests for this request.
+  - `forcedFull:true` means the runner deliberately ran everything and says why in
+    `reason` (fail-safe policy: run too many, never too few).
 
 A request-level problem (e.g. a missing `sourcePaths`) returns the usual single
 `{"error":"..."}` line instead of a `test`/`summary` sequence — see Errors below.
@@ -364,6 +373,31 @@ one `steps` entry per iteration carrying that iteration's own captured values,
   the baseline can only have been assigned by statement 0 before its hit (AL
   locals start at their default), so it is now emitted, attributed to statement
   0. Every other baseline value is still never emitted.
+### Affected-only test selection (`affectedOnly`)
+
+`affectedOnly: true` (runTests) narrows execution to tests affected by AL object
+changes since the previous successful run of the same bundle in this server
+process. The runner:
+
+1. keeps the previous run's per-test coverage grouped by test
+   (`"{Codeunit}.{Method}"`);
+2. computes changed AL objects from the incremental compiler change model
+   (Added/Modified/Removed/rename-attributed object identities);
+3. runs tests whose previous coverage intersects those changed objects;
+4. always includes unknown tests (new/renamed tests, tests with no recorded
+   coverage, and tests that did not finish with a passing result in the
+   recording run).
+
+When the runner cannot prove a safe object delta, it **forces a full run**
+(`selection.forcedFull:true`) and sets `selection.reason`. Forced-full causes
+include:
+
+- no previous per-test coverage baseline for that bundle;
+- incremental change model fallback (for example `app.json` changes, dependency
+  set changes, removed/unclassifiable files, duplicate declaration ambiguity);
+- coverage recorded under a different environment (BC version/artifact or
+  package-cache closure);
+- compile/dependency failures before test execution.
 
 ### `shutdown`
 

@@ -215,9 +215,14 @@ public static partial class NavReportSync
     /// here: it brings the standard request-page controls with it, and NavForm's
     /// InitializeFromMetadata — which request pages are deliberately not opted into
     /// (RunnerFormInit) — then NREs walking them. A request page with no controls is the
-    /// honest description of what a reconstructed report's metadata actually contains, and a
-    /// handler that reaches for a control is refused by name in RequestPageTestPage.GetField
-    /// rather than silently answering an empty value.
+    /// honest description of what a reconstructed report's metadata actually contains.
+    ///
+    /// This is only the fallback for a report whose real metadata could not be loaded. A
+    /// report the runner compiled gets a real MasterPage, and its request page's own
+    /// generated OnMetadataLoaded registers a source expression per control — which is what
+    /// RequestPageTestPage.GetField resolves against (#2442). On this stub there are no
+    /// controls and therefore no bindings, so GetField refuses by name rather than silently
+    /// answering an empty value.
     /// </summary>
     public static object BuildRequestPageStubMasterPage(
         System.Reflection.Assembly typesAsm, Type masterPageType, int reportId)
@@ -495,6 +500,14 @@ public static partial class NavReportSync
         if (parameters != null)
             TrySetParameterSet(requestPage, parameters);
 
+        // Must precede RunModal: RunModal is what reaches {Report}.RequestPage's generated
+        // OnMetadataLoaded, and that is where BC registers the request page's control ->
+        // report-global bindings. Without the opt-in, NavForm.RegisterSourceExpression
+        // no-ops and NavForm.SourceExpressions stays empty, so a [RequestPageHandler] that
+        // sets a control has nothing to resolve against (issue #2442). Registration only —
+        // see RunnerFormInit.MarkSourceExpressionsWanted for why this is not MarkRealInit.
+        AlRunner.Patches.RunnerFormInit.MarkSourceExpressionsWanted(requestPage);
+
         // Register the request-page surface BC's dispatch will ask the client session for
         // (RunnerTestClientSession.GetPage) — it is keyed by this form, and is also how the
         // handler's OK/Cancel is read back below.
@@ -678,9 +691,10 @@ public static partial class NavReportSync
             bool datasetWritten = InvokeDataItems(navReport);
             InvokeVirtual(_onPostReport, navReport);
 
-            // Strict AL semantics: when the AL source declares `ProcessingOnly =
-            // false` (the AL default), Run() must attempt rendering after the
-            // lifecycle triggers. The runner has no service tier and cannot
+            // Strict AL semantics: when the report declares `ProcessingOnly =
+            // false` (the AL default) — in its own AL source, or in the symbol
+            // data of the precompiled dependency it came from — Run() must
+            // attempt rendering after the lifecycle triggers. The runner has no service tier and cannot
             // render layouts, so the rendering attempt must surface as an
             // AL-observable error. We trigger that via NavReport.RDLCLayout —
             // a public static method that forwards to GetLayoutCore (Cecil-
@@ -768,7 +782,10 @@ public static partial class NavReportSync
         return false;
     }
 
-    // Looks up ProcessingOnly from the parsed AL source (RecordPatches).
+    // Looks up ProcessingOnly through RecordPatches, which answers from the parsed AL
+    // source when the runner compiled the report and from the dependency .app's
+    // SymbolReference.json when it did not (#2397 — every Base Application report takes
+    // the second path).
     // Falls back to true when the report ID cannot be resolved — defensive
     // so unknown reports do not trip the rendering guard.
     private static bool IsProcessingOnly(object navReport, Type navReportBase)

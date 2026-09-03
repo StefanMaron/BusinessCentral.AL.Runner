@@ -125,6 +125,13 @@ public sealed class TestExecutor
     /// shell ergonomics (e.g. --test '*Insert*').
     /// </summary>
     public string? TestFilter { get; set; }
+    /// <summary>
+    /// Optional exact-match test allowlist in the same "{Codeunit}.{Method}" key shape
+    /// ServerProtocol emits on the wire. Null = unchanged behaviour (no exact allowlist).
+    /// Applied after <see cref="TestFilter"/>, so callers can combine a coarse substring
+    /// filter with a precise per-test subset.
+    /// </summary>
+    public IReadOnlySet<string>? ExactTestFilter { get; set; }
 
     /// <summary>
     /// Per-test timeout, in seconds. v1's `--test-timeout &lt;seconds&gt;` CLI flag
@@ -308,6 +315,7 @@ public sealed class TestExecutor
         AbortReasons = Array.Empty<string>();   // #2415: this instance is reused across Run() calls
         var ctorParam = typeof(Microsoft.Dynamics.Nav.Runtime.ITreeObject);
         var filter = NormaliseFilter(TestFilter);
+        var exactFilter = ExactTestFilter;
         var typeSw = System.Diagnostics.Stopwatch.StartNew();
         Type[] types;
         try
@@ -605,6 +613,7 @@ public sealed class TestExecutor
 
                     if (!IsTestMethod(m)) continue;
                     if (filter != null && !MethodMatchesFilter(t.Name, m.Name, filter)) continue;
+                    if (exactFilter != null && !exactFilter.Contains($"{t.Name}.{m.Name}")) continue;
                     var entry = LookupExpectation(t.Name, displayName, m.Name);
                     if (entry is { Mode: Infrastructure.ExpectationMode.Skip })
                     {
@@ -651,13 +660,29 @@ public sealed class TestExecutor
                         instMs += stageSw.ElapsedMilliseconds;
                         if (fresh == null)
                         {
-                            // The very first instantiation of this type (above) already
-                            // succeeded with a matching constructor, so this can only
-                            // mean the type stopped being instantiable mid-codeunit,
-                            // which should never happen — treat it the same as the
-                            // outer "no matching ctor" case rather than fail every
-                            // remaining test one by one.
-                            break;
+                            // Unreachable today, and deliberately loud rather than silent.
+                            //
+                            // InstantiateCodeunit returns null in exactly one case: no
+                            // constructor taking a single ITreeObject. Every other failure
+                            // throws and is caught just above. Reaching here means the FIRST
+                            // instantiation of this same `t` returned non-null (otherwise the
+                            // `instance == null` check further up would have skipped the whole
+                            // codeunit), so a matching constructor exists — and
+                            // Type.GetConstructors() cannot change for a loaded type while the
+                            // process runs. So this branch cannot execute.
+                            //
+                            // It used to `break`, which would have silently dropped every
+                            // remaining [Test] in the codeunit — the exact shape #2415 fixed
+                            // elsewhere in this loop. If InstantiateCodeunit ever gains a second
+                            // reason to return null, that silent truncation would come back with
+                            // nothing reporting it. Throwing means the day it becomes reachable
+                            // is the day it is seen (#2420).
+                            throw new InvalidOperationException(
+                                $"TestExecutor: re-instantiating test codeunit '{t.Name}' returned null "
+                                + $"before '{m.Name}', although its first instantiation succeeded. "
+                                + "InstantiateCodeunit only returns null when no ITreeObject constructor "
+                                + "exists, which cannot change for a loaded type — so this indicates a "
+                                + "change in InstantiateCodeunit, not a fault in the AL under test.");
                         }
                         testInstance = fresh;
                     }
@@ -689,7 +714,7 @@ public sealed class TestExecutor
                     // instead of a quietly-smaller test total.
                     if (IsTimeout(raw))
                     {
-                        RecordAbortedSuite(t, m, displayName, orderedMethods, mi, types, ti, filter);
+                        RecordAbortedSuite(t, m, displayName, orderedMethods, mi, types, ti, filter, exactFilter);
                         return results;
                     }
                 }
@@ -733,6 +758,28 @@ public sealed class TestExecutor
         AlRunner.Infrastructure.PhaseLog.AddAppStage("run-test-methods", TimeSpan.FromMilliseconds(methodsMs));
         AlRunner.Infrastructure.PhaseLog.AddAppStage("codeunit-dispose", TimeSpan.FromMilliseconds(disposeMs));
         return results;
+    }
+
+    /// <summary>
+    /// Discover test keys in "{Codeunit}.{Method}" form, using the same codeunit/method
+    /// eligibility and optional substring filter that <see cref="Run"/> applies.
+    /// </summary>
+    public IReadOnlyList<string> DiscoverTests(Assembly assembly)
+    {
+        var filter = NormaliseFilter(TestFilter);
+        var tests = new List<string>();
+        foreach (var t in assembly.GetTypes())
+        {
+            if (!IsTestCodeunit(t)) continue;
+            if (filter != null && !CodeunitMatchesFilter(t, filter)) continue;
+            foreach (var m in OrderTestMethodsBySourceDeclaration(t))
+            {
+                if (!IsTestMethod(m)) continue;
+                if (filter != null && !MethodMatchesFilter(t.Name, m.Name, filter)) continue;
+                tests.Add($"{t.Name}.{m.Name}");
+            }
+        }
+        return tests;
     }
 
     private Infrastructure.ExpectationEntry? LookupExpectation(
@@ -1127,7 +1174,7 @@ public sealed class TestExecutor
     // legitimately-skipped tests inflating the count by a few is the safe direction.
     private void RecordAbortedSuite(Type hungType, MethodInfo hungMethod, string hungDisplayName,
         MethodInfo[] orderedMethodsInHungType, int hungMethodIndex,
-        Type[] allTypes, int hungTypeIndex, string? filter)
+        Type[] allTypes, int hungTypeIndex, string? filter, IReadOnlySet<string>? exactFilter)
     {
         int remainingInCodeunit = 0;
         for (int mi = hungMethodIndex + 1; mi < orderedMethodsInHungType.Length; mi++)
@@ -1135,6 +1182,7 @@ public sealed class TestExecutor
             var mm = orderedMethodsInHungType[mi];
             if (!IsTestMethod(mm)) continue;
             if (filter != null && !MethodMatchesFilter(hungType.Name, mm.Name, filter)) continue;
+            if (exactFilter != null && !exactFilter.Contains($"{hungType.Name}.{mm.Name}")) continue;
             remainingInCodeunit++;
         }
 
@@ -1145,7 +1193,9 @@ public sealed class TestExecutor
             if (!IsTestCodeunit(t2)) continue;
             if (filter != null && !CodeunitMatchesFilter(t2, filter)) continue;
             var count = t2.GetMethods(BindingFlags.Public | BindingFlags.Instance)
-                .Count(mm => IsTestMethod(mm) && (filter == null || MethodMatchesFilter(t2.Name, mm.Name, filter)));
+                .Count(mm => IsTestMethod(mm)
+                             && (filter == null || MethodMatchesFilter(t2.Name, mm.Name, filter))
+                             && (exactFilter == null || exactFilter.Contains($"{t2.Name}.{mm.Name}")));
             if (count == 0) continue;
             remainingCodeunits++;
             remainingInOtherCodeunits += count;

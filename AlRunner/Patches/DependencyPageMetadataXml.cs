@@ -26,9 +26,10 @@
 //   symbol file's own Properties array.
 //
 // WHAT IS DELIBERATELY OMITTED, AND WHY THAT IS SAFE HERE
-//   Content/Controls, ActionContainers, ViewContainers, AnalysisViewContainers — the page's
-//   full control tree and action ribbon. Two independent reasons neither is needed for the
-//   gap this file closes:
+//   Ordinary field Content/Controls, ActionContainers, ViewContainers,
+//   AnalysisViewContainers — the page's full control tree and action ribbon (the action
+//   half is #2460, a separate fix). Two independent reasons neither is needed for the gap
+//   this file closes:
 //     1. NavTestExecution.FindPageType — the NRE site — reads exactly one property,
 //        form.MasterPage.PageProperties.PageType, which Properties above already states.
 //     2. A precompiled page's control -> value BINDINGS are not read from this XML at all.
@@ -46,6 +47,16 @@
 //        compile itself stays out of scope (RunnerPageInstance.cs already documents this),
 //        unchanged by this fix — a modal page whose handler drives a field it does not
 //        recognise still refuses loudly, exactly as it did before.
+//
+//   Subpage PARTS (issue #2467) are the one exception, and reason 2 above is exactly why:
+//   unlike a field control, a part's binding is NOT read from IL at all.
+//   RunnerPageInstance.TryGetPartDefinition resolves a part entirely from
+//   form.MetadataHelper.InfoPartDefinitions, itself built by BC's own
+//   NCLMetaForm.LoadPageMetadata walking THIS file's Content — so a part genuinely is
+//   reconstructable data, not guessed data, and EmitPartControlXml below adds it. The
+//   SubFormLink field names it carries ARE resolved (to numeric ids, off the part's own and
+//   the host's SourceTable — see EmitSubFormLinkXml), because MockTestPage.SubPageLinks
+//   already consumes numeric FieldID/FilterValue, never AL text.
 using System.Text;
 using System.Xml;
 
@@ -110,9 +121,24 @@ public static partial class RecordPatches
                 w.WriteEndElement();
                 w.WriteEndElement();
             }
+            // ALWAYS written, even for a page with no source table (issue #2451). Same
+            // reason as the empty <Content> element below: MetaPageDefinition deserializes a
+            // MISSING element to null rather than to an empty one, and BC dereferences this
+            // one WITHOUT a null check —
+            // MetadataProvider.MergePageAndTable reads
+            // `masterPage.PageProperties.SourceObject.SourceTable > 0` as its first act.
+            // Omitting it NREs inside BC's own metadata merge, which
+            // RunnerPageInstance.TryCreateRecordless catches and turns into null, which
+            // silently demotes the TestPage to the navigation mock — every action there
+            // answers Enabled = true and Invoke() is a literal no-op.
+            //
+            // The real AL compiler writes it unconditionally too: across the 3187 page
+            // metadata documents in this machine's dependency-compile sidecars,
+            // <SourceObject> appears in all 3187, and in 1114 of them it carries no
+            // SourceTable attribute at all — the empty form written here.
+            w.WriteStartElement("SourceObject");
             if (page.SourceTableId > 0)
             {
-                w.WriteStartElement("SourceObject");
                 w.WriteAttributeString("SourceTable",
                     page.SourceTableId.ToString(System.Globalization.CultureInfo.InvariantCulture));
                 if (page.SourceTableTemporary)
@@ -120,22 +146,130 @@ public static partial class RecordPatches
                 if (!page.InsertAllowed) w.WriteAttributeString("InsertAllowed", "0");
                 if (!page.ModifyAllowed) w.WriteAttributeString("ModifyAllowed", "0");
                 if (!page.DeleteAllowed) w.WriteAttributeString("DeleteAllowed", "0");
-                w.WriteEndElement();
             }
+            // The attributes above only mean anything alongside a SourceTable, so a page
+            // without one gets the bare element the compiler itself emits — not
+            // SourceTable="0", which would answer "table 0" to a question about a table the
+            // page does not have.
+            w.WriteEndElement(); // SourceObject
             w.WriteEndElement(); // Properties
 
-            // An empty (but present) Content element, not an absent one: NCLMetaForm.
+            // Present-but-empty for the third time, and for the third identical reason:
+            // MetadataProvider.LoadExpressionRelationTables iterates
+            // `masterPage.Expressions` with no null check, so a missing element NREs one
+            // statement after the SourceObject read above. The real compiler emits it on all
+            // 3187 documents measured. No general control tree is reconstructed (see the
+            // file header) — only parts (below), whose bindings are resolved from THIS XML,
+            // not from an <Expressions> entry — so this deserializes to an empty collection,
+            // which is what a page with no bound controls would have anyway.
+            w.WriteStartElement("Expressions");
+            w.WriteEndElement();
+
+            // An empty-but-present Content element, not an absent one: NCLMetaForm.
             // LoadPageMetadata()'s own post-load check (EnsureNoControlIdAppearsMoreThanOnce)
             // unconditionally iterates page.Content.Containers, and MetaPageDefinition
             // deserializes a MISSING <Content> element to a null Content rather than an
             // empty one — so leaving the element out entirely NREs there, one call deeper
-            // than the FindPageType gap this file exists to close. No control tree is
-            // reconstructed (see the file header), so this iterates zero containers.
+            // than the FindPageType gap this file exists to close.
+            //
+            // Issue #2467: Content now also carries the page's subpage PART controls, still
+            // no ordinary field controls (the file header's reasoning for those is
+            // unchanged — their VALUE BINDINGS are IL, not XML). A part is different:
+            // RunnerPageInstance.TryGetPartDefinition resolves it entirely from THIS XML
+            // (form.MetadataHelper.InfoPartDefinitions, itself built by BC's own
+            // NCLMetaForm.LoadPageMetadata walking Content), so reconstructing it here closes
+            // the gap at its actual source rather than working around it.
             w.WriteStartElement("Content");
-            w.WriteEndElement();
+            if (page.Parts is { Count: > 0 })
+            {
+                w.WriteStartElement("Containers");
+                w.WriteAttributeString("xsi", "type", XsiNs, "ControlContainerDefinition");
+                w.WriteAttributeString("ContainerType", "ContentArea");
+                foreach (var part in page.Parts)
+                    EmitPartControlXml(w, page, part);
+                w.WriteEndElement(); // Containers
+            }
+            w.WriteEndElement(); // Content
 
             w.WriteEndElement(); // PageDefinition
         }
         return sb.ToString();
+    }
+
+    private const string XsiNs = "http://www.w3.org/2001/XMLSchema-instance";
+
+    /// <summary>
+    /// One subpage PART control, as an <c>InfopartPageDefinition</c> — the shape the real AL
+    /// compiler emits (measured against this machine's compiled-deps sidecars: every
+    /// <c>&lt;SubFormLink&gt;</c> observed there carries <c>FilterGroup="4"</c>). Property
+    /// attributes (Editable/Enabled/Visible/ShowFilter) are written RAW, exactly as
+    /// PageControlSymbol already does for field controls — an AL-bound one resolves later
+    /// through the page's own registered source expressions (real IL, not this XML); a
+    /// literal true/false/number resolves directly. Absent when the symbol file states none,
+    /// matching the compiler's own AL-default-true behaviour for these three.
+    /// </summary>
+    private static void EmitPartControlXml(XmlWriter w, BcAppSymbolCache.PageSymbol hostPage, BcAppSymbolCache.PagePartSymbol part)
+    {
+        w.WriteStartElement("Controls");
+        w.WriteAttributeString("xsi", "type", XsiNs, "InfopartPageDefinition");
+        w.WriteAttributeString("ID", part.Id.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        w.WriteAttributeString("Name", part.Name);
+        w.WriteAttributeString("PagePartID", part.PagePartId.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        if (!string.IsNullOrEmpty(part.Caption)) w.WriteAttributeString("CaptionML", "ENU=" + part.Caption);
+        if (!string.IsNullOrEmpty(part.EditableExpr)) w.WriteAttributeString("Editable", part.EditableExpr);
+        if (!string.IsNullOrEmpty(part.EnabledExpr)) w.WriteAttributeString("Enabled", part.EnabledExpr);
+        if (!string.IsNullOrEmpty(part.VisibleExpr)) w.WriteAttributeString("Visible", part.VisibleExpr);
+        if (!string.IsNullOrEmpty(part.ShowFilterExpr)) w.WriteAttributeString("ShowFilter", part.ShowFilterExpr);
+
+        foreach (var link in part.SubFormLink)
+            EmitSubFormLinkXml(w, hostPage, part, link);
+
+        w.WriteEndElement(); // Controls
+    }
+
+    /// <summary>
+    /// One <c>SubFormLink</c> entry, resolved from AL text to the numeric field ids BC's own
+    /// compiled metadata carries (MockTestPage.SubPageLinks reads
+    /// <c>InfopartPageDefinition.SubFormLink</c> as (FieldID, FilterType, FilterValue), never
+    /// AL text). FIELD is the only kind that resolves to real filtering here — the same kind
+    /// MockTestPage.SubPageLinks already implements. CONST/FILTER, and any FIELD entry whose
+    /// field name this run cannot resolve to an id, are written with a value that reliably
+    /// trips MockTestPage.SubPageLinks' OWN existing refusal (non-FIELD FilterType, or a
+    /// non-numeric FilterValue) — an honest "testpage-part-link" out-of-scope refusal rather
+    /// than a silently unfiltered part, which would show every row of the child table instead
+    /// of only the parent's.
+    /// </summary>
+    private static void EmitSubFormLinkXml(
+        XmlWriter w, BcAppSymbolCache.PageSymbol hostPage, BcAppSymbolCache.PagePartSymbol part,
+        BcAppSymbolCache.PageSubFormLinkSymbol link)
+    {
+        int partTableId = RecordPatches.ResolveSourceTableIdForAnyPage(part.PagePartId);
+        int? partFieldId = RecordPatches.TryResolveDependencyFieldId(partTableId, link.PartFieldName);
+
+        w.WriteStartElement("SubFormLink");
+        w.WriteAttributeString("FilterGroup", "4");
+        w.WriteAttributeString("FieldID",
+            (partFieldId ?? 0).ToString(System.Globalization.CultureInfo.InvariantCulture));
+
+        if (string.Equals(link.Kind, "field", StringComparison.OrdinalIgnoreCase))
+        {
+            var parentFieldName = link.Value.Trim('"');
+            int? parentFieldId = RecordPatches.TryResolveDependencyFieldId(hostPage.SourceTableId, parentFieldName);
+            w.WriteAttributeString("FilterType", "FIELD");
+            // Unresolved renders as the field NAME, not a number — MockTestPage.SubPageLinks
+            // int.TryParse()s this and refuses by name when it isn't numeric, which is
+            // exactly the honest outcome an unresolved link deserves.
+            w.WriteAttributeString("FilterValue",
+                parentFieldId?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? parentFieldName);
+        }
+        else
+        {
+            // CONST/FILTER — MockTestPage.SubPageLinks refuses any FilterType other than
+            // FIELD by name already; reproducing the real FilterType here (rather than
+            // defaulting to FIELD) is what makes that refusal name the true reason.
+            w.WriteAttributeString("FilterType", link.Kind.ToUpperInvariant());
+            w.WriteAttributeString("FilterValue", link.Value);
+        }
+        w.WriteEndElement(); // SubFormLink
     }
 }

@@ -116,7 +116,7 @@ tier with SQL Server.
 | API | Reason |
 |---|---|
 | `Report.SaveAsPdf` / `SaveAsHtml` / `SaveAsExcel` / `SaveAsWord` / `SaveAsDocx` | No layout renderer. Cecil-rewritten to throw `InvalidOperationException("out-of-scope: NavReport.SaveAs* ...")`. Tests `asserterror` + `Assert.ExpectedError('out-of-scope: NavReport.SaveAs')`. |
-| Request-page **controls** bound to report globals (`RequestPage.ShowAmountsInLCY.SetValue(…)`) | Resolving one needs the request page's `NavForm.SourceExpressions` table, which the runner only builds for forms it drives as a `TestPage`. Throws `out-of-scope: TestRequestPage control … request-page-control`. Data-item filters and the built-in actions ARE answered. See [#2442](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2442). |
+| Request-page **controls** the request page publishes no source expression for | A control bound to a report global IS answered (see below). A control id the request page registered no binding for still throws `out-of-scope: TestRequestPage control … request-page-control`, naming the ids it did register, rather than silently answering an empty value. |
 
 **Running a request page is in scope; rendering one is not.** `Report.Run()` /
 `RunModal()` / `RunRequestPage()` open the report's request page and let BC's own
@@ -128,6 +128,15 @@ service tier: `Cancel` leaves the report body unexecuted, and
 **dataset** at that path (through BC's own `ReportSaveAsXmlRenderer`, so
 `Codeunit "Library - Report Dataset"` loads it) rather than resolving a layout.
 A dataset is report *execution*, not rendering.
+
+The handler can also read and write the request page's **controls**
+(`RequestPage.ShowAmountsInLCY.SetValue(true)`). A request-page control is bound
+to one of the report's own global variables, and it resolves through BC's own
+control → value binding table (`NavForm.SourceExpressions`), so a write lands on
+that global and the report body's `OnAfterGetRecord` reads exactly what the
+handler chose — the value is never held aside. Data-item filters
+(`RequestPage.Rows.SetFilter(…)`) and the built-in `OK` / `Cancel` /
+`SaveAsXml` actions are answered the same way.
 
 **Layout *selection* is in scope; layout *content* is not.** A report's
 `rendering { layout(Name) { Type; MimeType; LayoutFile; … } }` declarations are
@@ -234,6 +243,7 @@ hitting them files a runner-gap issue rather than silently passing.
 | `--test-data`: TableFilter values from a BC backup | In scope; refused today rather than guessed at. BC's own SQL reader has a case for it (504 raw bytes), but no table in the shipped demo data stores one, so the shape the backup reader emits has never been measured here and the codec will not invent it. The refusal names the table, column and type. Date/DateTime/Time/DateFormula ([#2259](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2259)) and Blob/Media/MediaSet/RecordId/Duration ([#2270](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2270)) are rebuilt, not refused. | [#2271](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2271) |
 | `--test-data`: table-extension (`$ext`) columns owned by an app outside the run's app closure | Merged extension fields ARE hydrated ([#2261](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2261)). A companion column whose owning app this run does not install has no AL field in this run's schema, so it is dropped and counted in the hydration summary rather than refusing the table. | — |
 | `--test-data`: BC system columns (`SystemId`, `SystemCreatedAt`, …) | Left at the field's BC default rather than mapped from the backup's `$system*` columns. | [#2260](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2260) |
+| TestPage subpage part `SubPageLink` with `const(...)`/`filter(...)` | `field(...)` links resolve and filter for real ([#2467](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2467) — this includes a *precompiled dependency's* part, previously refused unconditionally as "could not resolve this control to a subpage part" regardless of link kind); a `CONST`/`FILTER` link still refuses by name (`testpage-part-link`) rather than filtering. | [#2469](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2469) |
 
 ---
 
