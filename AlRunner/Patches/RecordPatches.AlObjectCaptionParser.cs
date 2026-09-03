@@ -107,4 +107,36 @@ public static partial class RecordPatches
         => string.Equals(kind, "Report", StringComparison.OrdinalIgnoreCase)
             ? (_parsedReports.TryGetValue(id, out var report) ? report.Caption : null)
             : _parsedObjectCaptions.TryGetValue((kind, id), out var caption) ? caption : null;
+
+    /// <summary>
+    /// The Caption a table declares, or null when it declares none — which is also what a
+    /// table the runner has never seen the source or symbols for answers, because AL's
+    /// default caption is the object name and BC's own NCLMetaTable applies that fallback
+    /// itself (see NclMetaTableBuilder's caption block). Null therefore means "leave the
+    /// MetaTable ctor's caption parameters unset", never "the caption is empty".
+    ///
+    /// AllObjWithCaption answers the same question through <see cref="SourceCaptionFor"/>
+    /// plus EnumerateBcAppObjects; this is the metadata-side answer, for the caption BC
+    /// reads off NCLMetaTable when AL calls Rec.TableCaption() / RecordRef.Caption() and
+    /// when BC interpolates a table name into its own error text.
+    ///
+    /// Presence in <see cref="_parsedObjectCaptions"/> is authoritative even when the value
+    /// is null: a table parsed from AL source owns its object id for this run, so
+    /// "parsed, declares no Caption" must NOT fall through and inherit a same-id table
+    /// caption out of some registered .app's symbols.
+    /// </summary>
+    internal static string? ResolveTableCaption(int tableId)
+    {
+        if (_parsedObjectCaptions.TryGetValue(("Table", tableId), out var sourceCaption))
+            return sourceCaption;
+
+        lock (_bcTableIndexLock)
+        {
+            EnsureBcSymbolTableIndex();
+            return _bcSymbolTableCaptions != null
+                && _bcSymbolTableCaptions.TryGetValue(tableId, out var symbolCaption)
+                    ? symbolCaption
+                    : null;
+        }
+    }
 }
