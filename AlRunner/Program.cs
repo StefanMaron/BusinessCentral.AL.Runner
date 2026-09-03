@@ -3638,6 +3638,9 @@ return strictExitCode ? computedExitCode : 0;
         // changes that happened in a sibling bundle. Gated on affectedOnly and more than one
         // bundle — a single-bundle request already sees its own full change set.
         List<AffectedObjectId>? requestWideChangedObjects = null;
+        // Per bundle: how many objects its own peek saw change, or null when the peek could not
+        // answer for it. See ChangedDependencyForcesFullCompile below.
+        var peekedChangedCountByBundle = new Dictionary<string, int?>(StringComparer.OrdinalIgnoreCase);
         if (useIncrementalChangeModel && sourcePaths.Length > 1)
         {
             requestWideChangedObjects = new List<AffectedObjectId>();
@@ -3652,6 +3655,10 @@ return strictExitCode ? computedExitCode : 0;
                 peekPaths = peekPaths.Distinct().ToList();
 
                 var peeked = emitter.PeekChangedObjects(peekPaths, peekModuleName, peekBucketRoot);
+                // #2603: the same peek answers a second question — "did THIS bundle change this
+                // cycle?" — which is what lets a bundle listed BEFORE its own dependency decide
+                // safely. Recorded per bundle, not folded into the union.
+                peekedChangedCountByBundle[peekAbs] = peeked?.Count;
                 if (peeked == null)
                 {
                     // Unknown for at least one bundle (no baseline yet, app.json changed, an
@@ -3722,6 +3729,26 @@ return strictExitCode ? computedExitCode : 0;
             };
         }
 
+        // #2603, the order-independent half. The forward propagation above is only sound while a
+        // bundle's in-request dependencies are compiled BEFORE it — the `sourcePaths` order the
+        // README documents. Measured with that order reversed, the defect returns in full: the
+        // consuming bundle is processed first, `sawFallbackReason` is still null, it replays its
+        // previous C# verbatim, and the run reports BOUND-TO=1 where a cold run gives 2. An
+        // undocumented argument order is still an accepted one, and answering it wrongly in
+        // silence is the thing this whole change exists to stop.
+        //
+        // The request already knows enough to decide this without compiling anything and without
+        // reordering execution (which would change the order test events stream out):
+        //   * which bundles this one declares a dependency on — the same app.json identity read
+        //     RunLayeredPrePass already does to decide which bundles are "impls";
+        //   * whether each of those changed this cycle — the per-bundle peek above.
+        //
+        // The rule: a bundle may use the incremental change model only if every in-request bundle
+        // it depends on either comes BEFORE it (the forward propagation covers it) or is
+        // known-unchanged this cycle. In the documented order the first clause always holds, so
+        // this costs nothing and changes no behaviour there.
+        var forcedFullBundles = ChangedLaterDependencyBundles(sourcePaths, peekedChangedCountByBundle);
+
         var bundleIndex = 0;
         foreach (var bundleDir in sourcePaths)
         {
@@ -3730,16 +3757,91 @@ return strictExitCode ? computedExitCode : 0;
             var relBundle = Path.GetRelativePath(
                 Environment.CurrentDirectory, Path.GetFullPath(bundleDir));
             AlRunner.Infrastructure.PhaseLog.BeginBundle(relBundle, bundleIndex);
-            // #2603: see the comment above `sawFallbackReason`. An earlier bundle fell back, so
-            // this one must not serve its C# from a baseline recorded before that bundle moved.
+            // #2603: see the two comments above. An earlier bundle fell back, or a dependency of
+            // this bundle is listed after it and changed this cycle — either way this bundle must
+            // not serve its C# from a baseline recorded before that other bundle moved.
             var result = RunBundleForServer(bundleDir, requestPackagePaths, runStep,
-                useIncrementalChangeModel && sawFallbackReason == null,
+                useIncrementalChangeModel && sawFallbackReason == null
+                    && !forcedFullBundles.Contains(Path.GetFullPath(bundleDir)),
                 effectiveBeforeRun,
                 out var emitElapsed, out var compileElapsed, out var runElapsed);
             AlRunner.Infrastructure.PhaseLog.EndBundle(emitElapsed, compileElapsed, runElapsed);
             results.Add(result);
         }
         return results;
+    }
+
+    /// <summary>
+    /// The bundles in this request that must NOT use the incremental change model because a bundle
+    /// they depend on is listed AFTER them in <paramref name="sourcePaths"/> and changed this cycle.
+    ///
+    /// <para>Issue #2603. A bundle whose own files all hash identical replays its previous
+    /// generated C# verbatim, which bakes the member ids its dependencies' PREVIOUS surfaces
+    /// resolved to. The forward fallback propagation in <c>RunAllBundlesForServer</c> covers a
+    /// dependency compiled earlier in the same request; it cannot cover one compiled later,
+    /// because the signal it reads does not exist yet.</para>
+    ///
+    /// <para>Both inputs are already paid for: the dependency relation is the same app.json
+    /// identity read <see cref="RunLayeredPrePass"/> does, and "did it change" is the per-bundle
+    /// result of the peek <c>RunAllBundlesForServer</c> already performs for #2492's union.
+    /// Nothing here compiles anything, and execution order is deliberately left alone — reordering
+    /// would change the order test events stream out.</para>
+    ///
+    /// <para><b>Fail-closed on an unreadable answer.</b> A dependency whose peek could not answer
+    /// (no baseline yet, app.json changed, an unclassifiable file — <c>PeekChangedObjects</c>
+    /// returns null) counts as changed, and so does one that was never peeked at all. "I do not
+    /// know whether it moved" and "it moved" have the same safe handling; only a positive
+    /// zero-changes answer earns the fast path.</para>
+    ///
+    /// <para>Matching is by declared <c>AppId</c>, falling back to Name+Publisher — the same pair
+    /// <see cref="RunLayeredPrePass"/> uses, and for the same reason: a bundle without a declared
+    /// id still has to be recognisable as somebody's dependency.</para>
+    /// </summary>
+    static HashSet<string> ChangedLaterDependencyBundles(
+        string[] sourcePaths, Dictionary<string, int?> peekedChangedCountByBundle)
+    {
+        var forced = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (sourcePaths.Length < 2 || peekedChangedCountByBundle.Count == 0) return forced;
+
+        var order = new List<string>();
+        var identities = new Dictionary<string, AlRunner.Infrastructure.BundleIdentity>(StringComparer.OrdinalIgnoreCase);
+        foreach (var bundle in sourcePaths)
+        {
+            var abs = Path.GetFullPath(bundle);
+            order.Add(abs);
+            var appJson = Path.Combine(abs, "app.json");
+            if (!File.Exists(appJson))
+            {
+                var root = FindBucketRoot(abs);
+                if (root != null) appJson = Path.Combine(root, "app.json");
+            }
+            if (!File.Exists(appJson)) continue;
+            var id = AlRunner.Infrastructure.InProcessAppPackager.ReadIdentity(appJson);
+            if (id != null) identities[abs] = id;
+        }
+        if (identities.Count < 2) return forced;
+
+        bool ChangedOrUnknown(string abs) =>
+            !peekedChangedCountByBundle.TryGetValue(abs, out var count) || count is not 0;
+
+        for (int i = 0; i < order.Count; i++)
+        {
+            if (!identities.TryGetValue(order[i], out var mine)) continue;
+            for (int j = i + 1; j < order.Count; j++)
+            {
+                if (!identities.TryGetValue(order[j], out var later)) continue;
+                bool dependsOnLater = mine.Dependencies.Any(dep =>
+                    (dep.AppId != Guid.Empty && dep.AppId == later.AppId)
+                    || (string.Equals(dep.Name, later.Name, StringComparison.OrdinalIgnoreCase)
+                        && string.Equals(dep.Publisher, later.Publisher, StringComparison.OrdinalIgnoreCase)));
+                if (dependsOnLater && ChangedOrUnknown(order[j]))
+                {
+                    forced.Add(order[i]);
+                    break;
+                }
+            }
+        }
+        return forced;
     }
 
     // True when `path` is `root` itself or nested somewhere under it. Both are

@@ -38,12 +38,15 @@ namespace AlRunner.Tests;
 
 public class ServerCrossAppOverloadRebindTests
 {
-    private const string AppId = "a1b2c3d4-6051-4a11-9111-111111111111";
-    private const string TestAppId = "a1b2c3d4-6052-4a11-9222-222222222222";
+    // One id set per ordering case, so the two cases cannot share on-disk or in-process state.
+    private static string AppId(int c) => $"a1b2c3d4-605{c}-4a11-9111-111111111111";
+    private static string TestAppId(int c) => $"a1b2c3d4-606{c}-4a11-9222-222222222222";
+    private static int LibId(int c) => 60510 + c * 20;
+    private static int TestsId(int c) => 60520 + c * 20;
 
     /// <summary>The dependency app, with one Decimal overload of `Which`.</summary>
-    private const string LibBefore = """
-        codeunit 60510 "XApp Ovl Lib"
+    private static string LibBefore(int c) => $$"""
+        codeunit {{LibId(c)}} "XApp Ovl Lib {{c}}"
         {
             procedure Which(Seed: Decimal): Integer
             begin
@@ -54,8 +57,8 @@ public class ServerCrossAppOverloadRebindTests
 
     /// <summary>The edit: a second overload of the SAME name taking Integer. Nothing else moves,
     /// and no existing member's id moves either.</summary>
-    private const string LibAfter = """
-        codeunit 60510 "XApp Ovl Lib"
+    private static string LibAfter(int c) => $$"""
+        codeunit {{LibId(c)}} "XApp Ovl Lib {{c}}"
         {
             procedure Which(Seed: Decimal): Integer
             begin
@@ -69,19 +72,19 @@ public class ServerCrossAppOverloadRebindTests
         }
         """;
 
-    private static string MakeAppBundle(string root, string lib)
+    private static string MakeAppBundle(string root, int c, string lib)
     {
         var dir = Path.Combine(root, "app");
         Directory.CreateDirectory(dir);
         File.WriteAllText(Path.Combine(dir, "app.json"), $$"""
         {
-          "id": "{{AppId}}",
-          "name": "XApp Ovl App",
+          "id": "{{AppId(c)}}",
+          "name": "XApp Ovl App {{c}}",
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [],
           "platform": "1.0.0.0",
-          "idRanges": [ { "from": 60510, "to": 60519 } ],
+          "idRanges": [ { "from": {{LibId(c)}}, "to": {{LibId(c) + 9}} } ],
           "runtime": "14.0"
         }
         """);
@@ -93,34 +96,34 @@ public class ServerCrossAppOverloadRebindTests
     /// The consuming app. Byte-identical across both requests, and it passes an INTEGER — so what
     /// it binds to is decided entirely by which overloads the dependency declares.
     /// </summary>
-    private static string MakeTestAppBundle(string root)
+    private static string MakeTestAppBundle(string root, int c)
     {
         var dir = Path.Combine(root, "test-app");
         Directory.CreateDirectory(dir);
         File.WriteAllText(Path.Combine(dir, "app.json"), $$"""
         {
-          "id": "{{TestAppId}}",
-          "name": "XApp Ovl Test App",
+          "id": "{{TestAppId(c)}}",
+          "name": "XApp Ovl Test App {{c}}",
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [
-            { "id": "{{AppId}}", "name": "XApp Ovl App",
+            { "id": "{{AppId(c)}}", "name": "XApp Ovl App {{c}}",
               "publisher": "AL Runner", "version": "1.0.0.0" }
           ],
           "platform": "1.0.0.0",
-          "idRanges": [ { "from": 60520, "to": 60529 } ],
+          "idRanges": [ { "from": {{TestsId(c)}}, "to": {{TestsId(c) + 9}} } ],
           "runtime": "14.0"
         }
         """);
-        File.WriteAllText(Path.Combine(dir, "Tests.al"), """
-        codeunit 60520 "XApp Ovl Tests"
+        File.WriteAllText(Path.Combine(dir, "Tests.al"), $$"""
+        codeunit {{TestsId(c)}} "XApp Ovl Tests {{c}}"
         {
             Subtype = Test;
 
             [Test]
             procedure BindsTheIntegerOverload()
             var
-                Lib: Codeunit "XApp Ovl Lib";
+                Lib: Codeunit "XApp Ovl Lib {{c}}";
                 Seed: Integer;
                 Bound: Integer;
             begin
@@ -138,11 +141,11 @@ public class ServerCrossAppOverloadRebindTests
         return dir;
     }
 
-    private static string RunTestsRequest(string appDir, string testAppDir)
+    private static string RunTestsRequest(string[] sourcePaths)
         => JsonSerializer.Serialize(new
         {
             command = "runTests",
-            sourcePaths = new[] { appDir, testAppDir },
+            sourcePaths,
             packagePaths = Array.Empty<string>(),
             // Without these the server takes the ordinary full Emit() on every request
             // (RunBundleForServer only calls TryEmitIncremental when useIncrementalChangeModel is
@@ -153,48 +156,84 @@ public class ServerCrossAppOverloadRebindTests
         });
 
     /// <summary>
-    /// A warm <c>--server</c> request whose DEPENDENCY app gained an overload must answer the same
-    /// as a from-scratch run of the same sources.
+    /// A warm <c>--server</c> request whose DEPENDENCY app gained an overload must never answer
+    /// with the overload the consuming app used to bind to.
+    ///
+    /// <para><b>The two orders have different bars, and the difference is measured, not assumed.</b></para>
+    ///
+    /// <para><c>dependencyFirst: true</c> — the order the README documents. Must PASS: the request
+    /// answers exactly as a from-scratch run of the same sources does.</para>
+    ///
+    /// <para><c>dependencyFirst: false</c> — an order nothing documents but the runner accepts.
+    /// Before this change it returned <c>BOUND-TO=1</c>: a green-looking, silently wrong answer,
+    /// because the consuming bundle is processed before the fallback signal the forward
+    /// propagation reads even exists. <c>ChangedLaterDependencyBundles</c> now forces that bundle
+    /// to compile in full, and what remains is a LOUD failure —
+    /// <c>NavNCLCompilationException: Function ID … was called. The object with ID … does not have
+    /// a member with that ID</c> — because in this order the dependency's runtime assembly is not
+    /// reloaded until after the consuming bundle's tests have already run. That residual is #2614; the bar asserted here is the one
+    /// <c>.claude/rules/loud-failures.md</c> sets: pass, or fail in a way somebody can see.
+    /// <b>Never <c>BOUND-TO=1</c>.</b></para>
     /// </summary>
-    [SkippableFact]
-    public async Task WarmRequest_AfterADependencyGainsAnOverload_RebindsTheConsumingApp()
+    [SkippableTheory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task WarmRequest_AfterADependencyGainsAnOverload_NeverAnswersWithTheOldOverload(bool dependencyFirst)
     {
         TestArtifacts.SkipIfMissing();
 
+        var c = dependencyFirst ? 1 : 2;
         var root = Path.Combine(Path.GetTempPath(), "al-runner-xapp-overload", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
-        var appDir = MakeAppBundle(root, LibBefore);
-        var testAppDir = MakeTestAppBundle(root);
+        var appDir = MakeAppBundle(root, c, LibBefore(c));
+        var testAppDir = MakeTestAppBundle(root, c);
+        var sourcePaths = dependencyFirst
+            ? new[] { appDir, testAppDir }
+            : new[] { testAppDir, appDir };
 
         await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
 
         // Request 1 — pre-edit. The Integer argument widens to Which(Decimal), so the test reports
         // BOUND-TO=1 and fails. Asserted, not tolerated: it is the measurement that the fixture
-        // really does bind the Decimal overload to begin with, so request 2's pass cannot be
-        // "it was always 2".
-        var lines1 = await server.SendRequestStreamingAsync(RunTestsRequest(appDir, testAppDir));
+        // really does bind the Decimal overload to begin with, so request 2 cannot pass by the
+        // answer having been 2 all along.
+        var lines1 = await server.SendRequestStreamingAsync(RunTestsRequest(sourcePaths));
         var (events1, _) = ProtocolV2Streaming.Split(lines1);
         Assert.Single(events1);
         Assert.Equal("fail", events1[0].GetProperty("status").GetString());
         Assert.Contains("BOUND-TO=1", string.Join(" | ", lines1), StringComparison.Ordinal);
 
-        // Edit ONLY the dependency app. The test app's files are not touched.
-        File.WriteAllText(Path.Combine(appDir, "Lib.al"), LibAfter);
+        // Edit ONLY the dependency app. The test app's files are not touched — which is the whole
+        // point, since a modified caller would get a fresh call-site id anyway.
+        File.WriteAllText(Path.Combine(appDir, "Lib.al"), LibAfter(c));
 
         // Request 2 — same warm process. A from-scratch run of these sources binds
         // Which(Integer) and returns 2.
-        var lines2 = await server.SendRequestStreamingAsync(RunTestsRequest(appDir, testAppDir));
+        var lines2 = await server.SendRequestStreamingAsync(RunTestsRequest(sourcePaths));
         var (events2, _) = ProtocolV2Streaming.Split(lines2);
         Assert.Single(events2);
-
+        var joined2 = string.Join(" | ", lines2);
         var status2 = events2[0].GetProperty("status").GetString();
+
+        // The floor, asserted for BOTH orders: the previous overload's answer must never come back
+        // reported as a result. This is the silent failure the whole change exists to remove.
+        Assert.False(joined2.Contains("BOUND-TO=1", StringComparison.Ordinal),
+            "the consuming app returned the PREVIOUS overload's answer after its dependency gained "
+            + $"an overload (dependencyFirst: {dependencyFirst}). Its own files did not change, so "
+            + "its module took the \"replay the last cycle's result verbatim\" short-circuit and "
+            + "never entered the delta path — leaving its cached C# dispatching the member id that "
+            + "Which(Decimal) resolved to. That member still exists in the re-emitted dependency, so "
+            + "the call succeeded with no exception and no diagnostic. Got: " + joined2);
+
+        if (!dependencyFirst)
+        {
+            // The undocumented order: loud is the bar. Passing is fine too — assert only that the
+            // answer is not silently wrong, which the check above has already established.
+            return;
+        }
+
         Assert.True(status2 == "pass",
-            "the consuming app was not rebound after its dependency gained an overload. Its own "
-            + "files did not change, so its module took the \"replay the last cycle's result "
-            + "verbatim\" short-circuit and never entered the delta path — leaving its cached C# "
-            + "dispatching the member id that Which(Decimal) resolved to. That member still exists "
-            + "in the re-emitted dependency, so the call succeeded and returned the PREVIOUS "
-            + "overload's answer with no exception and no diagnostic. Expected BOUND-TO=2 "
-            + $"(what a cold run of these exact sources gives); got: {string.Join(" | ", lines2)}");
+            "the documented dependency-first order must answer exactly as a cold run of these "
+            + $"sources does (BOUND-TO=2). Got: {joined2}");
     }
 }
