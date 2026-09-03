@@ -42,6 +42,10 @@ public static partial class BcRuntime
     private static FieldInfo? _fTreeHandlerFirstChildBase;  // TreeHandler.firstChildHandler
     private static FieldInfo? _fTreeHandlerPrevSibling;     // TreeHandler.previousSiblingHandler
     private static FieldInfo? _fTreeHandlerNextSiblingBase; // TreeHandler.nextSiblingHandler
+    // Used by MethodScopePatches.UnbindLocalManualSubscriptions (#2476) to walk a disposing
+    // scope's own direct children and find local Codeunit-typed variable handles — see that
+    // method's doc comment for why this is narrower than the general child-dispose cascade.
+    internal static FieldInfo? _fTreeHandlerHostObject;      // TreeHandler.hostObject
 
     // NavApplicationObjectBase ctor replacement fields.
     private static FieldInfo? _fAoSession;             // NavApplicationObjectBase.session
@@ -1341,6 +1345,8 @@ public static partial class BcRuntime
             _fTreeHandlerPrevSibling     = treeHandlerType.GetField("previousSiblingHandler",
                 BindingFlags.NonPublic | BindingFlags.Instance);
             _fTreeHandlerNextSiblingBase = treeHandlerType.GetField("nextSiblingHandler",
+                BindingFlags.NonPublic | BindingFlags.Instance);
+            _fTreeHandlerHostObject = treeHandlerType.GetField("hostObject",
                 BindingFlags.NonPublic | BindingFlags.Instance);
         }
 

@@ -992,6 +992,7 @@ public sealed class TestExecutor
     private TestResult RunOne(string codeunit, MethodInfo m, object instance, string displayName)
     {
         var sw = System.Diagnostics.Stopwatch.StartNew();
+        var timedOut = false;
         PerfTrace.Log($"TestExecutor.RunOne START {codeunit}.{m.Name}");
         // Per-test reset only under Test isolation, which is AL's `TestIsolation =
         // Function`. Codeunit isolation resets at the CODEUNIT boundary instead (see
@@ -1037,6 +1038,10 @@ public sealed class TestExecutor
             if (!invokeResult.Completed)
             {
                 PerfTrace.Log($"TestExecutor.RunOne TIMEOUT {codeunit}.{m.Name} {sw.ElapsedMilliseconds}ms");
+                // The abandoned thread may still be writing to the row store — rolling back
+                // underneath it here would race with whatever it does next. See the
+                // ApplyTestTransactionModel call in `finally` below, which this flag skips.
+                timedOut = true;
                 var alStack = AlRunner.Infrastructure.AlCallStackCapture.CaptureCurrent();
                 return new TestResult(codeunit, m.Name, TestOutcome.Error,
                     $"Test exceeded {(int)timeout.TotalSeconds}s timeout.", null, sw.Elapsed, alStack, displayName,
@@ -1079,6 +1084,23 @@ public sealed class TestExecutor
         }
         finally
         {
+            // #2400: BC's own NavTestCodeunit.ExecuteTestMethodAsync rolls the session back
+            // to this test's own commit point — REGARDLESS of pass/fail — when the [Test]
+            // procedure carries [TransactionModel(TransactionModel::AutoRollback)] (decompiled,
+            // unmodified NCL body: the try block's own `case TestTransactionModel.AutoRollback:
+            // activeSession.Rollback();` after the method returns, and the surrounding
+            // `catch (Exception) { if (activeSession.IsTransactionActive())
+            // activeSession.Rollback(); }` when it throws). RunOne calls `m.Invoke` directly
+            // and never goes through that BC dispatch method, so the attribute had no effect
+            // at all: a codeunit under the default TestIsolation = Codeunit shares one
+            // transaction across every [Test], and an AutoRollback-annotated test's own writes
+            // (e.g. Microsoft's TestAppPermissions InitializeData() creating "Security Group"
+            // rows) stayed visible to every later [Test] in the same codeunit instead of being
+            // undone immediately. Skipped on timeout — the abandoned thread may still be
+            // writing to the row store.
+            if (!timedOut)
+                ApplyTestTransactionModel(m);
+
             BcRuntime.LeaveTestExecutionScope();
             // #2135: close this test's coverage-attribution window — see BeginTest's
             // call above. A stray timed-out background thread (see this method's
@@ -1090,6 +1112,41 @@ public sealed class TestExecutor
             // Env-gated memory-census diagnostic (AL_RUNNER_MEM_CENSUS=1); no-op when unset — see MemoryCensus.cs.
             MemoryCensus.Log(codeunit, m.Name);
         }
+    }
+
+    // Per-method cache: [NavTest] attribute instance found on a test MethodInfo, or null if
+    // none. Resolved once per method — see ResolveGetMethodScopeFlags in MethodScopePatches.cs
+    // for the established pattern (a reflection member/attribute lookup depends only on the
+    // method, of which a run has a bounded, small set).
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<MethodInfo, object?>
+        _testAttrCache = new();
+
+    /// <summary>
+    /// Read the [NavTest] attribute's TransactionModel property off <paramref name="m"/> —
+    /// discovered by TYPE NAME, matching this file's own convention (see the header comment:
+    /// "We discover by attribute name to avoid coupling to specific BC types") rather than a
+    /// hard `Microsoft.Dynamics.Nav.Runtime.NavTestAttribute` reference, since a multi-bundle
+    /// run can have more than one Ncl assembly-load-context loaded. If it is
+    /// TestTransactionModel.AutoRollback, roll the row store back to this test's own commit
+    /// point (RunOne's own MarkCommitPoint() call, right before m.Invoke) — see the call
+    /// site's comment for why this has to happen here rather than through BC's own dispatch.
+    /// </summary>
+    private static void ApplyTestTransactionModel(MethodInfo m)
+    {
+        var attr = _testAttrCache.GetOrAdd(m, static mi =>
+            mi.GetCustomAttributes(inherit: false)
+              .FirstOrDefault(a => a.GetType().Name is "NavTestAttribute" or "TestAttribute"));
+        if (attr == null) return;
+
+        var prop = attr.GetType().GetProperty("TransactionModel",
+            BindingFlags.Public | BindingFlags.Instance);
+        var value = prop?.GetValue(attr);
+        // TestTransactionModel.AutoRollback = 1 (AutoCommit=0, AutoRollback=1, None=2) —
+        // compared by NAME, not by casting to the real enum type, for the same
+        // assembly-load-context reason as the attribute-name lookup above.
+        if (value == null || value.ToString() != "AutoRollback") return;
+
+        AlRunner.Patches.RecordPatches.RollbackToCommitPoint(BcRuntime.SkeletonSession);
     }
 
     // Issue #2070 root cause: this watchdog's clock is WALL-CLOCK time on the AL
