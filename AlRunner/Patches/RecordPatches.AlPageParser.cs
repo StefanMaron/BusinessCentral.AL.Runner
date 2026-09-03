@@ -247,6 +247,17 @@ public static partial class RecordPatches
             if (NamesEqual(table.TableName, page.SourceTableName))
                 return table.TableId;
 
+        // (#2452) The loop above only sees tables THIS bundle AL-source-parsed. A
+        // bundle-declared page's SourceTable may instead name a table that ships
+        // PRECOMPILED in a loaded dependency .app (e.g. Base Application "Resource")
+        // — that table is never in _parsedTables until something asks for it by name.
+        // TryPopulateParsedTableByName is the SAME by-name dependency lookup
+        // BuildMetaCalcFormula/BcAppFallback already use for FlowField CalcFormula
+        // source-table resolution; this is a second caller; not new lookup machinery.
+        var byName = TryPopulateParsedTableByName(page.SourceTableName);
+        if (byName != null)
+            return byName.TableId;
+
         return 0;
     }
 
