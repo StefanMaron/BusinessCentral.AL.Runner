@@ -457,11 +457,35 @@ public static class BcArtifacts
             p => AlRunner.Provisioning.ArtifactDownloader.ResolveVersion(p, log),
             out tier);
 
+    /// <summary>
+    /// #2489: <paramref name="path"/> here is the shadow-dir Ncl.dll that
+    /// <c>NclCecilRewrite.RewriteInPlace</c> atomically replaces (temp-write + rename)
+    /// at every process's own startup. Under concurrent same-key subprocess spawns
+    /// (measured: AlRunner.Tests classes sharing one ncl-shadow key) a plain
+    /// <c>AssemblyName.GetAssemblyName</c> read here can land squarely inside that
+    /// rename — <c>ERROR_SHARING_VIOLATION</c> on Windows, or a transient not-found on
+    /// either platform if caught between the old name being removed and the new one
+    /// appearing. Extracted so the retry itself is directly unit-testable without
+    /// touching <see cref="SelectedVersion"/>'s global, lazily-initialized state.
+    /// </summary>
+    internal static System.Reflection.AssemblyName GetAssemblyNameWithRetry(string path)
+    {
+        const int maxAttempts = 20;
+        for (var attempt = 1; attempt <= maxAttempts; attempt++)
+        {
+            try { return System.Reflection.AssemblyName.GetAssemblyName(path); }
+            catch (IOException) when (attempt < maxAttempts) { System.Threading.Thread.Sleep(100); }
+            catch (UnauthorizedAccessException) when (attempt < maxAttempts) { System.Threading.Thread.Sleep(100); }
+        }
+        return System.Reflection.AssemblyName.GetAssemblyName(path); // final attempt — let it throw if still failing
+    }
+
     public static void VerifyEngineConsistency(string binDir)
     {
         var ncl = Path.Combine(binDir, "Microsoft.Dynamics.Nav.Ncl.dll");
         if (!File.Exists(ncl)) return; // nothing to compare against
-        var engineVer = System.Reflection.AssemblyName.GetAssemblyName(ncl).Version;
+
+        var engineVer = GetAssemblyNameWithRetry(ncl).Version;
         if (engineVer == null) return;
 
         var selected = SelectedVersion;

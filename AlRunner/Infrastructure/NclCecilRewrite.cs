@@ -8782,10 +8782,7 @@ public static class NclCecilRewrite
     /// key, several processes legitimately read this SAME path around the same moment a
     /// sibling MISS-writer is <c>AtomicReplace</c>-ing it (temp-write + rename). On
     /// Windows a reader can catch that rename mid-flight and get
-    /// <c>ERROR_SHARING_VIOLATION</c> — measured directly: <c>File.ReadAllBytes</c> with
-    /// no retry here is exactly what <see cref="FileContentEquals"/>'s cache-HIT
-    /// optimization made MORE likely to hit, by adding a second unguarded read of the
-    /// same path right before this one. Same bounded retry/backoff shape as
+    /// <c>ERROR_SHARING_VIOLATION</c>. Same bounded retry/backoff shape as
     /// <see cref="AtomicReplace(string, byte[])"/>'s own writer-side retry, just for a
     /// reader instead.
     /// </summary>
@@ -8799,30 +8796,6 @@ public static class NclCecilRewrite
             catch (UnauthorizedAccessException) when (attempt < maxAttempts) { System.Threading.Thread.Sleep(250); }
         }
         return File.ReadAllBytes(path); // final attempt — let it throw if still failing
-    }
-
-    /// <summary>
-    /// True when <paramref name="destPath"/> already holds byte-identical content to
-    /// <paramref name="sourcePath"/> — used by <see cref="RewriteInPlace"/>'s cache-HIT
-    /// branch (#2489) to skip a write that would just reproduce bytes already there. Size
-    /// check first (cheap, avoids reading the larger file on the common "genuinely
-    /// different" path); any I/O failure reading either file (missing, a sibling
-    /// mid-write/mid-rename of the shared cache entry — see
-    /// <see cref="ReadAllBytesWithRetry"/>) is treated as "not equal" so the caller falls
-    /// through to the normal (retrying) write path rather than throwing here.
-    /// </summary>
-    internal static bool FileContentEquals(string sourcePath, string destPath)
-    {
-        try
-        {
-            if (!File.Exists(destPath)) return false;
-            var sourceInfo = new FileInfo(sourcePath);
-            var destInfo = new FileInfo(destPath);
-            if (sourceInfo.Length != destInfo.Length) return false;
-            return ReadAllBytesWithRetry(sourcePath).AsSpan().SequenceEqual(ReadAllBytesWithRetry(destPath));
-        }
-        catch (IOException) { return false; }
-        catch (UnauthorizedAccessException) { return false; }
     }
 
     public static bool RewriteInPlace(string srcDir, string binNclPath)
@@ -8860,26 +8833,19 @@ public static class NclCecilRewrite
         {
             Console.Error.WriteLine($"[Cecil] Cecil cache HIT (key={shortKey})");
 
-            // #2489: a shadow-re-exec CHILD (see NclShadowRuntime) starts from a
-            // directory whose Ncl.dll was ALREADY populated from this exact cache entry
-            // — by the PARENT process's own EnsureShadowDir call, which runs this same
-            // rewrite-or-cache-copy logic before publishing the shadow dir. Re-copying
-            // here is then pure waste that's also actively harmful under concurrent
-            // startups: several shadow children sharing one published dir (same key) all
-            // re-run this method at their own startup, so several `AtomicReplaceFrom`
-            // writers hit the identical destination file at once, right as
-            // BcArtifacts.VerifyEngineConsistency (a reader with no retry of its own) is
-            // trying to read it — measured as "used by another process" at N=4 on an
-            // empty root. Skip the copy entirely when the destination already holds
-            // these exact bytes; only a genuinely stale/missing/differing destination
-            // needs the write.
-            if (FileContentEquals(cachePath, binNclPath))
-            {
-                Console.Error.WriteLine($"[Cecil] {binNclPath} already matches the cached Ncl — skipping copy");
-                PruneCacheFiles(cacheDir, cachePath, keepNewest: 8);
-                return false;
-            }
-
+            // #2489: an earlier version of this method skipped this AtomicReplaceFrom
+            // call entirely when the destination already held these exact bytes (a
+            // shadow-re-exec CHILD's own Ncl.dll, already populated by the PARENT
+            // process's EnsureShadowDir call before publishing). That optimization was
+            // withdrawn — it could not be distinguished from a residual, hard-to-pin
+            // regression measured under CI's real concurrent-subprocess load
+            // (AlRunner.Tests classes racing this exact shared-key path), and
+            // AtomicReplaceFrom's rename-based replace is ALREADY safe for concurrent
+            // readers on its own (an open handle/mmap to the old inode keeps working
+            // through a rename; nothing here truncates a file in place). The
+            // BcArtifacts.VerifyEngineConsistency read this comment used to cite as the
+            // race motivating the skip is hardened directly instead — see its own retry
+            // wrapper — so removing the skip does not reopen that hole.
             AtomicReplaceFrom(cachePath, binNclPath);
             Console.Error.WriteLine($"[Cecil] Copied cached Ncl to {binNclPath}");
             PruneCacheFiles(cacheDir, cachePath, keepNewest: 8);

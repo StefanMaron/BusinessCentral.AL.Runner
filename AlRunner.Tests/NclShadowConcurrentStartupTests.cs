@@ -402,81 +402,43 @@ public sealed class NclShadowConcurrentStartupTests
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // NclCecilRewrite.FileContentEquals — outcome 4 (redundant child re-copy)
+    // BcArtifacts.GetAssemblyNameWithRetry — the original #2489 crash site
     // ─────────────────────────────────────────────────────────────────────────
 
-    /// <summary>Positive: identical content at both paths compares equal — the case
-    /// RewriteInPlace's cache-HIT branch now uses to skip a pointless (and, under
-    /// concurrent shadow-dir startups, actively racy) re-copy of Ncl.dll that a sibling
-    /// or the parent EnsureShadowDir build already wrote.</summary>
+    /// <summary>Positive + regression pin: a transient exclusive lock on the target file
+    /// (standing in for NclCecilRewrite.RewriteInPlace's atomic-replace rename landing at
+    /// the wrong moment — the field report's own "MoveDirectory ... Access is denied"
+    /// shape, one level down at the file-read side) must NOT make the read fail outright.
+    /// Before this fix, AssemblyName.GetAssemblyName had no retry, so this exact
+    /// contention crashed BcArtifacts.VerifyEngineConsistency in the field. The lock is
+    /// released from a background task shortly after the read starts, well inside the
+    /// method's retry budget.</summary>
     [Fact]
-    public void FileContentEquals_IdenticalBytes_ReturnsTrue()
+    public void GetAssemblyNameWithRetry_TransientExclusiveLock_RetriesUntilReadable()
     {
-        var dir = NewTempDir("content-equal");
+        var dir = NewTempDir("assemblyname-retry");
         try
         {
-            var a = Path.Combine(dir, "a.dll");
-            var b = Path.Combine(dir, "b.dll");
-            var bytes = new byte[50000];
-            new Random(42).NextBytes(bytes);
-            File.WriteAllBytes(a, bytes);
-            File.WriteAllBytes(b, bytes);
+            var path = Path.Combine(dir, "Some.Assembly.dll");
+            // A real, loadable managed assembly — the runner's own test assembly makes a
+            // convenient, always-available stand-in for the shadow dir's Ncl.dll.
+            File.Copy(typeof(NclShadowConcurrentStartupTests).Assembly.Location, path);
 
-            Assert.True(NclCecilRewrite.FileContentEquals(a, b));
-        }
-        finally { Directory.Delete(dir, recursive: true); }
-    }
+            using var exclusiveLock = new FileStream(
+                path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
 
-    /// <summary>Negative: different content (even same length) compares unequal — proves
-    /// the check reads bytes rather than just comparing size/timestamps, which would let a
-    /// genuinely stale destination silently keep wrong content.</summary>
-    [Fact]
-    public void FileContentEquals_SameLengthDifferentBytes_ReturnsFalse()
-    {
-        var dir = NewTempDir("content-unequal");
-        try
-        {
-            var a = Path.Combine(dir, "a.dll");
-            var b = Path.Combine(dir, "b.dll");
-            File.WriteAllBytes(a, new byte[] { 1, 2, 3, 4 });
-            File.WriteAllBytes(b, new byte[] { 1, 2, 3, 5 });
+            var releaseAfter = Task.Run(async () =>
+            {
+                await Task.Delay(300);
+                exclusiveLock.Dispose();
+            });
 
-            Assert.False(NclCecilRewrite.FileContentEquals(a, b));
-        }
-        finally { Directory.Delete(dir, recursive: true); }
-    }
+            // Blocks on the lock above for a few retry iterations, then succeeds once
+            // the background task above disposes it.
+            var name = AlRunner.Infrastructure.BcArtifacts.GetAssemblyNameWithRetry(path);
 
-    /// <summary>Negative: different length compares unequal without needing to read the
-    /// larger file (the cheap-path assertion is implicit — this just proves correctness).</summary>
-    [Fact]
-    public void FileContentEquals_DifferentLength_ReturnsFalse()
-    {
-        var dir = NewTempDir("content-unequal-len");
-        try
-        {
-            var a = Path.Combine(dir, "a.dll");
-            var b = Path.Combine(dir, "b.dll");
-            File.WriteAllBytes(a, new byte[] { 1, 2, 3 });
-            File.WriteAllBytes(b, new byte[] { 1, 2, 3, 4, 5 });
-
-            Assert.False(NclCecilRewrite.FileContentEquals(a, b));
-        }
-        finally { Directory.Delete(dir, recursive: true); }
-    }
-
-    /// <summary>Negative: destination missing entirely is "not equal", not an exception —
-    /// RewriteInPlace's normal write path must still run for a fresh shadowDir build.</summary>
-    [Fact]
-    public void FileContentEquals_DestMissing_ReturnsFalse()
-    {
-        var dir = NewTempDir("content-dest-missing");
-        try
-        {
-            var a = Path.Combine(dir, "a.dll");
-            File.WriteAllBytes(a, new byte[] { 1, 2, 3 });
-            var b = Path.Combine(dir, "does-not-exist.dll");
-
-            Assert.False(NclCecilRewrite.FileContentEquals(a, b));
+            Assert.NotNull(name.Name);
+            releaseAfter.Wait(TimeSpan.FromSeconds(5));
         }
         finally { Directory.Delete(dir, recursive: true); }
     }
