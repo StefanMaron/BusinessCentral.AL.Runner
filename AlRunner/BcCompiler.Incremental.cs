@@ -1123,10 +1123,15 @@ public sealed partial class BcCompiler
     private static string? OverloadAddedUnderAnExistingName(
         NavSymRef.ModuleDefinition before, NavSymRef.ModuleDefinition after, IReadOnlySet<RadObjectIdentity> changed)
     {
-        foreach (var id in changed)
+        if (changed.Count == 0) return null;
+        var previousByObject = RadMethodNameCounts(before, changed);
+        if (previousByObject.Count == 0) return null;
+        var currentByObject = RadMethodNameCounts(after, changed);
+
+        foreach (var (id, previous) in previousByObject)
         {
-            if (RadMethodNameCounts(before, id) is not { } previous || previous.Count == 0) continue;
-            if (RadMethodNameCounts(after, id) is not { } current) continue;
+            if (previous == null || previous.Count == 0) continue;
+            if (!currentByObject.TryGetValue(id, out var current) || current == null) continue;
             foreach (var (name, count) in current)
                 if (previous.TryGetValue(name, out var had) && count > had)
                     return $"{id.Kind} '{id.Name}'";
@@ -1135,42 +1140,64 @@ public sealed partial class BcCompiler
     }
 
     /// <summary>
-    /// How many serialized methods <paramref name="id"/> declares under each name in
-    /// <paramref name="module"/>, or null when the object is absent, present more than once, or
-    /// has no readable <c>Methods</c> array.
+    /// How many serialized methods each object in <paramref name="wanted"/> declares under each
+    /// name, in one pass over <paramref name="module"/> — every namespace depth included (#2507).
     ///
-    /// <para>Null is "cannot answer", never "no methods" — an empty dictionary is the latter, and
-    /// <see cref="OverloadAddedUnderAnExistingName"/> distinguishes them. Names are counted
-    /// case-insensitively because AL identifiers are.</para>
+    /// <para>One pass, not one per identity: a bulk change (a branch switch, a bulk rename) can put
+    /// hundreds of objects in the change set, and asking per identity would re-walk the whole
+    /// module — reflection <c>GetValue</c> over every element of every kind array — once per one of
+    /// them.</para>
+    ///
+    /// <para>An object missing from the result was not found. A null VALUE is "found, but cannot be
+    /// counted" — present more than once (ambiguous), no readable <c>Methods</c> array, or a member
+    /// with no usable name. Both are non-answers to
+    /// <see cref="OverloadAddedUnderAnExistingName"/> and neither is "no methods", which is an
+    /// empty dictionary. Names are counted case-insensitively because AL identifiers are.</para>
     /// </summary>
-    private static Dictionary<string, int>? RadMethodNameCounts(NavSymRef.ModuleDefinition module, RadObjectIdentity id)
+    private static Dictionary<RadObjectIdentity, Dictionary<string, int>?> RadMethodNameCounts(
+        NavSymRef.ModuleDefinition module, IReadOnlySet<RadObjectIdentity> wanted)
     {
-        var propName = RadMergeablePropertiesByKind.FirstOrDefault(p => p.Kind == id.Kind).PropertyName;
-        if (propName == null) return null;
-        var prop = RadContainerProperty(propName);
-        var wanted = IdentityElementKeyOf(id);
+        var byKindAndKey = new Dictionary<(NavCA.SymbolKind Kind, string Key), RadObjectIdentity>();
+        foreach (var id in wanted)
+            if (RadMergeablePropertiesByKind.Any(p => p.Kind == id.Kind))
+                byKindAndKey[(id.Kind, IdentityElementKeyOf(id))] = id;
 
-        object? found = null;
-        // Every namespace depth, not just the module's own arrays (#2507).
+        var result = new Dictionary<RadObjectIdentity, Dictionary<string, int>?>();
+        if (byKindAndKey.Count == 0) return result;
+
+        var kindsWanted = byKindAndKey.Keys.Select(k => k.Kind).ToHashSet();
         foreach (var container in EnumerateContainers(module))
         {
-            if (prop.GetValue(container) is not Array arr) continue;
-            foreach (var item in arr)
+            foreach (var (propName, kind) in RadMergeablePropertiesByKind)
             {
-                if (item == null || ElementKey(item, id.Kind) != wanted) continue;
-                if (found != null) return null; // ambiguous — two copies, no defensible answer
-                found = item;
+                if (!kindsWanted.Contains(kind)) continue;
+                if (RadContainerProperty(propName).GetValue(container) is not Array arr) continue;
+                foreach (var item in arr)
+                {
+                    if (item == null) continue;
+                    if (!byKindAndKey.TryGetValue((kind, ElementKey(item, kind)), out var id)) continue;
+                    // A second copy of a key is ambiguous: which one answers would be decided by
+                    // array order rather than by the edit. Refuse to answer for it.
+                    result[id] = result.ContainsKey(id) ? null : RadMemberNameCounts(item);
+                }
             }
         }
-        if (found == null) return null;
-        if (found.GetType().GetProperty("Methods")?.GetValue(found) is not Array methods) return null;
+        return result;
+    }
 
+    /// <summary>
+    /// One serialized object's method-name multiset, or null when a member cannot be named — see
+    /// <see cref="RadMethodNameCounts"/> for how null is read.
+    /// </summary>
+    private static Dictionary<string, int>? RadMemberNameCounts(object element)
+    {
+        if (element.GetType().GetProperty("Methods")?.GetValue(element) is not Array methods) return null;
         var counts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         foreach (var method in methods)
         {
             if (method == null) continue;
             if (method.GetType().GetProperty("Name")?.GetValue(method) is not string name || name.Length == 0)
-                return null; // unkeyable member — do not pretend to have counted the surface
+                return null;
             counts[name] = counts.TryGetValue(name, out var n) ? n + 1 : 1;
         }
         return counts;
