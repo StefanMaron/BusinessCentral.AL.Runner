@@ -13,6 +13,11 @@ public static class AlScopeSyntaxResolver
     private static AlMemberSyntaxIndex? _index;
     private static IReadOnlyDictionary<(string Label, int Id), string>? _sourceMap;
     private static readonly ConcurrentDictionary<Type, AlScopeSyntax?> _scopes = new();
+    private static readonly ConcurrentDictionary<Type, string> _unresolved = new();
+
+    /// <summary>Bundle scopes whose member could not be matched in the parsed source, as
+    /// "scope@file". A dependency or framework scope is not in the bundle and is not listed.</summary>
+    public static IReadOnlyCollection<string> UnresolvedScopes => _unresolved.Values.Distinct().OrderBy(s => s, StringComparer.Ordinal).ToList();
 
     /// <summary>Installs the request's index and file map and forgets earlier resolutions.</summary>
     public static void Configure(AlMemberSyntaxIndex index, IReadOnlyDictionary<(string Label, int Id), string> sourceMap)
@@ -20,6 +25,7 @@ public static class AlScopeSyntaxResolver
         _index = index;
         _sourceMap = sourceMap;
         _scopes.Clear();
+        _unresolved.Clear();
     }
 
     /// <summary>Forgets the index, so a request without syntax-backed features resolves nothing.</summary>
@@ -28,6 +34,7 @@ public static class AlScopeSyntaxResolver
         _index = null;
         _sourceMap = null;
         _scopes.Clear();
+        _unresolved.Clear();
     }
 
     public static AlScopeSyntax? Resolve(Type scopeType)
@@ -56,7 +63,12 @@ public static class AlScopeSyntaxResolver
             anchor = new AlTextPosition(fromLine, fromColumn);
         }
         var member = index.FindMember(scope.FilePath, scope.ScopeName, anchor);
-        if (member == null) return null;
+        if (member == null)
+        {
+            _unresolved[scopeType] = $"{scope.ScopeName}@{scope.FilePath}";
+            Console.Error.WriteLine($"[iterations] no member '{scope.ScopeName}' matched in {scope.FilePath}: its loops and write sets are not tracked");
+            return null;
+        }
 
         return new AlScopeSyntax(
             AlLoopScopeTable.Build(member.Sites, scope.Spans, instrumented),

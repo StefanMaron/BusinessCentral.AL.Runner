@@ -42,15 +42,14 @@
 // ones. IsTopLevelCall is true for every scope of the run's root object (StackDepth only
 // grows across an application-object boundary, see AlDapSession.cs), so all are captured.
 //
-// THE FIRST OBSERVATION IS A BASELINE, NEVER EMITTED, with one measured exception:
+// THE FIRST OBSERVATION IS A BASELINE, NEVER EMITTED, except a loop variable:
 //
 // The first StmtHit fires before any statement ran, so every field is at its default and
 // nothing produced that state. Except that BC assigns a for/foreach variable BEFORE the
-// loop statement's own hit, so a leading `for` shows `i = 1` at the baseline. AL locals
-// start at their type's default, so a CLR primitive or non-empty string that is
-// non-default at the baseline was assigned by statement 0 before its hit; it is emitted,
-// attributed to statement 0 (AssignedBeforeFirstHit). A local declared but never
-// assigned gets no record at all.
+// loop statement's own hit, so at a `for` statement's hit (leading or not) its loop
+// variable is read and attributed to the loop statement itself, whatever the value; every
+// other field observed there is the previous statement's effect. A statement before the
+// loop that assigns the same variable is observed once, folded into that record.
 using System.Reflection;
 using Microsoft.Dynamics.Nav.Runtime;
 
@@ -143,12 +142,28 @@ public static class AlValueCapture
         var scopeName = scope.ScopeName ?? "?";
         var state = _frames.GetOrPush(scope).State;
         bool isBaseline = state.LastStatementId < 0;
-        // Attribute to the statement that just finished; a baseline's values came from
-        // statement 0 itself (see the file header).
         var previous = state.LastStatementId;
-        var assigned = isBaseline ? null : AssignedBetween(scope.GetType(), previous, currentStatementNumber);
-        var changed = DiffAndUpdate(scopeName, isBaseline ? currentStatementNumber : previous,
-            NamedFields(scope), state.LastKnown, isBaseline, assigned);
+        var syntax = AlScopeSyntaxResolver.Resolve(scope.GetType());
+        var fields = NamedFields(scope);
+
+        // A for/foreach statement's own hit: its loop variable was just assigned by it
+        // (see the file header), the rest is the previous statement's effect.
+        var headerVariable = syntax?.Loops.LoopVariableOfHeader(currentStatementNumber);
+        List<AlCapturedValue> changed;
+        if (headerVariable != null)
+        {
+            var loopField = fields.Where(f => string.Equals(f.Name, headerVariable, StringComparison.OrdinalIgnoreCase)).ToList();
+            var rest = fields.Where(f => !string.Equals(f.Name, headerVariable, StringComparison.OrdinalIgnoreCase));
+            changed = DiffAndUpdate(scopeName, previous, rest, state.LastKnown, isBaseline,
+                isBaseline ? null : AssignedBetween(syntax, previous, currentStatementNumber));
+            changed.AddRange(DiffAndUpdate(scopeName, currentStatementNumber, loopField, state.LastKnown, isBaseline: false,
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase) { headerVariable }));
+        }
+        else
+        {
+            changed = DiffAndUpdate(scopeName, previous, fields, state.LastKnown, isBaseline,
+                isBaseline ? null : AssignedBetween(syntax, previous, currentStatementNumber));
+        }
         if (changed.Count > 0) (_series ??= new List<AlCapturedValue>()).AddRange(changed);
         state.LastStatementId = currentStatementNumber;
         return changed;
@@ -239,7 +254,7 @@ public static class AlValueCapture
         var changed = new List<AlCapturedValue>();
         foreach (var (name, readField) in fields)
         {
-            var captured = CaptureField(scopeName, name, attributionStatementId, readField, out var raw);
+            var captured = CaptureField(scopeName, name, attributionStatementId, readField);
             bool unchanged = lastKnown.TryGetValue(name, out var prev)
                 && Equals(prev.Value, captured.Value) && prev.Error == captured.CaptureError;
             if (unchanged && !WasAssigned(assigned, name))
@@ -247,16 +262,14 @@ public static class AlValueCapture
                 continue; // neither changed nor assigned since the last observation — no execution to report
             }
             lastKnown[name] = (captured.Value, captured.CaptureError);
-            if (!isBaseline || (captured.CaptureError == null && AssignedBeforeFirstHit(raw)))
-                changed.Add(captured);
+            if (!isBaseline) changed.Add(captured);
         }
         return changed;
     }
 
     // The finished statement's write set plus loop variables assigned before `current`.
-    private static IReadOnlySet<string>? AssignedBetween(Type scopeType, int previous, int current)
+    private static IReadOnlySet<string>? AssignedBetween(AlScopeSyntax? syntax, int previous, int current)
     {
-        var syntax = AlScopeSyntaxResolver.Resolve(scopeType);
         if (syntax == null) return null;
         var writes = syntax.Writes.TargetsOf(previous);
         HashSet<string>? merged = null;
@@ -278,21 +291,6 @@ public static class AlValueCapture
         return false;
     }
 
-    /// <summary>A non-default primitive at the first observation was assigned by statement 0
-    /// before its hit; a BC value-type wrapper's ToString() of its default may be non-empty,
-    /// so only primitives and strings count.</summary>
-    private static bool AssignedBeforeFirstHit(object? raw) => raw switch
-    {
-        null => false,
-        bool b => b,
-        string s => s.Length > 0,
-        byte or sbyte or short or ushort or int or uint or long or ulong => Convert.ToDecimal(raw) != 0m,
-        float f => f != 0f,
-        double d => d != 0d,
-        decimal m => m != 0m,
-        _ => false,
-    };
-
     /// <summary>
     /// Captures one AL local given a way to read its raw CLR value. Extracted so the two
     /// failure modes issue #2043 names — a read that throws, and a ToString() that throws
@@ -303,14 +301,9 @@ public static class AlValueCapture
     /// ever throw — see the file header and AlValueCaptureErrorVisibilityTests).
     /// </summary>
     internal static AlCapturedValue CaptureField(
-        string scopeName, string name, int statementId, Func<object?> readField) =>
-        CaptureField(scopeName, name, statementId, readField, out _);
-
-    /// <summary>As above, also returning the raw CLR value (null when the read threw).</summary>
-    internal static AlCapturedValue CaptureField(
-        string scopeName, string name, int statementId, Func<object?> readField, out object? raw)
+        string scopeName, string name, int statementId, Func<object?> readField)
     {
-        raw = null;
+        object? raw;
         try { raw = readField(); }
         catch (Exception ex)
         {

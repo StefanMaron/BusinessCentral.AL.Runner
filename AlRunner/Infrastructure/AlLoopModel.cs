@@ -10,11 +10,22 @@
 //
 // An iteration opens when the body's first statement is hit (the "marker"). If that
 // statement is itself a loop, the marker is that loop's entry, because its own ids fire
-// several times per pass. A body with no instrumented statement is unsegmentable and
-// reported as such, never counted.
+// several times per pass. Shapes the hit stream cannot segment are reported as such,
+// never counted: an empty body, and a loop whose whole body is a nested repeat, a nested
+// while containing `break`, or a nested loop that is itself unsegmentable (no outer id
+// separates the nested loop's re-entry from its next pass).
 namespace AlRunner.Infrastructure;
 
 public enum AlLoopKind { For, ForEach, While, Repeat }
+
+/// <summary>Stable reason codes for a loop whose iterations cannot be counted.</summary>
+public static class AlLoopUnsegmentable
+{
+    public const string EmptyBody = "emptyBody";
+    public const string SoleNestedRepeat = "soleNestedRepeat";
+    public const string SoleNestedWhileWithBreak = "soleNestedWhileWithBreak";
+    public const string SoleNestedUnsegmentable = "soleNestedUnsegmentable";
+}
 
 /// <summary>0-based (line, column): the coordinate space both [SourceSpans] and the syntax tree use.</summary>
 public readonly record struct AlTextPosition(int Line, int Column) : IComparable<AlTextPosition>
@@ -37,7 +48,8 @@ public readonly record struct AlTextRange(AlTextPosition Start, AlTextPosition E
 /// <summary>A body statement in document order, blocks flattened. NestedSiteIndex is set when it is a loop.</summary>
 public readonly record struct AlLoopBodyStatement(AlTextRange Range, int? NestedSiteIndex);
 
-/// <summary>A loop as parsed from AL. Index is its position in the member's site list.</summary>
+/// <summary>A loop as parsed from AL. Index is its position in the member's site list; ContainsBreak
+/// is true when a `break` targets this loop (not a nested one).</summary>
 public sealed record AlLoopSite(
     int Index,
     AlLoopKind Kind,
@@ -45,13 +57,15 @@ public sealed record AlLoopSite(
     AlTextRange Range,
     IReadOnlyList<AlTextRange> HeaderRanges,
     IReadOnlyList<AlLoopBodyStatement> Body,
-    int? ParentIndex);
+    int? ParentIndex,
+    bool ContainsBreak);
 
 /// <summary>A loop resolved to one scope class's statement ids.</summary>
 public sealed class AlLoopSiteTable
 {
     public AlLoopSiteTable(
-        int index, AlLoopKind kind, string? loopVariable, int startLine, int endLine,
+        int index, AlLoopKind kind, string? loopVariable,
+        int startLine, int startColumn, int endLine, int endColumn,
         IReadOnlySet<int> headerIds, IReadOnlySet<int> bodyIds,
         int? markerStatementId, int? markerNestedSiteIndex, int? parentIndex, string? unsegmentable)
     {
@@ -59,7 +73,9 @@ public sealed class AlLoopSiteTable
         Kind = kind;
         LoopVariable = loopVariable;
         StartLine = startLine;
+        StartColumn = startColumn;
         EndLine = endLine;
+        EndColumn = endColumn;
         HeaderIds = headerIds;
         BodyIds = bodyIds;
         MarkerStatementId = markerStatementId;
@@ -72,9 +88,11 @@ public sealed class AlLoopSiteTable
     public AlLoopKind Kind { get; }
     /// <summary>The for/foreach control variable; null for while/repeat.</summary>
     public string? LoopVariable { get; }
-    /// <summary>1-based source lines of the loop statement.</summary>
+    /// <summary>1-based source position of the loop statement.</summary>
     public int StartLine { get; }
+    public int StartColumn { get; }
     public int EndLine { get; }
+    public int EndColumn { get; }
     /// <summary>Ids hit at entry (for/foreach) or per evaluation (while/until condition).</summary>
     public IReadOnlySet<int> HeaderIds { get; }
     /// <summary>Ids inside the body, nested loops included.</summary>
@@ -84,13 +102,20 @@ public sealed class AlLoopSiteTable
     /// <summary>The nested loop whose entry opens an iteration of this one.</summary>
     public int? MarkerNestedSiteIndex { get; }
     public int? ParentIndex { get; }
-    /// <summary>Why iterations cannot be counted for this loop, or null.</summary>
+    /// <summary>An AlLoopUnsegmentable code, or null when iterations can be counted.</summary>
     public string? Unsegmentable { get; }
+
+    public bool IsCounted => Kind is AlLoopKind.For or AlLoopKind.ForEach;
 
     /// <summary>Directly nested loops.</summary>
     public IReadOnlyList<AlLoopSiteTable> Children => _children;
     private readonly List<AlLoopSiteTable> _children = new();
-    internal void AddChild(AlLoopSiteTable child) => _children.Add(child);
+    internal AlLoopSiteTable? Parent { get; private set; }
+    internal void AddChild(AlLoopSiteTable child)
+    {
+        _children.Add(child);
+        child.Parent = this;
+    }
 
     public bool Owns(int statementId) => HeaderIds.Contains(statementId) || BodyIds.Contains(statementId);
 }
@@ -98,6 +123,8 @@ public sealed class AlLoopSiteTable
 /// <summary>Every loop of one scope class, plus its [SourceSpans] for line resolution.</summary>
 public sealed class AlLoopScopeTable
 {
+    private readonly Dictionary<int, AlLoopSiteTable> _innermostOwner = new();
+
     public AlLoopScopeTable(IReadOnlyList<AlLoopSiteTable> sites, long[] spans)
     {
         Sites = sites;
@@ -107,6 +134,9 @@ public sealed class AlLoopScopeTable
         {
             if (s.ParentIndex is int p) sites[p].AddChild(s);
             else roots.Add(s);
+            // Nested sites have higher indices than their parents, so the last writer is the innermost.
+            foreach (var id in s.HeaderIds) _innermostOwner[id] = s;
+            foreach (var id in s.BodyIds) _innermostOwner[id] = s;
         }
         Roots = roots;
     }
@@ -116,27 +146,48 @@ public sealed class AlLoopScopeTable
     public IReadOnlyList<AlLoopSiteTable> Roots { get; }
     public long[] Spans { get; }
 
+    /// <summary>The innermost loop whose header or body contains the id, or null.</summary>
+    public AlLoopSiteTable? OwnerOf(int statementId) =>
+        _innermostOwner.TryGetValue(statementId, out var s) ? s : null;
+
     public AlLoopSiteTable? RootSiteOwning(int statementId)
     {
-        foreach (var r in Roots)
-            if (r.Owns(statementId)) return r;
-        return null;
+        var s = OwnerOf(statementId);
+        while (s?.Parent != null) s = s.Parent;
+        return s;
+    }
+
+    /// <summary>The direct child of <paramref name="site"/> under which the id sits, or null.</summary>
+    public AlLoopSiteTable? ChildOwning(AlLoopSiteTable site, int statementId)
+    {
+        var s = OwnerOf(statementId);
+        while (s != null && s.Parent != site) s = s.Parent;
+        return s;
+    }
+
+    /// <summary>The loop variable a `for` statement with this header id has assigned before its
+    /// own hit, or null. A `foreach` assigns its element after the header hit, at the first
+    /// body hit (see <see cref="LoopVariablesAssignedBefore"/>).</summary>
+    public string? LoopVariableOfHeader(int statementId)
+    {
+        var s = OwnerOf(statementId);
+        return s != null && s.Kind == AlLoopKind.For && s.HeaderIds.Contains(statementId) ? s.LoopVariable : null;
     }
 
     /// <summary>
     /// The for/foreach loop variables assigned between statement <paramref name="previous"/>
-    /// finishing and <paramref name="current"/> starting: <paramref name="current"/> opens a pass and
-    /// <paramref name="previous"/> is not that loop's header (the first pass is observed at the
-    /// header hit). Needed for a foreach over equal consecutive elements, which the value diff
-    /// cannot see.
+    /// finishing and <paramref name="current"/> starting: <paramref name="current"/> opens a pass.
+    /// A `for` assigns before its header hit, so its first pass (previous is the header) is
+    /// excluded; a `foreach` assigns after it, so its first pass counts. Needed for a foreach
+    /// over equal consecutive elements, which the value diff cannot see.
     /// </summary>
     public IEnumerable<string> LoopVariablesAssignedBefore(int current, int previous)
     {
         foreach (var site in Sites)
         {
-            if (site.LoopVariable == null || site.Kind is not (AlLoopKind.For or AlLoopKind.ForEach)) continue;
+            if (site.LoopVariable == null || !site.IsCounted || site.Unsegmentable != null) continue;
             if (!OpensPassOf(site, current, previous)) continue;
-            if (site.HeaderIds.Contains(previous)) continue; // first pass: the header hit observed it
+            if (site.Kind == AlLoopKind.For && site.HeaderIds.Contains(previous)) continue; // first pass: the header hit observed it
             yield return site.LoopVariable;
         }
     }
@@ -144,13 +195,15 @@ public sealed class AlLoopScopeTable
     // `current` opens a pass of `site`: its marker, or the entry of the nested loop the body
     // starts with. A nested for/foreach header fires once per entry; a nested while condition
     // also fires mid-pass, but then always after one of its own body statements; a nested
-    // repeat's first statement also fires after its until-condition.
+    // repeat's first statement also fires after its until-condition. Nothing is inferred
+    // through an unsegmentable nested loop.
     private bool OpensPassOf(AlLoopSiteTable site, int current, int previous)
     {
         if (site.MarkerStatementId is int m) return m == current;
         if (site.MarkerNestedSiteIndex is int n && n >= 0 && n < Sites.Count)
         {
             var nested = Sites[n];
+            if (nested.Unsegmentable != null) return false;
             switch (nested.Kind)
             {
                 case AlLoopKind.For:
@@ -188,34 +241,53 @@ public sealed class AlLoopScopeTable
             starts[i] = new AlTextPosition(fromLine, fromColumn);
         }
 
+        var header = new HashSet<int>[sites.Count];
+        var body = new HashSet<int>[sites.Count];
+        var markerId = new int?[sites.Count];
+        var markerNested = new int?[sites.Count];
+        var unsegmentable = new string?[sites.Count];
+        foreach (var site in sites)
+        {
+            var h = header[site.Index] = new HashSet<int>();
+            var b = body[site.Index] = new HashSet<int>();
+            foreach (var (id, pos) in starts)
+            {
+                if (site.HeaderRanges.Any(r => r.ContainsStart(pos))) h.Add(id);
+                else if (site.Body.Any(s => s.Range.ContainsStart(pos))) b.Add(id);
+            }
+            foreach (var stmt in site.Body)
+            {
+                if (stmt.NestedSiteIndex is int nested) { markerNested[site.Index] = nested; break; }
+                var first = starts.Where(kv => stmt.Range.ContainsStart(kv.Value))
+                    .Select(kv => (int?)kv.Key).OrderBy(k => k).FirstOrDefault();
+                if (first is int f) { markerId[site.Index] = f; break; }
+            }
+            if (markerId[site.Index] == null && markerNested[site.Index] == null)
+                unsegmentable[site.Index] = AlLoopUnsegmentable.EmptyBody;
+        }
+
+        // Structural ambiguity: a body that is nothing but one nested loop has no outer id
+        // between the nested loop's re-entry and its next pass. Nested sites have higher
+        // indices, so walking backwards sees a nested loop's verdict before its parent's.
+        for (int i = sites.Count - 1; i >= 0; i--)
+        {
+            var site = sites[i];
+            if (unsegmentable[i] != null || site.Body.Count != 1 || site.Body[0].NestedSiteIndex is not int n) continue;
+            var nested = sites[n];
+            if (unsegmentable[n] != null) unsegmentable[i] = AlLoopUnsegmentable.SoleNestedUnsegmentable;
+            else if (nested.Kind == AlLoopKind.Repeat) unsegmentable[i] = AlLoopUnsegmentable.SoleNestedRepeat;
+            else if (nested.Kind == AlLoopKind.While && nested.ContainsBreak) unsegmentable[i] = AlLoopUnsegmentable.SoleNestedWhileWithBreak;
+        }
+
         var tables = new List<AlLoopSiteTable>(sites.Count);
         foreach (var site in sites)
         {
-            var header = new HashSet<int>();
-            var body = new HashSet<int>();
-            foreach (var (id, pos) in starts)
-            {
-                if (site.HeaderRanges.Any(r => r.ContainsStart(pos))) header.Add(id);
-                else if (site.Body.Any(b => b.Range.ContainsStart(pos))) body.Add(id);
-            }
-
-            int? markerId = null;
-            int? markerNested = null;
-            foreach (var stmt in site.Body)
-            {
-                if (stmt.NestedSiteIndex is int nested) { markerNested = nested; break; }
-                var first = starts.Where(kv => stmt.Range.ContainsStart(kv.Value))
-                    .Select(kv => (int?)kv.Key).OrderBy(k => k).FirstOrDefault();
-                if (first is int f) { markerId = f; break; }
-            }
-            string? unsegmentable = markerId == null && markerNested == null
-                ? "loop body has no instrumented statement (for example an empty body), so iterations cannot be counted from the statement hit stream"
-                : null;
-
             tables.Add(new AlLoopSiteTable(
                 site.Index, site.Kind, site.LoopVariable,
-                startLine: site.Range.Start.Line + 1, endLine: site.Range.End.Line + 1,
-                header, body, markerId, markerNested, site.ParentIndex, unsegmentable));
+                startLine: site.Range.Start.Line + 1, startColumn: site.Range.Start.Column + 1,
+                endLine: site.Range.End.Line + 1, endColumn: site.Range.End.Column + 1,
+                header[site.Index], body[site.Index], markerId[site.Index], markerNested[site.Index],
+                site.ParentIndex, unsegmentable[site.Index]));
         }
         return new AlLoopScopeTable(tables, spans);
     }

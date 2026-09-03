@@ -5287,6 +5287,10 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
             AlRunner.Infrastructure.AlIterationTracker.Enabled
                 ? AlRunner.Infrastructure.AlIterationTracker.Collect()
                 : null;
+        IReadOnlyList<string>? IterationsUnresolved() =>
+            AlRunner.Infrastructure.AlIterationTracker.Enabled
+                ? AlRunner.Infrastructure.AlScopeSyntaxResolver.UnresolvedScopes.ToList()
+                : null;
         // #2135: same test-window bracket TestExecutor.RunOne uses for [Test]
         // procedures, applied to `execute`'s single OnRun invocation — the key
         // matches the SAME "{Codeunit}.{Method}" shape (target.Name is the .NET type
@@ -5308,7 +5312,7 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                 System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance, null,
                 Type.EmptyTypes, null)!.Invoke(instance, null);
             return new[] { new TestResult(target.Name, "OnRun", TestOutcome.Pass, null, null, sw.Elapsed,
-                CapturedValues: Captured(), Iterations: Iterations()) };
+                CapturedValues: Captured(), Iterations: Iterations(), IterationsUnresolved: IterationsUnresolved()) };
         }
         catch (System.Reflection.TargetInvocationException tex)
         {
@@ -5316,12 +5320,12 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
             var alStack = AlRunner.Infrastructure.AlCallStackCapture.GetCaptured(inner);
             return new[] { new TestResult(target.Name, "OnRun", TestOutcome.Fail,
                 $"{inner.GetType().Name}: {inner.Message}", inner.ToString(), sw.Elapsed, alStack,
-                CapturedValues: Captured(), Iterations: Iterations()) };
+                CapturedValues: Captured(), Iterations: Iterations(), IterationsUnresolved: IterationsUnresolved()) };
         }
         catch (Exception ex)
         {
             return new[] { new TestResult(target.Name, "OnRun", TestOutcome.Error,
-                ex.Message, ex.ToString(), sw.Elapsed, CapturedValues: Captured(), Iterations: Iterations()) };
+                ex.Message, ex.ToString(), sw.Elapsed, CapturedValues: Captured(), Iterations: Iterations(), IterationsUnresolved: IterationsUnresolved()) };
         }
         finally
         {

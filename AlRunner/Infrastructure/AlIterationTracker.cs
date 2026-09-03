@@ -10,7 +10,8 @@ public sealed record AlIterationStep(
     int Iteration,
     IReadOnlyList<AlCapturedValue> CapturedValues,
     IReadOnlyList<AlCapturedMessage> Messages,
-    IReadOnlyList<int> LinesExecuted);
+    IReadOnlyList<int> LinesExecuted,
+    IReadOnlyList<int> StatementsExecuted);
 
 /// <summary>One loop instance on the wire. Parent fields name the instance and iteration active at entry, across calls. IterationCount is null when Unsegmentable says why.</summary>
 public sealed record AlLoopRecord(
@@ -18,10 +19,13 @@ public sealed record AlLoopRecord(
     string ScopeName,
     string FilePath,
     int LoopLine,
+    int LoopColumn,
     int LoopEndLine,
+    int LoopEndColumn,
     string? ParentLoopId,
     int? ParentIteration,
     int? IterationCount,
+    AlLoopEnd ClosedBy,
     IReadOnlyList<AlIterationStep> Steps,
     string? Unsegmentable);
 
@@ -33,7 +37,7 @@ public static class AlIterationTracker
     private static volatile AlIterationSegmenter? _segmenter;
 
     /// <summary>Reset before each top-level AL invocation, like AlValueCapture.Reset.</summary>
-    public static void Reset() => _segmenter = new AlIterationSegmenter();
+    public static void Reset() => _segmenter = Enabled ? new AlIterationSegmenter() : null;
 
     /// <summary>Fed with the values this observation produced, so they land in the right iteration.</summary>
     public static void OnStmtHit(NavMethodScope scope, int currentStatementNumber, IReadOnlyList<AlCapturedValue> observed)
@@ -72,24 +76,22 @@ public static class AlIterationTracker
             var steps = new List<AlIterationStep>(inst.Steps.Count);
             foreach (var s in inst.Steps)
             {
-                var lines = s.StatementIds
-                    .Select(inst.Table.LineOf)
-                    .Where(l => l != null)
-                    .Select(l => l!.Value)
-                    .Distinct()
-                    .OrderBy(l => l)
-                    .ToList();
-                steps.Add(new AlIterationStep(s.Iteration, s.Captures, s.Messages, lines));
+                var ids = s.StatementIds.Distinct().OrderBy(i => i).ToList();
+                var lines = ids.Select(inst.Table.LineOf).Where(l => l != null).Select(l => l!.Value).Distinct().ToList();
+                steps.Add(new AlIterationStep(s.Iteration, s.Captures, s.Messages, lines, ids));
             }
             result.Add(new AlLoopRecord(
                 LoopId: $"L{inst.Id}",
                 ScopeName: info.ScopeName,
                 FilePath: info.FilePath,
                 LoopLine: inst.Site.StartLine,
+                LoopColumn: inst.Site.StartColumn,
                 LoopEndLine: inst.Site.EndLine,
+                LoopEndColumn: inst.Site.EndColumn,
                 ParentLoopId: inst.ParentId is int p ? $"L{p}" : null,
                 ParentIteration: inst.ParentIteration,
                 IterationCount: inst.IterationCount,
+                ClosedBy: inst.ClosedBy ?? AlLoopEnd.Unfinished,
                 Steps: steps,
                 Unsegmentable: inst.Site.Unsegmentable));
         }

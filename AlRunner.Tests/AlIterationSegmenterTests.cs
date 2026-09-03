@@ -15,7 +15,7 @@ public sealed class AlIterationSegmenterTests
         int index, AlLoopKind kind, int[] header, int[] body,
         int? marker = null, int? markerNested = null, string? loopVar = null,
         int? parent = null, string? unsegmentable = null) =>
-        new(index, kind, loopVar, startLine: 10 + index, endLine: 20 + index,
+        new(index, kind, loopVar, startLine: 10 + index, startColumn: 8, endLine: 20 + index, endColumn: 12,
             headerIds: header.ToHashSet(), bodyIds: body.ToHashSet(),
             markerStatementId: marker, markerNestedSiteIndex: markerNested,
             parentIndex: parent, unsegmentable: unsegmentable);
@@ -327,12 +327,12 @@ public sealed class AlIterationSegmenterTests
         seg.OnHit(scope, table, 1, new[] { V("n", 2, 2) });     // body's effect → iteration 1
         seg.OnHit(scope, table, 2, new[] { V("r", 2, 1) });     // → iteration 2
         seg.OnHit(scope, table, 1, new[] { V("n", 1, 2) });     // → iteration 2
-        seg.OnHit(scope, table, 3, new[] { V("r", 0, 1) });     // final false evaluation: loop already closed
+        seg.OnHit(scope, table, 3, new[] { V("r", 0, 1) });     // the terminating evaluation's effect: last pass
 
         var loop = Assert.Single(seg.Finish());
         Assert.Equal(2, loop.IterationCount);
         Assert.Equal(new[] { "r=1", "n=2" }, loop.Steps[0].Captures.Select(c => $"{c.VariableName}={c.Value}").ToArray());
-        Assert.Equal(new[] { "r=2", "n=1" }, loop.Steps[1].Captures.Select(c => $"{c.VariableName}={c.Value}").ToArray());
+        Assert.Equal(new[] { "r=2", "n=1", "r=0" }, loop.Steps[1].Captures.Select(c => $"{c.VariableName}={c.Value}").ToArray());
         Assert.DoesNotContain(loop.Steps.SelectMany(s => s.Captures), c => c.VariableName == "n" && Equals(c.Value, 3));
     }
 
@@ -430,5 +430,207 @@ public sealed class AlIterationSegmenterTests
         var loop = Assert.Single(seg.Finish());
         Assert.Equal(1, loop.IterationCount);
         Assert.Equal(new[] { 2 }, Stmts(loop.Steps[0]));
+    }
+
+    // --- round 3: re-entry, stale frames, conditions, carries ------------------------------
+
+    [Fact]
+    public void SoleBodyNestedFor_HeaderHitOnTheActiveChild_IsAReentry_ThatOpensTheNextOuterPass()
+    {
+        // for i := 1 to 2 do for j := 1 to 2 do x += 1;   ids: 0 outer for | 1 inner for | 2 body | 3 after
+        // No outer-owned id between passes: the second inner header hit is the only signal.
+        var outer = Site(0, AlLoopKind.For, header: new[] { 0 }, body: new[] { 1, 2 }, markerNested: 1, loopVar: "i");
+        var inner = Site(1, AlLoopKind.For, header: new[] { 1 }, body: new[] { 2 }, marker: 2, loopVar: "j", parent: 0);
+        var table = Table(outer, inner);
+        var seg = new AlIterationSegmenter();
+        Hits(seg, new object(), table, 0, 1, 2, 2, 1, 2, 2, 3);
+
+        var loops = seg.Finish();
+        Assert.Equal(3, loops.Count);
+        Assert.Equal(2, loops[0].IterationCount);
+        Assert.Equal(2, loops[1].IterationCount);
+        Assert.Equal(1, loops[1].ParentIteration);
+        Assert.Equal(2, loops[2].IterationCount);
+        Assert.Equal(2, loops[2].ParentIteration);
+    }
+
+    [Fact]
+    public void SoleBodyNestedWhile_ConditionAfterItsOwnBodyIsAReevaluation_AfterItsOwnHeaderIsAReentry()
+    {
+        // for i := 1 to 2 do while n < 2 do n := n + 1;   ids: 0 outer for | 1 cond | 2 body | 3 after
+        var outer = Site(0, AlLoopKind.For, header: new[] { 0 }, body: new[] { 1, 2 }, markerNested: 1, loopVar: "i");
+        var inner = Site(1, AlLoopKind.While, header: new[] { 1 }, body: new[] { 2 }, marker: 2, parent: 0);
+        var table = Table(outer, inner);
+        var seg = new AlIterationSegmenter();
+        Hits(seg, new object(), table,
+            0,
+            1, 2, 1, 2, 1,   // outer pass 1: two inner passes, then the false evaluation
+            1, 2, 1, 2, 1,   // outer pass 2: the first `1` follows the inner's own header -> re-entry
+            3);
+
+        var loops = seg.Finish();
+        Assert.Equal(3, loops.Count);
+        Assert.Equal(2, loops[0].IterationCount);
+        Assert.Equal(2, loops[1].IterationCount);
+        Assert.Equal(2, loops[2].IterationCount);
+        Assert.Equal(2, loops[2].ParentIteration);
+    }
+
+    [Fact]
+    public void StaleCalleeInstance_IsUnwoundWhenTheCallerResumes_WithoutADuplicateCaller()
+    {
+        // The callee errors inside its loop; the error is caught by the caller and no scope
+        // exit for the callee reaches us. The caller's next hit must not be parented to it.
+        var callerTable = Table(Site(0, AlLoopKind.For, header: new[] { 0 }, body: new[] { 1, 2 }, marker: 1, loopVar: "i"));
+        var calleeTable = Table(Site(0, AlLoopKind.For, header: new[] { 0 }, body: new[] { 1 }, marker: 1, loopVar: "k"));
+        var seg = new AlIterationSegmenter();
+        var caller = new object();
+        var callee = new object();
+        Hits(seg, caller, callerTable, 0, 1);
+        Hits(seg, callee, calleeTable, 0, 1);      // errors here: no exit for the callee
+        Hits(seg, caller, callerTable, 2, 1, 2, 3); // caller continues: rest of pass 1, pass 2, exit
+
+        var loops = seg.Finish();
+        Assert.Equal(2, loops.Count);
+        Assert.Equal(2, loops[0].IterationCount);
+        Assert.Equal(AlLoopEnd.Exit, loops[0].ClosedBy);
+        Assert.Equal(new[] { 1, 2 }, Stmts(loops[0].Steps[0]));
+        Assert.Equal(AlLoopEnd.Unfinished, loops[1].ClosedBy);
+        Assert.Equal(1, loops[1].IterationCount);
+    }
+
+    [Fact]
+    public void ScopeExit_WithStaleFramesAbove_ClosesThemAndTheScopesOwnInstances()
+    {
+        var callerTable = Table(Site(0, AlLoopKind.For, header: new[] { 0 }, body: new[] { 1 }, marker: 1, loopVar: "i"));
+        var calleeTable = Table(Site(0, AlLoopKind.For, header: new[] { 0 }, body: new[] { 1 }, marker: 1, loopVar: "k"));
+        var seg = new AlIterationSegmenter();
+        var caller = new object();
+        var callee = new object();
+        Hits(seg, caller, callerTable, 0, 1);
+        Hits(seg, callee, calleeTable, 0, 1);
+        seg.OnScopeExit(caller, None);
+
+        var loops = seg.Finish();
+        Assert.Equal(AlLoopEnd.ScopeExit, loops[0].ClosedBy);
+        Assert.Equal(AlLoopEnd.Unfinished, loops[1].ClosedBy);
+    }
+
+    [Fact]
+    public void ChildEnteredFromACondition_GetsTheParentIterationThatConditionOpens()
+    {
+        // while Helper() do x += 1;   Helper has its own loop.
+        var callerTable = Table(Site(0, AlLoopKind.While, header: new[] { 1 }, body: new[] { 2 }, marker: 2));
+        var calleeTable = Table(Site(0, AlLoopKind.For, header: new[] { 0 }, body: new[] { 1 }, marker: 1, loopVar: "k"));
+        var seg = new AlIterationSegmenter();
+        var caller = new object();
+        void Helper()
+        {
+            var callee = new object();
+            Hits(seg, callee, calleeTable, 0, 1, 2);
+            seg.OnScopeExit(callee, None);
+        }
+        Hits(seg, caller, callerTable, 0, 1); Helper();   // condition 1 -> true
+        Hits(seg, caller, callerTable, 2, 1); Helper();   // body pass 1; condition 2 -> true
+        Hits(seg, caller, callerTable, 2, 1); Helper();   // body pass 2; condition 3 -> false
+        Hits(seg, caller, callerTable, 3);
+        seg.OnScopeExit(caller, None);
+
+        var loops = seg.Finish();
+        Assert.Equal(4, loops.Count);
+        Assert.Equal(2, loops[0].IterationCount);
+        Assert.Equal(1, loops[1].ParentIteration);   // opened pass 1
+        Assert.Equal(2, loops[2].ParentIteration);   // opened pass 2
+        Assert.Equal(2, loops[3].ParentIteration);   // terminating evaluation: the pass that ended
+    }
+
+    [Fact]
+    public void ChildEnteredBeforeTheParentsFirstPass_AndTheLoopNeverRuns_HasNoParentIteration()
+    {
+        var callerTable = Table(Site(0, AlLoopKind.While, header: new[] { 1 }, body: new[] { 2 }, marker: 2));
+        var calleeTable = Table(Site(0, AlLoopKind.For, header: new[] { 0 }, body: new[] { 1 }, marker: 1, loopVar: "k"));
+        var seg = new AlIterationSegmenter();
+        var caller = new object();
+        var callee = new object();
+        Hits(seg, caller, callerTable, 0, 1);
+        Hits(seg, callee, calleeTable, 0, 1, 2);
+        seg.OnScopeExit(callee, None);
+        Hits(seg, caller, callerTable, 3);
+
+        var loops = seg.Finish();
+        Assert.Equal(0, loops[0].IterationCount);
+        Assert.Equal(loops[0].Id, loops[1].ParentId);
+        Assert.Null(loops[1].ParentIteration);       // never 0
+    }
+
+    [Fact]
+    public void MessagesAndValuesDuringACondition_LandInTheIterationItOpens_OrTheLastOneWhenItEnds()
+    {
+        var table = Table(Site(0, AlLoopKind.While, header: new[] { 1 }, body: new[] { 2 }, marker: 2));
+        var seg = new AlIterationSegmenter();
+        var scope = new object();
+        Hits(seg, scope, table, 0, 1);
+        seg.OnMessage(new AlCapturedMessage("m1", "S", 1));
+        Hits(seg, scope, table, 2, 1);
+        seg.OnMessage(new AlCapturedMessage("m2", "S", 1));
+        Hits(seg, scope, table, 2, 1);
+        seg.OnMessage(new AlCapturedMessage("m3", "S", 1));   // during the terminating evaluation
+        Hits(seg, scope, table, 3);
+
+        var loop = Assert.Single(seg.Finish());
+        Assert.Equal(new[] { "m1" }, loop.Steps[0].Messages.Select(m => m.Text).ToArray());
+        Assert.Equal(new[] { "m2", "m3" }, loop.Steps[1].Messages.Select(m => m.Text).ToArray());
+    }
+
+    [Fact]
+    public void ZeroIterationNestedFor_ItsCarriedLoopVariable_GoesToTheEnclosingIteration()
+    {
+        // for i := 1 to 2 do begin for j := 1 to 0 do x += 1; y += 1; end;
+        // ids: 0 outer | 1 inner for | 2 inner body (never) | 3 y += 1 | 4 end
+        var outer = Site(0, AlLoopKind.For, header: new[] { 0 }, body: new[] { 1, 2, 3 }, markerNested: 1, loopVar: "i");
+        var inner = Site(1, AlLoopKind.For, header: new[] { 1 }, body: new[] { 2 }, marker: 2, loopVar: "j", parent: 0);
+        var table = Table(outer, inner);
+        var seg = new AlIterationSegmenter();
+        var scope = new object();
+        seg.OnHit(scope, table, 0, new[] { V("i", 1, 0) });
+        seg.OnHit(scope, table, 1, new[] { V("j", 1, 1) });
+        seg.OnHit(scope, table, 3, None);
+        seg.OnHit(scope, table, 4, new[] { V("y", 1, 3) });
+
+        var loops = seg.Finish();
+        Assert.Equal(0, loops[1].IterationCount);
+        Assert.Equal(new[] { "i=1", "j=1", "y=1" }, loops[0].Steps[0].Captures.Select(c => $"{c.VariableName}={c.Value}").ToArray());
+    }
+
+    [Fact]
+    public void LoopVariable_IsMatchedCaseInsensitively_LikeALIdentifiers()
+    {
+        var table = Table(Site(0, AlLoopKind.For, header: new[] { 0 }, body: new[] { 1 }, marker: 1, loopVar: "I"));
+        var seg = new AlIterationSegmenter();
+        var scope = new object();
+        seg.OnHit(scope, table, 0, new[] { V("i", 1, 0) });
+        seg.OnHit(scope, table, 1, None);
+        seg.OnHit(scope, table, 1, new[] { V("s", 1, 1), V("i", 2, 1) });
+        seg.OnHit(scope, table, 2, new[] { V("s", 3, 1) });
+
+        var loop = Assert.Single(seg.Finish());
+        Assert.Equal(new[] { "i=1", "s=1" }, loop.Steps[0].Captures.Select(c => $"{c.VariableName}={c.Value}").ToArray());
+        Assert.Equal(new[] { "i=2", "s=3" }, loop.Steps[1].Captures.Select(c => $"{c.VariableName}={c.Value}").ToArray());
+    }
+
+    [Fact]
+    public void ClosedBy_SaysHowEachInstanceEnded()
+    {
+        var table = Table(Site(0, AlLoopKind.For, header: new[] { 0 }, body: new[] { 1 }, marker: 1, loopVar: "i"));
+        var seg = new AlIterationSegmenter();
+        var a = new object(); var b = new object(); var c = new object();
+        Hits(seg, a, table, 0, 1, 2);            // ended by the first statement after the loop
+        Hits(seg, b, table, 0, 1); seg.OnScopeExit(b, None);
+        Hits(seg, c, table, 0, 1);               // still open at Finish
+
+        var loops = seg.Finish();
+        Assert.Equal(AlLoopEnd.Exit, loops[0].ClosedBy);
+        Assert.Equal(AlLoopEnd.ScopeExit, loops[1].ClosedBy);
+        Assert.Equal(AlLoopEnd.Unfinished, loops[2].ClosedBy);
     }
 }

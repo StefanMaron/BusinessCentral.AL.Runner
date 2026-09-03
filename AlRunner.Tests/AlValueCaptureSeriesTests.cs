@@ -97,49 +97,6 @@ public sealed class AlValueCaptureSeriesTests
         Assert.Equal("Touched", entry.VariableName);
     }
 
-    // --- Baseline exception (#2056): BC assigns a for variable before the for statement's
-    // own hit, so a leading for shows i = 1 at the baseline; a non-default primitive there
-    // can only mean an assignment already ran. ---
-
-    [Fact]
-    public void DiffAndUpdate_Baseline_PrimitiveAlreadyNonDefault_EmittedAsProducedByTheFirstStatement()
-    {
-        var lastKnown = new Dictionary<string, (object?, string?)>();
-        var r0 = AlValueCapture.DiffAndUpdate("OnRun", 0,
-            new[] { Field("i", 1), Field("t", 0), Field("name", ""), Field("flag", false), Field("big", 0m) },
-            lastKnown, isBaseline: true);
-
-        var entry = Assert.Single(r0);
-        Assert.Equal("i", entry.VariableName);
-        Assert.Equal(1, entry.Value);
-        Assert.Equal(0, entry.StatementId); // the caller passes statement 0 itself for a baseline
-        // The baseline still primes lastKnown for every field: the next observation must
-        // not re-emit i = 1 as if it changed again.
-        var r1 = AlValueCapture.DiffAndUpdate("OnRun", 0,
-            new[] { Field("i", 1), Field("t", 0), Field("name", ""), Field("flag", false), Field("big", 0m) },
-            lastKnown, isBaseline: false);
-        Assert.Empty(r1);
-    }
-
-    [Fact]
-    public void DiffAndUpdate_Baseline_NonPrimitiveOrErrored_NeverEmitted()
-    {
-        // Only CLR primitives/strings can prove "assigned before the first hit": a BC
-        // value-type wrapper's ToString() of its DEFAULT may well be non-empty, and a
-        // field whose read threw proves nothing. Neither may fake a produced value.
-        var lastKnown = new Dictionary<string, (object?, string?)>();
-        var fields = new (string, Func<object?>)[]
-        {
-            ("Rec", () => new object()),                                   // renders via ToString()
-            ("Broken", () => throw new InvalidOperationException("boom")),
-            ("s", () => "assigned"),                                        // the one real signal
-        };
-        var r0 = AlValueCapture.DiffAndUpdate("OnRun", 0, fields, lastKnown, isBaseline: true);
-        var entry = Assert.Single(r0);
-        Assert.Equal("s", entry.VariableName);
-        Assert.Equal("assigned", entry.Value);
-    }
-
     // --- Degenerate case: Exit() is the ONLY observation (no StmtHit fired at all) ---
 
     [Fact]

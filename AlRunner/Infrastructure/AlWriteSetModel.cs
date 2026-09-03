@@ -1,9 +1,10 @@
 // Which locals a statement assigns, from syntax (#2056). The value diff cannot tell
 // "x := 5 ran while x was 5" from "x untouched"; the write set makes the former a record.
 // Counted: the root local of an assignment target (`Rec.Amount :=` writes Rec), a
-// method-call statement's receiver (`Rec.Insert();`), the first argument of Clear and
-// Evaluate. Not knowable from syntax, so left to the diff: a user procedure's var
-// parameter, a receiver mutated inside an expression. Loop variables are covered by
+// method-call statement's receiver (`Rec.Insert();`, assumed to mutate it), the first
+// argument of Clear and Evaluate, and the `var` arguments of a same-object procedure
+// call. Not knowable from syntax, so left to the diff: a receiver mutated inside an
+// expression, a call into another object. Loop variables are covered by
 // AlLoopScopeTable.LoopVariablesAssignedBefore.
 namespace AlRunner.Infrastructure;
 

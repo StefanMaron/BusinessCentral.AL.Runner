@@ -472,6 +472,7 @@ public static class ServerProtocol
         stackTrace = (t.AlCallStack ?? t.FullException)?.TrimEnd(),
         capturedValues = t.CapturedValues?.Select(ToWire),
         iterations = t.Iterations?.Select(ToWire),
+        iterationsUnresolved = t.IterationsUnresolved is { Count: > 0 } ? t.IterationsUnresolved : null,
     };
 
     // One captured AL local on the wire — the shape protocol-v2.schema.json already
@@ -498,24 +499,34 @@ public static class ServerProtocol
         statementId = m.StatementId,
     };
 
-    // One loop instance on the wire (#2056). parentLoopId/parentIteration are omitted for a
-    // root loop; iterationCount is omitted exactly when `unsegmentable` is present.
+    // One loop instance on the wire (#2056). parentLoopId is omitted for a root loop,
+    // parentIteration when the parent had no pass yet; iterationCount is omitted exactly
+    // when `unsegmentable` (a stable code) is present; closedBy says how the instance ended.
     private static object ToWire(Infrastructure.AlLoopRecord l) => new
     {
         loopId = l.LoopId,
         scope = l.ScopeName,
         file = l.FilePath,
         loopLine = l.LoopLine,
+        loopColumn = l.LoopColumn,
         loopEndLine = l.LoopEndLine,
+        loopEndColumn = l.LoopEndColumn,
         parentLoopId = l.ParentLoopId,
         parentIteration = l.ParentIteration,
         iterationCount = l.IterationCount,
+        closedBy = l.ClosedBy switch
+        {
+            Infrastructure.AlLoopEnd.Exit => "exit",
+            Infrastructure.AlLoopEnd.ScopeExit => "scopeExit",
+            _ => "unfinished",
+        },
         steps = l.Steps.Select(s => new
         {
             iteration = s.Iteration,
             capturedValues = s.CapturedValues.Select(ToWire),
             messages = s.Messages.Select(ToWire),
             linesExecuted = s.LinesExecuted,
+            statementsExecuted = s.StatementsExecuted,
         }),
         unsegmentable = l.Unsegmentable,
     };

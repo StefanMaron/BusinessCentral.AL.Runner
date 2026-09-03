@@ -106,7 +106,10 @@ public sealed record TestResult(string Codeunit, string Method, TestOutcome Outc
                                 string? Diagnosis = null,
                                 // #2056: non-null only when execute asked for iterationTracking;
                                 // empty means requested, nothing looped.
-                                IReadOnlyList<Infrastructure.AlLoopRecord>? Iterations = null);
+                                IReadOnlyList<Infrastructure.AlLoopRecord>? Iterations = null,
+                                // #2056: bundle scopes whose loops could not be tracked (see
+                                // AlScopeSyntaxResolver.UnresolvedScopes); null when not requested.
+                                IReadOnlyList<string>? IterationsUnresolved = null);
 
 public sealed class TestExecutor
 {

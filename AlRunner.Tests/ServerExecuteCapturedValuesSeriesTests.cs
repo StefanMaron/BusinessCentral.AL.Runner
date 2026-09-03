@@ -324,4 +324,97 @@ public class ServerExecuteCapturedValuesSeriesTests : IClassFixture<SharedCliSer
         var s = all.Where(x => x.GetProperty("variableName").GetString() == "s").Select(x => x.GetProperty("value").GetInt32()).ToArray();
         Assert.Equal(new[] { 5, 10, 16 }, s);
     }
+
+    // A leading `for` starting at the type's default value: `i = 0` is a record, attributed
+    // to the `for` statement, because the statement's own hit is where its loop variable is
+    // read (BC assigns it before that hit) - no value guessing involved.
+    [SkippableFact]
+    public async Task Execute_LeadingForStartingAtZero_LoopVariableStillRecorded()
+    {
+        TestArtifacts.SkipIfMissing();
+        var server = await _fixture.GetAsync();
+        var r = await server.SendAsync(JsonSerializer.Serialize(new
+        {
+            command = "execute",
+            captureValues = true,
+            code = "codeunit 60333 \"CV Zero Start SX\" { trigger OnRun() var i: Integer; s: Integer; " +
+                   "begin for i := 0 to 2 do s := s + 1; end; }",
+        }));
+        var d = JsonSerializer.Deserialize<JsonElement>(r);
+        Assert.False(d.TryGetProperty("error", out _), $"unexpected error response: {r}");
+        var series = d.GetProperty("tests")[0].GetProperty("capturedValues").EnumerateArray()
+            .Where(v => v.GetProperty("variableName").GetString() == "i")
+            .Select(v => (Value: v.GetProperty("value").GetInt32(), Stmt: v.GetProperty("statementId").GetInt32()))
+            .ToList();
+        Assert.Equal(new[] { 0, 1, 2 }, series.Select(e => e.Value).ToArray());
+        Assert.Equal(0, series[0].Stmt);
+    }
+
+    // A non-leading `for`: its loop variable's initial value is attributed to the `for`
+    // statement, not to the statement before it.
+    [SkippableFact]
+    public async Task Execute_NonLeadingFor_LoopVariableAttributedToTheForStatement()
+    {
+        TestArtifacts.SkipIfMissing();
+        var server = await _fixture.GetAsync();
+        var r = await server.SendAsync(JsonSerializer.Serialize(new
+        {
+            command = "execute",
+            captureValues = true,
+            code = "codeunit 60334 \"CV NonLeading For SX\" { trigger OnRun() var i: Integer; t: Integer; " +
+                   "begin t := 5; for i := 1 to 2 do t := t + i; end; }",
+        }));
+        var d = JsonSerializer.Deserialize<JsonElement>(r);
+        Assert.False(d.TryGetProperty("error", out _), $"unexpected error response: {r}");
+        var all = d.GetProperty("tests")[0].GetProperty("capturedValues").EnumerateArray().ToList();
+        var first = all.First(v => v.GetProperty("variableName").GetString() == "i");
+        Assert.Equal(1, first.GetProperty("value").GetInt32());
+        Assert.Equal(1, first.GetProperty("statementId").GetInt32()); // ids: 0 t := 5 | 1 for | 2 body
+        var t5 = all.First(v => v.GetProperty("variableName").GetString() == "t");
+        Assert.Equal(5, t5.GetProperty("value").GetInt32());
+        Assert.Equal(0, t5.GetProperty("statementId").GetInt32());
+    }
+
+    // A parameter's value at entry was not produced by any statement: no record for it.
+    [SkippableFact]
+    public async Task Execute_ProcedureParameter_IsNotReportedAsAnAssignment()
+    {
+        TestArtifacts.SkipIfMissing();
+        var server = await _fixture.GetAsync();
+        var r = await server.SendAsync(JsonSerializer.Serialize(new
+        {
+            command = "execute",
+            captureValues = true,
+            code = "codeunit 60335 \"CV Param SX\" { trigger OnRun() begin Show(42); end; " +
+                   "local procedure Show(n: Integer) var m: Integer; begin m := n + 1; end; }",
+        }));
+        var d = JsonSerializer.Deserialize<JsonElement>(r);
+        Assert.False(d.TryGetProperty("error", out _), $"unexpected error response: {r}");
+        var show = d.GetProperty("tests")[0].GetProperty("capturedValues").EnumerateArray()
+            .Where(v => v.GetProperty("scopeName").GetString() == "Show")
+            .Select(v => $"{v.GetProperty("variableName").GetString()}={v.GetProperty("value")}").ToArray();
+        Assert.Equal(new[] { "m=43" }, show);
+    }
+
+    // A same-object procedure's `var` parameter is a write of the call statement.
+    [SkippableFact]
+    public async Task Execute_VarParameterCall_AssigningTheSameValue_IsStillARecord()
+    {
+        TestArtifacts.SkipIfMissing();
+        var server = await _fixture.GetAsync();
+        var r = await server.SendAsync(JsonSerializer.Serialize(new
+        {
+            command = "execute",
+            captureValues = true,
+            code = "codeunit 60336 \"CV VarParam SX\" { trigger OnRun() var x: Integer; begin x := 5; Fill(x); Fill(x); end; " +
+                   "local procedure Fill(var v: Integer) begin v := 5; end; }",
+        }));
+        var d = JsonSerializer.Deserialize<JsonElement>(r);
+        Assert.False(d.TryGetProperty("error", out _), $"unexpected error response: {r}");
+        var x = d.GetProperty("tests")[0].GetProperty("capturedValues").EnumerateArray()
+            .Where(v => v.GetProperty("scopeName").GetString() == "OnRun" && v.GetProperty("variableName").GetString() == "x")
+            .Select(v => (Value: v.GetProperty("value").GetInt32(), Stmt: v.GetProperty("statementId").GetInt32())).ToList();
+        Assert.Equal(new[] { 5, 5, 5 }, x.Select(e => e.Value).ToArray());   // x := 5, Fill(x), Fill(x)
+        Assert.Equal(new[] { 0, 1, 2 }, x.Select(e => e.Stmt).ToArray());
+    }
 }

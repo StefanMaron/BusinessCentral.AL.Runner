@@ -9,10 +9,13 @@ using NavSyntax = Microsoft.Dynamics.Nav.CodeAnalysis.Syntax;
 
 namespace AlRunner.Infrastructure;
 
-/// <summary>One trigger/procedure: its loops and assigning statements. Both empty for a member without any.</summary>
+/// <summary>One trigger/procedure: its loops and assigning statements. Both empty for a member
+/// without any. <c>QualifiedName</c> is BC's scope name for a trigger owned by a field, action,
+/// control or data item ("Number - OnValidate"); for a procedure it equals <c>Name</c>.</summary>
 public sealed record AlMemberSyntax(
     string FilePath,
     string Name,
+    string QualifiedName,
     AlTextRange BodyRange,
     IReadOnlyList<AlLoopSite> Sites,
     IReadOnlyList<AlStatementWrites> Writes);
@@ -59,20 +62,22 @@ public sealed class AlMemberSyntaxIndex
         return index;
     }
 
-    /// <summary>The named member in the file; among same-named triggers, the one whose body contains the position. Null rather than a guess.</summary>
-    public AlMemberSyntax? FindMember(string filePath, string memberName, AlTextPosition? statementStart)
+    /// <summary>
+    /// The member BC calls <paramref name="scopeName"/> in the file: by qualified name
+    /// ("Number - OnValidate"), else by plain name; among several candidates, the one whose
+    /// body contains the position. Null rather than a guess.
+    /// </summary>
+    public AlMemberSyntax? FindMember(string filePath, string scopeName, AlTextPosition? statementStart)
     {
         if (!_byFile.TryGetValue(NormalizePath(filePath), out var members)) return null;
-        AlMemberSyntax? single = null;
-        int matches = 0;
-        foreach (var m in members)
-        {
-            if (!string.Equals(m.Name, memberName, StringComparison.OrdinalIgnoreCase)) continue;
-            matches++;
-            single = m;
-            if (statementStart is { } p && m.BodyRange.ContainsStart(p)) return m;
-        }
-        return matches == 1 ? single : null;
+        var candidates = members.Where(m => string.Equals(m.QualifiedName, scopeName, StringComparison.OrdinalIgnoreCase)).ToList();
+        if (candidates.Count == 0)
+            candidates = members.Where(m => string.Equals(m.Name, scopeName, StringComparison.OrdinalIgnoreCase)).ToList();
+        if (candidates.Count == 0) return null;
+        if (statementStart is { } p)
+            foreach (var m in candidates)
+                if (m.BodyRange.ContainsStart(p)) return m;
+        return candidates.Count == 1 ? candidates[0] : null;
     }
 
     /// <summary>The loops of the member FindMember resolves, or null.</summary>
@@ -91,12 +96,29 @@ public sealed class AlMemberSyntaxIndex
         var normalized = NormalizePath(filePath);
 
         var result = new List<AlMemberSyntax>();
-        foreach (var member in root.DescendantNodes().OfType<NavSyntax.MethodOrTriggerDeclarationSyntax>())
+        foreach (var obj in root.Objects)
         {
-            if (member.Body == null) continue; // a declaration without a body has no statements
-            var sites = new List<AlLoopSite>();
-            VisitNonLoop(member.Body, parent: null, sites);
-            result.Add(new AlMemberSyntax(normalized, MemberName(member), Range(member.Body), sites, CollectWrites(member.Body)));
+            // Which parameters of this object's own procedures are `var`, by procedure name,
+            // so a call statement `Helper(x)` can claim x as a write.
+            var varParams = new Dictionary<string, bool[]>(StringComparer.OrdinalIgnoreCase);
+            foreach (var proc in obj.DescendantNodes().OfType<NavSyntax.MethodDeclarationSyntax>())
+            {
+                var name = proc.Name?.Identifier.ValueText;
+                if (name == null) continue;
+                var ps = proc.ParameterList?.Parameters;
+                varParams[name] = ps == null
+                    ? Array.Empty<bool>()
+                    : ps.Value.Select(p => p.VarKeyword.Kind == NavCA.SyntaxKind.VarKeyword).ToArray();
+            }
+            foreach (var member in obj.DescendantNodes().OfType<NavSyntax.MethodOrTriggerDeclarationSyntax>())
+            {
+                if (member.Body == null) continue; // a declaration without a body has no statements
+                var sites = new List<AlLoopSite>();
+                VisitNonLoop(member.Body, parent: null, sites);
+                var name = MemberName(member);
+                result.Add(new AlMemberSyntax(normalized, name, QualifiedName(member, name), Range(member.Body), sites,
+                    CollectWrites(member.Body, varParams)));
+            }
         }
         return result;
     }
@@ -116,42 +138,83 @@ public sealed class AlMemberSyntaxIndex
     private static string MemberName(NavSyntax.MethodOrTriggerDeclarationSyntax member) =>
         member.Name?.Identifier.ValueText ?? "?";
 
+    // BC names a trigger's scope after its owner: a field, action, control or data item
+    // declaration ("Number - OnValidate"). Owners are found by walking up to the first
+    // ancestor that has an identifier Name, which every such declaration has and the object
+    // itself does not contribute (an object-level trigger is just "OnRun").
+    private static string QualifiedName(NavSyntax.MethodOrTriggerDeclarationSyntax member, string name)
+    {
+        if (member is not NavSyntax.TriggerDeclarationSyntax) return name;
+        for (var p = member.Parent; p != null && p is not NavSyntax.ObjectSyntax; p = p.Parent)
+        {
+            var owner = OwnerName(p);
+            if (owner != null) return $"{owner} - {name}";
+        }
+        return name;
+    }
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<Type, System.Reflection.PropertyInfo?> _nameProps = new();
+
+    private static string? OwnerName(SyntaxNode node)
+    {
+        var prop = _nameProps.GetOrAdd(node.GetType(), t =>
+        {
+            var pi = t.GetProperty("Name");
+            return pi != null && typeof(NavSyntax.IdentifierNameSyntax).IsAssignableFrom(pi.PropertyType) ? pi : null;
+        });
+        return prop?.GetValue(node) is NavSyntax.IdentifierNameSyntax id ? id.Identifier.ValueText : null;
+    }
+
     // ---------------------------------------------------------------- write sets
 
     /// <summary>Every assigning statement in the body, all nesting levels; see AlWriteSetModel.cs for what counts.</summary>
-    internal static IReadOnlyList<AlStatementWrites> CollectWrites(NavSyntax.BlockSyntax body)
+    internal static IReadOnlyList<AlStatementWrites> CollectWrites(
+        NavSyntax.BlockSyntax body, IReadOnlyDictionary<string, bool[]>? varParams = null)
     {
         var result = new List<AlStatementWrites>();
         foreach (var stmt in body.DescendantNodes().OfType<NavSyntax.StatementSyntax>())
         {
             if (stmt is NavSyntax.BlockSyntax) continue;
-            var target = WriteTargetOf(stmt);
-            if (target != null) result.Add(new AlStatementWrites(Start(stmt), new[] { target }));
+            var targets = WriteTargetsOf(stmt, varParams);
+            if (targets.Count > 0) result.Add(new AlStatementWrites(Start(stmt), targets));
         }
         return result;
     }
 
-    private static string? WriteTargetOf(NavSyntax.StatementSyntax stmt) => stmt switch
+    private static IReadOnlyList<string> WriteTargetsOf(NavSyntax.StatementSyntax stmt, IReadOnlyDictionary<string, bool[]>? varParams)
     {
-        NavSyntax.AssignmentStatementSyntax a => RootLocal(a.Target),
-        NavSyntax.CompoundAssignmentStatementSyntax c => RootLocal(c.Target),
-        // for/foreach loop variables are handled by AlLoopScopeTable.LoopVariablesAssignedBefore.
-        NavSyntax.ExpressionStatementSyntax { Expression: NavSyntax.InvocationExpressionSyntax inv } => InvocationWriteTarget(inv),
-        _ => null,
-    };
+        string? single = stmt switch
+        {
+            NavSyntax.AssignmentStatementSyntax a => RootLocal(a.Target),
+            NavSyntax.CompoundAssignmentStatementSyntax c => RootLocal(c.Target),
+            // for/foreach loop variables are handled by AlLoopScopeTable.LoopVariablesAssignedBefore.
+            _ => null,
+        };
+        if (single != null) return new[] { single };
+        if (stmt is NavSyntax.ExpressionStatementSyntax { Expression: NavSyntax.InvocationExpressionSyntax inv })
+            return InvocationWriteTargets(inv, varParams);
+        return Array.Empty<string>();
+    }
 
-    // A method-call statement writes its receiver; Clear/Evaluate write their first argument.
-    private static string? InvocationWriteTarget(NavSyntax.InvocationExpressionSyntax inv)
+    // A method-call statement writes its receiver (assumed to mutate it); Clear/Evaluate
+    // write their first argument; a same-object procedure writes its `var` arguments.
+    private static IReadOnlyList<string> InvocationWriteTargets(NavSyntax.InvocationExpressionSyntax inv, IReadOnlyDictionary<string, bool[]>? varParams)
     {
+        var args = inv.ArgumentList?.Arguments;
         switch (inv.Expression)
         {
             case NavSyntax.MemberAccessExpressionSyntax ma:
-                return RootLocal(ma.Expression);
+                return RootLocal(ma.Expression) is { } receiver ? new[] { receiver } : Array.Empty<string>();
             case NavSyntax.IdentifierNameSyntax id when ByRefFirstArgumentBuiltins.Contains(id.Identifier.ValueText):
-                var args = inv.ArgumentList?.Arguments;
-                return args is { Count: > 0 } ? RootLocal(args.Value[0]) : null;
+                return args is { Count: > 0 } && RootLocal(args.Value[0]) is { } first ? new[] { first } : Array.Empty<string>();
+            case NavSyntax.IdentifierNameSyntax id when varParams != null && varParams.TryGetValue(id.Identifier.ValueText, out var flags):
+                var targets = new List<string>();
+                if (args != null)
+                    for (int i = 0; i < args.Value.Count && i < flags.Length; i++)
+                        if (flags[i] && RootLocal(args.Value[i]) is { } t) targets.Add(t);
+                return targets;
             default:
-                return null;
+                return Array.Empty<string>();
         }
     }
 
@@ -233,8 +296,21 @@ public sealed class AlMemberSyntaxIndex
             }
         }
 
-        sites[index] = new AlLoopSite(index, kind, loopVariable, Range(loop), new[] { header }, body, parent);
+        sites[index] = new AlLoopSite(index, kind, loopVariable, Range(loop), new[] { header }, body, parent,
+            ContainsBreak(loop));
         return index;
+    }
+
+    // A `break` targets the innermost loop around it.
+    private static bool ContainsBreak(NavSyntax.StatementSyntax loop)
+    {
+        foreach (var b in loop.DescendantNodes().OfType<NavSyntax.BreakStatementSyntax>())
+        {
+            SyntaxNode? p = b.Parent;
+            while (p != null && !IsLoop(p)) p = p.Parent;
+            if (ReferenceEquals(p, loop)) return true;
+        }
+        return false;
     }
 
     // A begin..end block is a statement in AL; the body is its statements.

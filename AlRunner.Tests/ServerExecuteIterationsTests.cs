@@ -170,7 +170,9 @@ public class ServerExecuteIterationsTests : IClassFixture<SharedCliServer>
         var r = Assert.Single(Loops(t, "RepeatUntil"));
         Assert.Equal(3, r.GetProperty("iterationCount").GetInt32());
         var rSteps = r.GetProperty("steps").EnumerateArray().ToList();
-        Assert.Equal(new[] { "1" }, Values(rSteps[0], "n"));
+        // A repeat has no header hit before its first pass, so pass 1 opens with the state
+        // the loop entered with (`n := 0`, the statement before it) and then its own assignment.
+        Assert.Equal(new[] { "0", "1" }, Values(rSteps[0], "n"));
         Assert.Equal(new[] { "2" }, Values(rSteps[1], "n"));
         Assert.Equal(new[] { "3" }, Values(rSteps[2], "n"));
         // The until-condition's line counts as executed in the pass it ended.
@@ -404,7 +406,7 @@ public class ServerExecuteIterationsTests : IClassFixture<SharedCliServer>
         // iterationCount is null-omitted exactly when unsegmentable is present: no fake 0.
         Assert.False(loop.TryGetProperty("iterationCount", out _), $"unsegmentable loop must not claim a count: {loop}");
         Assert.Empty(loop.GetProperty("steps").EnumerateArray());
-        Assert.Contains("no instrumented statement", loop.GetProperty("unsegmentable").GetString());
+        Assert.Equal("emptyBody", loop.GetProperty("unsegmentable").GetString());
     }
 
     // --- cross-reference with the statement table --------------------------------------------------
@@ -519,5 +521,290 @@ public class ServerExecuteIterationsTests : IClassFixture<SharedCliServer>
         Assert.Equal(new[] { "5" }, Values(steps[0], "s"));
         Assert.Equal(new[] { "10" }, Values(steps[1], "s"));
         Assert.Equal(new[] { "16" }, Values(steps[2], "s"));
+    }
+
+    // --- round 3 -------------------------------------------------------------------------------
+
+    [SkippableFact]
+    public async Task Execute_SoleBodyNestedFor_EachOuterPassGetsItsOwnInnerInstance()
+    {
+        TestArtifacts.SkipIfMissing();
+        var t = SingleTest(await ExecuteAsync(
+            "codeunit 60323 \"Iter Sole Nested SX\" { trigger OnRun() var i: Integer; j: Integer; s: Integer; " +
+            "begin for i := 1 to 2 do for j := 1 to 2 do s := s + 10 * i + j; end; }"));
+        var loops = Loops(t, "OnRun");
+        Assert.Equal(3, loops.Count);
+        Assert.Equal(2, loops[0].GetProperty("iterationCount").GetInt32());
+        var inner1 = loops[1].GetProperty("steps").EnumerateArray().ToList();
+        var inner2 = loops[2].GetProperty("steps").EnumerateArray().ToList();
+        Assert.Equal(1, loops[1].GetProperty("parentIteration").GetInt32());
+        Assert.Equal(2, loops[2].GetProperty("parentIteration").GetInt32());
+        Assert.Equal(new[] { "11" }, Values(inner1[0], "s"));
+        Assert.Equal(new[] { "23" }, Values(inner1[1], "s"));
+        Assert.Equal(new[] { "44" }, Values(inner2[0], "s"));
+        Assert.Equal(new[] { "66" }, Values(inner2[1], "s"));
+    }
+
+    [SkippableFact]
+    public async Task Execute_ErrorInsideACalleeLoop_CaughtByTheCaller_DoesNotCorruptTheCallersLoop()
+    {
+        TestArtifacts.SkipIfMissing();
+        const string code =
+            "codeunit 60324 \"Iter Caught Error SX\"\n" +
+            "{\n" +
+            "    trigger OnRun()\n" +
+            "    var i: Integer; caught: Integer;\n" +
+            "    begin\n" +
+            "        for i := 1 to 2 do begin\n" +
+            "            if not Risky() then\n" +
+            "                caught += 1;\n" +
+            "        end;\n" +
+            "    end;\n" +
+            "    [TryFunction]\n" +
+            "    local procedure Risky()\n" +
+            "    var k: Integer;\n" +
+            "    begin\n" +
+            "        for k := 1 to 3 do\n" +
+            "            if k = 2 then\n" +
+            "                Error('boom');\n" +
+            "    end;\n" +
+            "}\n";
+        var t = SingleTest(await ExecuteAsync(code));
+        var caller = Assert.Single(Loops(t, "OnRun"));
+        Assert.Equal(2, caller.GetProperty("iterationCount").GetInt32());
+        Assert.Equal("exit", caller.GetProperty("closedBy").GetString());
+        var callerSteps = caller.GetProperty("steps").EnumerateArray().ToList();
+        Assert.Equal(new[] { "1" }, Values(callerSteps[0], "caught"));
+        Assert.Equal(new[] { "2" }, Values(callerSteps[1], "caught"));
+        var callee = Loops(t, "Risky");
+        Assert.Equal(2, callee.Count);
+        Assert.All(callee, c => Assert.Equal(caller.GetProperty("loopId").GetString(), c.GetProperty("parentLoopId").GetString()));
+        Assert.Equal(1, callee[0].GetProperty("parentIteration").GetInt32());
+        Assert.Equal(2, callee[1].GetProperty("parentIteration").GetInt32());
+        // Whether or not BC delivers the scope exit through the error, the instance ends and
+        // its passes are what ran: k = 1 completed, k = 2 raised.
+        Assert.All(callee, c => Assert.Equal(2, c.GetProperty("iterationCount").GetInt32()));
+    }
+
+    [SkippableFact]
+    public async Task Execute_LoopInsideAWhileCondition_IsParentedToThePassTheConditionOpens()
+    {
+        TestArtifacts.SkipIfMissing();
+        const string code =
+            "codeunit 60325 \"Iter Cond Loop SX\"\n" +
+            "{\n" +
+            "    trigger OnRun()\n" +
+            "    var n: Integer;\n" +
+            "    begin\n" +
+            "        while More(n) do begin\n" +
+            "            n += 1;\n" +
+            "            Message('PASS_' + Format(n));\n" +
+            "        end;\n" +
+            "    end;\n" +
+            "    local procedure More(n: Integer): Boolean\n" +
+            "    var k: Integer; s: Integer;\n" +
+            "    begin\n" +
+            "        for k := 1 to 2 do\n" +
+            "            s += k;\n" +
+            "        Message('COND_' + Format(n));\n" +
+            "        exit(n < 2);\n" +
+            "    end;\n" +
+            "}\n";
+        var t = SingleTest(await ExecuteAsync(code));
+        var outer = Assert.Single(Loops(t, "OnRun"));
+        Assert.Equal(2, outer.GetProperty("iterationCount").GetInt32());
+        var steps = outer.GetProperty("steps").EnumerateArray().ToList();
+        // The condition's Message() lands in the pass that evaluation opened; the terminating
+        // evaluation's in the last pass.
+        Assert.Equal(new[] { "COND_0", "PASS_1" }, steps[0].GetProperty("messages").EnumerateArray().Select(m => m.GetProperty("text").GetString()).ToArray());
+        Assert.Equal(new[] { "COND_1", "PASS_2", "COND_2" }, steps[1].GetProperty("messages").EnumerateArray().Select(m => m.GetProperty("text").GetString()).ToArray());
+        var inner = Loops(t, "More");
+        Assert.Equal(3, inner.Count);
+        Assert.Equal(1, inner[0].GetProperty("parentIteration").GetInt32());
+        Assert.Equal(2, inner[1].GetProperty("parentIteration").GetInt32());
+        Assert.Equal(2, inner[2].GetProperty("parentIteration").GetInt32());
+    }
+
+    [SkippableFact]
+    public async Task Execute_ZeroIterationNestedFor_ItsLoopVariableLandsInTheEnclosingPass()
+    {
+        TestArtifacts.SkipIfMissing();
+        var t = SingleTest(await ExecuteAsync(
+            "codeunit 60326 \"Iter Zero Nested SX\" { trigger OnRun() var i: Integer; j: Integer; y: Integer; " +
+            "begin for i := 1 to 2 do begin for j := 1 to 0 do y += 100; y += 1; end; end; }"));
+        var loops = Loops(t, "OnRun");
+        Assert.Equal(3, loops.Count);
+        Assert.All(loops.Skip(1), l => Assert.Equal(0, l.GetProperty("iterationCount").GetInt32()));
+        var outerSteps = loops[0].GetProperty("steps").EnumerateArray().ToList();
+        Assert.Equal(new[] { "1" }, Values(outerSteps[0], "j"));
+        Assert.Equal(new[] { "1" }, Values(outerSteps[0], "y"));
+    }
+
+    [SkippableFact]
+    public async Task Execute_LoopVariableDeclaredInAnotherCase_StillPlaced()
+    {
+        TestArtifacts.SkipIfMissing();
+        var t = SingleTest(await ExecuteAsync(
+            "codeunit 60327 \"Iter Case SX\" { trigger OnRun() var I: Integer; s: Integer; " +
+            "begin for i := 1 to 2 do s := s + i; end; }"));
+        var loop = Assert.Single(Loops(t, "OnRun"));
+        var steps = loop.GetProperty("steps").EnumerateArray().ToList();
+        Assert.Equal(new[] { "1" }, Values(steps[0], "I"));
+        Assert.Equal(new[] { "2" }, Values(steps[1], "I"));
+    }
+
+    [SkippableFact]
+    public async Task Execute_RecordDrivenRepeat_EveryPassCarriesTheRecordPosition()
+    {
+        TestArtifacts.SkipIfMissing();
+        var dir = Path.Combine(Path.GetTempPath(), "al-runner-iter-record", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Combine(dir, "LoopRows.Table.al"), """
+        table 60328 "Iter Loop Rows SX"
+        {
+            fields { field(1; Number; Integer) { } }
+            keys { key(PK; Number) { Clustered = true; } }
+        }
+        """);
+        File.WriteAllText(Path.Combine(dir, "RecLoop.Codeunit.al"), """
+        codeunit 60329 "Iter Record Loop SX"
+        {
+            trigger OnRun()
+            var
+                Rec: Record "Iter Loop Rows SX" temporary;
+                total: Integer;
+            begin
+                Rec.Number := 10; Rec.Insert();
+                Rec.Number := 20; Rec.Insert();
+                Rec.Number := 30; Rec.Insert();
+                if Rec.FindSet() then
+                    repeat
+                        total += Rec.Number;
+                    until Rec.Next() = 0;
+            end;
+        }
+        """);
+        var server = await _fixture.GetAsync();
+        var r = await server.SendAsync(JsonSerializer.Serialize(new
+        {
+            command = "execute",
+            sourcePaths = new[] { dir },
+            captureValues = true,
+            iterationTracking = true,
+        }));
+        var d = JsonSerializer.Deserialize<JsonElement>(r);
+        Assert.False(d.TryGetProperty("error", out _), $"unexpected error response: {r}");
+        var t = SingleTest(d);
+        var loop = Assert.Single(Loops(t, "OnRun"));
+        Assert.Equal(3, loop.GetProperty("iterationCount").GetInt32());
+        var steps = loop.GetProperty("steps").EnumerateArray().ToList();
+        // A record's captured value is its primary key; FindSet positioned it before the loop,
+        // Next() repositions it in the until-condition that opens each later pass.
+        Assert.Equal(new[] { "10" }, Values(steps[0], "Rec"));
+        Assert.Equal(new[] { "20" }, Values(steps[1], "Rec"));
+        Assert.Equal(new[] { "30" }, Values(steps[2], "Rec"));
+        Assert.Equal(new[] { "10" }, Values(steps[0], "total"));
+        Assert.Equal(new[] { "30" }, Values(steps[1], "total"));
+        Assert.Equal(new[] { "60" }, Values(steps[2], "total"));
+        // The loop is the trigger's last statement: nothing after it ran, the scope exited.
+        Assert.Equal("scopeExit", loop.GetProperty("closedBy").GetString());
+    }
+
+    [SkippableFact]
+    public async Task Execute_LoopRecord_CarriesColumnsStatementIdsAndClosedBy()
+    {
+        TestArtifacts.SkipIfMissing();
+        var d = await ExecuteAsync(LoopAndFinalMessageCode.Replace("60303", "60330"), coverage: true);
+        var t = SingleTest(d);
+        var loop = Assert.Single(Loops(t, "OnRun"));
+        Assert.Equal(9, loop.GetProperty("loopLine").GetInt32());
+        Assert.Equal(9, loop.GetProperty("loopColumn").GetInt32());
+        Assert.Equal(12, loop.GetProperty("loopEndLine").GetInt32());
+        Assert.True(loop.GetProperty("loopEndColumn").GetInt32() > 1);
+        Assert.Equal("exit", loop.GetProperty("closedBy").GetString());
+        Assert.False(t.TryGetProperty("iterationsUnresolved", out _));
+        // statementsExecuted are the same id-space as the statement table.
+        var ids = d.GetProperty("coverage").EnumerateArray().Single().GetProperty("statements").EnumerateArray()
+            .Select(s => s.GetProperty("id").GetInt32()).ToHashSet();
+        foreach (var step in loop.GetProperty("steps").EnumerateArray())
+        {
+            var executed = step.GetProperty("statementsExecuted").EnumerateArray().Select(x => x.GetInt32()).ToArray();
+            Assert.Equal(2, executed.Length);
+            Assert.All(executed, id => Assert.Contains(id, ids));
+        }
+    }
+
+    [SkippableFact]
+    public async Task Execute_LoopInATableTrigger_IsTrackedUnderItsQualifiedScopeName()
+    {
+        TestArtifacts.SkipIfMissing();
+        var dir = Path.Combine(Path.GetTempPath(), "al-runner-iter-trigger", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Combine(dir, "Trig.Table.al"), """
+        table 60331 "Iter Trigger SX"
+        {
+            fields
+            {
+                field(1; Number; Integer)
+                {
+                    trigger OnValidate()
+                    var
+                        k: Integer;
+                        t: Integer;
+                    begin
+                        for k := 1 to 2 do
+                            t += k;
+                    end;
+                }
+            }
+            keys { key(PK; Number) { Clustered = true; } }
+        }
+        """);
+        File.WriteAllText(Path.Combine(dir, "Trig.Codeunit.al"), """
+        codeunit 60332 "Iter Trigger Run SX"
+        {
+            trigger OnRun()
+            var
+                Rec: Record "Iter Trigger SX" temporary;
+                i: Integer;
+            begin
+                for i := 1 to 2 do
+                    Rec.Validate(Number, i);
+            end;
+        }
+        """);
+        var server = await _fixture.GetAsync();
+        var r = await server.SendAsync(JsonSerializer.Serialize(new
+        {
+            command = "execute",
+            sourcePaths = new[] { dir },
+            captureValues = true,
+            iterationTracking = true,
+        }));
+        var d = JsonSerializer.Deserialize<JsonElement>(r);
+        Assert.False(d.TryGetProperty("error", out _), $"unexpected error response: {r}");
+        var t = SingleTest(d);
+        var caller = Assert.Single(Loops(t, "OnRun"));
+        // BC's scope name for a field trigger is "<field> - <trigger>"; the syntax index matches it.
+        var trigger = Loops(t, "Number - OnValidate");
+        Assert.Equal(2, trigger.Count);
+        Assert.False(t.TryGetProperty("iterationsUnresolved", out _), $"the trigger scope must resolve: {t}");
+        Assert.All(trigger, l => Assert.Equal(caller.GetProperty("loopId").GetString(), l.GetProperty("parentLoopId").GetString()));
+        Assert.Equal(1, trigger[0].GetProperty("parentIteration").GetInt32());
+        Assert.Equal(2, trigger[1].GetProperty("parentIteration").GetInt32());
+        Assert.All(trigger, l => Assert.Equal(2, l.GetProperty("iterationCount").GetInt32()));
+        Assert.All(trigger, l => Assert.EndsWith("Trig.Table.al", l.GetProperty("file").GetString()));
+        foreach (var l in trigger)
+        {
+            var steps = l.GetProperty("steps").EnumerateArray().ToList();
+            Assert.Equal(new[] { "1" }, Values(steps[0], "k"));
+            Assert.Equal(new[] { "1" }, Values(steps[0], "t"));
+            Assert.Equal(new[] { "2" }, Values(steps[1], "k"));
+            Assert.Equal(new[] { "3" }, Values(steps[1], "t"));
+        }
+        // The record's captured value is its primary key, set by Validate.
+        var callerSteps = caller.GetProperty("steps").EnumerateArray().ToList();
+        Assert.Equal(new[] { "1" }, Values(callerSteps[0], "Rec"));
+        Assert.Equal(new[] { "2" }, Values(callerSteps[1], "Rec"));
     }
 }
