@@ -266,17 +266,59 @@ public class PageBackgroundTaskInlineTests
                     Error('ARM4 FAIL: expected the worker''s own error text to propagate, got %1', GetLastErrorText());
                 Card.Close();
             end;
+
+            // A worker codeunit's own Insert() must be refused with BC's permission-denied
+            // wording (measured verbatim against BC 27.5/28.3, corpus PR #135), and the row
+            // must not land -- the write never reaches the table, it is not merely rolled
+            // back afterward. See PageBackgroundTaskWritePatches.cs for the full mechanism.
+            [Test]
+            procedure RunPageBackgroundTask_WorkerInsert_RefusedByReadOnlySession()
+            var
+                Row: Record "PBTI Row";
+                Card: TestPage "PBTI Card";
+                Params: Dictionary of [Text, Text];
+                Results: Dictionary of [Text, Text];
+            begin
+                Initialize();
+                Card.OpenView();
+
+                Params.Add('No', 'WR-NEW');
+                Params.Add('Write', 'true');
+                asserterror Results := Card.RunPageBackgroundTask(Codeunit::"PBTI WriteWorker", Params, false);
+                if StrPos(GetLastErrorText(), 'Sorry, the current permissions prevented the action') = 0 then
+                    Error('ARM5 FAIL: expected BC''s permission-denied wording, got %1', GetLastErrorText());
+                if Row.Get('WR-NEW') then
+                    Error('ARM5 FAIL: a refused Insert() must not have landed the row');
+                Card.Close();
+            end;
+        }
+
+        codeunit 62518 "PBTI WriteWorker"
+        {
+            trigger OnRun()
+            var
+                Row: Record "PBTI Row";
+                Params: Dictionary of [Text, Text];
+                RowNo: Text;
+            begin
+                Params := Page.GetBackgroundParameters();
+                Params.Get('No', RowNo);
+                Row.Init();
+                Row."No." := CopyStr(RowNo, 1, MaxStrLen(Row."No."));
+                Row.Insert();
+            end;
         }
         """);
 
         var (output, exitCode) = RunRunner(root);
 
         Assert.True(exitCode == 0,
-            $"Expected all four page-background-task tests to pass (exit 0); got exit {exitCode}.\n{output}");
+            $"Expected all five page-background-task tests to pass (exit 0); got exit {exitCode}.\n{output}");
         Assert.DoesNotContain("FAIL", output);
         Assert.Contains("PASS  Codeunit62517.EnqueueBackgroundTask_CompletesBeforeOpenAndGoToRecordReturn", output);
         Assert.Contains("PASS  Codeunit62517.RunPageBackgroundTask_ReturnsWorkerResult", output);
         Assert.Contains("PASS  Codeunit62517.EnqueueBackgroundTask_HandledErrorDoesNotPropagate", output);
         Assert.Contains("PASS  Codeunit62517.EnqueueBackgroundTask_UnhandledErrorPropagates", output);
+        Assert.Contains("PASS  Codeunit62517.RunPageBackgroundTask_WorkerInsert_RefusedByReadOnlySession", output);
     }
 }

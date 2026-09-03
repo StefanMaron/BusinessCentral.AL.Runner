@@ -4737,6 +4737,54 @@ public static class NclCecilRewrite
                 $"[Cecil] Prepended All Profile write guards -> {profileGuarded} NavRecord AL write entry point(s)");
         }
 
+        // -- Page background task write refusal (issue #2514) -----------------------------
+        // A page background task's worker codeunit runs inline against the current session
+        // (RunnerPageBackgroundTaskGap.cs), with NavSession.PageBackgroundTask set for the
+        // duration — real BC refuses ANY write from that scope (measured against BC 27.5 and
+        // 28.3, corpus PR StefanMaron/BusinessCentral.AL.Language.Tests#135; see
+        // PageBackgroundTaskWritePatches.cs for the full trail). Prepend a guard to all four
+        // AL write entry points, exactly like the All Profile guard above and the rowversion
+        // clock before it — a no-op for every write except one made from inside a page
+        // background task worker.
+        {
+            var navRecordForPbtGuard = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.NavRecord")
+                ?? throw new InvalidOperationException("NavRecord type not found in Ncl");
+
+            MethodReference PbtGuardRef(string helper)
+            {
+                var mi = typeof(AlRunner.Patches.PageBackgroundTaskWritePatches).GetMethod(
+                    helper, BindingFlags.Public | BindingFlags.Static)
+                    ?? throw new InvalidOperationException($"PageBackgroundTaskWritePatches.{helper} not found");
+                return asm.MainModule.ImportReference(mi);
+            }
+
+            var pbtGuards = new (string Entry, MethodReference Helper)[]
+            {
+                ("ALInsertAsync", PbtGuardRef(nameof(AlRunner.Patches.PageBackgroundTaskWritePatches.GuardPageBackgroundTaskInsert))),
+                ("ALModifyAsync", PbtGuardRef(nameof(AlRunner.Patches.PageBackgroundTaskWritePatches.GuardPageBackgroundTaskModify))),
+                ("ALDeleteAsync", PbtGuardRef(nameof(AlRunner.Patches.PageBackgroundTaskWritePatches.GuardPageBackgroundTaskDelete))),
+                ("ALRenameAsync", PbtGuardRef(nameof(AlRunner.Patches.PageBackgroundTaskWritePatches.GuardPageBackgroundTaskRename))),
+            };
+
+            int pbtGuarded = 0;
+            foreach (var (entry, helper) in pbtGuards)
+                foreach (var m in navRecordForPbtGuard.Methods.Where(
+                             x => x.Name == entry && x.HasBody && x.Body.Instructions.Count > 0))
+                {
+                    var il = m.Body.GetILProcessor();
+                    var first = m.Body.Instructions[0];
+                    il.InsertBefore(first, il.Create(OpCodes.Ldarg_0));
+                    il.InsertBefore(first, il.Create(OpCodes.Call, helper));
+                    pbtGuarded++;
+                }
+            if (pbtGuarded == 0)
+                throw new InvalidOperationException(
+                    "[Cecil] no NavRecord ALInsert/ALModify/ALDelete/ALRename entry points found for the "
+                    + "page background task write guard - a worker codeunit's write would silently succeed.");
+            Console.Error.WriteLine(
+                $"[Cecil] Prepended page background task write guards -> {pbtGuarded} NavRecord AL write entry point(s)");
+        }
+
         // === NavQuery ctor null-safety ===
         // The AL-emitted Query{ID} class chains to `: base(parent, securityFiltering, metaQuery)`
         // (the 3-arg ctor `(ITreeObject, SecurityFiltering, NCLMetaQuery)`). The original ctor
