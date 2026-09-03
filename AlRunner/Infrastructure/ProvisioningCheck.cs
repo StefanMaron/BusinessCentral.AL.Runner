@@ -1343,24 +1343,75 @@ public static class ProvisioningCheck
     /// <paramref name="serviceTierDir"/> (the full /service/ closure — the same set the
     /// manual `service-tier` command fetches). Returns true on success. This is the
     /// opt-in auto-resolve; callers gate it behind `al-runner provision` / `--auto-provision`.
+    ///
+    /// Issue #2559: a failure (non-zero exit, an incomplete closure after a "successful"
+    /// exit, or the downloader throwing) removes <paramref name="serviceTierDir"/> again —
+    /// but ONLY when it is left EMPTY. A partial download that landed some DLLs is a
+    /// resumable state; deleting it would throw away bytes the user already paid for. An
+    /// empty leftover directory has no such value and — left alone — would outrank a real,
+    /// complete, older-patch directory in <see cref="BcArtifacts.SelectArtifactVersionDir"/>,
+    /// which picks purely by directory name/version, not completeness.
     /// </summary>
-    public static bool AutoProvision(string version, string serviceTierDir, Action<string>? log = null)
+    /// <param name="downloader">Test seam: defaults to <see cref="ArtifactDownloader.ServiceTier"/>.
+    /// Exceptions from it are caught here (contained, not propagated) so a network failure is
+    /// reported the same way a non-zero exit code is, and still triggers the empty-dir cleanup.</param>
+    public static bool AutoProvision(
+        string version,
+        string serviceTierDir,
+        Action<string>? log = null,
+        Func<string, string, Action<string>?, int>? downloader = null)
     {
         var logf = log ?? Console.Error.WriteLine;
+        var download = downloader ?? ArtifactDownloader.ServiceTier;
         logf($"[provision] downloading BC {version} engine service-tier closure → {serviceTierDir}");
-        var rc = ArtifactDownloader.ServiceTier(version, serviceTierDir, logf);
+        int rc;
+        try
+        {
+            rc = download(version, serviceTierDir, logf);
+        }
+        catch (Exception ex)
+        {
+            logf($"[provision] download threw: {ex.Message}");
+            RemoveIfEmpty(serviceTierDir, logf);
+            return false;
+        }
         if (rc != 0)
         {
             logf($"[provision] download failed (exit {rc}). See messages above.");
+            RemoveIfEmpty(serviceTierDir, logf);
             return false;
         }
         var after = Check(version, serviceTierDir);
         if (!after.Ok)
         {
             logf($"[provision] still incomplete after download; missing: {string.Join(", ", after.MissingFiles)}");
+            RemoveIfEmpty(serviceTierDir, logf);
             return false;
         }
         logf($"[provision] BC {version} engine artifacts complete.");
         return true;
+    }
+
+    /// <summary>
+    /// Removes <paramref name="dir"/> if (and only if) it exists and holds nothing — no
+    /// files, no subdirectories. A non-empty (partial) download is left exactly as it is:
+    /// this is cleanup of the empty case only, never a "start over" wipe. Best-effort: a
+    /// failure to delete is logged, not thrown, so it never masks the real provisioning
+    /// failure that triggered the cleanup attempt.
+    /// </summary>
+    private static void RemoveIfEmpty(string dir, Action<string> logf)
+    {
+        try
+        {
+            if (Directory.Exists(dir) && !Directory.EnumerateFileSystemEntries(dir).Any())
+            {
+                Directory.Delete(dir);
+                logf($"[provision] removed empty {dir} left behind by the failed download.");
+            }
+        }
+        catch (Exception ex)
+        {
+            logf($"[provision] could not remove empty {dir} after the failed download: {ex.Message}");
+        }
     }
 }
