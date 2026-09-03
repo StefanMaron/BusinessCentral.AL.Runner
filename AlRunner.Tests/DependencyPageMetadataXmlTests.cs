@@ -48,6 +48,8 @@ public class DependencyPageMetadataXmlTests
     private const int ListPageId = 88123401;
     private const int UnknownPageId = 88123409;
     private const int NavigatePageId = 88123402;
+    private const int SplitKeyPageId = 88123403;
+    private const int PlainLinesPageId = 88123404;
 
     private const string SymbolReference = """
         {
@@ -69,6 +71,25 @@ public class DependencyPageMetadataXmlTests
               "Properties": [
                 { "Name": "Caption", "Value": "DPX Wizard Caption" },
                 { "Name": "PageType", "Value": "NavigatePage" }
+              ]
+            },
+            {
+              "Id": 88123403,
+              "Name": "DPX Test Split Key Lines",
+              "Properties": [
+                { "Name": "PageType", "Value": "ListPart" },
+                { "Name": "SourceTable", "Value": "701" },
+                { "Name": "AutoSplitKey", "Value": "1" },
+                { "Name": "MultipleNewLines", "Value": "1" },
+                { "Name": "DelayedInsert", "Value": "1" }
+              ]
+            },
+            {
+              "Id": 88123404,
+              "Name": "DPX Test Plain Lines",
+              "Properties": [
+                { "Name": "PageType", "Value": "ListPart" },
+                { "Name": "SourceTable", "Value": "701" }
               ]
             }
           ]
@@ -483,5 +504,89 @@ public class DependencyPageMetadataXmlTests
         {
             Directory.Delete(dir, recursive: true);
         }
+    }
+
+    /// <summary>
+    /// #2550: the three flags the AL compiler writes on &lt;SourceObject&gt; alongside
+    /// SourceTable were dropped, so a page shipping precompiled in a dependency .app answered
+    /// as if it declared none of them.
+    ///
+    /// <para>AutoSplitKey is the one with consequences. <c>RunnerPageInstance.NeedsAutoSplitKey</c>
+    /// reads <c>form.MasterPage.PageProperties.SourceObject.AutoSplitKey</c>, so a missing
+    /// attribute read false, BC's client half of AutoSplitKey silently did not run, and per the
+    /// note in <c>MockTestPage</c> the first new row then lands at line no. 0 and the second
+    /// fails on a duplicate primary key.</para>
+    ///
+    /// <para>The attribute names and value spelling are measured, not guessed: compiling a page
+    /// that declares all three and reading back the metadata the BC 28.1 compiler captured for
+    /// it gives
+    /// <c>&lt;SourceObject AutoSplitKey="1" DelayedInsert="1" MultipleNewLines="1" SourceTable="65940" /&gt;</c>.
+    /// Base Application 28.1's own SymbolReference.json states AutoSplitKey on 234 of its 2610
+    /// pages, MultipleNewLines on 116 and DelayedInsert on 303.</para>
+    /// </summary>
+    [Fact]
+    public void TryBuildDependencyPageMetadata_CarriesTheSourceObjectFlagsTheSymbolFileStates()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            RecordPatches.AddBcAppPath(WriteApp(dir, SymbolReference));
+
+            var sourceObject = ReadSourceObject(SplitKeyPageId);
+
+            Assert.Equal("1", sourceObject.GetAttribute("AutoSplitKey"));
+            Assert.Equal("1", sourceObject.GetAttribute("MultipleNewLines"));
+            Assert.Equal("1", sourceObject.GetAttribute("DelayedInsert"));
+            // The flags must not have displaced what was already there.
+            Assert.Equal("701", sourceObject.GetAttribute("SourceTable"));
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// The other direction, and the one that makes the test above mean something: all three
+    /// default to FALSE in AL, so a page whose symbol file states none of them must carry no
+    /// such attribute at all. Writing them unconditionally — as "0", or worse as "1" — would
+    /// make every dependency page claim AutoSplitKey, which is a different wrong answer from
+    /// the one being fixed.
+    /// </summary>
+    [Fact]
+    public void TryBuildDependencyPageMetadata_OmitsTheSourceObjectFlagsAPageDoesNotDeclare()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            RecordPatches.AddBcAppPath(WriteApp(dir, SymbolReference));
+
+            var sourceObject = ReadSourceObject(PlainLinesPageId);
+
+            Assert.False(sourceObject.HasAttribute("AutoSplitKey"), "AutoSplitKey must be absent, not \"0\"");
+            Assert.False(sourceObject.HasAttribute("MultipleNewLines"), "MultipleNewLines must be absent");
+            Assert.False(sourceObject.HasAttribute("DelayedInsert"), "DelayedInsert must be absent");
+            Assert.Equal("701", sourceObject.GetAttribute("SourceTable"));
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    private static XmlElement ReadSourceObject(int pageId)
+    {
+        var xml = RecordPatches.TryBuildDependencyPageMetadata(pageId);
+        Assert.NotNull(xml);
+
+        var doc = new XmlDocument();
+        doc.LoadXml(xml!);
+        var ns = new XmlNamespaceManager(doc.NameTable);
+        ns.AddNamespace("m", "urn:schemas-microsoft-com:dynamics:NAV:MetaObjects");
+
+        var properties = (XmlElement)doc.DocumentElement!.SelectSingleNode("m:Properties", ns)!;
+        return (XmlElement)properties.SelectSingleNode("m:SourceObject", ns)!;
     }
 }
