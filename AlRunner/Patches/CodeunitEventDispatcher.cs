@@ -367,6 +367,28 @@ public static partial class BcRuntime
     }
 
     /// <summary>
+    /// Session.EventBindings as a mutable list, resolving <see cref="_piSessionEventBindings"/>
+    /// lazily the same way <see cref="ResetEventBindingsForTestBoundary"/> and
+    /// <see cref="BoundInstancesOf"/> already do — shared so a third caller (see
+    /// MethodScopePatches.UnbindLocalManualSubscriptions, #2476) does not need its own copy
+    /// of the reflection lookup. Null when the skeleton session or the Ncl property itself is
+    /// unavailable — every caller already treats that as "nothing to touch".
+    /// </summary>
+    internal static System.Collections.IList? SessionEventBindings()
+    {
+        var session = SkeletonSession;
+        if (session == null) return null;
+        if (_piSessionEventBindings == null && !_eventBindingsLookupFailed)
+        {
+            _piSessionEventBindings = session.GetType().GetProperty("EventBindings",
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            if (_piSessionEventBindings == null)
+                _eventBindingsLookupFailed = true;
+        }
+        return _piSessionEventBindings?.GetValue(session) as System.Collections.IList;
+    }
+
+    /// <summary>
     /// <paramref name="publisher"/> when its tree is still usable, otherwise the skeleton
     /// session. Only the tree-parent role is being substituted — the publisher itself is
     /// still what the subscriber is dispatched for.
