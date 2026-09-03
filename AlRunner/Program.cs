@@ -3512,8 +3512,8 @@ return strictExitCode ? computedExitCode : 0;
     //
     // When more than one path is given, first wire any inter-bundle dependency (the
     // app + test-app shape --guide recommends) the same way the CLI does before its
-    // per-bundle loop: compile whichever bundle a sibling bundle depends on into a
-    // package cache the sibling can resolve against.
+    // per-bundle loop. Then, regardless of bundle count, run sibling source-dep
+    // discovery so a single-bundle request can still resolve source-only sibling apps.
     //
     // `cancellationToken` (default: none, for the `execute` caller which has no
     // active-run CTS) is checked BETWEEN bundles: a `cancel` landing while bundle 1
@@ -3558,14 +3558,13 @@ return strictExitCode ? computedExitCode : 0;
             }
         }
 
+        var bundleList = sourcePaths.ToList();
+        var workspaceScratch = new List<string>();
         if (sourcePaths.Length > 1)
         {
-            var bundleList = sourcePaths.ToList();
-            var workspaceScratch = new List<string>();
             try
             {
                 packageCacheDirs = RunLayeredPrePass(bundleList, packageCacheDirs, workspaceScratch);
-                packageCacheDirs = BuildSiblingSourceDeps(bundleList, packageCacheDirs, workspaceScratch);
             }
             catch (Exception ex)
             {
@@ -3577,6 +3576,19 @@ return strictExitCode ? computedExitCode : 0;
                     ServerRunResult.Failure(3, "<inter-bundle-deps>", $"LAYERED-PREPASS-FAIL: {ex.Message}", new())
                 };
             }
+        }
+
+        try
+        {
+            packageCacheDirs = BuildSiblingSourceDeps(bundleList, packageCacheDirs, workspaceScratch);
+        }
+        catch (Exception ex)
+        {
+            // Same failure contract as the layered pre-pass above.
+            return new List<ServerRunResult>
+            {
+                ServerRunResult.Failure(3, "<sibling-source-deps>", $"SIBLING-SOURCE-DEPS-FAIL: {ex.Message}", new())
+            };
         }
 
         var results = new List<ServerRunResult>(sourcePaths.Length);

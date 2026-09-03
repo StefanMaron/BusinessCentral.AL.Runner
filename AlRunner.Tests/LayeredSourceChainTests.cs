@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text;
+using System.Text.Json;
 using Xunit;
 
 namespace AlRunner.Tests;
@@ -36,24 +37,10 @@ namespace AlRunner.Tests;
 ///
 /// Spawns the real runner; needs the BC artifact cache. Skips (visibly) when absent.
 ///
-/// #2377: MEASURED and left spawning. Two of the three facts below could technically be
-/// served by a shared --server fixture, and converting them made the class SLOWER —
-/// 128.8s -> 139.9s of per-test time in a back-to-back matched pair. A warm server only
-/// pays for itself when a class issues SEVERAL expensive requests against one BC boot
-/// (LayeredCacheTests: 150.6s -> 28.9s, two expensive runs collapsing onto one boot).
-/// Here exactly one fact is expensive; the negative fact costs 5s because it dies in
-/// dependency resolution before BC boots at all; and the sibling-source fact CANNOT move
-/// (see below). So the conversion added a whole second BC boot to a class that still had
-/// to spawn a CLI anyway, and bought back 5 seconds.
-///
-/// The sibling-source fact is stuck for a different reason worth knowing about:
-/// RunAllBundlesForServer puts BOTH source pre-passes behind `if (sourcePaths.Length > 1)`,
-/// while the CLI gates only RunLayeredPrePass on bundle count and runs
-/// BuildSiblingSourceDeps unconditionally. Measured on this fixture's shape: the CLI exits
-/// 0, the identical single-bundle runTests request exits 3 with "DEP-RESOLVE-FAIL:
-/// Dependency not found". That is a runner bug (tracked in #2380), not a property of this
-/// test — a --server client such as the VS Code extension, which sends one bundle at a
-/// time, cannot resolve a sibling source dependency at all today.
+/// #2377: MEASURED and left spawning for the CLI facts. A warm shared server only pays
+/// for itself when a class issues several expensive requests against one BC boot
+/// (LayeredCacheTests: 150.6s -> 28.9s). This class keeps direct CLI coverage for the
+/// CLI path and now also carries the server mirror facts for #2380.
 /// </summary>
 public class LayeredSourceChainTests
 {
@@ -263,6 +250,13 @@ public class LayeredSourceChainTests
     private static string NewScratch(string tag) =>
         Path.Combine(Path.GetTempPath(), "al-runner-layered-chain", tag, Guid.NewGuid().ToString("N"));
 
+    private static string ServerReq(params string[] bundles) => JsonSerializer.Serialize(new
+    {
+        command = "runTests",
+        sourcePaths = bundles,
+        packagePaths = Array.Empty<string>(),
+    });
+
     // ── Positive: RunLayeredPrePass (three bundle arguments) ───────────────────
 
     /// <summary>
@@ -330,6 +324,31 @@ public class LayeredSourceChainTests
             $"a three-deep sibling source chain must compile and run (exit {exit}):\n{output}");
     }
 
+    [SkippableFact]
+    public async Task ServerRunTests_SingleSourcePath_MiddleSiblingResolvesTheBaseSibling()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        var scratch = NewScratch("sibling-server");
+        Guid baseId = Guid.NewGuid(), middleId = Guid.NewGuid(), testsId = Guid.NewGuid();
+        var baseDir = Path.Combine(scratch, "base-app");
+        var middleDir = Path.Combine(scratch, "middle-app");
+        var testsDir = Path.Combine(scratch, "tests-app");
+        WriteBaseApp(baseDir, baseId);
+        WriteMiddleApp(middleDir, middleId, baseId);
+        WriteTestApp(testsDir, testsId, middleId);
+
+        await using var server = await CliServer.StartAsync(new[] { "--cache", Path.Combine(scratch, "al-out") });
+        var lines = await server.SendRequestStreamingAsync(ServerReq(testsDir), TimeSpan.FromSeconds(300));
+        var (_, summary) = ProtocolV2Streaming.Split(lines);
+
+        Assert.Equal(0, summary.GetProperty("exitCode").GetInt32());
+        Assert.Equal(3, summary.GetProperty("total").GetInt32());
+        Assert.Equal(3, summary.GetProperty("passed").GetInt32());
+        Assert.False(summary.TryGetProperty("compilationErrors", out _),
+            $"unexpected compile errors: {string.Join(" | ", lines)}");
+    }
+
     // ── Negative: an absent dependency still fails, and says which one ─────────
 
     /// <summary>
@@ -360,5 +379,31 @@ public class LayeredSourceChainTests
         Assert.NotEqual(0, exit);
         Assert.Contains("LSC Chain Base", output);
         Assert.Contains("Dependency not found", output);
+    }
+
+    [SkippableFact]
+    public async Task ServerRunTests_SingleSourcePath_BaseAppAbsent_FailsNamingTheMissingDependency()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        var scratch = NewScratch("absent-server");
+        Guid baseId = Guid.NewGuid(), middleId = Guid.NewGuid(), testsId = Guid.NewGuid();
+        var chainRoot = Path.Combine(scratch, "chain");
+        var middleDir = Path.Combine(chainRoot, "middle-app");
+        var testsDir = Path.Combine(chainRoot, "tests-app");
+        WriteMiddleApp(middleDir, middleId, baseId);
+        WriteTestApp(testsDir, testsId, middleId);
+
+        await using var server = await CliServer.StartAsync(new[] { "--cache", Path.Combine(scratch, "al-out") });
+        var lines = await server.SendRequestStreamingAsync(ServerReq(testsDir), TimeSpan.FromSeconds(300));
+        var (_, summary) = ProtocolV2Streaming.Split(lines);
+
+        Assert.NotEqual(0, summary.GetProperty("exitCode").GetInt32());
+        Assert.True(summary.TryGetProperty("compilationErrors", out var compileErrors),
+            $"expected compilationErrors when base sibling is absent: {string.Join(" | ", lines)}");
+        var allErrorText = string.Join(" | ", compileErrors.EnumerateArray()
+            .SelectMany(g => g.GetProperty("errors").EnumerateArray().Select(e => e.GetString())));
+        Assert.Contains("LSC Chain Base", allErrorText);
+        Assert.Contains("Dependency not found", allErrorText);
     }
 }
