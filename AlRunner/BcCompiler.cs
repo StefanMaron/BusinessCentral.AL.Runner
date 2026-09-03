@@ -774,13 +774,15 @@ public sealed partial class BcCompiler
         return null;
     }
 
-    // Per-file cache of the two zip reads DeduplicateAppPackageDirs performs on every .app
-    // it scans (ReadManifest + HasSymbolReference). Both re-read the WHOLE package from
-    // disk and unzip it — for a 113-package, 138 MB platform-apps dir that is ~1–2.5 s per
-    // scan, and the scan runs on EVERY GetSharedReferences call (it has to: its output is
-    // what the loader signature is computed from). Keyed by path + length + last-write
-    // ticks, so a package rewritten in place (InProcessAppPackager's synthetic .apps, a
-    // --watch rebuild) invalidates its own entry.
+    // Per-file cache of the package read DeduplicateAppPackageDirs performs on every .app it
+    // scans, and the scan runs on EVERY GetSharedReferences call (it has to: its output is what
+    // the loader signature is computed from). Keyed by path + length + last-write ticks, so a
+    // package rewritten in place (InProcessAppPackager's synthetic .apps, a --watch rebuild)
+    // invalidates its own entry.
+    //
+    // AppLoader.ReadPackageMeta keeps the same key across PROCESSES in its on-disk index and
+    // answers both questions off one open; this is the in-process layer in front of it, and the
+    // one ResetSharedReferencesForTests clears so a test can force the scan to re-read.
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<
         string, (long Length, long Ticks, AppManifest? Manifest, bool HasSymbolReference)> _appMetaCache = new();
 
@@ -789,13 +791,13 @@ public sealed partial class BcCompiler
         var path = fi.FullName;
         long len, ticks;
         try { len = fi.Length; ticks = fi.LastWriteTimeUtc.Ticks; }
-        catch { return (AppLoader.ReadManifest(path), AppLoader.HasSymbolReference(path)); }
+        catch { return AppLoader.ReadPackageMeta(path); }
 
         if (_appMetaCache.TryGetValue(path, out var hit) && hit.Length == len && hit.Ticks == ticks)
             return (hit.Manifest, hit.HasSymbolReference);
 
-        var meta = (AppLoader.ReadManifest(path), AppLoader.HasSymbolReference(path));
-        _appMetaCache[path] = (len, ticks, meta.Item1, meta.Item2);
+        var meta = AppLoader.ReadPackageMeta(path);
+        _appMetaCache[path] = (len, ticks, meta.Manifest, meta.HasSymbolReference);
         return meta;
     }
 
@@ -912,6 +914,11 @@ public sealed partial class BcCompiler
         // thing the reader needs told. See DescribeStagedSearchSet.
         var unstaged = new List<UnstagedPackage>();
         var changed = false;
+        // Same BCCOMPILER_TIMING=1 switch and [emit-timing] channel Emit() uses. This scan runs
+        // on every GetSharedReferences call and its cost is invisible from the outside, so it
+        // gets a mark of its own.
+        var scanClock = System.Diagnostics.Stopwatch.StartNew();
+        var scanned = 0;
         foreach (var dir in packageDirs)
         {
             // This one already materialised INSIDE the try (the .ToList()), so unlike its five
@@ -923,6 +930,7 @@ public sealed partial class BcCompiler
             foreach (var appInfo in apps)
             {
                 var app = appInfo.FullName;
+                scanned++;
                 var (m, hasSymbolReference) = ReadAppMeta(appInfo);
                 if (m == null) continue;
                 if (excludeAppId != null && m.AppId == excludeAppId.Value) { changed = true; continue; }
@@ -970,6 +978,9 @@ public sealed partial class BcCompiler
                 inventory.Add(new PackageScanEntry(full, m.AppId, m.Publisher, m.Name, m.Version));
             }
         }
+        if (Environment.GetEnvironmentVariable("BCCOMPILER_TIMING") == "1")
+            Console.Error.WriteLine(
+                $"[emit-timing] package scan: {scanned} apps: {scanClock.ElapsedMilliseconds}ms");
         if (!changed) return packageDirs; // common case — leave the hot path untouched
 
         // Build (or reuse) a staging dir keyed by the exact picked-app set so concurrent /
