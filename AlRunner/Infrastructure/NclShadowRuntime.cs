@@ -293,6 +293,17 @@ public static class NclShadowRuntime
         }
     }
 
+    // #2489: healed in place, one file at a time — see PublishShadowDir's doc comment
+    // for why a whole-directory swap is unsafe here (a sibling process may already be
+    // RUNNING from shadowDir, with AppContext.BaseDirectory baked to that exact path
+    // for its entire lifetime; anything it path-joins off that string — a lazy
+    // Assembly.LoadFrom, a satellite resource, Win32Stubs — breaks the instant the
+    // directory is renamed away, even though its already-open file handles stay valid).
+    private static readonly string[] HealableFileNames =
+    {
+        EntryDllName, NclFileName, "al-runner.deps.json", "al-runner.runtimeconfig.json",
+    };
+
     /// <summary>
     /// Publishes <paramref name="tempDir"/> (a fully-built shadow dir, marker written last)
     /// onto <paramref name="shadowDir"/>, atomically, and self-heals the two concurrent-
@@ -309,10 +320,21 @@ public static class NclShadowRuntime
     ///    while it was still being mirrored, before this fix excluded that name pattern).
     ///    That state used to be sticky forever — nothing revisited it once published, and
     ///    <c>Directory.Move</c> onto an existing directory always throws, which the old
-    ///    lost-race handler treated as "someone else won" unconditionally. Self-heal
-    ///    instead: move the incomplete directory aside, publish ours in its place, then
-    ///    best-effort delete the stale one. Retried a few times since another process
-    ///    self-healing the SAME incomplete dir at the same moment can transiently collide.
+    ///    lost-race handler treated as "someone else won" unconditionally.
+    ///
+    ///    Self-heal here copies each required file from <paramref name="tempDir"/> INTO the
+    ///    existing <paramref name="shadowDir"/> (create-or-overwrite, one file at a time) —
+    ///    deliberately NOT a whole-directory swap. An earlier version of this fix moved the
+    ///    whole incomplete directory aside and republished at the same path; that is unsafe
+    ///    whenever a SIBLING PROCESS IS ALREADY RUNNING from shadowDir (its
+    ///    AppContext.BaseDirectory was fixed to that exact path at its own startup and never
+    ///    changes) — any later path-based lookup off that string (a lazy
+    ///    <c>Assembly.LoadFrom</c>, a satellite-resource probe, Win32Stubs) breaks the
+    ///    instant the directory is renamed away, even though handles already open at that
+    ///    point keep working. Overwriting individual files in place has the same property
+    ///    normal file writes always have for concurrent readers: an already-open handle
+    ///    keeps seeing the old bytes/inode, and a fresh open after the write sees the new
+    ///    ones — nobody's path resolution ever goes missing.
     /// </summary>
     internal static void PublishShadowDir(string tempDir, string shadowDir, string origFull)
     {
@@ -341,29 +363,32 @@ public static class NclShadowRuntime
                 return;
             }
 
-            // shadowDir exists but is incomplete — self-heal by moving it aside and
-            // retrying. Best-effort: another process may be doing the exact same thing
-            // to the exact same directory right now, so a failure here just falls
-            // through to the next attempt rather than being fatal.
-            var staleAside = Path.Combine(
-                Path.GetDirectoryName(shadowDir)!,
-                $"{Path.GetFileName(shadowDir)}.stale.{Guid.NewGuid():N}");
-            try
+            // shadowDir exists but is incomplete — heal in place (see the doc comment
+            // above for why NOT a whole-directory swap): copy every required file from
+            // our own complete tempDir build into shadowDir, then recheck. Best-effort
+            // per file — a sibling doing the exact same heal at the same moment can
+            // transiently collide on one file; the recheck below and the outer retry
+            // loop cover that rather than treating any single copy failure as fatal.
+            foreach (var name in HealableFileNames)
             {
-                Directory.Move(shadowDir, staleAside);
-                Console.Error.WriteLine(
-                    $"[reexec] Self-healing incomplete shadow dir at {shadowDir} (moved aside to {staleAside})");
+                try { File.Copy(Path.Combine(tempDir, name), Path.Combine(shadowDir, name), overwrite: true); }
+                catch (IOException) { /* transient sibling collision — recheck below, retry if still incomplete */ }
+                catch (UnauthorizedAccessException) { /* same */ }
             }
-            catch (IOException)
-            {
-                // Someone else is already mid-self-heal (or mid-publish) of this exact
-                // dir — loop around and re-observe rather than racing them further.
-                continue;
-            }
+            // Marker goes last, same invariant as the initial build: "marker matches
+            // origFull" only becomes true once every other required file is in place.
+            try { File.Copy(Path.Combine(tempDir, MarkerFileName), Path.Combine(shadowDir, MarkerFileName), overwrite: true); }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
 
-            try { Directory.Delete(staleAside, recursive: true); } catch { /* best effort */ }
-            // Loop around: shadowDir no longer exists (or a sibling just re-published
-            // it), so the top of the next iteration re-evaluates from scratch.
+            if (IsShadowDirComplete(shadowDir, origFull))
+            {
+                Console.Error.WriteLine($"[reexec] Self-healed incomplete shadow dir at {shadowDir} in place");
+                try { Directory.Delete(tempDir, recursive: true); } catch { /* best effort */ }
+                return;
+            }
+            // Still incomplete (a transient per-file collision above, or a sibling
+            // racing the same heal) — loop around and retry.
         }
 
         // Exhausted retries under sustained contention — leave tempDir for the finally

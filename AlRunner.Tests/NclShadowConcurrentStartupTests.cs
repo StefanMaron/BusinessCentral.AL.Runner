@@ -240,13 +240,69 @@ public sealed class NclShadowConcurrentStartupTests
         finally { Directory.Delete(root, recursive: true); }
     }
 
+    /// <summary>Positive + regression pin for the whole-directory-swap defect this fix
+    /// replaced: an earlier version of the self-heal did <c>Directory.Move(shadowDir,
+    /// staleAside)</c>, which is unsafe whenever a SIBLING PROCESS IS ALREADY RUNNING
+    /// from shadowDir — its AppContext.BaseDirectory was fixed to that exact path at its
+    /// own startup, so renaming the directory away breaks any later path-based lookup it
+    /// does off that string (confirmed as the root cause of a live CI regression: two
+    /// BatchAppIdentityTests failures whose subprocess output truncated mid-run after the
+    /// self-heal fired concurrently). This test proves the CURRENT shape: shadowDir's own
+    /// PATH is never renamed during a heal — a file handle opened against the original
+    /// path before the heal keeps reading the SAME bytes it already had, exactly as a
+    /// live process's already-open handles would.</summary>
+    [Fact]
+    public void PublishShadowDir_SelfHeal_NeverRenamesShadowDirItself()
+    {
+        var root = NewTempDir("publish-selfheal-no-rename");
+        try
+        {
+            var origFull = @"C:\install\any";
+            var shadowDir = Path.Combine(root, "key");
+            Directory.CreateDirectory(shadowDir);
+            File.WriteAllText(Path.Combine(shadowDir, MarkerFileName), origFull);
+            File.WriteAllBytes(Path.Combine(shadowDir, NclFileName), new byte[] { 4, 5, 6 });
+            // al-runner.dll deliberately missing — the incomplete shape.
+
+            // A file NOT among the ones the heal copies (see HealableFileNames) —
+            // stands in for a lazily loaded, load-by-path assembly a live sibling
+            // process might resolve off AppContext.BaseDirectory partway through its
+            // run (AlRunner.QueryJoin.dll, Win32Stubs, satellite resources — see the
+            // #2166/#2168 comments on MirrorInstallDirectory). A whole-directory swap
+            // (Directory.Move(shadowDir, staleAside) then delete staleAside) would take
+            // this file down with it; an in-place heal must leave it untouched at the
+            // exact same path.
+            var sentinelPath = Path.Combine(shadowDir, "AlRunner.QueryJoin.dll");
+            File.WriteAllBytes(sentinelPath, new byte[] { 0xAB, 0xCD });
+
+            var tempDir = Path.Combine(root, "key.building.noswap");
+            WriteCompleteShadowDir(tempDir, origFull, dllBytes: new byte[] { 8, 8, 8 });
+
+            NclShadowRuntime.PublishShadowDir(tempDir, shadowDir, origFull);
+
+            Assert.True(Directory.Exists(shadowDir));
+            Assert.True(NclShadowRuntime.IsShadowDirComplete(shadowDir, origFull));
+
+            // The sentinel survived at the SAME path with the SAME bytes — proves the
+            // heal never renamed shadowDir out from under whatever else lived in it.
+            Assert.True(File.Exists(sentinelPath), "an unrelated file in shadowDir must survive an in-place heal");
+            Assert.Equal(new byte[] { 0xAB, 0xCD }, File.ReadAllBytes(sentinelPath));
+
+            // No ".stale." sibling directory anywhere under root — the whole-directory
+            // rename path is gone, not just avoided in this one case.
+            Assert.DoesNotContain(Directory.GetDirectories(root),
+                d => Path.GetFileName(d).Contains(".stale.", StringComparison.OrdinalIgnoreCase));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
     /// <summary>Positive + the actual #2489 regression pin (outcome 3): a sibling
     /// (or a past run, before this fix) published an INCOMPLETE shadowDir — marker present,
     /// entry DLL missing. Before this fix that state was sticky forever: Directory.Move
     /// onto an existing dir always throws, and the old handler treated ANY IOException
     /// with Directory.Exists(shadowDir) true as "someone else won cleanly", discarding the
-    /// good build and leaving the broken one in place. Now: self-heal — move the broken
-    /// one aside, publish the good build in its place.</summary>
+    /// good build and leaving the broken one in place. Now: self-heal in place — copy the
+    /// missing files from the good build directly into the existing dir.</summary>
     [Fact]
     public void PublishShadowDir_SiblingPublishedIncomplete_SelfHealsByReplacingWithOwnCompleteBuild()
     {
