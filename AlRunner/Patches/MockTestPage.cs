@@ -194,6 +194,9 @@ internal class LiveNavTestPage : MockITestPage
     {
         if (_parts.TryGetValue(controlId, out var cached)) return cached;
 
+        if (Environment.GetEnvironmentVariable("AL_RUNNER_TRACE_PAGE_METADATA") == "1")
+            Console.Out.WriteLine($"[MockTestPage.GetPart] controlId={controlId} pageId={_pageId} _page={(_page == null ? "null" : "set")} _page.Form={( _page?.Form == null ? "null" : _page.Form.GetType().FullName)}");
+
         var definition = _page?.TryGetPartDefinition(controlId)
             ?? throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
                 $"TestPage part {controlId} (page {_pageId})",
@@ -242,38 +245,63 @@ internal class LiveNavTestPage : MockITestPage
         // (StefanMaron/BusinessCentral.AL.Language.Tests commit ef52b7e9, PR #80), all eight
         // arms green on BC 27.5 and BC 28.3.
         //
-        // CAVEAT worth knowing before extending this: the part page object built here is a
-        // FRESH RunnerPageInstance, not the subpage object the host's own NavForm owns, so
-        // TestPage.<part> and the host AL's CurrPage.<part>.Page are different instances.
-        // Invisible for a Rec-bound part (its state lives in the record); visible for a
-        // globals-bound one. Tracked as issue 2201.
+        // FIXED (issue #2201): the part page object is now, where possible, the SAME
+        // RunnerPageInstance the host's own AL reaches through CurrPage.<part> —
+        // RunnerPageInstance.AdoptFromHost goes through BC's own NavForm.GetPart(int) on
+        // the host, exactly the door the host's compiled AL uses. Only when that cannot
+        // produce a live object (the host has no NavForm, the control names no part there,
+        // or reifying the adopted object throws) does this fall back to the disconnected
+        // instance TryBuild/TryBuildRecordless constructs, which is the ENTIRE previous
+        // behaviour and stays exactly as faithful as it always was.
         NavRecord? partRecord;
         RunnerPageInstance? partPage;
-        switch (TestPageClientConstructionRule.Resolve(
-                    recordBuilt: built != null,
-                    pageShapeKnown: RecordPatches.IsPageShapeKnown(partPageId),
-                    pageDeclaresSourceTable: RecordPatches.ResolvePageDeclaresSourceTableForAnyPage(partPageId)))
+        // Whether partPage came from AdoptFromHost — that path already raised the part's
+        // OnOpenPage itself (once, at reification — see AdoptFromHost), so the fallback
+        // raise below must not run a second time on an adopted instance.
+        bool adopted;
+        var partKind = TestPageClientConstructionRule.Resolve(
+            recordBuilt: built != null,
+            pageShapeKnown: RecordPatches.IsPageShapeKnown(partPageId),
+            pageDeclaresSourceTable: RecordPatches.ResolvePageDeclaresSourceTableForAnyPage(partPageId));
+
+        if (partKind == TestPageClientKind.LiveOverRecord)
         {
-            case TestPageClientKind.LiveOverRecord:
-                partRecord = built!.Record;
-                partPage = built.Page;
-                break;
-
-            // No record and none needed. TryBuildRecordless answering null is a different
-            // failure — the runner has no metadata to build the part page object from, so
-            // there would be no control tree either — and falls through to the refusal.
-            case TestPageClientKind.LiveRecordless
-                when TestPageFactory.TryBuildRecordless(_owner, partPageId) is { } recordless:
-                partRecord = null;
-                partPage = recordless;
-                break;
-
-            default:
+            partRecord = built!.Record;
+            var fromHost = RunnerPageInstance.AdoptFromHost(_page?.Form, controlId, partPageId, partRecord, recordless: false);
+            adopted = fromHost != null;
+            partPage = fromHost ?? built.Page;
+            // AdoptFromHost may have reused a record ALREADY bound on the adopted instance
+            // (a SourceTableTemporary part the host already populated — see AdoptFromHost's
+            // "alreadyLive" branch) instead of the fresh one just built above. This part's
+            // OWN record must follow whichever one the live page object actually ended up
+            // bound to, or navigation/Insert/Delete would act on an empty record nobody else
+            // can see while the control tree reads the real one.
+            if (adopted && fromHost!.Record is { } liveRecord) partRecord = liveRecord;
+        }
+        else if (partKind == TestPageClientKind.LiveRecordless)
+        {
+            partRecord = null;
+            // No record and none needed. Both AdoptFromHost and TryBuildRecordless answering
+            // null is a different failure — the runner has no metadata to build the part page
+            // object from, so there would be no control tree either — and falls through to
+            // the refusal below.
+            var fromHost = RunnerPageInstance.AdoptFromHost(_page?.Form, controlId, partPageId, recordToBind: null, recordless: true);
+            adopted = fromHost != null;
+            partPage = fromHost ?? TestPageFactory.TryBuildRecordless(_owner, partPageId);
+            if (partPage == null)
                 throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
                     $"TestPage part {controlId} → page {partPageId}",
                     "testpage-part — the part's own page could not be driven live"
                     + (why == null ? string.Empty : $" ({why})")
                     + ". See docs/scope.md");
+        }
+        else
+        {
+            throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+                $"TestPage part {controlId} → page {partPageId}",
+                "testpage-part — the part's own page could not be driven live"
+                + (why == null ? string.Empty : $" ({why})")
+                + ". See docs/scope.md");
         }
 
         // The parent record is only needed to evaluate SubPageLink pairs (issue #2053). A
@@ -325,7 +353,12 @@ internal class LiveNavTestPage : MockITestPage
         // Raised BEFORE the part is cached so a re-entrant GetPart during the trigger cannot
         // observe a half-built part; raised after MarkPartOf so the trigger sees the
         // editability the host resolved.
-        part.RaiseOnOpenPage();
+        //
+        // NOT raised again when `adopted` is true: AdoptFromHost already raised it, exactly
+        // once, at the moment it reified the host's own shared instance (issue #2201) —
+        // raising it a second time here would clobber whatever the host's own AL (or an
+        // earlier TestPage touch) already wrote through that same instance.
+        if (!adopted) part.RaiseOnOpenPage();
 
         _parts[controlId] = part;
         return part;
