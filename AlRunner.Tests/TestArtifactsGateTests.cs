@@ -271,6 +271,84 @@ public class TestArtifactsGateTests
     }
 
     /// <summary>
+    /// The source shapes that mean "this test returned early and reported Passed without
+    /// asserting anything". Extracted from
+    /// <see cref="NoTestSilentlyReturnsWhenItsEnvironmentIsUnavailable"/> so the guard's own
+    /// matching can be tested directly — a guard nobody can exercise is a guard nobody notices
+    /// has stopped matching.
+    ///
+    /// <para><b>The first shape is deliberately <see cref="RegexOptions.Singleline"/> with a
+    /// bounded gap, and must not be narrowed back.</b> It used to be
+    /// <c>@"\[skip\][^\n]*\breturn;"</c> with <see cref="RegexOptions.None"/>, and
+    /// <c>[^\n]*</c> cannot cross the newline between the <c>Console.Error.WriteLine($"[skip] …")</c>
+    /// and the <c>return;</c> on the NEXT line — which is how the shape is actually written. The
+    /// guard therefore could not see the common form of the thing it exists to forbid. vhn hit
+    /// exactly this in his AL Runner fork, where seven suites had gated the BC engine that way and
+    /// 30 tests reported Passed having executed nothing (<c>646d6002</c>).</para>
+    ///
+    /// <para>The gap is bounded at 400 characters rather than left open so the match stays local to
+    /// one gate rather than pairing a <c>[skip]</c> in one method with a <c>return;</c> far below
+    /// it. A false positive here is a loud build failure somebody reads; a false negative is
+    /// silence, which is the failure mode this guard exists for — so the bound errs wide.</para>
+    /// </summary>
+    internal static readonly Regex[] SilentSkipShapes =
+    {
+        new Regex(@"\[skip\].{0,400}?\breturn;", RegexOptions.Singleline),
+        new Regex(@"\breturn;\s*//[^\n]*\b(skip|not provisioned|no artifacts|nothing to assert|nothing to prove)\b",
+            RegexOptions.IgnoreCase),
+    };
+
+    /// <summary>
+    /// The guard must see the TWO-LINE form, which is how the shape is really written. RED before
+    /// the Singleline widening: <c>[^\n]*</c> stops at the newline and this text matched nothing.
+    /// </summary>
+    [Fact]
+    public void SilentSkipShapes_MatchTheTwoLineWriteLineThenReturnForm()
+    {
+        const string twoLine = """
+            if (!engine.Ready)
+            {
+                Console.Error.WriteLine($"[skip] BC engine not ready: {engine.SkipReason}");
+                return;
+            }
+            """;
+        Assert.True(SilentSkipShapes.Any(s => s.IsMatch(twoLine)),
+            "the silent-skip guard does not match a `[skip]` line followed by `return;` on the NEXT "
+            + "line — the form the shape is actually written in. A guard that cannot see the thing "
+            + "it forbids is worse than no guard, because it reads as coverage.");
+
+        // …and the single-line form it always caught still matches, so widening did not trade one
+        // shape for the other.
+        Assert.True(
+            SilentSkipShapes.Any(s => s.IsMatch("""if (!ready) { Console.Error.WriteLine("[skip] no artifacts"); return; }""")),
+            "the single-line form is no longer matched.");
+    }
+
+    /// <summary>
+    /// Negative direction, and the reason the bound above matters: the CORRECT way to skip must not
+    /// trip the guard, and neither must an ordinary early return that has nothing to do with
+    /// skipping. Without this, widening the regex to `.*` would "pass" by flagging everything.
+    /// </summary>
+    [Fact]
+    public void SilentSkipShapes_DoNotMatchALegitimateSkipOrAnOrdinaryReturn()
+    {
+        const string properSkip = """
+            TestArtifacts.SkipIf(!engine.Ready, engine.SkipReason ?? "BC engine not ready");
+            var compiler = new BcCompiler();
+            return;
+            """;
+        Assert.DoesNotMatch(SilentSkipShapes[0], properSkip);
+        Assert.DoesNotMatch(SilentSkipShapes[1], properSkip);
+
+        const string ordinaryReturn = """
+            if (found == null)
+                return;
+            """;
+        Assert.DoesNotMatch(SilentSkipShapes[0], ordinaryReturn);
+        Assert.DoesNotMatch(SilentSkipShapes[1], ordinaryReturn);
+    }
+
+    /// <summary>
     /// A test that returns early because its environment is unavailable is recorded
     /// Passed — a green tick meaning "asserted nothing". Nothing in this assembly may
     /// do that; the unavailable branch must raise a visible skip.
@@ -278,21 +356,11 @@ public class TestArtifactsGateTests
     [Fact]
     public void NoTestSilentlyReturnsWhenItsEnvironmentIsUnavailable()
     {
-        // Both shapes the suite used: a "[skip] …" line followed by return, and a
-        // bare `return;` whose trailing comment admits it is skipping / has nothing
-        // to assert.
-        var shapes = new[]
-        {
-            new Regex(@"\[skip\][^\n]*\breturn;", RegexOptions.None),
-            new Regex(@"\breturn;\s*//[^\n]*\b(skip|not provisioned|no artifacts|nothing to assert|nothing to prove)\b",
-                RegexOptions.IgnoreCase),
-        };
-
         var offenders = new List<string>();
         foreach (var (file, text) in TestSources())
         {
             if (file == "TestArtifactsGateTests.cs") continue; // the regexes above are literals here
-            foreach (var shape in shapes)
+            foreach (var shape in SilentSkipShapes)
                 foreach (Match m in shape.Matches(text))
                     offenders.Add($"{file}: {m.Value.Split('\n')[0].Trim()}");
         }
