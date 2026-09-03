@@ -158,7 +158,7 @@ public sealed class BcCompilerIncrementalNamespaceTests : IDisposable
         Assert.Equal("Pageworks", pageworksNs.Name);
         Assert.NotNull(pageworksNs.Namespaces);
         Assert.Equal(2, pageworksNs.Namespaces!.Length); // "Assets" and "Utils"
-        var utilsNs = Assert.Single(pageworksNs.Namespaces!.Where(n => n.Name == "Utils"));
+        var utilsNs = Assert.Single(pageworksNs.Namespaces!, n => n.Name == "Utils");
         Assert.NotNull(utilsNs.Namespaces);
         var internalNs = Assert.Single(utilsNs.Namespaces!);
         Assert.Equal("Internal", internalNs.Name);
