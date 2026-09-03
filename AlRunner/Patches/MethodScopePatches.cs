@@ -284,9 +284,9 @@ public static partial class BcRuntime
         while (child != null)
         {
             // Capture the sibling link BEFORE any mutation below, mirroring
-            // DetachTreeHandlerFromParent's own walk — UnBindSubscription only touches
-            // EventBindings/IsSubscriptionBound, never the tree's sibling chain, but reading
-            // `next` up front keeps this loop robust regardless.
+            // DetachTreeHandlerFromParent's own walk — UnbindManualSubscriptionDirect only
+            // touches EventBindings/IsSubscriptionBound, never the tree's sibling chain, but
+            // reading `next` up front keeps this loop robust regardless.
             object? next;
             try { next = _fTreeHandlerNextSiblingBase.GetValue(child); }
             catch { next = null; }
