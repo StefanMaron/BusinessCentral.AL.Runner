@@ -37,6 +37,54 @@
          improved (156.0s -> 133.7s) with an unchanged fail-set.
          Regression cover: AlRunner.Tests/StartupJitModeTests. -->
 
+    <!-- Server GC (#2577). A cold AL compile allocates at a few hundred MB/s and keeps most
+         of it reachable until Roslyn finishes, so the workload is GC-throughput-bound and one
+         Workstation GC heap cannot keep up. Nothing here declared a GC mode, so every user got
+         the .NET default. That went unnoticed because every benchmark harness in this repo
+         exported DOTNET_gcServer=1 by hand — the harness measured a configuration no shipped
+         run ever had.
+
+         Two measurements, on workloads an order of magnitude apart. Same binary in each,
+         DOTNET_gcServer the only variable.
+
+         1. NP Retail (7,053 AL files / 6,949 objects), 6-core / 12 GB, by @vhn:
+
+              BC AL emit (compilation.Emit)   837.7s -> 331.3s
+              Roslyn bind + IL gen            293.9s -> 103.8s
+              whole emit+compile+load        1173.6s -> 483.0s
+              run wall clock                 1283.1s -> 611.5s
+
+         2. The al-language corpus (586 AL files, 2361 tests), cold cache, 12-core Linux.
+            Instructions retired (user mode) rather than wall clock, because wall clock on a
+            shared box moves for reasons unrelated to the change:
+
+              Workstation  707.8 700.4 679.8 701.8 699.9 714.8  G instructions
+              Server       658.1 645.2 658.9 657.2 656.1        G instructions
+
+            6.2% fewer and no overlap between the sets. A warm single-bundle run moved the same
+            way (38.10 -> 36.16 G, 5.1%), so the small common case does not pay for the large one.
+
+         The cost is peak resident memory, and this is where the two measurements disagree. The
+         NP Retail run reported Server GC as SMALLER resident (2.86 -> 2.39 GB); on 12 cores it
+         more than doubles, because Server GC scales heap count with core count:
+
+              Workstation                      2.11-2.24 GB   698-715 G instructions
+              Server, default heap count (12)  4.74-4.95 GB   656-659 G
+              Server, DOTNET_GCHeapCount=4     3.10-3.15 GB   655, 668 G
+              Server + DATAS                   2.50-2.52 GB   700, 702 G
+
+         Neither knob is set here. Capping heap count keeps the throughput and gives back most
+         of the memory, but the right cap depends on the machine, and .NET already caps the heap
+         under a container memory limit — which is the case where running out actually matters.
+         DATAS gives back the memory and loses the whole throughput win, landing at Workstation's
+         instruction count, so it is not a middle ground on this workload.
+
+         Concurrent (background) GC stays at its default (on): untested here, and this allocation
+         profile is throughput-bound, not pause-bound.
+         Regression cover: AlRunner.Tests/ServerGcConfigTests, and
+         AlRunner.Tests/PhaseLogIntegrationTests.TheRunnerProcess_RunsUnderServerGc. -->
+    <ServerGarbageCollection>true</ServerGarbageCollection>
+
     <!-- dotnet tool packaging -->
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>al-runner</ToolCommandName>

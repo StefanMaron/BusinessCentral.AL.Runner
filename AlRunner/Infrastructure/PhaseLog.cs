@@ -99,6 +99,16 @@ public sealed class PhaseLogRecord
     public long PeakRssBytes { get; set; }
     public int ExitCode { get; set; }
 
+    /// <summary>
+    /// Whether this process ran under Server GC. A cold AL compile is GC-throughput-bound
+    /// (see AlRunner.csproj's ServerGarbageCollection note for the measurement), so "which GC
+    /// was this" is the first question to ask of a phase log reporting an implausibly slow
+    /// emit — and it cannot be answered from outside the process, because the setting can come
+    /// from the shipped runtimeconfig, a DOTNET_gcServer environment variable, or a host that
+    /// embeds its own config.
+    /// </summary>
+    public bool ServerGc { get; set; }
+
     // ── Bundle-row and app-row only. Named slices of the row's turn that are NOT
     // already reported elsewhere on it — for a bundle row, the block #1828 exists to
     // attribute (work outside every app group); for an app row, the block #1861
@@ -145,6 +155,7 @@ public sealed class PhaseLogRecord
             Num(sb, "patches_ms", PatchesMs);
             Num(sb, "peak_rss_bytes", PeakRssBytes);
             Num(sb, "exit_code", ExitCode);
+            Bool(sb, "server_gc", ServerGc);
         }
         // Bundle and app rows only, and only when something was measured: a process
         // row's once-per-process costs already have their own named fields, and an
@@ -174,6 +185,11 @@ public sealed class PhaseLogRecord
         {
             Sep(b);
             b.Append('"').Append(k).Append("\":").Append(v.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        }
+        static void Bool(StringBuilder b, string k, bool v)
+        {
+            Sep(b);
+            b.Append('"').Append(k).Append("\":").Append(v ? "true" : "false");
         }
     }
 }
@@ -505,6 +521,7 @@ public static class PhaseLog
             row = Process_;
             row.ExitCode = Environment.ExitCode;
             row.PeakRssBytes = PeakRssBytes();
+            row.ServerGc = System.Runtime.GCSettings.IsServerGC;
             // Measured from OS process start, so it includes host startup and the
             // full-opt JIT that <TieredCompilation>false</TieredCompilation> forces —
             // exactly the residual #1825 wants to size.
