@@ -49,6 +49,7 @@ All notable changes to this project are documented here. Format based on
 - **agents:** opening a corpus PR needs no approval
 
 ### Changed
+- Fix `--server` single-bundle dependency resolution parity for sibling source apps
 - Server mode: add affected-only `runTests` selection with conservative forced-full fallback
 - **tests:** stop loading the Base Application closure in fixtures that never read it
 - **orchestrating-a-session:** capture the coordinator contract so it stops being re-explained
