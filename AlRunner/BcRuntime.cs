@@ -1137,6 +1137,44 @@ public static partial class BcRuntime
             if (hasBeenOpenedField != null)
                 FieldPoke.SetInstance(hasBeenOpenedField, _skeletonSession!, true);
 
+            // NavSession.DocumentStorageService seed — `public IDocumentStorageService
+            // DocumentStorageService { get; set; }` is a plain auto-property that a real BC
+            // service tier populates lazily. BC's own DocumentServiceManagement.Reset(session)
+            // (Ncl.dll) does exactly this on-demand:
+            //   if (session.DocumentStorageService == null)
+            //       session.DocumentStorageService = new NavDocumentStorageService();
+            // but DocumentServiceManagement.SetDocumentServiceType(session, type) does NOT —
+            // it dereferences the property directly, so on our skeleton session (never opened
+            // through the real bootstrap path that calls Reset) it NREs. Codeunit 9510
+            // "Document Service Management".SetServiceType calls SetDocumentServiceType before
+            // TestConnection/SaveFile/IsServiceUri get anywhere near it, so every one of those
+            // paths NREs on a skeleton session even when the AL under test never leaves the
+            // process (see #2487).
+            //
+            // Fix: mirror BC's own lazy-init here so the property is never null, using the
+            // real Ncl.dll NavDocumentStorageService — the same concrete class BC's own Reset()
+            // constructs. This is not a substitute/mock; it IS the class real BC uses. Its own
+            // methods (TestConnection/SaveFile/IsServiceUri path) still resolve document-service
+            // *handlers* via Microsoft.Dynamics.Nav.DocumentService.DocumentServiceFactory's MEF
+            // DirectoryCatalog scan of the platform install folder — a provisioning gap tracked
+            // separately (#2487 comment / follow-up issue), not something this seed can or should
+            // paper over.
+            try
+            {
+                var docStorageServiceType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NavDocumentStorageService");
+                var docStorageServiceProp = sessType.GetProperty("DocumentStorageService",
+                    BindingFlags.Public | BindingFlags.Instance);
+                if (docStorageServiceType != null && docStorageServiceProp != null && docStorageServiceProp.CanWrite)
+                {
+                    var docStorageService = Activator.CreateInstance(docStorageServiceType);
+                    docStorageServiceProp.SetValue(_skeletonSession, docStorageService);
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"[BcRuntime] WARN: DocumentStorageService seed failed: {ex.GetType().Name}: {ex.Message}");
+            }
+
             // ALCompanyProperty.ALDisplayName (AL surface: `CompanyProperty.DisplayName()`) — used
             // to Hook() a stub returning "My Company" here on the theory that the real body NREs
             // reading NavRecord on table 2000000006. That JmpHook.Apply call was an orphan under
