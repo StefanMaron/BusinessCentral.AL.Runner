@@ -49,15 +49,24 @@ using Xunit;
 
 namespace AlRunner.Tests;
 
-[Collection(BcEngineCollection.Name)]
+// RecordPatchesSerialCollection, not BcEngineCollection: this class calls
+// RecordPatches.ResetForReload() directly, which ParserStaticsIsolationGuardTests requires
+// to be in RecordPatchesSerialCollection (see that guard's own header for #1696 — the AL
+// parse statics are process-wide, and xunit runs collections in parallel). Both
+// RecordPatchesSerialCollection and BcEngineCollection set DisableParallelization = true,
+// and xUnit runs every DisableParallelization collection serially relative to every OTHER
+// one too (see CollectionCostOrderer.cs), so this still can't race a BcEngineCollection
+// class. The BC engine bootstrap itself runs at [ModuleInitializer] time (BcEngineBootstrap,
+// BcEngineCollection.cs), unconditionally, before any test — BcEngineFixture is only a
+// convenience DI wrapper over BcEngineBootstrap.Ready/SkipReason, so reading those directly
+// works identically without joining BcEngineCollection.
+[Collection(RecordPatchesSerialCollection.Name)]
 public sealed class RecordPatchesWarmReloadInstallBaselineTests : IDisposable
 {
-    private readonly BcEngineFixture _engine;
     private readonly string _root;
 
-    public RecordPatchesWarmReloadInstallBaselineTests(BcEngineFixture engine)
+    public RecordPatchesWarmReloadInstallBaselineTests()
     {
-        _engine = engine;
         _root = Path.Combine(Path.GetTempPath(), "al-runner-2480-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(_root);
     }
@@ -107,8 +116,8 @@ public sealed class RecordPatchesWarmReloadInstallBaselineTests : IDisposable
     [SkippableFact]
     public void RestoreInstallBaselineSnapshot_ThrowsWhenTableShapeChangedAcrossReload()
     {
-        TestArtifacts.SkipIf(!_engine.Ready,
-            _engine.SkipReason ?? "the in-process BC engine is not ready (see BcEngineCollection).");
+        TestArtifacts.SkipIf(!BcEngineBootstrap.Ready,
+            BcEngineBootstrap.SkipReason ?? "the in-process BC engine is not ready (see BcEngineCollection).");
 
         // 93920-93921: process-wide unique among AlRunner.Tests statics — 939xx is also used
         // by RecordPatchesPrecompiledTableExtEvictionTests.cs (93900-93902) and
@@ -168,8 +177,8 @@ public sealed class RecordPatchesWarmReloadInstallBaselineTests : IDisposable
     [SkippableFact]
     public void RestoreInstallBaselineSnapshot_SucceedsWhenTableShapeUnchangedAcrossReload()
     {
-        TestArtifacts.SkipIf(!_engine.Ready,
-            _engine.SkipReason ?? "the in-process BC engine is not ready (see BcEngineCollection).");
+        TestArtifacts.SkipIf(!BcEngineBootstrap.Ready,
+            BcEngineBootstrap.SkipReason ?? "the in-process BC engine is not ready (see BcEngineCollection).");
 
         // Distinct id range from the negative fact above so the two tests' shared statics
         // (_parsedTables / _metaTableCache) cannot interfere with each other.
