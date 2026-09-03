@@ -32,7 +32,13 @@ import statistics
 import sys
 import xml.etree.ElementTree as ET
 from collections import defaultdict
-from datetime import datetime
+from pathlib import Path
+
+# Sibling module, imported by path so this works both when the script is run
+# directly and when a test loads it through importlib.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from trxtime import parse_trx_time  # noqa: E402
+
 
 NS = {"t": "http://microsoft.com/schemas/VisualStudio/TeamTest/2010"}
 
@@ -50,7 +56,7 @@ def load(path):
         if not start or not end:
             continue
         cls, name = names.get(r.get("testId"), ("?", r.get("testName") or "?"))
-        rows.append((datetime.fromisoformat(start), datetime.fromisoformat(end),
+        rows.append((parse_trx_time(start), parse_trx_time(end),
                      cls.rsplit(".", 1)[-1], name))
     return rows
 
