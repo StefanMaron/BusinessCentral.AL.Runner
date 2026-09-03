@@ -415,8 +415,8 @@ public static class NclCecilRewrite
         // instance, else → NavNCLConversionException), just the InStream direction.
         "Microsoft.Dynamics.Nav.Runtime.ALCompiler::DotNetToNavInStream/2",
         // NavMediaFactory.ProcessMediaObject(Stream,bool,string) — surgical prepend so a
-        // structurally valid PNG classifies as image/png without decoding (#2570). See
-        // the RewriteNcl block below for the detail. Additive: does not touch
+        // PNG-signature-prefixed stream classifies as image/png without decoding (#2570).
+        // See the RewriteNcl block below for the detail. Additive: does not touch
         // NavForm.GetPart (#2600) or the page-background-task routing (#2628).
         "Microsoft.Dynamics.Nav.Runtime.Media.NavMediaFactory::ProcessMediaObject/3",
     };
@@ -8218,20 +8218,23 @@ public static class NclCecilRewrite
 
             // NavMediaFactory.ProcessMediaObject(Stream,bool,string) — #2570. Surgical
             // PREPEND (original body untouched, same shape as PrependFieldFindGuard below),
-            // not a body replacement: MediaPatches.TryClassifyStructuralPng sniffs+validates
-            // the stream as a PNG BEFORE the real body decides anything. When it returns
-            // "image/png" we `starg` the mimeType PARAMETER to that value and fall through
-            // into the real, unmodified body — which (mimeType now non-empty) skips
-            // GetImageWithContentHeaderValidation entirely, and — because
-            // NavMediaImage.IsSupportedMimeType is rewritten to always return false just
-            // above — cascades past every image/document branch straight to BC's own
+            // not a body replacement: MediaPatches.TryClassifyPngBySignature sniffs the
+            // stream's first 8 bytes for the PNG signature BEFORE the real body decides
+            // anything. When it returns "image/png" we `starg` the mimeType PARAMETER to
+            // that value and fall through into the real, unmodified body — which (mimeType
+            // now non-empty) skips GetImageWithContentHeaderValidation entirely, and —
+            // because NavMediaImage.IsSupportedMimeType is rewritten to always return false
+            // just above — cascades past every image/document branch straight to BC's own
             // `new NavMediaBinaryFile(mediaStream, mimeType)` fallback, unmodified. When it
             // returns null, nothing changes (falls straight through to the original first
             // instruction) — every other mimeType/content shape, including every
-            // already-working non-PNG-image / non-image classification, is untouched. When
-            // it THROWS (PNG signature present but chunk structure corrupt), the exception
-            // propagates before the original try/catch exists to catch it — a real error,
-            // not a silent accept. RED→GREEN: AlRunner.Tests
+            // already-working non-PNG-image / non-image classification, is untouched.
+            // Signature-only (no chunk/CRC/IHDR validation) is deliberate: two full rounds
+            // of upstream corpus CI (StefanMaron/BusinessCentral.AL.Language.Tests#138, all
+            // 8 BC legs both times) measured that real BC accepts a PNG-signature-prefixed
+            // stream regardless of chunk CRCs, IHDR presence, or declared width/height — so
+            // anything stricter here would make the runner reject content BC accepts (the
+            // same class of defect as #2641, opposite direction). RED→GREEN: AlRunner.Tests
             // MediaFactoryProcessMediaObjectPngPrependTests.cs (mechanism) +
             // tests/runner-extras/standalone-suites/media-non-image-content (unchanged,
             // pins the JPEG-still-refuses claim so this cannot silently widen back) + the
@@ -8240,7 +8243,7 @@ public static class NclCecilRewrite
             {
                 var processMediaObject = FindNclMethod(nclMod, Rt + "Media.NavMediaFactory", "ProcessMediaObject", 3);
                 var helperMi = typeof(AlRunner.Patches.MediaPatches).GetMethod(
-                    nameof(AlRunner.Patches.MediaPatches.TryClassifyStructuralPng),
+                    nameof(AlRunner.Patches.MediaPatches.TryClassifyPngBySignature),
                     BindingFlags.Public | BindingFlags.Static)!;
                 var helperRef = nclMod.ImportReference(helperMi);
 
@@ -8273,7 +8276,7 @@ public static class NclCecilRewrite
                 il.InsertBefore(first, starg);
 
                 body.MaxStackSize = Math.Max(body.MaxStackSize, 2);
-                Console.Error.WriteLine("[Cecil] Prepended structural-PNG mimeType classification to NavMediaFactory.ProcessMediaObject");
+                Console.Error.WriteLine("[Cecil] Prepended PNG-signature mimeType classification to NavMediaFactory.ProcessMediaObject");
             }
 
             // ── NavRecordRef cluster (Batch 8) — get_Target + open-gates + ALOpen ─

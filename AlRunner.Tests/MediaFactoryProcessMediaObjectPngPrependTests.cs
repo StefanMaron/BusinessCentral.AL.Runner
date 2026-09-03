@@ -1,15 +1,23 @@
 // MediaFactoryProcessMediaObjectPngPrependTests — proves the #2570 fix: the mechanism
-// MediaPatches.TryClassifyStructuralPng() drives, prepended to
+// MediaPatches.TryClassifyPngBySignature() drives, prepended to
 // NavMediaFactory.ProcessMediaObject(Stream, bool, string) via Cecil (see
-// NclCecilRewrite.cs), classifies a structurally valid PNG as "image/png" without decoding
-// it, leaves an explicit mimeType or non-PNG content untouched, and raises BC's own
-// "not a valid image" shape for a PNG whose chunk structure is corrupt.
+// NclCecilRewrite.cs), classifies any PNG-signature-prefixed stream as "image/png" without
+// decoding it, and leaves an explicit mimeType or non-PNG content untouched.
+//
+// Signature-only, deliberately: an earlier version of this classifier additionally
+// validated every PNG chunk's CRC32 and IHDR's declared width/height. Two full rounds of
+// upstream corpus CI (StefanMaron/BusinessCentral.AL.Language.Tests#138, 27.0-28.4, all 8
+// legs each) measured that real BC accepts a PNG with a wrong IHDR chunk CRC, a stream that
+// is nothing but the 8-byte signature, a stream truncated mid-IHDR-chunk, and a
+// structurally complete PNG with IHDR width=0 — identically, both rounds. Matching BC
+// exactly (rather than being stricter, which would make the runner reject a PNG BC
+// accepts) is why this file's classifier — and these tests — only check the signature.
 //
 // This is deliberately a RUNNER-INTERNAL claim, not a BC-behaviour one: it asserts that OUR
-// C# structural-PNG classifier — the thing the Cecil prepend calls — returns the right
-// answer for each input shape. Whether AL code that imports a PNG into a Media field
-// actually stores it as image/png on real BC is a plain BC-behaviour claim and belongs
-// upstream — see StefanMaron/BusinessCentral.AL.Language.Tests#138
+// C# classifier — the thing the Cecil prepend calls — returns the right answer for each
+// input shape. Whether AL code that imports a PNG into a Media field actually stores it as
+// image/png on real BC is a plain BC-behaviour claim and belongs upstream — see
+// StefanMaron/BusinessCentral.AL.Language.Tests#138
 // (tests/al-language/media/TestMediaPngImport.al), and the equivalent end-to-end proof run
 // locally against that corpus branch (RED before this fix, GREEN after — see the PR
 // description for #2570).
@@ -29,15 +37,18 @@ public sealed class MediaFactoryProcessMediaObjectPngPrependTests
             NclCecilRewrite.CecilOwned);
     }
 
-    // A minimal valid 1x1-pixel PNG (68 bytes): signature + IHDR(13) + IDAT(11) + IEND(0),
-    // every chunk CRC verified independently with Python's zlib.crc32 — the same fixture
-    // used in the upstream corpus PR (TestMediaPngImport.al).
+    // A minimal valid 1x1-pixel PNG (68 bytes): signature + IHDR(13) + IDAT(11) + IEND(0).
     private static readonly byte[] ValidPng = Convert.FromBase64String(
         "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=");
 
-    // Same bytes with one byte of the IHDR chunk's CRC field flipped.
+    // Same bytes with one byte of the IHDR chunk's CRC field flipped — BC accepts this
+    // (measured, corpus #138 round 1); still just the signature that matters here.
     private static readonly byte[] CorruptIhdrCrcPng = Convert.FromBase64String(
         "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAADFfptVAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=");
+
+    // Just the 8-byte PNG signature, nothing else — BC accepts this too (measured, corpus
+    // #138 round 2).
+    private static readonly byte[] SignatureOnlyPng = ValidPng.AsSpan(0, 8).ToArray();
 
     private static readonly byte[] JpegSoi = { 0xFF, 0xD8, 0xFF };
 
@@ -46,7 +57,7 @@ public sealed class MediaFactoryProcessMediaObjectPngPrependTests
     {
         using var stream = new MemoryStream(ValidPng);
 
-        var result = MediaPatches.TryClassifyStructuralPng(stream, "");
+        var result = MediaPatches.TryClassifyPngBySignature(stream, "");
 
         Assert.Equal("image/png", result);
     }
@@ -56,7 +67,7 @@ public sealed class MediaFactoryProcessMediaObjectPngPrependTests
     {
         using var stream = new MemoryStream(ValidPng);
 
-        var result = MediaPatches.TryClassifyStructuralPng(stream, null);
+        var result = MediaPatches.TryClassifyPngBySignature(stream, null);
 
         Assert.Equal("image/png", result);
     }
@@ -67,7 +78,7 @@ public sealed class MediaFactoryProcessMediaObjectPngPrependTests
         using var stream = new MemoryStream(ValidPng);
         stream.Position = 0;
 
-        MediaPatches.TryClassifyStructuralPng(stream, null);
+        MediaPatches.TryClassifyPngBySignature(stream, null);
 
         // A "peek" must leave the stream exactly where the caller left it — the real
         // ProcessMediaObject body still needs to read this stream from the start.
@@ -81,7 +92,7 @@ public sealed class MediaFactoryProcessMediaObjectPngPrependTests
         // caller-supplied mimeType must never be overridden.
         using var stream = new MemoryStream(ValidPng);
 
-        var result = MediaPatches.TryClassifyStructuralPng(stream, "application/pdf");
+        var result = MediaPatches.TryClassifyPngBySignature(stream, "application/pdf");
 
         Assert.Null(result);
     }
@@ -91,7 +102,7 @@ public sealed class MediaFactoryProcessMediaObjectPngPrependTests
     {
         using var stream = new MemoryStream(JpegSoi);
 
-        var result = MediaPatches.TryClassifyStructuralPng(stream, null);
+        var result = MediaPatches.TryClassifyPngBySignature(stream, null);
 
         Assert.Null(result);
     }
@@ -102,42 +113,34 @@ public sealed class MediaFactoryProcessMediaObjectPngPrependTests
         using var inner = new MemoryStream(ValidPng);
         using var nonSeekable = new NonSeekableWrapperStream(inner);
 
-        var result = MediaPatches.TryClassifyStructuralPng(nonSeekable, null);
+        var result = MediaPatches.TryClassifyPngBySignature(nonSeekable, null);
 
         Assert.Null(result);
     }
 
     [Fact]
-    public void CorruptIhdrCrc_ThrowsWithSpecificDiagnostic()
+    public void CorruptIhdrCrc_StillClassifiesAsImagePng()
     {
+        // MEASURED (corpus #138 round 1): real BC accepts this. The classifier must not
+        // reject it either — rejecting a PNG BC accepts is the exact defect this file's
+        // simplification exists to avoid.
         using var stream = new MemoryStream(CorruptIhdrCrcPng);
 
-        var ex = Assert.ThrowsAny<Exception>(() => MediaPatches.TryClassifyStructuralPng(stream, null));
+        var result = MediaPatches.TryClassifyPngBySignature(stream, null);
 
-        // Whichever exception shape NotAnImage() ends up constructing (NavImageLoadErrorException
-        // wrapping ArgumentException in-process, or a bare ArgumentException if
-        // Microsoft.Dynamics.Nav.Types has not been loaded yet in an isolated test run), the
-        // specific diagnostic must be findable somewhere in the exception chain — proving
-        // this fires for the CRC mismatch specifically, not any old exception.
-        Assert.True(
-            (ex.Message + " " + ex.InnerException?.Message).Contains("IHDR chunk CRC mismatch"),
-            $"expected 'IHDR chunk CRC mismatch' somewhere in the exception chain, got: {ex}");
+        Assert.Equal("image/png", result);
     }
 
     [Fact]
-    public void Truncated_AfterSignature_ThrowsWithSpecificDiagnostic()
+    public void SignatureOnly_StillClassifiesAsImagePng()
     {
-        // The PNG signature alone (no chunks at all) — the shape
-        // tests/runner-extras/standalone-suites/media-non-image-content used to use for its
-        // "image content is refused by name" fixture before #2570 gave PNG its own path
-        // (that test now uses a JPEG signature instead; see MncTests.Codeunit.al).
-        using var stream = new MemoryStream(ValidPng.AsSpan(0, 8).ToArray());
+        // MEASURED (corpus #138 round 2): real BC accepts a stream that is nothing but the
+        // 8-byte PNG signature. Same reasoning as CorruptIhdrCrc_StillClassifiesAsImagePng.
+        using var stream = new MemoryStream(SignatureOnlyPng);
 
-        var ex = Assert.ThrowsAny<Exception>(() => MediaPatches.TryClassifyStructuralPng(stream, null));
+        var result = MediaPatches.TryClassifyPngBySignature(stream, null);
 
-        Assert.True(
-            (ex.Message + " " + ex.InnerException?.Message).Contains("unexpected end of data after signature"),
-            $"expected 'unexpected end of data after signature' somewhere in the exception chain, got: {ex}");
+        Assert.Equal("image/png", result);
     }
 
     /// <summary>Wraps a seekable stream to report CanSeek=false, for the non-seekable test above.</summary>
