@@ -79,7 +79,10 @@ mkfifo "$FIFO"
 # shellcheck disable=SC2086
 $RUNNER --server --cache "$WORK/al-out" "${EXTRA_ARGS[@]}" < "$FIFO" > "$OUT" 2> "$LOG" &
 SERVER_PID=$!
-sleep infinity > "$FIFO" &
+# Hold the FIFO's write end open for the whole session — see server-mode-test.sh for
+# why `sleep infinity` cannot do this job: it is a GNU extension, BSD/macOS sleep
+# rejects it, and the resulting dead holder hands the server EOF on stdin.
+tail -f /dev/null > "$FIFO" &
 HOLDER_PID=$!
 
 echo "waiting for server readiness (timeout ${READY_TIMEOUT}s)..."

@@ -287,6 +287,48 @@ jobs:
       - name: Check every agent definition allowlists the MCP tools it documents
         run: python3 .github/scripts/check_agent_mcp_tools.py
 
+  scripts-tests:
+    name: scripts/ unit tests
+    runs-on: ubuntu-latest
+    # scripts/tests/*.test.py existed and nothing ran them, so every assertion in them
+    # was decoration: the CHANGELOG/pe-signing/release-ref suites above are all wired up
+    # and this family was not. Gated inside the job on whether scripts/ changed, like its
+    # siblings -- plain Python unrelated to most PRs.
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Check whether scripts/ changed
+        id: changed
+        run: |
+          BASE=${{ github.event.pull_request.base.sha }}
+          HEAD=${{ github.event.pull_request.head.sha }}
+          if git diff --name-only "$BASE"..."$HEAD" | grep -qE '^scripts/'; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run every scripts/tests/*.test.py
+        if: steps.changed.outputs.run == 'true'
+        run: |
+          # Fails the job if any suite fails AND if the glob matched nothing -- an empty
+          # run reporting success is the same "green tick meaning nothing ran" this job
+          # exists to prevent.
+          shopt -s nullglob
+          suites=(scripts/tests/*.test.py)
+          if [ ${#suites[@]} -eq 0 ]; then
+            echo "::error::no scripts/tests/*.test.py found"
+            exit 1
+          fi
+          rc=0
+          for s in "${suites[@]}"; do
+            echo "=== $s"
+            python3 "$s" || rc=1
+          done
+          exit $rc
+
   # validate-coverage (docs/coverage.yaml) removed at the v1->v2 cutover: v1 tracked
   # AL-language coverage in a hand-curated YAML the orchestrator validated on every PR.
   # v2's spec is the tests/al-language/ corpus itself -- every AL surface that needs

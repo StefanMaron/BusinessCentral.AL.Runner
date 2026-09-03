@@ -40,8 +40,13 @@ import re
 import sys
 import xml.etree.ElementTree as ET
 from collections import defaultdict
-from datetime import datetime
 from pathlib import Path
+
+# Sibling module, imported by path so this works both when the script is run
+# directly and when a test loads it through importlib.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from trxtime import parse_trx_time  # noqa: E402
+
 
 NS = {"t": "http://microsoft.com/schemas/VisualStudio/TeamTest/2010"}
 
@@ -67,7 +72,7 @@ def load_trx_per_collection_seconds(path):
         if not start or not end:
             continue
         cls = names.get(r.get("testId"), "?").rsplit(".", 1)[-1]
-        per_class[cls] += (datetime.fromisoformat(end) - datetime.fromisoformat(start)).total_seconds()
+        per_class[cls] += (parse_trx_time(end) - parse_trx_time(start)).total_seconds()
     return dict(per_class)
 
 

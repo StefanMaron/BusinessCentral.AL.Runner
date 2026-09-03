@@ -71,7 +71,14 @@ mkfifo "$FIFO"
 # shellcheck disable=SC2086
 $RUNNER --server --cache "$WORK/al-out" "${EXTRA_ARGS[@]}" < "$FIFO" > "$OUT" 2> "$LOG" &
 SERVER_PID=$!
-sleep infinity > "$FIFO" &
+# Hold the FIFO's write end open for the whole session: without a holder each
+# `printf > "$FIFO"` closes it again, the server reads EOF on stdin and shuts down
+# after one request. `sleep infinity` is a GNU extension — BSD/macOS sleep rejects
+# the argument outright, so the holder died immediately, the server shut down after
+# printing `ready`, and the first request then blocked forever writing to a FIFO
+# with no reader: a hang, not an error. `tail -f /dev/null` holds the same way on
+# both platforms.
+tail -f /dev/null > "$FIFO" &
 HOLDER_PID=$!
 
 echo "waiting for server readiness (timeout ${READY_TIMEOUT}s)..."
