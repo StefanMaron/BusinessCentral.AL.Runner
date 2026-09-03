@@ -330,6 +330,43 @@ public static partial class BcRuntime
     }
 
     /// <summary>
+    /// Drop every manually-bound event subscription (real BC's own
+    /// <c>Session.EventBindings</c> list — see <see cref="BoundInstancesOf"/>) at the
+    /// per-test-isolation boundary. Must run alongside
+    /// <see cref="BcRuntime.ResetSingleInstanceCache"/> in
+    /// <c>RecordPatches.ResetPerTestState()</c>, for the same reason: a codeunit instance
+    /// that outlives the AL variable that created it must not leak state into the next
+    /// test codeunit's run.
+    ///
+    /// Corpus-verified (TestEventManualBindingCrossCodeunit, 60244/60245): a manual
+    /// subscription left open (Unbind never reached) by one test CODEUNIT does not fire
+    /// in the NEXT test codeunit's run — TestIsolation = Codeunit starts each new codeunit
+    /// with no leftover bindings, even though a binding DOES survive across [Test]
+    /// procedures within the SAME codeunit (TestEventManualBinding Contract 9 — that
+    /// within-codeunit persistence is real, faithful BC behaviour and must NOT be
+    /// disturbed here; this reset only runs at the codeunit/test boundary in
+    /// ResetPerTestState, never between two [Test] methods sharing one codeunit instance
+    /// under TestIsolation = Codeunit). Filed as AL Runner issue #2466 — Base App codeunit
+    /// 9178 "Application Area Mgmt." failed 18 corpus tests once ANY test codeunit ahead
+    /// of it in the run bound (and never unbound) a manual event subscriber that clears
+    /// "Application Area Setup".Basic on OnGetBasicExperienceAppAreas.
+    /// </summary>
+    internal static void ResetEventBindingsForTestBoundary()
+    {
+        var session = SkeletonSession;
+        if (session == null) return;
+        if (_piSessionEventBindings == null && !_eventBindingsLookupFailed)
+        {
+            _piSessionEventBindings = session.GetType().GetProperty("EventBindings",
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            if (_piSessionEventBindings == null)
+                _eventBindingsLookupFailed = true;
+        }
+        if (_piSessionEventBindings?.GetValue(session) is System.Collections.IList bindings)
+            bindings.Clear();
+    }
+
+    /// <summary>
     /// <paramref name="publisher"/> when its tree is still usable, otherwise the skeleton
     /// session. Only the tree-parent role is being substituted — the publisher itself is
     /// still what the subscriber is dispatched for.

@@ -1351,6 +1351,15 @@ public static partial class RecordPatches
         // this a SingleInstance codeunit's instance-variable state would leak from one test into
         // the next. See BcRuntime._singleInstanceCache / BcRuntime.ResetSingleInstanceCache.
         AlRunner.BcRuntime.ResetSingleInstanceCache();
+
+        // Manual-binding event subscriptions (BindSubscription/Session.EventBindings) are
+        // likewise a live-instance leak risk across the same boundary: a subscriber a test
+        // bound and never unbound must not still be bound when the next test codeunit runs
+        // (corpus-verified — TestEventManualBindingCrossCodeunit, 60244/60245 — a within-
+        // codeunit leak across [Test] procedures IS faithful BC behaviour and is untouched
+        // by this reset, since ResetPerTestState only runs at the codeunit/Test-isolation
+        // boundary, not between methods sharing one codeunit instance). See #2466.
+        AlRunner.BcRuntime.ResetEventBindingsForTestBoundary();
     }
 
     /// <summary>
