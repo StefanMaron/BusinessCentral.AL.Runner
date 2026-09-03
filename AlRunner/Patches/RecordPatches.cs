@@ -170,7 +170,16 @@ public static partial class RecordPatches
         _parsedTables.Clear();
         _parsedExtensionFields.Clear();
         _extensionIdsByBaseTable.Clear();
-        _bcSymbolExtensionIndexBuilt = false; // re-merge BC precompiled extensions on next build
+        // #2478: must invalidate _bcSymbolTableIndex too, not just _bcSymbolExtensionIndexBuilt —
+        // EnsureBcSymbolExtensionIndex's only call site is inside EnsureBcSymbolTableIndex, gated
+        // by `_bcSymbolTableIndex != null`. Leaving that index populated made the flag reset above
+        // a no-op forever: on request 2 of a warm --server/--watch process, EnsureBcSymbolTableIndex
+        // short-circuited before ever reaching the extension merge again, so precompiled
+        // tableextension fields silently vanished from every metatable from the second request on.
+        // Shares InvalidateBcAppIndexes with AddBcAppPath (RecordPatches.BcAppFallback.cs) so the
+        // two call sites can't drift apart again the way they did here.
+        lock (_bcTableIndexLock)
+            InvalidateBcAppIndexes();
         _fieldTriggersWiredTables.Clear();
         _parsedPages.Clear();
         _parsedPageExtensions.Clear();

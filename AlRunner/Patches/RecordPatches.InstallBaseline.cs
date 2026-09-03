@@ -349,7 +349,36 @@ public static partial class RecordPatches
                 static _ => new ConcurrentDictionary<int, object>());
             foreach (var table in source.Tables)
             {
-                var dataAccess = _mCreateTempDataAccess!.Invoke(source.Source, new[] { table.MetaTable })!;
+                // #2480: table.MetaTable was captured in a PREVIOUS process epoch — possibly
+                // a prior --server/--watch request, since this snapshot can be
+                // TestExecutor's process-lifetime dep+company cache, which no per-request
+                // reset touches. BcRuntime.ResetForNewBundleReload() always rebuilds
+                // _metaTableCache from scratch, so table.MetaTable may no longer be the
+                // object registered in the live NCLMetadata caches even when its SHAPE is
+                // unchanged, and if the table's AL source genuinely changed shape between
+                // requests the stale object's field layout no longer matches what live AL
+                // code expects (#2478 is the most common way that happens, but not the
+                // only one). Re-resolve against the CURRENT process's cache — mirroring the
+                // on-disk restore path's own reconciliation
+                // (RecordPatches.InstallBaselineDisk.cs, TryDeserializeInstallBaselineSnapshot)
+                // — and refuse outright when the live shape doesn't match what was captured:
+                // this method has no MISS-fallback path to recompute from, so silently
+                // proceeding with a shape it cannot reconcile would misalign field values
+                // instead of refusing (.claude/rules/loud-failures.md).
+                var liveMeta = EnsureTableInMetadataCache(table.TableId)
+                    ?? throw new InvalidOperationException(
+                        $"[RecordPatches] install-baseline restore: no live NCLMetaTable for " +
+                        $"table {table.TableId} in this process — the cached snapshot cannot be restored.");
+                var capturedMeta = (NCLMetaTable)table.MetaTable;
+                if (liveMeta.FieldCount != capturedMeta.FieldCount)
+                    throw new InvalidOperationException(
+                        $"[RecordPatches] install-baseline restore: table {table.TableId} now has " +
+                        $"{liveMeta.FieldCount} field(s) in this process, the cached snapshot was " +
+                        $"captured with {capturedMeta.FieldCount} — its shape changed since the " +
+                        "snapshot was captured (e.g. a warm --server/--watch reload of an edited " +
+                        "dependency), so the cached install baseline is stale and unsafe to restore.");
+
+                var dataAccess = _mCreateTempDataAccess!.Invoke(source.Source, new object[] { liveMeta })!;
                 perTable[table.TableId] = dataAccess;
                 var provider = GetDataProvider(dataAccess)!;
                 var insert = provider.GetType().GetMethods(BindingFlags.Public | BindingFlags.Instance)
@@ -372,7 +401,7 @@ public static partial class RecordPatches
                 foreach (var values in table.Rows)
                 {
                     var readOnly = new ReadOnlyRecordBuffer(
-                        (NCLMetaApplicationObject)table.MetaTable, CloneValues(values));
+                        (NCLMetaApplicationObject)liveMeta, CloneValues(values));
                     var mutable = _ibMutableBufferCtor.Invoke(new object[] { readOnly });
                     insert.Invoke(provider, new object?[] { 0, mutable, insertOptions, null });
                     restoredRows++;

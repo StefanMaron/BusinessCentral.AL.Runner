@@ -451,12 +451,21 @@ public static class JoinExecutor
 
     /// <summary>
     /// A non-aggregated column's value for one combo (row) — the same value it would get in
-    /// the ungrouped per-combo projection above: the owning dataitem's buffer value at the
-    /// column's TableSlot, or the child field's typed default for an unmatched LeftOuterJoin
-    /// combo, or null if unsupported (ConstValue/no source field).
+    /// the ungrouped per-combo projection above: for a #2423 FlowField column, computed via
+    /// ctx.CalcFlowFieldForRow against the owning dataitem's row (#2455 — the implicit GROUP BY
+    /// has no TableSlot to read for a FlowField column, so it must be calculated the same way
+    /// the ungrouped path calculates it, not read off a buffer); otherwise the owning dataitem's
+    /// buffer value at the column's TableSlot, or the child field's typed default for an
+    /// unmatched LeftOuterJoin combo, or null if unsupported (ConstValue/no source field).
     /// </summary>
     private static object? ResolveComboValue(JoinContext ctx, JoinColumn col, Dictionary<string, object?> combo)
     {
+        if (col.FlowFieldMeta != null)
+        {
+            if (!combo.TryGetValue(col.OwnerName, out var ownerBuf) || ownerBuf == null)
+                return ctx.TypedDefaultForField(col.FlowFieldMeta);
+            return ctx.CalcFlowFieldForRow(ownerBuf, col.FlowFieldMeta);
+        }
         if (!combo.TryGetValue(col.OwnerName, out var buf) || buf == null)
             return col.SourceField != null ? ctx.TypedDefaultForField(col.SourceField) : null;
         if (col.TableSlot < 0 || col.TableSlot >= BufFieldCount(buf)) return null;
@@ -676,20 +685,13 @@ public static class JoinExecutor
             }
         }
 
-        // #2423: a FlowField column combined with a #2146 implicit GROUP BY (some other column
-        // in this same join has Method = Sum/Count/Average/Min/Max) is unmeasured -- no oracle
-        // case covers a query grouping alongside a joined FlowField column, and BuildGroupedRows'
-        // ResolveComboValue has no FlowField branch (it would silently read TableSlot = -1 as a
-        // GROUP BY key, producing null/default). Fail loudly rather than guess, same as the
-        // single-dataitem path leaves this combination as a documented follow-up (see BuildRow's
-        // #2300 comment in RecordPatches.QueryProjection.cs).
-        if (plan.Columns.Any(c => c.FlowFieldMeta != null) && plan.Columns.Any(c => c.Aggregation != "None"))
-            throw ctx.OutOfScope(
-                "NavQuery (multi-dataitem join with a FlowField column)",
-                "query-join-flowfield-column-with-groupby-not-implemented -- this join selects both a " +
-                "FlowField column and an aggregated (Method = Sum/Count/Average/Min/Max) column; the " +
-                "implicit GROUP BY this runner performs for the aggregated column (#2146) has no " +
-                "FlowField-calculation branch; see docs/scope.md");
+        // #2455: a FlowField column combined with a #2146 implicit GROUP BY (some other column
+        // in this same join has Method = Sum/Count/Average/Min/Max) is now supported —
+        // ResolveComboValue's FlowFieldMeta branch (#2455) calculates the FlowField per combo
+        // via ctx.CalcFlowFieldForRow the same way the ungrouped path does, so it participates
+        // in the GROUP BY key / group-representative-row projection like any other non-aggregated
+        // column. This mirrors real BC (verified against BC 28.4, see #2455): the FlowField is
+        // calculated per joined row and carried into the group.
 
         plan.SlotCount = Math.Max(maxSlot + 1, nextExtraSlot);
         return plan;

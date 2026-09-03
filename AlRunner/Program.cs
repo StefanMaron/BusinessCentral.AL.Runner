@@ -3644,6 +3644,15 @@ return strictExitCode ? computedExitCode : 0;
         return results;
     }
 
+    // True when `path` is `root` itself or nested somewhere under it. Both are
+    // full-pathed by the caller; trailing-separator-insensitive.
+    static bool IsUnderDirectory(string path, string root)
+    {
+        var normalizedRoot = root.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        return string.Equals(path, normalizedRoot, StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith(normalizedRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+    }
+
     // Compile + run one bundle, resetting bundle-derived caches first so an edited
     // same-identity bundle is picked up (server reload contract). Mirrors the
     // bundled-mode path of the normal run loop for a single bundle. The run step
@@ -3674,9 +3683,33 @@ return strictExitCode ? computedExitCode : 0;
             .Concat(packageCacheDirs)
             .Distinct()
             .ToList();
+        // #2479: the environment key gates affectedOnly's per-test coverage baseline on
+        // "did the resolved environment change in a way per-test coverage can't reason
+        // about" (BC version/artifact/configured package caches) — deliberately a COARSER
+        // signal than the incremental change model, which already answers "did a
+        // dependency's CONTENT change" precisely via changedObjects. RunLayeredPrePass /
+        // BuildSiblingSourceDeps (multi-sourcePaths requests only) give each impl a
+        // content-keyed workspace dir under CacheRoots "workspace-deps" and add it to the process-wide
+        // packageCacheDirs — that path changes every time the impl's own source changes,
+        // since it is keyed on exactly that content, and OLD entries are never removed (the
+        // process-lifetime list only ever grows across requests). Folding either into this
+        // key made every dependency edit look like an "environment changed" event too,
+        // forcing a full re-run of the WHOLE multi-bundle request on the NEXT request even
+        // though changedObjects had already identified precisely what changed — the
+        // environment check re-litigated a question the incremental model had already
+        // answered correctly. Exclude every dir under the workspace-deps root (not just
+        // the ones this specific request happened to add — a per-request list would still
+        // leave a PRIOR request's stale entry in effectivePkgDirs, which is exactly what a
+        // first attempt at this fix, scoped only to "this request's own additions", missed);
+        // effectivePkgDirs above is untouched, so actual dependency resolution still sees
+        // every synthesized dir it needs.
+        var workspaceDepsRoot = AlRunner.Infrastructure.CacheRoots.Resolve("workspace-deps");
+        var envKeyPkgDirs = effectivePkgDirs
+            .Where(d => !IsUnderDirectory(Path.GetFullPath(d), workspaceDepsRoot))
+            .ToList();
         var selectionEnvironmentKey =
             $"{AlRunner.Infrastructure.BcArtifacts.SelectedVersion}|{AlRunner.Infrastructure.BcArtifacts.ServiceTierDir}|"
-            + string.Join("|", effectivePkgDirs
+            + string.Join("|", envKeyPkgDirs
                 .Select(d => Path.GetFullPath(d))
                 .OrderBy(d => d, StringComparer.Ordinal));
 
