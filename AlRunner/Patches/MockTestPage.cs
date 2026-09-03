@@ -1057,8 +1057,24 @@ internal class LiveNavTestPage : MockITestPage
         // for a page that declares a SourceTable, so a hit here implies _record is set.
         if (_controlIdToFieldNo.TryGetValue(id, out var tableFieldNo))
         {
-            if (!_fields.TryGetValue(tableFieldNo, out var field))
-                _fields[tableFieldNo] = field =
+            // Keyed by CONTROL id, not by table field number. A page may show one field
+            // through more than one control -- twice under different conditions, or once in
+            // each of two groups with different visibility -- and each of those controls
+            // carries its own Visible / Editable / Enabled. Keying by field number handed the
+            // second control the instance built for the first, which holds the FIRST
+            // control's id, so every property read answered for the wrong control.
+            //
+            // Real BC keeps them apart: corpus test "TPSF Tests" (codeunit 60263) opens a
+            // card with two controls over one Text field, the second declaring
+            // Editable = false, and reads them independently on all 8 BC versions.
+            //
+            // Sharing the instance bought nothing. LiveNavTestField holds only readonly
+            // state -- the record, the field number, the page, the control id and the
+            // edited callback -- and every value it reads or writes goes to the record, so
+            // two instances over one field see each other's writes exactly as one did.
+            // _pageVariableFields beside it is already keyed this way.
+            if (!_fields.TryGetValue(id, out var field))
+                _fields[id] = field =
                     new LiveNavTestField(_record!, tableFieldNo, _page, id, MarkEdited);
             return field;
         }
