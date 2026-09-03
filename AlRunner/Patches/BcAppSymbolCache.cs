@@ -101,7 +101,12 @@ internal static partial class BcAppSymbolCache
     // deserialises with Parts empty, which DependencyPageMetadataXml would read as "this
     // page has no parts" — every TestPage part on that page refusing out-of-scope again,
     // silently reverting to the pre-fix behaviour rather than a cache miss.
-    private const int CacheVersion = 21;
+    // v22: ObjectSymbol gained TableNo / SingleInstance / Subtype for Codeunits — the columns
+    // the CodeUnit Metadata (2000000137) virtual table reports (issue #2544). A v21 payload
+    // deserialises with all three at their defaults, which reads as "every dependency codeunit
+    // declares no TableNo, is not SingleInstance, and is Subtype Normal" — a silent wrong
+    // answer for Base Application codeunits rather than a cache miss.
+    private const int CacheVersion = 22;
     private static readonly ConcurrentDictionary<string, AppSymbols> ProcessCache = new(StringComparer.OrdinalIgnoreCase);
     // Issue #1820 — path -> content-hash memo. ComputeAppContentHash needs to read the
     // WHOLE .app to hash it (unlike the FileInfo.Length/LastWriteTimeUtc stat it replaced,
@@ -306,7 +311,15 @@ internal static partial class BcAppSymbolCache
     /// consumer's job so the "not stated" and "stated as the name" cases stay distinct
     /// here.
     /// </summary>
-    internal sealed record ObjectSymbol(string Kind, int Id, string Name, string? Caption = null);
+    /// <summary>
+    /// <para>The three trailing properties are populated for <c>Codeunit</c> only, and feed the
+    /// CodeUnit Metadata (2000000137) virtual table (issue #2544). Every other kind leaves them
+    /// at their defaults — which is also what a codeunit declaring none of them means.
+    /// <c>TableNo</c> is the reference AS WRITTEN (a bare id in text form, or a table name);
+    /// resolving it to an id needs the run's table inventory, so the consumer does that.</para>
+    /// </summary>
+    internal sealed record ObjectSymbol(string Kind, int Id, string Name, string? Caption = null,
+        string? TableNo = null, bool SingleInstance = false, string? Subtype = null);
 
     // SymbolReference.json container name → the AllObj "Object Type" option name the
     // objects inside it map to. Matched against the live option string by name, so a
@@ -612,7 +625,25 @@ internal static partial class BcAppSymbolCache
                     continue;
                 var objName = el.TryGetProperty("Name", out var nameProp) ? nameProp.GetString() : null;
                 if (string.IsNullOrEmpty(objName)) continue;
-                SymbolProperties(el).TryGetValue("Caption", out var objCaption);
+                var objProps = SymbolProperties(el);
+                objProps.TryGetValue("Caption", out var objCaption);
+                if (kind == "Codeunit")
+                {
+                    // The object-level properties CodeUnit Metadata reports as real columns.
+                    // SymbolProperties is case-insensitive, so "TableNo"/"TableNO" both match.
+                    objProps.TryGetValue("TableNo", out var cuTableNo);
+                    objProps.TryGetValue("SingleInstance", out var cuSingleInstance);
+                    objProps.TryGetValue("Subtype", out var cuSubtype);
+                    objects.TryAdd((kind, objId), new ObjectSymbol(kind, objId, objName, objCaption,
+                        // Left as written; StripModuleQualifier is the consumer's job, the same
+                        // split the query/report data-item RelatedTable reads already make.
+                        TableNo: string.IsNullOrWhiteSpace(cuTableNo) ? null : cuTableNo.Trim(),
+                        // AL's default is false; only an explicit "true" sets it.
+                        SingleInstance: string.Equals(cuSingleInstance?.Trim(), "true",
+                            StringComparison.OrdinalIgnoreCase),
+                        Subtype: string.IsNullOrWhiteSpace(cuSubtype) ? null : cuSubtype.Trim()));
+                    continue;
+                }
                 objects.TryAdd((kind, objId), new ObjectSymbol(kind, objId, objName, objCaption));
             }
         }
