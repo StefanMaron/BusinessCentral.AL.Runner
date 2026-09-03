@@ -54,13 +54,29 @@ unit-test step. `AlRunner.Tests/BaseAppFloorFixtureGuardTests.cs` now enforces b
 fails when an allowlist entry goes stale. Add to the allowlist only with the reason the
 floor is genuinely the subject.
 
-**How these four were identified, and how they were nearly missed.** The property was
+**A sixth turned out to be legitimate, and stays on the fixture allowlist: `Fixtures/
+SubscriberScanAudit`.** Dropping the floor from `RecordTriggerXRec` broke
+`EventSubscriberScanEquivalenceTests`, which drives the runner with
+`AL_RUNNER_SUBSCRIBER_SCAN_AUDIT=1` and asserts over 3,000 real `[NavEventSubscriber]`
+methods across Base Application + System Application -- a count with nothing to count
+without the platform closure loaded. That test never declared its own need for the floor;
+it rode along on a fixture another 13 test classes shared. Its whole claim is a count of
+subscribers in real BC assemblies, so without the floor it asserts against nothing --
+the same shape as `PlaceholderFloorProvisioningTests` above, not a #2364-style violation.
+The fix is not to restore the floor to `RecordTriggerXRec` (that un-does the entire point
+of this PR for its other 13 users) but to give the one test that needs it a fixture of its
+own, so the floor is paid once per CI leg instead of 28 times.
+
+**How these six were identified, and how they were nearly missed twice.** The property was
 removed from all 49 classes and the full suite run. A *partial* local run reported three
 classes; reading it before it finished produced a wrong list, and CI — running to completion
-on all eight legs — found five failures in two further classes. **Do not conclude a set of
-failures from a run that has not finished.** The bar for adding to this list is a completed
-run showing the class fails without the floor, not a reading of what the test looks like it
-needs.
+on all eight legs — found five failures in two further classes. Later, removing the floor
+from the checked-in `RecordTriggerXRec` fixture (rather than a class-generated manifest)
+found a sixth failure the same way: only a completed eight-leg CI run surfaced
+`EventSubscriberScanEquivalenceTests` failing with `found 0` subscribers, on multiple BC
+legs at once. **Do not conclude a set of failures from a run that has not finished.** The
+bar for adding to either allowlist is a completed run showing the class or fixture fails
+without the floor, not a reading of what the test looks like it needs.
 
 ## Sister rules
 

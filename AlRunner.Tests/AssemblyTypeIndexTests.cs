@@ -326,8 +326,15 @@ public sealed class EventSubscriberScanEquivalenceTests
     private static readonly string RepoRoot = Path.GetFullPath(
         Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
     private static readonly string ProjectPath = Path.Combine(RepoRoot, "AlRunner");
+
+    // This is the ONLY user of this fixture, and deliberately so: it is the one place in
+    // the suite where the "application" floor is the actual subject (real BC assemblies to
+    // scan), not an accident carried by a shared fixture. See
+    // Fixtures/SubscriberScanAudit/app.json and .claude/rules/no-base-app-in-csharp-tests.md.
+    // Do not repoint this at RecordTriggerXRec or any other floor-less fixture -- the
+    // magnitude assertions below (>3000 subscribers) need the real closure to be loaded.
     private static readonly string Fixture = Path.Combine(
-        RepoRoot, "AlRunner.Tests", "Fixtures", "RecordTriggerXRec");
+        RepoRoot, "AlRunner.Tests", "Fixtures", "SubscriberScanAudit");
 
     private static readonly Regex AuditLine = new(
         @"scan-audit (?<asm>\S+): metadata=(?<md>\d+) reflection=(?<rf>\d+) identical=(?<same>true|false)",

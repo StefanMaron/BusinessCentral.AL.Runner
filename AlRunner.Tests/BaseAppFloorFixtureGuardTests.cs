@@ -24,6 +24,17 @@ namespace AlRunner.Tests;
 /// 4.65 s to 1.92 s locally, and this file's 14 dependent test classes from 4 m 20 s to
 /// 1 m 54 s.
 ///
+/// Removing the floor from RecordTriggerXRec broke one of its 14 dependent test classes:
+/// EventSubscriberScanEquivalenceTests (in AssemblyTypeIndexTests.cs) drives the runner with
+/// AL_RUNNER_SUBSCRIBER_SCAN_AUDIT=1 and asserts over 3,000 real [NavEventSubscriber]
+/// methods across Base Application + System Application -- those assemblies only load
+/// because the fixture used to declare the floor, and the test never declared its own need
+/// for it. Rather than restore the floor to all 28-spawns-per-leg of RecordTriggerXRec, it
+/// now has its own dedicated fixture, Fixtures/SubscriberScanAudit, whose entire purpose is
+/// to carry the floor -- so it is paid once per leg instead of 28 times. Found by a
+/// completed eight-leg CI run, not a partial local one -- see the note below on why that
+/// distinction matters.
+///
 /// So the count is enforced here rather than asked for in prose. Anything not on the
 /// allowlist below fails, in the C#-written manifests the rule already covered AND in the
 /// checked-in fixture manifests it did not.
@@ -58,6 +69,10 @@ public sealed class BaseAppFloorFixtureGuardTests
             "BcVersionFloorSkipTests — a floor no artifact can satisfy; the fixture IS the floor",
         ["Fixtures/CrossMajorNote/app.json"] =
             "CrossMajorNoteTests (#2210) — declares a BC major no shipped engine matches",
+        ["Fixtures/SubscriberScanAudit/app.json"] =
+            "EventSubscriberScanEquivalenceTests — needs the real Base App + System App " +
+            "closure loaded so the metadata-vs-reflection subscriber scan has >3000 real " +
+            "[NavEventSubscriber] methods to compare; the floor IS the subject",
     };
 
     /// <summary>
@@ -80,7 +95,7 @@ public sealed class BaseAppFloorFixtureGuardTests
     };
 
     [Fact]
-    public void NoFixtureManifest_DeclaresTheBaseApplicationFloor_ExceptTheAllowlistedThree()
+    public void NoFixtureManifest_DeclaresTheBaseApplicationFloor_ExceptTheAllowlistedFour()
     {
         var offenders = new List<string>();
         foreach (var path in Directory.EnumerateFiles(
