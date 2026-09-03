@@ -25,6 +25,7 @@
 // then have no caption table to match against and throw instead of resolving.
 using AlRunner;
 using AlRunner.Infrastructure;
+using AlRunner.Patches;
 using Microsoft.Dynamics.Nav.Runtime;
 using Xunit;
 
