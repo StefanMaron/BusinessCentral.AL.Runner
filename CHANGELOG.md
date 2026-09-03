@@ -15,6 +15,8 @@ All notable changes to this project are documented here. Format based on
 - **all-profile:** populate the All Profile system virtual table (2000000178)
 
 ### Fixed
+- **codeunit:** trap and roll back a failed guarded Codeunit.Run for both call spellings
+- **rad:** make the RAD baseline namespace-aware, fixing the empty ModuleDefinition
 - Aggregate Permission Set redrives its union on every Get()/Find() request
 - **testpage:** enforce field MinValue/MaxValue on TestPage SetValue
 - **server:** stop affectedOnly from silently narrowing a sibling bundle when a dependency's incremental cycle can't be attributed
