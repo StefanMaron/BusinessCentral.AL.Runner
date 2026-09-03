@@ -15,6 +15,12 @@ All notable changes to this project are documented here. Format based on
 - **all-profile:** populate the All Profile system virtual table (2000000178)
 
 ### Fixed
+- **scripts:** parse VSTest timestamps on Python 3.9, hold the FIFO portably, and run the script tests
+- **testpage:** TestPage.<part> adopts the host's own subpage instance
+- **diagnostics:** name the app group in an EXEC-FAIL, not the bundle marker
+- **server:** stop a consuming bundle replaying stale C# after a sibling re-emits
+- **layered:** decide prebuilt-shadow staleness on content, not mtime
+- **option:** strip AL identifier quoting from Option field member names
 - **dep-metadata:** carry the SourceObject flags the symbol file states
 - **cli:** print the build's own version, and stop overselling --print-cache-key
 - **phaselog:** report a real peak RSS on macOS instead of a silent zero
@@ -81,6 +87,11 @@ All notable changes to this project are documented here. Format based on
 - **agents:** opening a corpus PR needs no approval
 
 ### Changed
+- stop superseded runs from holding job slots
+- **compile:** run CallSiteArgWrap only when the real emit needs it
+- **guard:** the silent-skip guard could not see the multi-line shape
+- Evaluate the TestPage control property expression instead of looking it up as a name
+- **packages:** answer both .app metadata questions from one read, and cache both
 - Populate the Time Zone (2000000164) virtual table from the host
 - Name this bundle's provisioning gaps again in the run summary
 - Give each runner process its own sibling-symbols directory
