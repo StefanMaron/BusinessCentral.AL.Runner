@@ -835,4 +835,51 @@ public class ServerExecuteIterationsTests : IClassFixture<SharedCliServer>
         Assert.Equal(new[] { "1" }, Values(callerSteps[0], "Rec"));
         Assert.Equal(new[] { "2" }, Values(callerSteps[1], "Rec"));
     }
+
+    [SkippableFact]
+    public async Task Execute_TwoBundles_LoopIdsUniquePerResponse_AndMessageTagsResolve()
+    {
+        TestArtifacts.SkipIfMissing();
+        var root = Path.Combine(Path.GetTempPath(), "al-runner-iter-multi", Guid.NewGuid().ToString("N"));
+        var a = Path.Combine(root, "a"); var b = Path.Combine(root, "b");
+        Directory.CreateDirectory(a); Directory.CreateDirectory(b);
+        File.WriteAllText(Path.Combine(a, "A.al"),
+            "codeunit 60340 \"Iter MB A SX\" { trigger OnRun() var i: Integer; begin for i := 1 to 2 do Message('A' + Format(i)); end; }");
+        File.WriteAllText(Path.Combine(b, "B.al"),
+            "codeunit 60341 \"Iter MB B SX\" { trigger OnRun() var j: Integer; begin for j := 1 to 2 do Message('B' + Format(j)); end; }");
+        var server = await _fixture.GetAsync();
+        var r = await server.SendAsync(JsonSerializer.Serialize(new
+        {
+            command = "execute",
+            sourcePaths = new[] { a, b },
+            captureValues = true,
+            iterationTracking = true,
+        }));
+        var d = JsonSerializer.Deserialize<JsonElement>(r);
+        Assert.False(d.TryGetProperty("error", out _), $"unexpected error response: {r}");
+        var tests = d.GetProperty("tests").EnumerateArray().ToList();
+        Assert.Equal(2, tests.Count);
+
+        // Loop ids are distinct across the whole response, not both L0.
+        var allLoopIds = tests.SelectMany(t => t.GetProperty("loops").EnumerateArray())
+            .Select(l => l.GetProperty("id").GetInt32()).ToList();
+        Assert.Equal(2, allLoopIds.Count);
+        Assert.Equal(allLoopIds.Distinct().Count(), allLoopIds.Count);
+        var idA = tests[0].GetProperty("loops").EnumerateArray().Single().GetProperty("id").GetInt32();
+        var idB = tests[1].GetProperty("loops").EnumerateArray().Single().GetProperty("id").GetInt32();
+
+        // Each response message is tagged with the correct bundle's loop id.
+        var msgs = d.GetProperty("messages").EnumerateArray()
+            .ToDictionary(m => m.GetProperty("text").GetString()!, m => m.GetProperty("loop").GetInt32());
+        Assert.Equal(idA, msgs["A1"]);
+        Assert.Equal(idA, msgs["A2"]);
+        Assert.Equal(idB, msgs["B1"]);
+        Assert.Equal(idB, msgs["B2"]);
+
+        // Each bundle's capture tags reference its own loop id.
+        Assert.All(tests[0].GetProperty("capturedValues").EnumerateArray(),
+            v => Assert.Equal(idA, v.GetProperty("loop").GetInt32()));
+        Assert.All(tests[1].GetProperty("capturedValues").EnumerateArray(),
+            v => Assert.Equal(idB, v.GetProperty("loop").GetInt32()));
+    }
 }
