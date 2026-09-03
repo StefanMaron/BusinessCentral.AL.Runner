@@ -43,6 +43,17 @@ times, so this is the single largest cost in the C# suite.
 None is a precedent to cite. Do not add a fifth. When #2364 lands, this section shrinks to
 the one legitimate case.
 
+**A fifth arrived anyway, because this list had no enforcement.** Not as a class -- as a
+checked-in fixture, which the paragraph above never mentioned:
+`AlRunner.Tests/Fixtures/RecordTriggerXRec/app.json`, a bundle with `"dependencies": []`
+and its own private Assert codeunit that needs nothing from Microsoft. It was also the
+most-spawned fixture in the suite (28 spawns per BC leg, 313-472 s of subprocess wall),
+so the property nobody noticed was costing about a quarter of all subprocess time in the
+unit-test step. `AlRunner.Tests/BaseAppFloorFixtureGuardTests.cs` now enforces both halves
+-- generated manifests AND checked-in fixture manifests -- against a named allowlist, and
+fails when an allowlist entry goes stale. Add to the allowlist only with the reason the
+floor is genuinely the subject.
+
 **How these four were identified, and how they were nearly missed.** The property was
 removed from all 49 classes and the full suite run. A *partial* local run reported three
 classes; reading it before it finished produced a wrong list, and CI — running to completion
