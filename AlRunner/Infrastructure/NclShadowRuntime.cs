@@ -184,20 +184,14 @@ public static class NclShadowRuntime
 
         var shadowRoot = CacheRoots.Resolve("ncl-shadow");
         var shadowDir = Path.Combine(shadowRoot, key);
-        var markerPath = Path.Combine(shadowDir, MarkerFileName);
         var shadowDll = Path.Combine(shadowDir, EntryDllName);
-        var shadowNcl = Path.Combine(shadowDir, NclFileName);
 
         // AL_RUNNER_NCL_CACHE=0 (NclCecilRewrite's own escape hatch) means "always do a
         // fresh Cecil rewrite" — honour that here too rather than silently reusing a
         // stale shadow dir built before the flag was set.
         var forceFresh = Environment.GetEnvironmentVariable("AL_RUNNER_NCL_CACHE") == "0";
 
-        var reusable = !forceFresh
-            && File.Exists(markerPath)
-            && File.ReadAllText(markerPath) == origFull
-            && File.Exists(shadowDll)
-            && File.Exists(shadowNcl);
+        var reusable = !forceFresh && IsShadowDirComplete(shadowDir, origFull);
 
         if (reusable)
         {
@@ -239,26 +233,181 @@ public static class NclShadowRuntime
             // shadowDir that isn't complete.
             File.WriteAllText(Path.Combine(tempDir, MarkerFileName), origFull);
 
-            Directory.Move(tempDir, shadowDir);
-        }
-        catch (IOException) when (Directory.Exists(shadowDir))
-        {
-            // Lost the race: another process's Directory.Move landed first. Its
-            // directory is complete by construction (only ever created via this same
-            // rename-into-place path), and — same key — content-equivalent to what we
-            // would have built. Discard our temp build rather than leave it orphaned.
-            try { Directory.Delete(tempDir, recursive: true); } catch { /* best effort */ }
+            PublishShadowDir(tempDir, shadowDir, origFull);
         }
         finally
         {
             // Belt-and-braces cleanup if something above threw for an unrelated reason
-            // (e.g. RewriteInPlace failing) — don't leave a half-built temp dir behind.
+            // (e.g. RewriteInPlace failing), or PublishShadowDir already consumed/moved
+            // tempDir away — don't leave a half-built temp dir behind.
             try { if (Directory.Exists(tempDir)) Directory.Delete(tempDir, recursive: true); } catch { /* best effort */ }
         }
 
         PruneStaleShadowDirs(shadowRoot, shadowDir, keepNewest: 4);
 
         return shadowDll;
+    }
+
+    // #2489: the issue's own field observation of "incomplete published dir" listed
+    // al-runner.dll / al-runner.exe / al-runner.deps.json / al-runner.pdb /
+    // .al-runner-shadow-source as the files variously missing — not just the entry DLL.
+    // A dir missing ONLY al-runner.deps.json still fails to `dotnet exec` (hostfxr needs
+    // it to resolve the app's dependency closure), so checking just the marker + entry
+    // DLL + Ncl.dll would report such a dir "complete" and let it stay sticky. Check the
+    // two manifests every dotnet-exec launch actually needs; al-runner.pdb/.exe are
+    // debug/native-host conveniences a missing copy doesn't stop `dotnet exec` from
+    // working, so they're not required here.
+    private static readonly string[] RequiredManifestNames =
+    {
+        "al-runner.deps.json", "al-runner.runtimeconfig.json",
+    };
+
+    /// <summary>
+    /// True when <paramref name="shadowDir"/> is a fully-built, reusable shadow dir for
+    /// <paramref name="origFull"/>: marker present and pointing at this exact install, plus
+    /// the entry assembly, its deps/runtimeconfig manifests, and Ncl.dll all on disk.
+    /// Pulled out of the reuse-check in <see cref="EnsureShadowDir"/> so
+    /// <see cref="PublishShadowDir"/> can use the SAME definition of "complete" to decide
+    /// between adopting a sibling's already-published dir and self-healing one that
+    /// publish left incomplete (#2489).
+    /// </summary>
+    internal static bool IsShadowDirComplete(string shadowDir, string origFull)
+    {
+        var markerPath = Path.Combine(shadowDir, MarkerFileName);
+        var shadowDll = Path.Combine(shadowDir, EntryDllName);
+        var shadowNcl = Path.Combine(shadowDir, NclFileName);
+        try
+        {
+            if (!File.Exists(markerPath) || File.ReadAllText(markerPath) != origFull) return false;
+            if (!File.Exists(shadowDll) || !File.Exists(shadowNcl)) return false;
+            foreach (var name in RequiredManifestNames)
+                if (!File.Exists(Path.Combine(shadowDir, name))) return false;
+            return true;
+        }
+        catch (IOException)
+        {
+            // A sibling process racing a delete/replace of this exact dir right now —
+            // treat as "not complete" rather than letting the read explode; the caller
+            // will either adopt a later-observed complete dir or rebuild.
+            return false;
+        }
+    }
+
+    // #2489: healed in place, one file at a time — see PublishShadowDir's doc comment
+    // for why a whole-directory swap is unsafe here (a sibling process may already be
+    // RUNNING from shadowDir, with AppContext.BaseDirectory baked to that exact path
+    // for its entire lifetime; anything it path-joins off that string — a lazy
+    // Assembly.LoadFrom, a satellite resource, Win32Stubs — breaks the instant the
+    // directory is renamed away, even though its already-open file handles stay valid).
+    private static readonly string[] HealableFileNames =
+    {
+        EntryDllName, NclFileName, "al-runner.deps.json", "al-runner.runtimeconfig.json",
+    };
+
+    /// <summary>
+    /// Publishes <paramref name="tempDir"/> (a fully-built shadow dir, marker written last)
+    /// onto <paramref name="shadowDir"/>, atomically, and self-heals the two concurrent-
+    /// startup failure modes #2489 measured on top of the original lost-race handler:
+    ///
+    /// 1. <b>Clean race</b> — nobody else has published yet: <c>Directory.Move</c> (rename,
+    ///    atomic on the same volume) lands directly.
+    /// 2. <b>Lost a clean race</b> — a sibling's rename landed first and its directory is
+    ///    COMPLETE (only ever produced by this same path, so it's content-equivalent):
+    ///    adopt it, discard <paramref name="tempDir"/>.
+    /// 3. <b>Lost to an INCOMPLETE publish</b> — a sibling (or a past run, before this fix)
+    ///    published a dir with the marker but missing the entry DLL/Ncl.dll (e.g.
+    ///    <c>PruneStaleShadowDirs</c> deleted files out of its <c>.building.*</c> temp dir
+    ///    while it was still being mirrored, before this fix excluded that name pattern).
+    ///    That state used to be sticky forever — nothing revisited it once published, and
+    ///    <c>Directory.Move</c> onto an existing directory always throws, which the old
+    ///    lost-race handler treated as "someone else won" unconditionally.
+    ///
+    ///    Self-heal here copies each required file from <paramref name="tempDir"/> INTO the
+    ///    existing <paramref name="shadowDir"/> (create-or-overwrite, one file at a time) —
+    ///    deliberately NOT a whole-directory swap. An earlier version of this fix moved the
+    ///    whole incomplete directory aside and republished at the same path; that is unsafe
+    ///    whenever a SIBLING PROCESS IS ALREADY RUNNING from shadowDir (its
+    ///    AppContext.BaseDirectory was fixed to that exact path at its own startup and never
+    ///    changes) — any later path-based lookup off that string (a lazy
+    ///    <c>Assembly.LoadFrom</c>, a satellite-resource probe, Win32Stubs) breaks the
+    ///    instant the directory is renamed away, even though handles already open at that
+    ///    point keep working. Overwriting individual files in place has the same property
+    ///    normal file writes always have for concurrent readers: an already-open handle
+    ///    keeps seeing the old bytes/inode, and a fresh open after the write sees the new
+    ///    ones — nobody's path resolution ever goes missing.
+    /// </summary>
+    internal static void PublishShadowDir(string tempDir, string shadowDir, string origFull)
+    {
+        const int maxAttempts = 20;
+        for (var attempt = 1; attempt <= maxAttempts; attempt++)
+        {
+            if (!Directory.Exists(shadowDir))
+            {
+                try
+                {
+                    Directory.Move(tempDir, shadowDir);
+                    return;
+                }
+                catch (IOException) when (Directory.Exists(shadowDir))
+                {
+                    // A sibling published between our Exists check and our Move —
+                    // fall through to the adopt/self-heal logic below.
+                }
+            }
+
+            if (IsShadowDirComplete(shadowDir, origFull))
+            {
+                // Lost the race, but to a COMPLETE, content-equivalent directory (only
+                // ever produced by this same rename-into-place path) — adopt it.
+                try { Directory.Delete(tempDir, recursive: true); } catch { /* best effort */ }
+                return;
+            }
+
+            // shadowDir exists but is incomplete — heal in place (see the doc comment
+            // above for why NOT a whole-directory swap): ADD only the required files
+            // that are ACTUALLY MISSING, copied from our own complete tempDir build.
+            // Deliberately never overwrites a file that already exists in shadowDir,
+            // even with content that should be identical (same key => same bytes) —
+            // File.Copy(overwrite: true) on an EXISTING file truncates-and-rewrites it
+            // in place, which is unsafe if a sibling process already has that exact
+            // file memory-mapped (a loaded assembly): the mapped pages would be
+            // corrupted mid-read out from under a process that never touched the
+            // shadow dir itself, well past its own startup. A missing file has no
+            // existing inode to corrupt, so creating it is safe regardless of who else
+            // is running from this directory.
+            foreach (var name in HealableFileNames)
+            {
+                var dest = Path.Combine(shadowDir, name);
+                if (File.Exists(dest)) continue;
+                try { File.Copy(Path.Combine(tempDir, name), dest, overwrite: false); }
+                catch (IOException) { /* sibling created it (or is creating it) concurrently — fine either way */ }
+                catch (UnauthorizedAccessException) { /* same */ }
+            }
+            // Marker goes last, same invariant as the initial build: "marker matches
+            // origFull" only becomes true once every other required file is in place.
+            // The marker itself IS safe to overwrite unconditionally — nothing reads it
+            // except this completeness check (never mapped, never a load target), and
+            // origFull is identical across every builder of this key by construction.
+            try { File.Copy(Path.Combine(tempDir, MarkerFileName), Path.Combine(shadowDir, MarkerFileName), overwrite: true); }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+
+            if (IsShadowDirComplete(shadowDir, origFull))
+            {
+                Console.Error.WriteLine($"[reexec] Self-healed incomplete shadow dir at {shadowDir} in place");
+                try { Directory.Delete(tempDir, recursive: true); } catch { /* best effort */ }
+                return;
+            }
+            // Still incomplete (a transient per-file collision above, or a sibling
+            // racing the same heal) — loop around and retry.
+        }
+
+        // Exhausted retries under sustained contention — leave tempDir for the finally
+        // block in EnsureShadowDir to clean up, and let the caller rebuild next call
+        // rather than publish something we can no longer prove is complete.
+        Console.Error.WriteLine(
+            $"[reexec] WARN: could not publish shadow dir at {shadowDir} after {maxAttempts} attempts " +
+            "under contention — will retry on the next invocation");
     }
 
     /// <summary>
@@ -373,14 +522,27 @@ public static class NclShadowRuntime
 
     /// <summary>Mirrors NclCecilRewrite's own cache pruning — bounds how many stale
     /// shadow dirs (one per distinct runner-build + Ncl-version + install-path
-    /// combination) accumulate under ncl-shadow/ across upgrades.</summary>
-    private static void PruneStaleShadowDirs(string shadowRoot, string protectedDir, int keepNewest)
+    /// combination) accumulate under ncl-shadow/ across upgrades.
+    ///
+    /// #2489: excludes any <c>*.building.*</c> name from BOTH the candidate set and the
+    /// keepNewest=4 count entirely — those are another process's in-flight
+    /// <see cref="EnsureShadowDir"/> build, still being mirrored into. Before this fix a
+    /// concurrent-startup window with more than 4 total entries under the shadow root
+    /// (a few stale published dirs plus several siblings' <c>.building.*</c> temp dirs)
+    /// could delete files OUT OF a sibling's temp dir mid-build; that sibling's own
+    /// <c>Directory.Move</c> then still succeeded (a rename doesn't care about the
+    /// content underneath it) and published an INCOMPLETE shadow dir — see
+    /// <see cref="PublishShadowDir"/> for the self-heal that recovers from that state
+    /// once it's already happened, but the real fix is not deleting into it in the first
+    /// place.</summary>
+    internal static void PruneStaleShadowDirs(string shadowRoot, string protectedDir, int keepNewest)
     {
         var protectedFull = Path.GetFullPath(protectedDir);
         List<string> stale;
         try
         {
             stale = Directory.EnumerateDirectories(shadowRoot)
+                .Where(d => !Path.GetFileName(d).Contains(".building.", StringComparison.OrdinalIgnoreCase))
                 .Select(d => new DirectoryInfo(d))
                 .OrderByDescending(d => d.LastWriteTimeUtc)
                 .Skip(keepNewest)
