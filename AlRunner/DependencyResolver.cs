@@ -50,9 +50,22 @@ public sealed class DependencyResolver
     /// </summary>
     public IReadOnlyList<string> UnservableDependencies => _unservable;
 
+    // Dirs holding packages this run built FROM SOURCE (SiblingCompile's synthesized
+    // workspace dirs). A candidate under one of these outranks any packaged copy of the
+    // same app — see FromSource in SelectBestVersion for why version cannot decide it.
+    private readonly IReadOnlyList<string> _sourceSupersedingDirs;
+
     public DependencyResolver(IReadOnlyList<string> cacheDirs)
+        : this(cacheDirs, Array.Empty<string>())
+    {
+    }
+
+    public DependencyResolver(
+        IReadOnlyList<string> cacheDirs,
+        IReadOnlyList<string> sourceSupersedingDirs)
     {
         _cacheDirs = cacheDirs;
+        _sourceSupersedingDirs = sourceSupersedingDirs;
     }
 
     /// <summary>
@@ -236,6 +249,37 @@ public sealed class DependencyResolver
         var isPlatformApp = IsMicrosoftPlatformApp(dep.Name, dep.Publisher);
         (AppManifest Manifest, string Path) bestExecutableAnyVersion = default;
 
+        // A package this run built FROM SOURCE outranks a packaged copy of the same app —
+        // above executability, above version (#2688). Version cannot decide it and directory
+        // order does not either: a real BC artifact ships a four-part build number
+        // (28.4.53241.53989) while a source build carries its app.json version (28.4.0.0), so
+        // the artifact wins on version every time no matter which dir was scanned first.
+        // SiblingCompile only puts a package here after PrebuiltShadowCheck has ruled the
+        // packaged copy STALE against that same source, so by the time a candidate is in one
+        // of these dirs the question "which of these two is current" is already settled — and
+        // settled on CONTENT, not on the version string or an mtime.
+        //
+        // Microsoft PLATFORM apps are exempt. Those ship one package per exact BC build and
+        // their procedure bodies are external/native, implemented by the extracted
+        // service-tier DLLs rather than by the AL they ship; superseding one from source hands
+        // every codeunit in it to a package that cannot execute, which is the #2251 corpus
+        // incident PlatformApp_BelowMinimumR2R_Beats_AboveMinimumSymbolOnly pins. Running
+        // Microsoft's own platform-app SOURCE (microsoft/BCApps src/System Application/App)
+        // as the live implementation is a separate question this ranking deliberately does not
+        // answer — see SourceBuiltPlatformApp_DoesNotSupersede_TheEngineMatchingR2RArtifact.
+        bool FromSource(string path)
+        {
+            if (isPlatformApp || _sourceSupersedingDirs.Count == 0) return false;
+            var full = Path.GetFullPath(path);
+            foreach (var d in _sourceSupersedingDirs)
+            {
+                var dir = Path.GetFullPath(d).TrimEnd(Path.DirectorySeparatorChar);
+                if (full.StartsWith(dir + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+            return false;
+        }
+
         foreach (var c in candidates)
         {
             if (isPlatformApp && Executable(c.Path)
@@ -246,6 +290,13 @@ public sealed class DependencyResolver
 
             if (c.Manifest.Version < dep.Version) continue;
             if (best.Manifest == null) { best = c; continue; }
+
+            var candidateFromSource = FromSource(c.Path);
+            if (candidateFromSource != FromSource(best.Path))
+            {
+                if (candidateFromSource) best = c;
+                continue;
+            }
 
             var candidateExecutable = Executable(c.Path);
             if (candidateExecutable != Executable(best.Path))

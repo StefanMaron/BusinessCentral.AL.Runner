@@ -889,4 +889,115 @@ public sealed class DependencyResolverTests : IDisposable
         Assert.Single(result);
         Assert.Equal("Lib_v28_sym.app", Path.GetFileName(result[0].AppPath));
     }
+
+    // ── Part N+1: a source-built package supersedes a packaged copy of the same app ──
+    //
+    // Root cause (#2688): when a bundle passed on the command line provides an app that a
+    // package cache ALSO ships compiled, SiblingCompile correctly notices the packaged copy
+    // is stale and rebuilds from source into a workspace dir, then prepends that dir to the
+    // caches — its own comment says this makes the source build "win over a stale cached
+    // .app". It does not. SelectBestVersion ranks on executability then version and ignores
+    // directory order entirely, so the packaged copy (a real BC artifact carries a full
+    // four-part build number, e.g. 28.4.53241.53989) outranks the source build's app.json
+    // version (28.4.0.0) every time. Both copies then load under one app id and the run dies
+    // on AppIdCollisionException.
+    //
+    // Measured against microsoft/BCApps releases/28.4: `System Application Test Library`
+    // declares GetLastContextInfoRequestUri in source, the shipped 28.4.53241.53989 .app
+    // predates it, and SharePointClientTest.Codeunit drops out with three AL0132 errors —
+    // a branch head is never the same commit as a cut artifact, so this is the normal case,
+    // not an edge case.
+
+    /// <summary>
+    /// Same AppId in two dirs: a source-built package at the app.json version (28.4.0.0)
+    /// and a packaged copy at a higher artifact build (28.4.53241.53989). With the source
+    /// dir declared as source-superseding, the resolver must bind to the SOURCE build even
+    /// though it loses on version.
+    /// </summary>
+    [Fact]
+    public void SourceBuiltPackage_Wins_OverHigherVersionedPackagedCopy()
+    {
+        var appId = "dddddddd-0000-0000-0000-000000000001";
+        var artifactDir = MakeDir("artifact-test-apps");
+        var sourceDir = MakeDir("workspace-deps");
+
+        WriteApp(artifactDir, "Microsoft_System Application Test Library.app", appId,
+            "System Application Test Library", "Microsoft", "28.4.53241.53989");
+        WriteApp(sourceDir, "Microsoft_System_Application_Test_Library_28_4_0_0.app", appId,
+            "System Application Test Library", "Microsoft", "28.4.0.0");
+
+        var resolver = new DependencyResolver(
+            new[] { artifactDir, sourceDir },
+            sourceSupersedingDirs: new[] { sourceDir });
+        var dep = new DependencyRef(Guid.Parse(appId), "System Application Test Library",
+            "Microsoft", new Version(28, 4, 0, 0));
+
+        var result = resolver.Resolve(new[] { dep });
+
+        Assert.Single(result);
+        Assert.Equal("28.4.0.0", result[0].Manifest.Version.ToString());
+        Assert.Equal(sourceDir, Path.GetDirectoryName(result[0].AppPath));
+    }
+
+    /// <summary>
+    /// Negative: declaring a source-superseding dir must not change resolution for an app
+    /// that dir does NOT provide. Without this, the fix could degrade into "the first dir
+    /// always wins", silently undoing the highest-satisfying-version contract every other
+    /// test in this file pins.
+    /// </summary>
+    [Fact]
+    public void SourceSupersedingDir_LeavesOtherAppsOnHighestVersion()
+    {
+        var otherId = "dddddddd-0000-0000-0000-000000000002";
+        var providedId = "dddddddd-0000-0000-0000-000000000003";
+        var cacheDir = MakeDir("cache-untouched");
+        var sourceDir = MakeDir("workspace-untouched");
+
+        // The source dir provides ONE app, and it is not the one being resolved.
+        WriteApp(sourceDir, "Provided_1_0_0_0.app", providedId, "Provided", "Microsoft", "1.0.0.0");
+        WriteApp(cacheDir, "Other_v17.app", otherId, "Other", "Microsoft", "17.0.0.0");
+        WriteApp(cacheDir, "Other_v28.app", otherId, "Other", "Microsoft", "28.4.53241.53989");
+
+        var resolver = new DependencyResolver(
+            new[] { sourceDir, cacheDir },
+            sourceSupersedingDirs: new[] { sourceDir });
+        var dep = new DependencyRef(Guid.Parse(otherId), "Other", "Microsoft",
+            new Version(17, 0, 0, 0));
+
+        var result = resolver.Resolve(new[] { dep });
+
+        Assert.Single(result);
+        Assert.Equal("28.4.53241.53989", result[0].Manifest.Version.ToString());
+    }
+
+    /// <summary>
+    /// Negative: a Microsoft PLATFORM app is deliberately exempt. Those ship one package per
+    /// exact BC build and their real runtime lives in the extracted service-tier DLLs, so the
+    /// engine-matching R2R artifact must keep winning — that is issue #2251, whose corpus
+    /// incident PlatformApp_BelowMinimumR2R_Beats_AboveMinimumSymbolOnly pins. Superseding
+    /// those from source would hand every codeunit in them to a package that cannot execute.
+    /// </summary>
+    [Fact]
+    public void SourceBuiltPlatformApp_DoesNotSupersede_TheEngineMatchingR2RArtifact()
+    {
+        var appId = "dddddddd-0000-0000-0000-000000000004";
+        var artifactDir = MakeDir("platform-artifact");
+        var sourceDir = MakeDir("platform-source");
+
+        WriteApp(artifactDir, "Microsoft_System Application.app", appId,
+            "System Application", "Microsoft", "28.4.53241.53989", r2r: true);
+        WriteApp(sourceDir, "Microsoft_System_Application_28_4_0_0.app", appId,
+            "System Application", "Microsoft", "28.4.0.0", r2r: false);
+
+        var resolver = new DependencyResolver(
+            new[] { sourceDir, artifactDir },
+            sourceSupersedingDirs: new[] { sourceDir });
+        var dep = new DependencyRef(Guid.Parse(appId), "System Application", "Microsoft",
+            new Version(28, 4, 0, 0));
+
+        var result = resolver.Resolve(new[] { dep });
+
+        Assert.Single(result);
+        Assert.Equal("28.4.53241.53989", result[0].Manifest.Version.ToString());
+    }
 }
