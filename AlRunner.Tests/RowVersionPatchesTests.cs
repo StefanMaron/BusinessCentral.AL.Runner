@@ -47,13 +47,22 @@ public sealed class RowVersionPatchesTests
         {
             "_pMetaTable", "_pTimestampField", "_pFieldIndex", "_pItem", "_mCreate",
             "_pSystemIdField", "_pSystemIdProp", "_pReadOnlyBuffer", "_pReadOnlyBufferSystemId",
-            "_pTableCaptionSafe", "_pRowSystemId", "_fPrimaryTree", "_mCreateUniqueConstraint",
+            "_pTableCaptionSafe", "_fPrimaryTree", "_mCreateUniqueConstraint",
         })
         {
             var f = t.GetField(name, BindingFlags.NonPublic | BindingFlags.Static)
                 ?? throw new InvalidOperationException($"test setup: RowVersionPatches.{name} not found");
             f.SetValue(null, null);
         }
+
+        // _rowSystemIdGetters replaced the old _pRowSystemId PropertyInfo cache: the
+        // per-stored-row SystemId read is now a compiled delegate keyed by row type, not a
+        // PropertyInfo.GetValue call. It is readonly and non-null, so it is cleared rather
+        // than nulled — same purpose as the loop above, keeping one test's resolution from
+        // leaking into the next.
+        var getters = t.GetField("_rowSystemIdGetters", BindingFlags.NonPublic | BindingFlags.Static)
+            ?? throw new InvalidOperationException("test setup: RowVersionPatches._rowSystemIdGetters not found");
+        ((System.Collections.IDictionary)getters.GetValue(null)!).Clear();
     }
 
     private static object MarkDatabaseBackedProvider(object? provider = null)
