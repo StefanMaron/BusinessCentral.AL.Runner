@@ -1,0 +1,10 @@
+[
+  {
+    "codeunitId": 60793,
+    "CodeunitName": "Test Page BgTask Tests",
+    "Method": "EnqueueBackgroundTask_UnhandledErrorPropagates",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2656",
+    "Note": "Real BC (27.5 and 28.3) tears down the TestPage's underlying client session when a page background task's worker raises an unhandled error and the page's own OnPageBackgroundTaskError leaves IsHandled false: the error that reaches the AL caller is BC's own 'The TestPage is not open.', not the worker's own error text. The runner currently propagates the worker's own error text verbatim instead, and does not tear the TestPage down. Looks like a general TestPage error-teardown behaviour (any unhandled trigger error during a TestPage-driven navigation call plausibly does the same), not something specific to page background tasks -- tracked as #2656, which removes this entry."
+  }
+]

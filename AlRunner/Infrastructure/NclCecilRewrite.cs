@@ -1104,55 +1104,41 @@ public static class NclCecilRewrite
         }
         Console.Error.WriteLine("[Cecil] Rewrote NavTenant.CanCreateSession(bool) → return true (issue #2514)");
 
-        // Page background task SYNCHRONOUS execution → loud RunnerOutOfScopeException.
+        // Page background task SYNCHRONOUS execution → run INLINE against the current session.
         //
-        // Issue #2514 investigation: both CurrPage.EnqueueBackgroundTask (from an AL trigger)
-        // and TestPage.RunPageBackgroundTask run their child task synchronously in BC's own
-        // test framework (PageBackgroundTask.CanPageBackgroundTaskRunAsync is false without a
-        // real scheduler), which opens a REAL child NavSession and really Open()s it
-        // (NavChildSessionTaskRuntime<T>.RunAsync -> childSession.Open() ->
-        // childSession.OpenCompanyAsync(...)). That is a full service-tier session/company
-        // bootstrap (SQL connection state, tenant database bring-up, permission-manager
-        // resolution) the runner's in-process, no-SQL skeleton cannot faithfully answer.
+        // Issue #2514: both CurrPage.EnqueueBackgroundTask (from an AL trigger) and
+        // TestPage.RunPageBackgroundTask run their child task synchronously in BC's own test
+        // framework (PageBackgroundTask.CanPageBackgroundTaskRunAsync is false without a real
+        // scheduler — always true here). BC's own dispatch bodies
+        // (NavForm.EnqueueBackgroundTask(NavSession,...) and
+        // NavTestPage.ALRunPageBackgroundTask(PageBackgroundTask,bool)) both funnel through
+        // `new NavChildSessionTaskRuntime<PageBackgroundChildSessionTask>(...).RunAsync(...)
+        // .AsTask().GetAwaiter().GetResult()`, which creates a brand-new NavSession purely to
+        // isolate the worker codeunit, then really Open()s/OpenCompanyAsync()s it — a full
+        // service-tier session/company bootstrap the runner's in-process, no-SQL skeleton
+        // cannot faithfully answer, and an isolation guarantee the AL-observable contract does
+        // not depend on (AfterRunTaskAsync/AfterRunTaskErrorAsync — which raise
+        // OnPageBackgroundTaskCompleted/OnPageBackgroundTaskError — are already invoked by real
+        // BC against the PARENT session, not the child one; see RunnerPageBackgroundTaskGap.cs's
+        // header for the full decompiled trail and the differential against a real BC 28.4
+        // container).
         //
-        // Three real, VERIFIED skeleton gaps were found and fixed on the way in (kept, see
-        // above and MetadataPatches.cs): NavTenant.Diagnostics was never seeded (this alone
-        // was CurrPage.EnqueueBackgroundTask's originally-reported ArgumentNullException);
-        // NavTestPageBase.get_ServerForm() handed PageBackgroundTask's ctor a tree-less
-        // uninitialised NavForm instead of the TestPage's real live one (this was
-        // TestPage.RunPageBackgroundTask's originally-reported "Parent.Tree cannot be null");
-        // NavTenant.CanCreateSession's real body assumes a live SQL-backed tenant database.
-        // Past those three, NavSession.Open()'s real body reaches `NavUserPermissions..ctor`,
-        // then OpenCompanyAsync's real connection bootstrap, which throws
-        // NavNCLConnectionNotOpenedException from inside the child session's own execution —
-        // a further, DEEPER layer whose exact throw site (a bare, frame-stripped
-        // NavSession.CheckConnectionIsOpen() call, likely R2R-inlined) was not pinned down
-        // inside this investigation's budget. Rather than keep patching individual NavSession
-        // internals one exception at a time — precompiled-dll-respect.md's mandate is to
-        // faithfully run real business logic, not to reimplement a service tier's session
-        // bootstrap piecemeal — this refuses loudly at the ONE choke point BOTH AL surfaces
-        // share (loud-failures.md: an in-scope, not-yet-implemented surface must throw, never
-        // silently misbehave), naming the AL-visible API each one actually calls.
-        //
-        // Two separate call sites (NOT the shared generic NavChildSessionTaskRuntime<T>.RunAsync
-        // itself, which the runner may use for other child-session shapes elsewhere) so the
-        // thrown message names the exact AL statement the developer wrote:
+        // Rewrite both dispatch bodies to call RunnerPageBackgroundTaskGap's inline
+        // reimplementation of that same synchronous branch instead of
+        // NavChildSessionTaskRuntime<T>.RunAsync (an async state-machine method this cannot
+        // safely rewrite directly via Cecil):
         //   - NavForm.EnqueueBackgroundTask(NavSession, PageBackgroundTask, ...) — the static
         //     dispatcher CurrPage.EnqueueBackgroundTask funnels through.
         //   - NavTestPage.ALRunPageBackgroundTask(PageBackgroundTask, bool) — the internal
         //     static helper both TestPage.RunPageBackgroundTask() overloads funnel through.
-        var navSessionTypeForOpen = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.NavSession")
-            ?? throw new InvalidOperationException("NavSession type not found in Ncl.dll — Ncl shape changed; do not commit");
-        _ = navSessionTypeForOpen; // kept for future layer-5 work; unused directly by the throws below.
-
-        var throwEnqueueMethodInfo = typeof(AlRunner.Patches.RunnerPageBackgroundTaskGap)
-            .GetMethod(nameof(AlRunner.Patches.RunnerPageBackgroundTaskGap.ThrowEnqueueBackgroundTaskNotYetImplemented),
+        var enqueueInlineMethodInfo = typeof(AlRunner.Patches.RunnerPageBackgroundTaskGap)
+            .GetMethod(nameof(AlRunner.Patches.RunnerPageBackgroundTaskGap.EnqueueBackgroundTaskInline),
                 BindingFlags.Public | BindingFlags.Static)
-            ?? throw new InvalidOperationException("RunnerPageBackgroundTaskGap.ThrowEnqueueBackgroundTaskNotYetImplemented not found — do not commit");
-        var throwRunPbtMethodInfo = typeof(AlRunner.Patches.RunnerPageBackgroundTaskGap)
-            .GetMethod(nameof(AlRunner.Patches.RunnerPageBackgroundTaskGap.ThrowRunPageBackgroundTaskNotYetImplemented),
+            ?? throw new InvalidOperationException("RunnerPageBackgroundTaskGap.EnqueueBackgroundTaskInline not found — do not commit");
+        var runPbtInlineMethodInfo = typeof(AlRunner.Patches.RunnerPageBackgroundTaskGap)
+            .GetMethod(nameof(AlRunner.Patches.RunnerPageBackgroundTaskGap.RunPageBackgroundTaskInline),
                 BindingFlags.Public | BindingFlags.Static)
-            ?? throw new InvalidOperationException("RunnerPageBackgroundTaskGap.ThrowRunPageBackgroundTaskNotYetImplemented not found — do not commit");
+            ?? throw new InvalidOperationException("RunnerPageBackgroundTaskGap.RunPageBackgroundTaskInline not found — do not commit");
 
         var navFormTypeForPbt = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.NavForm")
             ?? throw new InvalidOperationException("NavForm type not found in Ncl.dll — Ncl shape changed; do not commit");
@@ -1167,11 +1153,14 @@ public static class NclCecilRewrite
             body.Variables.Clear();
             body.ExceptionHandlers.Clear();
             var il = body.GetILProcessor();
-            il.Append(il.Create(OpCodes.Call, asm.MainModule.ImportReference(throwEnqueueMethodInfo)));
-            il.Append(il.Create(OpCodes.Throw));
-            body.MaxStackSize = 1;
+            il.Append(il.Create(OpCodes.Ldarg_0));
+            il.Append(il.Create(OpCodes.Ldarg_1));
+            il.Append(il.Create(OpCodes.Ldarg_2));
+            il.Append(il.Create(OpCodes.Call, asm.MainModule.ImportReference(enqueueInlineMethodInfo)));
+            il.Append(il.Create(OpCodes.Ret));
+            body.MaxStackSize = 3;
         }
-        Console.Error.WriteLine("[Cecil] Rewrote NavForm.EnqueueBackgroundTask(NavSession,...) → RunnerOutOfScopeException (issue #2514)");
+        Console.Error.WriteLine("[Cecil] Rewrote NavForm.EnqueueBackgroundTask(NavSession,...) → RunnerPageBackgroundTaskGap.EnqueueBackgroundTaskInline (issue #2514)");
 
         var navTestPageTypeForPbt = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.NavTestPage")
             ?? throw new InvalidOperationException("NavTestPage type not found in Ncl.dll — Ncl shape changed; do not commit");
@@ -1186,11 +1175,13 @@ public static class NclCecilRewrite
             body.Variables.Clear();
             body.ExceptionHandlers.Clear();
             var il = body.GetILProcessor();
-            il.Append(il.Create(OpCodes.Call, asm.MainModule.ImportReference(throwRunPbtMethodInfo)));
-            il.Append(il.Create(OpCodes.Throw));
-            body.MaxStackSize = 1;
+            il.Append(il.Create(OpCodes.Ldarg_0));
+            il.Append(il.Create(OpCodes.Ldarg_1));
+            il.Append(il.Create(OpCodes.Call, asm.MainModule.ImportReference(runPbtInlineMethodInfo)));
+            il.Append(il.Create(OpCodes.Ret));
+            body.MaxStackSize = 2;
         }
-        Console.Error.WriteLine("[Cecil] Rewrote NavTestPage.ALRunPageBackgroundTask(PageBackgroundTask,bool) → RunnerOutOfScopeException (issue #2514)");
+        Console.Error.WriteLine("[Cecil] Rewrote NavTestPage.ALRunPageBackgroundTask(PageBackgroundTask,bool) → RunnerPageBackgroundTaskGap.RunPageBackgroundTaskInline (issue #2514)");
 
         // ── NavTestPage / NavTestPageBase vtable-dispatch cluster fix ─────────────────────────
         //
@@ -4744,6 +4735,54 @@ public static class NclCecilRewrite
                     + "write guard - an app-owned profile would silently be deletable.");
             Console.Error.WriteLine(
                 $"[Cecil] Prepended All Profile write guards -> {profileGuarded} NavRecord AL write entry point(s)");
+        }
+
+        // -- Page background task write refusal (issue #2514) -----------------------------
+        // A page background task's worker codeunit runs inline against the current session
+        // (RunnerPageBackgroundTaskGap.cs), with NavSession.PageBackgroundTask set for the
+        // duration — real BC refuses ANY write from that scope (measured against BC 27.5 and
+        // 28.3, corpus PR StefanMaron/BusinessCentral.AL.Language.Tests#135; see
+        // PageBackgroundTaskWritePatches.cs for the full trail). Prepend a guard to all four
+        // AL write entry points, exactly like the All Profile guard above and the rowversion
+        // clock before it — a no-op for every write except one made from inside a page
+        // background task worker.
+        {
+            var navRecordForPbtGuard = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.NavRecord")
+                ?? throw new InvalidOperationException("NavRecord type not found in Ncl");
+
+            MethodReference PbtGuardRef(string helper)
+            {
+                var mi = typeof(AlRunner.Patches.PageBackgroundTaskWritePatches).GetMethod(
+                    helper, BindingFlags.Public | BindingFlags.Static)
+                    ?? throw new InvalidOperationException($"PageBackgroundTaskWritePatches.{helper} not found");
+                return asm.MainModule.ImportReference(mi);
+            }
+
+            var pbtGuards = new (string Entry, MethodReference Helper)[]
+            {
+                ("ALInsertAsync", PbtGuardRef(nameof(AlRunner.Patches.PageBackgroundTaskWritePatches.GuardPageBackgroundTaskInsert))),
+                ("ALModifyAsync", PbtGuardRef(nameof(AlRunner.Patches.PageBackgroundTaskWritePatches.GuardPageBackgroundTaskModify))),
+                ("ALDeleteAsync", PbtGuardRef(nameof(AlRunner.Patches.PageBackgroundTaskWritePatches.GuardPageBackgroundTaskDelete))),
+                ("ALRenameAsync", PbtGuardRef(nameof(AlRunner.Patches.PageBackgroundTaskWritePatches.GuardPageBackgroundTaskRename))),
+            };
+
+            int pbtGuarded = 0;
+            foreach (var (entry, helper) in pbtGuards)
+                foreach (var m in navRecordForPbtGuard.Methods.Where(
+                             x => x.Name == entry && x.HasBody && x.Body.Instructions.Count > 0))
+                {
+                    var il = m.Body.GetILProcessor();
+                    var first = m.Body.Instructions[0];
+                    il.InsertBefore(first, il.Create(OpCodes.Ldarg_0));
+                    il.InsertBefore(first, il.Create(OpCodes.Call, helper));
+                    pbtGuarded++;
+                }
+            if (pbtGuarded == 0)
+                throw new InvalidOperationException(
+                    "[Cecil] no NavRecord ALInsert/ALModify/ALDelete/ALRename entry points found for the "
+                    + "page background task write guard - a worker codeunit's write would silently succeed.");
+            Console.Error.WriteLine(
+                $"[Cecil] Prepended page background task write guards -> {pbtGuarded} NavRecord AL write entry point(s)");
         }
 
         // === NavQuery ctor null-safety ===
