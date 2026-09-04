@@ -13,6 +13,7 @@ using AlRunner.Patches;
 using Microsoft.Dynamics.Nav.Runtime;
 using Microsoft.Dynamics.Nav.Types;
 using Microsoft.Dynamics.Nav.Types.Data;
+using Microsoft.Dynamics.Nav.Types.Exceptions;
 
 namespace AlRunner;
 
@@ -156,7 +157,8 @@ internal class LiveNavTestPage : MockITestPage
     /// never calls this).
     /// </summary>
     protected internal NavRecord RequireRecord(string what)
-        => _record ?? throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+        => _tornDown ? throw MakeTestPageNotOpenException()
+        : _record ?? throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
             $"TestPage page {_pageId} — {what}",
             "testpage-modal-no-source-table — this page has no SourceTable, so there is no "
             + "record-backed rowset for this operation. Controls bound to page variables are "
@@ -192,6 +194,7 @@ internal class LiveNavTestPage : MockITestPage
     /// </summary>
     public override ITestPart GetPart(int controlId)
     {
+        if (_tornDown) throw MakeTestPageNotOpenException();
         if (_parts.TryGetValue(controlId, out var cached)) return cached;
 
         if (Environment.GetEnvironmentVariable("AL_RUNNER_TRACE_PAGE_METADATA") == "1")
@@ -403,6 +406,7 @@ internal class LiveNavTestPage : MockITestPage
     /// </summary>
     public override ITestAction GetBuiltInAction(FormResult formResult)
     {
+        if (_tornDown) throw MakeTestPageNotOpenException();
         if (!Offers(formResult)) return null!;
         return new RecordingBuiltInAction(this, formResult);
     }
@@ -474,6 +478,7 @@ internal class LiveNavTestPage : MockITestPage
     /// </summary>
     public override ITestAction GetAction(int actionId)
     {
+        if (_tornDown) throw MakeTestPageNotOpenException();
         if (_page == null)
         {
             // ExtensionOnlyTestAction dispatches through a pageextension's OWN NavFormExtension
@@ -537,6 +542,76 @@ internal class LiveNavTestPage : MockITestPage
     // a row started with New() was then never persisted at Close, only at Dispose, which
     // is after the test's assertions have already read the table. See RunnerTestPageState.
     private bool _opened;
+
+    // Set when an unhandled error propagates out of the page's own record-positioning
+    // trigger (OnAfterGetRecord) while this TestPage is already open — see Loaded() below.
+    //
+    // Measured against a real BC service tier (27.5, 28.3, 28.4; issue #2656): an unhandled
+    // error raised there tears down the TestPage's underlying client session. Every
+    // subsequent call on the SAME TestPage variable then raises BC's own
+    // "The TestPage is not open." — not the trigger's own error text — including the
+    // navigation call itself, Close(), and a plain field read. Deliberately distinct from
+    // _opened (which BC's own NavTestPageBase.Open()/Close() guards read): a torn-down page
+    // must still make Close() forward into this class (real BC's Close() THROWS after
+    // teardown, it does not silently no-op the way it would for a page that was simply never
+    // opened), so _opened stays true and this flag alone gates the refusal.
+    //
+    // This is NOT a blanket "any unhandled trigger error tears the page down" rule — measured
+    // the same way, an unhandled error from OnValidate (field validation) or OnAction
+    // (action invocation) propagates with its own error text and leaves the page open. Only
+    // Loaded() (the record-positioning trigger) sets this flag.
+    private bool _tornDown;
+
+    // Set only around the page-construction-time initial positioning call (MarkOpened /
+    // RunnerTestClientSession.GetPage's own MoveFirst()). MarkOpened's caller wraps it in a
+    // blanket `catch { }` that would swallow whatever Loaded() throws there; GetPage's is not
+    // similarly guarded on the runner side (its caller is precompiled BC dispatch via
+    // TestClientProxy<ITestPage>.Proxy, not audited here). Either way, teardown must not apply
+    // during this call: the page never finished a first successful position, so treating a
+    // failure there as "the page tore down" would leave every LATER, otherwise-unrelated call
+    // on a freshly-adopted page wrongly answering "The TestPage is not open." -- for MarkOpened
+    // specifically, that would follow a failure that never became AL-visible in the first
+    // place (a pre-existing, separate gap: real BC's OpenView() propagates that first row's own
+    // trigger error, catchable by asserterror, rather than swallowing it -- not this issue's
+    // scope).
+    private bool _suppressTeardownOnLoad;
+
+    /// <summary>
+    /// The page-construction-time initial positioning call -- see _suppressTeardownOnLoad.
+    /// </summary>
+    internal bool MoveFirstDuringOpen()
+    {
+        _suppressTeardownOnLoad = true;
+        try { return MoveFirst(); }
+        finally { _suppressTeardownOnLoad = false; }
+    }
+
+    // Real BC's own exception for this ("The TestPage is not open.") is not part of the
+    // runner's own type surface — construct BC's own NavNCLDialogException (the same
+    // AL-catchable-by-asserterror mechanism every other faithful platform error in this file
+    // uses; see e.g. HelperShims.MakeNavDrilldownActionNotSupportedException) with BC's exact
+    // wording so `asserterror` + Assert.ExpectedError('The TestPage is not open') behaves the
+    // same here as against a real service tier.
+    private static System.Exception MakeTestPageNotOpenException(System.Exception? original = null)
+    {
+        var t = System.Type.GetType(
+            "Microsoft.Dynamics.Nav.Types.Exceptions.NavNCLDialogException, Microsoft.Dynamics.Nav.Types");
+        const string msg = "The TestPage is not open.";
+        if (t != null)
+        {
+            var ctor = t.GetConstructor(new[] { typeof(string) });
+            if (ctor != null)
+            {
+                var ex = (System.Exception)ctor.Invoke(new object[] { msg });
+                // Not AL-visible (asserterror / GetLastErrorText only see the outer message,
+                // matching real BC) -- kept only so a runner-side stack trace can still show
+                // what actually failed inside the trigger.
+                if (original != null) ex.Data["OriginalTriggerError"] = original;
+                return ex;
+            }
+        }
+        return new System.InvalidOperationException(msg, original);
+    }
 
     /// <summary>
     /// Record that BC opened this page, in <paramref name="viewMode"/>.
@@ -1067,6 +1142,10 @@ internal class LiveNavTestPage : MockITestPage
     // started with Card.Lines.New() has no other moment at which it could be persisted.
     public override void Close()
     {
+        // A torn-down page (see _tornDown / Loaded()) raises "The TestPage is not open."
+        // instead of closing -- measured on real BC, Close() does NOT silently no-op here.
+        if (_tornDown) throw MakeTestPageNotOpenException();
+
         // OnQueryClosePage's veto is the one part of the close sequence the runner cannot
         // model: BC would leave the page open and hand control back to the user, which has no
         // meaning in a test that has already asked for the close. Refusing by name beats both
@@ -1088,6 +1167,8 @@ internal class LiveNavTestPage : MockITestPage
 
     public override ITestField GetField(int id)
     {
+        if (_tornDown) throw MakeTestPageNotOpenException();
+
         // A control whose OWN Visible, or that of any group enclosing it, is the compile-time
         // LITERAL false is dead-code-eliminated on real BC — it never exists on the runtime
         // page at all. Returning null here is what makes that faithful: the caller is
@@ -1337,7 +1418,34 @@ internal class LiveNavTestPage : MockITestPage
     {
         if (found)
         {
-            _page?.RaiseOnAfterGetRecord();
+            try
+            {
+                _page?.RaiseOnAfterGetRecord();
+            }
+            // NavBaseException only -- matches real BC's own teardown, NstDataAccess.Abort
+            // (NavBaseException exception), which only wraps a genuine AL-catchable error
+            // (Error(), TestField, a table trigger's own refusal, ...). A RunnerOutOfScopeException
+            // (plain System.Exception, never NavBaseException -- see NavDotNetPatches.cs) or a
+            // genuine runner NRE must NOT be relabelled as "The TestPage is not open.": that
+            // would hide an OOS surface's real reason, or a runner bug, behind a fake BC message
+            // (.claude/rules/loud-failures.md).
+            catch (NavBaseException ex)
+            {
+                // See _suppressTeardownOnLoad: the page-construction-time initial position is
+                // not a teardown-worthy call. Let the original exception propagate unmodified,
+                // exactly as it did before this fix (into a blanket `catch {}` at the call site).
+                if (_suppressTeardownOnLoad) throw;
+
+                // Real BC (measured 27.5/28.3/28.4, issue #2656): an unhandled AL error here
+                // tears the TestPage down. The original error's own text never reaches the AL
+                // caller -- what propagates out of this call (and every later one on the same
+                // variable) is BC's own "The TestPage is not open." The original is kept as
+                // diagnostic data (see MakeTestPageNotOpenException); it is not AL-visible
+                // (asserterror / GetLastErrorText only see the outer message), matching what
+                // real BC surfaces.
+                _tornDown = true;
+                throw MakeTestPageNotOpenException(ex);
+            }
             SnapshotBeforeImage();
             // Issue #2677: NOT during a FindRowFromTableFieldValues scan — see
             // _suppressPartRefreshDuringScan's doc comment and that method's own explicit

@@ -259,7 +259,12 @@ public class PageBackgroundTaskInlineTests
             end;
 
             // The same error, left unhandled (IsHandled stays false) -- must propagate out of
-            // GoToRecord rather than be swallowed.
+            // GoToRecord rather than be swallowed. Issue #2656 (measured against real BC
+            // 27.5/28.3/28.4, corpus PR StefanMaron/BusinessCentral.AL.Language.Tests#142):
+            // the error that reaches the AL caller is NOT the worker's own text -- an unhandled
+            // record-positioning-trigger error tears the TestPage down, and what propagates is
+            // BC's own "The TestPage is not open." No Close() afterward: the page is already
+            // gone, and Close() itself would raise the same "not open" error.
             [Test]
             procedure EnqueueBackgroundTask_UnhandledErrorPropagates()
             var
@@ -273,9 +278,8 @@ public class PageBackgroundTaskInlineTests
 
                 Card.OpenView();
                 asserterror Card.GoToRecord(Row);
-                if GetLastErrorText() <> 'PBTI Worker deliberately failed for FAIL-U' then
-                    Error('ARM4 FAIL: expected the worker''s own error text to propagate, got %1', GetLastErrorText());
-                Card.Close();
+                if StrPos(GetLastErrorText(), 'The TestPage is not open') = 0 then
+                    Error('ARM4 FAIL: expected BC''s own TestPage-teardown message, got %1', GetLastErrorText());
             end;
 
             // A worker codeunit's own Insert() must be refused with BC's permission-denied

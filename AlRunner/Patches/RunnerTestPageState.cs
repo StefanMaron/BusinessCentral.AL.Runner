@@ -95,7 +95,7 @@ public static class RunnerTestPageState
                 // (corpus CU60848 RunModal_OpensOnTheRecordSetByTheCaller): a record the caller
                 // already positioned on a specific row must not be silently reset to the
                 // table's own first row.
-                live.MoveFirst();
+                live.MoveFirstDuringOpen();
         }
         // Issue #2677: EagerlyBuildParts + Loaded's own part-refresh can now run AL trigger
         // code (a subpage part's OnAfterGetRecord/OnAfterGetCurrRecord, and whatever that

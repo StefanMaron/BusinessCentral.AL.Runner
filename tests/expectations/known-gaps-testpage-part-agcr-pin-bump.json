@@ -1,0 +1,10 @@
+[
+  {
+    "codeunitId": 60815,
+    "CodeunitName": "Test Page Part Agcr Tests",
+    "Method": "PartFiresOnHostOpen_NoTouch",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2689",
+    "Note": "Surfaced by the al-language pin bump landing alongside issue #2656's fix (StefanMaron/BusinessCentral.AL.Language.Tests commit 1725c51, #141) -- unrelated to #2656's own claim. An eagerly-materialised subpage part's own OnOpenPage does not run between the host's OnOpenPage and the host's first OnAfterGetCurrRecord, the way real BC sequences it; three of the test's four ordering assertions pass (the part's OnAfterGetCurrRecord fires with the right row, after the host's own OnAfterGetCurrRecord), only the host-OnOpenPage-before-part-OnOpenPage ordering fails. Not investigated further; tracked as #2689."
+  }
+]
