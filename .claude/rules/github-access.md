@@ -8,9 +8,9 @@ the same GitHub access:
 | Local CLI (`claude` in a terminal) | `gh` CLI, authenticated |
 | Claude Code on the web / remote sessions | **no `gh`, no `hub`, no direct GitHub API** — GitHub MCP tools only (`mcp__github__*`) |
 
-A definition written only in `gh` recipes is dead on arrival in a web session:
-every `gh` call fails with "command not found", and the agent either stalls or —
-worse — reports success on work it never did.
+A definition written only in `gh` recipes is dead on arrival in a web session: every
+`gh` call fails with "command not found", and the agent either stalls or reports
+success on work it never did.
 
 ## The rule
 
@@ -30,24 +30,22 @@ Never fall back to `curl` against `api.github.com` — the token is not in the
 environment, and a 404 from an unauthenticated request is indistinguishable from
 "this does not exist."
 
-The operation → tool map (which `gh` subcommand pairs with which
-`mcp__github__*` call) lives in the `al-runner-workflow` skill, not here —
-that table is reference material, not a rule.
+The operation → tool map (which `gh` subcommand pairs with which `mcp__github__*`
+call) lives in the `al-runner-workflow` skill — reference material, not a rule.
 
 ## Things `gh` gives you that the MCP tools do not
 
-- **`mergeable_state` is not a conflict check.** A PR's `base.sha` records the
-  base at *creation* time and never moves, so a merged PR can still read as based
-  on an old commit. To decide whether a branch conflicts with current `main`, ask
-  git, not the API:
+- **`mergeable_state` is not a conflict check.** A PR's `base.sha` records the base
+  at *creation* time and never moves, so a merged PR can still read as based on an
+  old commit. To decide whether a branch conflicts with current `main`, ask git, not
+  the API:
   ```bash
   git fetch origin main <branch>
   git merge-tree --write-tree --messages origin/main origin/<branch> >/dev/null \
     && echo CLEAN || echo CONFLICT
   ```
 - **Merge state is authoritative from git.** After a merge, confirm with
-  `git merge-base --is-ancestor <sha> origin/main`, not by re-reading the PR's
-  base.
+  `git merge-base --is-ancestor <sha> origin/main`, not by re-reading the PR's base.
 
 ## Sister rules
 

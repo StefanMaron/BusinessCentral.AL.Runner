@@ -5,20 +5,19 @@ Run Business Central AL unit tests in milliseconds — no service tier, no Docke
 ## Test corpus
 
 The canonical test corpus is the **`tests/al-language/` git submodule** pointing at
-[`StefanMaron/BusinessCentral.AL.Language.Tests`](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests).
-That repo is the AL-language spec, validated against a real BC service tier. The
-runner consumes it read-only — **never modify files under `tests/al-language/`**.
+[`StefanMaron/BusinessCentral.AL.Language.Tests`](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests) —
+the AL-language spec, validated against a real BC service tier. The runner consumes it
+read-only: **never modify files under `tests/al-language/`.**
 
-Tests that exercise surfaces the runner cannot support in-process (report
-rendering, SMTP, HTTP egress, etc.) are declared in
-[`tests/expectations/`](tests/expectations/README.md). See
-[`docs/expectations.md`](docs/expectations.md) for the schema and result-classification
-table. Runner-specific positive tests (e.g. proving `RunnerOutOfScopeException`
-is thrown with the right reason on the right surface) live in `tests/runner-extras/`.
+Tests that exercise surfaces the runner cannot support in-process (report rendering, SMTP,
+HTTP egress, etc.) are declared in [`tests/expectations/`](tests/expectations/README.md);
+[`docs/expectations.md`](docs/expectations.md) has the schema and result-classification
+table. Runner-specific positive tests (e.g. proving `RunnerOutOfScopeException` is thrown
+with the right reason on the right surface) live in `tests/runner-extras/`.
 
-`tests/archive/` holds the legacy `bucket-1` / `bucket-2` / `excluded` etc.
-test trees; they are no longer wired into CI and will be deleted once the
-al-language corpus + expectations cover their cases.
+`tests/archive/` holds the legacy `bucket-1` / `bucket-2` / `excluded` etc. test trees; they
+are no longer wired into CI and will be deleted once the al-language corpus + expectations
+cover their cases.
 
 ## Operating rules and skills
 
@@ -35,11 +34,12 @@ Operating rules live in `.claude/rules/` and are auto-loaded. Task-specific refe
 - Act as orchestrator or implementation agent → sub-agents `orchestrator` / `impl-agent` in `.claude/agents/`
 - Drive a full work cycle (triage → parallel impls in worktrees → orchestrator merge pass, until the queue is empty) → slash command `/work-cycle`
 
-### Code navigation: use these before grepping
+## Code navigation: use these before grepping
 
 Finding and reading code is the single biggest token cost in this repo. **Re-measured
 2026-09-02 across 17 subagents in one session: 3,545 tool calls, of which 3,266 were Bash,
-and 2,775 of those (85%) were `grep`/`sed`/`cat`/`head`/`find` over the source tree.
+and 2,775 of those (85%) were `grep`/`sed`/`cat`/`head`/`find` over the source tree
+(an earlier count of the same session: 3,237 Bash, 2,716 of them — 84% — such searches).
 `tools/lsp-query.py` was called ONCE in total; `graphify` twice.** Agents doing this ran two
 hours and 300k tokens on a single cluster.
 
@@ -74,19 +74,17 @@ cd AlRunner && graphify update .              # ~2 seconds, 200 files
 cd AlRunner && graphify query "SomeSymbol callers"
 ```
 
-Both commands default to `graphify-out/graph.json` **relative to the current directory**, so a
-rebuild run from one directory and a query run from another silently use different files. That
-mismatch is why an earlier root-level copy sat 13 days stale while the documented rebuild
-appeared to work.
+Both commands default to `graphify-out/graph.json` **relative to the current directory**, so
+a rebuild run from one directory and a query run from another silently use different files —
+that mismatch is why an earlier root-level copy sat 13 days stale while the documented
+rebuild appeared to work. Rebuilding takes ~2 seconds, so rebuild rather than wonder whether
+it is current; in a worktree the graph only drifts by your own edits.
 
 **Phrase queries as bare symbols or `Symbol callers` — never as an English question.** The
 start-node resolver matches on the words you type, so `graphify query "what calls
 GetDataAccessForTableCore"` matches **CallSiteArgWrap** on the word *calls*, returns 2 unrelated
 nodes, and gives no sign it failed. The same question as `"GetDataAccessForTableCore callers"`
 returns the correct 66-node neighbourhood.
-
-Rebuilding takes ~2 seconds, so rebuild rather than wonder whether it is current. In a worktree
-the graph only drifts by your own edits.
 
 The graph maps **static** structure only: which types and files reference which. It cannot tell
 you whether a `Hook(...)` registration or a Cecil rewrite actually fires at runtime — an
@@ -106,8 +104,8 @@ never read a 2 as "nothing calls this". Full guidance: skill `find-code`.
 
 **2b. The built-in `LSP` tool — main session only.**
 
-The `LSP` tool answers `findReferences`, `incomingCalls`, `goToDefinition` and `workspaceSymbol`
-for `.cs`, and it is the sharpest instrument here: `findReferences` on
+It answers `findReferences`, `incomingCalls`, `goToDefinition` and `workspaceSymbol` for
+`.cs`, and it is the sharpest instrument here: `findReferences` on
 `GetDataAccessForTableCore` returns its three call sites across two partial-class files in one
 call.
 
@@ -121,7 +119,23 @@ spend calls rediscovering this.
 
 When you are the main session briefing a subagent, resolve its symbols first and paste the
 answers into the brief as `# LSP CONTEXT (pre-resolved)`, so it does not have to go looking.
+Setup is in the README's tooling section (`mise use -g dotnet:csharp-ls` plus the `csharp-lsp`
+plugin); if `LSP` reports no server for `.cs`, the plugin is not active — that is a setup
+answer, never a "nothing calls this" answer.
 
-If you are the main session, use it. Setup is in the README's tooling section
-(`mise use -g dotnet:csharp-ls` plus the `csharp-lsp` plugin); if `LSP` reports no server for
-`.cs`, the plugin is not active — that is a setup answer, never a "nothing calls this" answer.
+**3. `grep` here is a shell function, and it fails silently.**
+
+Measured in this environment: `grep` resolves to a shell **function**, not `/usr/bin/grep`.
+It rejects `-E`, `--include` and some pipelines with `error: unknown option '-G'` — and
+**exits 0 with no output**, which reads exactly like "no matches found". That is a false
+negative, not an error you will notice; an agent burned several calls on it before running
+`type grep`, and it silently corrupted intermediate results before that.
+
+```bash
+command grep -E "pattern" file     # bypasses the function
+rg "pattern"                       # or just use ripgrep
+python3 - <<'EOF' ... EOF          # or do the scan in python, which also batches
+```
+
+**Never conclude "nothing matches" from a bare `grep -E` in this repo.** Re-run it with
+`command grep` before believing an empty result.
