@@ -166,6 +166,15 @@ public sealed class TestExecutor
     // that aborted does not leak its reasons into the next, clean one.
     public IReadOnlyList<string> AbortReasons { get; private set; } = Array.Empty<string>();
 
+    /// <summary>
+    /// Tests to skip outright (--exclude-test). The mechanism a run needs to resume past a
+    /// watchdog abort: this executor abandons the rest of the codeunit and every later codeunit
+    /// when a test hangs, because the hung thread is never killed and keeps mutating shared BC
+    /// state — so the abandoned tests can only be reached by a FRESH process that skips the
+    /// offender. See Infrastructure/TestExclusionFilter.
+    /// </summary>
+    public Infrastructure.TestExclusionFilter? Exclusions { get; set; }
+
     // #1867: process-lifetime cache of the dependency-assemblies' Install triggers +
     // Company-Initialize (codeunit 2) — the invariant portion of the per-app-group
     // "install-seed" sequence, keyed by InstallTriggerRunner.CurrentDependencySetKey()
@@ -633,7 +642,9 @@ public sealed class TestExecutor
 
                     if (!IsTestMethod(m)) continue;
                     if (filter != null && !MethodMatchesFilter(t.Name, m.Name, filter)) continue;
+                if (Exclusions?.IsExcluded(t.Name, m.Name) == true) continue;
                     if (exactFilter != null && !exactFilter.Contains($"{t.Name}.{m.Name}")) continue;
+                    if (Exclusions?.IsExcluded(t.Name, m.Name) == true) continue;
                     var entry = LookupExpectation(t.Name, displayName, m.Name);
                     if (entry is { Mode: Infrastructure.ExpectationMode.Skip })
                     {
@@ -1272,6 +1283,7 @@ public sealed class TestExecutor
             if (!IsTestMethod(mm)) continue;
             if (filter != null && !MethodMatchesFilter(hungType.Name, mm.Name, filter)) continue;
             if (exactFilter != null && !exactFilter.Contains($"{hungType.Name}.{mm.Name}")) continue;
+            if (Exclusions?.IsExcluded(hungType.Name, mm.Name) == true) continue;
             remainingInCodeunit++;
         }
 
@@ -1284,7 +1296,8 @@ public sealed class TestExecutor
             var count = t2.GetMethods(BindingFlags.Public | BindingFlags.Instance)
                 .Count(mm => IsTestMethod(mm)
                              && (filter == null || MethodMatchesFilter(t2.Name, mm.Name, filter))
-                             && (exactFilter == null || exactFilter.Contains($"{t2.Name}.{mm.Name}")));
+                             && (exactFilter == null || exactFilter.Contains($"{t2.Name}.{mm.Name}"))
+                             && Exclusions?.IsExcluded(t2.Name, mm.Name) != true);
             if (count == 0) continue;
             remainingCodeunits++;
             remainingInOtherCodeunits += count;

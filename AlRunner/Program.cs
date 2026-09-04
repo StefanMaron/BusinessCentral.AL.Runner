@@ -231,6 +231,9 @@ bool printClassification = false;
 bool outputJson = false;
 string? outputJunitPath = null;
 int jobs = 1;   // --jobs N: fan out across N worker processes (#2280)
+int resumeAborts = AlRunner.Infrastructure.AbortResume.DefaultBudget;   // #2280: resume past a watchdog abort
+var excludeTests = new List<string>();   // --exclude-test: skip these, so a run can resume past a watchdog abort (#2280)
+var allAbortReasons = new List<string>();   // #2280: watchdog aborts seen this run, for auto-resume
 // --coverage: statement-level coverage via BC's own StmtHit instrumentation (issue
 // #1922, first slice of #1640). Writes Cobertura XML to --coverage-out (default
 // cobertura.xml in the working directory) after the run, plus a console table.
@@ -421,6 +424,16 @@ for (int i = 0; i < args.Length; i++)
         if (!int.TryParse(args[++i], out jobs) || jobs < 1)
         {
             Console.Error.WriteLine($"--jobs expects a positive integer, got '{args[i]}'.");
+            return 2;
+        }
+        continue;
+    }
+    if (args[i] == "--exclude-test" && i + 1 < args.Length) { excludeTests.Add(args[++i]); continue; }
+    if (args[i] == "--resume-aborts" && i + 1 < args.Length)
+    {
+        if (!int.TryParse(args[++i], out resumeAborts) || resumeAborts < 0)
+        {
+            Console.Error.WriteLine("--resume-aborts expects a non-negative integer.");
             return 2;
         }
         continue;
@@ -1743,6 +1756,12 @@ AlRunner.PerfTrace.Log($"BcRuntime.EnsureApplied {t0.ElapsedMilliseconds}ms");
 var emitter = new BcCompiler();
 var assembler = new BcAssembler();
 var executor = new TestExecutor { Isolation = isolation, TestFilter = testFilter, TimeoutSeconds = testTimeoutSeconds, Expectations = expectations };
+// --exclude-test: the only way to reach tests a watchdog abort abandoned. TestExecutor stops
+// the whole suite when a test hangs — correctly, since the hung thread is never killed and
+// keeps mutating shared BC state — so those tests are reachable only from a fresh process that
+// skips the offender by name (#2280).
+if (excludeTests.Count > 0)
+    executor.Exclusions = new AlRunner.Infrastructure.TestExclusionFilter(excludeTests);
 var depLoader = new DependencyLoader(emitter, assembler);
 var results = new List<BucketResult>();
 // --tdd (issue #2001) acceptance criterion 8: every member generated across the WHOLE run
@@ -3115,6 +3134,7 @@ foreach (var bundle in bundles)
                 // CompileErrors check) both reflect the abandoned tests.
                 if (executor.AbortReasons.Count > 0)
                     bundleErrors.AddRange(executor.AbortReasons.Select(r => $"{rel}: TEST-TIMEOUT-ABORT: {r}"));
+                    allAbortReasons.AddRange(executor.AbortReasons);
             }
             catch (Exception ex)
             {
@@ -3242,6 +3262,7 @@ foreach (var bundle in bundles)
                 // never sees it.
                 if (executor.AbortReasons.Count > 0)
                     bundleErrors.AddRange(executor.AbortReasons.Select(r => $"{suiteName}: TEST-TIMEOUT-ABORT: {r}"));
+                    allAbortReasons.AddRange(executor.AbortReasons);
             }
             catch (Exception ex)
             {
@@ -3534,6 +3555,20 @@ else
     if (printClassification)
         Reporter.PrintFailureClassification(results, Console.Out);
     Reporter.PrintSummary(results, Console.Out);
+}
+
+// #2280: one hung codeunit must not take the whole run down. TestExecutor abandons the rest of
+// the bundle when a test's watchdog fires — correctly, because the hung thread is never killed
+// and keeps mutating shared BC state — so the abandoned tests are only reachable from a FRESH
+// process. Re-run there with the hung codeunit excluded, and let that process resume again if it
+// hits a different hang. A resumed attempt re-runs the bundle from the start, so its result
+// REPLACES this one rather than needing to be merged into it; the excluded codeunits are named
+// so the total is not mistaken for a complete one.
+if (resumeAborts > 0
+    && AlRunner.Infrastructure.AbortResumePlan.MakesProgress(allAbortReasons, excludeTests))
+{
+    var nextExclusions = AlRunner.Infrastructure.AbortResumePlan.NextExclusions(allAbortReasons, excludeTests);
+    return AlRunner.Infrastructure.AbortResume.Rerun(args, nextExclusions, resumeAborts - 1);
 }
 if (tddMode)
 {
