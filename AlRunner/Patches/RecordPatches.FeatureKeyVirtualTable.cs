@@ -158,6 +158,160 @@ public static partial class RecordPatches
         }
     }
 
+    // ── Modify guard: BC's own read-only-field-by-name rejection (#2636) ────────────────
+    //
+    // FeatureKeyDataProvider.Modify (Ncl) walks its own `FeatureKeyReadOnlyFields` static
+    // (every field except "Enabled") and, for the first one whose value differs from the
+    // record's current stored value, throws NavCSideException(Lang.InvalidFeatureKeyField,
+    // <that field's FieldCaption>) BEFORE it ever writes anything through to table
+    // 2000000210. That write-through is not implemented here (#2585's remaining half), but
+    // the read-only refusal needs none of it: it only needs to know which field changed and
+    // BC's own wording for saying so, both of which are read off BC's own types rather than
+    // hand-copied, so a BC version that renumbers or rewords either is followed automatically.
+    private static FieldInfo? _fkReadOnlyFieldsField;   // static int[] FeatureKeyReadOnlyFields
+
+    private static Type? _fkLangType;
+    private static string? _fkInvalidFieldMessage;      // "...{0}..." from Lang.InvalidFeatureKeyField
+
+    /// <summary>
+    /// Prepended (via StampSystemFieldsOnModify) ahead of any Feature Key Modify. Throws BC's
+    /// own NavCSideException, naming the field, the moment a read-only column's value differs
+    /// from what is currently stored. A Modify that only touches "Enabled" is not blocked here
+    /// — this guard makes no claim about the write-through path itself.
+    /// </summary>
+    internal static void GuardFeatureKeyReadOnlyFieldsOnModify(NavRecord self)
+    {
+        var meta = self.MetaTable
+            ?? throw new RunnerOutOfScopeException(
+                "Feature Key (system table 2000000211) — Modify",
+                "feature-key-modify — record carries no metatable; see docs/scope.md");
+
+        var readOnlyFieldNos = ReadOnlyFieldNumbers();
+
+        var keyField = meta.PrimaryKey?.GetKeyFieldByIndex(0)
+            ?? throw new RunnerOutOfScopeException(
+                "Feature Key (system table 2000000211) — Modify",
+                "feature-key-modify — metatable has no primary key field; see docs/scope.md");
+        var keyValue = self.GetFieldValue(keyField.FieldNo);
+
+        var original = new NavRecord(self.ParentSession, FeatureKeyVirtualTableId);
+        try
+        {
+            if (!original.ALGet(Microsoft.Dynamics.Nav.Types.DataError.TrapError, keyValue))
+                return; // no stored row to compare against — let the ordinary write path decide
+        }
+        finally
+        {
+            original.Dispose();
+        }
+
+        foreach (var fieldNo in readOnlyFieldNos)
+        {
+            if (fieldNo == keyField.FieldNo) continue; // the key value is how we found the row
+            var currentValue = self.GetFieldValue(fieldNo);
+            var originalValue = original.GetFieldValue(fieldNo);
+            if (Equals(currentValue, originalValue)) continue;
+
+            var caption = meta.GetFieldByNo(fieldNo)?.FieldCaption ?? $"field {fieldNo}";
+            throw BuildFeatureKeyReadOnlyError(caption);
+        }
+    }
+
+    private static int[] ReadOnlyFieldNumbers()
+    {
+        EnsureFeatureKeyReflection();
+        _fkReadOnlyFieldsField ??= _fkProviderType!.GetField(
+            "FeatureKeyReadOnlyFields", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)
+            ?? throw new RunnerOutOfScopeException(
+                "Feature Key (system table 2000000211) — Modify",
+                "feature-key-modify — BC's FeatureKeyDataProvider no longer declares "
+                + "FeatureKeyReadOnlyFields; see docs/scope.md");
+
+        return (int[])(_fkReadOnlyFieldsField.GetValue(null)
+            ?? throw new RunnerOutOfScopeException(
+                "Feature Key (system table 2000000211) — Modify",
+                "feature-key-modify — FeatureKeyReadOnlyFields is null; see docs/scope.md"));
+    }
+
+    private static Exception BuildFeatureKeyReadOnlyError(string fieldCaption)
+    {
+        var format = InvalidFeatureKeyFieldMessage();
+        var message = string.Format(System.Globalization.CultureInfo.CurrentCulture, format, fieldCaption);
+
+        var navCSideExceptionType = typeof(NavRecord).Assembly.GetType(
+            "Microsoft.Dynamics.Nav.Runtime.NavCSideException");
+        if (navCSideExceptionType != null
+            && Activator.CreateInstance(navCSideExceptionType, message) is Exception typed)
+            return typed;
+
+        // Never swallow the refusal: an untyped exception still stops the write and still
+        // carries BC's message, which is what AL's asserterror observes.
+        return new InvalidOperationException(message);
+    }
+
+    /// <summary>
+    /// BC's own "Sorry, but the task couldn't be completed because it tried to change the
+    /// "{0}" field of the feature key, which cannot be changed. ..." resource string, read
+    /// off Ncl's resx-generated Lang type rather than restated here, so a BC version that
+    /// rewords it is followed automatically instead of drifting.
+    /// </summary>
+    private static string InvalidFeatureKeyFieldMessage()
+    {
+        if (_fkInvalidFieldMessage != null) return _fkInvalidFieldMessage;
+
+        _fkLangType ??= FindFeatureKeyLangType()
+            ?? throw new RunnerOutOfScopeException(
+                "Feature Key (system table 2000000211) — Modify",
+                "feature-key-modify — Ncl's InvalidFeatureKeyField message resource could not be "
+                + "located; see docs/scope.md");
+
+        var prop = _fkLangType.GetProperty("InvalidFeatureKeyField",
+            BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)
+            ?? throw new RunnerOutOfScopeException(
+                "Feature Key (system table 2000000211) — Modify",
+                "feature-key-modify — Ncl states no InvalidFeatureKeyField message resource; "
+                + "see docs/scope.md");
+
+        var text = prop.GetValue(null) as string
+            ?? throw new RunnerOutOfScopeException(
+                "Feature Key (system table 2000000211) — Modify",
+                "feature-key-modify — Ncl's InvalidFeatureKeyField message resource is empty; "
+                + "see docs/scope.md");
+
+        _fkInvalidFieldMessage = text;
+        return text;
+    }
+
+    /// <summary>
+    /// Ncl's resx-generated resource class, found by the presence of the very property this
+    /// guard needs — the same lookup shape AllProfileWritePatches uses, since a plain
+    /// Assembly.GetTypes() call over the BC assemblies routinely throws
+    /// ReflectionTypeLoadException on the skeleton runtime.
+    /// </summary>
+    private static Type? FindFeatureKeyLangType()
+    {
+        foreach (var asm in new[] { typeof(NavRecord).Assembly }
+                     .Concat(AppDomain.CurrentDomain.GetAssemblies()
+                         .Where(a => a.GetName().Name?.StartsWith(
+                             "Microsoft.Dynamics.Nav", StringComparison.Ordinal) == true))
+                     .Distinct())
+        {
+            Type?[] types;
+            try { types = asm.GetTypes(); }
+            catch (ReflectionTypeLoadException ex) { types = ex.Types; }
+            catch { continue; }
+
+            foreach (var t in types)
+            {
+                if (t == null) continue;
+                if (t.GetProperty("InvalidFeatureKeyField",
+                        BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic) != null)
+                    return t;
+            }
+        }
+        return null;
+    }
+
     private static void EnsureFeatureKeyReflection()
     {
         if (_fkReflectionReady) return;

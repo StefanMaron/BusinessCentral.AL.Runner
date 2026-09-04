@@ -45,17 +45,20 @@ codeunit 60821 "FKV Fixture Tests"
     end;
 
     [Test]
-    procedure FeatureKey_Modify_RefusesLoudlyInsteadOfSilentlyDoingNothing()
+    procedure FeatureKey_Modify_ChangingAReadOnlyColumn_RaisesNamingTheField()
     var
         FeatureKey: Record "Feature Key";
     begin
-        // The runner serves this table read-only. Real BC's Modify writes through to table
-        // 2000000210; that path is not implemented, and our rows live in a temp store whose
-        // Modify would ACCEPT the write and put it nowhere. This pins the loud refusal — a
-        // silently-successful Modify is exactly what must not ship.
+        // "Enabled" is the only writable column; every other one is read-only and BC's own
+        // FeatureKeyDataProvider rejects a change to it BY NAME, before any write-through. This
+        // is what distinguishes the real provider from an ordinary table, which would accept
+        // the write silently (#2636).
         Assert.IsTrue(FeatureKey.FindSet(), 'Feature Key must answer at least one row.');
+        FeatureKey.Description := 'changed by a test';
         asserterror FeatureKey.Modify();
-        if StrPos(GetLastErrorText(), 'feature-key-modify') = 0 then
-            Error('Modify must refuse with the feature-key-modify reason, got: %1', GetLastErrorText());
+        Assert.IsTrue(
+            StrPos(GetLastErrorText(), FeatureKey.FieldCaption(Description)) > 0,
+            'Modifying a read-only Feature Key column must raise an error naming that column, got: '
+            + GetLastErrorText());
     end;
 }

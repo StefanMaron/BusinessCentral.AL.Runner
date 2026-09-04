@@ -20,8 +20,8 @@
 // that string does not appear in Types.dll or Ncl.dll on 28.1 OR 28.4. Hence no assertion
 // here names a key or a state.
 //
-// The last test is the one that must not regress: the runner serves this table read-only, and
-// a Modify landing in the temp store would be accepted and change nothing.
+// The last test is the one that must not regress: real BC's Modify rejects a change to a
+// read-only column BY NAME (issue #2636), before any write-through happens.
 using System.Diagnostics;
 using System.Text;
 using Xunit;
@@ -91,9 +91,9 @@ public sealed class FeatureKeyVirtualTableTests
             Assert.Contains("PASS  Codeunit60821.FeatureKey_EveryRowHasANonBlankIdThatGetRoundTrips", stdout);
             // Negative: a provider answering every Get with a row would pass the above.
             Assert.Contains("PASS  Codeunit60821.FeatureKey_GetOnAnUnknownId_ReturnsFalse", stdout);
-            // The read-only contract: Modify refuses loudly rather than succeeding and doing
-            // nothing. This is the assertion that keeps a silent no-op from shipping.
-            Assert.Contains("PASS  Codeunit60821.FeatureKey_Modify_RefusesLoudlyInsteadOfSilentlyDoingNothing", stdout);
+            // The read-only contract: changing a read-only column raises BC's own error naming
+            // that column, before any write-through happens (#2636).
+            Assert.Contains("PASS  Codeunit60821.FeatureKey_Modify_ChangingAReadOnlyColumn_RaisesNamingTheField", stdout);
             Assert.DoesNotContain("FAIL", stdout);
         }
         finally
