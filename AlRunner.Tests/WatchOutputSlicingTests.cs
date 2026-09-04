@@ -304,4 +304,104 @@ public sealed class WatchOutputSlicingTests
         Assert.Throws<ArgumentOutOfRangeException>(
             () => WatchOutputSlicing.FinalCycleStart(new List<int>(), 0));
     }
+
+    // ── #2653: the SAME #1843 race, for the "FULL REBUILD" reason line ─────────────────
+    //
+    // WatchFullRebuildReasonTests's cycle-2 assertions used `Segment(m1 + 1, m2)` then
+    // `Assert.Contains("FULL REBUILD", cycle2)` — an index-windowed search bounded above by
+    // the SAME m2 stdout marker the #1843 fix already proved unsafe for a stderr line. The
+    // "FULL REBUILD…" line (Program.cs, around line 2559) is written to stderr, and a starved
+    // stderr pump can land it at a list index past m2 even though it was written, in program
+    // order, well before m2 — Emit/dispatch/test-execution/reporting all still have to run
+    // between the reason line and the cycle's own closing marker.
+
+    /// <summary>
+    /// Builds the exact list shape a starved stderr pump produces for the FULL REBUILD
+    /// reason line: it was written during cycle 2, strictly before m2 in program order, but
+    /// its pump continuation only gets appended to the shared list AFTER m2.
+    /// </summary>
+    private static (List<CapturedLine> lines, int m1, int m2) FullRebuildStarvedPastM2Scenario()
+    {
+        var lines = new List<CapturedLine>
+        {
+            new(OutputStream.Stdout, "[1/1] xrec-probe-rxt — 1 suites"),
+        };
+        int m1 = lines.Count;
+        lines.Add(new(OutputStream.Stdout, WatchOutputSlicing.WaitingForSourceMarker + "… (Ctrl+C to quit)"));
+
+        lines.Add(new(OutputStream.Stdout, "[watch] change detected — re-running…"));
+        lines.Add(new(OutputStream.Stdout, "[1/1] xrec-probe-rxt — 1 suites"));
+        int m2 = lines.Count;
+        lines.Add(new(OutputStream.Stdout, WatchOutputSlicing.WaitingForSourceMarker + "… (Ctrl+C to quit)"));
+
+        // Written during cycle 2, strictly before m2 in program order (Program.cs prints this
+        // long before Emit even starts) — but its pump continuation lost the race and only
+        // got appended to the shared list here, after m2.
+        lines.Add(new(OutputStream.Stderr,
+            "[watch] xrec-probe-rxt: FULL REBUILD this cycle (whole module — expect the " +
+            "cold-cycle order of magnitude, not a proportional edit) — XRecProbeTests.Codeunit.al " +
+            "declares 2 object(s) (fast path requires exactly 1 per file)"));
+
+        return (lines, m1, m2);
+    }
+
+    /// <summary>
+    /// THE OLD (buggy) SHAPE: an index-windowed `Segment(m1+1, m2)` + `Assert.Contains` misses
+    /// the FULL REBUILD line entirely when the stderr pump is starved past m2 — this is the
+    /// RED half of the #2653 proof, over the OLD assertion shape WatchFullRebuildReasonTests
+    /// used before the fix.
+    /// </summary>
+    [Fact]
+    public void MergedJoin_BoundedAtM2_MissesFullRebuildLine_WhenStderrPumpIsStarvedPastM2()
+    {
+        var (lines, m1, m2) = FullRebuildStarvedPastM2Scenario();
+
+        var cycle2 = WatchOutputSlicing.MergedJoin(lines, m1 + 1, m2);
+
+        Assert.DoesNotContain("FULL REBUILD", cycle2); // the bug: the line is genuinely missing from this window
+    }
+
+    /// <summary>
+    /// THE FIX: an unbounded-forward search from m1 + 1 finds the FULL REBUILD line
+    /// regardless of whether its list index landed past m2 — because it was written, in
+    /// program order, strictly before m2 (stderr has exactly one pump, so cycle 2's own
+    /// stderr writes are always after cycle 1's and always after m1, the same guarantee
+    /// LastWarmTimingMs already relies on for the timing line).
+    /// </summary>
+    [Fact]
+    public void ContainsAfter_FindsFullRebuildLine_EvenWhenStderrPumpIsStarvedPastM2()
+    {
+        var (lines, m1, _) = FullRebuildStarvedPastM2Scenario();
+
+        Assert.True(WatchOutputSlicing.ContainsAfter(lines, "FULL REBUILD", m1 + 1));
+        Assert.True(WatchOutputSlicing.ContainsAfter(lines, "XRecProbeTests.Codeunit.al", m1 + 1));
+        Assert.True(WatchOutputSlicing.ContainsAfter(lines, "declares 2 object(s)", m1 + 1));
+    }
+
+    /// <summary>
+    /// Negative/mutation companion: ContainsAfter must not degenerate into "always true".
+    /// Nothing at or after m1 + 1 mentions a reason that was never written.
+    /// </summary>
+    [Fact]
+    public void ContainsAfter_ReturnsFalse_WhenTheTextWasNeverWritten()
+    {
+        var (lines, m1, _) = FullRebuildStarvedPastM2Scenario();
+
+        Assert.False(WatchOutputSlicing.ContainsAfter(lines, "SOMETHING NEVER WRITTEN", m1 + 1));
+    }
+
+    /// <summary>
+    /// fromIndex must be respected: cycle 1's own window (before m1) must not leak a cycle-2
+    /// reason forward, matching FindStdoutMarkerIndices' existing fromIndex contract.
+    /// </summary>
+    [Fact]
+    public void ContainsAfter_RespectsFromIndex_CannotSeeTextOnlyPresentBeforeIt()
+    {
+        var (lines, m1, m2) = FullRebuildStarvedPastM2Scenario();
+
+        // Searching from AFTER the reason line's own (post-m2) index must not find it.
+        Assert.False(WatchOutputSlicing.ContainsAfter(lines, "FULL REBUILD", lines.Count));
+        // But from m1 + 1 (cycle 2's start), it is found — this is the shape the fixed test uses.
+        Assert.True(WatchOutputSlicing.ContainsAfter(lines, "FULL REBUILD", m1 + 1));
+    }
 }
