@@ -376,4 +376,77 @@ public sealed class ProvisionExplicitModesTests
         Assert.NotEqual(0, proc.ExitCode);
         Assert.Contains("only valid with the `provision` subcommand", stderr, StringComparison.Ordinal);
     }
+
+    /// <summary>
+    /// Issue #2560, defect 1: `provision --force` alone (the `provision` subcommand IS
+    /// present, so the sibling "--force without `provision`" guard above does not fire, but
+    /// none of --platform-apps/--test-apps/--service-tier is given either) used to match
+    /// neither rejection guard and fall through into the ordinary auto-detect run path with
+    /// --force silently discarded — no message, no error, nothing forced. No network/BC
+    /// artifacts needed: this must be rejected before either is ever touched.
+    /// </summary>
+    [Fact]
+    public void Force_AloneWithNoModeFlag_IsRejected()
+    {
+        var argLine = TestBuildConfig.RunArgs(Path.Combine(RepoRoot, "AlRunner")) + " provision --force";
+        var psi = new ProcessStartInfo
+        {
+            FileName = "dotnet",
+            Arguments = argLine,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            WorkingDirectory = RepoRoot,
+        };
+        psi.Environment["HOME"] = NewIsolatedHome();
+        using var proc = Process.Start(psi)!;
+        var stderr = proc.StandardError.ReadToEnd();
+        Assert.True(proc.WaitForExit(30_000));
+        Assert.Equal(2, proc.ExitCode);
+        Assert.Contains("--force is only valid with", stderr, StringComparison.Ordinal);
+        Assert.Contains("--platform-apps", stderr, StringComparison.Ordinal);
+        Assert.Contains("--test-apps", stderr, StringComparison.Ordinal);
+        Assert.Contains("--service-tier", stderr, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Issue #2560, defect 2: `provision --resolve-version PREFIX --test-apps` used to print
+    /// the resolved version and return 0 UNCONDITIONALLY, before ever reaching the named
+    /// sub-step — silently discarding the --test-apps half of the command with no
+    /// indication anything was skipped ("either honor the combination or reject it with
+    /// exit 2... silently dropping it is the one option that should be off the table" per
+    /// the issue). This proves the combination is now HONORED: the resolved version is
+    /// printed to stdout (unchanged, still needed for script/agent consumption) AND the
+    /// named sub-step actually runs, landing real content — not merely "exit 0".
+    /// --test-apps chosen over --platform-apps/--service-tier for the same ~20MB-vs-100+MB
+    /// reason the rest of this file already prefers it (see file header).
+    /// </summary>
+    [Fact]
+    public void ResolveVersion_CombinedWithTestApps_PrintsVersionAndDownloads()
+    {
+        var home = NewIsolatedHome();
+        try
+        {
+            var (exit, stderr) = Run(home, "provision", "--resolve-version", "28.1", "--test-apps");
+
+            Assert.True(exit == 0, $"must exit 0 once both the resolve and the download succeed. stderr:\n{stderr}");
+            // The resolved version is whatever's currently latest under the 28.1 prefix —
+            // find the actual directory the download landed in rather than hardcoding one.
+            var artifactsRoot = TestArtifacts.StandardCacheDir(home);
+            Assert.True(Directory.Exists(artifactsRoot), $"expected {artifactsRoot} to exist. stderr:\n{stderr}");
+            var versionDirs = Directory.GetDirectories(artifactsRoot);
+            Assert.Single(versionDirs);
+            var landedTestAppsDir = Path.Combine(versionDirs[0], "test-apps");
+            Assert.True(Directory.Exists(landedTestAppsDir),
+                $"expected a test-apps dir under the resolved version {versionDirs[0]}. stderr:\n{stderr}");
+            var apps = Directory.GetFiles(landedTestAppsDir, "*.app");
+            Assert.True(apps.Length > 10,
+                $"expected more than 10 .app files (a real download, not an empty dir), got {apps.Length}. stderr:\n{stderr}");
+        }
+        finally
+        {
+            try { Directory.Delete(home, recursive: true); } catch { }
+        }
+    }
 }
