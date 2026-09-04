@@ -226,6 +226,14 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             ["DapStdioServerTests"] = 101,
             ["CacheRootsIsolationTests"] = 83,
             ["ServerDuplicateSourcePathTests"] = 73,
+            // #2653-adjacent: tripped check-collection-weights.py on PR 2659, absent from
+            // this table while costing over 60s. Measured across all six legs of that run:
+            // 61.3s (27.3), 67.3s (27.5), 69.4s (28.0), 71.2s (28.1), 61.4s (28.2),
+            // 63.0s (28.3). Carries the observed MAXIMUM, not the minimum, for the reason
+            // InstallBaselineVirtualTableExclusionTests above spells out: a value at the low
+            // end of an observed range sits on the 60s freshness threshold, which satisfies
+            // the gate while leaving dispatch order at the fallback and the tail in place.
+            ["ServerAffectedSelectionTests"] = 71,
             ["ProvisionExplicitModesTests"] = 80,
             // #1940/#1941/#1943: 4 tests, each spawning a real runner subprocess (two
             // single-bundle, two layered two-bundle dep compiles) — needed because
