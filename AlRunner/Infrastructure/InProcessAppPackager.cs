@@ -81,12 +81,26 @@ public static class InProcessAppPackager
             if (root.TryGetProperty("dependencies", out var depsEl)
                 && depsEl.ValueKind == JsonValueKind.Array)
             {
+                // #2560: a dependencies[] entry with a non-string field (e.g. `"name": 123`)
+                // used to blow up the ENTIRE ReadIdentity call via an unguarded
+                // JsonElement.GetString() a few lines below (the try/catch around this
+                // whole method turns that into a caught, non-crashing "failed to read"
+                // log line -- but the returned identity is null for the WHOLE bundle, not
+                // just the malformed entry). That silently broke sibling first-party
+                // source-dependency discovery for every OTHER, perfectly valid dependency
+                // in the same manifest -- worse than Program.cs's ReadDependencies having
+                // the same bug (that one only lost the one malformed entry's own fields).
+                // TryGetDepString mirrors ReadDependencies' own fix: degrade the one bad
+                // field to null/default and keep going, rather than letting one typo take
+                // the whole manifest's identity down.
+                int depIndex = 0;
                 foreach (var d in depsEl.EnumerateArray())
                 {
-                    var dIdStr = d.TryGetProperty("id", out var di) ? di.GetString() : null;
-                    var dName = d.TryGetProperty("name", out var dn) ? dn.GetString() ?? "" : "";
-                    var dPub = d.TryGetProperty("publisher", out var dp) ? dp.GetString() ?? "" : "";
-                    var dVerStr = d.TryGetProperty("version", out var dv) ? dv.GetString() ?? "0.0.0.0" : "0.0.0.0";
+                    var dIdStr = TryGetDepString(d, "id", appJsonPath, depIndex);
+                    var dName = TryGetDepString(d, "name", appJsonPath, depIndex) ?? "";
+                    var dPub = TryGetDepString(d, "publisher", appJsonPath, depIndex) ?? "";
+                    var dVerStr = TryGetDepString(d, "version", appJsonPath, depIndex) ?? "0.0.0.0";
+                    depIndex++;
                     Guid dId = Guid.Empty;
                     if (!string.IsNullOrEmpty(dIdStr)) Guid.TryParse(dIdStr, out dId);
                     if (!Version.TryParse(dVerStr, out var dVer)) dVer = new Version(0, 0, 0, 0);
@@ -113,6 +127,19 @@ public static class InProcessAppPackager
             Console.Error.WriteLine($"[layered] InProcessAppPackager: failed to read {appJsonPath}: {ex.Message}");
             return null;
         }
+    }
+
+    // #2560: mirrors Program.cs's own TryGetDepString — reads one dependencies[] entry's
+    // string-typed property, tolerating a non-string value instead of letting
+    // JsonElement.GetString() throw and take the WHOLE ReadIdentity call down with it.
+    private static string? TryGetDepString(JsonElement dep, string propertyName, string appJsonPath, int depIndex)
+    {
+        if (!dep.TryGetProperty(propertyName, out var v)) return null;
+        if (v.ValueKind == JsonValueKind.String) return v.GetString();
+        Console.Error.WriteLine(
+            $"[layered] warning: '{appJsonPath}' dependencies[{depIndex}].{propertyName} is not a " +
+            $"string (found {v.ValueKind}) — ignoring that field for this dependency entry.");
+        return null;
     }
 
     /// <summary>

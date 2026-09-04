@@ -526,6 +526,19 @@ if (!provisionSubcommand && provisionForce)
     Console.Error.WriteLine("--force is only valid with `provision --platform-apps` / `--test-apps` / `--service-tier`.");
     return 2;
 }
+// #2560: `provision --force` alone (subcommand present, --force present, but none of
+// --platform-apps/--test-apps/--service-tier) matched neither guard above -- it fell
+// through into the ordinary auto-detect run path with --force silently discarded and no
+// message. Same failure mode as the two guards above, just the missing THIRD combination:
+// deliberately excludes --resolve-version (that flag never reaches a download step at
+// all -- see RunExplicitProvisionModes -- so pairing it with --force is equally
+// meaningless, but is its own, differently-worded misuse if ever rejected).
+if (provisionSubcommand && provisionForce
+    && !(provisionPlatformApps || provisionTestApps || provisionServiceTier))
+{
+    Console.Error.WriteLine("--force is only valid with `provision --platform-apps` / `--test-apps` / `--service-tier`.");
+    return 2;
+}
 // `al-runner provision --help`: subcommands must accept --help like everything else —
 // previously this fell through to the generic arg-parser and answered "Unknown option
 // '--help'. Run with --help for the supported flags.", which tells the caller to run the
@@ -8108,6 +8121,7 @@ static int RunExplicitProvisionModes(string? bcVersionArg, List<string> bundles,
     // failed or errored" — would be a lie about what happened here; 2 is what every other
     // "couldn't get to a run at all" path in this file already uses (e.g. "BC version
     // selection failed: ..." further up).
+    string? full;
     if (resolveVersionPrefix != null)
     {
         var resolved = AlRunner.Provisioning.ArtifactDownloader.ResolveVersion(
@@ -8118,12 +8132,22 @@ static int RunExplicitProvisionModes(string? bcVersionArg, List<string> bundles,
             return 2;
         }
         Console.WriteLine(resolved); // stdout for script/agent consumption, mirrors tools/DownloadArtifacts
-        return 0;
+        // #2560: used to return 0 here unconditionally, even when the caller ALSO passed
+        // --platform-apps/--test-apps/--service-tier -- `provision --resolve-version 28.1
+        // --platform-apps` printed a version and downloaded nothing, silently discarding
+        // half the command with no indication anything was skipped. Honor the combination
+        // instead of discarding it: a resolved version stands in for --bc-version and the
+        // named sub-steps still run against it.
+        if (!platformApps && !testApps && !serviceTier)
+            return 0;
+        full = resolved;
     }
-
-    var full = ResolveFullVersionForExplicitProvision(bcVersionArg, bundles);
-    if (full == null)
-        return 2; // the resolver already printed a loud, named reason
+    else
+    {
+        full = ResolveFullVersionForExplicitProvision(bcVersionArg, bundles);
+        if (full == null)
+            return 2; // the resolver already printed a loud, named reason
+    }
 
     bool anyFailed = false;
     if (serviceTier)
@@ -8606,12 +8630,25 @@ static IEnumerable<DependencyRef> ReadDependencies(string appJsonPath)
     if (root.TryGetProperty("dependencies", out var deps)
         && deps.ValueKind == System.Text.Json.JsonValueKind.Array)
     {
+        int depIndex = 0;
         foreach (var d in deps.EnumerateArray())
         {
-            var idStr = d.TryGetProperty("id", out var pid) ? pid.GetString() : null;
-            var name = d.TryGetProperty("name", out var pn) ? pn.GetString() ?? "" : "";
-            var pub = d.TryGetProperty("publisher", out var pp) ? pp.GetString() ?? "" : "";
-            var ver = d.TryGetProperty("version", out var pv) ? pv.GetString() ?? "0.0.0.0" : "0.0.0.0";
+            // #2560: a `dependencies` entry with a non-string field (e.g. `"name": 123`,
+            // a plain typo a hand-edited app.json can carry) used to call .GetString()
+            // unguarded, raising InvalidOperationException out of the resolution path —
+            // TryReadManifestDependencyRoots's pre-scan catches that (its own catch-all
+            // around a DIFFERENT reader call), but ReadDependencies itself is also called
+            // directly (ScanManifestDependencyRoots, the per-suite dep-resolve path), with
+            // no such wrapper, so the exception was unhandled there. TryGetDepString names
+            // the file, the entry's position, and the property instead of either crashing
+            // OR silently `continue`-ing past the whole entry (which would just as
+            // silently drop a real dependency edge) — one malformed field degrades to its
+            // own default, the rest of the entry is still read and yielded normally.
+            var idStr = TryGetDepString(d, "id", appJsonPath, depIndex);
+            var name = TryGetDepString(d, "name", appJsonPath, depIndex) ?? "";
+            var pub = TryGetDepString(d, "publisher", appJsonPath, depIndex) ?? "";
+            var ver = TryGetDepString(d, "version", appJsonPath, depIndex) ?? "0.0.0.0";
+            depIndex++;
             Guid id = Guid.Empty;
             if (!string.IsNullOrEmpty(idStr)) Guid.TryParse(idStr, out id);
             if (!Version.TryParse(ver, out var v)) v = new Version(0, 0, 0, 0);
@@ -8624,7 +8661,18 @@ static IEnumerable<DependencyRef> ReadDependencies(string appJsonPath)
             // findable .app (e.g. on CI, where packageCacheDirs is empty) instead of failing
             // the whole bundle — matching how the implicit roots below are already Optional.
             bool isMsPlatform = AlRunner.DependencyResolver.IsMicrosoftPlatformApp(name, pub);
-            yield return new DependencyRef(id, name, pub, v, Optional: isMsPlatform);
+            // #2560: an entry whose id AND name both degraded to nothing (malformed fields
+            // — see TryGetDepString above) names no findable package at all; the loud
+            // warning already printed for the field is the whole diagnostic value this
+            // entry can offer. Requiring resolution to find "a package named ''" turns one
+            // malformed field into a hard failure for the WHOLE bundle over information we
+            // already know is unusable, which is worse than the drop the issue itself says
+            // to avoid — it still fails LOUDLY (the resolver's normal missing-dependency
+            // message, just naming nothing useful) rather than either silently vanishing or
+            // silently succeeding, but a genuinely unresolvable phantom entry blocking every
+            // OTHER valid dependency in the same manifest is not a fix worth shipping.
+            bool isUnresolvable = id == Guid.Empty && string.IsNullOrEmpty(name);
+            yield return new DependencyRef(id, name, pub, v, Optional: isMsPlatform || isUnresolvable);
         }
     }
 
@@ -8648,6 +8696,21 @@ static IEnumerable<DependencyRef> ReadDependencies(string appJsonPath)
     }
 }
 
+// #2560: reads one `dependencies[]` entry's string-typed property, tolerating a
+// non-string value (e.g. a numeric `"name": 123` in a hand-edited/malformed app.json)
+// instead of letting JsonElement.GetString() throw InvalidOperationException. Prints a
+// diagnostic naming the manifest file, the entry's zero-based position, and the property
+// so a malformed manifest is visible rather than either crashing the whole resolution
+// path or silently dropping the entry — see ReadDependencies' own call site comment.
+static string? TryGetDepString(System.Text.Json.JsonElement dep, string propertyName, string appJsonPath, int depIndex)
+{
+    if (!dep.TryGetProperty(propertyName, out var v)) return null;
+    if (v.ValueKind == System.Text.Json.JsonValueKind.String) return v.GetString();
+    Console.Error.WriteLine(
+        $"[provision] warning: '{appJsonPath}' dependencies[{depIndex}].{propertyName} is not a " +
+        $"string (found {v.ValueKind}) — ignoring that field for this dependency entry.");
+    return null;
+}
 
 // Collect this single suite's src/test/app* dirs for emit. Per-suite isolation
 // avoids the cross-suite object-id collisions that silently zeroed-out bundled emit.
