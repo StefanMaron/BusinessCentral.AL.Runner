@@ -297,6 +297,11 @@ internal static partial class ProgramSupport
         return 0;
     }
 
+    // #2669: GetDepSymbolCompiler (AlRunner.Infrastructure.DepSymbolCompilerCache) hands back the
+    // SAME BcCompiler instance across repeated calls to RunLayeredPrePass/BuildSiblingSourceDeps
+    // within the SAME process (--watch, --server) — see that class's own header for why.
+    internal static BcCompiler GetDepSymbolCompiler(string dir) => AlRunner.Infrastructure.DepSymbolCompilerCache.GetOrCreate(dir);
+
     // ── Layered source build pre-pass ─────────────────────────────────────────
     // Detects inter-bundle dependencies, emits impl bundles in topo order into a
     // per-run workspace cache dir, and prepends that dir to packageCacheDirs.
@@ -542,8 +547,25 @@ internal static partial class ProgramSupport
                     // and the guard is only here to avoid churning the loader signature.
                     if (priorImplDirs.Count > 0)
                         BcCompiler.SetExtraSymbolDirs(priorImplDirs);
+                    // #2669: EmitDepSymbolsIncremental instead of a plain EmitDepSymbols on a
+                    // throwaway `new BcCompiler()` — GetDepSymbolCompiler hands back the SAME
+                    // instance this impl used last time (if any), so a re-synthesis after a small
+                    // edit costs work proportional to that edit instead of the whole dependency
+                    // module. See GetDepSymbolCompiler's own comment above for why keying on
+                    // implPath is safe even though it's a looser identity than AppId/version.
                     using (BcCompiler.ScopeCurrentAppIdentity(implId.AppId, implId.Publisher, implId.Version))
-                        new BcCompiler().EmitDepSymbols(new[] { implPath }, implId.Name, implId.AppId, implId.Publisher, implId.Version, symbolsPath, implPath);
+                    {
+                        GetDepSymbolCompiler(implPath).EmitDepSymbolsIncremental(
+                            new[] { implPath }, implId.Name, implId.AppId, implId.Publisher, implId.Version,
+                            symbolsPath, implPath, out var tookFastPath, out var fallbackReason);
+                        // Same "not gated behind --verbose" reasoning as [watch]'s own FULL REBUILD
+                        // line above (see this file's header comment): a full compile here is the
+                        // ~22s-per-edit cost #2669 exists to eliminate, so which path was taken is a
+                        // RESULT the developer needs to see, not an internal diagnostic.
+                        Console.WriteLine(tookFastPath
+                            ? $"[layered] {implId.Name} {implId.Version}: RAD incremental (fast path)"
+                            : $"[layered] {implId.Name} {implId.Version}: full compile ({fallbackReason})");
+                    }
                     // Declare the FULL compile closure — the resolved deps (real AppIds/versions)
                     // UNIONed with the Microsoft platform apps vendored in the impl's own
                     // .alpackages. Filtering to non-Optional declared deps drops the implicit
@@ -839,8 +861,19 @@ internal static partial class ProgramSupport
             {
                 try
                 {
+                    // #2669: same GetDepSymbolCompiler + EmitDepSymbolsIncremental swap as
+                    // RunLayeredPrePass above, and for the identical reason — this function follows
+                    // the exact same "new BcCompiler() every call" shape for the same kind of source
+                    // dependency, just discovered via a sibling directory instead of a declared impl.
                     using (BcCompiler.ScopeCurrentAppIdentity(sid.AppId, sid.Publisher, sid.Version))
-                        new BcCompiler().EmitDepSymbols(new[] { dir }, sid.Name, sid.AppId, sid.Publisher, sid.Version, symbolsPath, dir);
+                    {
+                        GetDepSymbolCompiler(dir).EmitDepSymbolsIncremental(
+                            new[] { dir }, sid.Name, sid.AppId, sid.Publisher, sid.Version,
+                            symbolsPath, dir, out var tookFastPath, out var fallbackReason);
+                        Console.WriteLine(tookFastPath
+                            ? $"[source-dep] {sid.Name} {sid.Version}: RAD incremental (fast path)"
+                            : $"[source-dep] {sid.Name} {sid.Version}: full compile ({fallbackReason})");
+                    }
                     // Full compile closure (resolved deps ∪ vendored platform apps) — see the
                     // impl-bundle site above and #1546. Filtering to non-Optional declared deps
                     // would drop the implicit platform roots whose types appear in this dep's
