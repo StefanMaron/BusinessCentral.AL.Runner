@@ -309,9 +309,13 @@ public static partial class RecordPatches
         catch (Exception ex)
         {
             var inner = ex is TargetInvocationException tie ? tie.InnerException ?? ex : ex;
-            Console.Error.WriteLine($"[RecordPatches] BuildNCLMetaTable({tableId}) failed: {inner.GetType().Name}: {inner.Message}");
-            if (inner.StackTrace != null)
-                Console.Error.WriteLine(inner.StackTrace.Split('\n')[0]);
+            // Header + top frame in ONE tagged write — a separate write for the frame has no
+            // `[Component]` tag for Log.FilteredWriter to match, so it would print at default
+            // verbosity under a header the filter had just dropped.
+            Console.Error.WriteLine(
+                $"[RecordPatches] BuildNCLMetaTable({tableId}) failed: {inner.GetType().Name}: "
+                + $"{inner.Message}"
+                + (inner.StackTrace != null ? "\n" + inner.StackTrace.Split('\n')[0] : ""));
             return null;
         }
     }

@@ -1858,8 +1858,13 @@ public static partial class RecordPatches
         catch (Exception ex)
         {
             var inner = ex is System.Reflection.TargetInvocationException tie ? tie.InnerException ?? ex : ex;
-            Console.Error.WriteLine($"[RecordPatches] GetDataAccessForTable failed for table {table?.TableName ?? "null"}: {inner.GetType().Name}: {inner.Message}");
-            Console.Error.WriteLine(inner.StackTrace ?? "");
+            // Header + trace in ONE tagged write: Log.FilteredWriter matches per write and
+            // a bare stack trace has no `[Component]` tag, so a second call would print its
+            // frames at default verbosity under a header the filter had just dropped.
+            Console.Error.WriteLine(
+                $"[RecordPatches] GetDataAccessForTable failed for table "
+                + $"{table?.TableName ?? "null"}: {inner.GetType().Name}: {inner.Message}"
+                + $"\n{inner.StackTrace}");
             throw;
         }
     }
