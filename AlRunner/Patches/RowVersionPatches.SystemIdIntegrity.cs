@@ -93,7 +93,6 @@ public static partial class RowVersionPatches
                                                             // declaring type MutableRecordBuffer.ReadOnlyBuffer
                                                             // resolves to is only known by its runtime Type)
     private static PropertyInfo? _pTableCaptionSafe;      // NCLMetaTable.TableCaptionSafe (internal)
-    private static PropertyInfo? _pRowSystemId;           // TempTableRecordBuffer.SystemId, resolved per stored
                                                             // row's own runtime Type — kept as reflection (not a
                                                             // direct cast) so this whole mechanism is unit-testable
                                                             // with reflected-shape fakes, matching this file's and
@@ -137,6 +136,37 @@ public static partial class RowVersionPatches
     }
 
     /// <summary>
+    /// Per-row-type compiled getter for the stored row's SystemId. PropertyInfo.GetValue
+    /// costs roughly two orders of magnitude more than a delegate call, and this runs once
+    /// per stored row per insert, so the difference decides whether a bulk materialisation
+    /// finishes or times out. Keyed by concrete row type because the store holds one type
+    /// in practice but nothing in the surrounding code guarantees it.
+    /// </summary>
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<Type, Func<object, NavGuid>>
+        _rowSystemIdGetters = new();
+
+    private static NavGuid ReadRowSystemId(object rowObj)
+    {
+        var getter = _rowSystemIdGetters.GetOrAdd(rowObj.GetType(), static t =>
+        {
+            var prop = t.GetProperty("SystemId",
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+                ?? throw new InvalidOperationException(
+                    $"[RowVersionPatches] {t.Name}.SystemId property not found — " +
+                    "SystemId integrity check cannot resolve its reflection target");
+            var getMethod = prop.GetGetMethod(nonPublic: true)
+                ?? throw new InvalidOperationException(
+                    $"[RowVersionPatches] {t.Name}.SystemId has no getter");
+            var instance = System.Linq.Expressions.Expression.Parameter(typeof(object), "row");
+            var body = System.Linq.Expressions.Expression.Call(
+                System.Linq.Expressions.Expression.Convert(instance, t), getMethod);
+            return System.Linq.Expressions.Expression
+                .Lambda<Func<object, NavGuid>>(body, instance).Compile();
+        });
+        return getter(rowObj);
+    }
+
+    /// <summary>
     /// Cecil-prepend body (called from OnBeforeInsert): refuse a second Insert whose
     /// explicit SystemId already exists on this database-backed table, matching real
     /// BC's SQL unique-constraint violation on $systemId.
@@ -147,6 +177,18 @@ public static partial class RowVersionPatches
 
         var bufferType = recordBuffer.GetType();
         var metaTable = ResolveMetaTable(recordBuffer, bufferType);
+
+        // Virtual/system tables (2000000000 and up) are computed per request and
+        // materialised into a temp store; their rows never reach SQL, so real BC has no
+        // $systemId unique constraint to violate on them and this check has nothing
+        // faithful to enforce. Skipping them is also what makes on-demand materialisation
+        // affordable: the scan below is O(stored rows) per insert, and the Date virtual
+        // table (2000000007) widens its window by bulk-inserting, which turned a 908 ms
+        // suite into a 60 s watchdog timeout with the check applied
+        // (tests/runner-extras/date-virtual-table-window, Codeunit64561, measured on
+        // BC 28.4). See #2667 for the residual O(rows^2) on a genuinely large real table.
+        if (metaTable is NCLMetaTable ncl && ncl.TableId >= 2000000000) return;
+
         var systemIdIndex = ResolveSystemIdFieldIndex(metaTable);
         if (systemIdIndex == null) return; // no SystemId field on this table — nothing to check
 
@@ -173,14 +215,16 @@ public static partial class RowVersionPatches
         // nothing to collide with.
         if (_fPrimaryTree.GetValue(provider) is not System.Collections.IEnumerable storedRows) return;
 
+        // Read each stored row's SystemId through a delegate compiled once per row type
+        // rather than PropertyInfo.GetValue per row. This loop runs on EVERY insert into a
+        // database-backed table that carries an explicit SystemId, so it is O(rows) per
+        // insert and O(rows^2) over a bulk materialisation. Measured before this was
+        // compiled: the Date virtual table's on-demand window materialisation
+        // (tests/runner-extras/date-virtual-table-window, Codeunit64561) went from 908 ms
+        // on main to a 60 s timeout — reflection per row, not the comparison, was the cost.
         foreach (var rowObj in storedRows)
         {
-            _pRowSystemId ??= rowObj.GetType().GetProperty("SystemId",
-                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
-                ?? throw new InvalidOperationException(
-                    $"[RowVersionPatches] {rowObj.GetType().Name}.SystemId property not found — " +
-                    "SystemId integrity check cannot resolve its reflection target");
-            var storedSystemId = (NavGuid)_pRowSystemId.GetValue(rowObj)!;
+            var storedSystemId = ReadRowSystemId(rowObj);
             if (storedSystemId.Value != incomingSystemId.Value) continue;
 
             var tableCaption = ResolveTableCaptionSafe(metaTable);
