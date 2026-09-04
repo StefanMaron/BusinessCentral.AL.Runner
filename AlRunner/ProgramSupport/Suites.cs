@@ -8,25 +8,32 @@ internal static partial class ProgramSupport
 
     // Sidecar: serialize AlEnumMetadataRegistry to <key>.enum-registry.json so
     // cache HIT can replay the side-effect that emit would have populated.
-    // Schema (v9): { "enums": [ { "id": int, "name": string, "options": [string], "indexes": [int], "implementations": [[int]], "captions": [string?] }, ... ] }
+    // Schema (v10, #2709): { "enums": [ { "id": int, "name": string, "options": [string], "indexes": [int], "implementations": [[int]], "captions": [string?], "extends": int? }, ... ] }
+    // v10 switched from AlEnumMetadataRegistry.Snapshot()'s MERGED base+extension view to
+    // SnapshotRaw()'s unmerged one — a merged entry replayed through Register alone
+    // clobbers whichever of base/extension registers for real later in the process (#2709;
+    // see SnapshotRaw's doc comment for the two failure shapes this caused).
     internal static int SaveEnumRegistrySidecar(string path)
     {
-        var entries = AlEnumMetadataRegistry.Snapshot();
+        var raw = AlEnumMetadataRegistry.SnapshotRaw().ToList();
         var dto = new
         {
-            enums = entries.Select(e => new
+            enums = raw.Select(r => new
             {
-                id = e.Id,
-                name = e.Name,
-                options = e.Options,
-                indexes = e.Indexes,
-                implementations = e.Implementations,
-                captions = e.Captions,
+                id = r.Entry.Id,
+                name = r.Entry.Name,
+                options = r.Entry.Options,
+                indexes = r.Entry.Indexes,
+                implementations = r.Entry.Implementations,
+                captions = r.Entry.Captions,
                 // #2306 — the enum-level DefaultImplementation / UnknownValueImplementation
                 // fallbacks, without which an enum that names no per-value Implementation cannot
                 // be cast to its interface on a cache HIT.
-                defaultImplementations = e.DefaultImplementations,
-                unknownImplementations = e.UnknownImplementations,
+                defaultImplementations = r.Entry.DefaultImplementations,
+                unknownImplementations = r.Entry.UnknownImplementations,
+                // #2709 — null for a base registration; the base enum id an enumextension's
+                // own (unmerged) entry targets otherwise. See SnapshotRaw.
+                extends = r.ExtendsTargetId,
             }).ToArray(),
             // v4: per-report runtime metadata XML captured from emit — replayed on
             // cache HIT so NavReportSync builds real MetaReport instances.
@@ -68,7 +75,7 @@ internal static partial class ProgramSupport
             WriteIndented = false,
         });
         File.WriteAllText(path, json);
-        return entries.Count;
+        return raw.Count;
     }
 
     // Replay AlEnumMetadataRegistry from <key>.enum-registry.json. Throws on
@@ -138,8 +145,19 @@ internal static partial class ProgramSupport
                 foreach (var c in capEl.EnumerateArray())
                     captions[ci++] = c.ValueKind == System.Text.Json.JsonValueKind.Null ? null : c.GetString();
             }
-            AlEnumMetadataRegistry.Register(id, name, opts, idxs, implementations, captions,
-                ReadIdList(e, "defaultImplementations"), ReadIdList(e, "unknownImplementations"));
+            // #2709 — see AlEnumMetadataRegistry.LoadSidecar's matching comment: a present
+            // `extends` marks this entry as an enumextension's own (unmerged) values, so
+            // replay it through RegisterExtension, never Register, or it clobbers the base
+            // enum's _byId slot instead of accumulating alongside it.
+            int? extendsTargetId = null;
+            if (e.TryGetProperty("extends", out var extEl) && extEl.ValueKind == System.Text.Json.JsonValueKind.Number)
+                extendsTargetId = extEl.GetInt32();
+
+            if (extendsTargetId.HasValue)
+                AlEnumMetadataRegistry.RegisterExtension(extendsTargetId.Value, name, opts, idxs, implementations, captions);
+            else
+                AlEnumMetadataRegistry.Register(id, name, opts, idxs, implementations, captions,
+                    ReadIdList(e, "defaultImplementations"), ReadIdList(e, "unknownImplementations"));
             count++;
         }
         // v4: replay per-report metadata XML (absent in pre-v4 sidecars — fine,
