@@ -246,8 +246,9 @@ public sealed class CleanRunStartupVerbosityTests
 
     /// <summary>
     /// Structural half for the two lines a live spawn in this build can never reach
-    /// (see the file header): both the engine-variant-selection reasoning line and its
-    /// matching re-exec explanation in Program.cs must sit behind an
+    /// (see the file header): both the engine-variant-selection reasoning line
+    /// (Program.cs) and its matching re-exec explanation (TryShadowReexec, moved to
+    /// AlRunner/ProgramSupport/Provisioning.cs by #2665) must sit behind an
     /// `if (AlRunner.Log.Verbose)` guard within a short lookback window, the same
     /// technique ExplicitEngineMinorWarningGatingTests and
     /// ReexecExplanationVisibilityTests already use in this suite for the identical
@@ -256,10 +257,12 @@ public sealed class CleanRunStartupVerbosityTests
     [Fact]
     public void ProgramCs_EngineVariantAndReexecLines_GatedOnVerbose()
     {
-        var src = File.ReadAllText(Path.Combine(RepoRoot, "AlRunner", "Program.cs"));
+        var programSrc = File.ReadAllText(Path.Combine(RepoRoot, "AlRunner", "Program.cs"));
+        var provisioningSrc = File.ReadAllText(
+            Path.Combine(RepoRoot, "AlRunner", "ProgramSupport", "Provisioning.cs"));
 
-        AssertGuardedByLogVerbose(src, "[bc] selecting engine variant {variant.BuildVersion}");
-        AssertGuardedByLogVerbose(src, "? \"[reexec] Re-execing into a shadow runtime dir");
+        AssertGuardedByLogVerbose(programSrc, "[bc] selecting engine variant {variant.BuildVersion}");
+        AssertGuardedByLogVerbose(provisioningSrc, "? \"[reexec] Re-execing into a shadow runtime dir");
     }
 
     private static void AssertGuardedByLogVerbose(string src, string marker)

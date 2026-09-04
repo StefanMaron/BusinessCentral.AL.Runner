@@ -34,12 +34,13 @@ public sealed class ReexecExplanationVisibilityTests
         Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
 
     /// <summary>Acceptance #1 (source half): the Ncl-shadow / variant-swap re-exec
-    /// explanation in Program.cs — the exact line named in the issue — must be tagged
+    /// explanation — the exact line named in the issue, in TryShadowReexec (moved from
+    /// Program.cs to AlRunner/ProgramSupport/Provisioning.cs by #2665) — must be tagged
     /// `[reexec]`, not `[Cecil]`.</summary>
     [Fact]
     public void ProgramCs_NclShadowReexecExplanation_UsesReexecTag()
     {
-        var src = File.ReadAllText(Path.Combine(RepoRoot, "AlRunner", "Program.cs"));
+        var src = File.ReadAllText(Path.Combine(RepoRoot, "AlRunner", "ProgramSupport", "Provisioning.cs"));
         Assert.Contains(
             "[reexec] Ncl.dll not shipped in this install — re-execing into a shadow runtime dir that has it",
             src);

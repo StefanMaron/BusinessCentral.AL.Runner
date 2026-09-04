@@ -111,20 +111,23 @@ public sealed class FindBucketRootDedupeTests
     [Fact]
     public void ProgramCs_FindBucketRoot_DelegatesToWatchSource_HasNoIndependentWalkUpLoop()
     {
-        // Structural guard: read Program.cs's own source and assert its FindBucketRoot
-        // local function body is a one-line delegation, not a second copy of the walk-up
-        // loop. A behavioral test alone (spawn the runner, check which root it picks)
-        // cannot distinguish "calls the shared implementation" from "still carries its
-        // own byte-identical copy" — both produce the same observable output. Only
-        // reading the source proves there is genuinely ONE implementation now.
+        // Structural guard: read FindBucketRoot's own source (moved from Program.cs to
+        // AlRunner/ProgramSupport/Provisioning.cs by #2665 -- still called unqualified
+        // from Program.cs's top-level flow via `using static AlRunner.ProgramSupport;`)
+        // and assert its body is a one-line delegation, not a second copy of the
+        // walk-up loop. A behavioral test alone (spawn the runner, check which root it
+        // picks) cannot distinguish "calls the shared implementation" from "still
+        // carries its own byte-identical copy" — both produce the same observable
+        // output. Only reading the source proves there is genuinely ONE implementation
+        // now.
         var repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
-        var programCsPath = Path.Combine(repoRoot, "AlRunner", "Program.cs");
-        Assert.True(File.Exists(programCsPath), $"expected to find {programCsPath}");
-        var source = File.ReadAllText(programCsPath);
+        var sourcePath = Path.Combine(repoRoot, "AlRunner", "ProgramSupport", "Provisioning.cs");
+        Assert.True(File.Exists(sourcePath), $"expected to find {sourcePath}");
+        var source = File.ReadAllText(sourcePath);
 
-        var marker = "static string? FindBucketRoot(string bundlePath)";
+        var marker = "internal static string? FindBucketRoot(string bundlePath)";
         var idx = source.IndexOf(marker, StringComparison.Ordinal);
-        Assert.True(idx >= 0, "expected a FindBucketRoot local function declaration in Program.cs");
+        Assert.True(idx >= 0, "expected a FindBucketRoot declaration in ProgramSupport/Provisioning.cs");
 
         // Grab a window of source starting at the declaration, long enough to contain
         // either the old multi-line walk-up loop or the new one-line delegation, but
