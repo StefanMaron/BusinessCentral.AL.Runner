@@ -159,4 +159,17 @@ public static class CacheRoots
         _override = null;
         _throwawayRoot = null;
     }
+
+    /// <summary>
+    /// The roots under which this run writes packages it built FROM SOURCE — SiblingCompile's
+    /// synthesized workspace dirs (both <c>RunLayeredPrePass</c> and
+    /// <c>BuildSiblingSourceDeps</c> write under "workspace-deps"). Handed to
+    /// <see cref="AlRunner.DependencyResolver"/> so a source build outranks a packaged copy of
+    /// the same app instead of losing to it on version (#2688). A root rather than the
+    /// per-request list of dirs: the resolver matches by path prefix, and a per-request list
+    /// leaves a PRIOR request's dirs unmarked in a warm --server/--watch session, which is the
+    /// same scoping mistake Program.cs's selectionEnvironmentKey comment records.
+    /// </summary>
+    public static IReadOnlyList<string> SourceBuiltPackageDirs()
+        => new[] { Resolve("workspace-deps") };
 }

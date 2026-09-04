@@ -538,7 +538,7 @@ internal static partial class ProgramSupport
                         .Concat(implAlpackagesDirs)
                         .Distinct(StringComparer.OrdinalIgnoreCase)
                         .ToList();
-                    var implResolver = new DependencyResolver(implResolveDirs);
+                    var implResolver = new DependencyResolver(implResolveDirs, AlRunner.Infrastructure.CacheRoots.SourceBuiltPackageDirs());
                     var implDeps = implResolver.Resolve(implId.Dependencies);
                     BcCompiler.SetResolvedDeps(implDeps, implSymbolDirs);
                     // AFTER SetResolvedDeps, which resets _extraSymbolDirs. Passing an empty
@@ -847,7 +847,7 @@ internal static partial class ProgramSupport
                 .Concat(priorDepDirs)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
-            var depResolver = new DependencyResolver(depResolveDirs);
+            var depResolver = new DependencyResolver(depResolveDirs, AlRunner.Infrastructure.CacheRoots.SourceBuiltPackageDirs());
             var resolvedDepDeps = depResolver.Resolve(sid.Dependencies);
             BcCompiler.SetResolvedDeps(resolvedDepDeps, resolveDirs);
             // AFTER SetResolvedDeps, which resets _extraSymbolDirs.

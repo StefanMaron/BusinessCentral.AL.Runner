@@ -2054,7 +2054,7 @@ foreach (var bundle in bundles)
                     bundlePkgDirs = AlRunner.Infrastructure.SafeDirectoryScan.Directories(depRootDir, ".alpackages")
                         .ToList();
                 var resolverDirs = bundlePkgDirs.Concat(packageCacheDirs).Distinct().ToList();
-                var resolver = new DependencyResolver(resolverDirs);
+                var resolver = new DependencyResolver(resolverDirs, AlRunner.Infrastructure.CacheRoots.SourceBuiltPackageDirs());
                 IReadOnlyList<(AlRunner.AppManifest Manifest, string AppPath)> ordered;
                 using (AlRunner.Infrastructure.PhaseLog.Stage("dep-resolve"))
                     ordered = resolver.Resolve(roots);
@@ -4029,7 +4029,7 @@ return strictExitCode ? computedExitCode : 0;
                 var bundlePkgDirs = AlRunner.Infrastructure.SafeDirectoryScan.Directories(bucketRoot, ".alpackages")
                     .ToList();
                 var resolverDirs = bundlePkgDirs.Concat(effectivePkgDirs).Distinct().ToList();
-                var resolver = new DependencyResolver(resolverDirs);
+                var resolver = new DependencyResolver(resolverDirs, AlRunner.Infrastructure.CacheRoots.SourceBuiltPackageDirs());
                 ordered = resolver.Resolve(roots);
                 AlRunner.Infrastructure.PhaseLog.NoteDepsResolved(ordered.Count);
                 BcCompiler.SetResolvedDeps(ordered, resolverDirs);
