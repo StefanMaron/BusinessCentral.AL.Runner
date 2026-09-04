@@ -231,6 +231,7 @@ bool printClassification = false;
 bool outputJson = false;
 string? outputJunitPath = null;
 int jobs = 1;   // --jobs N: fan out across N worker processes (#2280)
+var excludeTests = new List<string>();   // --exclude-test: skip these, so a run can resume past a watchdog abort (#2280)
 // --coverage: statement-level coverage via BC's own StmtHit instrumentation (issue
 // #1922, first slice of #1640). Writes Cobertura XML to --coverage-out (default
 // cobertura.xml in the working directory) after the run, plus a console table.
@@ -425,6 +426,7 @@ for (int i = 0; i < args.Length; i++)
         }
         continue;
     }
+    if (args[i] == "--exclude-test" && i + 1 < args.Length) { excludeTests.Add(args[++i]); continue; }
     if (args[i] == "--coverage")
     {
         coverageEnabled = true;
@@ -1743,6 +1745,12 @@ AlRunner.PerfTrace.Log($"BcRuntime.EnsureApplied {t0.ElapsedMilliseconds}ms");
 var emitter = new BcCompiler();
 var assembler = new BcAssembler();
 var executor = new TestExecutor { Isolation = isolation, TestFilter = testFilter, TimeoutSeconds = testTimeoutSeconds, Expectations = expectations };
+// --exclude-test: the only way to reach tests a watchdog abort abandoned. TestExecutor stops
+// the whole suite when a test hangs — correctly, since the hung thread is never killed and
+// keeps mutating shared BC state — so those tests are reachable only from a fresh process that
+// skips the offender by name (#2280).
+if (excludeTests.Count > 0)
+    executor.Exclusions = new AlRunner.Infrastructure.TestExclusionFilter(excludeTests);
 var depLoader = new DependencyLoader(emitter, assembler);
 var results = new List<BucketResult>();
 // --tdd (issue #2001) acceptance criterion 8: every member generated across the WHOLE run
