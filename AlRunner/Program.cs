@@ -232,6 +232,9 @@ bool outputJson = false;
 string? outputJunitPath = null;
 int jobs = 1;   // --jobs N: fan out across N worker processes (#2280)
 var excludeTests = new List<string>();   // --exclude-test: skip these, so a run can resume past a watchdog abort (#2280)
+int resumeAborts = AlRunner.Infrastructure.AbortResume.DefaultBudget;
+var excludeTests = new List<string>();
+var allAbortReasons = new List<string>();   // #2280: watchdog aborts seen this run, for auto-resume   // --exclude-test: skip these, so a run can resume past a watchdog abort (#2280)
 // --coverage: statement-level coverage via BC's own StmtHit instrumentation (issue
 // #1922, first slice of #1640). Writes Cobertura XML to --coverage-out (default
 // cobertura.xml in the working directory) after the run, plus a console table.
@@ -427,6 +430,15 @@ for (int i = 0; i < args.Length; i++)
         continue;
     }
     if (args[i] == "--exclude-test" && i + 1 < args.Length) { excludeTests.Add(args[++i]); continue; }
+    if (args[i] == "--resume-aborts" && i + 1 < args.Length)
+    {
+        if (!int.TryParse(args[++i], out resumeAborts) || resumeAborts < 0)
+        {
+            Console.Error.WriteLine("--resume-aborts expects a non-negative integer.");
+            return 2;
+        }
+        continue;
+    }
     if (args[i] == "--coverage")
     {
         coverageEnabled = true;
@@ -3123,6 +3135,7 @@ foreach (var bundle in bundles)
                 // CompileErrors check) both reflect the abandoned tests.
                 if (executor.AbortReasons.Count > 0)
                     bundleErrors.AddRange(executor.AbortReasons.Select(r => $"{rel}: TEST-TIMEOUT-ABORT: {r}"));
+                    allAbortReasons.AddRange(executor.AbortReasons);
             }
             catch (Exception ex)
             {
@@ -3250,6 +3263,7 @@ foreach (var bundle in bundles)
                 // never sees it.
                 if (executor.AbortReasons.Count > 0)
                     bundleErrors.AddRange(executor.AbortReasons.Select(r => $"{suiteName}: TEST-TIMEOUT-ABORT: {r}"));
+                    allAbortReasons.AddRange(executor.AbortReasons);
             }
             catch (Exception ex)
             {
@@ -3542,6 +3556,20 @@ else
     if (printClassification)
         Reporter.PrintFailureClassification(results, Console.Out);
     Reporter.PrintSummary(results, Console.Out);
+}
+
+// #2280: one hung codeunit must not take the whole run down. TestExecutor abandons the rest of
+// the bundle when a test's watchdog fires — correctly, because the hung thread is never killed
+// and keeps mutating shared BC state — so the abandoned tests are only reachable from a FRESH
+// process. Re-run there with the hung codeunit excluded, and let that process resume again if it
+// hits a different hang. A resumed attempt re-runs the bundle from the start, so its result
+// REPLACES this one rather than needing to be merged into it; the excluded codeunits are named
+// so the total is not mistaken for a complete one.
+if (resumeAborts > 0
+    && AlRunner.Infrastructure.AbortResumePlan.MakesProgress(allAbortReasons, excludeTests))
+{
+    var nextExclusions = AlRunner.Infrastructure.AbortResumePlan.NextExclusions(allAbortReasons, excludeTests);
+    return AlRunner.Infrastructure.AbortResume.Rerun(args, nextExclusions, resumeAborts - 1);
 }
 if (tddMode)
 {

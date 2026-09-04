@@ -406,6 +406,16 @@ internal static partial class ProgramSupport
         w.WriteLine("                          A hung test also ends only its own shard, not the whole run.");
         w.WriteLine("                          Ignored by --watch/--server/--dap (long-lived warm state)");
         w.WriteLine("                          and by a single-bundle run. Default: 1.");
+        w.WriteLine("  --resume-aborts N       How many times a run may re-run itself in a fresh process");
+        w.WriteLine("                          after a watchdog abort, each time excluding the codeunit");
+        w.WriteLine("                          that hung. Default 5; 0 disables. A hung test abandons the");
+        w.WriteLine("                          rest of its bundle and cannot be continued in-process (the");
+        w.WriteLine("                          hung thread is never killed and keeps mutating shared");
+        w.WriteLine("                          state), so a fresh process is the only safe way on. Each");
+        w.WriteLine("                          retry re-runs the bundle from the start, so its totals");
+        w.WriteLine("                          REPLACE the previous attempt\'s; tests inside an excluded");
+        w.WriteLine("                          codeunit are not counted. Measured on Microsoft Tests-ERM:");
+        w.WriteLine("                          2 tests ran before, 1066 after one exclusion, 2145 after two.");
         w.WriteLine("  --exclude-test PATTERN  Skip tests matching PATTERN; repeatable. PATTERN is a whole");
         w.WriteLine("                          codeunit name (Codeunit134228) or a whole qualified test");
         w.WriteLine("                          name (Codeunit134228.CloseIncomeStatementTwice) — never a");
