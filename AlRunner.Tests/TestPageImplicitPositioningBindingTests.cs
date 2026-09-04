@@ -53,10 +53,14 @@ public sealed class TestPageImplicitPositioningBindingTests
     public void GetPage_PositionsTheNewlyBuiltLiveNavTestPage()
     {
         var m = Load(typeof(RunnerTestClientSession), "GetPage");
-        Assert.True(Calls(m, "MoveFirst"),
-            "RunnerTestClientSession.GetPage must call LiveNavTestPage.MoveFirst() so a page " +
-            "handed to a [PageHandler]/[ModalPageHandler] is positioned the moment it is built, " +
-            "the same way a real client positions a page the instant it opens.");
+        // Issue #2656: the initial position now goes through MoveFirstDuringOpen(), a thin
+        // wrapper that suppresses TestPage-error-teardown for this one call (see MockTestPage.cs
+        // _suppressTeardownOnLoad) and calls MoveFirst() itself internally -- so the IL here
+        // calls MoveFirstDuringOpen, not MoveFirst, directly.
+        Assert.True(Calls(m, "MoveFirstDuringOpen"),
+            "RunnerTestClientSession.GetPage must call LiveNavTestPage.MoveFirstDuringOpen() so a " +
+            "page handed to a [PageHandler]/[ModalPageHandler] is positioned the moment it is " +
+            "built, the same way a real client positions a page the instant it opens.");
     }
 
     // RunnerTestPageState.MarkOpened is the twin construction site: a TestPage the AL TEST
@@ -65,11 +69,13 @@ public sealed class TestPageImplicitPositioningBindingTests
     public void MarkOpened_PositionsAPageOpenedInEditOrViewMode()
     {
         var m = Load(typeof(RunnerTestPageState), "MarkOpened");
-        Assert.True(Calls(m, "MoveFirst"),
-            "RunnerTestPageState.MarkOpened must call LiveNavTestPage.MoveFirst() for a page " +
-            "opened in Edit/View mode, mirroring the Create-mode branch's InsertEmptyRow call " +
-            "just above it — otherwise a page a TEST opens itself sits on no row until the AL " +
-            "explicitly navigates, same defect as the [PageHandler] construction site.");
+        // Issue #2656: see the comment on GetPage_PositionsTheNewlyBuiltLiveNavTestPage above --
+        // same MoveFirstDuringOpen() wrapping applies here.
+        Assert.True(Calls(m, "MoveFirstDuringOpen"),
+            "RunnerTestPageState.MarkOpened must call LiveNavTestPage.MoveFirstDuringOpen() for a " +
+            "page opened in Edit/View mode, mirroring the Create-mode branch's InsertEmptyRow " +
+            "call just above it — otherwise a page a TEST opens itself sits on no row until the " +
+            "AL explicitly navigates, same defect as the [PageHandler] construction site.");
     }
 
     // The fallback itself: an empty MoveFirst() must not just refuse — it must land on the

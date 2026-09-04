@@ -35,7 +35,20 @@ public sealed class TestPageErrorTeardownContractTests
         var repoRoot = Path.GetFullPath(Path.Combine(dir, "..", "..", "..", ".."));
         var path = Path.Combine(repoRoot, "AlRunner", "Patches", "MockTestPage.cs");
         Assert.True(File.Exists(path), $"expected to find {path}");
-        return File.ReadAllText(path);
+
+        // CI (Linux, heavy parallel load from other AlRunner.Tests classes spawning the runner
+        // as a subprocess) has measured a transient short/stale read of this ~2700-line source
+        // file that does not reproduce locally -- retry a few times before failing so a genuine
+        // absence (the actual defect this test exists to catch) is not masked by environment
+        // flake, but a one-off partial read is.
+        string? text = null;
+        for (var attempt = 0; attempt < 5; attempt++)
+        {
+            text = File.ReadAllText(path);
+            if (text.Contains("private bool Loaded(bool found)", StringComparison.Ordinal)) break;
+            System.Threading.Thread.Sleep(200);
+        }
+        return text!;
     }
 
     [Fact]

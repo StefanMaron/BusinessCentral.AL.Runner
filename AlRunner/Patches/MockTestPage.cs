@@ -548,14 +548,17 @@ internal class LiveNavTestPage : MockITestPage
     private bool _tornDown;
 
     // Set only around the page-construction-time initial positioning call (MarkOpened /
-    // RunnerTestClientSession.GetPage's own MoveFirst()) -- BOTH of those already run inside a
-    // blanket `catch { }` that swallows whatever Loaded() throws (a pre-existing, separate gap:
-    // real BC's OpenView() propagates that first row's own trigger error, catchable by
-    // asserterror, rather than swallowing it -- not this issue's scope). Teardown must not
-    // apply there: the page never finished a first successful position, so treating that
-    // swallowed failure as "the page tore down" would leave every LATER, otherwise-unrelated
-    // call on a freshly-opened page wrongly answering "The TestPage is not open." even though,
-    // from the AL test's own point of view, OpenView()/RunModal() appeared to succeed.
+    // RunnerTestClientSession.GetPage's own MoveFirst()). MarkOpened's caller wraps it in a
+    // blanket `catch { }` that would swallow whatever Loaded() throws there; GetPage's is not
+    // similarly guarded on the runner side (its caller is precompiled BC dispatch via
+    // TestClientProxy<ITestPage>.Proxy, not audited here). Either way, teardown must not apply
+    // during this call: the page never finished a first successful position, so treating a
+    // failure there as "the page tore down" would leave every LATER, otherwise-unrelated call
+    // on a freshly-adopted page wrongly answering "The TestPage is not open." -- for MarkOpened
+    // specifically, that would follow a failure that never became AL-visible in the first
+    // place (a pre-existing, separate gap: real BC's OpenView() propagates that first row's own
+    // trigger error, catchable by asserterror, rather than swallowing it -- not this issue's
+    // scope).
     private bool _suppressTeardownOnLoad;
 
     /// <summary>
