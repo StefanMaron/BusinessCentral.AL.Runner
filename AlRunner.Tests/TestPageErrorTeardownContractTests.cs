@@ -1,8 +1,8 @@
 // TestPageErrorTeardownContractTests — pins the C# CONTRACT issue #2656's fix depends on,
 // not "what BC does" (that's the job of the companion corpus PR,
-// StefanMaron/BusinessCentral.AL.Language.Tests#142, which proves the AL-observable behavior
-// against a real BC 28.4 service tier -- 5/5 tests green -- and adjudicated 8/8 legs on the
-// pre-existing codeunit 60793 "Test Page BgTask Tests" test this fix also flips GREEN).
+// StefanMaron/BusinessCentral.AL.Language.Tests#142, merged, codeunit 60795 "TestPage
+// ErrTeardown Tests", 5/5 -- and the pre-existing codeunit 60793 "Test Page BgTask Tests"
+// EnqueueBackgroundTask_UnhandledErrorPropagates this fix also flips GREEN).
 //
 // Measured against a real BC service tier: an unhandled error raised inside a page's
 // OnAfterGetRecord trigger, fired by a TestPage navigation call (GoToRecord, MoveNext, ...)
@@ -13,133 +13,157 @@
 // page open.
 //
 // There is no reflection surface that exercises MockTestPage's dispatch without a loaded BC
-// runtime/session (it is constructed only from inside a live NavTestPage), so what's provable
-// here is that the source carries the mechanism: Loaded() catches the trigger's exception,
-// sets the teardown flag, and discards the original error in favor of BC's own message; and
-// every other public entry point a torn-down TestPage could still reach (RequireRecord --
-// covering Move*/GoToBookmark/FindRowFromTableFieldValues/SetFilter/GetFilter -- plus Close,
-// GetField, GetAction, GetPart, GetBuiltInAction) refuses by the same mechanism instead of
-// silently proceeding.
-using System;
-using System.IO;
-using System.Text.RegularExpressions;
+// runtime/session, so -- following the same proven pattern as
+// TestPageImplicitPositioningBindingTests (issue #2392) -- this reads the COMPILED IL of the
+// loaded al-runner.dll via Mono.Cecil, not raw source text. A raw-source-text version of this
+// file deterministically failed to find its own search strings when run under this repo's
+// Linux CI (reproduced across 5 retries with delay, ruling out a transient read race); the
+// IL-based approach mirrors a mechanism already proven reliable in that same environment.
+using System.Linq;
+using AlRunner.Patches;
+using Mono.Cecil;
+using Mono.Cecil.Cil;
 using Xunit;
 
 namespace AlRunner.Tests;
 
 public sealed class TestPageErrorTeardownContractTests
 {
-    private static string MockTestPageSource()
+    private static TypeDefinition LiveNavTestPageType()
     {
-        var dir = AppContext.BaseDirectory;
-        var repoRoot = Path.GetFullPath(Path.Combine(dir, "..", "..", "..", ".."));
-        var path = Path.Combine(repoRoot, "AlRunner", "Patches", "MockTestPage.cs");
-        Assert.True(File.Exists(path), $"expected to find {path}");
-
-        // CI (Linux, heavy parallel load from other AlRunner.Tests classes spawning the runner
-        // as a subprocess) has measured a transient short/stale read of this ~2700-line source
-        // file that does not reproduce locally -- retry a few times before failing so a genuine
-        // absence (the actual defect this test exists to catch) is not masked by environment
-        // flake, but a one-off partial read is.
-        string? text = null;
-        for (var attempt = 0; attempt < 5; attempt++)
-        {
-            text = File.ReadAllText(path);
-            if (text.Contains("private bool Loaded(bool found)", StringComparison.Ordinal)) break;
-            System.Threading.Thread.Sleep(200);
-        }
-        return text!;
+        var path = typeof(AlRunner.LiveNavTestPage).Assembly.Location;
+        var asm = AssemblyDefinition.ReadAssembly(path);
+        var type = asm.MainModule.GetType(typeof(AlRunner.LiveNavTestPage).FullName);
+        Assert.NotNull(type);
+        return type!;
     }
+
+    private static MethodDefinition Method(TypeDefinition type, string name)
+    {
+        var m = type.Methods.FirstOrDefault(x => x.Name == name && x.HasBody);
+        Assert.True(m != null, $"could not locate '{name}' on {type.Name}");
+        return m!;
+    }
+
+    private static bool HasField(TypeDefinition type, string fieldName)
+        => type.Fields.Any(f => f.Name == fieldName);
+
+    private static bool ReadsField(MethodDefinition m, string fieldName)
+        => m.Body.Instructions.Any(i =>
+            (i.OpCode == OpCodes.Ldfld || i.OpCode == OpCodes.Ldsfld)
+            && i.Operand is FieldReference fr && fr.Name == fieldName);
+
+    private static bool WritesField(MethodDefinition m, string fieldName)
+        => m.Body.Instructions.Any(i =>
+            (i.OpCode == OpCodes.Stfld || i.OpCode == OpCodes.Stsfld)
+            && i.Operand is FieldReference fr && fr.Name == fieldName);
+
+    private static bool Calls(MethodDefinition m, string memberName)
+        => m.Body.Instructions.Any(i =>
+            (i.OpCode == OpCodes.Call || i.OpCode == OpCodes.Callvirt)
+            && i.Operand is MethodReference mr && mr.Name == memberName);
 
     [Fact]
-    public void ExceptionMessage_IsBcsOwnNotOpenWording()
+    public void TornDown_And_SuppressTeardownOnLoad_FieldsExist()
     {
-        var source = MockTestPageSource();
-
-        // Measured verbatim against a real BC 28.4 service tier via
-        // StefanMaron/BusinessCentral.AL.Language.Tests#142's local container run.
-        Assert.Contains("\"The TestPage is not open.\"", source, StringComparison.Ordinal);
+        var type = LiveNavTestPageType();
+        Assert.True(HasField(type, "_tornDown"),
+            "LiveNavTestPage must carry a _tornDown flag distinct from _opened (see " +
+            "TornDown_IsDistinctFromOpened below for why they must not be the same flag).");
+        Assert.True(HasField(type, "_suppressTeardownOnLoad"),
+            "LiveNavTestPage must carry a flag suppressing teardown during the page-" +
+            "construction-time initial position (MarkOpened / GetPage's own MoveFirst call) -- " +
+            "see MoveFirstDuringOpen below.");
     }
 
+    // Loaded(bool) -- the single choke point every navigation primitive (MoveFirst/Next/
+    // Previous/Last, GoToBookmark, FindRowFromTableFieldValues via its internal scan) runs
+    // through before firing OnAfterGetRecord/OnAfterGetCurrRecord -- must catch NavBaseException
+    // specifically (real BC's own teardown, NstDataAccess.Abort(NavBaseException exception),
+    // only wraps a genuine AL-catchable error) and, on catch, write _tornDown and call
+    // MakeTestPageNotOpenException -- discarding the trigger's own exception rather than
+    // propagating it, UNLESS _suppressTeardownOnLoad is set (the initial-open-time exemption).
     [Fact]
-    public void Loaded_DiscardsTheTriggersOwnErrorAndTearsDown()
+    public void Loaded_CatchesOnlyNavBaseExceptionAndTearsDown()
     {
-        var source = MockTestPageSource();
-        var start = source.IndexOf("private bool Loaded(bool found)", StringComparison.Ordinal);
-        Assert.True(start >= 0, "could not locate Loaded(bool) in MockTestPage.cs");
-        var body = source.Substring(start, Math.Min(2000, source.Length - start));
+        var type = LiveNavTestPageType();
+        var m = Method(type, "Loaded");
 
-        // The trigger call must be wrapped in a try/catch that sets the teardown flag and
-        // throws BC's own exception instead of letting the trigger's own error propagate.
-        Assert.True(
-            Regex.IsMatch(body, @"try\s*\{\s*_page\?\.RaiseOnAfterGetRecord\(\);\s*\}\s*(//[^\n]*\n\s*)*catch"),
-            "Loaded() no longer wraps RaiseOnAfterGetRecord() in a try/catch -- this reintroduces " +
-            "#2656's defect of propagating the trigger's own error text instead of tearing the " +
-            "TestPage down.");
-        // Only NavBaseException -- a RunnerOutOfScopeException (plain System.Exception, never
-        // NavBaseException) or a genuine runner NRE must propagate unmodified, not be relabelled
-        // as "The TestPage is not open." (.claude/rules/loud-failures.md).
-        Assert.Contains("catch (NavBaseException ex)", body, StringComparison.Ordinal);
-        Assert.Contains("_tornDown = true;", body, StringComparison.Ordinal);
-        Assert.Contains("throw MakeTestPageNotOpenException(ex);", body, StringComparison.Ordinal);
+        var handler = m.Body.ExceptionHandlers.FirstOrDefault(
+            h => h.HandlerType == ExceptionHandlerType.Catch
+                 && h.CatchType is { } ct && ct.Name == "NavBaseException");
+        Assert.True(handler != null,
+            "Loaded(bool) must catch NavBaseException specifically -- a bare `catch` would also " +
+            "catch RunnerOutOfScopeException (plain System.Exception, never NavBaseException -- " +
+            "see NavDotNetPatches.cs) and a genuine runner NRE, relabelling either as " +
+            "\"The TestPage is not open.\" instead of letting it propagate (.claude/rules/" +
+            "loud-failures.md).");
+
+        Assert.True(ReadsField(m, "_suppressTeardownOnLoad"),
+            "Loaded(bool)'s catch must check _suppressTeardownOnLoad and rethrow unmodified " +
+            "during the page-construction-time initial position -- otherwise a swallowed " +
+            "first-row failure (MarkOpened's own blanket catch{}) would leave the page silently, " +
+            "permanently unusable from the AL test's own point of view.");
+        Assert.True(WritesField(m, "_tornDown"),
+            "Loaded(bool)'s catch must set _tornDown so later calls on the same TestPage " +
+            "variable refuse instead of silently proceeding.");
+        Assert.True(Calls(m, "MakeTestPageNotOpenException"),
+            "Loaded(bool)'s catch must construct BC's own not-open exception instead of letting " +
+            "the trigger's own error text propagate.");
     }
 
-    [Fact]
-    public void Loaded_DoesNotTearDownDuringTheInitialOpenTimePosition()
-    {
-        var source = MockTestPageSource();
-        var start = source.IndexOf("private bool Loaded(bool found)", StringComparison.Ordinal);
-        Assert.True(start >= 0, "could not locate Loaded(bool) in MockTestPage.cs");
-        var body = source.Substring(start, Math.Min(2000, source.Length - start));
-
-        // MarkOpened / RunnerTestClientSession.GetPage's own initial positioning call already
-        // runs inside a blanket catch{} that swallows whatever this throws -- teardown must not
-        // apply there, or a swallowed first-row failure would leave the page permanently
-        // (and silently, from the AL test's point of view) unusable afterward.
-        Assert.Contains("if (_suppressTeardownOnLoad) throw;", body, StringComparison.Ordinal);
-        Assert.Contains("internal bool MoveFirstDuringOpen()", source, StringComparison.Ordinal);
-    }
-
-    [Theory]
-    // Every other entry point a torn-down TestPage could still reach must refuse by the same
-    // mechanism -- RequireRecord is the single choke point for Move*/GoToBookmark/
+    // Every other entry point a torn-down TestPage could still reach must refuse the same way --
+    // RequireRecord is the single choke point for Move*/GoToBookmark/
     // FindRowFromTableFieldValues/SetFilter/GetFilter/field reads; Close/GetField/GetAction/
-    // GetPart/GetBuiltInAction do not route through RequireRecord and need their own guard.
-    [InlineData("protected internal NavRecord RequireRecord(string what)")]
-    [InlineData("public override void Close()")]
-    [InlineData("public override ITestField GetField(int id)")]
-    [InlineData("public override ITestAction GetAction(int actionId)")]
-    [InlineData("public override ITestPart GetPart(int controlId)")]
-    [InlineData("public override ITestAction GetBuiltInAction(FormResult formResult)")]
-    public void EntryPoint_RefusesWhenTornDown(string signature)
+    // GetPart/GetBuiltInAction do not route through RequireRecord and need their own guard,
+    // because BC's own CheckPageOpened gate (which would normally do this uniformly) is
+    // Cecil-neutralised to a no-op for an unrelated reason (NclCecilRewrite.Forms.cs, fix #3).
+    [Theory]
+    [InlineData("RequireRecord")]
+    [InlineData("Close")]
+    [InlineData("GetField")]
+    [InlineData("GetAction")]
+    [InlineData("GetPart")]
+    [InlineData("GetBuiltInAction")]
+    public void EntryPoint_RefusesWhenTornDown(string methodName)
     {
-        var source = MockTestPageSource();
-        var start = source.IndexOf(signature, StringComparison.Ordinal);
-        Assert.True(start >= 0, $"could not locate '{signature}' in MockTestPage.cs");
-        var body = source.Substring(start, Math.Min(400, source.Length - start));
-
-        Assert.True(
-            body.Contains("_tornDown", StringComparison.Ordinal) &&
-            body.Contains("MakeTestPageNotOpenException()", StringComparison.Ordinal),
-            $"'{signature}' does not guard on _tornDown / MakeTestPageNotOpenException() -- a " +
+        var type = LiveNavTestPageType();
+        var m = Method(type, methodName);
+        Assert.True(ReadsField(m, "_tornDown") && Calls(m, "MakeTestPageNotOpenException"),
+            $"'{methodName}' does not guard on _tornDown / MakeTestPageNotOpenException() -- a " +
             "torn-down TestPage would still answer this call instead of refusing it, unlike " +
             "real BC (#2656).");
     }
 
+    // MoveFirstDuringOpen -- the page-construction-time initial positioning wrapper -- must set
+    // _suppressTeardownOnLoad around its own call to MoveFirst().
+    [Fact]
+    public void MoveFirstDuringOpen_SuppressesTeardownAroundMoveFirst()
+    {
+        var type = LiveNavTestPageType();
+        var m = Method(type, "MoveFirstDuringOpen");
+        Assert.True(WritesField(m, "_suppressTeardownOnLoad"),
+            "MoveFirstDuringOpen() must write _suppressTeardownOnLoad around its MoveFirst() " +
+            "call.");
+        Assert.True(Calls(m, "MoveFirst"),
+            "MoveFirstDuringOpen() must call MoveFirst() -- it is a suppression wrapper, not a " +
+            "replacement.");
+    }
+
+    // _tornDown must be distinct from _opened: real BC's Close() THROWS "not open" after
+    // teardown rather than silently no-opping the way it would for a page that was simply never
+    // opened (NavTestPageBase.Close() only forwards into this class when IsOpened() is true --
+    // itself driven by _opened). If Loaded()'s catch cleared _opened instead of a separate flag,
+    // Close() would stop being dispatched here at all and could never raise the "not open" error
+    // this fix exists to produce.
     [Fact]
     public void TornDown_IsDistinctFromOpened()
     {
-        var source = MockTestPageSource();
-        var start = source.IndexOf("private bool Loaded(bool found)", StringComparison.Ordinal);
-        Assert.True(start >= 0, "could not locate Loaded(bool) in MockTestPage.cs");
-        var body = source.Substring(start, Math.Min(2000, source.Length - start));
-
-        // _opened must stay TRUE across a teardown -- real BC's Close() THROWS "not open"
-        // after teardown rather than silently no-opping the way it would for a page that was
-        // simply never opened (NavTestPageBase.Close() only forwards into this class when
-        // IsOpened() is true). If teardown cleared _opened instead of a separate flag, Close()
-        // would stop being dispatched here at all and the throw below would never run.
-        Assert.DoesNotContain("_opened = false", body, StringComparison.Ordinal);
-        Assert.Contains("private bool _tornDown;", source, StringComparison.Ordinal);
+        var type = LiveNavTestPageType();
+        var m = Method(type, "Loaded");
+        Assert.False(WritesField(m, "_opened"),
+            "Loaded(bool) must not write _opened -- teardown is tracked by the separate " +
+            "_tornDown flag so Close() still forwards into this class and can raise \"The " +
+            "TestPage is not open.\" instead of silently no-opping.");
     }
 }
