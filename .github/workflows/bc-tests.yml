@@ -114,10 +114,16 @@ jobs:
               # The contrast is runner-extras, which stays on all 8: it has 6
               # VERSION-SPLIT failures in the same 25 runs, because some AL surfaces are
               # gated on preprocessor symbols only defined from 28.0 on. That 27-vs-28
-              # boundary is also why this is two legs and not one — 28.1 is the primary
-              # version, 27.5 covers the other side of the only demonstrated split.
+              # boundary is also why this is two legs and not one, and why they are the
+              # NEWEST minor of each major rather than the primary 28.1: the one failure
+              # mode that does discriminate by version shows up on the newest build
+              # first. A BC service update once rerouted callers past a Cecil rewrite and
+              # produced 53 failures on the newer build alone, and a rewrite that stops
+              # being reached fails silently — behaviour just reverts to BC's own, with
+              # nothing announcing it. Update this list when a minor is added to
+              # .github/bc-versions.txt.
               UNIT=False
-              case "$prefix" in 28.1|27.5) UNIT=True ;; esac
+              case "$prefix" in 28.4|27.5) UNIT=True ;; esac
               echo "  $prefix -> $FULL (required=$REQ, unit-tests=$UNIT)"
               ENTRIES=$(echo "$ENTRIES" | python3 -c "import json,sys; v=json.load(sys.stdin); v.append({'bc-version':'$FULL','required':$REQ,'unit-tests':$UNIT}); print(json.dumps(v))")
             else
