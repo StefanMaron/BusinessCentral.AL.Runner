@@ -246,13 +246,6 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             // (BC engine cold-start + AL emit/compile once). Measured 63.9s in CI.
             ["TestPageBooleanRecBoundDispatchTests"] = 63,
             ["ServerTestIsolationTests"] = 69,
-            // #2555: absent from this table before, fell back to UnmeasuredWeightSeconds;
-            // measured 63.0s on the BC 28.3 leg of the PR that added two more
-            // subprocess-spawning test classes to this suite (CacheRootsDisableForRunTests,
-            // NoCacheLastWinsIntegrationTests) — the added 4-way-parallel contention was
-            // enough to tip this collection over the 60s freshness threshold and trip
-            // check-collection-weights.py, the same #1887 pattern as the entries around it.
-            ["ServerAffectedSelectionTests"] = 63,
             ["ServerStreamingTests"] = 50,
             ["ExpectationManifestWiringTests"] = 47,
             ["LayeredCacheTests"] = 46,
