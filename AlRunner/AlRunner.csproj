@@ -89,7 +89,7 @@
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>al-runner</ToolCommandName>
     <PackageId>MSDyn365BC.AL.Runner</PackageId>
-    <Version>2.0.0-preview.1</Version>
+    <Version>0.0.0-main</Version>
     <Description>Run Business Central AL unit tests in milliseconds — no BC service tier, no Docker, no SQL Server, no license.</Description>
     <Authors>Stefan Maron</Authors>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
