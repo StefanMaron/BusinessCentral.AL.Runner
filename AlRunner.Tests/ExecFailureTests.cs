@@ -106,4 +106,65 @@ public sealed class ExecFailureTests
         Assert.Equal("App: EXEC-FAIL: Unable to load.", line);
         Assert.DoesNotContain("—", line, StringComparison.Ordinal);
     }
+
+    // ── TargetInvocationException: the wrapper that names nothing ──────────────
+    //
+    // Reflection-invoked test entry points surface every failure as
+    // TargetInvocationException, whose own message is the fixed string "Exception has been
+    // thrown by the target of an invocation." — it names no app, no API and no cause, and the
+    // real exception is on InnerException. Describe unwrapped ReflectionTypeLoadException for
+    // exactly this reason and stopped there, so a whole bucket could report one useless line.
+    //
+    // Measured on Microsoft's Tests-SINGLESERVER bucket (BC 28.1): the entire bucket's only
+    // diagnostic was "Tests-SINGLESERVER: EXEC-FAIL: Exception has been thrown by the target of
+    // an invocation.", with nothing more under --verbose.
+
+    /// <summary>The wrapper's fixed message must be replaced by the inner cause, not printed.</summary>
+    [Fact]
+    public void Describe_UnwrapsTargetInvocationException_AndReportsTheRealCause()
+    {
+        var line = ExecFailure.Describe("Tests-SINGLESERVER",
+            new TargetInvocationException(new InvalidOperationException("Company 'CRONUS' does not exist")));
+
+        Assert.Equal("Tests-SINGLESERVER: EXEC-FAIL: Company 'CRONUS' does not exist", line);
+        Assert.DoesNotContain("target of an invocation", line, StringComparison.Ordinal);
+    }
+
+    /// <summary>Nested wrappers unwrap all the way down — reflection over reflection is common
+    /// on the test-invocation path, and stopping at the first level just prints a second
+    /// wrapper's equally contentless message.</summary>
+    [Fact]
+    public void Describe_UnwrapsNestedTargetInvocationExceptions()
+    {
+        var line = ExecFailure.Describe("App",
+            new TargetInvocationException(new TargetInvocationException(new DivideByZeroException("real cause"))));
+
+        Assert.Equal("App: EXEC-FAIL: real cause", line);
+    }
+
+    /// <summary>Negative: a TargetInvocationException with NO inner exception has nothing better
+    /// to say, so its own message must still be reported rather than producing an empty line.</summary>
+    [Fact]
+    public void Describe_KeepsTheWrapperMessage_WhenThereIsNoInnerException()
+    {
+        var line = ExecFailure.Describe("App", new TargetInvocationException(null));
+
+        Assert.StartsWith("App: EXEC-FAIL: ", line, StringComparison.Ordinal);
+        Assert.True(line.Length > "App: EXEC-FAIL: ".Length, "the line must still carry a message");
+    }
+
+    /// <summary>Negative: unwrapping must not lose the ReflectionTypeLoadException handling that
+    /// already worked — a RTLE reached THROUGH a TargetInvocationException must still have its
+    /// LoaderExceptions quoted, which is the whole diagnosis in that case.</summary>
+    [Fact]
+    public void Describe_StillQuotesLoaderExceptions_WhenReachedThroughATargetInvocationException()
+    {
+        var rtle = new ReflectionTypeLoadException(
+            new Type[] { null! },
+            new Exception?[] { new FileNotFoundException("Contoso.Dep.dll not found") });
+
+        var line = ExecFailure.Describe("App", new TargetInvocationException(rtle));
+
+        Assert.Contains("Contoso.Dep.dll not found", line, StringComparison.Ordinal);
+    }
 }
