@@ -233,6 +233,7 @@ string? outputJunitPath = null;
 int jobs = 1;   // --jobs N: fan out across N worker processes (#2280)
 int resumeAborts = AlRunner.Infrastructure.AbortResume.DefaultBudget;   // #2280: resume past a watchdog abort
 var excludeTests = new List<string>();   // --exclude-test: skip these, so a run can resume past a watchdog abort (#2280)
+var mergeCountsFiles = new List<string>();   // #2280: totals carried in from earlier resume attempts
 var allAbortReasons = new List<string>();   // #2280: watchdog aborts seen this run, for auto-resume
 // --coverage: statement-level coverage via BC's own StmtHit instrumentation (issue
 // #1922, first slice of #1640). Writes Cobertura XML to --coverage-out (default
@@ -429,6 +430,7 @@ for (int i = 0; i < args.Length; i++)
         continue;
     }
     if (args[i] == "--exclude-test" && i + 1 < args.Length) { excludeTests.Add(args[++i]); continue; }
+    if (args[i] == "--merge-counts" && i + 1 < args.Length) { mergeCountsFiles.Add(args[++i]); continue; }
     if (args[i] == "--resume-aborts" && i + 1 < args.Length)
     {
         if (!int.TryParse(args[++i], out resumeAborts) || resumeAborts < 0)
@@ -3554,7 +3556,7 @@ else
     Reporter.PrintPerTest(results, Console.Out, showPass);
     if (printClassification)
         Reporter.PrintFailureClassification(results, Console.Out);
-    Reporter.PrintSummary(results, Console.Out);
+    Reporter.PrintSummary(results, Console.Out, ProgramSupport.CarriedFromEarlierAttempts(mergeCountsFiles));
 }
 
 // #2280: one hung codeunit must not take the whole run down. TestExecutor abandons the rest of
@@ -3567,8 +3569,24 @@ else
 if (resumeAborts > 0
     && AlRunner.Infrastructure.AbortResumePlan.MakesProgress(allAbortReasons, excludeTests))
 {
-    var nextExclusions = AlRunner.Infrastructure.AbortResumePlan.NextExclusions(allAbortReasons, excludeTests);
-    return AlRunner.Infrastructure.AbortResume.Rerun(args, nextExclusions, resumeAborts - 1);
+    // Exclude every codeunit already ATTEMPTED, not just the hung one, so the retry runs only
+    // work no attempt has reached. Re-running from the start made a bundle pay for its whole
+    // successful prefix again — and under --jobs the unit of retry is the shard, so eight
+    // buckets re-ran because one codeunit in one of them hung.
+    var attemptedTests = results.SelectMany(b => b.Tests).ToList();
+    var nextExclusions = AlRunner.Infrastructure.AbortResumePlan.NextExclusions(
+        allAbortReasons, excludeTests, attemptedTests);
+
+    // This attempt's results are a partial view; carry them forward so the final summary is the
+    // whole run rather than the last slice of it.
+    var carryDir = Path.Combine(Path.GetTempPath(), "al-runner-resume-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(carryDir);
+    var carryPath = Path.Combine(carryDir, "attempt.xml");
+    try { JUnitReport.WriteJUnit(carryPath, results); } catch { carryPath = null!; }
+    var carry = new List<string>(mergeCountsFiles);
+    if (carryPath != null) carry.Add(carryPath);
+
+    return AlRunner.Infrastructure.AbortResume.Rerun(args, nextExclusions, resumeAborts - 1, carry);
 }
 if (tddMode)
 {

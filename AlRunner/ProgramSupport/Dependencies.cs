@@ -561,3 +561,24 @@ internal static partial class ProgramSupport
         }
     }
 }
+
+internal static partial class ProgramSupport
+{
+    /// <summary>
+    /// Sum the totals of JUnit files handed in by --merge-counts: results from earlier attempts
+    /// of this same run, before a watchdog abort forced a resume (#2280). An unreadable file
+    /// contributes zero rather than throwing — the run's own verdict must not depend on a
+    /// carry-forward file, and JUnitCounts already treats a missing/truncated file that way.
+    /// </summary>
+    public static AlRunner.Reporter.CarriedTotals CarriedFromEarlierAttempts(IEnumerable<string> files)
+    {
+        var total = default(AlRunner.Reporter.CarriedTotals);
+        foreach (var f in files)
+        {
+            var t = AlRunner.Infrastructure.JUnitCounts.Read(f);
+            total += new AlRunner.Reporter.CarriedTotals(
+                (int)t.Tests, (int)(t.Tests - t.Failures - t.Errors - t.Skipped), (int)t.Failures, (int)t.Errors);
+        }
+        return total;
+    }
+}

@@ -38,12 +38,24 @@ internal static class AbortResume
     /// </summary>
     public static List<string> BuildChildArgs(
         IReadOnlyList<string> originalArgs, IReadOnlyCollection<string> exclusions, int remainingBudget)
+        => BuildChildArgs(originalArgs, exclusions, remainingBudget, Array.Empty<string>());
+
+    /// <summary>
+    /// As above, plus <paramref name="carryFiles"/> — JUnit files whose totals the child folds
+    /// into its own summary (#2280). A resume runs only the codeunits no attempt has reached, so
+    /// without these the final summary would report the last attempt's slice as the whole run.
+    /// Previous --merge-counts pairs are stripped first, exactly like --exclude-test, so the
+    /// accumulated list replaces rather than appends to itself.
+    /// </summary>
+    public static List<string> BuildChildArgs(
+        IReadOnlyList<string> originalArgs, IReadOnlyCollection<string> exclusions,
+        int remainingBudget, IReadOnlyCollection<string> carryFiles)
     {
         var child = new List<string>();
         for (var i = 0; i < originalArgs.Count; i++)
         {
             var a = originalArgs[i];
-            if (a == "--exclude-test" || a == "--resume-aborts")
+            if (a == "--exclude-test" || a == "--resume-aborts" || a == "--merge-counts")
             {
                 if (i + 1 < originalArgs.Count) i++;
                 continue;
@@ -51,6 +63,7 @@ internal static class AbortResume
             child.Add(a);
         }
         foreach (var e in exclusions) { child.Add("--exclude-test"); child.Add(e); }
+        foreach (var f in carryFiles) { child.Add("--merge-counts"); child.Add(f); }
         child.Add("--resume-aborts");
         child.Add(remainingBudget.ToString());
         return child;
@@ -62,18 +75,20 @@ internal static class AbortResume
     /// for the length of another full attempt would be worse than the abort it is recovering
     /// from.
     /// </summary>
-    public static int Rerun(IReadOnlyList<string> originalArgs, IReadOnlyCollection<string> exclusions, int remainingBudget)
+    public static int Rerun(IReadOnlyList<string> originalArgs, IReadOnlyCollection<string> exclusions,
+        int remainingBudget, IReadOnlyCollection<string>? carryFiles = null)
     {
-        var childArgs = BuildChildArgs(originalArgs, exclusions, remainingBudget);
+        var childArgs = BuildChildArgs(originalArgs, exclusions, remainingBudget,
+            carryFiles ?? Array.Empty<string>());
 
         Console.Error.WriteLine();
         Console.Error.WriteLine(
-            $"resume: a watchdog abort ended this run early. Re-running in a fresh process with "
-            + $"{exclusions.Count} codeunit(s) excluded ({string.Join(", ", exclusions)}); "
+            $"resume: a watchdog abort ended this attempt early. Continuing in a fresh process, "
+            + $"skipping {exclusions.Count} codeunit(s) already attempted or hung; "
             + $"{remainingBudget} resume attempt(s) left after this one.");
         Console.Error.WriteLine(
-            "resume: the retry's totals REPLACE the ones above. Tests inside an excluded codeunit "
-            + "are not counted in them.");
+            "resume: this attempt's totals are carried forward, so the next summary covers the "
+            + "whole run. Tests inside a HUNG codeunit still never ran and are not counted.");
         Console.Error.WriteLine();
 
         var exe = Environment.ProcessPath ?? "dotnet";
@@ -101,9 +116,10 @@ internal static class AbortResume
         // exactly this while the resume was first being written.
         Console.Error.WriteLine();
         Console.Error.WriteLine(
-            $"resume: finished after excluding {exclusions.Count} hung codeunit(s): "
-            + $"{string.Join(", ", exclusions)}. Their tests did NOT run, so this run is not clean "
-            + "however the retry's own totals read.");
+            $"resume: finished. {exclusions.Count} codeunit(s) were skipped on the final attempt — "
+            + "most because an earlier attempt already ran them (their results are carried into the "
+            + "summary), and at least one because it HUNG, whose tests never ran at all. That is why "
+            + "this run is not reported as clean however the final totals read.");
         return p.ExitCode != 0 ? p.ExitCode : 1;
     }
 }
