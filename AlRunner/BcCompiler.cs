@@ -2276,10 +2276,20 @@ public sealed partial class BcCompiler
     /// <paramref name="alFolders"/> carries an app.json, and never searches parent
     /// directories — a neighbouring app's manifest is worse than none (#1948).
     /// </param>
+    /// <param name="trackIncrementalBaseline">
+    /// #2669: when true, records a RAD incremental baseline for <paramref name="moduleName"/>
+    /// on THIS instance after a successful compile — the same mechanism <see cref="Emit"/>'s
+    /// own identically-named parameter uses — so a LATER call to
+    /// <see cref="EmitDepSymbolsIncremental"/> for the same (instance, moduleName) can take
+    /// <see cref="TryEmitIncremental"/>'s fast path instead of repeating this whole-module
+    /// compile. False by default: an ordinary <see cref="EmitDepSymbols"/> call (a fresh
+    /// instance, or a caller that never revisits this dependency) has no use for a baseline
+    /// nobody will read.
+    /// </param>
     public void EmitDepSymbols(
         IEnumerable<string> alFolders, string moduleName,
         Guid appId, string publisher, Version version, string symbolsJsonPath,
-        string? appRootDir = null)
+        string? appRootDir = null, bool trackIncrementalBaseline = false)
     {
         var dirs = alFolders.Where(Directory.Exists).Distinct().ToList();
         var alFiles = dirs
@@ -2426,8 +2436,68 @@ public sealed partial class BcCompiler
         }
 
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(symbolsJsonPath))!);
-        using var fs = new FileStream(symbolsJsonPath, FileMode.Create, FileAccess.Write, FileShare.None);
-        SymbolJsonWriter.WriteSymbolJson(compilation, fs);
+        using (var fs = new FileStream(symbolsJsonPath, FileMode.Create, FileAccess.Write, FileShare.None))
+            SymbolJsonWriter.WriteSymbolJson(compilation, fs);
+
+        // #2669: record a RAD baseline from THIS full compile so a later call to
+        // EmitDepSymbolsIncremental on the SAME instance can take the fast path. `captured`
+        // (runtime C#) is intentionally empty — EmitDepSymbols never generates or needs
+        // runtime C# (that half of a source dependency is served by the DependencyLoader's own
+        // separate compile, see RunLayeredPrePass's Step 2 comment); only ModuleDef (the
+        // compile-time symbol picture TryEmitIncremental keeps merged every cycle) is ever read
+        // back from this baseline.
+        if (trackIncrementalBaseline)
+        {
+            RecordIncrementalBaseline(
+                moduleName, compilation, alFiles, Array.Empty<EmittedSource>(), specs,
+                manifestInputs, foundAppJson, appId, publisher, version, effectiveAppRoot,
+                new BcEmitOutput(Array.Empty<EmittedSource>(), Array.Empty<string>(), Array.Empty<string>()));
+        }
+    }
+
+    /// <summary>
+    /// Incremental-aware synthesis of a dependency's compile-time symbols (<c>*.symbols.json</c>)
+    /// — issue #2669. Tries <see cref="TryEmitIncremental"/> against THIS INSTANCE's RAD baseline
+    /// for <paramref name="moduleName"/> first: cost proportional to what changed since the LAST
+    /// call to this method on the SAME instance, not the whole dependency. Falls back to the
+    /// existing whole-module <see cref="EmitDepSymbols"/> compile for every condition
+    /// <see cref="TryEmitIncremental"/> already falls back for — no baseline yet (always true on
+    /// the first call for a given instance/moduleName pair), an app.json/dependency-set change, a
+    /// file declaring more than one object, a duplicate declaration only the compiler can
+    /// adjudicate, any diagnostic/exception the delta compile raises, or (#2548's guard) an edit
+    /// that could change which overload an UNTOUCHED sibling resolves to — and records a fresh
+    /// baseline afterward so the NEXT call on this instance can take the fast path.
+    ///
+    /// Callers that want the speedup must reuse ONE instance per dependency directory across
+    /// calls — a fresh <c>new BcCompiler()</c> every call (RunLayeredPrePass's and
+    /// BuildSiblingSourceDeps's shape before this fix) always falls back, correctly: there is no
+    /// baseline to diff against on an instance that has never compiled this module before.
+    ///
+    /// On the fast path the written module definition is the SAME merged <c>ModuleDef</c> the RAD
+    /// delta path itself just verified and recorded (via <see cref="TryEmitIncremental"/>'s own
+    /// correctness machinery) — never a naive replay of old bytes, and never stale: an edit this
+    /// path cannot prove safe falls back to a full compile instead of guessing.
+    /// </summary>
+    public void EmitDepSymbolsIncremental(
+        IEnumerable<string> alFolders, string moduleName,
+        Guid appId, string publisher, Version version, string symbolsJsonPath,
+        string? appRootDir, out bool tookFastPath, out string fallbackReason)
+    {
+        var folders = (alFolders as IReadOnlyCollection<string>) ?? alFolders.ToList();
+        var incrementalOutput = TryEmitIncremental(folders, moduleName, appRootDir, out fallbackReason, out _);
+        if (incrementalOutput != null && _radBaselines.TryGetValue(moduleName, out var baseline))
+        {
+            tookFastPath = true;
+            Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(symbolsJsonPath))!);
+            using var fs = new FileStream(symbolsJsonPath, FileMode.Create, FileAccess.Write, FileShare.None);
+            NavSymRef.SymbolReferenceJsonWriter.WriteModule(fs, baseline.ModuleDef);
+            return;
+        }
+
+        tookFastPath = false;
+        EmitDepSymbols(
+            folders, moduleName, appId, publisher, version, symbolsJsonPath, appRootDir,
+            trackIncrementalBaseline: true);
     }
 
     /// <summary>
