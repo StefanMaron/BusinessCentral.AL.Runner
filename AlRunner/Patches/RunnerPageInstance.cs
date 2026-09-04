@@ -451,10 +451,29 @@ internal sealed class RunnerPageInstance
 
         // Raise the part's own OnOpenPage exactly once — the FIRST time ANY caller (the
         // host's own AL touching CurrPage.<part>, or the runner adopting on the TestPage's
-        // behalf) reifies this instance — not once per TestPage-side touch. Issue #2201's
-        // report: with the object now SHARED, running it again on a later touch would
-        // clobber whatever the host's AL already wrote through the same instance.
-        if (!alreadyLive) instance.RaiseOnOpenPage();
+        // behalf) reifies this instance — not once per TestPage-side touch. The
+        // <see cref="_reifiedSubpages"/> cache above is what makes this "exactly once": a
+        // second reification of the SAME subForm returns the cached instance at the
+        // TryGetValue check earlier in this method and never reaches this line again.
+        //
+        // Issue #2689: this used to be gated on `!alreadyLive` (no bound record yet) instead
+        // — conflating two different questions. `alreadyLive` answers "did the HOST's own AL
+        // already write rows through this instance" (still used above to skip
+        // SetSourceTable/EnsureMetadataLoaded, which would wipe those rows) — it does NOT
+        // answer "has OnOpenPage already run for this instance". Measured against real BC
+        // (corpus PR StefanMaron/BusinessCentral.AL.Language.Tests#141): an ORDINARY Rec-bound
+        // part (no SourceTableTemporary, nothing written to it yet) already has a bound record
+        // the FIRST time this method's own `host.GetPart(controlId)` call above returns —
+        // BC's own native part construction binds the part's statically-declared SourceTable
+        // as routine construction, with no AL trigger involved. That made `alreadyLive` true
+        // on the very first reification, so `!alreadyLive` never fired the part's OnOpenPage
+        // at all: real BC runs it between the host's own OnOpenPage and the host's first
+        // OnAfterGetCurrRecord (see RunnerTestPageState.MarkOpened / EagerlyBuildParts), the
+        // runner ran it never. Gating on this method's own dedup cache instead of on record
+        // presence fixes that without reopening #2201 (TestPageTempPart_Part.al, the
+        // SourceTableTemporary shape #2201 pinned, declares no OnOpenPage trigger at all, so
+        // running it once here is a no-op either way; codeunit 60807 stays green).
+        instance.RaiseOnOpenPage();
 
         return instance;
     }
