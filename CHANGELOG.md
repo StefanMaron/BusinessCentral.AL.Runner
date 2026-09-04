@@ -15,6 +15,26 @@ All notable changes to this project are documented here. Format based on
 - **all-profile:** populate the All Profile system virtual table (2000000178)
 
 ### Fixed
+- **diagnostics:** unwrap TargetInvocationException so EXEC-FAIL names the real cause
+- **deps:** let a source-built package supersede a packaged copy of the same app
+- **testpage:** format Decimal-typed TestPage controls with decimal places
+- **testpage:** tear a TestPage down after an unhandled record-positioning trigger error
+- **testpage:** reset a page's own globals when a TestPage is reopened
+- **testpage:** a subpage part linked via SubPageLink never fired OnAfterGetRecord
+- **cli:** report 0.0.0-main from a source build instead of a stale 2.0.0-preview.1
+- **patches:** stop a passing run dumping 618 bare stack-frame lines on stderr
+- **record:** refuse a duplicate SystemId on Insert, preserve it across Modify
+- **cache:** --no-cache now disables every on-disk cache, not just al-out
+- **provision:** verify the test toolkit really landed instead of trusting a glob or an exit code
+- **provision:** remove empty <artifacts>/<version>/ dirs left by failed AutoProvision
+- **watch:** clear page/xmlport metadata registries on reload without regressing #1957
+- **media:** let a structurally valid PNG import into a Media field
+- **provision:** stop --force/--resolve-version from silently doing less than they say
+- **tests:** stop bounding the FULL REBUILD search at the cycle-2 marker
+- **testpage:** run page background tasks inline instead of refusing loudly
+- **install:** arm event-subscriber injection before the first Install trigger
+- **server:** select at PROCEDURE granularity for affectedOnly, not whole-object
+- **expectations:** drop two Feature Key known-gap entries that main already passes
 - **streams:** implement ALCompiler.DotNetToNavInStream (.NET Stream -> AL InStream)
 - **query:** apply the ReverseSign column property instead of ignoring it
 - **scripts:** parse VSTest timestamps on Python 3.9, hold the FIFO portably, and run the script tests
@@ -89,6 +109,15 @@ All notable changes to this project are documented here. Format based on
 - **agents:** opening a corpus PR needs no approval
 
 ### Changed
+- **ci:** run the C# unit suite on 2 BC legs instead of 8
+- **compiler:** route source-dependency symbol synthesis through the RAD incremental path
+- **program:** split static helper functions out of Program.cs
+- **cecil:** split NclCecilRewrite into partial files by area
+- Key the TestPage field cache by control id, not by table field number
+- **perf:** give ServerAffectedSelectionTests its measured weight
+- Populate the Windows Language (2000000045) virtual table
+- **tests:** drop the unused Base Application floor from the most-spawned test fixture
+- stop the changelog sync losing a race it cannot win
 - Route Feature Key (2000000211) to BC's own FeatureKeyDataProvider
 - **reporter:** pin ProvisionGapLog's discovery order, the one property #2597 left uncovered
 - stop superseded runs from holding job slots
