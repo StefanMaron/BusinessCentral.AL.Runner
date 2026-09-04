@@ -414,6 +414,11 @@ public static class NclCecilRewrite
         // body (three branches: null → Default, Stream → NavStreamProvider-backed
         // instance, else → NavNCLConversionException), just the InStream direction.
         "Microsoft.Dynamics.Nav.Runtime.ALCompiler::DotNetToNavInStream/2",
+        // NavMediaFactory.ProcessMediaObject(Stream,bool,string) — surgical prepend so a
+        // PNG-signature-prefixed stream classifies as image/png without decoding (#2570).
+        // See the RewriteNcl block below for the detail. Additive: does not touch
+        // NavForm.GetPart (#2600) or the page-background-task routing (#2628).
+        "Microsoft.Dynamics.Nav.Runtime.Media.NavMediaFactory::ProcessMediaObject/3",
     };
 
     /// <summary>
@@ -8210,6 +8215,69 @@ public static class NclCecilRewrite
             ReplaceBodyWithHelper(nclMod,
                 FindNclMethod(nclMod, Rt + "Media.NavMediaImage", "IsSupportedMimeType", 1),
                 H(helperShims, "ReturnFalse_1Arg"));
+
+            // NavMediaFactory.ProcessMediaObject(Stream,bool,string) — #2570. Surgical
+            // PREPEND (original body untouched, same shape as PrependFieldFindGuard below),
+            // not a body replacement: MediaPatches.TryClassifyPngBySignature sniffs the
+            // stream's first 8 bytes for the PNG signature BEFORE the real body decides
+            // anything. When it returns "image/png" we `starg` the mimeType PARAMETER to
+            // that value and fall through into the real, unmodified body — which (mimeType
+            // now non-empty) skips GetImageWithContentHeaderValidation entirely, and —
+            // because NavMediaImage.IsSupportedMimeType is rewritten to always return false
+            // just above — cascades past every image/document branch straight to BC's own
+            // `new NavMediaBinaryFile(mediaStream, mimeType)` fallback, unmodified. When it
+            // returns null, nothing changes (falls straight through to the original first
+            // instruction) — every other mimeType/content shape, including every
+            // already-working non-PNG-image / non-image classification, is untouched.
+            // Signature-only (no chunk/CRC/IHDR validation) is deliberate: two full rounds
+            // of upstream corpus CI (StefanMaron/BusinessCentral.AL.Language.Tests#138, all
+            // 8 BC legs both times) measured that real BC accepts a PNG-signature-prefixed
+            // stream regardless of chunk CRCs, IHDR presence, or declared width/height — so
+            // anything stricter here would make the runner reject content BC accepts (the
+            // same class of defect as #2641, opposite direction). RED→GREEN: AlRunner.Tests
+            // MediaFactoryProcessMediaObjectPngPrependTests.cs (mechanism) +
+            // tests/runner-extras/standalone-suites/media-non-image-content (unchanged,
+            // pins the JPEG-still-refuses claim so this cannot silently widen back) + the
+            // upstream BC-behaviour claim, StefanMaron/BusinessCentral.AL.Language.Tests#138
+            // (tests/al-language/media/TestMediaPngImport.al).
+            {
+                var processMediaObject = FindNclMethod(nclMod, Rt + "Media.NavMediaFactory", "ProcessMediaObject", 3);
+                var helperMi = typeof(AlRunner.Patches.MediaPatches).GetMethod(
+                    nameof(AlRunner.Patches.MediaPatches.TryClassifyPngBySignature),
+                    BindingFlags.Public | BindingFlags.Static)!;
+                var helperRef = nclMod.ImportReference(helperMi);
+
+                var body = processMediaObject.Body;
+                var il = body.GetILProcessor();
+                var first = body.Instructions[0];
+
+                var newMimeTypeLocal = new VariableDefinition(nclMod.ImportReference(typeof(string)));
+                body.Variables.Add(newMimeTypeLocal);
+
+                // ldarg.0 (mediaStream); ldarg.2 (mimeType); call helper -> string?
+                // stloc newMimeTypeLocal; ldloc; brfalse <first>; ldloc; starg.s mimeType;
+                // <first> (original body, unchanged, falls through here in both cases)
+                var ldStream = il.Create(OpCodes.Ldarg_0);
+                var ldMime = il.Create(OpCodes.Ldarg_2);
+                var callHelper = il.Create(OpCodes.Call, helperRef);
+                var stloc = il.Create(OpCodes.Stloc, newMimeTypeLocal);
+                var ldlocCheck = il.Create(OpCodes.Ldloc, newMimeTypeLocal);
+                var brFalse = il.Create(OpCodes.Brfalse, first);
+                var ldlocApply = il.Create(OpCodes.Ldloc, newMimeTypeLocal);
+                var starg = il.Create(OpCodes.Starg, processMediaObject.Parameters[2]);
+
+                il.InsertBefore(first, ldStream);
+                il.InsertBefore(first, ldMime);
+                il.InsertBefore(first, callHelper);
+                il.InsertBefore(first, stloc);
+                il.InsertBefore(first, ldlocCheck);
+                il.InsertBefore(first, brFalse);
+                il.InsertBefore(first, ldlocApply);
+                il.InsertBefore(first, starg);
+
+                body.MaxStackSize = Math.Max(body.MaxStackSize, 2);
+                Console.Error.WriteLine("[Cecil] Prepended PNG-signature mimeType classification to NavMediaFactory.ProcessMediaObject");
+            }
 
             // ── NavRecordRef cluster (Batch 8) — get_Target + open-gates + ALOpen ─
             // get_Target's real body NREs on base.Tree.Session.Company.SharedObjects
