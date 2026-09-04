@@ -11,12 +11,23 @@
 // worker leaves one worker running ERM while the rest idle, and a run takes as long as its
 // longest shard.
 //
-// There is a second, harder reason to shard at all, measured on those buckets: peak RSS tracks
-// the number of tests a process has EXECUTED, not the loaded floor — 1.3 GB at 11 tests, 5.3 GB
-// at 1,133, 7.9 GB at 2,859. Extrapolated, one process cannot finish all ~40,000 of them on an
-// ordinary machine. Sharding bounds each worker's peak by its own test count, so it is a
-// prerequisite for the full run rather than only an optimization. It also contains a hung test
-// to its own shard instead of ending the whole run.
+// There is a second, harder reason to shard at all, measured on those buckets: peak RSS is
+// driven by how many BUNDLES a process loads, not by how many tests it runs. Measured on this
+// machine: 3 bundles / 939 tests peaked at 4.4 GB while 1 bundle / 1,027 tests peaked at 3.7 GB,
+// and running 10x the tests inside ONE bundle (106 -> 1,027) cost only +0.4 GB. Each bundle
+// brings its own emitted assemblies, symbols and object metadata, none of which a test rollback
+// owns or can release.
+//
+// Isolation is NOT the gap there, which is worth stating because it is the obvious suspect:
+// per-test resets (1,027 of them) peaked within 1% of per-codeunit (44), and disabling resets
+// entirely cost 33% MORE — so the rollback is doing its job on the state it actually owns.
+//
+// So all 33 BaseApp buckets do not fit in one process however the tests are counted, and
+// splitting the BUNDLES across workers is what makes that run possible rather than merely
+// faster. It also contains a hung test to its own shard instead of ending the whole run.
+//
+// (Peaks vary run to run by roughly 20% — the same bucket measured 3.1, 3.3 and 3.7 GB across
+// repeats — so treat these as magnitudes, not constants.)
 //
 // Longest-processing-time assignment (heaviest first, always onto the currently lightest shard)
 // is the standard greedy bound for this. Determinism is deliberate: a plan that reshuffles
