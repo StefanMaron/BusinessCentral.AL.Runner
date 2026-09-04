@@ -401,6 +401,88 @@ public static class ProvisioningCheck
     }
 
     /// <summary>
+    /// #2558: <c>al-runner provision --test-apps</c>'s own logic, extracted out of
+    /// <c>Program.cs</c> so it is unit-testable without a real network download —
+    /// <paramref name="download"/> stands in for
+    /// <see cref="AlRunner.Provisioning.ArtifactDownloader.TestApps"/>, which a test can
+    /// replace with a fake that returns 0 without writing the sentinel app, the exact
+    /// silent-skip shape this method exists to catch.
+    ///
+    /// Both the entry guard AND the post-download check use <see cref="TestToolkitPresent"/>
+    /// (a real manifest parse for the specific, well-known sentinel app), not "does any
+    /// <c>.app</c> file exist in <paramref name="dir"/>" — the entry guard used to accept
+    /// any single file, so a directory left holding one country test app by an earlier
+    /// interrupted extraction (but missing <see cref="TestToolkitSentinelApp"/>) read as a
+    /// complete toolkit forever, and re-running never re-attempted the download.
+    ///
+    /// <paramref name="download"/> can report <c>rc == 0</c> ("success") after extracting
+    /// ANY file, silently skipping entries it could not fetch — so a successful-looking
+    /// return code alone does not mean the sentinel app actually landed on disk. This
+    /// method re-checks the same real predicate after the download returns 0, rather than
+    /// trusting the exit code, and returns <c>false</c> (with a named, actionable log line)
+    /// on either kind of failure — a caller that used to warn-and-continue on <c>rc != 0</c>
+    /// can now fail loudly instead, per <c>.claude/rules/loud-failures.md</c>.
+    /// </summary>
+    /// <param name="fullVersion">The full BC artifact version being provisioned for.</param>
+    /// <param name="dir">The test-apps destination directory for that version.</param>
+    /// <param name="download">
+    /// (version, outputDir, log) → exit code, matching
+    /// <see cref="AlRunner.Provisioning.ArtifactDownloader.TestApps"/>'s own signature.
+    /// </param>
+    /// <param name="log">Receives one line per step, already carrying the caller's own prefix
+    /// convention (e.g. Program.cs passes a delegate that prepends "[provision] ") — this
+    /// method does not prepend anything of its own.</param>
+    /// <returns>
+    /// <c>true</c> if the toolkit was already present, or was downloaded and the sentinel
+    /// app is confirmed present afterward; <c>false</c> on any failure (download itself
+    /// failed, threw, or reported success without the sentinel actually landing).
+    /// </returns>
+    public static bool EnsureTestToolkitProvisioned(
+        string fullVersion,
+        string dir,
+        Func<string, string, Action<string>?, int> download,
+        Action<string> log)
+    {
+        if (TestToolkitPresent(new[] { dir }))
+        {
+            log($"test toolkit already present at {dir}.");
+            return true;
+        }
+
+        log($"fetching the MS test toolkit for BC {fullVersion} → {dir}");
+        int rc;
+        try
+        {
+            rc = download(fullVersion, dir, log);
+        }
+        catch (Exception ex)
+        {
+            log($"warning: test-toolkit download failed: {ex.Message}");
+            return false;
+        }
+
+        if (rc != 0)
+        {
+            log($"warning: could not fetch the test toolkit for BC {fullVersion}. " +
+                "Test bundles depending on Library Assert / Test Runner / Any will need " +
+                "--package-cache <dir-with-those-apps>.");
+            return false;
+        }
+
+        // rc == 0 does not mean the sentinel app landed -- ArtifactDownloader.TestApps
+        // reports success on any non-zero extraction and skips entries it could not fetch
+        // silently. Re-check the real predicate instead of trusting the exit code.
+        if (!TestToolkitPresent(new[] { dir }))
+        {
+            log($"test toolkit download reported success but the sentinel app " +
+                $"'{TestToolkitSentinelApp}' is still missing from {dir}.");
+            return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>
     /// The BC major.minor a Microsoft "Base Application"/"System Application" .app already
     /// present in <paramref name="packageCacheDirs"/> would suggest for auto-provisioning.
     /// Falls back to <paramref name="fallbackVersion"/>'s major.minor when no such app is

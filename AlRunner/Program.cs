@@ -8153,35 +8153,53 @@ static int RunExplicitProvisionModes(string? bcVersionArg, List<string> bundles,
     if (serviceTier)
     {
         var dir = AlRunner.Infrastructure.BcArtifacts.ArtifactDirFor(full);
-        anyFailed |= ForceProvisionMode("BC service-tier engine DLLs", dir, full, force, "*.dll",
+        anyFailed |= ForceProvisionMode("BC service-tier engine DLLs", dir, full, force,
+            d => Directory.Exists(d) && Directory.EnumerateFiles(d, "*.dll").Any(),
             (v, d, log) => AlRunner.Provisioning.ArtifactDownloader.ServiceTier(v, d, log)) != 0;
     }
     if (platformApps)
     {
         var dir = AlRunner.Infrastructure.ProvisioningCheck.PlatformAppsDirFor(
             AlRunner.Infrastructure.BcArtifacts.ArtifactsRootDir, full);
-        anyFailed |= ForceProvisionMode("Microsoft platform apps", dir, full, force, "*.app",
+        anyFailed |= ForceProvisionMode("Microsoft platform apps", dir, full, force,
+            d => Directory.Exists(d) && Directory.EnumerateFiles(d, "*.app").Any(),
             (v, d, log) => AlRunner.Provisioning.ArtifactDownloader.PlatformApps(
                 v, d, AlRunner.Infrastructure.BcArtifacts.SelectedCountry, log)) != 0;
     }
     if (testApps)
     {
         var dir = TestAppsDirFor(full);
-        anyFailed |= ForceProvisionMode("Microsoft test-toolkit apps", dir, full, force, "*.app",
+        // #2558: this is the exact command the issue reports ("al-runner provision
+        // --test-apps can exit 0 over a partial extraction") — unlike the other two
+        // modes above, "any *.app file exists" is not a faithful completeness check for
+        // the test toolkit specifically: an interrupted extraction that landed one
+        // country test app but not the real sentinel (TestToolkitPresent /
+        // TestToolkitSentinelApp) used to read as complete forever, and a download that
+        // reports rc == 0 without the sentinel landing used to be treated as success.
+        anyFailed |= ForceProvisionMode("Microsoft test-toolkit apps", dir, full, force,
+            d => AlRunner.Infrastructure.ProvisioningCheck.TestToolkitPresent(new[] { d }),
             (v, d, log) => AlRunner.Provisioning.ArtifactDownloader.TestApps(v, d, log)) != 0;
     }
     return anyFailed ? 2 : 0;
 }
 
-// Shared by every explicit provision mode: skip the download when the canonical directory
-// already contains at least one file matching <paramref name="expectedGlob"/> (unless
-// --force), otherwise run <paramref name="download"/> and report success/failure. Named
-// per-mode so the log lines read like the rest of `[provision]` output, not a generic
-// "done"/"failed".
+// Shared by every explicit provision mode: skip the download when <paramref name="isPresent"/>
+// says the canonical directory already looks complete (unless --force), otherwise run
+// <paramref name="download"/> and report success/failure. Named per-mode so the log lines
+// read like the rest of `[provision]` output, not a generic "done"/"failed".
+//
+// #2558: <paramref name="isPresent"/> is also re-checked AFTER a download that reports
+// rc == 0 — a download delegate can report success as soon as it wrote ANYTHING, silently
+// skipping entries it could not fetch, so rc == 0 alone does not mean the expected content
+// actually landed. This was `al-runner provision --test-apps`'s exact reported bug: its
+// predicate used to be "does any *.app file exist in the directory", so a partial
+// extraction (e.g. one leftover country test app but not the toolkit's real sentinel) read
+// as complete forever, and a download that "succeeded" without the sentinel landing was
+// never caught.
 static int ForceProvisionMode(string label, string outputDir, string fullVersion, bool force,
-    string expectedGlob, Func<string, string, Action<string>, int> download)
+    Func<string, bool> isPresent, Func<string, string, Action<string>, int> download)
 {
-    if (!force && Directory.Exists(outputDir) && Directory.EnumerateFiles(outputDir, expectedGlob).Any())
+    if (!force && isPresent(outputDir))
     {
         Console.Error.WriteLine($"[provision] {label} already present at {outputDir} for BC {fullVersion} — skipping (pass --force to re-download).");
         return 0;
@@ -8191,8 +8209,18 @@ static int ForceProvisionMode(string label, string outputDir, string fullVersion
     {
         var rc = download(fullVersion, outputDir, m => Console.Error.WriteLine($"[provision] {m}"));
         if (rc != 0)
+        {
             Console.Error.WriteLine($"[provision] warning: {label} download failed for BC {fullVersion}.");
-        return rc;
+            return rc;
+        }
+        if (!isPresent(outputDir))
+        {
+            Console.Error.WriteLine(
+                $"[provision] {label} download reported success but the expected content is " +
+                $"still missing from {outputDir} for BC {fullVersion}.");
+            return 1;
+        }
+        return 0;
     }
     catch (Exception ex)
     {
@@ -8427,7 +8455,11 @@ static int RunProvisioning(string? bcVersionArg, string? artifactPathArg,
         // edges live in the test-toolkit packages' own NavxManifest.xml. Fetch that set
         // first and EnsurePlatformAppsProvisioned can read the answer instead of guessing it
         // from a hand-written table that was only ever right for one BC version.
-        EnsureTestToolkitProvisioned(full);
+        // #2558: fail loudly (exit 2) rather than warn-and-continue over a partial toolkit
+        // — mirrors the --auto-provision path's own post-download re-check a few hundred
+        // lines up (`toolkitPresent = ...; if (!toolkitPresent) { ...; return 2; }`).
+        if (!EnsureTestToolkitProvisioned(full))
+            return 2;
         EnsurePlatformAppsProvisioned(full, bundles);
     }
     provisionedVersion = full;
@@ -8570,29 +8602,20 @@ static void EnsurePlatformAppsProvisioned(string engineVersion, List<string> bun
 // had to hand-assemble a package dir with no command that could produce one.
 // Provisioned into <artifacts>/<version>/test-apps/, which DefaultPackageCacheDirs scans,
 // so a provisioned machine needs no --package-cache for the toolkit at all.
-static void EnsureTestToolkitProvisioned(string fullVersion)
+// #2558: thin wrapper over ProvisioningCheck.EnsureTestToolkitProvisioned — the real logic
+// lives there so it is unit-testable with a fake download delegate (no real network call).
+// Returns false (rather than only warning) on either kind of provisioning failure — a
+// download that failed outright, or one that reported success (rc == 0) without the
+// sentinel app actually landing — so RunExplicitProvisionModes can fail the whole
+// `provision --test-apps` invocation loudly instead of exiting 0 over a partial toolkit.
+static bool EnsureTestToolkitProvisioned(string fullVersion)
 {
     var dir = TestAppsDirFor(fullVersion);
-    if (Directory.Exists(dir) && Directory.EnumerateFiles(dir, "*.app").Any())
-    {
-        Console.Error.WriteLine($"[provision] test toolkit already present at {dir}.");
-        return;
-    }
-    Console.Error.WriteLine($"[provision] fetching the MS test toolkit for BC {fullVersion} → {dir}");
-    try
-    {
-        var rc = AlRunner.Provisioning.ArtifactDownloader.TestApps(
-            fullVersion, dir, m => Console.Error.WriteLine($"[provision] {m}"));
-        if (rc != 0)
-            Console.Error.WriteLine(
-                $"[provision] warning: could not fetch the test toolkit for BC {fullVersion}. " +
-                $"Test bundles depending on Library Assert / Test Runner / Any will need " +
-                $"--package-cache <dir-with-those-apps>.");
-    }
-    catch (Exception ex)
-    {
-        Console.Error.WriteLine($"[provision] warning: test-toolkit download failed: {ex.Message}");
-    }
+    return AlRunner.Infrastructure.ProvisioningCheck.EnsureTestToolkitProvisioned(
+        fullVersion,
+        dir,
+        (v, d, l) => AlRunner.Provisioning.ArtifactDownloader.TestApps(v, d, l),
+        m => Console.Error.WriteLine($"[provision] {m}"));
 }
 
 static string TestAppsDirFor(string fullVersion)

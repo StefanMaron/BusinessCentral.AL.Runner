@@ -171,6 +171,44 @@ public sealed class ProvisionExplicitModesTests
     }
 
     /// <summary>
+    /// Issue #2558's exact reported command: `provision --test-apps` used to accept ANY
+    /// single .app file as proof of a complete toolkit — a directory left holding one
+    /// unrelated .app by, e.g., an earlier interrupted extraction read as "already present"
+    /// forever, and a re-run never attempted the real download. The entry guard now uses
+    /// ProvisioningCheck.TestToolkitPresent (a real manifest parse for the specific,
+    /// well-known sentinel app "Business Foundation Test Libraries"), not "does any .app
+    /// file exist". Proven end-to-end against the real CDN: seed the canonical directory
+    /// with one unrelated .app, run without --force, and the run must NOT say "already
+    /// present" — it must actually fetch the real set, landing the sentinel.
+    /// </summary>
+    [Fact]
+    public void TestApps_OnlyUnrelatedAppPresent_DoesNotShortCircuit_DownloadsTheRealSet()
+    {
+        var home = NewIsolatedHome();
+        try
+        {
+            var testAppsDir = TestAppsDirFor(home);
+            Directory.CreateDirectory(testAppsDir);
+            // A single, deliberately UNRELATED .app — not the real sentinel — mimicking an
+            // interrupted extraction that landed one country test app and nothing else.
+            File.WriteAllText(Path.Combine(testAppsDir, "leftover.app"), "not a real NAVX package");
+
+            var (exit, stderr) = Run(home, "provision", "--test-apps", "--bc-version", RealVersion);
+
+            Assert.True(exit == 0, $"provision --test-apps must exit 0 once the real download completes. stderr:\n{stderr}");
+            Assert.DoesNotContain("already present", stderr, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("fetching", stderr, StringComparison.OrdinalIgnoreCase);
+            var apps = Directory.GetFiles(testAppsDir, "*.app");
+            Assert.Contains(apps, a => Path.GetFileName(a).Contains("Library Assert", StringComparison.OrdinalIgnoreCase));
+            Assert.Contains(apps, a => Path.GetFileName(a).Contains("Business Foundation Test Libraries", StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            try { Directory.Delete(home, recursive: true); } catch { }
+        }
+    }
+
+    /// <summary>
     /// `--force` is the escape hatch from the skip above: it must re-run the download even
     /// though the directory already looks populated. Proven the same way as the negative
     /// test above, inverted — the marker's write time MUST move.
