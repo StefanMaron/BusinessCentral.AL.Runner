@@ -192,4 +192,28 @@ public static class WatchOutputSlicing
     /// </summary>
     public static bool HasAtLeastWarmTimingMatches(IReadOnlyList<CapturedLine> lines, int minCount) =>
         CountWarmTimingMatches(lines) >= minCount;
+
+    /// <summary>
+    /// True when any captured line at index &gt;= <paramref name="fromIndex"/> — across
+    /// EITHER stream — contains <paramref name="text"/>. Unbounded above, for the identical
+    /// reason <see cref="LastWarmTimingMs"/> is: a line's position in `lines` reflects PUMP
+    /// SCHEDULING, not program order (see this file's header comment), so a window bounded
+    /// above by the next stdout marker can miss content that was written, in real time, well
+    /// before that marker.
+    ///
+    /// #2653: WatchFullRebuildReasonTests' cycle-2 "FULL REBUILD" assertions used to bound
+    /// their search at m2 (`Segment(m1 + 1, m2)` then `Assert.Contains`) — exactly the #1843
+    /// shape, just against a different marker. The "FULL REBUILD…" line
+    /// (Program.cs's watch loop, around line 2559) is written to STDERR, early in the cycle —
+    /// well before Emit/dispatch/test-execution/reporting even run, all of which happen
+    /// before the cycle's own closing "waiting for AL source" marker on STDOUT. Under load, a
+    /// starved stderr pump can still land that line's LIST index after m2, even though it was
+    /// written, chronologically, long before it.
+    /// </summary>
+    public static bool ContainsAfter(IReadOnlyList<CapturedLine> lines, string text, int fromIndex)
+    {
+        for (int i = fromIndex; i < lines.Count; i++)
+            if (lines[i].Text.Contains(text)) return true;
+        return false;
+    }
 }
