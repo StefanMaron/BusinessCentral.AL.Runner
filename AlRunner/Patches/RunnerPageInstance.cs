@@ -1230,6 +1230,17 @@ internal sealed class RunnerPageInstance
         InvokeRecordTrigger("OnAfterGetCurrRecord", Type.EmptyTypes, Array.Empty<object>());
     }
 
+    // Set the first time RaiseOnOpenPage runs. A SECOND (or later) call means the TestPage
+    // was closed and reopened — issue #2658. The runner attaches its ITestPage at
+    // CONSTRUCTION (see RunnerTestPageState's WHY note) and keeps the SAME RunnerPageInstance,
+    // and therefore the SAME compiled page object, for the whole life of the TestPage
+    // variable. Real BC does not: closing a page discards its client-side instance, and
+    // reopening builds a fresh one — corpus CU60266 ReopeningThePage_IsHowTheNewVisibleIsObserved
+    // measures this directly: a page global toggled true in the first open reads false again
+    // (its type default) once the page is reopened, and a control's own Visible — which
+    // freezes at open-time (see the snapshot note below) — follows it back to true.
+    private bool _hasOpenedBefore;
+
     /// <summary>
     /// Run the page's OnOpenPage trigger.
     ///
@@ -1242,6 +1253,14 @@ internal sealed class RunnerPageInstance
     /// </summary>
     internal void RaiseOnOpenPage()
     {
+        // A reopen: reset the page's OWN global variables to their AL type defaults before
+        // anything (including OnOpenPage) can read or re-seed them, matching a freshly
+        // built client-side page instance. Never on the first open — the object was just
+        // constructed and is already at its defaults, and skipping it there keeps every
+        // page's normal open path free of the extra scratch construction below.
+        if (_hasOpenedBefore) ResetGlobalsForReopen();
+        _hasOpenedBefore = true;
+
         InvokeRecordTrigger("OnOpenPage", Type.EmptyTypes, Array.Empty<object>());
 
         // Re-take the open-time snapshot AFTER the trigger, not before. OnOpenPage is where a
@@ -1251,6 +1270,49 @@ internal sealed class RunnerPageInstance
         // all failed. The constructor still takes one, so a page whose OnOpenPage never runs
         // still has a snapshot rather than none.
         _expressionValuesAtOpen = SnapshotExpressionValues(_sourceExpressions);
+    }
+
+    /// <summary>
+    /// Reset every field the compiled page TYPE ITSELF declares — its AL <c>var</c> globals —
+    /// back to the value a brand-new instance of that type would carry. Fields inherited from
+    /// <c>NavForm</c> (the record cursor, control-tree wiring, source-expression table, …) are
+    /// deliberately untouched: <c>DeclaredOnly</c> excludes them, so this can never disturb the
+    /// plumbing <see cref="TryCreate"/> already built.
+    ///
+    /// The "value a brand-new instance would carry" is taken from an actual scratch instance
+    /// built through the SAME <c>(ITreeObject, NavRecord)</c> constructor <see cref="TryCreate"/>
+    /// uses, rather than a hand-rolled CLR default per field — AL's field initializers (a Text
+    /// global to <c>''</c>, a Record global to its own fresh instance, …) run inside that
+    /// constructor, and reproducing them by hand would silently diverge the moment a page
+    /// declares a global whose AL default is not the CLR default. The scratch instance is
+    /// deliberately NOT put through <see cref="RunnerFormInit.MarkRealInit"/> or
+    /// <c>SetSourceTable</c> — those are guarded to no-op without MarkRealInit (see
+    /// <see cref="TryCreateRecordless"/>'s note), so building one is side-effect-free, and this
+    /// method only ever reads its declared fields, never anything SetSourceTable would have
+    /// wired.
+    /// </summary>
+    private void ResetGlobalsForReopen()
+    {
+        try
+        {
+            var formType = _form.GetType();
+            var ctor = formType.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+                .FirstOrDefault(c => c.GetParameters().Length == 2
+                                  && typeof(NavRecord).IsAssignableFrom(c.GetParameters()[1].ParameterType));
+            if (ctor == null) return;
+
+            var scratch = ctor.Invoke(new object?[] { _owner, _record });
+            foreach (var field in formType.GetFields(
+                         BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly))
+            {
+                field.SetValue(_form, field.GetValue(scratch));
+            }
+        }
+        catch
+        {
+            // Best-effort: a page whose globals could not be reset behaves as it did before
+            // this existed — stale on reopen, not crashing on reopen.
+        }
     }
 
     /// <summary>
