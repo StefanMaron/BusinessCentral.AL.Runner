@@ -230,6 +230,7 @@ bool printClassification = false;
 // --output-junit PATH: additionally write a JUnit XML report — independent of --output-json.
 bool outputJson = false;
 string? outputJunitPath = null;
+int jobs = 1;   // --jobs N: fan out across N worker processes (#2280)
 // --coverage: statement-level coverage via BC's own StmtHit instrumentation (issue
 // #1922, first slice of #1640). Writes Cobertura XML to --coverage-out (default
 // cobertura.xml in the working directory) after the run, plus a console table.
@@ -415,6 +416,15 @@ for (int i = 0; i < args.Length; i++)
     if (args[i] == "--classify") { printClassification = true; continue; }
     if (args[i] == "--output-json") { outputJson = true; continue; }
     if (args[i] == "--output-junit" && i + 1 < args.Length) { outputJunitPath = args[++i]; continue; }
+    if ((args[i] == "--jobs" || args[i] == "-j") && i + 1 < args.Length)
+    {
+        if (!int.TryParse(args[++i], out jobs) || jobs < 1)
+        {
+            Console.Error.WriteLine($"--jobs expects a positive integer, got '{args[i]}'.");
+            return 2;
+        }
+        continue;
+    }
     if (args[i] == "--coverage")
     {
         coverageEnabled = true;
@@ -1362,6 +1372,20 @@ deferredStartupLines.Add(() => Console.WriteLine(serverMode
 // returned from inside one of those blocks and never reaches this line, so its own queued
 // entries are simply discarded — however many generations preceded this one.
 foreach (var deferredLine in deferredStartupLines) deferredLine();
+
+// --jobs: fan out across worker processes (#2280). Deliberately placed HERE, after the
+// deferred-startup flush, because that line marks the terminal generation — both re-exec
+// decision points (the shadow hop and the Cecil-fresh-rewrite hop) are behind us, so BC is
+// selected and the rewritten Ncl is on disk. Fanning out earlier would have every worker race
+// to perform the same first-ever Cecil rewrite; fanning out later would make the parent pay a
+// full bundle run it is not going to use.
+//
+// Only the plain multi-bundle CLI path. --watch, --server and --dap are long-lived single
+// processes whose whole contract is warm in-process state, and one bundle cannot be split
+// across processes without splitting it by test, which this does not do yet.
+if (jobs > 1 && bundles.Count > 1 && !watchMode && !serverMode && !dapMode)
+    return AlRunner.Infrastructure.ParallelFanOut.Run(bundles, args, jobs);
+
 
 var packageCacheDirs = packageCacheArgs.Count > 0
     ? ExpandPackageCacheDirs(packageCacheArgs).ToList()

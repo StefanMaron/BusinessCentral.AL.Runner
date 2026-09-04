@@ -392,6 +392,17 @@ internal static partial class ProgramSupport
         w.WriteLine("                          \"Test exceeded {N}s timeout.\" (v1-compatible message text).");
         w.WriteLine();
         w.WriteLine("EXECUTION");
+        w.WriteLine("  --jobs N, -j N          Run the given bundle dirs across N worker PROCESSES and");
+        w.WriteLine("                          print one aggregate summary. Bundles are balanced by AL");
+        w.WriteLine("                          file count, so one large bundle does not leave the other");
+        w.WriteLine("                          workers idle. Exit code is the worst any worker returned.");
+        w.WriteLine("                          Sharding also bounds MEMORY: peak RSS tracks the number of");
+        w.WriteLine("                          tests a process has executed (measured on Microsoft's");
+        w.WriteLine("                          BaseApp buckets: 1.3 GB at 11 tests, 7.9 GB at 2,859), so a");
+        w.WriteLine("                          very large run does not fit in one process at all. And a");
+        w.WriteLine("                          hung test ends only its own shard instead of the whole run.");
+        w.WriteLine("                          Ignored by --watch/--server/--dap (long-lived warm state)");
+        w.WriteLine("                          and by a single-bundle run. Default: 1.");
         w.WriteLine("  --bc-version X          Select the BC artifact version (e.g. \"28.1\" or a full");
         w.WriteLine("                          version). Default depends on how this binary was");
         w.WriteLine("                          installed: a single-build install (built from source)");
