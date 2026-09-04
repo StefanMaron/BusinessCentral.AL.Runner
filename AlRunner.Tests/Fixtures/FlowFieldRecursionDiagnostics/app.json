@@ -1,0 +1,24 @@
+{
+  "id": "c7f1a2b3-4d5e-4f60-8a71-9b2c3d4e5f80",
+  "name": "Runner Tests Fixture - FlowField Recursion Diagnostics",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Regression test: a trapped FlowField recursion error must not dump a bare .NET stack trace on stderr.",
+  "description": "Drives the runner's FlowField recursion guard (a FlowField whose where-condition names itself) from an AL asserterror, which is the expected, passing outcome. Used by FlowFieldDiagnosticNoiseTests to prove the runner's internal [FlowFieldPatches] diagnostic — header AND stack trace — is suppressed at default verbosity and restored under --verbose.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "platform": "1.0.0.0",
+  "idRanges": [
+    {
+      "from": 60840,
+      "to": 60859
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}

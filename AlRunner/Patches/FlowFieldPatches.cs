@@ -473,8 +473,15 @@ public static class FlowFieldPatches
         }
         catch (TargetInvocationException tie) when (tie.InnerException != null)
         {
-            Console.Error.WriteLine($"[FlowFieldPatches] inner ex: {tie.InnerException.GetType().Name}: {tie.InnerException.Message}");
-            Console.Error.WriteLine(tie.InnerException.StackTrace ?? "");
+            // Header AND trace in ONE tagged write. Log.FilteredWriter matches its
+            // `[Component]` pattern per write, and a stack trace carries no tag — split
+            // across two calls the header is dropped at default verbosity and the frames
+            // are not, which is how a green corpus run came to print 618 header-less
+            // frame lines into every CI log (this is a trapped, expected AL error path,
+            // not a failure). One write means the filter suppresses or keeps both together.
+            Console.Error.WriteLine(
+                $"[FlowFieldPatches] inner ex: {tie.InnerException.GetType().Name}: "
+                + $"{tie.InnerException.Message}\n{tie.InnerException.StackTrace}");
             // Rethrow honoring DataError contract
             if (errorLevel == DataError.TrapError)
                 return new System.Threading.Tasks.ValueTask<bool>(false);
@@ -483,8 +490,14 @@ public static class FlowFieldPatches
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"[FlowFieldPatches] ex: {ex.GetType().Name}: {ex.Message}");
-            Console.Error.WriteLine(ex.StackTrace ?? "");
+            // One tagged write, header + trace — see the sibling catch above for why
+            // splitting them leaks the frames past Log's filter. This catch is on the
+            // ordinary AL error path (BC's own NavNCLStackOverflowException for a cyclic
+            // CalcFormula, trapped by `asserterror` in a passing test), so the trace is
+            // diagnostic detail, not evidence of a fault. The exception itself is still
+            // rethrown / converted per BC's DataError contract below — unchanged.
+            Console.Error.WriteLine(
+                $"[FlowFieldPatches] ex: {ex.GetType().Name}: {ex.Message}\n{ex.StackTrace}");
             if (errorLevel == DataError.TrapError)
                 return new System.Threading.Tasks.ValueTask<bool>(false);
             throw;
