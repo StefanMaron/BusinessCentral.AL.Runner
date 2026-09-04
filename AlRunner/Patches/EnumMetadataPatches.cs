@@ -242,45 +242,88 @@ public static class AlEnumMetadataRegistry
     }
 
     /// <summary>
-    /// Serialize the given enum ids' MERGED entries (base + enumextension values
-    /// already flattened by <see cref="TryGet"/>) to a sidecar file. Mirrors
-    /// Program.cs's bundle-level <c>SaveEnumRegistrySidecar</c> (schema v3), but
-    /// scoped to <paramref name="onlyIds"/> so the dependency-loader's per-dep
-    /// cache sidecar does not leak sibling-app/bundle entries into its own file —
-    /// same convention as <see cref="AlReportMetadataRegistry.SaveSidecar(string, IEnumerable{int})"/>.
+    /// Raw (unmerged) entries for serialization: each base registration paired with
+    /// <c>ExtendsTargetId = null</c>, and each enumextension's OWN values (never
+    /// merged with the base) paired with <c>ExtendsTargetId = &lt;the base id it
+    /// targets&gt;</c>.
+    ///
+    /// Deliberately NOT <see cref="TryGet"/>/<see cref="Snapshot"/>'s merged view: a
+    /// sidecar built from the merged view cannot round-trip through
+    /// <see cref="Register"/> alone without one of two failures (issue #2709) —
+    /// replayed AFTER the target's real base registration, it clobbers the base
+    /// (multi-bundle: Base App enum 7011 lost); replayed BEFORE and then the real
+    /// base registers over it, the extension's values are lost (single-bundle:
+    /// enumextension value no longer casts). Keeping base and extension identities
+    /// distinct in the sidecar — exactly as <see cref="_byId"/>/<see cref="_extByTargetId"/>
+    /// already keep them distinct in memory — lets replay use
+    /// <see cref="Register"/>/<see cref="RegisterExtension"/> the same way emit does,
+    /// so a later real base (or extension) registration always merges instead of
+    /// overwriting.
+    /// </summary>
+    public static IEnumerable<(Entry Entry, int? ExtendsTargetId)> SnapshotRaw(IEnumerable<int>? onlyIds = null)
+    {
+        IEnumerable<int> ids;
+        if (onlyIds != null)
+            ids = new HashSet<int>(onlyIds);
+        else
+        {
+            var all = new HashSet<int>(_byId.Keys);
+            all.UnionWith(_extByTargetId.Keys);
+            ids = all;
+        }
+        foreach (var id in ids.OrderBy(i => i))
+        {
+            if (_byId.TryGetValue(id, out var baseEntry))
+                yield return (baseEntry, null);
+            if (_extByTargetId.TryGetValue(id, out var exts))
+                foreach (var ext in exts)
+                    yield return (ext, id);
+        }
+    }
+
+    /// <summary>
+    /// Serialize the given enum ids' RAW (unmerged) entries — see
+    /// <see cref="SnapshotRaw"/> for why raw, not merged — to a sidecar file (schema
+    /// v2: adds the <c>extends</c> marker; see #2709). Mirrors Program.cs's
+    /// bundle-level <c>SaveEnumRegistrySidecar</c>, but scoped to
+    /// <paramref name="onlyIds"/> so the dependency-loader's per-dep cache sidecar
+    /// does not leak sibling-app/bundle entries into its own file — same convention
+    /// as <see cref="AlReportMetadataRegistry.SaveSidecar(string, IEnumerable{int})"/>.
     /// Returns the number of entries written.
     /// </summary>
     public static int SaveSidecar(string path, IEnumerable<int> onlyIds)
     {
-        var idSet = new HashSet<int>(onlyIds);
-        var entries = new List<Entry>(idSet.Count);
-        foreach (var id in idSet)
-            if (TryGet(id, out var merged))
-                entries.Add(merged);
-        entries = entries.OrderBy(e => e.Id).ToList();
+        var raw = SnapshotRaw(onlyIds).ToList();
 
         var dto = new
         {
-            enums = entries.Select(e => new
+            enums = raw.Select(r => new
             {
-                id = e.Id,
-                name = e.Name,
-                options = e.Options,
-                indexes = e.Indexes,
-                implementations = e.Implementations,
-                captions = e.Captions,
+                id = r.Entry.Id,
+                name = r.Entry.Name,
+                options = r.Entry.Options,
+                indexes = r.Entry.Indexes,
+                implementations = r.Entry.Implementations,
+                captions = r.Entry.Captions,
                 // #2306 — the enum-level Default/UnknownValue implementation fallbacks. Absent
                 // from a sidecar written before this and read back as null, which means
                 // "declares none" and is the pre-#2306 behaviour; the AL-output cache key
                 // hashes the runner assembly's own content, so such a sidecar is unreachable
                 // from this build anyway.
-                defaultImplementations = e.DefaultImplementations,
-                unknownImplementations = e.UnknownImplementations,
+                defaultImplementations = r.Entry.DefaultImplementations,
+                unknownImplementations = r.Entry.UnknownImplementations,
+                // #2709 — null for a base registration; the base enum id it extends for an
+                // enumextension's own (unmerged) entry. Absent/null on replay means "plain
+                // Register", exactly like a pre-#2709 sidecar (which never carried this
+                // property) — but the cache key already hashes the runner assembly's own
+                // content, so a pre-#2709 sidecar is unreachable from this build anyway; the
+                // fallback is defensive, not load-bearing.
+                extends = r.ExtendsTargetId,
             }).ToArray(),
         };
         var json = System.Text.Json.JsonSerializer.Serialize(dto);
         File.WriteAllText(path, json);
-        return entries.Count;
+        return raw.Count;
     }
 
     /// <summary>
@@ -353,8 +396,22 @@ public static class AlEnumMetadataRegistry
                 foreach (var c in capEl.EnumerateArray())
                     captions[ci++] = c.ValueKind == System.Text.Json.JsonValueKind.Null ? null : c.GetString();
             }
-            Register(id, name, opts, idxs, implementations, captions,
-                ReadIdList(e, "defaultImplementations"), ReadIdList(e, "unknownImplementations"));
+            // #2709 — a present, non-null `extends` marks this entry as an
+            // enumextension's own (unmerged) values, targeting the base enum id it
+            // names; replay through RegisterExtension so it accumulates alongside
+            // whatever base/other-extension entries this process already holds,
+            // instead of overwriting the base enum's own _byId slot. Absent (older
+            // sidecar written before #2709, or a plain base entry) replays through
+            // Register exactly as before.
+            int? extendsTargetId = null;
+            if (e.TryGetProperty("extends", out var extEl) && extEl.ValueKind == System.Text.Json.JsonValueKind.Number)
+                extendsTargetId = extEl.GetInt32();
+
+            if (extendsTargetId.HasValue)
+                RegisterExtension(extendsTargetId.Value, name, opts, idxs, implementations, captions);
+            else
+                Register(id, name, opts, idxs, implementations, captions,
+                    ReadIdList(e, "defaultImplementations"), ReadIdList(e, "unknownImplementations"));
             count++;
         }
         return count;
