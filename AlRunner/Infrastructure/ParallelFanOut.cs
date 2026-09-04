@@ -125,31 +125,57 @@ internal static class ParallelFanOut
 
 
     /// <summary>
-    /// GC heaps to give one worker. The runner ships under Server GC (#2577), which sizes its
-    /// heap count from the CORE count — right for a single process, wrong under --jobs, where
-    /// every worker independently believes it owns the whole machine and allocates a full set.
+    /// GC heaps to give one worker: always one.
     ///
-    /// Measured on Tests-SMB (1,027 tests), two runs each: default heaps 3,244/3,119 MB at
-    /// 106/107 s; two heaps 2,090/2,192 MB at 108/110 s. About 34% of peak RSS returned for
-    /// about 2% wall. Since worker count is bounded by RAM rather than cores (see ShardPlanner),
-    /// that trade buys more concurrency than it costs.
+    /// The runner ships under Server GC (#2577), which sizes its heap count from the CORE
+    /// count — right for a single process, wrong under --jobs, where every worker
+    /// independently believes it owns the whole machine and keeps an arena sized for it.
     ///
-    /// Workstation GC returns more still (1,591/1,561 MB) but costs ~14% wall, so it is not
-    /// chosen for you here — DOTNET_gcServer=0 remains available to anyone who wants it.
+    /// This used to divide the core budget across workers (cores / jobs). That was a guess
+    /// made before anything was measured, and measurement does not support it: one heap wins
+    /// at every job count, not only at high ones. At --jobs 2 the old formula handed each
+    /// worker 6 heaps and cost 2.5 GB of peak to save 6.8 s of wall. Figures are in
+    /// ParallelFanOutGcHeapTests' header; the pass count is identical in every configuration.
+    ///
+    /// Both parameters are kept so the call site and the tests keep their shape, and so a
+    /// future machine-dependent answer does not need a signature change — but the answer no
+    /// longer depends on either, which is the point.
     /// </summary>
     public static int GcHeapCountForWorker(int cores, int jobs)
-        => Math.Clamp(cores / Math.Max(1, jobs), 1, Math.Max(1, cores));
+        => 1;
 
     /// <summary>
-    /// Extra environment for a worker process. Empty when the user has already set the knob:
-    /// someone tuning DOTNET_GCHeapCount by hand, or a CI runner setting it globally, must win
-    /// over a number computed here.
+    /// Extra environment for a worker process: one GC heap, conserve memory, no background GC.
+    /// Together these take about half off peak memory for 6-7% wall (8,183 -> 4,193 MB at
+    /// --jobs 4, 4,983 -> 2,434 MB at --jobs 2, pass count identical in both) — see
+    /// ParallelFanOutGcHeapTests' header for the measurements behind each one.
+    ///
+    /// Every knob here is SOFT: it can cost time, never correctness. That rules out
+    /// DOTNET_GCHeapHardLimit, which recovers a similar amount and then silently drops
+    /// Tests-SMB from 259 to 212 passing below about 1.25 GB, with no error and an unchanged
+    /// exit code (#2712).
+    ///
+    /// Each knob is skipped when the user has already set it — someone tuning by hand, or a CI
+    /// runner setting one globally, must win over a value chosen here. Setting one does not
+    /// suppress the other two.
     /// </summary>
-    public static Dictionary<string, string> WorkerEnvironment(int cores, int jobs, string? userHeapCount = null)
+    public static Dictionary<string, string> WorkerEnvironment(
+        int cores,
+        int jobs,
+        string? userHeapCount = null,
+        string? userConserveMemory = null,
+        string? userGcConcurrent = null)
     {
         var env = new Dictionary<string, string>(StringComparer.Ordinal);
         if (string.IsNullOrEmpty(userHeapCount))
             env["DOTNET_GCHeapCount"] = GcHeapCountForWorker(cores, jobs).ToString();
+        // 9 is the most aggressive setting: trade CPU for footprint wherever the GC can.
+        if (string.IsNullOrEmpty(userConserveMemory))
+            env["DOTNET_GCConserveMemory"] = "9";
+        // 0 = background GC off. A background collection keeps its own budget alive, worth
+        // ~150 MB of the measured difference on Tests-SMB.
+        if (string.IsNullOrEmpty(userGcConcurrent))
+            env["DOTNET_gcConcurrent"] = "0";
         return env;
     }
 
@@ -194,7 +220,9 @@ internal static class ParallelFanOut
             };
             foreach (var kv in WorkerEnvironment(
                          Environment.ProcessorCount, shards.Count,
-                         Environment.GetEnvironmentVariable("DOTNET_GCHeapCount")))
+                         Environment.GetEnvironmentVariable("DOTNET_GCHeapCount"),
+                         Environment.GetEnvironmentVariable("DOTNET_GCConserveMemory"),
+                         Environment.GetEnvironmentVariable("DOTNET_gcConcurrent")))
                 psi.Environment[kv.Key] = kv.Value;
             if (viaDotnet && asm != null) psi.ArgumentList.Add(asm);
             foreach (var a in childArgs) psi.ArgumentList.Add(a);
