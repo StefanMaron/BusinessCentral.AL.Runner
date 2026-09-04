@@ -2174,7 +2174,28 @@ internal sealed class LiveNavTestField : ITestField
             // A raw SetFieldValue stored what the test wrote — so the field itself read back
             // correctly and every field DERIVED from it stayed empty, which made the test fail
             // pointing at the derived field, the one place the defect was not.
-            _record.ALValidateAsync(_fieldNo, navValue, null).GetAwaiter().GetResult();
+            //
+            // Issue #2705 — real BC (measured on a 28.4 container) runs the bound field's
+            // OnValidate with CurrFieldNo equal to that field's number for the duration of a
+            // page-driven write (own-table AND tableextension fields alike), while a
+            // Rec.Validate from AL code leaves it at 0. NavRecord.CurrFieldNo
+            // (Microsoft.Dynamics.Nav.Ncl.dll, decompiled) is a plain public get/set property
+            // that nothing in Ncl itself ever assigns — real BC's compiled client/page glue must
+            // set it around a UI-originated validate, which is exactly what a TestPage SetValue
+            // is standing in for here. Restoring the PREVIOUS value (not unconditionally 0)
+            // keeps a nested SetValue-from-OnValidate honest, and the try/finally matches what
+            // arm E of the corpus test measures: OnModify after Close() sees CurrFieldNo = 0
+            // again, so the assignment must not outlive this one validate call.
+            var previousCurrFieldNo = _record.CurrFieldNo;
+            _record.CurrFieldNo = _fieldNo;
+            try
+            {
+                _record.ALValidateAsync(_fieldNo, navValue, null).GetAwaiter().GetResult();
+            }
+            finally
+            {
+                _record.CurrFieldNo = previousCurrFieldNo;
+            }
 
             // Then the control's own OnValidate, which is a second and independent trigger: the
             // table field's runs first, the page's after it.
