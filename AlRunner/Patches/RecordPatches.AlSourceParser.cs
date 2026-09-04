@@ -588,6 +588,15 @@ public static partial class RecordPatches
     /// table it was wired for" family as #2197/#2412 (table-level DB triggers) and #2453
     /// (TestPageFactory's record-construction chokepoint), just for the table's own
     /// compiled field-trigger methods instead of an event subscriber.
+    ///
+    /// Also purges the table from <see cref="EventSubscriberPatches"/>'s
+    /// <c>_injectedSubscriberMethods</c> (issue #2510, the subscriber-side sibling of #2463
+    /// left unfixed by #2506): that set is keyed by the subscriber's MethodInfo only, with no
+    /// per-table index, so an event subscriber ([EventSubscriber] on Insert/Modify/Delete/
+    /// Rename or on a field's OnBefore/OnAfterValidateEvent) already injected onto the OLD
+    /// instance's event scope stayed marked "already injected" across this same rebuild and
+    /// was silently never appended to the NEW instance's event scope — no error, no
+    /// diagnostic, subscriber just stops firing for the rest of the process.
     /// </summary>
     private static void EvictCachedMetaTableForBaseTable(string baseTableName)
     {
@@ -597,6 +606,7 @@ public static partial class RecordPatches
                 continue;
             if (_metaTableCache.TryRemove(kvp.Key, out _))
             {
+                EventSubscriberPatches.ForgetInjectedForTable(kvp.Key);
                 _fieldTriggersWiredTables.TryRemove(kvp.Key, out _);
                 Console.Error.WriteLine(
                     $"[TableExt] evicted stale NCLMetaTable {kvp.Key} '{baseTableName}' " +
