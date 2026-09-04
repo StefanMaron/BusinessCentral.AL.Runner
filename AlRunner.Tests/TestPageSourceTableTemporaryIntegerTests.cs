@@ -171,8 +171,8 @@ public sealed class TestPageSourceTableTemporaryIntegerTests : IDisposable
                     Error('part must have rows after its own OnOpenPage runs');
                 if Part.Number.Value() <> '1' then
                     Error('first row Number expected 1, got %1', Part.Number.Value());
-                if Part.ValueAtNumber.Value() <> '10' then
-                    Error('first row Values[Number] expected 10, got %1', Part.ValueAtNumber.Value());
+                if Part.ValueAtNumber.Value() <> '10.00' then
+                    Error('first row Values[Number] expected 10.00, got %1', Part.ValueAtNumber.Value());
                 Part.Close();
             end;
         }
