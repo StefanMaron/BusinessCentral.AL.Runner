@@ -79,6 +79,27 @@
          DATAS gives back the memory and loses the whole throughput win, landing at Workstation's
          instruction count, so it is not a middle ground on this workload.
 
+         TEST EXECUTION IS A DIFFERENT WORKLOAD, and everything above was measured on COMPILE.
+         Measured 2026-09-04 on Microsoft's Tests-SMB bucket (1,027 tests), two runs each, same
+         binary, same 12-core box, wall clock (the compile numbers above use instructions
+         retired for good reason — treat these as magnitudes):
+
+              Server, default heap count (12)  3,244 / 3,119 MB   106 / 107 s
+              Server, DOTNET_GCHeapCount of 2     2,090 / 2,192 MB   108 / 110 s
+              Workstation                      1,591 / 1,561 MB   120 / 122 s
+
+         So execution pays roughly a third of its peak for a setting tuned on compile, and gets
+         no measurable time back for it. The default is still Server GC — a run compiles before
+         it executes, and #2577's compile win is real — but two things follow:
+
+           * Under the jobs flag, each worker was allocating a full core-count heap set, six processes
+             each sizing for the whole machine. ParallelFanOut now budgets cores/jobs per
+             worker: measured over ten buckets back-to-back on an idle box, 13,372 MB -> 9,196 MB
+             at an identical 153 s wall. See ParallelFanOut.GcHeapCountForWorker.
+           * Whether the SINGLE-process default should cap heaps for an execution-heavy run is
+             open, and needs the compile and execute phases measured separately before anyone
+             changes this property.
+
          Concurrent (background) GC stays at its default (on): untested here, and this allocation
          profile is throughput-bound, not pause-bound.
          Regression cover: AlRunner.Tests/ServerGcConfigTests, and
