@@ -231,10 +231,9 @@ bool printClassification = false;
 bool outputJson = false;
 string? outputJunitPath = null;
 int jobs = 1;   // --jobs N: fan out across N worker processes (#2280)
+int resumeAborts = AlRunner.Infrastructure.AbortResume.DefaultBudget;   // #2280: resume past a watchdog abort
 var excludeTests = new List<string>();   // --exclude-test: skip these, so a run can resume past a watchdog abort (#2280)
-int resumeAborts = AlRunner.Infrastructure.AbortResume.DefaultBudget;
-var excludeTests = new List<string>();
-var allAbortReasons = new List<string>();   // #2280: watchdog aborts seen this run, for auto-resume   // --exclude-test: skip these, so a run can resume past a watchdog abort (#2280)
+var allAbortReasons = new List<string>();   // #2280: watchdog aborts seen this run, for auto-resume
 // --coverage: statement-level coverage via BC's own StmtHit instrumentation (issue
 // #1922, first slice of #1640). Writes Cobertura XML to --coverage-out (default
 // cobertura.xml in the working directory) after the run, plus a console table.
