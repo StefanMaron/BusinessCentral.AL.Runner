@@ -415,8 +415,12 @@ public sealed class DependencyLoader
             }
         }
 
-        var tempDir = Path.Combine(Path.GetTempPath(),
-            "al-runner-deps", SanitizeFileName($"{m.Publisher}_{m.Name}_{m.Version}"));
+        // Per-process, NOT the machine-wide identity-only path this used to be (#2696): the
+        // delete-then-rewrite below raced two runners resolving the same dependency, and one
+        // deleted the .al files the other was compiling from. Isolating costs nothing — the
+        // real cache is `cachedDll` above, which returns before this point on a hit, so this
+        // directory is scratch that is fully rewritten on every miss.
+        var tempDir = AlRunner.Infrastructure.DepExtractionDir.For(m.Publisher, m.Name, m.Version.ToString());
         Directory.CreateDirectory(tempDir);
         // Clean previously emitted .al files so a stale one doesn't pollute the compile.
         foreach (var existing in Directory.EnumerateFiles(tempDir, "*.al"))
