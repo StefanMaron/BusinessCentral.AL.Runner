@@ -87,7 +87,7 @@ public sealed class RunnerTestClientSession : ITestClientSession
         // silently overwrote the caller's chosen row with whatever sorts first, which is
         // exactly what that corpus test exists to catch (measured: it did, on first push of
         // this fix). Only reposition a record nothing has touched yet.
-        if (record != null && IsUnpositioned(record)) live.MoveFirst();
+        if (record != null && IsUnpositioned(record)) live.MoveFirstDuringOpen();
 
         return live;
     }

@@ -86,7 +86,7 @@ public static class RunnerTestPageState
                 // (corpus CU60848 RunModal_OpensOnTheRecordSetByTheCaller): a record the caller
                 // already positioned on a specific row must not be silently reset to the
                 // table's own first row.
-                live.MoveFirst();
+                live.MoveFirstDuringOpen();
         }
         catch { /* a page that cannot be marked simply behaves as it did before */ }
     }
