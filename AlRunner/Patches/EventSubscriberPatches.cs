@@ -419,6 +419,44 @@ public static class EventSubscriberPatches
         AlRunner.BcRuntime.ResetManualBindingCacheForReload();
     }
 
+    /// <summary>
+    /// Drop every subscriber MethodInfo injected for <paramref name="tableId"/> from
+    /// <see cref="_injectedSubscriberMethods"/> — both table-level trigger-ordinal subscribers
+    /// (<see cref="_byKey"/>, injected via <see cref="DoInject"/> / <see cref="InjectTriggerSubsForTable"/>)
+    /// and field-scoped validate subscribers (<see cref="_validateSubs"/>, injected via
+    /// <see cref="DoInjectValidate"/> / <see cref="InjectValidateSubsForTable"/>).
+    ///
+    /// Called from <c>RecordPatches.EvictCachedMetaTableForBaseTable</c> (issue #2510, the
+    /// subscriber-side sibling of #2463/#2506): that method already evicts the table's cached
+    /// <c>NCLMetaTable</c> and drops it from <c>_fieldTriggersWiredTables</c> so the table's OWN
+    /// compiled field triggers get re-wired onto the rebuilt instance, but it left
+    /// <see cref="_injectedSubscriberMethods"/> untouched. That set is keyed by the subscriber's
+    /// <c>MethodInfo</c> only — never by (table, metatable instance) — so a subscriber already
+    /// injected onto the OLD instance's <c>NavTableTriggerEventHandler</c> / field
+    /// <c>NavEventScope</c> stayed marked "already injected" forever: the next injection pass
+    /// over the REBUILT instance found the MethodInfo already in the set and skipped it, so the
+    /// rebuilt instance's event scopes never got the subscription appended at all. Removing the
+    /// MethodInfo here makes the guard re-evaluate on the next injection pass, exactly like
+    /// <c>_fieldTriggersWiredTables.TryRemove</c> does for the table's own field triggers.
+    /// </summary>
+    public static void ForgetInjectedForTable(int tableId)
+    {
+        lock (_lock)
+        {
+            foreach (var kv in _byKey)
+            {
+                if (kv.Key.PublisherId != tableId) continue;
+                foreach (var sub in kv.Value)
+                    _injectedSubscriberMethods.Remove(sub.Method);
+            }
+            foreach (var vs in _validateSubs)
+            {
+                if (vs.Handle.PublisherId != tableId) continue;
+                _injectedSubscriberMethods.Remove(vs.Handle.Method);
+            }
+        }
+    }
+
     private static Type? FindCodeunitClrType(int codeunitId) =>
         FindClrType(_codeunitTypeCache, "Codeunit", codeunitId);
 
