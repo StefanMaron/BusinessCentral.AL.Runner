@@ -108,6 +108,36 @@ internal static class ParallelFanOut
         catch { return 0; }
     }
 
+
+    /// <summary>
+    /// GC heaps to give one worker. The runner ships under Server GC (#2577), which sizes its
+    /// heap count from the CORE count — right for a single process, wrong under --jobs, where
+    /// every worker independently believes it owns the whole machine and allocates a full set.
+    ///
+    /// Measured on Tests-SMB (1,027 tests), two runs each: default heaps 3,244/3,119 MB at
+    /// 106/107 s; two heaps 2,090/2,192 MB at 108/110 s. About 34% of peak RSS returned for
+    /// about 2% wall. Since worker count is bounded by RAM rather than cores (see ShardPlanner),
+    /// that trade buys more concurrency than it costs.
+    ///
+    /// Workstation GC returns more still (1,591/1,561 MB) but costs ~14% wall, so it is not
+    /// chosen for you here — DOTNET_gcServer=0 remains available to anyone who wants it.
+    /// </summary>
+    public static int GcHeapCountForWorker(int cores, int jobs)
+        => Math.Clamp(cores / Math.Max(1, jobs), 1, Math.Max(1, cores));
+
+    /// <summary>
+    /// Extra environment for a worker process. Empty when the user has already set the knob:
+    /// someone tuning DOTNET_GCHeapCount by hand, or a CI runner setting it globally, must win
+    /// over a number computed here.
+    /// </summary>
+    public static Dictionary<string, string> WorkerEnvironment(int cores, int jobs, string? userHeapCount = null)
+    {
+        var env = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (string.IsNullOrEmpty(userHeapCount))
+            env["DOTNET_GCHeapCount"] = GcHeapCountForWorker(cores, jobs).ToString();
+        return env;
+    }
+
     /// <summary>
     /// Run <paramref name="bundles"/> across <paramref name="jobs"/> worker processes and print
     /// one aggregate summary. Returns the exit code: the worst any worker returned, so a green
@@ -147,6 +177,10 @@ internal static class ParallelFanOut
                 RedirectStandardError = true,
                 UseShellExecute = false,
             };
+            foreach (var kv in WorkerEnvironment(
+                         Environment.ProcessorCount, shards.Count,
+                         Environment.GetEnvironmentVariable("DOTNET_GCHeapCount")))
+                psi.Environment[kv.Key] = kv.Value;
             if (viaDotnet && asm != null) psi.ArgumentList.Add(asm);
             foreach (var a in childArgs) psi.ArgumentList.Add(a);
 
