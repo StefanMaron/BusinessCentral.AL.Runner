@@ -33,7 +33,7 @@ on:
     outputs:
       required-version:
         description: >-
-          The live-resolved 28.1.* build this run actually tested (resolve-versions'
+          The live-resolved NEWEST build this run actually tested (resolve-versions'
           `required-version`, see below). publish.yml's release job reads this instead
           of carrying its own static _BCVersion pin — see #2010: a hardcoded pin in the
           one path nobody exercises except during a release rotted the moment Microsoft
@@ -63,7 +63,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.resolve.outputs.matrix }}
-      # The PRIMARY version (28.1) — the one the runner is developed against, used by
+      # The PRIMARY version — the NEWEST prefix in .github/bc-versions.txt, used by
       # jobs that build once rather than across the matrix (currently `smoke`). Every
       # version in the matrix now gates; this output just picks the representative one.
       required-version: ${{ steps.resolve.outputs.required-version }}
@@ -93,17 +93,61 @@ jobs:
           #
           # So the informational tier has nothing left to protect, and keeping it would
           # mean a BC 27 regression lands silently, which is exactly what this matrix
-          # exists to prevent. 28.1 stays singled out only as `required-version`, for
-          # single-build jobs that need to name one version.
+          # exists to prevent. One prefix is still singled out as `required-version`,
+          # for single-build jobs that need to name one version.
           BC_PREFIXES=$(cat .github/bc-versions.txt | grep -v '^#' | tr '\n' ' ')
+
+          # Both selections below are DERIVED from bc-versions.txt, never hardcoded.
+          # A hardcoded pin in a path nobody exercises except during a release is
+          # exactly what rotted in #2010, and a hardcoded "primary" rots the same way
+          # the day a newer minor ships: it keeps naming an older build while claiming
+          # to be representative, and nothing announces the drift.
+          #
+          # PRIMARY = the newest prefix overall. It sets `required-version`, which is
+          # the top-level entry point publish.yml builds and the fallback EngineVariants
+          # picks when no variants/<version>/ matches the BC in play. Newest is the
+          # right fallback because the unmatched case is a BC NEWER than anything we
+          # built. Every prefix still ships its own variant either way -- that loop
+          # reads versions-json, not this.
+          #
+          # UNIT = the newest prefix of each major. See the unit-tests flag below.
+          # Plain `sort -V` rather than an inline python -c: `python3 -c` with indented
+          # source is an IndentationError on some CPython versions and not others, and
+          # this block resolves the whole matrix -- if it throws, nothing runs at all.
+          PRIMARY_PREFIX=$(printf '%s\n' $BC_PREFIXES | sort -V | tail -1)
+          UNIT_PREFIXES=$(for major in $(printf '%s\n' $BC_PREFIXES | cut -d. -f1 | sort -u); do
+                            printf '%s\n' $BC_PREFIXES | grep "^${major}\." | sort -V | tail -1
+                          done | tr '\n' ' ')
+          echo "Primary prefix: $PRIMARY_PREFIX | unit-test prefixes: $UNIT_PREFIXES"
+
           ENTRIES="[]"
           for prefix in $BC_PREFIXES; do
             FULL=$(dotnet run --project tools/DownloadArtifacts -- resolve-version "$prefix" dummy 2>/dev/null || true)
             if [ -n "$FULL" ]; then
               REQ=True
-              [ "$prefix" = "28.1" ] && echo "required-version=$FULL" >> "$GITHUB_OUTPUT"
-              echo "  $prefix -> $FULL (required=$REQ)"
-              ENTRIES=$(echo "$ENTRIES" | python3 -c "import json,sys; v=json.load(sys.stdin); v.append({'bc-version':'$FULL','required':$REQ}); print(json.dumps(v))")
+              [ "$prefix" = "$PRIMARY_PREFIX" ] && echo "required-version=$FULL" >> "$GITHUB_OUTPUT"
+              # Issue #2674: AlRunner.Tests runs on TWO legs, not eight. It is 66% of a
+              # leg's wall clock (627s of 942s, run 33826354932) and carries no version
+              # signal: across the 25 most recent red Test Matrix runs it failed 8 times
+              # on a SCATTERED leg set (the load-dependent signature) and 3 times on ALL
+              # EIGHT (a real regression any single leg catches) — and ZERO times on a
+              # version split. On a green run all 1922 tests report an identical outcome
+              # on all 8 legs. The 6 redundant legs therefore add no signal and 6x the
+              # flake surface, which has reddened main repeatedly (#2496, #2653, #2648).
+              #
+              # The contrast is runner-extras, which stays on all 8: it has 6
+              # VERSION-SPLIT failures in the same 25 runs, because some AL surfaces are
+              # gated on preprocessor symbols only defined from 28.0 on. That 27-vs-28
+              # boundary is also why this is two legs and not one, and why they are the
+              # NEWEST minor of each major: the one failure mode that does discriminate
+              # by version shows up on the newest build first. A BC service update once
+              # rerouted callers past a Cecil rewrite and produced 53 failures on the
+              # newer build alone, and a rewrite that stops being reached fails silently
+              # — behaviour just reverts to BC's own, with nothing announcing it.
+              UNIT=False
+              case " $UNIT_PREFIXES " in *" $prefix "*) UNIT=True ;; esac
+              echo "  $prefix -> $FULL (required=$REQ, unit-tests=$UNIT)"
+              ENTRIES=$(echo "$ENTRIES" | python3 -c "import json,sys; v=json.load(sys.stdin); v.append({'bc-version':'$FULL','required':$REQ,'unit-tests':$UNIT}); print(json.dumps(v))")
             else
               echo "  $prefix -> FAILED (skipping)"
             fi
@@ -264,6 +308,7 @@ jobs:
           cp "$(ls -t ~/.cache/al-runner/ncl-cecil/*.dll | head -1)" AlRunner.Tests/bin/Release/net8.0/Microsoft.Dynamics.Nav.Ncl.dll
 
       - name: Generate .runsettings for in-process BC engine tests
+        if: ${{ matrix.target.unit-tests }}
         run: |
           # See AlRunner.Tests/EngineStartupHook.cs and
           # AlRunner/EngineTestBinResolverStartupHook.cs for the full mechanism (issue #1813):
@@ -298,9 +343,12 @@ jobs:
       # completely inert without the variable. The start marker is a separate step so
       # the run block below stays byte-identical and rebases cleanly.
       - name: Phase-log start marker (unit tests)
+        if: ${{ matrix.target.unit-tests }}
         run: date +%s > phase-step-start-unit
 
       - name: Run unit tests (AlRunner.Tests)
+        # Two legs only — see the unit-tests flag in the resolve step for the measurement.
+        if: ${{ matrix.target.unit-tests }}
         env:
           AL_RUNNER_PHASE_LOG: ${{ github.workspace }}/phase-log-unit.jsonl
           # Issue #2070: opt-in ARM/EVAL/FIRE/WAIT (server, AlDapSession.cs) + SEND/GIVEUP
@@ -333,8 +381,8 @@ jobs:
 
       - name: TRX occupancy report (unit tests)
         # always(): the timeline is most worth seeing on a red leg, and this must never be
-        # the thing that fails one.
-        if: always()
+        # the thing that fails one. Still only on the legs that produced a trx.
+        if: ${{ always() && matrix.target.unit-tests }}
         continue-on-error: true
         run: |
           python3 scripts/trx-occupancy.py trx/unit-tests.trx \
@@ -349,13 +397,14 @@ jobs:
       # genuinely missing from the table is loud CI failure, per
       # .claude/rules/loud-failures.md, not another quiet report.
       - name: Collection weight table freshness (unit tests)
+        if: ${{ matrix.target.unit-tests }}
         run: |
           python3 scripts/check-collection-weights.py trx/unit-tests.trx
 
       - name: Phase-log report (unit tests)
         # always(): a red unit-test step is exactly when the timings are most worth
         # seeing, and this must never be the thing that fails the leg.
-        if: always()
+        if: ${{ always() && matrix.target.unit-tests }}
         continue-on-error: true
         run: |
           python3 scripts/phase-log-report.py phase-log-unit.jsonl \
