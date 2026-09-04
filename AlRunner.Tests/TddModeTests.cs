@@ -294,24 +294,25 @@ public sealed class TddModeTests : IDisposable
     }
 
     /// <summary>
-    /// Criterion 11, code-shape half: Program.cs:5334's ComputeAlCacheKey must hash the
-    /// --tdd flag itself, not only rely on the cache being disabled at runtime — the
-    /// issue calls this out as required in the FIRST commit, and a future PR that
-    /// re-enables caching under --tdd (e.g. once excluded-object detail has its own
-    /// sidecar) must not be able to silently drop this line and still compile. A scrape
-    /// test (same technique as CliDocumentationTests' flag scrape) rather than a runtime
-    /// probe, because --tdd runs never reach ComputeAlCacheKey while the cache is
-    /// disabled (see the test above) — there is no live --print-cache-key path to probe.
+    /// Criterion 11, code-shape half: ComputeAlCacheKey (moved from Program.cs to
+    /// AlRunner/ProgramSupport/Dependencies.cs by #2665) must hash the --tdd flag
+    /// itself, not only rely on the cache being disabled at runtime — the issue calls
+    /// this out as required in the FIRST commit, and a future PR that re-enables
+    /// caching under --tdd (e.g. once excluded-object detail has its own sidecar) must
+    /// not be able to silently drop this line and still compile. A scrape test (same
+    /// technique as CliDocumentationTests' flag scrape) rather than a runtime probe,
+    /// because --tdd runs never reach ComputeAlCacheKey while the cache is disabled
+    /// (see the test above) — there is no live --print-cache-key path to probe.
     /// </summary>
     [Fact]
     public void ComputeAlCacheKey_HashesTheTddFlag()
     {
-        var programSource = File.ReadAllText(Path.Combine(RepoRoot, "AlRunner", "Program.cs"));
-        var start = programSource.IndexOf("static string ComputeAlCacheKey(", StringComparison.Ordinal);
-        Assert.True(start >= 0, "ComputeAlCacheKey not found in Program.cs");
-        var end = programSource.IndexOf("static string? CommonDirectory(", start, StringComparison.Ordinal);
+        var source = File.ReadAllText(Path.Combine(RepoRoot, "AlRunner", "ProgramSupport", "Dependencies.cs"));
+        var start = source.IndexOf("internal static string ComputeAlCacheKey(", StringComparison.Ordinal);
+        Assert.True(start >= 0, "ComputeAlCacheKey not found in ProgramSupport/Dependencies.cs");
+        var end = source.IndexOf("internal static string? CommonDirectory(", start, StringComparison.Ordinal);
         Assert.True(end > start, "could not bound ComputeAlCacheKey's body (CommonDirectory marker not found after it)");
-        var body = programSource[start..end];
+        var body = source[start..end];
 
         Assert.Contains("IsTddMode()", body);
         Assert.Contains("tdd:", body);
