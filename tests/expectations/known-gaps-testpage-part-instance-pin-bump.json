@@ -1,13 +1,5 @@
 [
   {
-    "codeunitId": 60624,
-    "CodeunitName": "Test TmpInt ListPart",
-    "Method": "TempIntegerPart_SelfLoaded_FirstRowIsNumberOne",
-    "Mode": "expect-fail-known-gap",
-    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2634",
-    "Note": "Surfaced by the al-language pin bump landing alongside issue #2201's fix (StefanMaron/BusinessCentral.AL.Language.Tests commit 3661f1d, #121) -- unrelated to #2201's own claim. Real BC formats the Integer virtual table's Number field as '10.00' on the first row of a self-loaded SourceTable Integer ListPart; the runner answers '10'. Not investigated further; tracked as #2634."
-  },
-  {
     "codeunitId": 60958,
     "CodeunitName": "Test Feature Key Table",
     "Method": "Record_FeatureKey_ModifyingAReadOnlyColumn_RaisesNamingTheField",

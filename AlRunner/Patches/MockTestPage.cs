@@ -1915,6 +1915,39 @@ internal static class TestPageMinMaxValue
     }
 }
 
+/// <summary>
+/// A Decimal-typed control always renders with the field's decimal places -- default 2,
+/// the same convention #2490 measured against real BC and <see cref="TestPageMinMaxValue.FormatValue"/>
+/// already codifies for the error-message text -- regardless of how many decimal digits the
+/// underlying .NET <c>decimal</c>'s own <c>Scale</c> happens to carry (issues #2634 / #2534).
+///
+/// A record field reaches its stored value through <see cref="Microsoft.Dynamics.Nav.Runtime.NavRecord"/>'s
+/// own Validate/Insert path, which is BC's own precompiled code and out of this runner's
+/// control -- so a Rec-bound Decimal control can format correctly today by construction, if
+/// BC's own write path already normalises the stored scale. A page-GLOBAL <c>Decimal</c>
+/// (<c>Values: array[20] of Decimal;</c>) gets no such round trip at all: a plain assignment
+/// like <c>Values[i] := i * 10;</c> stores a .NET decimal with Scale 0, and
+/// <c>Convert.ToString(10m)</c> answers "10" where real BC's page layer answers "10.00". Both
+/// <see cref="LiveNavTestField.Value"/> and <see cref="PageVariableTestField.Value"/> read
+/// through this helper so neither binding shape can silently regress relative to the other --
+/// exactly the LiveNavTestField/PageVariableTestField pairing pattern <see cref="TestPageBooleanValue"/>
+/// and <see cref="TestPageOptionValue"/> already use.
+///
+/// Only <see cref="NavDecimal"/> needs special handling: <see cref="NavInteger"/> and
+/// <see cref="NavBigInteger"/> already round-trip correctly through
+/// <c>Convert.ToString</c> because an integral CLR type never carries a fractional Scale to
+/// lose in the first place -- matching the "0" (no decimals) half of
+/// <see cref="TestPageMinMaxValue.FormatValue"/>'s own convention without any code needed here.
+/// </summary>
+internal static class TestPageNumericValue
+{
+    internal static string? Format(NavValue? navValue)
+        => navValue is NavDecimal d
+            ? Convert.ToDecimal(d.ClientObject, CultureInfo.InvariantCulture)
+                .ToString("0.00", CultureInfo.InvariantCulture)
+            : null;
+}
+
 internal static class TestPageBooleanValue
 {
     internal static NavValue Resolve(string value, string context)
@@ -2000,6 +2033,7 @@ internal sealed class LiveNavTestField : ITestField
         get => (CurrentOption() is { } option
                    ? TestPageOptionValue.Display(option, OptionCaptions())
                    : null)
+               ?? TestPageNumericValue.Format(_record.GetFieldValue(_fieldNo) as NavValue)
                ?? Convert.ToString(ObjectValue, CultureInfo.InvariantCulture)
                ?? string.Empty;
         set
@@ -2201,6 +2235,7 @@ internal sealed class PageVariableTestField : ITestField
         get => (CurrentOption() is { } option
                    ? TestPageOptionValue.Display(option, _page.TryGetOptionCaptions(_controlId, option))
                    : null)
+               ?? TestPageNumericValue.Format(RunnerPageInstance.GetValue(_expression))
                ?? Convert.ToString(ObjectValue, CultureInfo.InvariantCulture)
                ?? string.Empty;
         set
@@ -2275,6 +2310,13 @@ internal sealed class PageVariableTestField : ITestField
         NavBoolean => NavType.Boolean,
         NavCode => NavType.Code,
         NavDate => NavType.Date,
+        // #2634/#2534's fix: a Decimal-typed page-global control has to answer NavType.Decimal
+        // here too, the same as an Option/Boolean/Code/Date global already does above -- this
+        // FieldType is what NavTestField.ALSetValue (BC's own precompiled dispatch) uses to pick
+        // a NavValueMetadata before round-tripping through ValueToString, so leaving Decimal out
+        // would have kept a Decimal-typed page variable dispatching as plain Text on the WRITE
+        // side even after the READ side (Value, above) started formatting it correctly.
+        NavDecimal => NavType.Decimal,
         _ => NavType.Text,
     };
     public int ValidationErrorCount => 0;
