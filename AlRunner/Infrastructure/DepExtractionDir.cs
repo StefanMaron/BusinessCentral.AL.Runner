@@ -27,9 +27,17 @@ namespace AlRunner.Infrastructure;
 
 internal static class DepExtractionDir
 {
+    /// <summary>
+    /// The root a process with this id would use. Exposed so a test can prove two processes get
+    /// DIFFERENT roots — asserting only that the live path contains the current pid would still
+    /// pass if the pid were, say, appended to a shared constant in a way that collided.
+    /// </summary>
+    public static string RootForProcess(int processId)
+        => Path.Combine(Path.GetTempPath(), "al-runner-deps", $"p{processId}");
+
     private static readonly Lazy<string> _root = new(() =>
     {
-        var root = Path.Combine(Path.GetTempPath(), "al-runner-deps", $"p{Environment.ProcessId}");
+        var root = RootForProcess(Environment.ProcessId);
         Directory.CreateDirectory(root);
         AppDomain.CurrentDomain.ProcessExit += (_, _) =>
         {

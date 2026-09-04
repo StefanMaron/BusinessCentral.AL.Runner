@@ -75,4 +75,14 @@ public sealed class DepExtractionDirTests
     [Fact]
     public void Root_IsUnderTheSharedAlRunnerDepsParent()
         => Assert.Contains("al-runner-deps", DepExtractionDir.Root, StringComparison.Ordinal);
+
+    /// <summary>The claim that actually matters, stated directly: two processes get different
+    /// roots. Asserting only that the live path contains the current pid would still pass if the
+    /// id were folded in somewhere that collided.</summary>
+    [Fact]
+    public void Root_DiffersBetweenProcesses()
+    {
+        Assert.NotEqual(DepExtractionDir.RootForProcess(1001), DepExtractionDir.RootForProcess(1002));
+        Assert.Equal(DepExtractionDir.RootForProcess(1001), DepExtractionDir.RootForProcess(1001));
+    }
 }
