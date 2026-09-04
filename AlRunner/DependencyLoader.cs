@@ -29,8 +29,18 @@ public sealed class DependencyLoader
     // already read off app.json / the dependency manifest for every app that
     // reaches this cache, so the comparison costs nothing extra — no content hash,
     // no re-reading source.
+    // Tier3CacheKey is null for every Tier-1 (precompiled DLL) / Tier-2 (R2R) / symbol-only
+    // entry — the overwhelming majority (Base Application, System Application, most real
+    // ISV .apps) — and is set ONLY when LoadOne actually took the Tier-3 source-compile
+    // path (see its own return points). #2593/#2579: this is what lets the LoadAll
+    // cache-hit fast path replay a Tier-3 dependency's metadata sidecars on every reuse
+    // WITHOUT re-hashing the .app file (ComputeSourceDependencyCacheKey reads and
+    // SHA256's the whole file — cheap for a small test-library .app, NOT cheap for a
+    // ~100MB Base Application .app, which would otherwise pay that cost on every single
+    // reload cycle purely to discover "this one has no sidecars anyway").
     private readonly record struct LoadedAppEntry(
-        Assembly Asm, string Name, string Publisher, string Version, string SourcePath);
+        Assembly Asm, string Name, string Publisher, string Version, string SourcePath,
+        string? Tier3CacheKey = null);
 
     private static readonly ConcurrentDictionary<Guid, LoadedAppEntry> _cache = new();
     private static readonly ConcurrentDictionary<string, Assembly> _byName =
@@ -94,6 +104,22 @@ public sealed class DependencyLoader
                         m.AppId,
                         existing.Name, existing.Publisher, existing.Version, existing.SourcePath,
                         m.Name, m.Publisher, newVersion, path);
+                // #2593/#2579: this dependency's Assembly is being reused without calling
+                // LoadOne again — but LoadOne is the ONLY place that replays this dependency's
+                // Tier-3 metadata sidecars (report/report-layout/page/xmlport/enum) into the
+                // process-wide registries. Those registries get reset every reload cycle
+                // (BcRuntime.ResetForNewBundleReload), so on the SECOND and every later
+                // --watch/--server cycle that resolves this same AppId as a dependency, skipping
+                // this replay would silently drop the dependency's metadata forever — the exact
+                // regression this call prevents (see WatchPageMetadataReloadTests, R3Pages
+                // resolved as R3Driver's dependency). Gated on the stored Tier3CacheKey, not a
+                // File.Exists probe recomputed from scratch — a Tier-1/Tier-2 entry (the
+                // overwhelming majority: Base Application, System Application, most real ISV
+                // .apps) never went through Tier 3 and has no sidecars to replay, and
+                // ComputeSourceDependencyCacheKey hashes the WHOLE .app file, which would be a
+                // real cost paid every cycle for a ~100MB Base Application package for no reason.
+                if (existing.Tier3CacheKey != null)
+                    ReplayDependencyMetadataSidecars(m, existing.Tier3CacheKey);
                 list.Add(existing.Asm);
                 continue;
             }
@@ -153,9 +179,10 @@ public sealed class DependencyLoader
             }
 
             Assembly? asm;
+            string? tier3CacheKey;
             try
             {
-                asm = LoadOne(m, path, bucketRoot);
+                (asm, tier3CacheKey) = LoadOne(m, path, bucketRoot);
             }
             // #2131: this guard USED to be bare `when (microsoftSourceOnly)` — it caught
             // and silently swallowed EVERY Microsoft-source-only Tier-3 failure, including
@@ -181,7 +208,7 @@ public sealed class DependencyLoader
             }
             if (asm != null)
             {
-                _cache[m.AppId] = new LoadedAppEntry(asm, m.Name, m.Publisher, m.Version.ToString(), path);
+                _cache[m.AppId] = new LoadedAppEntry(asm, m.Name, m.Publisher, m.Version.ToString(), path, tier3CacheKey);
                 _byName[asm.GetName().Name ?? ""] = asm;
                 // Register app metadata so AlCallStackCapture can decorate frames.
                 AlCallStackCapture.RegisterAssemblyInfo(asm, m.Name, m.Publisher, m.Version.ToString());
@@ -220,7 +247,7 @@ public sealed class DependencyLoader
         }
     }
 
-    private Assembly? LoadOne(AppManifest m, string appPath, string bucketRoot)
+    private (Assembly? Asm, string? Tier3CacheKey) LoadOne(AppManifest m, string appPath, string bucketRoot)
     {
         // Tier 1: precompiled DLL.
         var fileName = SanitizeFileName($"{m.Publisher}_{m.Name}_{m.Version}.dll");
@@ -246,7 +273,7 @@ public sealed class DependencyLoader
                 // asm.GetTypes() on this assembly (asm.Location is empty for a byte[]-loaded
                 // assembly, so it couldn't cheaply re-derive this later on its own).
                 AlRunner.Patches.RecordPatches.SeedCompiledReportIdsFromPEBytes(asm, bytes);
-                return asm;
+                return (asm, null);
             }
             catch (Exception ex)
             {
@@ -299,7 +326,7 @@ public sealed class DependencyLoader
                 }
                 if (loaded > 1)
                     Console.Error.WriteLine($"[deps] tier-2 R2R: {m.Name} loaded {loaded} DLL chunk(s)");
-                return primary;
+                return (primary, null);
             }
         }
 
@@ -321,7 +348,7 @@ public sealed class DependencyLoader
                 Console.Error.WriteLine(
                     $"[deps] DLL-first: {m.Publisher}_{m.Name} v{m.Version} — {codeunitIds.Count} codeunit(s) " +
                     $"served from extracted service-tier DLLs; skipping source compile");
-                return null; // lazy dispatch via ServiceTierDllIndex
+                return (null, null); // lazy dispatch via ServiceTierDllIndex
             }
         }
 
@@ -332,7 +359,7 @@ public sealed class DependencyLoader
             Console.Error.WriteLine(
                 $"[deps] NOTE: {m.Publisher}_{m.Name} v{m.Version} is symbol-only " +
                 $"(no runtime code in package); relying on service-tier/already-loaded assembly");
-            return null;
+            return (null, null);
         }
 
         var cacheKey = ComputeSourceDependencyCacheKey(m, appPath);
@@ -380,7 +407,7 @@ public sealed class DependencyLoader
                     replayedEnums = AlEnumMetadataRegistry.LoadSidecar(enumRegistrySidecar);
                 Console.Error.WriteLine(
                     $"[deps] source-cache HIT: {m.Name} v{m.Version} key={cacheKey[..12]} ({cachedBytes.Length} bytes, {replayedReports} report-metadata entries, {replayedEnums} enum-registry entries)");
-                return Assembly.Load(cachedBytes);
+                return (Assembly.Load(cachedBytes), cacheKey);
             }
             catch (Exception ex)
             {
@@ -490,7 +517,7 @@ public sealed class DependencyLoader
         {
             Console.Error.WriteLine($"[deps] source-cache write failed for {m.Name}: {ex.Message}");
         }
-        try { return Assembly.Load(compile.AssemblyBytes!); }
+        try { return (Assembly.Load(compile.AssemblyBytes!), cacheKey); }
         catch (Exception ex)
         {
             // LOAD-FAIL: the compiled bytes could not be loaded into the ALC.
@@ -556,6 +583,47 @@ public sealed class DependencyLoader
         onSidecarsPublishedBeforeDll?.Invoke();
         AlCacheWriter.AtomicPublish(cachedDll, tmp => File.WriteAllBytes(tmp, assemblyBytes));
         return (sidecarCount, enumSidecarCount);
+    }
+
+    /// <summary>
+    /// Replay this dependency's Tier-3 source-compile-cache metadata sidecars (report,
+    /// report-layout, page, xmlport, enum) into the process-wide registries. Called from
+    /// the <c>LoadAll</c> cache-hit fast path (see its call site for the full "why"), ONLY
+    /// when the reused <see cref="LoadedAppEntry"/> carries a non-null
+    /// <c>Tier3CacheKey</c> — that gate is the caller's job (it also decides "is there
+    /// anything to do at all"), so this method trusts <paramref name="cacheKey"/> rather
+    /// than re-deriving or re-checking it. This keeps a dependency's metadata answering
+    /// after every <c>BcRuntime.ResetForNewBundleReload()</c>, not just the first time this
+    /// AppId is resolved in the process — WITHOUT re-hashing the .app file on every reuse
+    /// (see <see cref="LoadedAppEntry"/>'s own header comment on Tier3CacheKey for the cost
+    /// that would otherwise be paid every single cycle).
+    /// </summary>
+    private void ReplayDependencyMetadataSidecars(AppManifest m, string cacheKey)
+    {
+        var cacheDir = AlRunner.Infrastructure.CacheRoots.Resolve("compiled-deps");
+        var reportSidecar = Path.Combine(cacheDir, cacheKey + ".report-metadata.json");
+        var reportLayoutSidecar = Path.Combine(cacheDir, cacheKey + ".report-layouts.json");
+        var pageMetadataSidecar = Path.Combine(cacheDir, cacheKey + ".page-metadata.json");
+        var xmlPortMetadataSidecar = Path.Combine(cacheDir, cacheKey + ".xmlport-metadata.json");
+        var enumRegistrySidecar = Path.Combine(cacheDir, cacheKey + ".enum-registry.json");
+        try
+        {
+            int replayedReports = File.Exists(reportSidecar) ? AlReportMetadataRegistry.LoadSidecar(reportSidecar) : 0;
+            if (File.Exists(reportLayoutSidecar))
+                AlReportLayoutRegistry.LoadSidecar(reportLayoutSidecar);
+            int replayedPages = File.Exists(pageMetadataSidecar) ? AlPageMetadataRegistry.LoadSidecar(pageMetadataSidecar) : 0;
+            int replayedXmlPorts = File.Exists(xmlPortMetadataSidecar) ? AlXmlPortMetadataRegistry.LoadSidecar(xmlPortMetadataSidecar) : 0;
+            int replayedEnums = File.Exists(enumRegistrySidecar) ? AlEnumMetadataRegistry.LoadSidecar(enumRegistrySidecar) : 0;
+            if (replayedReports + replayedPages + replayedXmlPorts + replayedEnums > 0)
+                Console.Error.WriteLine(
+                    $"[deps] metadata sidecar replay (reused module): {m.Name} v{m.Version} — " +
+                    $"{replayedReports} report, {replayedPages} page, {replayedXmlPorts} xmlport, {replayedEnums} enum entries");
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine(
+                $"[deps] metadata sidecar replay failed for {m.Name} v{m.Version} (reused module): {ex.Message}");
+        }
     }
 
     private static string ComputeSourceDependencyCacheKey(AppManifest manifest, string appPath)

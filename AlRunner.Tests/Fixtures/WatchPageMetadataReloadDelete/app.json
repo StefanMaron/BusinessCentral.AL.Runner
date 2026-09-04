@@ -1,0 +1,23 @@
+{
+  "id": "a3000000-0000-4000-8000-000000000021",
+  "name": "Runner Tests Fixture - Watch Page Metadata Reload Delete",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "#2593/#2579: a deleted page's metadata must stop answering after the next --watch reload, while a page that survives unchanged must keep answering.",
+  "description": "Used by AlRunner.Tests' WatchPageMetadataReloadDeleteTests. Cycle 1 declares both 'RPR Keep' and 'RPR Gone'; between cycles the test deletes RPR Gone's .al file (nothing else references it, so the bundle still compiles) and asserts AL_RUNNER_TRACE_PAGE_METADATA=1 output on cycle 2: RPR Keep's page id is re-registered (the shadow-snapshot replay this fix adds), RPR Gone's is not (BcRuntime.ResetForNewBundleReload() cleared it and nothing re-registers a page the bundle no longer declares).",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "idRanges": [
+    {
+      "from": 70200,
+      "to": 70219
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}

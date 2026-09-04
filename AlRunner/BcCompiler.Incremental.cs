@@ -207,6 +207,86 @@ public sealed partial class BcCompiler
 {
     private readonly Dictionary<string, RadBaseline> _radBaselines = new();
 
+    // #2593/#2579: AlPageMetadataRegistry/AlXmlPortMetadataRegistry are populated ONLY as a
+    // side effect of BC's own Compilation.Emit (CaptureOutputter.AddApplicationObject), and
+    // BcRuntime.ResetForNewBundleReload() clears both at the top of every --watch/--server
+    // reload cycle. Both RAD fast paths below can return WITHOUT running a full Emit for
+    // every object this app declares:
+    //   - the "genuinely zero work" fast path (this app's files hash identical to the last
+    //     cycle) never calls Emit at all;
+    //   - a real delta's own `radComp.Emit(...)` (below) only covers the objects that
+    //     actually changed this cycle, not the rest of the app's unchanged objects.
+    // Either way, an object this app still declares but did not touch this cycle would
+    // otherwise silently lose its metadata the moment THIS reload's Reset already ran —
+    // see WatchPageMetadataReloadTests (R3Pages, unchanged, resolved as R3Driver's
+    // dependency), which regresses without this. These two dictionaries are a shadow copy
+    // that lives on THIS BcCompiler instance rather than the process-wide registry, so they
+    // survive the reset; <see cref="ReplayRadMetadataSnapshot"/> restores exactly what a
+    // from-scratch Emit of this app would have (re-)registered, every time a RAD fast path
+    // is about to hand a result back to the caller.
+    private readonly Dictionary<string, Dictionary<int, string>> _radPageMetadataByModule =
+        new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Dictionary<int, string>> _radXmlPortMetadataByModule =
+        new(StringComparer.Ordinal);
+
+    /// <summary>Full (re)capture — called after a clean full Emit, when every object this app
+    /// declares is known and the live registries already hold its current metadata.</summary>
+    private void CaptureRadMetadataSnapshotFull(
+        string moduleName, IEnumerable<NavCA.IApplicationObjectTypeSymbol> declared)
+    {
+        var pages = new Dictionary<int, string>();
+        var xmlPorts = new Dictionary<int, string>();
+        foreach (var sym in declared)
+        {
+            var id = (sym as NavCA.ISymbolWithId)?.Id;
+            if (id == null) continue;
+            if (sym.Kind == NavCA.SymbolKind.Page && AlPageMetadataRegistry.TryGet(id.Value, out var pageXml))
+                pages[id.Value] = pageXml;
+            else if (sym.Kind == NavCA.SymbolKind.XmlPort && AlXmlPortMetadataRegistry.TryGet(id.Value, out var xpXml))
+                xmlPorts[id.Value] = xpXml;
+        }
+        _radPageMetadataByModule[moduleName] = pages;
+        _radXmlPortMetadataByModule[moduleName] = xmlPorts;
+    }
+
+    /// <summary>Incremental update — called after a successful RAD delta. Drops vacated
+    /// (deleted/renamed-away) ids, then refreshes every changed id's metadata from the live
+    /// registry (the delta's own Emit call, immediately above the caller, already populated
+    /// it for exactly these ids).</summary>
+    private void UpdateRadMetadataSnapshotDelta(
+        string moduleName, IEnumerable<RadObjectIdentity> vacatedIds, IEnumerable<RadObjectIdentity> changedIds)
+    {
+        if (!_radPageMetadataByModule.TryGetValue(moduleName, out var pages))
+            _radPageMetadataByModule[moduleName] = pages = new Dictionary<int, string>();
+        if (!_radXmlPortMetadataByModule.TryGetValue(moduleName, out var xmlPorts))
+            _radXmlPortMetadataByModule[moduleName] = xmlPorts = new Dictionary<int, string>();
+
+        foreach (var v in vacatedIds)
+        {
+            if (v.Id is not { } id) continue;
+            if (v.Kind == NavCA.SymbolKind.Page) pages.Remove(id);
+            else if (v.Kind == NavCA.SymbolKind.XmlPort) xmlPorts.Remove(id);
+        }
+        foreach (var c in changedIds)
+        {
+            if (c.Id is not { } id) continue;
+            if (c.Kind == NavCA.SymbolKind.Page && AlPageMetadataRegistry.TryGet(id, out var pageXml))
+                pages[id] = pageXml;
+            else if (c.Kind == NavCA.SymbolKind.XmlPort && AlXmlPortMetadataRegistry.TryGet(id, out var xpXml))
+                xmlPorts[id] = xpXml;
+        }
+    }
+
+    /// <summary>Replays this app's shadow snapshot into the live process-wide registries.
+    /// Idempotent (Register overwrites by id) — safe to call even when nothing has drifted.</summary>
+    private void ReplayRadMetadataSnapshot(string moduleName)
+    {
+        if (_radPageMetadataByModule.TryGetValue(moduleName, out var pages))
+            foreach (var (id, xml) in pages) AlPageMetadataRegistry.Register(id, xml);
+        if (_radXmlPortMetadataByModule.TryGetValue(moduleName, out var xmlPorts))
+            foreach (var (id, xml) in xmlPorts) AlXmlPortMetadataRegistry.Register(id, xml);
+    }
+
     /// <summary>
     /// Object kinds with no numeric Id. Matches issue #1902's own enumeration. Five of the six
     /// (everything but entitlement) ARE represented in SymbolReference.ModuleDefinition and are
@@ -438,6 +518,11 @@ public sealed partial class BcCompiler
         {
             // Every file hashes identical to the last cycle — including a touch-with-identical-
             // bytes. Genuinely zero work: replay the last cycle's result verbatim.
+            //
+            // #2593/#2579: also replay this app's page/xmlport metadata shadow snapshot — see
+            // this class's own header comment on _radPageMetadataByModule for why a "genuinely
+            // zero work" cycle must still restore it even though nothing here calls Emit.
+            ReplayRadMetadataSnapshot(moduleName);
             changedObjects = Array.Empty<AffectedObjectId>();
             return baseline.LastOutput;
         }
@@ -729,6 +814,17 @@ public sealed partial class BcCompiler
             SourceByKey = newSourceByKey,
             LastOutput = output,
         };
+
+        // #2593/#2579: this delta's own radComp.Emit(...) above already refreshed the live
+        // registry for every CHANGED page/xmlport id — update the shadow snapshot to match
+        // (dropping vacated ids, refreshing changed ones from what Emit just wrote), then
+        // replay the FULL snapshot so an id this app still declares but did NOT touch this
+        // cycle — cleared by this reload's Reset, never re-registered by a delta that only
+        // covers the objects it actually changed — is restored too. See this class's own
+        // header comment on _radPageMetadataByModule for the full "why".
+        UpdateRadMetadataSnapshotDelta(
+            moduleName, vacated.Values.Select(v => v.Identity), allChangedIdentities);
+        ReplayRadMetadataSnapshot(moduleName);
 
         return output;
     }
@@ -1172,6 +1268,13 @@ public sealed partial class BcCompiler
             SourceByKey = sourceByKey,
             LastOutput = fullOutput,
         };
+
+        // #2593/#2579: this Emit already ran for real (that is how `captured`/the live
+        // registries got populated), so snapshot every page/xmlport id it declares NOW —
+        // the shadow copy TryEmitIncremental's fast paths replay on every later cycle that
+        // does NOT run a full Emit for this app. See _radPageMetadataByModule's header
+        // comment.
+        CaptureRadMetadataSnapshotFull(moduleName, declared);
     }
 
     /// <summary>Drops the current baseline for a bundle — used when a caller knows the next cycle must be a full rebuild regardless (e.g. a watched suite set changed).</summary>
