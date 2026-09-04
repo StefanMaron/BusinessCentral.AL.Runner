@@ -314,10 +314,19 @@ public static partial class RecordPatches
             AlRunner.Infrastructure.FieldPoke.SetInstance(RequiredField(t, name), provider, null);
     }
 
-    /// <summary>Put saved rows back, deep-copying so the snapshot stays reusable.</summary>
+    /// <summary>
+    /// Put saved rows back, deep-copying so the snapshot stays reusable.
+    ///
+    /// Runs inside RowVersionPatches.SuppressSystemIdUniqueness (#2694): every restored row
+    /// carries the SystemId it already had, and #2639's duplicate-SystemId refusal models an AL
+    /// `Insert()` hitting SQL's clustered unique constraint on $systemId. Real BC's rollback is a
+    /// transaction abort that issues no INSERT at all, so a replay has no constraint to violate.
+    /// Without the scope the guard fired mid-restore and Tests-SINGLESERVER ran 0 of 878 tests.
+    /// </summary>
     private static void InsertRows(object provider, object metaTable, NavValue[][] rows)
     {
         if (rows.Length == 0) return;
+        using var _ = AlRunner.Patches.RowVersionPatches.SuppressSystemIdUniqueness();
         var insert = provider.GetType().GetMethods(BindingFlags.Public | BindingFlags.Instance)
             .First(m => m.Name == "Insert" && m.GetParameters().Length == 4
                      && m.GetParameters()[0].ParameterType == typeof(int));

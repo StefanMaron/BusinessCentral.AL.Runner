@@ -171,8 +171,48 @@ public static partial class RowVersionPatches
     /// explicit SystemId already exists on this database-backed table, matching real
     /// BC's SQL unique-constraint violation on $systemId.
     /// </summary>
+    // ── The runner's own snapshot replay is not an AL Insert (issue #2694) ──────────
+    //
+    // RecordPatches.RollbackToCommitPoint restores a table by clearing it and re-inserting the
+    // snapshot rows THROUGH THIS SAME provider method, so every restored row arrives here
+    // carrying the SystemId it already had. Real BC's rollback is a transaction abort — it never
+    // issues an INSERT — so there is no unique constraint for a replay to violate, and applying
+    // the guard there is a category error rather than a stricter reading of it.
+    //
+    // It was also total: on Microsoft's Tests-SINGLESERVER (BC 28.1) the restore threw and the
+    // bucket ran 0 of 878 tests, bisected to #2639's commit against its parent d9f01ca1. A
+    // restore that throws part way is worse than either outcome it chooses between — the table
+    // keeps some of the snapshot and none of the rest.
+    //
+    // Scoped and per-thread rather than a global off switch: AL test bodies run on their own
+    // thread (TestExecutor.InvokeWithTimeout), and a process-wide flag would let one thread's
+    // restore disable a genuine AL Insert's check on another.
+    [ThreadStatic] private static bool _suppressSystemIdUniqueness;
+
+    /// <summary>True while this thread is replaying a snapshot rather than running AL Insert.</summary>
+    public static bool IsSystemIdUniquenessSuppressed => _suppressSystemIdUniqueness;
+
+    /// <summary>
+    /// Suppress the duplicate-SystemId refusal for the duration of a snapshot replay. Restores
+    /// the ENCLOSING state on dispose, not unconditionally false, so a rollback nested inside a
+    /// rollback cannot re-arm the check for the outer replay's remaining rows.
+    /// </summary>
+    public static IDisposable SuppressSystemIdUniqueness() => new SystemIdSuppressionScope();
+
+    private sealed class SystemIdSuppressionScope : IDisposable
+    {
+        private readonly bool _previous;
+        public SystemIdSuppressionScope()
+        {
+            _previous = _suppressSystemIdUniqueness;
+            _suppressSystemIdUniqueness = true;
+        }
+        public void Dispose() => _suppressSystemIdUniqueness = _previous;
+    }
+
     private static void CheckNoDuplicateSystemId(object? provider, object? recordBuffer)
     {
+        if (_suppressSystemIdUniqueness) return;
         if (recordBuffer == null || !BlobStoreIsolationPatches.IsDatabaseBacked(provider)) return;
 
         var bufferType = recordBuffer.GetType();
