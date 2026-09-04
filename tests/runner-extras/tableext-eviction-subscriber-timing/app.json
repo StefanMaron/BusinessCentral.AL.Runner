@@ -1,0 +1,25 @@
+{
+  "id": "83714abb-7c21-496d-8f70-aa01ae2e6e9f",
+  "name": "Runner Extras - TableExt Eviction Subscriber Timing",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Regression for issue #2510: EventSubscriberPatches._injectedSubscriberMethods is keyed by MethodInfo only, with no per-table index, so it is never purged when RecordPatches.EvictCachedMetaTableForBaseTable rebuilds a base table's NCLMetaTable after a tableextension merges in. A table-level (OnBeforeInsertEvent) and a field-scoped validate (OnAfterValidateEvent) subscriber, both already injected onto the OLD NCLMetaTable instance before the eviction, are silently skipped on the re-injection pass for the rebuilt instance and never fire again for the live table.",
+  "description": "The dependency app 'dep' declares table \"Sett T\", an event subscriber codeunit (table-level OnBeforeInsertEvent + field-scoped OnAfterValidateEvent on \"Val\"), and an Install-subtype codeunit that materializes and validates a \"Sett T\" record during its OWN install -- forcing RecordPatches.NclMetaTableBuilder.BuildNCLMetaTable to build \"Sett T\"'s NCLMetaTable and EventSubscriberPatches to inject both subscribers onto that instance, via the standard `Record X` local-variable construction chokepoint, BEFORE this app's tableextension on \"Sett T\" (adding field 5 \"Extra\") is even parsed. Once this app's AddSourceDir parses that tableextension, RecordPatches.MergeExtensionFields -> EvictCachedMetaTableForBaseTable evicts \"Sett T\"'s already-built+wired NCLMetaTable so the next lookup rebuilds it with the extension field merged in. #2506 fixed the sibling defect for the table's OWN compiled field triggers (_fieldTriggersWiredTables) but left EventSubscriberPatches._injectedSubscriberMethods untouched: it is keyed by the subscriber's MethodInfo, not by (table, metatable instance), so the guard has no way to know the instance it wired the subscriber onto was just discarded. Before the fix, both subscribers stay marked injected across the rebuild, so the REBUILT NCLMetaTable's new NavTableTriggerEventHandler/NCLMetaField carry neither subscription at all -- Insert(true) never sets InsertFlag and Validate(Val, x) never sets Computed, silently, for a table the extension never touched the subscribed events of. This is the same 'wiring survives the table it was wired for' family as #2197/#2412/#2463 (table-level DB-trigger subscribers / the table's own field triggers), here for EventSubscriberPatches' subscriber-injection guard specifically. This is a runner-internal caching defect, not a claim about BC behaviour, so it belongs in runner-extras rather than the upstream corpus.",
+  "dependencies": [
+    {
+      "id": "3aa9b8c1-4de0-44ec-8ec8-c6ef2c6d121b",
+      "publisher": "AL Runner",
+      "name": "Runner Extras - TableExt Eviction Subscriber Timing Dep",
+      "version": "1.0.0.0"
+    }
+  ],
+  "idRanges": [
+    {
+      "from": 65525,
+      "to": 65529
+    }
+  ],
+  "platform": "27.0.0.0",
+  "runtime": "15.0",
+  "target": "Cloud"
+}

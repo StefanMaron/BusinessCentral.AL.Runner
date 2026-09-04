@@ -1,0 +1,17 @@
+{
+  "id": "3aa9b8c1-4de0-44ec-8ec8-c6ef2c6d121b",
+  "name": "Runner Extras - TableExt Eviction Subscriber Timing Dep",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Dependency half of the #2510 regression: declares a table with an event subscriber codeunit, and forces the table's NCLMetaTable to be built+wired (subscribers injected) during THIS app's own install, before the sibling 'test' app's tableextension is known.",
+  "dependencies": [],
+  "idRanges": [
+    {
+      "from": 65520,
+      "to": 65524
+    }
+  ],
+  "platform": "27.0.0.0",
+  "runtime": "15.0",
+  "target": "Cloud"
+}
