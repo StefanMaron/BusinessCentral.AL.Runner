@@ -27,6 +27,7 @@
 //     SuiteAbortOnTimeoutTests' fixture is that shape: one codeunit, and it is the one hanging.
 
 using System.Text.RegularExpressions;
+using AlRunner;
 
 namespace AlRunner.Infrastructure;
 
@@ -48,6 +49,30 @@ internal static class AbortResumePlan
     private static readonly Regex AbortLine =
         new(@"\((?<cu>[A-Za-z_][A-Za-z0-9_]*)\)\.(?<m>[A-Za-z_][A-Za-z0-9_]*): watchdog timeout aborted",
             RegexOptions.Compiled);
+
+    /// <summary>
+    /// Codeunits to exclude on the next attempt: everything already excluded, everything the
+    /// aborts named, and — the point of this overload — every codeunit that already produced
+    /// results. What is left is exactly the work no attempt has reached.
+    ///
+    /// Without the third set the retry re-runs the bundle FROM THE START, so a bundle that hangs
+    /// late pays for its whole successful prefix again; under --jobs the unit of retry is the
+    /// SHARD, so eight buckets re-run because one codeunit in one of them hung; and since the
+    /// watchdog is wall-clock, the extra load makes further spurious aborts more likely, which
+    /// triggers further re-runs.
+    /// </summary>
+    public static IReadOnlyList<string> NextExclusions(
+        IEnumerable<string> abortReasons,
+        IReadOnlyCollection<string> already,
+        IReadOnlyCollection<TestResult> attempted)
+    {
+        var seed = new List<string>(already);
+        var seen = new HashSet<string>(already, StringComparer.OrdinalIgnoreCase);
+        foreach (var r in attempted)
+            if (!string.IsNullOrEmpty(r.Codeunit) && seen.Add(r.Codeunit))
+                seed.Add(r.Codeunit);
+        return NextExclusions(abortReasons, seed);
+    }
 
     /// <summary>Codeunits named by these abort reasons, plus everything already excluded.</summary>
     public static IReadOnlyList<string> NextExclusions(

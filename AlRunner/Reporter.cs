@@ -33,7 +33,23 @@ public sealed record BucketResult(string BucketPath, BucketStage Stage,
 
 public static class Reporter
 {
+    /// <summary>
+    /// Totals carried in from earlier attempts of the same run (#2280). A watchdog resume runs
+    /// only the codeunits no attempt has reached, so its own results are a PARTIAL view — without
+    /// these the final summary would report the last attempt's slice as if it were the whole run,
+    /// which is a smaller number stated with more confidence than the truth.
+    /// </summary>
+    public readonly record struct CarriedTotals(int Tests, int Pass, int Fail, int Error)
+    {
+        public static CarriedTotals operator +(CarriedTotals a, CarriedTotals b)
+            => new(a.Tests + b.Tests, a.Pass + b.Pass, a.Fail + b.Fail, a.Error + b.Error);
+        public bool IsEmpty => Tests == 0 && Pass == 0 && Fail == 0 && Error == 0;
+    }
+
     public static void PrintSummary(IReadOnlyList<BucketResult> buckets, TextWriter w)
+        => PrintSummary(buckets, w, default);
+
+    public static void PrintSummary(IReadOnlyList<BucketResult> buckets, TextWriter w, CarriedTotals carried)
     {
         int totalTests = 0, pass = 0, fail = 0, err = 0, skipped = 0;
         int passOos = 0, passKnownGap = 0, passDivergence = 0;
@@ -67,6 +83,15 @@ public static class Reporter
         w.WriteLine($"  ran:         {buckets.Count - compileFailed - execFailed}");
         w.WriteLine($"  compile-fail:{compileFailed}");
         w.WriteLine($"  exec-fail:   {execFailed}");
+        if (!carried.IsEmpty)
+        {
+            // Named rather than folded in silently: these tests ran in an EARLIER process of this
+            // same run, before a watchdog abort forced a resume. A reader who cannot see that
+            // cannot tell this total from a single clean run's.
+            w.WriteLine($"  (carried from earlier attempt(s): {carried.Tests} tests, "
+                + $"{carried.Pass} pass, {carried.Fail} fail, {carried.Error} error)");
+            totalTests += carried.Tests; pass += carried.Pass; fail += carried.Fail; err += carried.Error;
+        }
         w.WriteLine($"Tests:         {totalTests} total");
         w.WriteLine($"  pass:        {pass}");
         // Manifest reclassifications (docs/expectations.md) are surfaced DISTINCTLY so

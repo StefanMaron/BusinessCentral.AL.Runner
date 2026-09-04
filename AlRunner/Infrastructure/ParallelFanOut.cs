@@ -35,7 +35,7 @@ internal static class ParallelFanOut
         // Both take a value and both must reach a worker: a shard that lost --exclude-test would
         // walk straight back into the hang the parent already excluded, and one that lost
         // --resume-aborts would fall back to the default budget and start its own resume chain.
-        "--exclude-test", "--resume-aborts",
+        "--exclude-test", "--resume-aborts", "--merge-counts",
     };
 
     /// <summary>
@@ -71,6 +71,17 @@ internal static class ParallelFanOut
             // --output-junit values leave the last one winning, and the parent then reads a file
             // no worker wrote (or the user's report holds a single shard's results).
             if (a == "--output-junit")
+            {
+                if (i + 1 < originalArgs.Count) i++;
+                continue;
+            }
+
+            // Carried totals belong to the RUN, not to each worker. The parent aggregates every
+            // shard's JUnit itself, so handing --merge-counts to all six workers would add the
+            // same earlier-attempt totals six times and report a number larger than the tests
+            // that exist. Listed in ValueTakingFlags above so its value is still recognised as a
+            // value rather than read as a bundle path; dropped here so it reaches no worker.
+            if (a == "--merge-counts")
             {
                 if (i + 1 < originalArgs.Count) i++;
                 continue;

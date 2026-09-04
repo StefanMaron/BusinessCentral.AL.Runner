@@ -83,4 +83,18 @@ public sealed class ParallelFanOutArgsTests
         Assert.Contains("--cache", child);
         Assert.Contains("/b/two", child);
     }
+
+    /// <summary>--merge-counts belongs to the RUN, not to each worker. The parent aggregates
+    /// every shard's JUnit itself, so passing it to all six workers would add the same
+    /// earlier-attempt totals six times and report more tests than exist.</summary>
+    [Fact]
+    public void BuildChildArgs_DoesNotHandCarriedTotalsToEveryWorker()
+    {
+        var child = ParallelFanOut.BuildChildArgs(
+            new[] { "/b/one", "--merge-counts", "/tmp/attempt.xml" },
+            new[] { "/b/one" }, bundleRoots: new[] { "/b/one" }, junitPath: "/tmp/s0.xml");
+
+        Assert.DoesNotContain("--merge-counts", child);
+        Assert.DoesNotContain("/tmp/attempt.xml", child);
+    }
 }
