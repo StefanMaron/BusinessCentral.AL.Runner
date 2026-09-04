@@ -28,6 +28,7 @@
 //   after a Close works.
 using System.Reflection;
 using System.Runtime.CompilerServices;
+using Microsoft.Dynamics.Nav.Types.Exceptions;
 
 namespace AlRunner.Patches;
 
@@ -67,6 +68,14 @@ public static class RunnerTestPageState
             // it is looking at — the singleton buffer it fetches or creates for the current
             // user, the filter it narrows to its caller's context.
             live.RaiseOnOpenPage();
+            // Issue #2677: reach every declared subpage PART eagerly, here — right after the
+            // host's own OnOpenPage, before the host's first row is found below. This is
+            // what makes a FactBox nobody's AL ever references still get its own OnOpenPage
+            // (and, once the host's row is found, its OnAfterGetRecord/OnAfterGetCurrRecord
+            // via LiveNavTestPage.Loaded's refresh) — matching corpus PR
+            // StefanMaron/BusinessCentral.AL.Language.Tests#141's measured order
+            // (HostOpen;PartOpen;HostAGCR;PartAGCR) on all 8 BC legs.
+            live.EagerlyBuildParts();
             if (viewMode == Microsoft.Dynamics.Nav.Types.Metadata.ViewMode.Create)
                 live.InsertEmptyRow(beforeCurrent: true);
             else if (live.Record != null && AlRunner.Patches.RunnerTestClientSession.IsUnpositioned(live.Record))
@@ -88,7 +97,20 @@ public static class RunnerTestPageState
                 // table's own first row.
                 live.MoveFirst();
         }
-        catch { /* a page that cannot be marked simply behaves as it did before */ }
+        // Issue #2677: EagerlyBuildParts + Loaded's own part-refresh can now run AL trigger
+        // code (a subpage part's OnAfterGetRecord/OnAfterGetCurrRecord, and whatever that
+        // enqueues) as part of MoveFirst — code that previously never ran this early, so a
+        // genuine AL error raised in it (NavBaseException, BC's own AL-error hierarchy —
+        // e.g. the read-only-session write refusal issue #2514/#2650 raises) never had a
+        // path to this catch before. A real AL error belongs on the caller's stack, exactly
+        // as it would be on a real service tier's Open() — swallowing it here would be
+        // precisely the silent-default `.claude/rules/loud-failures.md` forbids. Only a
+        // NON-NavBaseException (a runner-internal/reflection failure — the ORIGINAL reason
+        // this catch exists, per the type comment above) still means "a page that cannot be
+        // marked simply behaves as it did before".
+        catch (Exception ex) when (ex is not NavBaseException)
+        {
+        }
     }
 
     private static FieldInfo? FindTestPageField(Type type)

@@ -360,6 +360,21 @@ internal class LiveNavTestPage : MockITestPage
         // earlier TestPage touch) already wrote through that same instance.
         if (!adopted) part.RaiseOnOpenPage();
 
+        // Position the part on its SubPageLink-matched row and run OnAfterGetRecord/
+        // OnAfterGetCurrRecord — issue #2677, measured against real BC (corpus PR
+        // StefanMaron/BusinessCentral.AL.Language.Tests#141): a linked part loads on EVERY
+        // GetPart touch this method reaches (see ReloadLinkedRow's doc comment for why this
+        // is deliberately NOT once-guarded — a GetPart touch normally happens only once per
+        // part per TestPage anyway, since the `_parts` cache at the top of this method
+        // short-circuits repeats; what actually keeps a linked part in sync across host
+        // navigation is <see cref="LiveNavTestPage.Loaded"/> calling this again on every
+        // parent row load — see that method).
+        //
+        // A recordless part (LiveRecordless branch) has no cursor — ReloadLinkedRow no-ops
+        // on a null Record — so its OnOpenPage (just raised, or raised inside AdoptFromHost)
+        // is the only trigger such a part gets, exactly as before.
+        part.ReloadLinkedRow();
+
         _parts[controlId] = part;
         return part;
     }
@@ -580,6 +595,39 @@ internal class LiveNavTestPage : MockITestPage
 
     /// <summary>Run the page's OnOpenPage — see RunnerTestPageState.MarkOpened.</summary>
     internal void RaiseOnOpenPage() => _page?.RaiseOnOpenPage();
+
+    /// <summary>
+    /// Reach every subpage PART this page declares, the way <see cref="RunnerTestPageState.MarkOpened"/>
+    /// calls it: right after the host's own OnOpenPage, before the host's first row is found.
+    /// Issue #2677, corpus PR StefanMaron/BusinessCentral.AL.Language.Tests#141 — real BC
+    /// materialises a page's declared FactBoxes as part of opening, with nothing in the
+    /// host's own AL ever referencing <c>CurrPage.&lt;part&gt;</c>. <c>GetPart</c> raises the
+    /// part's OWN OnOpenPage and, via <c>ReloadLinkedRow</c>, attempts its initial row load —
+    /// which finds nothing yet (the host's own record is not positioned until MoveFirst runs
+    /// right after this returns), so the part's OnAfterGetRecord/OnAfterGetCurrRecord fires
+    /// for the first time from <see cref="Loaded"/>'s own refresh once the host DOES have a
+    /// row, not from here.
+    ///
+    /// Each control is isolated in its own try/catch: a part the runner cannot build (a
+    /// precompiled Base App page the runner has no metadata for, an unsupported shape) must
+    /// not prevent the HOST from opening, or every card carrying one unbuildable FactBox
+    /// would refuse OpenView entirely. An AL test that genuinely touches such a part still
+    /// gets the normal named refusal through <see cref="GetPart"/> — this only skips the
+    /// EAGER attempt, it does not swallow the refusal a real touch would raise.
+    /// </summary>
+    internal void EagerlyBuildParts()
+    {
+        if (_page == null) return;
+        foreach (var controlId in _page.AllPartControlIds())
+        {
+            try { GetPart(controlId); }
+            catch (Exception ex)
+            {
+                if (Environment.GetEnvironmentVariable("AL_RUNNER_TRACE_PAGE_METADATA") == "1")
+                    Console.Out.WriteLine($"[MockTestPage.EagerlyBuildParts] control {controlId} on page {_pageId}: {ex.GetType().Name}: {ex.Message}");
+            }
+        }
+    }
 
     public override bool IsOpened() => _opened;
 
@@ -1207,6 +1255,18 @@ internal class LiveNavTestPage : MockITestPage
     private bool _onNewRowLine;
     private string? _newRowLineReturnPosition;
 
+    // Set while FindRowFromTableFieldValues (GoToRecord's underlying mechanism) is scanning
+    // candidate rows one at a time via repeated MoveFirst/MoveNextDataRow calls — issue
+    // #2677. Each intermediate stop DOES run this page's own OnAfterGetRecord (matching real
+    // BC, measured: a GoToRecord that has to search fires the host's OnAfterGetCurrRecord for
+    // every row the scan lands on before the target). A linked subpage part's refresh must
+    // NOT piggyback on every one of those intermediate stops the same way — measured
+    // (corpus PR StefanMaron/BusinessCentral.AL.Language.Tests#141): the part re-fires ONLY
+    // for the row the scan actually SETTLES on, never for a row merely passed through while
+    // searching. See Loaded's own guard and FindRowFromTableFieldValues's explicit refresh
+    // once a match is confirmed.
+    private bool _suppressPartRefreshDuringScan;
+
     /// <summary>
     /// Park the cursor on the new-row line: blank the record buffer so every control reads
     /// empty, having first saved the position of the data row being left.
@@ -1267,15 +1327,42 @@ internal class LiveNavTestPage : MockITestPage
     /// as BC does after every load. That trigger is where a page derives its per-row state
     /// (the variable behind <c>Editable = …</c>, <c>CurrPage.Editable(…)</c>), so skipping it
     /// froze every page at whatever state its first row left behind.
+    ///
+    /// <c>protected</c> (not <c>private</c>) so <see cref="LiveNavTestPart"/> can drive its
+    /// own SubPageLink-matched row through the identical path a top-level page's
+    /// MoveFirst/MoveNext/GoToBookmark already use — see issue #2677's
+    /// <c>ReloadLinkedRow</c>.
     /// </summary>
-    private bool Loaded(bool found)
+    protected bool Loaded(bool found)
     {
         if (found)
         {
             _page?.RaiseOnAfterGetRecord();
             SnapshotBeforeImage();
+            // Issue #2677: NOT during a FindRowFromTableFieldValues scan — see
+            // _suppressPartRefreshDuringScan's doc comment and that method's own explicit
+            // refresh once a match is confirmed.
+            if (!_suppressPartRefreshDuringScan)
+                RefreshLinkedParts();
         }
         return found;
+    }
+
+    /// <summary>
+    /// Refresh every linked subpage part to THIS page's current row — issue #2677, measured
+    /// on real BC (corpus PR StefanMaron/BusinessCentral.AL.Language.Tests#141): a linked
+    /// subpage part (FactBox-style, SubPageLink to this page's key) refreshes to the NEW
+    /// current row every time this page's own row changes — GoToRecord on the host re-fires
+    /// the part's OnAfterGetRecord/OnAfterGetCurrRecord for the row just arrived at, and does
+    /// NOT re-fire it for the row just left. Only linked parts refresh here: an unlinked part
+    /// shows its own table's full rowset, independent of this page's current row, and BC's
+    /// own re-sync behaviour for that shape is unmeasured — see LiveNavTestPart.HasLinks.
+    /// </summary>
+    private void RefreshLinkedParts()
+    {
+        foreach (var part in _parts.Values)
+            if (part is LiveNavTestPart { HasLinks: true } linkedPart)
+                linkedPart.ReloadLinkedRow();
     }
 
     /// <summary>
@@ -1367,31 +1454,54 @@ internal class LiveNavTestPage : MockITestPage
         // row anywhere in the rowset. Starting at the current row silently failed to find
         // any row BEHIND the cursor, so navigating C -> A returned false even though A is
         // on the page (tests/runner-extras/testpage-gotorecord GoToRecord_MovesBetweenRows).
-        var hasRow = forward ? MoveFirst() : MoveLast();
-
-        while (hasRow)
+        //
+        // Issue #2677: the scan below runs Loaded(true) — and so this page's own
+        // OnAfterGetRecord — for every intermediate row it passes through before landing on
+        // the target, matching BC's own measured behaviour. A linked subpage part must NOT
+        // piggyback on those intermediate stops; _suppressPartRefreshDuringScan holds that
+        // off, and the one explicit RefreshLinkedParts() call below — once a match is
+        // confirmed, for that row only — is what a linked part actually re-fires for.
+        _suppressPartRefreshDuringScan = true;
+        try
         {
-            if (Matches(fieldNos, values)) return true;
-            // MoveNextDataRow, not MoveNext: a search wants rows that EXIST. Walking the
-            // scan onto the new-row line would let any request for an empty value "find"
-            // the blank line and report a row that is not in the table.
-            hasRow = forward ? MoveNextDataRow() : MovePrevious();
-        }
+            var hasRow = forward ? MoveFirst() : MoveLast();
 
-        if (originalKeyFieldNos != null)
-        {
-            // Re-find the original row by its own primary key, walking forward from the top
-            // exactly like the search above — this goes through a real MoveFirst/
-            // MoveNextDataRow load, refreshing every field (not just the key) from the row's
-            // own stored values, instead of a raw key-only ALSetPosition.
-            hasRow = MoveFirst();
             while (hasRow)
             {
-                if (Matches(originalKeyFieldNos, originalKeyValues!)) break;
-                hasRow = MoveNextDataRow();
+                if (Matches(fieldNos, values))
+                {
+                    _suppressPartRefreshDuringScan = false;
+                    RefreshLinkedParts();
+                    return true;
+                }
+                // MoveNextDataRow, not MoveNext: a search wants rows that EXIST. Walking the
+                // scan onto the new-row line would let any request for an empty value "find"
+                // the blank line and report a row that is not in the table.
+                hasRow = forward ? MoveNextDataRow() : MovePrevious();
             }
+
+            if (originalKeyFieldNos != null)
+            {
+                // Re-find the original row by its own primary key, walking forward from the
+                // top exactly like the search above — this goes through a real MoveFirst/
+                // MoveNextDataRow load, refreshing every field (not just the key) from the
+                // row's own stored values, instead of a raw key-only ALSetPosition. Still
+                // suppressed: this restores the SAME row the page (and its parts) were
+                // already showing before the failed search started, so there is nothing new
+                // for a linked part to refresh to.
+                hasRow = MoveFirst();
+                while (hasRow)
+                {
+                    if (Matches(originalKeyFieldNos, originalKeyValues!)) break;
+                    hasRow = MoveNextDataRow();
+                }
+            }
+            return false;
         }
-        return false;
+        finally
+        {
+            _suppressPartRefreshDuringScan = false;
+        }
     }
 
     // ITestFilter.SetFilter/GetFilter are handed a TABLE FIELD NUMBER, not a control id:
@@ -2404,6 +2514,58 @@ internal sealed class LiveNavTestPart : LiveNavTestPage, ITestPart
     public override bool MoveLast() { ApplyLink(); return base.MoveLast(); }
     public override bool MoveNext() { ApplyLink(); return base.MoveNext(); }
     public override bool MovePrevious() { ApplyLink(); return base.MovePrevious(); }
+
+    /// <summary>True when this part carries a FIELD SubPageLink at all — the signal
+    /// <see cref="LiveNavTestPage.Loaded"/> uses to decide whether a parent row-load should
+    /// refresh this part too (issue #2677). An unlinked part shows its own table's full
+    /// rowset and is never re-positioned by a parent's cursor move.</summary>
+    internal bool HasLinks => _links.Length > 0;
+
+    /// <summary>
+    /// Position this part on the row matching its SubPageLink and, if one exists, run its
+    /// OnAfterGetRecord/OnAfterGetCurrRecord — the row-load a real BC FactBox/subpage part
+    /// gets automatically, both when its host opens AND every time the host's own cursor
+    /// moves to a different row. Issue #2677, corpus PR
+    /// StefanMaron/BusinessCentral.AL.Language.Tests#141 (8 BC legs, OBS probes measuring a
+    /// SubPageLink-bound CardPart): with NOTHING ever touching <c>CurrPage.&lt;part&gt;</c> or
+    /// <c>TestPage.&lt;part&gt;</c>, opening the host alone produces
+    /// <c>HostOpen;PartOpen;HostAGCR;PartAGCR</c> — the part's OnOpenPage runs right after the
+    /// host's, and its OnAfterGetRecord/OnAfterGetCurrRecord runs right after the host's own,
+    /// entirely unprompted. A later touch adds nothing (already loaded). Navigating the HOST
+    /// to a different row (GoToRecord) re-fires the part's trigger for the NEW row and does
+    /// NOT re-fire it for the row just left. Before this fix nothing EVER positioned a part's
+    /// own cursor at all — <c>TestPageFactory.TryBuild</c> hands back a BLANK, unfetched
+    /// record, and only an explicit MoveXxx/GoToBookmark call on the PART ITSELF (which
+    /// nothing makes on its behalf) ever reached <see cref="LiveNavTestPage.Loaded"/> — so a
+    /// part whose entire per-row state comes from that trigger (the common FactBox-summary
+    /// shape) stayed at its field defaults for the page's whole life.
+    ///
+    /// Deliberately reuses <c>Loaded(bool)</c> rather than <c>MoveFirst()</c>: MoveFirst()
+    /// also flushes pending parts/rows and, on a not-found part, enters the insertable
+    /// new-row line (<c>EnterNewRowLine</c>) — state changes appropriate to an AL-driven
+    /// cursor move, not to a parent row simply becoming current. A part with no matching row
+    /// here shows empty, exactly as it did before this method existed; this only adds the
+    /// FOUND case BC already runs.
+    ///
+    /// NOT once-guarded: every call re-applies the link filter and re-finds, which is exactly
+    /// what makes a GoToRecord-driven refresh work. A repeat call for the SAME still-current
+    /// row (a second control read with no intervening parent move) re-runs
+    /// OnAfterGetRecord/OnAfterGetCurrRecord too — unmeasured against BC for that specific
+    /// case (probe 2 only read a control, which triggers a fresh <c>GetPart</c> lookup that
+    /// the `_parts` cache already short-circuits before reaching here at all, so it never
+    /// re-entered this method a second time for the SAME touch).
+    ///
+    /// A record-less part (<see cref="LiveNavTestPage.Record"/> null, the page-globals-only
+    /// CardPart shape from #2195) has no cursor to position and nothing here to do — its
+    /// OnOpenPage is the only trigger such a part gets.
+    /// </summary>
+    internal void ReloadLinkedRow()
+    {
+        if (Record is not { } record) return;
+        ApplyLink();
+        var found = record.ALFindFirstAsync(DataError.TrapError).GetAwaiter().GetResult();
+        Loaded(found);
+    }
 
     public override bool FindRowFromTableFieldValues(int[] fieldNos, object[] values, bool forward)
     {

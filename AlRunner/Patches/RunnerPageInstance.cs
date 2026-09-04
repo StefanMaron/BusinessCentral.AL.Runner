@@ -933,6 +933,26 @@ internal sealed class RunnerPageInstance
         return null;
     }
 
+    /// <summary>
+    /// Every subpage PART control id this page declares — issue #2677's eager-build list.
+    /// Real BC materialises a page's declared parts (FactBoxes above all) as part of the
+    /// host opening, without the host's own AL ever referencing <c>CurrPage.&lt;part&gt;</c>
+    /// (corpus PR StefanMaron/BusinessCentral.AL.Language.Tests#141, all 8 BC legs: with
+    /// nothing touching the part, opening the host alone still fires the part's own
+    /// OnOpenPage and OnAfterGetRecord/OnAfterGetCurrRecord). <see cref="TryGetPartDefinition"/>
+    /// answers "is THIS control a part"; this answers "what are ALL of them" so the caller
+    /// can eagerly reach every one the same way.
+    /// </summary>
+    internal IReadOnlyList<int> AllPartControlIds()
+    {
+        if (_form is not NavForm form) return Array.Empty<int>();
+        var ids = new List<int>();
+        foreach (var definition in form.MetadataHelper.InfoPartDefinitions)
+            if (definition is Microsoft.Dynamics.Nav.Types.Metadata.InfopartPageDefinition part)
+                ids.Add(part.ID);
+        return ids;
+    }
+
     /// <summary>BC's key convention for a control's source expression.</summary>
     internal static string SourceExpressionKey(int controlId) => "Control" + controlId;
 
