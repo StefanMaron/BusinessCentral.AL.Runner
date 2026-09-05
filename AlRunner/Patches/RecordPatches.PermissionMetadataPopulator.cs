@@ -152,6 +152,7 @@ public static partial class RecordPatches
             InstallFreshPermissionSetLookup(baseGroup, summaries);
 
             _permMetaPopulatedForCount = known.Count;
+            _permissionSetIdByName = null;   // the inventory just changed; rebuild lazily
 
             if (Environment.GetEnvironmentVariable("AL_RUNNER_DIAG_PERMMETA") == "1")
             {
@@ -162,9 +163,11 @@ public static partial class RecordPatches
                 var lookupCount = 0;
                 if (lookup != null) foreach (var _ in lookup) lookupCount++;
                 var resolvable = known.Count(p => EnsurePermissionSetInMetadataCache(p.PermissionSet.Id) != null);
+                var declaredPermissions = known.Sum(p => p.PermissionSet.Permissions?.Count ?? 0);
                 Console.Error.WriteLine(
                     $"[perm-metadata] app-group permission-set summaries: {lookupCount}; "
-                    + $"meta permission sets resolvable: {resolvable}/{known.Count}");
+                    + $"meta permission sets resolvable: {resolvable}/{known.Count}; "
+                    + $"declared permissions: {declaredPermissions}");
             }
         }
     }
@@ -419,16 +422,16 @@ public static partial class RecordPatches
         var meta = _mCreateEmptyMetaPermissionSet.Invoke(null,
             new object?[] { null, permissionSetId, baseGroup, -1, string.Empty })!;
 
-        SetBackingField(metaType, meta, "Name", declaration.Name);
-        SetBackingField(metaType, meta, "Assignable", declaration.Assignable);
-        // Empty, not null: BC reads these as lists. They stay EMPTY on purpose — the
-        // permission rows themselves need each set's `Permissions` array out of
-        // SymbolReference.json, which the symbol cache does not extract yet (#2886). An empty
-        // list says "this set resolves and declares nothing here"; a null would NRE in the
-        // first consumer that enumerated it, which is a worse answer to the same gap.
-        SetEmptyListBackingField(metaType, meta, "Permissions");
-        SetEmptyListBackingField(metaType, meta, "IncludedPermissionSets");
-        SetEmptyListBackingField(metaType, meta, "ExcludedPermissionSets");
+        // #2910: hand BC a real MetaPermissionSet and let its OWN AssignFromMetaPermissionSet
+        // fill the instance — Name, Access, Assignable, the caption strings, the includes and
+        // excludes, and Permissions as PermissionDefinition objects. Poking the backing fields
+        // by hand (what this did before) could only ever fill the ones somebody remembered;
+        // this way every field BC sets is set, by BC.
+        var assign = metaType.GetMethod("AssignFromMetaPermissionSet",
+            BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public)
+            ?? throw new InvalidOperationException(
+                "NCLMetaPermissionSet.AssignFromMetaPermissionSet not found — Ncl shape changed; do not commit");
+        assign.Invoke(meta, new[] { BuildMetaPermissionSet(declaration) });
 
         EnsureCachePopulatorReflection();
         if (_fNCLMetaAppObjMetadataLoaded != null)
@@ -457,6 +460,213 @@ public static partial class RecordPatches
             : typeof(object);
         SetBackingField(declaring, target, propertyName,
             Activator.CreateInstance(typeof(List<>).MakeGenericType(element)));
+    }
+
+    // ── source-declared permissions: names in, ids out (#2910) ──────────────────────────
+
+    /// <summary>
+    /// Turn a source-declared set's permission entries into the id-based shape a precompiled
+    /// .app already states, by resolving each object NAME against this run's own parsed object
+    /// declarations. AL has no id form in a permission set, so this resolution is the only way
+    /// a permission set the runner compiled can mean the same thing as one that arrived
+    /// precompiled.
+    ///
+    /// <para>KNOWN LIMIT, deliberately not hidden: <c>ParsedObjectDecls</c> does not carry
+    /// tables (they are parsed by the table pipeline, not the declaration sweep), so a
+    /// <c>tabledata</c> or <c>table</c> grant in a set the runner compiled from source is
+    /// dropped rather than guessed at. Every tabledata grant that matters in practice comes
+    /// from a precompiled dependency, where SymbolReference.json states the id outright and
+    /// this method is not involved. Dropping is the conservative answer: inventing an id would
+    /// put a permission row on the wrong object, which nothing downstream could detect.</para>
+    /// </summary>
+    private static IReadOnlyList<BcAppSymbolCache.PermissionSymbol> ResolveSourcePermissionEntries(
+        IReadOnlyList<ParsedAlPermissionEntry>? entries)
+    {
+        if (entries == null || entries.Count == 0) return Array.Empty<BcAppSymbolCache.PermissionSymbol>();
+
+        var byName = new Dictionary<(string Kind, string Name), int>(new KindNameComparer());
+        foreach (var decl in ParsedObjectDecls)
+            byName[(decl.Kind, decl.Name)] = decl.Id;
+
+        var resolved = new List<BcAppSymbolCache.PermissionSymbol>();
+        foreach (var e in entries)
+        {
+            var kind = AlKeywordForPermissionObject(e.ObjectTypeOrdinal);
+            if (kind == null) continue;
+            if (!byName.TryGetValue((kind, e.ObjectName), out var id))
+            {
+                if (Environment.GetEnvironmentVariable("AL_RUNNER_DIAG_PERMMETA") == "1")
+                    Console.Error.WriteLine(
+                        $"[perm-metadata] source permission on {kind} '{e.ObjectName}' not resolvable "
+                        + "to an object id in this run — dropped rather than guessed");
+                continue;
+            }
+            resolved.Add(new BcAppSymbolCache.PermissionSymbol(e.ObjectTypeOrdinal, id, e.Mask));
+        }
+        return resolved;
+    }
+
+    private sealed class KindNameComparer : IEqualityComparer<(string Kind, string Name)>
+    {
+        public bool Equals((string Kind, string Name) x, (string Kind, string Name) y) =>
+            StringComparer.OrdinalIgnoreCase.Equals(x.Kind, y.Kind)
+            && StringComparer.OrdinalIgnoreCase.Equals(x.Name, y.Name);
+
+        public int GetHashCode((string Kind, string Name) obj) =>
+            HashCode.Combine(
+                StringComparer.OrdinalIgnoreCase.GetHashCode(obj.Kind),
+                StringComparer.OrdinalIgnoreCase.GetHashCode(obj.Name));
+    }
+
+    /// <summary>
+    /// The AL object keyword a <c>PermissionObject</c> ordinal names, for the kinds
+    /// <c>ParsedObjectDecls</c> can answer for. Tables are absent on purpose — see
+    /// <see cref="ResolveSourcePermissionEntries"/>.
+    /// </summary>
+    private static string? AlKeywordForPermissionObject(int ordinal) => ordinal switch
+    {
+        3 => "report",
+        5 => "codeunit",
+        6 => "xmlport",
+        8 => "page",
+        9 => "query",
+        _ => null,
+    };
+
+    private static Type? _tMetaPermissionSet;
+    private static Type? _tMetaPermission;
+    private static Type? _tAccessModifier;
+
+    /// <summary>
+    /// The <c>MetaPermissionSet</c> BC's own <c>AssignFromMetaPermissionSet</c> consumes, built
+    /// from the runner's inventory. Public parameterless constructor, every property settable —
+    /// this is transcription of data the run already has, not a re-implementation of anything:
+    /// the composition (includes expansion, exclusions, extension merge) stays in BC's
+    /// PermissionSetGraphWalker and PermissionComposer, which is the whole point of feeding
+    /// them real data instead of computing rows here.
+    /// </summary>
+    private static object BuildMetaPermissionSet(BcAppSymbolCache.PermissionSetSymbol declaration)
+    {
+        var types = AppDomain.CurrentDomain.GetAssemblies()
+            .FirstOrDefault(a => a.GetName().Name == "Microsoft.Dynamics.Nav.Types")
+            ?? throw new InvalidOperationException("Microsoft.Dynamics.Nav.Types is not loaded");
+
+        _tMetaPermissionSet ??= types.GetType("Microsoft.Dynamics.Nav.Types.Metadata.MetaPermissionSet")
+            ?? throw new InvalidOperationException(
+                "MetaPermissionSet not found — Types shape changed; do not commit");
+        _tMetaPermission ??= types.GetType("Microsoft.Dynamics.Nav.Types.Metadata.MetaPermission")
+            ?? throw new InvalidOperationException(
+                "MetaPermission not found — Types shape changed; do not commit");
+        // AccessModifier is the enum MetaPermissionSet.Access is declared as. Take it FROM
+        // that property rather than from a namespace guess: it does not live where the
+        // sibling metadata types do, and hardcoding a namespace turned into a run-aborting
+        // "Types shape changed" on the first real run.
+        _tAccessModifier ??= _tMetaPermissionSet.GetProperty("Access",
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.PropertyType
+            ?? throw new InvalidOperationException(
+                "MetaPermissionSet.Access not found — Types shape changed; do not commit");
+
+        var mps = Activator.CreateInstance(_tMetaPermissionSet)!;
+        SetProperty(mps, "Id", declaration.Id);
+        SetProperty(mps, "Name", declaration.Name);
+        SetProperty(mps, "Assignable", declaration.Assignable);
+        // AL's default when a set declares no Access is Public, the same default the AL
+        // compiler applies; an unrecognised spelling is treated as the default rather than
+        // failing the run, because Access does not affect what a permission grants.
+        SetProperty(mps, "Access",
+            declaration.Access != null && Enum.TryParse(_tAccessModifier, declaration.Access, ignoreCase: true, out var access)
+                ? access!
+                : Enum.ToObject(_tAccessModifier, 0));
+
+        var permListType = typeof(List<>).MakeGenericType(_tMetaPermission);
+        var permissions = (System.Collections.IList)Activator.CreateInstance(permListType)!;
+        foreach (var p in declaration.Permissions ?? (IReadOnlyList<BcAppSymbolCache.PermissionSymbol>)Array.Empty<BcAppSymbolCache.PermissionSymbol>())
+        {
+            // MetaPermission is a STRUCT: box it once, set the three properties on the box,
+            // then add — adding first would copy an empty value into the list.
+            var mp = Activator.CreateInstance(_tMetaPermission)!;
+            SetProperty(mp, "Id", p.ObjectId);
+            SetProperty(mp, "Value", p.Value);
+            var objectTypeProp = _tMetaPermission.GetProperty("Type",
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                ?? throw new InvalidOperationException(
+                    "MetaPermission.Type not found — Types shape changed; do not commit");
+            objectTypeProp.SetValue(mp, Enum.ToObject(objectTypeProp.PropertyType, p.ObjectType));
+            permissions.Add(mp);
+        }
+        SetProperty(mps, "Permissions", permissions);
+
+        SetProperty(mps, "IncludedPermissionSets",
+            BuildIncludeList(_tMetaPermissionSet.GetProperty("IncludedPermissionSets")!.PropertyType,
+                declaration.IncludedPermissionSets));
+        SetProperty(mps, "ExcludedPermissionSets",
+            BuildIncludeList(_tMetaPermissionSet.GetProperty("ExcludedPermissionSets")!.PropertyType, null));
+
+        return mps;
+    }
+
+    /// <summary>
+    /// The include/exclude list in whatever element type BC declares. Measured on BC 28.1 it is
+    /// <c>List&lt;int&gt;</c> — permission set OBJECT IDS, not names — while both SymbolReference.json
+    /// and AL source state NAMES, so the names are resolved against this run's own inventory
+    /// here. A name that resolves to nothing is dropped with a diagnostic rather than guessed
+    /// at: an invented id would make BC compose a different permission set's grants into this
+    /// one, which nothing downstream could detect.
+    ///
+    /// <para>The element type is read from the property rather than assumed, because the first
+    /// version of this code assumed strings and failed loudly at <c>Add()</c> — the right
+    /// failure, but only because it was checked at all.</para>
+    /// </summary>
+    private static object BuildIncludeList(Type listType, IReadOnlyList<string>? names)
+    {
+        var list = (System.Collections.IList)Activator.CreateInstance(listType)!;
+        if (names == null || names.Count == 0) return list;
+
+        var element = listType.IsGenericType ? listType.GetGenericArguments()[0] : typeof(string);
+        foreach (var name in names)
+        {
+            if (element == typeof(string)) { list.Add(name); continue; }
+            if (element == typeof(int))
+            {
+                if (PermissionSetIdByName().TryGetValue(name, out var id)) { list.Add(id); continue; }
+                if (Environment.GetEnvironmentVariable("AL_RUNNER_DIAG_PERMMETA") == "1")
+                    Console.Error.WriteLine(
+                        $"[perm-metadata] included permission set '{name}' is not in this run's inventory — dropped");
+                continue;
+            }
+            var ctor = element.GetConstructors()
+                .FirstOrDefault(c =>
+                {
+                    var ps = c.GetParameters();
+                    return ps.Length == 2 && ps[0].ParameterType == typeof(int) && ps[1].ParameterType == typeof(string);
+                });
+            if (ctor != null) { list.Add(ctor.Invoke(new object?[] { 30, name })); continue; }
+            throw new InvalidOperationException(
+                $"MetaPermissionSet include/exclude list element type {element.Name} is not one this "
+                + "code knows how to fill — Types shape changed; do not commit");
+        }
+        return list;
+    }
+
+    private static Dictionary<string, int>? _permissionSetIdByName;
+
+    /// <summary>Role id -> object id over every permission set the runner knows, built once per population.</summary>
+    private static Dictionary<string, int> PermissionSetIdByName()
+    {
+        if (_permissionSetIdByName != null) return _permissionSetIdByName;
+        var index = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (permissionSet, _, _) in EnumerateKnownPermissionSets())
+            index.TryAdd(permissionSet.Name, permissionSet.Id);
+        return _permissionSetIdByName = index;
+    }
+
+    private static void SetProperty(object target, string name, object? value)
+    {
+        var prop = target.GetType().GetProperty(name,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException(
+                $"{target.GetType().Name}.{name} not found — Types shape changed; do not commit");
+        prop.SetValue(target, value);
     }
 }
 

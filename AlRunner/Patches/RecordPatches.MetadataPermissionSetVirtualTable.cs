@@ -154,7 +154,15 @@ public static partial class RecordPatches
         // 1. Permission sets the runner compiled from source.
         foreach (var p in ParsedPermissionSets)
             if (seen.Add(p.Name))
-                yield return (new BcAppSymbolCache.PermissionSetSymbol(p.Id, p.Name, p.Caption, p.Assignable), p.AppId, p.AppName ?? string.Empty);
+                yield return (new BcAppSymbolCache.PermissionSetSymbol(
+                        p.Id, p.Name, p.Caption, p.Assignable,
+                        // #2910: a source-declared set's permissions name their objects; a
+                        // precompiled one's carry ids. Resolve here so both shapes reach BC's
+                        // composer identically.
+                        ResolveSourcePermissionEntries(p.Permissions),
+                        p.IncludedPermissionSets,
+                        p.Access),
+                    p.AppId, p.AppName ?? string.Empty);
 
         // 2. Permission sets declared by precompiled dependency .app packages.
         foreach (var appPath in _bcAppPaths.ToArray())
