@@ -185,6 +185,18 @@ public static partial class RecordPatches
             if (meta != null)
                 return meta;
         }
+        else if (objectType == ObjectType.PermissionSet)
+        {
+            // #2893: BC's PermissionDataProviderBase resolves each role id it found in the app
+            // group's summaries through TryGetMetaPermissionSetById, which forwards straight
+            // here. Without a branch the lookup answered false with a null out param, so the
+            // provider would have thrown NavMetadataNotFoundException the moment the summaries
+            // stopped being empty. Serve the same runner inventory the Metadata Permission Set
+            // virtual table (2000000250) is built from.
+            var meta = EnsurePermissionSetInMetadataCache(objectId);
+            if (meta != null)
+                return meta;
+        }
         else if (objectType == ObjectType.XmlPort)
         {
             // NavXmlPort.BeginInitialization reads get_NclMetaXmlPort, which resolves

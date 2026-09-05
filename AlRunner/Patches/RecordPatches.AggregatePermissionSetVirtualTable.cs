@@ -175,6 +175,13 @@ public static partial class RecordPatches
         // trees, not the "table" metadata field, so the provider stays usable afterward.
         ClearProviderInPlace(store);
 
+        // #2893: the other moment the runner knows the permission-set inventory is complete
+        // and something is asking about permission sets. Populating BC's own metadata layer
+        // from here as well as from the Metadata Permission Set table means a bundle that only
+        // ever touches Aggregate Permission Set still gets it — the population is idempotent
+        // and installs a fresh lazy, so calling it from two places is cheap and order-safe.
+        EnsurePermissionMetadataPopulated();
+
         var nclMetadata = _apsSessionNclMetadata!.GetValue(session)
             ?? throw new RunnerOutOfScopeException(
                 "Aggregate Permission Set (virtual table 2000000167)",
