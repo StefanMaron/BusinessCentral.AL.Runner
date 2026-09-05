@@ -84,8 +84,10 @@
     PathMap rewrites those paths to a fixed repo-relative root (`/_/AlRunner/…`), which is the
     same convention the SDK's own DeterministicSourcePaths uses. Verified by rebuilding both
     worktrees above with it: byte-identical output. Guarded by
-    AlRunner.Tests/BuildDeterminismTests.cs, both on a probe project and directly on
-    al-runner.dll's own CodeView entry.
+    AlRunner.Tests/BuildDeterminismTests.cs, three ways: on a probe project, directly on
+    al-runner.dll's own CodeView entry, and — for the CONDITION below, which nothing else
+    pins — by evaluating this very property on AlRunner.csproj both with and without
+    `-p:SuppressImplicitGitSourceLink=false`.
 
     Scoped to SuppressImplicitGitSourceLink=true — i.e. every dev, CI and test build, and NOT
     the release pack. publish.yml packs with `-p:SuppressImplicitGitSourceLink=false`
@@ -96,7 +98,21 @@
     `-p:SuppressImplicitGitSourceLink=false` overrides this file's assignment above, so the
     condition here reads false on that path and no mapping is applied. The released package's
     bytes are fixed per version anyway, so it never needed this (same argument the block
-    above makes for the informational version).
+    above makes for the informational version). Deleting the Condition would therefore break
+    source-stepping in every released package SILENTLY: the pack step in bc-tests.yml checks
+    only that a .nupkg was produced and which binaries it holds, nothing checks SourceLink
+    coherence, so CI would stay green. The test
+    PathMap_IsSetForOrdinaryBuilds_AndClearedOnTheReleasePackPath exists for exactly that.
+
+    Cost, stated because it is real and applies to every LOCAL build: since dev builds take
+    this branch, the document names inside a locally built al-runner.pdb read
+    `/_/AlRunner/Program.cs` rather than an absolute path, so a debugger cannot find the
+    sources on its own — attaching to a locally built al-runner.dll needs an explicit source
+    map from `/_/` to the checkout root (VS Code: `sourceFileMap`; Visual Studio: Debug
+    Source Files), and stack traces printed from such a build show `/_/…` file names. That is
+    accepted deliberately: the cache this fixes is the LOCAL one, so exempting dev builds
+    would exempt the exact case the fix is for. Released packages are unaffected — they pack
+    with SourceLink and keep working source-stepping.
   -->
   <PropertyGroup Condition="'$(SuppressImplicitGitSourceLink)' == 'true'">
     <PathMap>$(MSBuildThisFileDirectory)=/_/</PathMap>

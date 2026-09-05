@@ -172,8 +172,15 @@ public class BuildDeterminismTests
             // behaviors that embed the commit identity; it must not make ContentHash blind
             // to actual code changes — a stale cache HIT would serve wrong compiled output,
             // far worse than a missed cache.
+            //
+            // Rebuilt into "out-a" — the SAME output directory hashA came from — so exactly
+            // ONE variable moves between hashA and hashC: the source marker. An earlier
+            // version built into a fresh "out-c", which moved the source AND the build
+            // location together; that assertion could then have passed for a path reason
+            // even if the fix had over-reached and blinded the hash to source, which is the
+            // precise failure this half exists to catch.
             WriteProbeProject(root, marker: "Y");
-            var hashC = BuildAndHash(proj, RevisionA, Path.Combine(root, "out-c"));
+            var hashC = BuildAndHash(proj, RevisionA, Path.Combine(root, "out-a"));
             Assert.NotEqual(hashA, hashC);
         }
         finally
@@ -273,9 +280,14 @@ public class BuildDeterminismTests
 
             Assert.Equal(hashA, hashB);
 
-            // Negative / regression guard: same two roots, genuinely different source in B.
-            WriteProbeProjectWithOwnBuildProps(rootB, marker: "Y");
-            var hashC = BuildAndHash(projB, RevisionA, Path.Combine(rootB, "out-c"));
+            // Negative / regression guard: rewrite root A's source in place and rebuild it
+            // at root A into root A's SAME output directory, so the ONLY thing that differs
+            // between hashA and hashC is the marker. Rebuilding root B instead would move
+            // the source AND the build location at once, and the inequality could then hold
+            // for a path reason even if PathMap had over-reached and made the hash blind to
+            // source — which is the exact failure this half exists to catch.
+            WriteProbeProjectWithOwnBuildProps(rootA, marker: "Y");
+            var hashC = BuildAndHash(projA, RevisionA, Path.Combine(rootA, "out"));
             Assert.NotEqual(hashA, hashC);
         }
         finally
@@ -323,5 +335,87 @@ public class BuildDeterminismTests
             Assert.StartsWith("/_/", cv.Path.Replace('\\', '/'));
             Assert.EndsWith("al-runner.pdb", cv.Path.Replace('\\', '/'));
         }
+    }
+
+    /// <summary>
+    /// Evaluates a single MSBuild property on a real project without building it
+    /// (<c>-getProperty:</c> with no target does evaluation only — measured at ~0.4 s for
+    /// AlRunner.csproj). Fails loudly on a non-zero exit rather than returning "" , so an
+    /// SDK that does not understand <c>-getProperty</c> reads as a broken guard instead of
+    /// as "the property is empty".
+    /// </summary>
+    private static string EvaluateMsBuildProperty(string projectRelativePath, string property, params string[] extraArgs)
+    {
+        var args = $"msbuild \"{Path.Combine(RepoRoot, projectRelativePath)}\" " +
+                   string.Join(" ", extraArgs.Append($"-getProperty:{property}"));
+        var psi = new ProcessStartInfo
+        {
+            FileName = "dotnet",
+            Arguments = args,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            WorkingDirectory = RepoRoot,
+        };
+        using var p = Process.Start(psi)!;
+        var stdout = p.StandardOutput.ReadToEnd();
+        var stderr = p.StandardError.ReadToEnd();
+        if (!p.WaitForExit(120_000))
+        {
+            try { p.Kill(true); } catch { }
+            throw new TimeoutException($"`dotnet {args}` hung");
+        }
+        Assert.True(p.ExitCode == 0,
+            $"`dotnet {args}` failed (exit {p.ExitCode}). This guard cannot read the property, so " +
+            $"it must not pass.\n--- stdout ---\n{stdout}\n--- stderr ---\n{stderr}");
+        return stdout.Trim();
+    }
+
+    /// <summary>
+    /// Issue #2818, the OTHER half of the fix — the half nothing else guards.
+    ///
+    /// <see cref="RunnerAssembly_DebugDirectory_DoesNotEmbedTheBuildMachinesAbsolutePath"/>
+    /// pins the DEFAULT build: <c>PathMap</c> is set, so dev/CI/test builds are path-independent
+    /// and the cache keys derived from <c>ContentHash</c> are stable across checkouts. Nothing
+    /// pinned the EXCLUSION. Drop the <c>Condition</c> from the <c>PathMap</c>
+    /// <c>PropertyGroup</c> in <c>Directory.Build.props</c> — or hoist the property into the
+    /// unconditional group during a future tidy-up — and every released package silently loses
+    /// source-stepping: SourceLink's <c>sourcelink.json</c> maps the ORIGINAL absolute document
+    /// paths to raw.githubusercontent.com URLs, and rewritten <c>/_/…</c> document names match
+    /// nothing in that map. <c>bc-tests.yml</c>'s pack step asserts only that a .nupkg was
+    /// produced and what binaries it contains; nothing asserts SourceLink coherence. So the
+    /// break would ship green — no error, no failing test, unchanged exit code, a user-visible
+    /// feature gone for a release cycle before anyone noticed.
+    ///
+    /// Both directions are asserted on the REAL AlRunner.csproj, at evaluation cost only:
+    ///
+    ///   dotnet msbuild AlRunner/AlRunner.csproj -getProperty:PathMap
+    ///       -> "&lt;repo-root&gt;/=/_/"
+    ///   dotnet msbuild AlRunner/AlRunner.csproj -p:SuppressImplicitGitSourceLink=false -getProperty:PathMap
+    ///       -> ""   (publish.yml's pack invocation)
+    ///
+    /// The second command is exactly what <c>publish.yml</c> passes; a global
+    /// <c>-p:</c> property overrides the props file's own assignment, which is what makes the
+    /// condition read false there.
+    /// </summary>
+    [Fact]
+    public void PathMap_IsSetForOrdinaryBuilds_AndClearedOnTheReleasePackPath()
+    {
+        var dev = EvaluateMsBuildProperty("AlRunner/AlRunner.csproj", "PathMap");
+        var pack = EvaluateMsBuildProperty("AlRunner/AlRunner.csproj", "PathMap",
+                                           "-p:SuppressImplicitGitSourceLink=false");
+
+        Assert.EndsWith("=/_/", dev);
+        var mappedFrom = dev[..^"=/_/".Length].TrimEnd('/', '\\');
+        Assert.Equal(Path.GetFullPath(RepoRoot).TrimEnd('/', '\\'), Path.GetFullPath(mappedFrom).TrimEnd('/', '\\'));
+
+        Assert.True(pack.Length == 0,
+            "PathMap must evaluate to EMPTY on the release-pack path " +
+            "(-p:SuppressImplicitGitSourceLink=false, as publish.yml passes it), because SourceLink " +
+            "maps the ORIGINAL absolute document paths to raw.githubusercontent.com URLs and a /_/ " +
+            "rewrite would point that map at paths no document carries any more — silently breaking " +
+            "source-stepping in every released package, with CI still green. " +
+            $"Evaluated instead: '{pack}'.");
     }
 }
