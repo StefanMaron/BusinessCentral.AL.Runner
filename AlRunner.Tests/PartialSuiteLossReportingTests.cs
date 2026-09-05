@@ -320,6 +320,85 @@ public sealed class PartialSuiteLossReportingTests
         Assert.Equal(1, total);
     }
 
+    // ── --watch dashboard TREE (rendered) ────────────────────────────────────────────
+
+    /// <summary>
+    /// Renders the real dashboard through Spectre's TestConsole, the harness
+    /// WatchDashboardTests already uses. Wide profile so the node text under test is never
+    /// wrapped or truncated away — an assertion that passes only because a line was cut is
+    /// worse than no assertion.
+    /// </summary>
+    private static string RenderWatch(params BucketResult[] results)
+    {
+        var console = new Spectre.Console.Testing.TestConsole();
+        console.Profile.Width = 200;
+        console.Write(WatchDashboard.Build(results, "my-bundle", WatchStatus.Idle,
+            new DateTime(2026, 9, 5, 12, 0, 0, DateTimeKind.Local), TimeSpan.FromSeconds(1)));
+        return console.Output;
+    }
+
+    /// <summary>
+    /// Tally counts a lost suite, but the count alone is a number with no name attached — under
+    /// --watch the tree is where the developer finds out WHICH suite went missing and why, and
+    /// there is no exit code to send them looking. Asserts the concrete node text, not merely
+    /// that something rendered.
+    /// </summary>
+    [Fact]
+    public void WatchTree_RanBucketThatLostASuite_RendersANamedSuiteErrorsNode()
+    {
+        var output = RenderWatch(PartialLossBucket("/tmp/my-bundle"));
+
+        // The node header, carrying the bucket name and how many suites it lost.
+        Assert.Contains("my-bundle", output, StringComparison.Ordinal);
+        Assert.Contains("SUITE ERRORS (1)", output, StringComparison.Ordinal);
+
+        // The message itself, so the reader learns the surface (EMIT-EXCLUDED) and the module
+        // from the tree rather than from a stderr line the dashboard has already overpainted.
+        Assert.Contains("EMIT-EXCLUDED for Contoso Widgets", output, StringComparison.Ordinal);
+        Assert.Contains("23 object(s) dropped from the module", output, StringComparison.Ordinal);
+
+        // And the consequence spelled out, because a cycle has no exit code to state it.
+        Assert.Contains("MISSING from this cycle, not passing", output, StringComparison.Ordinal);
+
+        // The surviving test is still in the tree — a node that replaced the bucket's results
+        // would satisfy everything above and hide the run.
+        Assert.Contains("PartialBundleHealthy_StillRuns", output, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The negative control. Without it every assertion above is satisfied by an implementation
+    /// that emits the node unconditionally, which would put a red SUITE ERRORS banner on every
+    /// clean --watch cycle.
+    /// </summary>
+    [Fact]
+    public void WatchTree_CleanBucket_RendersNoSuiteErrorsNode()
+    {
+        var output = RenderWatch(CleanBucket("/tmp/my-bundle"));
+
+        Assert.DoesNotContain("SUITE ERRORS", output, StringComparison.Ordinal);
+        Assert.DoesNotContain("MISSING from this cycle", output, StringComparison.Ordinal);
+        // …and the cycle's real results are untouched.
+        Assert.Contains("PartialBundleHealthy_StillRuns", output, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A bucket that lost EVERYTHING already rendered as COMPILE FAILED. It must keep doing so
+    /// rather than acquiring a second, contradictory node — the new branch is for buckets that
+    /// ran, and Stage is the thing that separates them.
+    /// </summary>
+    [Fact]
+    public void WatchTree_FullyCompileFailedBucket_StillRendersCompileFailedNotSuiteErrors()
+    {
+        var bucket = new BucketResult("/tmp/my-bundle", BucketStage.CompileFailed,
+            new[] { SuiteError }, null, Array.Empty<TestResult>(),
+            TimeSpan.Zero, TimeSpan.Zero, TimeSpan.Zero, 0, null);
+
+        var output = RenderWatch(bucket);
+
+        Assert.Contains("COMPILE FAILED", output, StringComparison.Ordinal);
+        Assert.DoesNotContain("SUITE ERRORS", output, StringComparison.Ordinal);
+    }
+
     // ── --jobs aggregate ─────────────────────────────────────────────────────────────
 
     /// <summary>
