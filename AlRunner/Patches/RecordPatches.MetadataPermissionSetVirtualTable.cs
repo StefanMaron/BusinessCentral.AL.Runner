@@ -81,6 +81,17 @@ namespace AlRunner.Patches;
 
 public static partial class RecordPatches
 {
+    /// <summary>
+    /// Every refusal in this file, built in one place. See
+    /// RecordPatches.VirtualTableShapeGap.cs for the three-bucket classification and for
+    /// why the anchor is "not-yet-implemented" rather than a docs/scope.md section (#2945).
+    /// </summary>
+    /// <remarks>
+    /// Category (2): one store-wiring refusal, on a table this file populates.
+    /// </remarks>
+    internal static RunnerOutOfScopeException MetadataPermissionSetShapeGap(string detail)
+        => VirtualTableShapeGap("Metadata Permission Set (virtual table 2000000250)", "metadata-permission-set-virtual-table", detail);
+
     internal const int MetadataPermissionSetVirtualTableId = 2000000250;
 
     // Per in-memory-provider guard so repeated data-access handouts only insert roles
@@ -108,9 +119,7 @@ public static partial class RecordPatches
         EnsureDataAccessProviderReflection(dataAccess);
 
         var provider = _pDataAccessDataProvider!.GetValue(dataAccess)
-            ?? throw new RunnerOutOfScopeException(
-                "Metadata Permission Set (virtual table 2000000250)",
-                "metadata-permission-set-virtual-table — data access has no in-memory provider; see docs/scope.md");
+            ?? throw MetadataPermissionSetShapeGap("data access has no in-memory provider");
 
         var done = _mpsPopulatedByProvider.GetValue(provider, static _ => new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase));
 

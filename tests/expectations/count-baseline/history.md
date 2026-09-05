@@ -544,6 +544,12 @@ group, and al-language carries no byBcVersion override -- CI's eight legs confir
 needed. Only the al-language number moved here; the runner-extras values are main's, taken
 unmodified through a rebase conflict in this file.
 
+The runner-extras `testpage-lookup-tablerelation-oos` group (3 tests, issue #2775) is a new app
+group, so it adds a line rather than moving a number: expected tests on every leg go up by 3 and
+expected app groups by 1, both derived from the line and neither written out anywhere. No
+`absentOn` -- the bundle declares `platform`/`application` 27.0.0.0, so it runs on all eight
+legs. The 3 is measured from an actual run of that bundle, not counted off the source.
+
 The runner-extras `session-user-row` group (4 tests, issue #2296) is a new bundle: the runner
 seeds its own session user into the User system table (2000000120), and the suite pins that the
 row exists with the identity BcRuntime put on the skeleton NavSession, that it carries the User

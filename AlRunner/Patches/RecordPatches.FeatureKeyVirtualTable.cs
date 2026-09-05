@@ -54,6 +54,40 @@ namespace AlRunner.Patches;
 
 public static partial class RecordPatches
 {
+    /// <summary>
+    /// Every refusal in this file, built in one place. See
+    /// RecordPatches.VirtualTableShapeGap.cs for the three-bucket classification and for
+    /// why the anchor is "not-yet-implemented" rather than a docs/scope.md section (#2945).
+    /// </summary>
+    /// <remarks>
+    /// Category (2) for all five. One is a store-wiring gap; the other four are BC's own
+    /// FeatureKeyDataProvider missing, throwing, or answering with nothing. Every one of those
+    /// already carried a comment saying why answering empty would be WRONG rather than
+    /// incomplete -- an empty Feature Key table makes every feature read as unregistered and
+    /// silently wins the legacy code path, which is the bug #2585 fixed.
+    /// </remarks>
+    internal static RunnerOutOfScopeException FeatureKeyShapeGap(string detail)
+        => VirtualTableShapeGap("Feature Key (system table 2000000211)", "feature-key-virtual-table", detail);
+
+    /// <summary>
+    /// Every refusal in this file, built in one place. See
+    /// RecordPatches.VirtualTableShapeGap.cs for the three-bucket classification and for
+    /// why the anchor is "not-yet-implemented" rather than a docs/scope.md section (#2945).
+    /// </summary>
+    /// <remarks>
+    /// Category (2) for all seven: BC's FeatureKeyDataProvider.FeatureKeyReadOnlyFields, or
+    /// Ncl's InvalidFeatureKeyField message resource, is not where this reads it.
+    /// 
+    /// The API name is punctuated with a colon, not an em-dash. OutOfScopeMessage.TryParse cuts
+    /// the api from the reason at the FIRST " \u2014 " in the message, so the old
+    /// "... 2000000211) \u2014 Modify" spelling made the untyped recovery path read the api as
+    /// "Feature Key (system table 2000000211)" and the reason as "Modify \u2014 feature-key-modify
+    /// ..." -- disagreeing with the typed path, which is the one the manifest matches on. AL
+    /// asserterror is unaffected: Assert.ExpectedError matches a prefix.
+    /// </remarks>
+    internal static RunnerOutOfScopeException FeatureKeyModifyShapeGap(string detail)
+        => VirtualTableShapeGap("Feature Key (system table 2000000211): Modify", "feature-key-modify", detail);
+
     internal const int FeatureKeyVirtualTableId = 2000000211;
 
     private static readonly ConditionalWeakTable<object, object> _fkPopulatedProviders = new();
@@ -79,9 +113,7 @@ public static partial class RecordPatches
         EnsureFeatureKeyReflection();
 
         var store = _pDataAccessDataProvider!.GetValue(dataAccess)
-            ?? throw new RunnerOutOfScopeException(
-                "Feature Key (system table 2000000211)",
-                "feature-key-virtual-table — data access has no in-memory provider; see docs/scope.md");
+            ?? throw FeatureKeyShapeGap("data access has no in-memory provider");
 
         if (_fkPopulatedProviders.TryGetValue(store, out _)) return;
 
@@ -93,13 +125,12 @@ public static partial class RecordPatches
         catch (Exception ex)
         {
             var inner = ex is TargetInvocationException tie && tie.InnerException != null ? tie.InnerException : ex;
-            throw new RunnerOutOfScopeException(
-                "Feature Key (system table 2000000211)",
-                "feature-key-virtual-table — BC's own FeatureKeyDataProvider could not be "
+            throw FeatureKeyShapeGap(
+                "BC's own FeatureKeyDataProvider could not be "
                 + $"constructed on the skeleton session ({inner.GetType().Name}: {inner.Message}). "
                 + "Its constructor reads the table's own metatable and the session's app group; "
                 + "rebuilding the feature list here instead would be a second copy of a list BC "
-                + "owns. See docs/scope.md and AlRunner#2585");
+                + "owns. See AlRunner#2585");
         }
 
         object? rows;
@@ -111,12 +142,11 @@ public static partial class RecordPatches
         catch (Exception ex)
         {
             var inner = ex is TargetInvocationException tie && tie.InnerException != null ? tie.InnerException : ex;
-            throw new RunnerOutOfScopeException(
-                "Feature Key (system table 2000000211)",
-                "feature-key-virtual-table — BC's own FeatureKeyDataProvider.GetAllItems failed "
+            throw FeatureKeyShapeGap(
+                "BC's own FeatureKeyDataProvider.GetAllItems failed "
                 + $"({inner.GetType().Name}: {inner.Message}). Answering with no rows would make "
                 + "every feature read as unregistered and silently win the legacy code path, "
-                + "which is the bug this fixes. See docs/scope.md and AlRunner#2585");
+                + "which is the bug this fixes. See AlRunner#2585");
         }
 
         var inserted = 0;
@@ -128,14 +158,13 @@ public static partial class RecordPatches
         }
 
         if (inserted == 0)
-            throw new RunnerOutOfScopeException(
-                "Feature Key (system table 2000000211)",
-                "feature-key-virtual-table — BC's own FeatureKeyDataProvider produced no rows. "
+            throw FeatureKeyShapeGap(
+                "BC's own FeatureKeyDataProvider produced no rows. "
                 + "Its feature list is a hardcoded static in Microsoft.Dynamics.Nav.Types, so an "
                 + "empty result means a modifier filtered everything out (a tenant state read, "
                 + "the FeatureKeyOverride setting, or ECS configuration filtering) rather than "
                 + "that BC ships no features. Silently answering empty would put back exactly "
-                + "the wrong-legacy-path bug this fixes. See docs/scope.md and AlRunner#2585");
+                + "the wrong-legacy-path bug this fixes. See AlRunner#2585");
 
         _fkPopulatedProviders.Add(store, new object());
     }
@@ -182,16 +211,12 @@ public static partial class RecordPatches
     internal static void GuardFeatureKeyReadOnlyFieldsOnModify(NavRecord self)
     {
         var meta = self.MetaTable
-            ?? throw new RunnerOutOfScopeException(
-                "Feature Key (system table 2000000211) — Modify",
-                "feature-key-modify — record carries no metatable; see docs/scope.md");
+            ?? throw FeatureKeyModifyShapeGap("record carries no metatable");
 
         var readOnlyFieldNos = ReadOnlyFieldNumbers();
 
         var keyField = meta.PrimaryKey?.GetKeyFieldByIndex(0)
-            ?? throw new RunnerOutOfScopeException(
-                "Feature Key (system table 2000000211) — Modify",
-                "feature-key-modify — metatable has no primary key field; see docs/scope.md");
+            ?? throw FeatureKeyModifyShapeGap("metatable has no primary key field");
         var keyValue = self.GetFieldValue(keyField.FieldNo);
 
         var original = new NavRecord(self.ParentSession, FeatureKeyVirtualTableId);
@@ -222,15 +247,11 @@ public static partial class RecordPatches
         EnsureFeatureKeyReflection();
         _fkReadOnlyFieldsField ??= _fkProviderType!.GetField(
             "FeatureKeyReadOnlyFields", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)
-            ?? throw new RunnerOutOfScopeException(
-                "Feature Key (system table 2000000211) — Modify",
-                "feature-key-modify — BC's FeatureKeyDataProvider no longer declares "
-                + "FeatureKeyReadOnlyFields; see docs/scope.md");
+            ?? throw FeatureKeyModifyShapeGap(
+                "BC's FeatureKeyDataProvider no longer declares FeatureKeyReadOnlyFields");
 
         return (int[])(_fkReadOnlyFieldsField.GetValue(null)
-            ?? throw new RunnerOutOfScopeException(
-                "Feature Key (system table 2000000211) — Modify",
-                "feature-key-modify — FeatureKeyReadOnlyFields is null; see docs/scope.md"));
+            ?? throw FeatureKeyModifyShapeGap("FeatureKeyReadOnlyFields is null"));
     }
 
     private static Exception BuildFeatureKeyReadOnlyError(string fieldCaption)
@@ -260,23 +281,17 @@ public static partial class RecordPatches
         if (_fkInvalidFieldMessage != null) return _fkInvalidFieldMessage;
 
         _fkLangType ??= FindFeatureKeyLangType()
-            ?? throw new RunnerOutOfScopeException(
-                "Feature Key (system table 2000000211) — Modify",
-                "feature-key-modify — Ncl's InvalidFeatureKeyField message resource could not be "
-                + "located; see docs/scope.md");
+            ?? throw FeatureKeyModifyShapeGap(
+                "Ncl's InvalidFeatureKeyField message resource could not be located");
 
         var prop = _fkLangType.GetProperty("InvalidFeatureKeyField",
             BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)
-            ?? throw new RunnerOutOfScopeException(
-                "Feature Key (system table 2000000211) — Modify",
-                "feature-key-modify — Ncl states no InvalidFeatureKeyField message resource; "
-                + "see docs/scope.md");
+            ?? throw FeatureKeyModifyShapeGap(
+                "Ncl states no InvalidFeatureKeyField message resource");
 
         var text = prop.GetValue(null) as string
-            ?? throw new RunnerOutOfScopeException(
-                "Feature Key (system table 2000000211) — Modify",
-                "feature-key-modify — Ncl's InvalidFeatureKeyField message resource is empty; "
-                + "see docs/scope.md");
+            ?? throw FeatureKeyModifyShapeGap(
+                "Ncl's InvalidFeatureKeyField message resource is empty");
 
         _fkInvalidFieldMessage = text;
         return text;
@@ -329,13 +344,12 @@ public static partial class RecordPatches
             BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
 
         if (_fkProviderType == null || _fkProviderCtor == null || _fkGetAllItems == null)
-            throw new RunnerOutOfScopeException(
-                "Feature Key (system table 2000000211)",
-                "feature-key-virtual-table — BC's FeatureKeyDataProvider does not expose the "
+            throw FeatureKeyShapeGap(
+                "BC's FeatureKeyDataProvider does not expose the "
                 + $"shape this drives (type={_fkProviderType != null}, "
                 + $"ctor(NavSession)={_fkProviderCtor != null}, GetAllItems={_fkGetAllItems != null}). "
                 + "A BC shape change says so here rather than being papered over with a "
-                + "hand-built feature list. See docs/scope.md");
+                + "hand-built feature list");
 
         _fkReflectionReady = true;
     }

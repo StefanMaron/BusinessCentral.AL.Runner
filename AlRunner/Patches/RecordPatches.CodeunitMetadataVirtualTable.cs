@@ -59,6 +59,20 @@ namespace AlRunner.Patches;
 
 public static partial class RecordPatches
 {
+    /// <summary>
+    /// Every refusal in this file, built in one place. See
+    /// RecordPatches.VirtualTableShapeGap.cs for the three-bucket classification and for
+    /// why the anchor is "not-yet-implemented" rather than a docs/scope.md section (#2945).
+    /// </summary>
+    /// <remarks>
+    /// Category (2) for all four. One is a store-wiring gap; the other three are BC metadata
+    /// shapes this file reads rather than owns. Refusing beats guessing an option ordinal: the
+    /// ordinal is a stored column value, so a wrong guess mis-keys every row it writes and no
+    /// test can see it.
+    /// </remarks>
+    internal static RunnerOutOfScopeException CodeunitMetadataShapeGap(string detail)
+        => VirtualTableShapeGap("CodeUnit Metadata (virtual table 2000000137)", "codeunit-metadata-virtual-table", detail);
+
     internal const int CodeunitMetadataVirtualTableId = 2000000137;
 
     private static readonly ConditionalWeakTable<object, ConcurrentDictionary<int, byte>>
@@ -98,9 +112,7 @@ public static partial class RecordPatches
         var subtypeOrdinals = EnsureCodeunitSubtypeOrdinals(metaTable);
 
         var provider = _pDataAccessDataProvider!.GetValue(dataAccess)
-            ?? throw new RunnerOutOfScopeException(
-                "CodeUnit Metadata (virtual table 2000000137)",
-                "codeunit-metadata-virtual-table — data access has no in-memory provider; see docs/scope.md");
+            ?? throw CodeunitMetadataShapeGap("data access has no in-memory provider");
 
         var done = _cmvPopulatedByProvider.GetValue(provider, static _ => new ConcurrentDictionary<int, byte>());
 
@@ -250,14 +262,10 @@ public static partial class RecordPatches
 
         var field = (GetAllFields(metaTable) ?? Enumerable.Empty<NCLMetaField>())
             .FirstOrDefault(f => NormalizeObjectTypeName(f.FieldName ?? string.Empty) == "subtype")
-            ?? throw new RunnerOutOfScopeException(
-                "CodeUnit Metadata (virtual table 2000000137)",
-                "codeunit-metadata-virtual-table — metatable has no \"Subtype\" field; see docs/scope.md");
+            ?? throw CodeunitMetadataShapeGap("metatable has no \"Subtype\" field");
 
         var optionMetadata = field.FieldOptionMetadata
-            ?? throw new RunnerOutOfScopeException(
-                "CodeUnit Metadata (virtual table 2000000137)",
-                "codeunit-metadata-virtual-table — \"Subtype\" carries no option metadata; see docs/scope.md");
+            ?? throw CodeunitMetadataShapeGap("\"Subtype\" carries no option metadata");
 
         var map = new Dictionary<string, int>(StringComparer.Ordinal);
         var parts = (optionMetadata.OptionString ?? string.Empty).Split(',');
@@ -268,9 +276,7 @@ public static partial class RecordPatches
             map.TryAdd(key, i);
         }
         if (map.Count == 0)
-            throw new RunnerOutOfScopeException(
-                "CodeUnit Metadata (virtual table 2000000137)",
-                "codeunit-metadata-virtual-table — \"Subtype\" option string is empty; see docs/scope.md");
+            throw CodeunitMetadataShapeGap("\"Subtype\" option string is empty");
 
         _cmvSubtypeOrdinals = map;
         return map;
