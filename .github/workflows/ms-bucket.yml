@@ -75,6 +75,29 @@ name: MS bucket (manual)
 #   "=== <bundle> — EXEC FAIL ===" header and its reason lines generically, not the MSDA text).
 
 on:
+  # workflow_call so the nightly (ms-bucket-nightly.yml) can REUSE these steps rather than
+  # re-spell them. Deliberately no push/pull_request/schedule here: this workflow is the
+  # MECHANICS of running one bucket, and every policy question — which bucket, how often,
+  # what the result asserts — belongs to whoever calls it. A schedule on this file would also
+  # arrive with no inputs, so `bucket` would be empty. MsBucketWorkflowTests pins the trigger
+  # set in both directions.
+  workflow_call:
+    inputs:
+      bucket:
+        description: Microsoft BaseApp test bucket, e.g. Tests-SMB or Tests-ERM.
+        type: string
+        required: true
+      bc-version:
+        description: >-
+          BC build or prefix. Empty = the newest prefix in .github/bc-versions.txt.
+        type: string
+        required: false
+        default: ''
+      test-data:
+        description: Hydrate CRONUS International Ltd_ from the sandbox backup.
+        type: boolean
+        required: false
+        default: true
   workflow_dispatch:
     inputs:
       bucket:

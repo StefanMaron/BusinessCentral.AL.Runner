@@ -56,13 +56,35 @@ public static class RunnerTestPageState
             if (navTestPage == null) return;
             _testPageField ??= FindTestPageField(navTestPage.GetType());
             if (_testPageField?.GetValue(navTestPage) is not LiveNavTestPage live) return;
-            // Opening a page is a commit point. BC reaches one because the page opens inside a
-            // new TRANSACTION WORLD, and TransactionManager.BeginTransactionWorld commits the
-            // active transaction on entering one (CommitImpl(commit: true)). The runner opens
-            // the page in-process without that machinery, so the commit has to be made here —
-            // otherwise an asserterror on a page operation rolls back the test's own setup,
-            // which real BC has already committed by then.
-            AlRunner.Patches.RecordPatches.MarkCommitPoint();
+            // NOT a commit point. This used to call RecordPatches.MarkCommitPoint() here, on
+            // the reading that "opening a page enters a new TRANSACTION WORLD, and
+            // TransactionManager.BeginTransactionWorld commits the active transaction on
+            // entering one". Half of that is true and the half that matters is not (#2400).
+            //
+            // BeginTransactionWorld does commit — but only when
+            // `logicalTransaction.TransactionWorldCount == 0`, and it calls
+            // ThrowIfWriteTransactionStarted() first, so with an AL write transaction already
+            // open it RAISES rather than committing. More decisive: in BC 28.1's Ncl,
+            // SessionTransactionExtensions.BeginTransactionWorld has exactly two callers —
+            // NavForm.RunModalAsync and NavReport.RunReportCoreAsync. Page.RunModal and
+            // Report.Run enter a transaction world. A TestPage does not: NavTestPage.Open is
+            // `base.Open(mode)` followed by
+            // `TestClientProxy<ITestPage>.Proxy(session.TestExecution.ClientSession.CreatePage(...))`
+            // and `Attach(value)` — no transaction world anywhere on that path. The runner
+            // already marks the modal/report commit through BC's own machinery, via
+            // RecordPatches.NoteTransactionEnd prepended to EndTransactionWorldAndTransaction.
+            //
+            // What the wrong commit point cost: MarkCommitPoint() DISCARDS the pre-write
+            // snapshot, so a [Test] that wrote rows and then opened a TestPage had nothing left
+            // to roll back to. Its writes then outlived the test —
+            // [TransactionModel(TransactionModel::AutoRollback)] could not undo them, and
+            // neither could a later asserterror. In Microsoft's Tests-SINGLESERVER codeunit
+            // 134614 that is exactly one test's InitializeData() leaving its "Security Group"
+            // rows behind for the next test to fail on with "The group SG1 already exists."
+            //
+            // Pinned upstream by corpus codeunit 60900 "Test TxModel Page Open", which writes a
+            // row, opens and closes a TestPage, and asserts the write is still rolled back both
+            // by AutoRollback and by a later asserterror.
             live.MarkOpened(viewMode);
             // Before anything else reads the page: OnOpenPage is where a page establishes what
             // it is looking at — the singleton buffer it fetches or creates for the current

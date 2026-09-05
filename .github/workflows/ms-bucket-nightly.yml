@@ -1,0 +1,134 @@
+name: MS bucket (nightly)
+
+# A scheduled Microsoft BaseApp bucket run on the NEWEST released BC version, so drift in the
+# runner's behaviour against Microsoft's own tests shows up the next morning instead of at the
+# next manual dispatch. Issue #2724 built the mechanics; this is the schedule on top of them.
+#
+# ─── THIS RUN MAY BE RED, AND EITHER OUTCOME IS INFORMATIVE ──────────────────────────────────
+#
+# This workflow was written when the backup reader could not open a 28.2+ W1 backup, so
+# --test-data could not produce a number on 28.4 at all, and the plan was to land it knowingly
+# red against the version that matters rather than pin it back to a version nobody ships. That
+# blocker is now FIXED: #2780 is closed as completed and READER_TAG in ms-bucket.yml pins
+# reader v0.1.2, which reads BC 28.2, 28.3 and 28.4.
+#
+# What has NOT been measured is whether the bucket now produces a number on 28.4. The only
+# ms-bucket run in this repository's history (33967273260) ran at 12:52 UTC on 2026-09-05,
+# against reader v0.1.1, six and a half hours before the reader bump merged at 19:22 UTC. So
+# the first scheduled run here may be green or red, and this header does not claim to know
+# which — inventing an expectation from a run that never happened is how the paragraph above
+# went stale in the first place.
+#
+# Red is still an acceptable outcome, for a separate reason: this runs Microsoft's own tests,
+# which genuinely fail against the runner today, and taking the Microsoft data recipe to green
+# is deliberately the LAST thing on the list. What is not acceptable is a red whose cause is
+# this workflow rather than the runner.
+#
+# The two are told apart by the annotation, and that is what makes landing this reasonable
+# without knowing the outcome in advance. scripts/ms-bucket-summary.py recognises a known
+# blocker by signature and leads the job summary with "Known blocker: …", emitted as a
+# `::error::` annotation so the reason reaches the run list and the scheduled-failure
+# notification without anyone opening the log. A failure it does NOT recognise gets a
+# different annotation saying exactly that — the case that actually needs someone's attention.
+# A knowingly-red job that says nothing trains everyone to ignore it, which is worse than not
+# having one.
+#
+# The annotation lives in that script rather than in a step here, because a `uses:` job cannot
+# add steps to the workflow it calls — and putting it there means a MANUAL dispatch that hits
+# the same wall gets the same explanation.
+#
+# ─── IT GATES NOTHING ───────────────────────────────────────────────────────────────────────
+#
+# No push, no pull_request. Not a required check, not in any branch ruleset. `main`'s gate is
+# and stays "All BC versions passed" (test-matrix.yml). Nothing here should ever be "made
+# green" by working around it — if it is red for a reason that is NOT the known blocker, that
+# is the signal, and the fix belongs where the defect is.
+#
+# ─── WHICH BUCKET, AND WHY ONLY ONE ─────────────────────────────────────────────────────────
+#
+# Tests-SMB: 1,027 tests, a couple of minutes warm with test data, and the `running-ms-test-
+# buckets` skill's named known-good baseline (259 passing without test data, 595 with) — so a
+# number from it can be compared against something. A nightly's job is DRIFT DETECTION, not
+# work generation.
+#
+# Not Tests-ERM (9,496) and not the full surface (~40,550): those are hours, and GitHub Actions
+# concurrency is per-ACCOUNT, shared with this repo's own eight-leg matrix and with the corpus
+# repository's. A multi-hour nightly would contend with PR CI every night for a number nobody
+# needs daily. Ranking work across the Microsoft surface is what the MANUAL dispatch is for.
+#
+# It is a matrix with one entry on purpose: widening it later is one line, and the reasoning
+# above is the thing to revisit first if anyone does.
+#
+# ─── WHAT IT ASSERTS TODAY, AND WHAT IT SHOULD ASSERT LATER ─────────────────────────────────
+#
+# Today: only "did the run produce a number", which is ms-bucket-summary.py's existing exit
+# contract (0 = runner exit 0/1 plus a JUnit file, 1 = no measurement). Nothing stronger,
+# because nothing stronger can be honest yet.
+#
+# Later, once this is reliably producing a number on 28.4, it should assert a BASELINE rather
+# than a raw pass count: a raw count drifts with every merge and nobody reads it, whereas
+# --count-baseline fails in BOTH directions — a drop AND unexplained growth — which is the
+# mechanism this repo already trusts (tests/expectations/count-baseline/, docs/expectations.md).
+#
+# Seeding it is deliberately NOT done here, because a baseline invented from a run that never
+# happened is worse than no baseline. The procedure, once there is a run to read:
+#
+#   1. Let this nightly run once on 28.4 and read total/pass/fail off the job summary.
+#   2. Run it a second time unchanged and confirm the same numbers. Microsoft's buckets contain
+#      order-dependent tests (measured: a full-bucket per-test diff is not stable when a
+#      watchdog abort splits the run), so one run is not a baseline.
+#   3. Record that number in tests/expectations/count-baseline/ under its own suite key, and
+#      add --count-baseline to the run step in ms-bucket.yml behind an input this workflow sets.
+#   4. From then on, a nightly that goes red because the count moved is a real signal.
+#
+# ─── HOW THE RESULT REACHES ANYONE ──────────────────────────────────────────────────────────
+#
+# GitHub notifies the repository owner about failing SCHEDULED workflows by default, and the
+# `::error::` annotation ms-bucket-summary.py emits is what that notification and the Actions run
+# list carry — so the reason travels with the alert instead of living in a log nobody opens.
+# The job summary holds the full table and caveats; the JUnit and run log are uploaded as
+# artifacts by the called workflow for clustering.
+#
+# Deliberately NOT wired to open or update an issue. A recurring failure would file the same
+# issue every night until someone fixed it, it needs `issues: write` on a scheduled job, and it
+# duplicates the tracking that already exists. Worth revisiting only if the nightly starts
+# producing numbers worth trending.
+
+on:
+  schedule:
+    # 03:17 UTC. Off the hour deliberately — GitHub queues a large share of cron workflows on
+    # the hour and delays them under load, and this job wants a quiet account-wide window
+    # rather than a punctual one.
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One nightly at a time. If yesterday's is somehow still running, queue rather than cancel —
+# a cancelled run produces no number and no diagnosis, which is the one outcome with no value.
+concurrency:
+  group: ms-bucket-nightly
+  cancel-in-progress: false
+
+jobs:
+  bucket:
+    strategy:
+      # One entry today; see the header for why, and change it here rather than adding a second
+      # workflow. fail-fast off so a widened matrix reports every bucket instead of the first.
+      fail-fast: false
+      matrix:
+        bucket: [Tests-SMB]
+    # The MECHANICS are ms-bucket.yml's, called rather than copied: provisioning through the
+    # shared composite action, the pinned backup reader, both package caches, the raised emit
+    # timeout, the private --cache root, the company name in SQL form, and the resume-after-
+    # watchdog behaviour. A second spelling of any of that is how bc-tests.yml's provisioning
+    # drifted four times and failed two releases (#1976).
+    #
+    # bc-version is left EMPTY on purpose: ms-bucket.yml resolves that to the newest prefix in
+    # .github/bc-versions.txt, which is the version the matrix marks required. Pinning a
+    # version here is the thing this nightly must not do.
+    uses: ./.github/workflows/ms-bucket.yml
+    with:
+      bucket: ${{ matrix.bucket }}
+      test-data: true

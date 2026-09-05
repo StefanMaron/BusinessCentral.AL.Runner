@@ -21,6 +21,20 @@ doing its job — and anything not pinned there is a claim nobody is checking.
 Read every priority below through that lens. A fix that closes an issue and adds no upstream
 coverage has moved a number; a fix that lands with a corpus test has moved the guarantee.
 
+The test for whether a fix owes a corpus test is wider than "is this a claim about BC?":
+**wherever it is possible to red-test something with AL tests, that should add tests to the
+corpus** — that is, wherever the fix can be proven by AL running against a real service tier. A
+BC-behaviour claim is the common case, not the whole rule. The service-tier clause is what keeps
+the rule legal: runner-only claims are red-testable in AL too — out-of-scope reasons, AL-output
+cache HIT/MISS, provisioning-gap messages, exit codes — and they stay in `tests/runner-extras/`,
+because the corpus does not know about AL Runner and must stay that way
+(`al-language-submodule.md`).
+
+The runner fix is still the priority, and the work never stalls on the corpus. Open the corpus
+PR and keep the runner fix moving — implemented, pushed, reviewed — rather than idling until
+the corpus legs report; priority 3's merge bar decides when it may *merge*, and nothing before
+that waits.
+
 ## Working unattended
 
 This runs without anyone watching. That changes what matters: not throughput, but never
@@ -49,6 +63,15 @@ Exactly one agent runs. When it returns, you review, act, and start the next.
 
 A fresh or drifted box does not announce that it is broken; it produces numbers that look fine.
 Every check below exists because its absence has silently corrupted a result.
+
+**Run `tools/preflight.py`.** It is this section, executable, with a real exit code — 0 all
+passed, 1 something failed and this box would produce untrustworthy results, 2 warnings under
+`--strict`, 3 it could not complete. `--json` for a box profile, `--reap` to remove worktrees
+whose PR is merged and whose tree is clean, `--with-corpus` to include step 1. The prose below
+stays as the specification and the reasoning; the script is how it actually gets run, because a
+check a busy coordinator can decline is not a check — one skipped step 5 across an evening of
+~20 agents and filled a 7.7 GB tmpfs, after which every shell on the box failed without naming
+the cause.
 
 1. **Known-good baseline — run the corpus.** `tests/al-language` is green or it is not, and its
    expected count lives in `tests/expectations/count-baseline/`, checked in and only moved by a
@@ -98,9 +121,11 @@ Every check below exists because its absence has silently corrupted a result.
 
    Keep your label on whatever you are working, so a loop starting up can see the slot is live.
    Between units you hold nothing, so a concurrent startup may pick the same slot — that is what
-   the re-read above is for, and it is why the assignee, not the slot, is the real lock. Do not
-   try to judge whether someone else's open work is "still being worked": you cannot tell a dead
-   box from a contributor who is asleep, and the design refuses that judgement elsewhere for the
+   the re-read above is for. Do not read the assignee as the lock that makes up for it: where
+   every loop pushes as one account, the assignee cannot say *which* loop holds an issue, and an
+   **open PR carrying `Closes #N`** is the signal that decides it (#2891). Do not try to judge
+   whether someone else's open work is "still being worked" either: you cannot tell a dead box
+   from a contributor who is asleep, and the design refuses that judgement elsewhere for the
    same reason.
 
    Note the slot is bookkeeping, not safety. The incident it is often credited with preventing —
@@ -230,6 +255,18 @@ a merge can turn `main` red, which outranks everything you were about to do.
    PR names that structural reason and puts its proving test in `tests/runner-extras/`. It is not
    acceptable as a way to avoid writing the upstream test.
 
+   That claim is the **implementer's** to test up front, not only the reviewer's to challenge,
+   and the answer belongs in the PR body whichever way it comes out. Both have happened: a
+   defect assumed precompiled-only also reproduced on a source-compiled table, and the corpus
+   app declares a Base Application dependency, so a corpus test does reach the precompiled path
+   after all (issue #2518, corpus PR #165, merged green on all 8 legs); while table `2000000001`
+   really is out of reach, being `Scope = OnPrem` and in `SystemTables.InternalTables`, which
+   `NavRecordRef.IsSystemTableAllowedForRecordRefUsage` refuses outright. Hold that second answer
+   to what actually carries it: the service tier measured a **sibling id** — corpus PR #153 put
+   `2000000071` in front of one, all eight legs came back red, and the PR was withdrawn —
+   and `2000000001` follows by **set membership in the same refused list**, not by its own
+   measurement. Make the PR body say which of the two it has (issue #2774).
+
    **Do not merge a PR that closes a BC-behaviour issue on the strength of a runner-local test
    alone.** That is the exact failure `bc-behavior-tests-go-upstream.md` exists to prevent, and it
    is invisible: the runner-local test is green and nothing complains. Unattended, nobody will
@@ -290,6 +327,12 @@ everyone, survives a crashed box, and needs no shared state between contributors
 label is useful for telling afterwards which work the loop produced — but the label is
 bookkeeping; the assignee is what prevents two agents doing the same issue.
 
+**Between two loops on the same account, neither signal decides ownership**, and the check that
+does is one call: an **open PR carrying `Closes #N`** means the issue is in progress no matter
+what the assignee and labels say. Resolve it before claiming, and — as a coordinator — build the
+whole map once per cycle before dispatching. Three collisions in four hours came from skipping
+it. `.claude/rules/check-open-prs-before-claiming.md` has the command and the incidents.
+
 **Look in this order, and it works for any account:**
 
 1. **Issues assigned to your account AND carrying your own `agent: <tag>-N` label.** Both, not
@@ -316,14 +359,17 @@ pick the same top issue. Use compare-and-swap rather than trusting the write: as
 candidate. Losing a race costs one API call; two agents silently doing the same issue costs
 both.
 
-**Release when you stop.** Finished without a fix, blocked, or shutting down for budget: remove
-your assignment so the issue returns to the pool. An issue you cannot finish should not stay
-parked under your name.
+**Release when you stop.** Finished without a fix, blocked, or shutting down for budget: release
+the issue so it returns to the pool. An issue you cannot finish should not stay parked under your
+name. Release by removing **your own** `agent:` label — on a shared account the assignee you would
+remove may be another loop's lock, and a foreign `agent:` label is never yours to clear.
 
 **Your own stale claims are yours to reclaim** — a claim of yours with no linked PR and no
 activity for hours is from a run that died, and rule 1 above picks it up automatically.
 **Someone else's stale claim is not yours to take**, even if it looks abandoned. You cannot tell
-a dead box from a contributor who is asleep. Surface it to the human queue and move on.
+a dead box from a contributor who is asleep — and that refusal covers a foreign `agent:` label
+too, which looks identical whether the loop that wrote it is live or gone. Surface it to the
+human queue and move on.
 
 **Namespace anything per-contributor** that lives on disk or in a branch name — worktrees,
 branches, scratch directories, cache directories. Two contributors must never write to the same
@@ -374,9 +420,41 @@ The five-hour windows are real, but **exhausting every window burns the weekly l
 couple of days.** The budget that matters is weekly, so run continuously *below* per-window
 capacity rather than sprinting and then idling.
 
-One agent at a time is most of the pacing. Beyond that, use numbers the loop can actually count,
-because **it has no way to read its own token consumption or remaining budget** — an instruction
-to "tune from observed consumption" cannot be followed and will be guessed at.
+One agent at a time is most of the pacing. Beyond that, **the loop can measure both its own
+consumption and its remaining budget**, where the tooling for it is installed. Check for these
+two sources during preflight and record in the box profile which ones this machine has:
+
+- **Consumption, on any machine:** `npx ccusage@latest claude` for daily totals and
+  `npx ccusage@latest blocks` for per-5-hour-block ones, read from Claude Code's own local
+  JSONL. Absolute tokens and cost only — see the two misreadings below.
+- **Remaining budget, where the Omarchy agents panel is installed:**
+  `/usr/share/omarchy/bin/omarchy-agent-usage-claude --limits-only`, or read its state file
+  `~/.local/state/omarchy/agents/usage/claude.json` directly. It carries the authoritative
+  limits from Anthropic's OAuth usage endpoint — a `percent` and a `resetsAt` for the 5-hour
+  and the 7-day window. `percent` is a 0..1 fraction, so `0.47` means 47%. `--limits-only`
+  re-probes the limits while reusing a recent transcript scan; it does not narrow the output.
+
+**A missing limits source leaves the loop half-sighted, not blind.** Measure absolute tokens and
+cost with ccusage, ask the human for the cap percentage, and record any snapshot they give you
+so a burn rate can be derived. One sample for calibration, taken from a panel screenshot:
+35% → 37% of a session across 8 minutes at 9–12 concurrent agents, roughly 15 percentage points
+per hour. Where the limits source *is* present, measure the rate directly rather than
+extrapolating from that figure.
+
+Two ways to misread these numbers, both of which cost real time on 2026-09-05:
+
+- **ccusage's block `%` is not your cap.** It is measured against a *guessed* limit — the largest
+  block ccusage has ever seen. A coordinator read it as "at the cap" and concluded there was no
+  headroom while the authoritative figure was 37%. Take absolute tokens and cost from ccusage;
+  take the percentage from the limits source, or from the human.
+- **ccusage counts the whole machine.** It reads all local Claude Code data, so its totals cover
+  every loop running on the box, not only yours.
+
+**Cost is almost entirely cache reads, so the lever is round trips, not agent count.** Of
+738,650,170 tokens in one measured day, 723,088,774 (97.9%) were cache reads and 8,761 were
+input. Cache reads scale with tool round-trips × context size, so fewer round trips per agent
+and tighter briefs cut cost far more than running fewer agents does — the same finding
+`CLAUDE.md`'s code-navigation section reaches about grep round-trips, and it applies here too.
 
 Put concrete values in the box profile and obey them: a fixed wall-clock gap between cycles, and
 a hard cap on cycles per rolling 24 hours. Count cycles, subagents spawned and elapsed time —

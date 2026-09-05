@@ -29,5 +29,16 @@ codeunit 60711 "ITS Installer"
         Seed."Code" := 'COMPANY2';
         Seed."Value" := 22;
         Seed.Insert();
+
+        // #2805's guard refuses StartSession from inside a [Test] unless the TestRunner
+        // declares TestIsolation = Disabled. An install trigger is NOT a test, so the guard
+        // must be inert here and this must dispatch normally. Nothing outside a [Test] had
+        // ever exercised it, and "inert by construction" (BcRuntime.InTestExecutionScope is
+        // false) is exactly the claim that stops being true when someone changes the
+        // construction. "ITS StartSession Outside Test" reads the row the worker writes.
+        StartSession(SessionId, Codeunit::"ITS Session Worker");
     end;
+
+    var
+        SessionId: Integer;
 }

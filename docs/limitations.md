@@ -194,6 +194,10 @@ dispatch, and report/request-page variables support a limited standalone surface
   a handler that cancels leaves the report body unexecuted, and one that calls
   `TestRequestPage.SaveAsXml(parametersFile, dataSetFile)` gets the report's dataset written
   to that file (so `Codeunit "Library - Report Dataset"` can load it) instead of a layout.
+  A handler asking for a RENDERED artifact instead — `SaveAsExcel`, `SaveAsPdf`, `SaveAsWord`,
+  print, preview — is refused loudly on the rendering path, like every other rendering request
+  here; it is not answered with a dataset written into the file it named
+  ([#2887](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2887)).
   A handler can also read and write the request page's **controls**
   (`RequestPage.ShowAmountsInLCY.SetValue(true)`): a request-page control is bound to one of
   the report's own globals, and it resolves through BC's own `NavForm.SourceExpressions`
@@ -378,6 +382,52 @@ If your AL under test depends on real SA behaviour to mean anything, the support
 2. **Test-only AL codeunit shadowing the SA call.** Add an AL codeunit in your `test/` directory with the same object ID and a hand-rolled implementation that returns the values your test expects. The runner will use your codeunit because it is in the compile unit; in real BC, your production code never sees it.
 
 Concrete example — `Image` codeunit (System Application). A test that asserts on image dimensions cannot rely on the runner's blank-shell `Image.GetWidth()` (which returns `0`). The fix is to write a small stub in your test project that parses a known fixture image, not to ask the runner to ship an `Image` implementation. If the AL pattern under test is widespread enough that everyone needs the same stub, file a runner-gap issue and we can discuss whether a shared stub belongs in `AlRunner/stubs/` (the bar is high — it must be test-automation infrastructure, not business logic).
+
+### Document-service providers (`DOCUMENTSERVICEMOCK`)
+
+Base Application codeunit 9510 `"Document Service Management"` resolves a provider through
+`Microsoft.Dynamics.Nav.DocumentService.DocumentServiceFactory.CreateService`. That factory
+composes a MEF `DirectoryCatalog` over the directory holding
+`Microsoft.Dynamics.Nav.DocumentService.dll`, using the file pattern
+`*.nav.*DocumentService*.dll`, and picks the export whose `IDocumentServiceMetadata.ServiceType`
+matches the requested type, compared case-insensitively.
+
+The only provider Microsoft ships in the public platform artifacts is
+`Microsoft.Dynamics.Nav.SharePointOnlineDocumentService.dll`. The two types Microsoft's own test
+codeunit 139101 `"Document Service Mgmt Test"` asks for — `DOCUMENTSERVICEMOCK` and
+`EMPTYDOCUMENTSERVICEMOCK` — live in internal test binaries. Measured across 25 cached artifacts
+from BC 26.0 through 28.4, the string `DOCUMENTSERVICEMOCK` appears in no shipped DLL.
+
+A test that requests one of those service types therefore fails, with BC's own message:
+
+```
+NavNCLDotNetInvokeException: A call to ...DocumentServiceFactory.CreateService failed with this
+message: <install-dir> The following document service provider could not be found: 'DOCUMENTSERVICEMOCK'.
+```
+
+That is the correct result, and the runner keeps it. It names the API, the missing provider and
+the directory that was searched. `tests/runner-extras/document-service-session-seed` checks it
+from AL, and `AlRunner.Tests/DocumentServiceProviderScopeGuardTests.cs` checks that the runner
+ships no provider of its own.
+
+**The runner will not supply a `DOCUMENTSERVICEMOCK` implementation.** Ten of the eleven failing
+tests in codeunit 139101 need one, and they divide into two halves: five need the handler to
+return a result the test then asserts on, and five assert an exact error string that Microsoft's
+AL marks `Comment = 'Text is copied from Mock assembly.'`. A runner-written handler would have to
+reproduce those strings out of the test codeunit that checks them, so those five would pass
+because the runner matched its own copy, not because it behaved the way Microsoft's mock behaves.
+That is the same problem that caused MockImage to be reverted in #1502.
+
+**Bring your own provider.** The extension point is public, so this needs no runner change:
+
+1. Build a .NET assembly whose file name matches `*.nav.*DocumentService*.dll`.
+2. Export a type implementing `IDocumentServiceHandler`, decorated
+   `[DocumentServiceMetadata("YOURTYPE")]`.
+3. Put it in the artifact directory alongside `Microsoft.Dynamics.Nav.DocumentService.dll`.
+4. Call `SetServiceType('YOURTYPE')` from your AL.
+
+The factory rescans that directory on every `CreateService` call, so the assembly is picked up
+without any further setup.
 
 ---
 
@@ -578,6 +628,17 @@ well, which is the bug (#2519) this table's support closed.
 `tests/runner-extras/object-metadata-system-table` asserts the runner-side behaviour so it cannot
 move quietly. It deliberately uses only ids that are live table objects, so it does not encode
 the open `ObsoleteState = Removed` question as settled in either direction.
+
+**Synthesis never overwrites restored rows, and never guesses whether there are any.** Because
+2000000071 is a real SQL table, a `--test-data` backup can genuinely carry rows for it, so the
+on-demand loader runs first and the populator does nothing when the store already holds a row.
+Deciding that means reading BC's private `TempTableDataProvider.primaryTree` by reflection. A
+*null* tree is BC's own "no row was ever inserted" and synthesis proceeds; the field being
+**absent**, or holding something that cannot be enumerated, means BC's private layout moved and
+the runner cannot tell the two apart — so it refuses with an `out-of-scope:` failure naming the
+member rather than synthesising over rows it cannot see (#2786). That refusal is unreachable on
+every BC version the runner supports; it exists so a future one cannot silently disable the
+precedence rule.
 
 ---
 
