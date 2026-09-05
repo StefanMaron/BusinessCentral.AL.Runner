@@ -286,18 +286,45 @@ Never leave an agent mid-task when a budget boundary is near. Have it commit and
 has, even incomplete, and report where it got to. A work-in-progress commit on a pushed branch
 survives; an uncommitted worktree does not.
 
-## The human queue
+## Posting, and leaving an audit trail
 
-Some things must not be decided unattended. Label them and move on — do not block, and do not
-guess:
+Within **this repository and the corpus repository**, the loop acts without asking: filing
+issues, commenting on issues and PRs, closing issues, applying labels. Waiting for approval on
+each of those would stall an unattended loop for no benefit, and a comment on the issue is a
+better home for a decision than an agent's memory, which is discarded.
 
-- A genuine product decision. Example: `--test-data` presents a company whose configuration
-  differs from Microsoft's test database. Whether hydration should change that is a judgement
-  call, not an agent's.
-- Anything posted publicly on someone else's behalf — comments, review comments, anything in
-  another repository.
-- Merging a PR authored by anyone other than the repository owner.
-- A refusal that might be a scope boundary rather than a defect.
+**Every state change carries its reasoning.** Not as a permission step — as the thing that makes
+the loop auditable. Closing an issue, claiming or reclaiming one, marking it needs-input,
+declaring a surface out of scope, filing from a measured cluster: each gets a short comment
+saying why, with the evidence. Someone reading the repository months later should be able to
+question any decision from the repository alone, without a transcript that no longer exists.
+
+**Say who is writing.** Comments post under the account the loop runs as, so a reader cannot
+otherwise tell an agent from a person — which matters on a public repository with outside
+contributors. Every agent-authored comment carries a consistent marker naming the agent tag and
+the cycle. It is honest, and it makes the audit trail searchable.
+
+**Comment on state changes and findings, never on progress.** A loop that narrates itself
+drowns the signal it exists to produce. No "starting work on this". Never repeat a conclusion
+already on the thread — if nothing changed, there is nothing to say.
+
+**Outside these two repositories, nothing is automatic.** Another repository, email, anywhere
+else: that needs a human, whatever the loop concludes.
+
+## What still needs a person
+
+Some things are not the loop's to decide. Label them, comment with the question and what you
+would need to answer it, and move on — do not block, and do not guess:
+
+- A genuine product decision. Whether `--test-data` should present a company configured
+  differently from the backup it loads is a judgement call about what the runner is *for*, not a
+  defect.
+- Merging a PR authored by anyone other than the account the loop runs as.
+- A refusal that might be a correct scope boundary rather than a gap. Getting that wrong in
+  either direction is expensive: implementing something that should throw, or throwing on
+  something that should work.
+- Anything where the loop has failed the same way several cycles running. That is not a hard
+  problem, it is a wrong assumption, and it needs a person to see it.
 
 ## Blast radius
 
