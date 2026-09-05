@@ -40,3 +40,7 @@ a classification of one named test. It lives in the
 a classification array. Do not add `*.json` files directly under
 `tests/expectations/` unless they follow the classification-entry schema
 above.
+
+Its schema, how to bump it, and where per-bump rationale goes are in
+[`count-baseline/README.md`](count-baseline/README.md); the log of past bumps is
+[`count-baseline/history.md`](count-baseline/history.md).
