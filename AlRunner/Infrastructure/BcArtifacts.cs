@@ -5,7 +5,8 @@ namespace AlRunner.Infrastructure;
 /// process-global selected BC version.
 ///
 /// The runner downloads BC platform DLLs (Ncl/Types/Common/Language/CodeAnalysis +
-/// their runtime closure) to <c>~/.local/share/al-runner/artifacts/&lt;bc-version&gt;/</c>.
+/// their runtime closure) to <c>~/.local/share/al-runner/artifacts/&lt;bc-version&gt;/</c>,
+/// or under whatever root <see cref="ArtifactsRootEnvVar"/> names (issue #2578).
 /// The exact version is pinned by <c>AlRunner.csproj</c>'s <c>_BCVersion</c> at build
 /// time (those 5 DLLs are <c>&lt;Reference&gt;</c>d and CopyLocal'd into bin/), so the
 /// *engine* a given binary runs is fixed at build time. But the runtime artifact /
@@ -102,13 +103,77 @@ public static class BcArtifacts
 
     private static readonly object _lock = new();
 
-    // AlRunnerPaths.UserHome throws loudly (issue #2114) rather than silently handing back
-    // a relative path when $HOME names a directory that does not exist.
-    private static string ArtifactsRoot => Path.Combine(AlRunnerPaths.UserHome, ArtifactsRoot_Rel);
+    /// <summary>
+    /// Environment variable that relocates the artifacts root (issue #2578) — the directory
+    /// the per-version subdirectories live under, NOT one version's engine directory.
+    ///
+    /// <para>Before this existed the root was <c>Path.Combine(UserHome, ArtifactsRoot_Rel)</c>
+    /// and nothing else, so the only way to move the artifact cache off the home directory
+    /// was to move <c>$HOME</c> — which relocates every OTHER home-rooted path
+    /// (<c>~/.cache/al-runner</c>, <c>~/.bcartifacts.cache</c>,
+    /// <c>~/.local/share/al-runner/symbols</c>) at the same time. Useful when the cache has
+    /// to sit on a different volume from the home directory, and for CI runners that want it
+    /// on a mounted path.</para>
+    ///
+    /// <para>Distinct from <c>--artifact-path</c>, which pins ONE version's engine directory
+    /// and bypasses version selection entirely. This names the root that selection scans, so
+    /// <c>--bc-version</c>, latest-in-cache defaulting and provisioning all keep working —
+    /// they resolve through <see cref="ArtifactsRootDir"/> / <see cref="ArtifactDirFor"/>.</para>
+    ///
+    /// <para>Also read by <c>AlRunner.csproj</c> and <c>AlRunner.Tests.csproj</c> (MSBuild
+    /// surfaces environment variables as properties), which <c>&lt;Reference&gt;</c> the
+    /// service-tier DLLs out of the same root and hard-error when they are missing
+    /// (<c>FailIfBCServiceTierDllsMissing</c>). A variable the runtime honoured but the build
+    /// did not would leave a relocated cache unbuildable.</para>
+    /// </summary>
+    public const string ArtifactsRootEnvVar = "AL_RUNNER_ARTIFACTS_ROOT";
 
-    /// <summary>The per-user artifacts root (<c>~/.local/share/al-runner/artifacts</c>),
-    /// where each BC version lives in a version-named subdir. Public for the provisioning
-    /// flow, which downloads into <see cref="ArtifactDirFor"/> before selection runs.</summary>
+    private static string ArtifactsRoot =>
+        ResolveArtifactsRoot(
+            Environment.GetEnvironmentVariable(ArtifactsRootEnvVar),
+            static () => AlRunnerPaths.UserHome);
+
+    /// <summary>
+    /// Pure core of <see cref="ArtifactsRootDir"/>: <paramref name="envOverride"/> wins when
+    /// it is set to something non-blank, otherwise the historical
+    /// <c>&lt;home&gt;/.local/share/al-runner/artifacts</c>. Split out from the property (the
+    /// same shape <see cref="AlRunnerPaths.Validate"/> uses) so the resolution is unit-testable
+    /// without mutating the process-wide environment, which every parallel test in this repo
+    /// shares. Internal + <c>InternalsVisibleTo("AlRunner.Tests")</c>.
+    ///
+    /// <para><paramref name="userHome"/> is a callback, not a value, on purpose: an explicitly
+    /// named artifacts root must not be coupled to an unrelated resolution that can throw.
+    /// <see cref="AlRunnerPaths.UserHome"/> fails loudly when <c>$HOME</c> names a directory
+    /// that does not exist (issue #2114), and evaluating it eagerly would make THIS resolution
+    /// fail for a reason it does not depend on. (It does not follow that the whole run
+    /// survives a broken <c>$HOME</c> — <c>Program.cs</c>'s AL-output cache resolves
+    /// <see cref="AlRunnerPaths.UserHome"/> independently and still exits 2 there. The claim is
+    /// scoped to this resolution.)</para>
+    ///
+    /// <para>The override is absolutized. A relative root would never equal
+    /// <c>Path.Combine(ArtifactsRoot, version)</c> under
+    /// <see cref="TryTranslateArtifactPathToVersion"/>'s ordinal comparison, so every
+    /// <c>--artifact-path</c> naming a directory inside the (relocated) cache would silently
+    /// route onto the explicit-root branch instead of normal version selection. The trailing
+    /// separator is trimmed for the same comparison — <c>Path.GetFullPath</c> preserves one
+    /// when the caller typed it.</para>
+    /// </summary>
+    internal static string ResolveArtifactsRoot(string? envOverride, Func<string> userHome)
+    {
+        if (string.IsNullOrWhiteSpace(envOverride))
+            // AlRunnerPaths.UserHome throws loudly (issue #2114) rather than silently handing
+            // back a relative path when $HOME names a directory that does not exist.
+            return Path.Combine(userHome(), ArtifactsRoot_Rel);
+
+        // TrimEndingDirectorySeparator leaves a filesystem ROOT ("/", a drive root) alone,
+        // unlike a bare TrimEnd, which turns "/" into "" and hands back a relative path.
+        return Path.TrimEndingDirectorySeparator(Path.GetFullPath(envOverride.Trim()));
+    }
+
+    /// <summary>The per-user artifacts root (<c>~/.local/share/al-runner/artifacts</c>, or
+    /// <see cref="ArtifactsRootEnvVar"/> when set), where each BC version lives in a
+    /// version-named subdir. Public for the provisioning flow, which downloads into
+    /// <see cref="ArtifactDirFor"/> before selection runs.</summary>
     public static string ArtifactsRootDir => ArtifactsRoot;
 
     /// <summary>The artifact directory for a specific full version string.</summary>

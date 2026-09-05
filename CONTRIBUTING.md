@@ -67,7 +67,9 @@ The version is `_BCVersion` in `AlRunner/AlRunner.csproj`, and the default artif
 `<user-home>/.local/share/al-runner/artifacts/<version>` (that same layout on Windows, under
 `%USERPROFILE%`). You do not have to look either up — the failing build prints the whole
 command, filled in, ready to paste. Set `-p:ServiceTierPath=...` to point at an artifact dir
-you already have instead.
+you already have instead, or `AL_RUNNER_ARTIFACTS_ROOT=<dir>` to move the whole cache (the
+root the per-version subdirectories live under) somewhere else — the build and the runner
+both read it, so the two never disagree about where the artifacts are.
 
 Once the DLLs are present neither provisioning target runs, and the plain build is all
 you need from then on:
