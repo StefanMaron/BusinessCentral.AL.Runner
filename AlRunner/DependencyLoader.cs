@@ -136,29 +136,47 @@ public sealed class DependencyLoader
             if (_cache.TryGetValue(m.AppId, out var existing))
             {
                 var newVersion = m.Version.ToString();
-                if (!IdentityMatches(existing, m.Name, m.Publisher, newVersion))
+                var identityMatches = IdentityMatches(existing, m.Name, m.Publisher, newVersion);
+                var sameDirectory = string.Equals(
+                    existing.SourcePath, path, StringComparison.OrdinalIgnoreCase);
+
+                // #2556: the third site with this ordering, and the one the issue does not
+                // name. A dependency's app.json version can be bumped mid-session exactly as
+                // a bundle's own can — and in a multi-bundle run one bundle's own app IS
+                // another bundle's dependency — so this threw naming the same directory on
+                // both sides. Only a DIFFERENT directory can be a collision.
+                if (!identityMatches && !sameDirectory)
                     throw new AlRunner.Infrastructure.AppIdCollisionException(
                         m.AppId,
                         existing.Name, existing.Publisher, existing.Version, existing.SourcePath,
                         m.Name, m.Publisher, newVersion, path);
-                // #2593/#2579: this dependency's Assembly is being reused without calling
-                // LoadOne again — but LoadOne is the ONLY place that replays this dependency's
-                // Tier-3 metadata sidecars (report/report-layout/page/xmlport/enum) into the
-                // process-wide registries. Those registries get reset every reload cycle
-                // (BcRuntime.ResetForNewBundleReload), so on the SECOND and every later
-                // --watch/--server cycle that resolves this same AppId as a dependency, skipping
-                // this replay would silently drop the dependency's metadata forever — the exact
-                // regression this call prevents (see WatchPageMetadataReloadTests, R3Pages
-                // resolved as R3Driver's dependency). Gated on the stored Tier3CacheKey, not a
-                // File.Exists probe recomputed from scratch — a Tier-1/Tier-2 entry (the
-                // overwhelming majority: Base Application, System Application, most real ISV
-                // .apps) never went through Tier 3 and has no sidecars to replay, and
-                // ComputeSourceDependencyCacheKey hashes the WHOLE .app file, which would be a
-                // real cost paid every cycle for a ~100MB Base Application package for no reason.
-                if (existing.Tier3CacheKey != null)
-                    ReplayDependencyMetadataSidecars(m, existing.Tier3CacheKey);
-                list.Add(existing.Asm);
-                continue;
+
+                // Same directory with a changed identity falls through to a recompile rather
+                // than into the reuse below: serving `existing.Asm` would run the PREVIOUS
+                // version's compiled module for the new one's tests — the silent wrong answer
+                // #1850 exists to prevent, reached from the other side. The cache entry is
+                // overwritten further down, when this app is loaded afresh.
+                if (identityMatches)
+                {
+                    // #2593/#2579: this dependency's Assembly is being reused without calling
+                    // LoadOne again — but LoadOne is the ONLY place that replays this dependency's
+                    // Tier-3 metadata sidecars (report/report-layout/page/xmlport/enum) into the
+                    // process-wide registries. Those registries get reset every reload cycle
+                    // (BcRuntime.ResetForNewBundleReload), so on the SECOND and every later
+                    // --watch/--server cycle that resolves this same AppId as a dependency, skipping
+                    // this replay would silently drop the dependency's metadata forever — the exact
+                    // regression this call prevents (see WatchPageMetadataReloadTests, R3Pages
+                    // resolved as R3Driver's dependency). Gated on the stored Tier3CacheKey, not a
+                    // File.Exists probe recomputed from scratch — a Tier-1/Tier-2 entry (the
+                    // overwhelming majority: Base Application, System Application, most real ISV
+                    // .apps) never went through Tier 3 and has no sidecars to replay, and
+                    // ComputeSourceDependencyCacheKey hashes the WHOLE .app file, which would be a
+                    // real cost paid every cycle for a ~100MB Base Application package for no reason.
+                    if (existing.Tier3CacheKey != null)
+                        ReplayDependencyMetadataSidecars(m, existing.Tier3CacheKey);
+                    list.Add(existing.Asm);
+                    continue;
+                }
             }
             // A source-only Microsoft app carries compile-time symbols, not a runtime DLL.
             // Two sub-cases, and we can only tell them apart by trying to compile:
@@ -880,12 +898,18 @@ public sealed class DependencyLoader
     public static Assembly? TryGetByAppId(Guid appId, string name, string publisher, string version, string sourcePath)
     {
         if (!_cache.TryGetValue(appId, out var entry)) return null;
+        // #2556: SourcePath is asked FIRST. A collision is by definition between two
+        // DIFFERENT directories, so comparing identity first meant a version bump on this
+        // one tree — an ordinary thing to do between two requests of a warm session — was
+        // read as #1850's two-apps-one-id case and aborted the run, naming this same
+        // directory as both sides. Identity is now only ever compared across two genuinely
+        // distinct directories, which is the only situation #1850's guard was written for.
+        if (string.Equals(entry.SourcePath, sourcePath, StringComparison.OrdinalIgnoreCase))
+            return null;
         if (!IdentityMatches(entry, name, publisher, version))
             throw new AlRunner.Infrastructure.AppIdCollisionException(
                 appId, entry.Name, entry.Publisher, entry.Version, entry.SourcePath,
                 name, publisher, version, sourcePath);
-        if (string.Equals(entry.SourcePath, sourcePath, StringComparison.OrdinalIgnoreCase))
-            return null;
         return entry.Asm;
     }
 
@@ -920,11 +944,19 @@ public sealed class DependencyLoader
         var newEntry = new LoadedAppEntry(asm, name, publisher, version, sourcePath);
         if (_cache.TryAdd(appId, newEntry)) return;
         var existing = _cache[appId];
+        // #2556: SourcePath first, for the same reason as TryGetByAppId above — this is the
+        // same bundle re-registering itself after a fresh compile, which is not a collision
+        // whatever its version now says. Overwriting is what server mode's edit-and-rerun
+        // contract needs: a later sibling bundle must resolve to THIS compile, not the one
+        // that happened to run first.
+        if (string.Equals(existing.SourcePath, sourcePath, StringComparison.OrdinalIgnoreCase))
+        {
+            _cache[appId] = newEntry;
+            return;
+        }
         if (!IdentityMatches(existing, name, publisher, version))
             throw new AlRunner.Infrastructure.AppIdCollisionException(
                 appId, existing.Name, existing.Publisher, existing.Version, existing.SourcePath,
                 name, publisher, version, sourcePath);
-        if (string.Equals(existing.SourcePath, sourcePath, StringComparison.OrdinalIgnoreCase))
-            _cache[appId] = newEntry;
     }
 }
