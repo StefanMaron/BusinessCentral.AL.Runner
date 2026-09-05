@@ -277,9 +277,11 @@ public static partial class RecordPatches
             // server request on. That failure was silent; this one was too.
             //
             // Still accumulating, same shape, deliberately NOT changed here: the sibling list
-            // _bcQuerySymbolJsonPaths (RecordPatches.BcAppFallback.cs). Tracked separately —
-            // see the PR discussion; #2755 scoped itself to _bcAppPaths and called the blast
-            // radius out explicitly.
+            // _bcQuerySymbolJsonPaths (RecordPatches.BcAppFallback.cs), tracked in #2939. It
+            // feeds _bcSymbolQueryIndex through the same derived/registered split and is the
+            // other input to RegisteredBcAppSymbolStateKey. Left alone because #2755 scoped
+            // itself to _bcAppPaths and called the blast radius out explicitly — and the
+            // SystemApp regression above is what that caution was warning about.
             ClearPerBundleBcAppPaths();
         }
         _fieldTriggersWiredTables.Clear();
