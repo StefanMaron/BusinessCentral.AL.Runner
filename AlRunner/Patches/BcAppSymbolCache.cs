@@ -491,11 +491,40 @@ internal static partial class BcAppSymbolCache
             pageExtensions.Values.ToList());
     }
 
+    /// <summary>
+    /// A hash of CachePayload's STRUCTURE — every member name and type reachable from it —
+    /// computed once per process (issue #2335).
+    ///
+    /// <para>CacheVersion alone cannot tell two concurrent branches apart. bc-symbols is shared
+    /// by every worktree of this repository, so when two branches each add a field and each bump
+    /// the same integer, they read each other's entries — and it does not fail as a
+    /// deserialization error, it fails as a payload that deserializes CLEANLY with the other
+    /// branch's fields defaulted to null. That is the "wrong answer replayed from cache, not a
+    /// cache miss" the version comments above already warn about, reproduced across branches
+    /// instead of across time. It cost an agent about an hour once, and on 2026-09-05 two
+    /// branches reached for the same next integer within hours of each other.</para>
+    ///
+    /// <para>The fingerprint cannot drift because nobody maintains it. CacheVersion stays, and
+    /// keeps the job only a human can do: saying that the PARSE changed while the shape did
+    /// not — new values in the same fields, which no structural hash can see.</para>
+    /// </summary>
+    private static readonly string PayloadShape =
+        AlRunner.Infrastructure.RecordShapeFingerprint.Of(typeof(CachePayload));
+
+    /// <summary>
+    /// The one place the cache key is spelled. Get() and the test seam below both call it, so a
+    /// test can never compute A key that is not the key Get() consults — the drift the
+    /// CachePathForVersionForTests comment already argues against, closed by construction
+    /// rather than by documentation.
+    /// </summary>
+    private static string BuildKey(string fullPath, string contentHash, int cacheVersion) =>
+        $"{fullPath}|hash:{contentHash}|v{cacheVersion}|shape:{PayloadShape}";
+
     internal static AppSymbols Get(string appPath)
     {
         var fullPath = Path.GetFullPath(appPath);
         var contentHash = ComputeAppContentHash(fullPath);
-        var key = $"{fullPath}|hash:{contentHash}|v{CacheVersion}";
+        var key = BuildKey(fullPath, contentHash, CacheVersion);
         if (ProcessCache.TryGetValue(key, out var cachedInProcess))
             return cachedInProcess;
 
@@ -528,7 +557,19 @@ internal static partial class BcAppSymbolCache
     // review). Exposing this one seam instead makes that drift impossible rather than
     // merely documented.
     internal static string CachePathForVersionForTests(string appPath, string contentHash, int cacheVersion)
-        => CachePath($"{Path.GetFullPath(appPath)}|hash:{contentHash}|v{cacheVersion}");
+        => CachePath(BuildKey(Path.GetFullPath(appPath), contentHash, cacheVersion));
+
+    /// <summary>The current payload-shape fingerprint, for a test that needs to prove the key
+    /// actually carries it and that it changes when the shape does.</summary>
+    internal static string PayloadShapeForTests => PayloadShape;
+
+    /// <summary>
+    /// The key itself, for the one assertion that cannot be made through the path: the path is a
+    /// hash, so "the key carries the shape" is invisible from outside. Exposing the key makes the
+    /// wiring directly assertable instead of inferred from two paths differing.
+    /// </summary>
+    internal static string BuildKeyForTests(string appPath, string contentHash, int cacheVersion)
+        => BuildKey(Path.GetFullPath(appPath), contentHash, cacheVersion);
 
     // The CURRENT CacheVersion, for a test that wants to prove a fresh entry landed at
     // exactly the path Get() would consult, without hardcoding the number (which would

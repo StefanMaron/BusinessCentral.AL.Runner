@@ -59,6 +59,35 @@ CAVEAT_PATTERNS = (
     re.compile(r"^\s*exec-fail:\s*[1-9]"),
 )
 
+# KNOWN BLOCKERS — a failure whose cause is already understood and tracked. Recognising one
+# turns a generic non-zero exit into a sentence naming the reason and the issue, which is the
+# difference between a red run people read and a red run people learn to ignore. That matters
+# most for the nightly (ms-bucket-nightly.yml), which is EXPECTED to be red — it runs a
+# Microsoft bucket whose tests genuinely fail here. A known blocker is a different kind of
+# red: it means the run produced no number at all, so there is no measurement to read.
+#
+# Matched against the whole log, not line-anchored: the reader's own stderr reaches the log
+# verbatim (#2782) but its wrapping and prefix vary with where it surfaced.
+KNOWN_BLOCKERS = (
+    (re.compile(r"neither mapped by the derived extent list nor padding filler", re.I),
+     "the backup reader cannot open this backup",
+     "The pinned backup reader refused this backup. Reader v0.1.1 and earlier could not open a "
+     "W1 demo backup for BC 28.2 or newer at all (#2780, now closed); v0.1.2 reads 28.2, 28.3 "
+     "and 28.4, and is what READER_TAG pins in ms-bucket.yml. So this message now means the "
+     "pinned reader has met a backup it still cannot open — check READER_TAG against the "
+     "latest release, and if the newest reader refuses it too, the fix is in "
+     "StefanMaron/BusinessCentral.DbReader, not here."),
+)
+
+
+def known_blocker(log_text):
+    """The first recognised known blocker in the log, or None."""
+    for pattern, headline, detail in KNOWN_BLOCKERS:
+        if pattern.search(log_text):
+            return {"headline": headline, "detail": detail}
+    return None
+
+
 SUMMARY_START = "al-runner — test run summary"
 
 RC_MEANING = {
@@ -95,7 +124,8 @@ def scan_log(log_text):
                     break
                 block.append(l.rstrip())
             summary_block = "\n".join(block)
-    return {"caveats": caveats, "summary_block": summary_block}
+    return {"caveats": caveats, "summary_block": summary_block,
+            "blocker": known_blocker(log_text)}
 
 
 def measured(rc, have_junit):
@@ -116,8 +146,18 @@ def compose(meta, totals, scan, rc, elapsed_s):
     rc_text = RC_MEANING.get(rc, "unexpected exit code")
     out.append(f"Runner exit code {rc} — {rc_text}. Wall time {fmt_elapsed(elapsed_s)} for the runner step.")
     if meta.get("reader"):
-        out.append(f"Backup reader: BusinessCentral.BakReader {meta['reader']}.")
+        # BusinessCentral.DbReader, not .BakReader: that repository was renamed and the old
+        # name survives only through GitHub's rename redirect. This line is read by a human
+        # deciding where to go look, so an old name sends them to a redirect that may not be
+        # there later.
+        out.append(f"Backup reader: BusinessCentral.DbReader {meta['reader']}.")
     out.append("")
+    blocker = scan.get("blocker")
+    if blocker is not None and not measured(rc, totals is not None):
+        out += [f"### Known blocker: {blocker['headline']}", "",
+                blocker["detail"], "",
+                "This run's failure is explained and tracked. It is not a new problem, and it is "
+                "not something to work around here.", ""]
     if totals is None:
         out += ["**No number: no JUnit file was produced.** The runner did not get as far as running tests"
                 " — read the log artifact (`run.log`) and the caveats below.", ""]
@@ -179,7 +219,21 @@ def main(argv=None):
         with open(step, "a", encoding="utf-8") as f:
             f.write(md + "\n")
 
-    return 0 if measured(a.rc, totals is not None) else 1
+    ok = measured(a.rc, totals is not None)
+    if not ok:
+        # A GitHub workflow annotation, so the REASON travels with the run-list entry and the
+        # scheduled-failure notification instead of living in a log nobody opens. This is what
+        # makes the knowingly-red nightly (ms-bucket-nightly.yml) readable at a glance; it is
+        # emitted for a manual dispatch that hits the same wall too.
+        blocker = scan.get("blocker")
+        if blocker is not None:
+            print(f"::error title=Known blocker ({a.bucket} on BC {a.bc_version})::"
+                  f"{blocker['headline']} — {blocker['detail']}")
+        else:
+            print(f"::error title=No measurement ({a.bucket} on BC {a.bc_version})::"
+                  f"the run produced no number (runner exit {a.rc}) and the cause is NOT a known "
+                  f"blocker — read the job summary and the run.log artifact.")
+    return 0 if ok else 1
 
 
 if __name__ == "__main__":

@@ -86,9 +86,23 @@ tier with SQL Server.
 
 | API | Reason |
 |---|---|
-| `HttpClient.Send`, `.Get`, `.Post`, `.Put`, `.Delete`, `.Patch` | Real HTTP requires a network and an external server. Tests that need an HTTP boundary must inject an AL interface and provide a fake in the test project. |
+| `HttpClient.Send`, `.Get`, `.Post`, `.Put`, `.Delete`, `.Patch`, **when the request is actually sent** | Real HTTP requires a network and an external server. |
 | OAuth / Azure AD token acquisition | Same — external network. |
 | Outbound REST/SOAP consumers | Same. |
+
+**AL's HTTP mocking is supported and is the way to test an HTTP boundary here** (issue #2547).
+A test that declares `[HandlerFunctions('MyHandler')]` and an `[HttpClientHandler] procedure
+MyHandler(Request: TestHttpRequestMessage; var Response: TestHttpResponseMessage): Boolean`
+returning `false` has its request served by that AL handler, in-process, with no socket opened —
+so it runs here exactly as it does on a service tier. Injecting an AL interface and hand-rolling
+a fake, which this table used to recommend, is no longer necessary.
+
+The refusal sits at the one method a real send funnels through, after BC's own dispatcher has
+declined — not at the AL verbs, which have to run for the dispatcher to be reached at all. Inside
+a test you will usually meet BC's own error first: the default `TestHttpRequestPolicy` blocks an
+unhandled outbound request, and a handler that returns `true` (asking to fall through to the
+network) is refused the same way. The runner's `external-http` refusal is what you get with
+`TestHttpRequestPolicy = AllowAllOutboundRequests`, or for HTTP outside a test method.
 
 ### §3.3. Web service publishing <a id="web-services"></a>
 

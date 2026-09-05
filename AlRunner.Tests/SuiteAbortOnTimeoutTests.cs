@@ -28,6 +28,7 @@
 // BaseApp surface at --jobs 12, the aggregate was missing 26% of the tests the shards had run.
 using System.Diagnostics;
 using System.Text;
+using System.Text.Json;
 using System.Xml.Linq;
 using AlRunner.Infrastructure;
 using Xunit;
@@ -197,6 +198,37 @@ public sealed class SuiteAbortOnTimeoutTests : IDisposable
     }
 
     /// <summary>
+    /// Same spawn, but keeping stdout and stderr APART. Every other test here reads them merged,
+    /// which is fine when it is looking for a message — but --output-json's whole contract is
+    /// about what lands on stdout ALONE, and a merged capture cannot tell a second JSON document
+    /// from an ordinary stderr line following the first (#2719).
+    /// </summary>
+    private (string stdout, string stderr, int exit) RunRunnerSplit(
+        string bundle, int waitMs, params string[] extraArgs)
+    {
+        var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
+        args.Append(TestBuildConfig.BcVersionArg);
+        args.Append($" \"{bundle}\"");
+        foreach (var a in extraArgs) args.Append($" {a}");
+        var psi = new ProcessStartInfo
+        {
+            FileName = "dotnet", Arguments = args.ToString(),
+            RedirectStandardOutput = true, RedirectStandardError = true,
+            UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
+        };
+        var so = new StringBuilder();
+        var se = new StringBuilder();
+        var p = Process.Start(psi)!;
+        p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (so) so.AppendLine(e.Data); };
+        p.ErrorDataReceived  += (_, e) => { if (e.Data != null) lock (se) se.AppendLine(e.Data); };
+        p.BeginOutputReadLine();
+        p.BeginErrorReadLine();
+        if (!p.WaitForExit(waitMs)) { try { p.Kill(true); } catch { } throw new TimeoutException("runner hung"); }
+        p.WaitForExit();
+        lock (so) lock (se) return (so.ToString(), se.ToString(), p.ExitCode);
+    }
+
+    /// <summary>
     /// Positive: a hang must be reported loudly. The codeunit name and the exact
     /// count of [Test] methods it never got to (2 — NeverRuns1 and NeverRuns2) must
     /// both appear in the output, alongside a non-zero "suite errors" tally.
@@ -243,6 +275,49 @@ public sealed class SuiteAbortOnTimeoutTests : IDisposable
             .ToList();
 
     /// <summary>
+    /// The precondition every assertion in the two resume tests rests on: the fixture's
+    /// <c>Hangs</c> test really did hang, the per-test watchdog really did fire, and that really
+    /// did escalate to a suite abort.
+    ///
+    /// It is asserted separately, and first, because when it does NOT hold the consequences fail
+    /// in a shape that describes the wrong problem. On CI (issue #2801, seen on BC 28.4 across
+    /// two unrelated PRs) these tests failed as a bare collection diff —
+    /// <c>Expected ["Hangs","RanBeforeHang"]</c> vs <c>Actual [... ,"SecondA","SecondB"]</c> —
+    /// and as a missing <c>resume:</c> line. Both reduce to one fact: <c>Hangs</c> did not report
+    /// <c>TimedOut</c>, so <c>TestExecutor</c> never took its abort path
+    /// (<c>if (IsTimeout(raw)) { RecordAbortedSuite(...); return results; }</c>), so the run
+    /// carried on into the second codeunit AND there was nothing for a resume to resume.
+    ///
+    /// What made <c>Hangs</c> fail to time out on those legs is NOT established. Anything that
+    /// makes it fail FAST instead of hanging produces exactly this shape, and #2801 stays open on
+    /// that question — this method does not fix the flake, it makes the next occurrence say what
+    /// happened instead of nothing.
+    ///
+    /// The whole runner output goes into the failure message on purpose: the assertions below
+    /// compare name lists and discard <c>output</c>, which is why the CI failures carried no
+    /// evidence at all. xUnit truncates its own previews, so <c>Assert.Contains</c> is not enough
+    /// here.
+    /// </summary>
+    private static void AssertHangEscalatedToAbort(string output, int timeoutSeconds)
+    {
+        var timedOut = $"Test exceeded {timeoutSeconds}s timeout.";
+        Assert.True(output.Contains(timedOut, StringComparison.Ordinal),
+            $"PRECONDITION FAILED: the fixture's Hangs test never hit the {timeoutSeconds}s per-test "
+            + $"watchdog, so \"{timedOut}\" is absent. Nothing asserted after this point is "
+            + "interpretable: with no timeout there is no suite abort, so the run continues into "
+            + "the next codeunit and no resume is triggered. This is issue #2801, and the cause of "
+            + "the missing timeout is still unknown — see it before reading the run below as a "
+            + "resume/JUnit defect."
+            + "\n--- runner output ---\n" + output);
+
+        Assert.True(output.Contains("SUITE ABORTED", StringComparison.Ordinal),
+            "PRECONDITION FAILED: Hangs timed out but TestExecutor did not escalate it to a suite "
+            + "abort, so the rest of the run was never abandoned. That is a different defect from "
+            + "the timeout not firing at all, and it is the half #2801 has never observed."
+            + "\n--- runner output ---\n" + output);
+    }
+
+    /// <summary>
     /// #2716 positive: after a watchdog resume, --output-junit must hold the WHOLE run — the
     /// earlier attempt's cases (RanBeforeHang, Hangs) as well as the final attempt's (SecondA,
     /// SecondB). The worker's own printed summary already said "4 total (carried: 2)"; the XML
@@ -260,6 +335,9 @@ public sealed class SuiteAbortOnTimeoutTests : IDisposable
             "--test-timeout 2", "--resume-aborts 1", $"--output-junit \"{junit}\"");
 
         Assert.NotEqual(0, exit);
+        // Before anything resume-specific: did the hang hang, and did that abort the suite?
+        // Without this the failure below reads as a resume defect when it is not one (#2801).
+        AssertHangEscalatedToAbort(output, timeoutSeconds: 2);
         // Sanity: the resume really happened, and the printed summary already carried attempt 1.
         Assert.Contains("resume: a watchdog abort ended this attempt early", output);
         Assert.Contains("carried from earlier attempt(s): 2 tests", output);
@@ -285,6 +363,140 @@ public sealed class SuiteAbortOnTimeoutTests : IDisposable
     }
 
     /// <summary>
+    /// #2719: --output-json, --out and --count-baseline must describe the RUN after a resume,
+    /// not the final attempt's slice. Before this the same command produced, all at once:
+    /// TWO JSON documents concatenated on stdout (so json.loads failed outright); a final
+    /// document reading total=2 passed=2 errors=0 exitCode=0 — a completely clean run — while
+    /// the process exited non-zero; a classification file claiming total_failures=0; and a
+    /// count-baseline DROP reported in the same log as "4 total".
+    ///
+    /// One spawn, all four outputs, because they have to AGREE — that is the actual claim.
+    /// </summary>
+    [SkippableFact]
+    public void ResumedRun_JsonClassificationAndBaseline_DescribeTheWholeRun()
+    {
+        TestArtifacts.SkipIfMissing();
+        var dir = Path.Combine(_resumeRoot, "out2");
+        Directory.CreateDirectory(dir);
+        var jsonPath = Path.Combine(dir, "stdout.json");
+        var clsPath = Path.Combine(dir, "cls.json");
+        var junitPath = Path.Combine(dir, "r.xml");
+        var baselinePath = Path.Combine(dir, "baseline.json");
+        // The whole run is 4 tests; a baseline of 4 must be MET, not reported as a drop.
+        File.WriteAllText(baselinePath,
+            $$"""{ "suites": { "{{Path.GetFileName(_resumeRoot)}}": { "tests": { "default": 4 } } } }""");
+
+        var (stdout, stderr, exit) = RunRunnerSplit(_resumeRoot, 300_000,
+            "--test-timeout 2", "--resume-aborts 1", "--output-json",
+            $"--out \"{clsPath}\"", $"--output-junit \"{junitPath}\"",
+            $"--count-baseline \"{baselinePath}\"");
+
+        Assert.NotEqual(0, exit);
+        Assert.Contains("resume: a watchdog abort ended this attempt early", stderr);
+
+        // stdout is ONE json document. A second one is not "the wrong half" — it is unparseable.
+        var stdoutJson = StdoutJson(stdout);
+        using var doc = JsonDocument.Parse(stdoutJson);
+        var root = doc.RootElement;
+
+        Assert.Equal(4, root.GetProperty("total").GetInt32());
+        Assert.Equal(3, root.GetProperty("passed").GetInt32());
+        Assert.Equal(1, root.GetProperty("errors").GetInt32());
+        // The field a consumer trusts INSTEAD of the exit code. It said 0 for a failed run.
+        Assert.Equal(exit, root.GetProperty("exitCode").GetInt32());
+
+        var names = root.GetProperty("tests").EnumerateArray()
+            .Select(t => t.GetProperty("name").GetString()!.Split('.').Last())
+            .OrderBy(n => n).ToArray();
+        Assert.Equal(new[] { "Hangs", "RanBeforeHang", "SecondA", "SecondB" }, names);
+
+        // The carried error reaches the classification file, which reported zero failures.
+        var cls = JsonDocument.Parse(File.ReadAllText(clsPath)).RootElement;
+        Assert.True(cls.GetProperty("total_failures").GetInt32() > 0,
+            "the classification file must not report a resumed run with an error as having no failures");
+
+        // The baseline the whole run meets is met, and the phantom DROP is gone.
+        Assert.DoesNotContain("[count-baseline] DROP", stderr);
+        Assert.Contains("[count-baseline] skipped: this attempt is resuming", stderr);
+
+        // And --output-junit is untouched by all of this: still 4 cases, not 8. The carried
+        // attempt must not be counted once per output shape.
+        Assert.Equal(4, TestCases(junitPath).Count);
+    }
+
+    /// <summary>The single JSON document the runner prints on stdout. Fails loudly, naming what
+    /// it saw, rather than letting a test read the first of two concatenated documents.</summary>
+    private static string StdoutJson(string stdout)
+    {
+        var start = stdout.IndexOf('{');
+        Assert.True(start >= 0, "no JSON found on stdout:\n" + stdout);
+        var text = stdout.Substring(start).Trim();
+        var reader = new Utf8JsonReader(System.Text.Encoding.UTF8.GetBytes(text), isFinalBlock: true,
+            state: default);
+        Assert.True(JsonDocument.TryParseValue(ref reader, out _),
+            "stdout did not hold ONE parseable JSON document:\n" + text);
+        var consumed = (int)reader.BytesConsumed;
+        var trailing = System.Text.Encoding.UTF8.GetString(
+            System.Text.Encoding.UTF8.GetBytes(text), consumed,
+            System.Text.Encoding.UTF8.GetByteCount(text) - consumed).Trim();
+        Assert.True(trailing.Length == 0,
+            "stdout held MORE than one JSON document — a consumer's json.loads fails outright. "
+            + "Trailing:\n" + trailing);
+        return text;
+    }
+
+    /// <summary>
+    /// #2747: a carried attempt that was PROMISED and is not there must fail the run loudly,
+    /// not shrink the report in silence.
+    ///
+    /// Reproduced deterministically by naming a carry file that does not exist, rather than by
+    /// racing a kill: how the file goes missing (SIGTERM running the parent's ProcessExit and
+    /// deleting the scratch directory it owns, or SIGKILL leaving a dead owner for the next
+    /// runner start to sweep correctly) does not change what the child then does with it, and
+    /// the silence was unconditional on the cause.
+    ///
+    /// Before this the same command exited 0 with a JUnit holding only the final attempt.
+    /// </summary>
+    [SkippableFact]
+    public void CarriedAttemptFileGone_FailsLoudly_InsteadOfShrinkingTheReport()
+    {
+        TestArtifacts.SkipIfMissing();
+        var dir = Path.Combine(_resumeRoot, "out3");
+        Directory.CreateDirectory(dir);
+        var missingJUnit = Path.Combine(dir, "attempt-that-vanished.xml");
+        var junit = Path.Combine(dir, "final.xml");
+
+        var (output, exit) = RunRunner(_resumeRoot, 180_000,
+            "--test-timeout 2", "--resume-aborts 0",
+            $"--merge-counts \"{missingJUnit}\"", $"--output-junit \"{junit}\"");
+
+        Assert.NotEqual(0, exit);
+        Assert.Contains("#2747", output);
+        // The lost attempt is named, because "which one?" is the first question.
+        Assert.Contains(missingJUnit, output);
+        // And the run's own results are not thrown away with it — only the total is untrusted.
+        Assert.Contains("still printed above", output);
+    }
+
+    /// <summary>
+    /// #2747 negative, and the one that matters most: a run handed NO carry files is untouched.
+    /// Every run that never resumed is in this case, so a false positive here would fail every
+    /// run on the machine.
+    /// </summary>
+    [SkippableFact]
+    public void NoCarriedAttemptFiles_IsNotTreatedAsALoss()
+    {
+        TestArtifacts.SkipIfMissing();
+        var junit = Path.Combine(_resumeRoot, "out4", "final.xml");
+        Directory.CreateDirectory(Path.GetDirectoryName(junit)!);
+
+        var (output, _) = RunRunner(_resumeRoot, 180_000,
+            "--test-timeout 2", "--resume-aborts 0", $"--output-junit \"{junit}\"");
+
+        Assert.DoesNotContain("#2747", output);
+    }
+
+    /// <summary>
     /// #2716 negative: with resume disabled the same fixture writes exactly attempt 1's two
     /// cases — nothing is carried in from nowhere, and the count is not inflated.
     /// </summary>
@@ -299,11 +511,16 @@ public sealed class SuiteAbortOnTimeoutTests : IDisposable
             "--test-timeout 2", "--resume-aborts 0", $"--output-junit \"{junit}\"");
 
         Assert.NotEqual(0, exit);
+        AssertHangEscalatedToAbort(output, timeoutSeconds: 2);
         Assert.DoesNotContain("resume: a watchdog abort ended this attempt early", output);
         Assert.DoesNotContain("carried from earlier attempt(s)", output);
 
         var names = TestCases(junit).Select(c => c.Name).OrderBy(n => n).ToList();
-        Assert.Equal(new[] { "Hangs", "RanBeforeHang" }, names);
+        Assert.True(names.SequenceEqual(new[] { "Hangs", "RanBeforeHang" }),
+            "JUnit must hold exactly attempt 1's two cases. Got: ["
+            + string.Join(", ", names) + "]. With --resume-aborts 0 the abort ends the run, so "
+            + "SecondA/SecondB appearing here means the run continued past the hang."
+            + "\n--- runner output ---\n" + output);
         var totals = JUnitCounts.Read(junit);
         Assert.Equal(2, totals.Tests);
         Assert.Equal(1, totals.Errors);

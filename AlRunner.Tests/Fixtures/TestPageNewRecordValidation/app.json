@@ -1,0 +1,24 @@
+{
+  "id": "7b3e0d52-af61-4c98-b204-9e5f13a7c680",
+  "name": "Runner Tests Fixture - TestPage New() Record Validation",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Issue #2551 gap 2: TestPage.New() through a SubPageLink must run OnValidate on the fields it STAMPS, and only those.",
+  "description": "Runner-mechanism fixture. What BC does is settled upstream by corpus codeunit 60653 (StefanMaron/BusinessCentral.AL.Language.Tests#150), measured on all eight BC legs; this fixture exists so a regression in the runner's OWN stamping path fails loudly here without needing the submodule pin bumped first, and so the two arms the corpus does not reach are pinned somewhere: a const(...) link, and the fields New() must NOT validate. Declares no application floor: everything it needs is its own.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "platform": "1.0.0.0",
+  "idRanges": [
+    {
+      "from": 70400,
+      "to": 70419
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}

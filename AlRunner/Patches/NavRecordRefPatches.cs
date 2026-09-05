@@ -139,17 +139,102 @@ public static partial class BcRuntime
     public static void NavRecordRef_ALOpen_IntBoolCompany(object self, int tableNo, bool isTemporary, string companyName)
         => OpenRecordRefById(self, tableNo, isTemporary);
 
+    // ── #2783: the compilation-target gate on RecordRef.Open ────────────────────
+    //
+    // The AL compiler emits the app's manifest `target` INTO the call site — a Cloud
+    // bundle's `RecRef.Open(2000000071)` compiles to
+    // `recRef.ALOpen((CompilationTarget)4, 2000000071)` — and BC's own
+    // ALOpen(CompilationTarget, …) overloads open with
+    // `CheckIsOpenAllowed(compilationTarget, tableId)`, which refuses an id in
+    // SystemTables.InternalTables, or an OnPrem-scoped system table not in
+    // SystemTables.OnPremSystemTableRecordRefAllowed, for any non-OnPrem target:
+    //
+    //   You cannot open record 2000000071 from a RecordRef data type when you are
+    //   using target Cloud.
+    //
+    // (Real BC, all 8 legs of al-language corpus run 33968379281.) These three helper
+    // bodies replace BC's ALOpen bodies wholesale, so the CheckIsOpenAllowed call in
+    // them was gone; #2725 had already made the manifest target reach the compiler, so
+    // the runner honoured `target` at COMPILE time and ignored it at RUNTIME, and
+    // RecordRef is exactly the route that bypasses the compile-time half (AL0296 fires
+    // on `Record "Object Metadata"`, not on an id passed to RecordRef.Open).
+    //
+    // Nothing here re-implements the rule. CheckIsOpenAllowed / IsOpenAllowed /
+    // IsSystemTableAllowedForRecordRefUsage are BC's own Ncl bodies, no longer
+    // Cecil-replaced (see NclCecilRewrite.Runtime.cs), so BC's own id sets and BC's own
+    // NavNCLNotAllowedForCompilationTargetException + Lang.NotAllowedRecordRefCompilationTarget
+    // text are what AL sees — a second copy of those ~100 ids would rot silently.
+    //
+    // The no-target overloads above are deliberately NOT gated: BC does not check them
+    // either (they are the platform's own internal entry points), and the AL compiler
+    // never emits them for AL source.
+
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static void NavRecordRef_ALOpen_TargetInt(object self, CompilationTarget compilationTarget, int tableNo)
-        => OpenRecordRefById(self, tableNo, isTemporary: false);
+    {
+        CheckIsOpenAllowed(self, compilationTarget, tableNo);
+        OpenRecordRefById(self, tableNo, isTemporary: false);
+    }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static void NavRecordRef_ALOpen_TargetIntBool(object self, CompilationTarget compilationTarget, int tableNo, bool isTemporary)
-        => OpenRecordRefById(self, tableNo, isTemporary);
+    {
+        CheckIsOpenAllowed(self, compilationTarget, tableNo);
+        OpenRecordRefById(self, tableNo, isTemporary);
+    }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static void NavRecordRef_ALOpen_TargetIntBoolCompany(object self, CompilationTarget compilationTarget, int tableNo, bool isTemporary, string companyName)
-        => OpenRecordRefById(self, tableNo, isTemporary);
+    {
+        CheckIsOpenAllowed(self, compilationTarget, tableNo);
+        OpenRecordRefById(self, tableNo, isTemporary);
+    }
+
+    private static MethodInfo? _mCheckIsOpenAllowed;
+    private static bool _checkIsOpenAllowedResolved;
+
+    /// <summary>
+    /// Run BC's own <c>NavRecordRef.CheckIsOpenAllowed(CompilationTarget, int)</c> on
+    /// <paramref name="self"/>. Private on NavRecordRef, hence reflection; the point is
+    /// precisely that the *rule* stays BC's — the id sets it consults
+    /// (<c>SystemTables.InternalTables</c>, <c>SystemTables.OnPremSystemTableRecordRefAllowed</c>)
+    /// and the scope lookup (<c>PlatformMetadataProvider.IsSystemTableWithOnPremScope</c>)
+    /// are BC data that changes between BC builds.
+    /// </summary>
+    /// <remarks>
+    /// Resolution failure throws rather than falling through to "allowed". A silent
+    /// fall-through is how this gap shipped in the first place, and
+    /// <c>.claude/rules/loud-failures.md</c> forbids defaulting a check open.
+    /// </remarks>
+    private static void CheckIsOpenAllowed(object self, CompilationTarget compilationTarget, int tableNo)
+    {
+        if (!_checkIsOpenAllowedResolved)
+        {
+            for (var t = self.GetType(); t != null && _mCheckIsOpenAllowed == null; t = t.BaseType)
+                _mCheckIsOpenAllowed = t.GetMethod("CheckIsOpenAllowed",
+                    BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance,
+                    null, new[] { typeof(CompilationTarget), typeof(int) }, null);
+            _checkIsOpenAllowedResolved = true;
+        }
+        if (_mCheckIsOpenAllowed == null)
+            throw new InvalidOperationException(
+                "RecordRef.Open: BC's NavRecordRef.CheckIsOpenAllowed(CompilationTarget, Int32) "
+                + $"could not be resolved on {self.GetType().FullName}, so the compilation-target "
+                + "scope check (issue #2783) cannot run. Refusing to open the RecordRef rather "
+                + "than silently allowing a table real BC would refuse.");
+
+        try
+        {
+            _mCheckIsOpenAllowed.Invoke(self, new object?[] { compilationTarget, tableNo });
+        }
+        catch (TargetInvocationException tie) when (tie.InnerException != null)
+        {
+            // BC's own NavNCLNotAllowedForCompilationTargetException, with BC's own
+            // message — rethrown with its original stack so AL's asserterror /
+            // GetLastErrorText sees the platform error, not a reflection wrapper.
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw();
+        }
+    }
 
     private static void OpenRecordRefById(object self, int tableNo, bool isTemporary)
     {

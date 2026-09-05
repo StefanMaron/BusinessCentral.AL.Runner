@@ -1,6 +1,6 @@
 ---
 name: running-ms-test-buckets
-description: Run Microsoft's BaseApp test buckets through AL Runner to find real gaps — where the sources come from, the configuration that must be exact, how to size a run, and how to turn failures into issues worth filing. --test-data is mandatory; without it roughly 40% of failures are missing setup data rather than defects. Use when generating work from the Microsoft surface, or when measuring where the runner stands against it.
+description: Run Microsoft's BaseApp test buckets through AL Runner to find real gaps — where the sources come from, the configuration that must be exact, how to size a run, and how to turn failures into issues worth filing. --test-data is mandatory; without it roughly 40% of failures are missing setup data rather than defects. And even with it, --test-data presents a RESTORED CRONUS, not one prepared the way Microsoft's pipelines prepare it, so some failures are an incomplete data recipe on our side rather than runner defects — triage for that before filing. Use when generating work from the Microsoft surface, when triaging a bucket failure, or when measuring where the runner stands against it.
 ---
 
 # Running Microsoft's BaseApp test buckets
@@ -37,6 +37,73 @@ dispatch, unsupported filter kinds, silently skipped handlers. Those are worth f
 
 **So: never file an issue from a run without `--test-data`.** A no-test-data run is legitimate
 for measuring speed or for bisecting a regression, never for deciding what is broken.
+
+### …and `--test-data` still gives a restored CRONUS, not a *prepared* one
+
+The 40% above is the coarse form of a sharper fact. **Microsoft's pipelines run independent
+data-preparation steps on top of CRONUS before their tests execute.** The blueprint for those
+steps lives in those pipelines, and we have not replicated it. `--test-data` hydrates from the
+demo backup, so it presents the company **as restored** — not as Microsoft's tests were written
+against.
+
+A whole class of Microsoft-bucket failures is therefore **neither a runner defect nor a BC
+divergence**. It is an incomplete data recipe on our side, and those tests are expected to fail
+until someone replicates the preparation blueprint.
+
+**This is deliberately not the priority** (Stefan, resolving #2730): fix the clear runner
+failures first. Chasing the recipe to reach 100% green is the *very end* of the work, once
+nothing else is left.
+
+#### The triage rule
+
+When a Microsoft bucket test fails, ask **"is this a data-recipe failure?" before treating it
+as a runner defect.** The tell is that the runner did the right thing for the company it was
+handed — the posting, the validation, the count are all correct *given the data*, and the
+expectation encodes a differently-prepared company.
+
+Recipe failures:
+
+- are **expected**, and stay failing until the recipe is replicated;
+- must **not** be fixed by bending the runner to match the expectation;
+- must **not** be filed as runner gaps;
+- must **not** be classified `expect-divergence` — that mode means the runner intentionally
+  answers differently from BC *permanently* (`docs/expectations.md`), and this is neither
+  permanent nor a disagreement with BC. Calling it divergence records a fixable data gap as a
+  settled decision.
+
+#### The worked example, measured
+
+`Codeunit134157`, three tests asserting a G/L Entry count, each off by exactly +1:
+
+| `General Ledger Setup."Additional Reporting Currency"` | result |
+|---|---|
+| `EUR` — what `--test-data` presents | **3 failed / 3 passed** |
+| blank — what Microsoft's test database has | **6 passed / 0 failed** |
+
+Nothing else changed. `HandleAddCurrResidualGLEntry` opens with
+
+```al
+if AddCurrencyCode = '' then exit;
+```
+
+so given an ACY, **BC's own residual rule correctly adds a sixth G/L Entry**, and the tests
+correctly report six where they expect five. The runner was posting correctly for the company
+it was handed. There is no runner defect anywhere in that chain.
+
+#### The scale — this is a class, not a cluster
+
+#2730 already records two more from the same single setting: codeunit 134880's four `Reverse…`
+tests, and a 16-test exchange-rate cluster (`There is no Detailed Cust. Ledg. Entry within the
+filter` after report 596) that cannot be diagnosed cleanly while ACY is set. #2833 is a fourth.
+One field of one setup table, four independent clusters — which is what makes this a recipe
+problem rather than a handful of odd tests. Expect other prepared state to behave the same way.
+
+#### One thing this does NOT explain, and must not bury
+
+Under ACY the runner's Additional-Currency amounts **miss balance by 0.01** — debits
+`54,426.58` against payables `-54,426.57`. If the recipe blanks ACY, that divergence becomes
+**unreachable in these tests rather than fixed.** It may still be a real runner defect. Do not
+let "explained as a recipe gap" be read as "the arithmetic was fine".
 
 ## Getting the sources
 
@@ -110,6 +177,11 @@ however many workers you add.
 Large clusters that are already understood, so a fresh run does not generate duplicates:
 
 - Failures that vanish with `--test-data` (see above) are configuration, not defects.
+- **Failures that vanish when the company is *prepared* the way Microsoft's pipelines prepare
+  it** — the data-recipe class above — are not defects either. The ACY clusters (#2730, #2833,
+  codeunit 134157, codeunit 134880's `Reverse…` four, the 16-test exchange-rate cluster) are the
+  known instances. Do not refile them, do not bend the runner to them, and do not mark them
+  `expect-divergence`.
 - `RunObject`-only page actions are refused deliberately and loudly; supporting them is a
   feature, not a bug fix.
 - The task scheduler, live external connections, report rendering, SMTP and HTTP egress are

@@ -210,9 +210,45 @@ public static partial class RowVersionPatches
         public void Dispose() => _suppressSystemIdUniqueness = _previous;
     }
 
+    /// <summary>Per-store SystemId indexes (#2667). Keyed on the provider so an index dies with
+    /// the store it describes; a table the run never touches again costs nothing.</summary>
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<object, StoredSystemIdIndex>
+        _systemIdIndexes = new();
+
+    /// <summary>The AvlTree row count, in O(1), or -1 when the tree cannot answer cheaply.
+    /// BC's own <c>AvlTree&lt;T&gt;.CountIfBounded</c> returns the node count for an unbounded
+    /// tree (which <c>primaryTree</c> always is) and -1 for a bounded view.</summary>
+    private static int TryGetStoredRowCount(object storedRows)
+    {
+        var getter = _treeCountGetters.GetOrAdd(storedRows.GetType(), static t =>
+        {
+            var prop = t.GetProperty("CountIfBounded",
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            var getMethod = prop?.GetGetMethod(nonPublic: true);
+            if (getMethod == null || prop!.PropertyType != typeof(int)) return null;
+            var instance = System.Linq.Expressions.Expression.Parameter(typeof(object), "tree");
+            var body = System.Linq.Expressions.Expression.Call(
+                System.Linq.Expressions.Expression.Convert(instance, t), getMethod);
+            return System.Linq.Expressions.Expression.Lambda<Func<object, int>>(body, instance).Compile();
+        });
+        // No such property on this BC build: fall back to the scan rather than guess a count.
+        return getter == null ? -1 : getter(storedRows);
+    }
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<Type, Func<object, int>?>
+        _treeCountGetters = new();
+
     private static void CheckNoDuplicateSystemId(object? provider, object? recordBuffer)
     {
-        if (_suppressSystemIdUniqueness) return;
+        if (_suppressSystemIdUniqueness)
+        {
+            // A snapshot replay writes rows straight past this check (#2694), so anything this
+            // index believes about that store is now guesswork. Drop it; the next real insert
+            // rebuilds. See StoredSystemIdIndex for why a stale entry is the dangerous direction.
+            if (provider != null && _systemIdIndexes.TryGetValue(provider, out var replayed))
+                lock (replayed) replayed.Invalidate();
+            return;
+        }
         if (recordBuffer == null || !BlobStoreIsolationPatches.IsDatabaseBacked(provider)) return;
 
         var bufferType = recordBuffer.GetType();
@@ -257,26 +293,61 @@ public static partial class RowVersionPatches
                 ?? throw new InvalidOperationException(
                     $"[RowVersionPatches] {provider.GetType().Name}.primaryTree field not found — " +
                     "SystemId integrity check cannot resolve its reflection target");
-        // No rows stored yet for this table instance (EnsureTreeCreated has not run,
-        // which happens INSIDE the real Insert body this prepend runs ahead of) —
-        // nothing to collide with.
-        if (_fPrimaryTree.GetValue(provider) is not System.Collections.IEnumerable storedRows) return;
+        // A NULL primaryTree means no rows are stored yet for this table instance
+        // (EnsureTreeCreated has not run, which happens INSIDE the real Insert body this
+        // prepend runs ahead of) — nothing to collide with, so a quiet return is right.
+        //
+        // A NON-NULL value the runner cannot enumerate is the same "BC's private layout
+        // moved" case the resolution above already refuses, and folding it into the null
+        // branch silently skipped the duplicate-SystemId check on every insert (#2786).
+        var storedTree = _fPrimaryTree.GetValue(provider);
+        if (storedTree == null) return;
+        if (storedTree is not System.Collections.IEnumerable storedRows)
+            throw new InvalidOperationException(
+                $"[RowVersionPatches] {provider.GetType().Name}.primaryTree holds a " +
+                $"{storedTree.GetType().Name}, which cannot be enumerated — " +
+                "SystemId integrity check cannot read the stored rows");
 
-        // Read each stored row's SystemId through a delegate compiled once per row type
-        // rather than PropertyInfo.GetValue per row. This loop runs on EVERY insert into a
-        // database-backed table that carries an explicit SystemId, so it is O(rows) per
-        // insert and O(rows^2) over a bulk materialisation. Measured before this was
-        // compiled: the Date virtual table's on-demand window materialisation
-        // (tests/runner-extras/date-virtual-table-window, Codeunit64561) went from 908 ms
-        // on main to a 60 s timeout — reflection per row, not the comparison, was the cost.
-        foreach (var rowObj in storedRows)
+        // #2667: answer from a per-store index instead of walking every stored row. The walk
+        // ran on EVERY insert into a database-backed table — note that the zero-SystemId early
+        // return above does NOT spare the common case, because the id is already assigned by the
+        // time this runs — making it O(rows) per insert and O(rows^2) over a bulk load. Measured
+        // on a 3-field table with the guard bypassed as the control, it was 93-97% of all the
+        // work an insert did. See StoredSystemIdIndex for the invalidation rules.
+        var storedRowCount = TryGetStoredRowCount(storedRows);
+        if (storedRowCount < 0)
         {
-            var storedSystemId = ReadRowSystemId(rowObj);
-            if (storedSystemId.Value != incomingSystemId.Value) continue;
-
-            var tableCaption = ResolveTableCaptionSafe(metaTable);
-            throw BuildDuplicateSystemIdException(tableCaption, $"SystemId={incomingSystemId.Value}");
+            // The store cannot give a cheap, trustworthy count, so an index built from it could
+            // not be verified. Fall back to exactly the pre-#2667 walk rather than risk a stale
+            // entry refusing an insert real BC would accept.
+            foreach (var rowObj in storedRows)
+            {
+                if (ReadRowSystemId(rowObj).Value != incomingSystemId.Value) continue;
+                throw BuildDuplicateSystemIdException(
+                    ResolveTableCaptionSafe(metaTable), $"SystemId={incomingSystemId.Value}");
+            }
+            return;
         }
+
+        var index = _systemIdIndexes.GetOrCreateValue(provider);
+        lock (index)
+        {
+            // Deciding to rebuild, looking the id up, and noting the row this call is about to
+            // clear have to be one atomic step: two threads inserting into the same store must
+            // not both see "not present" for the same id.
+            index.SyncTo(storedRowCount, () => EnumerateStoredSystemIds(storedRows));
+            if (index.Contains(incomingSystemId.Value))
+                throw BuildDuplicateSystemIdException(
+                    ResolveTableCaptionSafe(metaTable), $"SystemId={incomingSystemId.Value}");
+            index.NoteInserting(incomingSystemId.Value, storedRowCount);
+        }
+    }
+
+    /// <summary>Every stored row's SystemId, read through the same compiled per-row-type getter
+    /// the pre-#2667 walk used. Lazy, so a sync that does not rebuild never touches a row.</summary>
+    private static IEnumerable<Guid> EnumerateStoredSystemIds(System.Collections.IEnumerable storedRows)
+    {
+        foreach (var rowObj in storedRows) yield return ReadRowSystemId(rowObj).Value;
     }
 
     /// <summary>

@@ -542,6 +542,76 @@ codeunit 61001 "Microsoft Dependency Tests"
         SetupPage.OK().Invoke();
     end;
 
+    // StartSession from inside a [Test] — REFUSED, and that is real BC, not a runner limit.
+    //
+    // These three tests used to assert that StartSession dispatched a precompiled worker
+    // (AlRunner#2733). They were green only because the runner did not implement BC's
+    // TestIsolation guard. It does now (#2805), and the corpus pins the refusal on all eight
+    // BC versions — StefanMaron/BusinessCentral.AL.Language.Tests session/TestStartSessionRecord.al,
+    // codeunit 60397, merged as PR #149.
+    //
+    // BC's guard is the FIRST statement of ALSession.ALStartSessionAsyncImpl, before the
+    // timeout check and before a session id is assigned:
+    //
+    //     if (session.TestExecution != null
+    //         && (!session.TestExecution.CommitTestCodeunits
+    //             || !session.TestExecution.CommitTestFunctions))
+    //         throw new NavTestStartSessionNotAllowedException();
+    //
+    // So on a real service tier a [Test] running under TestIsolation = Codeunit (this suite's
+    // mode, and BC's shipped runner 130450) can never reach StartSession's dispatch at all.
+    // Asserting that it does was asserting something no service tier would agree with.
+    //
+    // WHAT THIS COSTS, recorded rather than glossed: the #2733/#2752 dispatch path inside
+    // AlRunnerStartSession — construct the worker, resolve OnRun vs OnRunAsync, await the
+    // ValueTask — no longer has AL-level coverage here, because from AL it is now only
+    // reachable under --isolation disabled, which this suite does not run under. The shared
+    // resolver it calls (CodeunitPatches.ResolveOnRunTrigger) keeps its other call site's
+    // coverage through Codeunit.Run. Re-covering the StartSession-specific half is AlRunner#2826.
+    [Test]
+    procedure PrecompiledCodeunit_StartSession_FromATestIsRefusedUnderCodeunitIsolation()
+    var
+        SessionId: Integer;
+    begin
+        asserterror StartSession(SessionId, Codeunit::"Price Calculation - V16");
+
+        Assert.Contains(GetLastErrorText(),
+            'can only be started in tests that are run by a TestRunner that has TestIsolation set to Disabled',
+            'StartSession inside a [Test] under Codeunit isolation must be refused with BC''s own message.');
+    end;
+
+    // The refusal precedes the session-id assignment. BC assigns sessionId.ObjectValue about
+    // forty lines after the guard, so a refused call leaves the caller's by-ref untouched —
+    // the same claim corpus codeunit 60397 makes, asserted here against a Base Application
+    // worker rather than a fixture one.
+    [Test]
+    procedure PrecompiledCodeunit_StartSession_RefusedBeforeASessionIdIsAssigned()
+    var
+        SessionId: Integer;
+    begin
+        SessionId := 0;
+        asserterror StartSession(SessionId, Codeunit::"Price Calculation - V15");
+
+        Assert.AreEqual(0, SessionId,
+            'a refused StartSession must not have assigned a session id.');
+    end;
+
+    // The refusal is checked BEFORE the object id is resolved, so a nonexistent codeunit id
+    // reports the isolation refusal rather than "no codeunit behind this id" — matching BC,
+    // whose guard runs before any codeunit lookup. Keeps the negative direction of the test
+    // this replaces: StartSession still fails loudly here, just for the earlier reason.
+    [Test]
+    procedure PrecompiledCodeunit_StartSession_OnAnIdWithNoCodeunit_IsRefusedByIsolationFirst()
+    var
+        SessionId: Integer;
+    begin
+        asserterror StartSession(SessionId, 1999999);
+
+        Assert.Contains(GetLastErrorText(),
+            'can only be started in tests that are run by a TestRunner that has TestIsolation set to Disabled',
+            'the isolation guard runs before the codeunit lookup, so it reports first.');
+    end;
+
     local procedure EnsureGeneralLedgerSetupExists()
     var
         GeneralLedgerSetup: Record "General Ledger Setup";

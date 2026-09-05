@@ -1,0 +1,50 @@
+[
+  {
+    "codeunitId": 60662,
+    "CodeunitName": "TP Blank Temporal Tests",
+    "Method": "TestPageField_Value_BlankRecBoundDateTime_ReadsEmptyString",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2361",
+    "Note": "Pulled in by this PR's submodule pin bump, NOT caused by it. The pin had to advance to bce7c87 to consume StefanMaron/BusinessCentral.AL.Language.Tests#155 (the upstream half of #2524), and corpus master had meanwhile merged four other agents' PRs on top of the previous pin -- corpus history is linear, so #155 cannot be taken without them. A blank Date/Time/DateTime reads as '01/01/0001 00:00:00' through a TestPage control where real BC reads ''. Tracked as #2361, which is open and is NOT closed by this PR; the fix for it removes this entry."
+  },
+  {
+    "codeunitId": 60662,
+    "CodeunitName": "TP Blank Temporal Tests",
+    "Method": "TestPageField_AssertEquals_BlankRecBoundDateTime_AcceptsEmptyString",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2361",
+    "Note": "Pulled in by this PR's submodule pin bump, NOT caused by it. The pin had to advance to bce7c87 to consume StefanMaron/BusinessCentral.AL.Language.Tests#155 (the upstream half of #2524), and corpus master had meanwhile merged four other agents' PRs on top of the previous pin -- corpus history is linear, so #155 cannot be taken without them. A blank Date/Time/DateTime reads as '01/01/0001 00:00:00' through a TestPage control where real BC reads ''. Tracked as #2361, which is open and is NOT closed by this PR; the fix for it removes this entry."
+  },
+  {
+    "codeunitId": 60662,
+    "CodeunitName": "TP Blank Temporal Tests",
+    "Method": "TestPageField_Value_BlankRecBoundDate_ReadsEmptyString",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2361",
+    "Note": "Pulled in by this PR's submodule pin bump, NOT caused by it. The pin had to advance to bce7c87 to consume StefanMaron/BusinessCentral.AL.Language.Tests#155 (the upstream half of #2524), and corpus master had meanwhile merged four other agents' PRs on top of the previous pin -- corpus history is linear, so #155 cannot be taken without them. A blank Date/Time/DateTime reads as '01/01/0001 00:00:00' through a TestPage control where real BC reads ''. Tracked as #2361, which is open and is NOT closed by this PR; the fix for it removes this entry."
+  },
+  {
+    "codeunitId": 60662,
+    "CodeunitName": "TP Blank Temporal Tests",
+    "Method": "TestPageField_Value_BlankRecBoundTime_ReadsEmptyString",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2361",
+    "Note": "Pulled in by this PR's submodule pin bump, NOT caused by it. The pin had to advance to bce7c87 to consume StefanMaron/BusinessCentral.AL.Language.Tests#155 (the upstream half of #2524), and corpus master had meanwhile merged four other agents' PRs on top of the previous pin -- corpus history is linear, so #155 cannot be taken without them. A blank Date/Time/DateTime reads as '01/01/0001 00:00:00' through a TestPage control where real BC reads ''. Tracked as #2361, which is open and is NOT closed by this PR; the fix for it removes this entry."
+  },
+  {
+    "codeunitId": 60662,
+    "CodeunitName": "TP Blank Temporal Tests",
+    "Method": "TestPageField_Value_BlankVariableBoundDateTime_ReadsEmptyString",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2361",
+    "Note": "Pulled in by this PR's submodule pin bump, NOT caused by it. The pin had to advance to bce7c87 to consume StefanMaron/BusinessCentral.AL.Language.Tests#155 (the upstream half of #2524), and corpus master had meanwhile merged four other agents' PRs on top of the previous pin -- corpus history is linear, so #155 cannot be taken without them. A blank Date/Time/DateTime reads as '01/01/0001 00:00:00' through a TestPage control where real BC reads ''. Tracked as #2361, which is open and is NOT closed by this PR; the fix for it removes this entry."
+  },
+  {
+    "codeunitId": 60662,
+    "CodeunitName": "TP Blank Temporal Tests",
+    "Method": "TestPageField_Value_VariableBoundDateTime_StaysBlankOnAPopulatedRow",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2361",
+    "Note": "Pulled in by this PR's submodule pin bump, NOT caused by it. The pin had to advance to bce7c87 to consume StefanMaron/BusinessCentral.AL.Language.Tests#155 (the upstream half of #2524), and corpus master had meanwhile merged four other agents' PRs on top of the previous pin -- corpus history is linear, so #155 cannot be taken without them. A blank Date/Time/DateTime reads as '01/01/0001 00:00:00' through a TestPage control where real BC reads ''. Tracked as #2361, which is open and is NOT closed by this PR; the fix for it removes this entry."
+  }
+]

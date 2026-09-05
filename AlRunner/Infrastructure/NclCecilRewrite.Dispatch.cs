@@ -190,18 +190,38 @@ public static partial class NclCecilRewrite
             Console.Error.WriteLine("[Cecil] Rewrote ALCompiler.DotNetToNavInStream → BcRuntime helper (skeleton SharedObjects fallback)");
         }
 
-        // NavHttpClient egress (ALGet/ALPost/ALPut/ALDelete/ALPatch + their *Async and
-        // *Send variants) — external HTTP is permanently out of scope (docs/scope.md §3.2,
-        // anchor external-http). On the headless skeleton these NRE deep inside
-        // NavHttpClient.get_Target() (no real HttpClient/network), which surfaces as a raw
-        // NullReferenceException — a silent-ish failure that does NOT name the unsupported
-        // surface. loud-failures.md requires we throw loudly, naming the API + reason AT THE
-        // CALL SITE. Rewrite each egress body to throw the "out-of-scope: <api> — external-http
-        // — see docs/scope.md#external-http" InvalidOperationException (same message contract +
-        // memberRef as the NavReport.SaveAs OOS rewrite above; reusing the existing memberRef
-        // keeps R2R token offsets stable). Header / base-address configuration methods
-        // (ALSetBaseAddress, ALDefaultRequestHeaders, …) are deliberately left intact — only
-        // the methods that actually egress are rewritten.
+        // NavHttpClient egress — external HTTP is permanently out of scope (docs/scope.md §3.2,
+        // anchor external-http), but AL's HTTP MOCKING is not: a test that declares
+        // [HandlerFunctions('X')] and an [HttpClientHandler] procedure X gets its request served
+        // by that AL handler and no socket is ever opened, which is squarely in scope.
+        //
+        // #2547: this used to rewrite the VERBS — ALGet/ALPost/ALPut/ALDelete/ALPatch/ALSend and
+        // their *Async twins — to throw unconditionally. That is one call frame too early. Every
+        // verb funnels into NavHttpClient.Send / SendAsync(NavHttpRequestMessage), whose FIRST
+        // line is the mock dispatcher:
+        //
+        //     if (Tree.Session.TestExecution.TestHandleHttpClientRequest(this, request, out var mocked))
+        //     { response.Value.Assign(mocked); return mocked.ALIsSuccessfulRequest; }   // mocked
+        //     LogSecretHeaderNames(request);
+        //     return SendAsync(errorLevel, request.RequestMessage, response);           // real egress
+        //
+        // Throwing at the verb meant that dispatcher never ran and every mocked-HTTP test was
+        // refused as external-http, with no way to reach a first-class BC test feature.
+        //
+        // So the refusal moves down to the ONE method that actually opens a socket: the private
+        // SendAsync overload taking a System.Net.Http.HttpRequestMessage. Both callers above
+        // reach it only after TestHandleHttpClientRequest declined, so it is exactly the egress
+        // boundary and nothing in scope passes through it. Header / base-address configuration
+        // methods (ALSetBaseAddress, ALDefaultRequestHeaders, …) remain untouched, as before.
+        //
+        // Note for anyone measuring this: inside a test under the default TestHttpRequestPolicy
+        // this throw is UNREACHABLE — BC's own dispatcher raises
+        // NavNCLTestCodeunitUnhandledHttpRequestException (no handler) or
+        // NavNCLNotAllowedHttpClientHandlerFallThroughException (handler returned true) first,
+        // which is real BC behaviour and better left alone. It is reachable with
+        // TestHttpRequestPolicy = AllowAllOutboundRequests, and for any HTTP outside a test
+        // method (TestHandleHttpClientRequest's own `if (!InTest) return false`) — which is
+        // precisely where the runner would otherwise open a real socket in silence.
         {
             var httpType = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.NavHttpClient");
             if (httpType != null)
@@ -212,30 +232,56 @@ public static partial class NclCecilRewrite
                 // `asserterror`/`Assert.ExpectedError('out-of-scope:')` matches. Using the
                 // already-imported memberRef avoids adding a new typeRef/memberRef to Ncl
                 // (R2R token-shift safety — see feedback_r2r_cecil_token_shift).
-                var egressVerbs = new[] { "ALGet", "ALPost", "ALPut", "ALDelete", "ALPatch", "ALSend" };
+                // The single egress method: private SendAsync(DataError, HttpRequestMessage, ByRef).
+                // Matched on the parameter type, not the name — NavHttpClient has a SECOND private
+                // SendAsync with the same arity whose second parameter is a NavHttpRequestMessage,
+                // and THAT one is the mock-dispatching wrapper that must keep its body.
                 int httpRewritten = 0;
                 foreach (var method in httpType.Methods)
                 {
-                    if (!method.HasBody) continue;
-                    var verb = egressVerbs.FirstOrDefault(v =>
-                        method.Name == v || method.Name == v + "Async");
-                    if (verb == null) continue;
+                    if (!method.HasBody || method.Name != "SendAsync") continue;
+                    if (method.Parameters.Count != 3) continue;
+                    if (method.Parameters[1].ParameterType.FullName != "System.Net.Http.HttpRequestMessage") continue;
 
-                    var apiLabel = "HttpClient." + verb.Substring(2); // "HttpClient.Get"
                     var body = method.Body;
                     body.Instructions.Clear();
                     body.Variables.Clear();
                     body.ExceptionHandlers.Clear();
                     var il = body.GetILProcessor();
-                    il.Append(il.Create(OpCodes.Ldstr,
-                        $"out-of-scope: {apiLabel} — external-http — see docs/scope.md#external-http"));
-                    il.Append(il.Create(OpCodes.Newobj, oosCtor));
+                    // `call <helper returning Exception>; throw`, NOT the inline
+                    // `ldstr + newobj InvalidOperationException` the verb rewrite used.
+                    // Measured: from this deeper frame BC's error machinery replaces an
+                    // unrecognised CLR exception with NavNCLInvalidOperationException ("The
+                    // requested operation cannot be performed in this context.") and discards
+                    // the original — the expectation classifier then reports "no out-of-scope
+                    // signal". A BC-native AL error survives. See
+                    // BcRuntime.MakeHttpEgressOutOfScopeException.
+                    // ldarg.2 = the HttpRequestMessage (0 = this, 1 = errorLevel, 2 = requestMessage,
+                    // 3 = response). The helper reads the HTTP method off it so the refusal names
+                    // the verb the AL author wrote — HttpClient.Get, not a collapsed
+                    // HttpClient.Send. AlRunner.Tests' ExpectationManifestWiringTests asserts that
+                    // exact spelling, which is how the first version of this change (which
+                    // collapsed the label) got caught.
+                    il.Append(il.Create(OpCodes.Ldarg_2));
+                    il.Append(il.Create(OpCodes.Call, asm.MainModule.ImportReference(
+                        typeof(AlRunner.BcRuntime).GetMethod(
+                            nameof(AlRunner.BcRuntime.MakeHttpEgressOutOfScopeException))!)));
                     il.Append(il.Create(OpCodes.Throw));
                     body.MaxStackSize = 1;
                     httpRewritten++;
                 }
-                if (httpRewritten > 0)
-                    Console.Error.WriteLine($"[Cecil] Rewrote {httpRewritten} NavHttpClient egress method(s) → throw OOS (external-http)");
+                // Loud when the shape moves. This method is the ONLY thing standing between an
+                // unmocked AL HttpClient call and a real socket, so "we could not find it" must
+                // never degrade into "we silently allowed egress" — that is the difference
+                // between a missing feature and a broken promise (loud-failures.md).
+                if (httpRewritten == 1)
+                    Console.Error.WriteLine("[Cecil] Rewrote NavHttpClient.SendAsync(HttpRequestMessage) → throw OOS (external-http)");
+                else
+                    throw new InvalidOperationException(
+                        $"[Cecil] Expected exactly ONE NavHttpClient.SendAsync(DataError, System.Net.Http.HttpRequestMessage, ByRef) "
+                        + $"to rewrite as the HTTP egress boundary, found {httpRewritten}. BC's NavHttpClient shape has changed; "
+                        + "external HTTP would otherwise escape unrefused. See AlRunner/Infrastructure/NclCecilRewrite.Dispatch.cs "
+                        + "and issue #2547.");
 
                 // NavHttpClient.get_Target — must NOT throw: the AL `HttpClient` value type
                 // lazily materialises its backing SharedNavHttpClient via get_Target during

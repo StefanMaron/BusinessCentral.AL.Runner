@@ -147,6 +147,9 @@ jobs:
 
   reject-ci-skip-directives:
     name: PR title/body must not contain a CI-skip directive
+    permissions:
+      contents: read
+      pull-requests: read   # gh pr view --json commits (#2491)
     runs-on: ubuntu-latest
     # #2116: this repo squash-merges, and GitHub's default squash commit
     # message is "<title> (#N)" followed by the PR body (see
@@ -175,14 +178,46 @@ jobs:
       - name: Run check_ci_skip_directives.sh's own unit tests
         run: bash .github/scripts/test_check_ci_skip_directives.sh
 
-      - name: Check PR title and body for CI-skip directives
+      # #2491: the branch's commit messages are the merge commit's BODY here
+      # (squash_merge_commit_message=COMMIT_MESSAGES, measured with
+      # `gh api repos/StefanMaron/BusinessCentral.AL.Runner`), so they are part
+      # of the text GitHub parses on merge and have to be checked with the
+      # title and body. Asked of the API rather than reconstructed from git:
+      # this returns exactly the commit list GitHub will concatenate, with no
+      # dependence on fetch-depth or on where the base branch has moved to.
+      # A PR always has at least one commit, so empty output means the fetch
+      # failed and the job must say so rather than pass on no evidence.
+      - name: Collect the branch's commit messages
+        id: commits
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          msgs=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" \
+                   --json commits --jq '.commits[] | .messageHeadline, .messageBody')
+          if [ -z "${msgs//[[:space:]]/}" ]; then
+            echo "::error::Could not read any commit message for PR #$PR_NUMBER. Every PR has at least one commit, so this is a failure to fetch, not an empty branch -- refusing to report a pass without having read the text that becomes the merge commit." >&2
+            exit 1
+          fi
+          {
+            echo "messages<<PR_COMMITS_EOF"
+            printf '%s\n' "$msgs"
+            echo "PR_COMMITS_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Check PR title, body and commit messages for CI-skip directives
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_BODY: ${{ github.event.pull_request.body }}
+          PR_COMMITS: ${{ steps.commits.outputs.messages }}
         run: bash .github/scripts/check_ci_skip_directives.sh
 
   reject-bad-closing-references:
     name: PR body closing references must be correct, both directions
+    permissions:
+      contents: read
+      pull-requests: read   # gh pr view --json commits (#2491)
     runs-on: ubuntu-latest
     # #2121 (missing) and #2128 (unintended): this repo squash-merges, and
     # GitHub folds the PR title + body into the squash commit message (see
@@ -210,10 +245,39 @@ jobs:
       - name: Run check_closing_reference.sh's own unit tests
         run: bash .github/scripts/test_check_closing_reference.sh
 
-      - name: Check PR body for a correct closing reference
+      # #2491: the branch's commit messages are the merge commit's BODY here
+      # (squash_merge_commit_message=COMMIT_MESSAGES, measured with
+      # `gh api repos/StefanMaron/BusinessCentral.AL.Runner`), so they are part
+      # of the text GitHub parses on merge and have to be checked with the
+      # title and body. Asked of the API rather than reconstructed from git:
+      # this returns exactly the commit list GitHub will concatenate, with no
+      # dependence on fetch-depth or on where the base branch has moved to.
+      # A PR always has at least one commit, so empty output means the fetch
+      # failed and the job must say so rather than pass on no evidence.
+      - name: Collect the branch's commit messages
+        id: commits
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          msgs=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" \
+                   --json commits --jq '.commits[] | .messageHeadline, .messageBody')
+          if [ -z "${msgs//[[:space:]]/}" ]; then
+            echo "::error::Could not read any commit message for PR #$PR_NUMBER. Every PR has at least one commit, so this is a failure to fetch, not an empty branch -- refusing to report a pass without having read the text that becomes the merge commit." >&2
+            exit 1
+          fi
+          {
+            echo "messages<<PR_COMMITS_EOF"
+            printf '%s\n' "$msgs"
+            echo "PR_COMMITS_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Check PR body and commit messages for correct closing references
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_BODY: ${{ github.event.pull_request.body }}
+          PR_COMMITS: ${{ steps.commits.outputs.messages }}
         run: bash .github/scripts/check_closing_reference.sh
 
   verify-trigger-list:
@@ -309,6 +373,43 @@ jobs:
 
       - name: Run tools/test_ci_wait.py
         run: python3 tools/test_ci_wait.py
+
+  preflight-tests:
+    name: preflight.py unit tests
+    runs-on: ubuntu-latest
+    # tools/preflight.py decides whether a box is fit to run an autonomous
+    # cycle, so its thresholds and its merged-worktree test are unit-tested
+    # against captured df / git worktree output rather than against whatever the
+    # runner happens to look like. Two of its cases build a real throwaway git
+    # repository: the squash-merge trap (this repo squash-merges, so
+    # `git merge-base --is-ancestor` calls every merged branch unmerged) and the
+    # submodule refusal `git worktree remove` raises. Ungated -- plain Python
+    # plus git, and it takes seconds.
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Run tools/test_preflight.py
+        run: python3 tools/test_preflight.py
+
+  pr-body-tests:
+    name: pr-body.py unit tests
+    runs-on: ubuntu-latest
+    # tools/pr-body.py is the only sanctioned way to edit a PR body from a
+    # script, and every one of its guards exists because an unguarded edit
+    # destroyed PR #2790's body -- including the standalone closing-reference
+    # line, so the linked issue never auto-closed. Its guards are therefore
+    # worth proving on every PR rather than the first time one of them is
+    # needed. Ungated -- plain Python, no network, seconds to run.
+    #
+    # The suite also asserts PARITY with .github/scripts/check_closing_reference.sh:
+    # pr-body.py reimplements that script's canonical/stray distinction in Python
+    # so a body can be refused locally before pr-check.yml refuses it server-side,
+    # and a silent drift between the two would make the local check meaningless.
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Run tools/test_pr_body.py
+        run: python3 tools/test_pr_body.py
 
   agent-mcp-tools:
     name: Agent definitions must allowlist the MCP tools they document

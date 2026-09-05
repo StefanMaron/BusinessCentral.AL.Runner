@@ -50,12 +50,25 @@ internal static class AbortResume
     public static List<string> BuildChildArgs(
         IReadOnlyList<string> originalArgs, IReadOnlyCollection<string> exclusions,
         int remainingBudget, IReadOnlyCollection<string> carryFiles)
+        => BuildChildArgs(originalArgs, exclusions, remainingBudget, carryFiles, Array.Empty<string>());
+
+    /// <summary>
+    /// As above, plus <paramref name="carryResultFiles"/> — the per-attempt JSON sidecars
+    /// (#2719). The JUnit carry files answer the printed summary and --output-junit; these
+    /// answer --output-json, --out and --count-baseline, which need the full TestResult and
+    /// cannot be rebuilt from a JUnit testcase (see Infrastructure.ResumeCarry).
+    /// </summary>
+    public static List<string> BuildChildArgs(
+        IReadOnlyList<string> originalArgs, IReadOnlyCollection<string> exclusions,
+        int remainingBudget, IReadOnlyCollection<string> carryFiles,
+        IReadOnlyCollection<string> carryResultFiles)
     {
         var child = new List<string>();
         for (var i = 0; i < originalArgs.Count; i++)
         {
             var a = originalArgs[i];
-            if (a == "--exclude-test" || a == "--resume-aborts" || a == "--merge-counts")
+            if (a == "--exclude-test" || a == "--resume-aborts"
+                || a == "--merge-counts" || a == "--merge-results")
             {
                 if (i + 1 < originalArgs.Count) i++;
                 continue;
@@ -64,6 +77,7 @@ internal static class AbortResume
         }
         foreach (var e in exclusions) { child.Add("--exclude-test"); child.Add(e); }
         foreach (var f in carryFiles) { child.Add("--merge-counts"); child.Add(f); }
+        foreach (var f in carryResultFiles) { child.Add("--merge-results"); child.Add(f); }
         child.Add("--resume-aborts");
         child.Add(remainingBudget.ToString());
         return child;
@@ -76,10 +90,12 @@ internal static class AbortResume
     /// from.
     /// </summary>
     public static int Rerun(IReadOnlyList<string> originalArgs, IReadOnlyCollection<string> exclusions,
-        int remainingBudget, IReadOnlyCollection<string>? carryFiles = null)
+        int remainingBudget, IReadOnlyCollection<string>? carryFiles = null,
+        IReadOnlyCollection<string>? carryResultFiles = null,
+        string? carryDirectory = null)
     {
         var childArgs = BuildChildArgs(originalArgs, exclusions, remainingBudget,
-            carryFiles ?? Array.Empty<string>());
+            carryFiles ?? Array.Empty<string>(), carryResultFiles ?? Array.Empty<string>());
 
         Console.Error.WriteLine();
         Console.Error.WriteLine(
@@ -107,6 +123,20 @@ internal static class AbortResume
             Console.Error.WriteLine("resume: could not start the retry process; reporting the aborted run as-is.");
             return 3;
         }
+
+        // #2824: the carry directory is written by THIS process but READ by the child, at the very
+        // end of a run that may take minutes. Owned by us, it dies with us — SIGTERM here runs our
+        // ProcessExit and deletes it out from under a live child, and SIGKILL leaves an owner that
+        // is dead, so the next runner start on the machine sweeps it correctly. The child is the
+        // one that needs it, so the child should own it. Done HERE rather than before the spawn
+        // because the pid to name does not exist until Process.Start returns.
+        //
+        // This lowers the PROBABILITY of the loss; it does not remove the need to shout when a
+        // carry file is missing anyway (a /tmp cleaner, a full disk, an operator rm). #2747's
+        // loud refusal stays exactly as it is.
+        if (carryDirectory != null)
+            AlRunner.Infrastructure.ScratchDirs.TransferOwnership(carryDirectory, p.Id);
+
         p.WaitForExit();
 
         // A resumed run must NEVER report clean success. The retry can legitimately exit 0 — the

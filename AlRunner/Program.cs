@@ -256,6 +256,7 @@ int jobs = 1;   // --jobs N: fan out across N worker processes (#2280)
 int resumeAborts = AlRunner.Infrastructure.AbortResume.DefaultBudget;   // #2280: resume past a watchdog abort
 var excludeTests = new List<string>();   // --exclude-test: skip these, so a run can resume past a watchdog abort (#2280)
 var mergeCountsFiles = new List<string>();   // #2280: totals carried in from earlier resume attempts
+var mergeResultsFiles = new List<string>(); // #2719: full results carried in from earlier resume attempts
 var allAbortReasons = new List<string>();   // #2280: watchdog aborts seen this run, for auto-resume
 // --coverage: statement-level coverage via BC's own StmtHit instrumentation (issue
 // #1922, first slice of #1640). Writes Cobertura XML to --coverage-out (default
@@ -332,6 +333,10 @@ string? testFilter = null;
 // --test-timeout SECONDS: per-test timeout override (v1 carryover; v2 previously
 // hardcoded 60s with no CLI override — see #1648). Takes precedence over the
 // AL_RUNNER_TEST_TIMEOUT_SEC env var. Null = env var / 60s default.
+// Under --jobs, ParallelFanOut.WorkerEnvironment sets AL_RUNNER_TEST_TIMEOUT_SEC on each
+// worker to the 60s default scaled by shard count, because the watchdog is wall-clock and a
+// worker sharing cores runs slower in wall time for the same work (#2718). This flag still
+// outranks that, so naming a number here gets exactly that number in every worker.
 int? testTimeoutSeconds = null;
 // --watch: stay resident with warm dependencies and re-run IN-PROCESS on every .al
 // change. Each cycle resets the per-bundle caches (BcRuntime.ResetForNewBundleReload),
@@ -453,6 +458,7 @@ for (int i = 0; i < args.Length; i++)
     }
     if (args[i] == "--exclude-test" && i + 1 < args.Length) { excludeTests.Add(args[++i]); continue; }
     if (args[i] == "--merge-counts" && i + 1 < args.Length) { mergeCountsFiles.Add(args[++i]); continue; }
+    if (args[i] == "--merge-results" && i + 1 < args.Length) { mergeResultsFiles.Add(args[++i]); continue; }
     if (args[i] == "--resume-aborts" && i + 1 < args.Length)
     {
         if (!int.TryParse(args[++i], out resumeAborts) || resumeAborts < 0)
@@ -1807,6 +1813,35 @@ var watchFullRebuildReasons = new List<(string Module, string Reason)>();
 // call site for the full reasoning.
 int watchCycleIndex = 0;
 
+// #2815: execute bundles in DEPENDENCY order under --watch, for the reason #2614 established
+// for --server and #2814 fixed there.
+//
+// A resident process reloads a bundle's runtime assembly only during that bundle's own
+// iteration, so a dependency listed LAST leaves its consumer dispatching freshly baked member
+// ids into the PREVIOUS cycle's assembly. --watch's per-bundle
+// BcRuntime.ResetForNewBundleReload() does not cover this: it clears bundle-derived caches
+// (record/codeunit types, parsed schemas, in-memory rows, enum registry), which is a different
+// thing from the resident assembly a cross-app call dispatches into.
+//
+// That was measured rather than assumed, because the two paths' reset disciplines differ and
+// the --server conclusion does not transfer on its own. WatchCrossAppOverloadRebindTests drives
+// the ServerCrossAppOverloadRebindTests fixture through a real --watch process: with the
+// dependency listed last, cycle 2 died with "The object with ID ... does not have a member with
+// that ID" — the LOUD half of #2614 — while the same fixture with the dependency listed first
+// passed. So the defect is real here and it is specifically about order.
+//
+// Sorted ONCE, here, ahead of the layered pre-pass rather than inside the cycle loop, so the
+// pre-pass, the incremental peek and the execution loop all agree on one order — the same
+// discipline #2814 applies on the server side. Only --watch is reordered: a cold CLI run has
+// nothing resident from a previous cycle, so its execution order cannot produce this and
+// reordering it would change reported bundle order for every existing caller to no purpose.
+if (watchMode && bundles.Count > 1)
+{
+    var watchOrdered = SortBundlesInDependencyOrder(bundles.ToArray());
+    if (!ReferenceEquals(watchOrdered, bundles))
+        bundles = watchOrdered.ToList();
+}
+
 // ── Layered source build pre-pass ─────────────────────────────────────────
 // When multiple bundles are passed and one depends on another (by AppId or
 // Name+Publisher), emit each "impl" bundle (one that another depends on) as
@@ -1884,9 +1919,10 @@ var compilerPackageDirs = new List<string>();
 // FIRST cycle's dependency sources, and a dependent bundle went on compiling against the
 // frozen *.symbols.json and EXECUTING the frozen .app's source — reporting a confident green
 // for a dependency whose code had changed underneath it. Its AL-output cache could not catch
-// that either: GetOrderedDepIds stamps each resolved .app with mtime:length precisely so a
-// sibling source app's content invalidates the dependent, but nothing rewrote that .app after
-// cycle 1, so the stamp never moved and the key HIT.
+// that either: GetOrderedDepIds stamps each resolved .app with a hash of its bytes (#2754;
+// mtime:length before that) precisely so a sibling source app's content invalidates the
+// dependent, but nothing rewrote that .app after cycle 1, so the stamp never moved and the
+// key HIT.
 //
 // Re-running is cheap when nothing changed. Each impl's workspace dir is keyed on its own
 // source content (ComputeSourceWorkspaceKey), so an unchanged dependency finds its .app and
@@ -2525,12 +2561,30 @@ foreach (var bundle in bundles)
         // SetTestAssembly.
         var suiteDirByAssembly = new Dictionary<Assembly, string>();
 
-        // Ordered dep ids feed every app's cache key but depend only on the bucket root
-        // and the package caches — both loop-invariant. Resolving them inside the loop
-        // re-scanned the package caches once per app.
-        IReadOnlyList<string> orderedDepIds;
-        using (AlRunner.Infrastructure.PhaseLog.Stage("ordered-dep-ids"))
-            orderedDepIds = GetOrderedDepIds(bucketRoot, packageCacheDirs, bundleAbs);
+        // Ordered dep ids feed every app's cache key but depend only on the bucket root and
+        // the package caches — both loop-invariant, so resolving them inside the loop
+        // re-scanned the package caches once per app. That was the intent of hoisting them;
+        // the hoist was never wired up (#2557) — the value was assigned here and read
+        // nowhere, while the loop went on calling GetOrderedDepIds again, so the run paid for
+        // BOTH. GetOrderedDepIds builds its own DependencyResolver and EnsureIndexed is an
+        // instance field, so the second resolver re-walked every package-cache directory and
+        // re-read every .app manifest out of its zip, carrying nothing over.
+        //
+        // Lazy, not eager: the only consumer is inside the `needCompile && alCacheDir != null`
+        // cache gate, so a --no-cache run (or one where nothing needs compiling) must not pay
+        // for it at all. Evaluated at most once per bundle, which is what the hoist was for.
+        //
+        // The stage is an AppStage and lives INSIDE the factory deliberately. PhaseLog.BeginApp
+        // is called above, so the first evaluation happens inside an app group, and a bundle
+        // Stage there would overlap it — which #1828's stage sum reports as manufactured
+        // overhead, eating the "unattributed" line. Inside the factory it is also recorded
+        // exactly once, on the app that actually opens the gate, instead of a zero-length row
+        // on every later app.
+        var orderedDepIds = new Lazy<IReadOnlyList<string>>(() =>
+        {
+            using (AlRunner.Infrastructure.PhaseLog.AppStage("ordered-dep-ids"))
+                return GetOrderedDepIds(bucketRoot, packageCacheDirs, bundleAbs);
+        });
 
         int agIdx = 0;
         foreach (var appGroup in appGroups)
@@ -2615,14 +2669,31 @@ foreach (var bundle in bundles)
         string? cachePath = null;
         string? sidecarPath = null;
         string? querySidecarPath = null;
-        // A bundle declaring an AL query also needs its query-symbols sidecar: the
-        // MetaQuery design is built from the compilation's SymbolReference, which only
-        // emit produces. Serving a HIT without it leaves NCLMetaQuery null and every
-        // query Find NREs inside BC's NavQuery.ValidateTablesNotVirtual.
-        bool bundleDeclaresQuery = BcCompiler.BundleDeclaresQuery(allPaths);
+        // A bundle declaring an AL query also needs its query-symbols sidecar: the MetaQuery
+        // design is built from the compilation's SymbolReference, which only emit produces.
+        // Serving a HIT without it leaves NCLMetaQuery null and every query Find NREs inside
+        // BC's NavQuery.ValidateTablesNotVirtual.
+        //
+        // Declared here but PROBED only inside the gate below (#2557). The probe reads AL text
+        // to answer: a bundle that declares a query answers on its first file, but one that
+        // does not — the common case — reads the whole tree to prove the negative. Probing
+        // unconditionally meant --no-cache runs and needCompile == false app groups paid for a
+        // whole-tree scan and then discarded the answer.
+        //
+        // It cannot simply MOVE into the gate: the second consumer is in the separate
+        // `needCompile && cachedBytes != null` block further down, outside the gate's braces.
+        // Defaulting to false is safe there because cachedBytes is only ever assigned non-null
+        // inside the gate, so reaching that consumer implies the gate ran and assigned this.
+        bool bundleDeclaresQuery = false;
         if (needCompile && alCacheDir != null)
         {
-            cacheKey = ComputeAlCacheKey(allPaths, moduleName, ordered: GetOrderedDepIds(bucketRoot, packageCacheDirs, bundleAbs), appRootDir: appGroup.SuiteDir);
+            // Instrumented because it was invisible: a whole-tree read that only showed up as
+            // the report's "unattributed" remainder. An AppStage, not a Stage — BeginApp is
+            // already open here, and a bundle stage overlapping an app group is what #1828's
+            // stage sum reports as manufactured overhead.
+            using (AlRunner.Infrastructure.PhaseLog.AppStage("query-decl-probe"))
+                bundleDeclaresQuery = BcCompiler.BundleDeclaresQuery(allPaths);
+            cacheKey = ComputeAlCacheKey(allPaths, moduleName, ordered: orderedDepIds.Value, appRootDir: appGroup.SuiteDir);
             cachePath = Path.Combine(alCacheDir, cacheKey + ".dll");
             sidecarPath = Path.Combine(alCacheDir, cacheKey + AlRunner.Infrastructure.AlCacheSidecars.EnumRegistrySuffix);
             querySidecarPath = Path.Combine(alCacheDir, cacheKey + AlRunner.Infrastructure.AlCacheSidecars.QuerySymbolsSuffix);
@@ -3603,6 +3674,64 @@ else
 watchCycleIndex++; // the cycle that just finished is no longer "the first cycle"
 } // end while(true) watch loop
 
+// #2719: is this attempt about to hand off to a fresh process? Decided here, ahead of every
+// output, rather than at the resume branch far below, because two outputs must not speak for an
+// attempt that is not the run's last word: --output-json (two attempts each printing one left
+// TWO documents concatenated on stdout, which is not parseable at all — json.loads fails
+// outright, it does not merely read the wrong half) and the count-baseline check (a slice can
+// never match a whole-suite baseline, so it reported a DROP on every resumed run).
+var willResume = resumeAborts > 0
+    && AlRunner.Infrastructure.AbortResumePlan.MakesProgress(allAbortReasons, excludeTests);
+
+// ── The whole run, not this attempt's slice (issue #2719) ───────────────────────────
+// After a watchdog resume this process ran only the codeunits no earlier attempt reached, so
+// `results` is a SLICE. The printed summary and --output-junit already reassemble the run
+// through their own carry channels (--merge-counts, #2280/#2716); these are the three outputs
+// that did not, and each reported the slice as if it were the run:
+//
+//   --output-json      tests[], its counters, AND its own exitCode field
+//   --out PATH         the failure-classification file
+//   --count-baseline   the number compared against the baseline
+//
+// Deliberately a SEPARATE list rather than appending onto `results`: PrintSummary and
+// JUnitReport.WriteJUnit fold the carried attempts in themselves, so a merged `results` would
+// count every carried case twice, once in each shape. Empty carry list => the same object,
+// so a run that never resumed is bit-for-bit unchanged.
+// #2824: a parent that resumed into this process handed us its carry directory — it rewrote the
+// sidecar to name our pid so its own death could not take the files with it. Take responsibility
+// for deleting it at our exit, so the handoff does not turn into a leak. Done HERE rather than at
+// argument-parsing time because the parent rewrites the sidecar AFTER Process.Start, so at parse
+// time it may still name the parent; by the time the run is over it never does.
+//
+// AdoptIfHandedToThisProcess adopts ONLY when the sidecar already names this process, which is
+// what makes it safe to call on the directory of an arbitrary --merge-counts path: a file the
+// caller passed by hand has no such sidecar, and this process must not delete a directory of
+// theirs at exit.
+foreach (var carriedFile in mergeCountsFiles.Concat(mergeResultsFiles))
+{
+    if (string.IsNullOrEmpty(carriedFile)) continue;
+    var carriedDir = Path.GetDirectoryName(Path.GetFullPath(carriedFile));
+    if (!string.IsNullOrEmpty(carriedDir))
+        AlRunner.Infrastructure.ScratchDirs.AdoptIfHandedToThisProcess(carriedDir);
+}
+
+var carriedResults = AlRunner.Infrastructure.ResumeCarry.Read(mergeResultsFiles, out _);
+
+// #2747: every attempt this run was PROMISED must actually be here. Both carry readers shrug at
+// a file they cannot use — right for a corrupt one, wrong for a file that is simply GONE,
+// because the carry directory is owned by the PARENT attempt, which then waits while the child
+// runs. Kill the parent alone (SIGTERM runs its ProcessExit and deletes the directory; SIGKILL
+// leaves an owner that is dead, so the next runner start sweeps it correctly) and the child
+// finishes, finds nothing, and reports a SMALLER run as a clean one. Audited in ONE place for
+// BOTH channels, because a report is complete or it is not — it cannot be half-trusted.
+var carryLosses = AlRunner.Infrastructure.CarriedAttemptFiles.Audit(mergeCountsFiles, mergeResultsFiles);
+var carryIncomplete = carryLosses.Count > 0;
+if (carryIncomplete)
+    Console.Error.WriteLine(AlRunner.Infrastructure.CarriedAttemptFiles.Describe(carryLosses));
+var allResults = carriedResults.Count == 0
+    ? results
+    : carriedResults.Concat(results).ToList();
+
 // ── Count-baseline check (issue #1880) ──────────────────────────────────────────────
 // Runs once, after every bundle has finished, against the FULL `results` list — same
 // timing as the exit-code computation right below, which it feeds into. See
@@ -3617,7 +3746,18 @@ if (countBaseline != null)
     // runs the SAME al-language root with --test "Codeunit6020"), so a baseline sized
     // for the full suite must not fire here. Loud, not silent: anyone who passes both
     // flags together sees exactly why the guard stood down.
-    if (testFilter != null)
+    if (willResume)
+    {
+        // #2719: this attempt ran a slice and is about to hand the rest to a fresh process, so
+        // comparing it against a whole-suite baseline can only ever report a phantom DROP —
+        // "a bundle may have silently stopped being discovered" is exactly the wrong story to
+        // tell about a watchdog resume. The final attempt carries every earlier attempt's
+        // results and does the real check.
+        Console.Error.WriteLine(
+            "[count-baseline] skipped: this attempt is resuming in a fresh process; the final "
+            + "attempt checks the whole run.");
+    }
+    else if (testFilter != null)
     {
         Console.Error.WriteLine(
             $"[count-baseline] skipped: --test '{testFilter}' narrows scope intentionally.");
@@ -3625,7 +3765,7 @@ if (countBaseline != null)
     else
     {
         var actualBySuite = new Dictionary<string, AlRunner.Infrastructure.SuiteCountActual>();
-        foreach (var b in results)
+        foreach (var b in allResults)   // #2719: the run, not this attempt's slice
         {
             var suiteKey = Path.GetFileName(b.BucketPath.TrimEnd(
                 Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
@@ -3692,7 +3832,11 @@ if (countBaseline != null)
 int computedExitCode = 0;
 {
     int failed = 0, errored = 0, compileFail = 0, execFail = 0;
-    foreach (var b in results)
+    // #2719: allResults, so a resumed run's exitCode field reports the RUN. Before this the
+    // final attempt computed 0 from its own all-passing slice and printed "exitCode": 0 into
+    // --output-json, while AbortResume.Rerun forced the process to exit 1 — the shell said
+    // failed and the JSON said success, each self-consistent from its own vantage point.
+    foreach (var b in allResults)
     {
         if (b.Stage == BucketStage.CompileFailed) { compileFail++; continue; }
         if (b.Stage == BucketStage.ExecuteFailed) { execFail++; continue; }
@@ -3711,14 +3855,26 @@ int computedExitCode = 0;
         }
     }
     computedExitCode = compileFail > 0 ? 3       // compile errors
-        : execFail > 0 ? 2                       // bucket-level execution error
+        // #2747: a carried attempt was promised and is not here, so whatever this run reports
+        // omits it. Ranked above a plain test failure because it is not a statement about the
+        // AL at all — it says the REPORT cannot be trusted, which a consumer must not read as
+        // "some tests failed". Below a compile failure, which is the more fundamental problem.
+        : (execFail > 0 || carryIncomplete) ? 2  // bucket-level execution error, or a lost attempt
         : (failed + errored > 0 ? 1               // at least one test failed
         : (countBaselineMismatch ? 4 : 0));      // #1880: suite's count didn't exactly match its baseline
 }
 
-if (outputJson)
+if (outputJson && willResume)
 {
-    var json = Reporter.SerializeJsonOutput(results, computedExitCode);
+    // The final attempt prints the whole run. If Rerun then fails to START that attempt it
+    // returns non-zero having printed none, so a consumer gets NO json rather than a wrong one
+    // — louder, and the direction to fail in.
+    Console.Error.WriteLine(
+        "resume: --output-json suppressed for this attempt; the final attempt prints the whole run.");
+}
+else if (outputJson)
+{
+    var json = Reporter.SerializeJsonOutput(allResults, computedExitCode);
     // Restore the real stdout (captured above) so this is the ONLY thing ever
     // written to it — every banner/progress line up to this point went to stderr
     // instead. See the redirect right after arg parsing for why.
@@ -3740,8 +3896,7 @@ else
 // hits a different hang. A resumed attempt re-runs the bundle from the start, so its result
 // REPLACES this one rather than needing to be merged into it; the excluded codeunits are named
 // so the total is not mistaken for a complete one.
-if (resumeAborts > 0
-    && AlRunner.Infrastructure.AbortResumePlan.MakesProgress(allAbortReasons, excludeTests))
+if (willResume)
 {
     // Exclude every codeunit already ATTEMPTED, not just the hung one, so the retry runs only
     // work no attempt has reached. Re-running from the start made a bundle pay for its whole
@@ -3766,7 +3921,20 @@ if (resumeAborts > 0
     var carry = new List<string>(mergeCountsFiles);
     if (carryPath != null) carry.Add(carryPath);
 
-    return AlRunner.Infrastructure.AbortResume.Rerun(args, nextExclusions, resumeAborts - 1, carry);
+    // #2719: the same attempt, in full. A JUnit <testcase> has a name and a status; it has no
+    // Expectation, and Expectation is what decides whether a failure is a real `fail` or a
+    // pass-known-gap / pass-oos / pass-divergence. Rebuilding a carried case from the XML would
+    // hand --out a case with no Expectation, which classifies as an UNEXPECTED failure — turning
+    // a silently missing error into a confidently wrong one. So the attempt writes what it had.
+    // THIS attempt's results only, for the same reason the JUnit carry file holds one attempt.
+    var carryResultsPath = Path.Combine(carryDir, "attempt-results.json");
+    try { AlRunner.Infrastructure.ResumeCarry.Write(carryResultsPath, results); }
+    catch { carryResultsPath = null!; }
+    var carryResults = new List<string>(mergeResultsFiles);
+    if (carryResultsPath != null) carryResults.Add(carryResultsPath);
+
+    return AlRunner.Infrastructure.AbortResume.Rerun(
+        args, nextExclusions, resumeAborts - 1, carry, carryResults, carryDir);
 }
 if (tddMode)
 {
@@ -3794,7 +3962,7 @@ if (tddMode)
 }
 if (outPath != null)
 {
-    Reporter.WriteClassification(results, outPath);
+    Reporter.WriteClassification(allResults, outPath);   // #2719: the run, not this attempt's slice
     // In --output-json mode this must not land on stdout (it already printed the
     // JSON above and restored the real stdout writer) — route to stderr there.
     (outputJson ? Console.Error : Console.Out).WriteLine($"Classification → {outPath}");
@@ -3917,6 +4085,18 @@ return strictExitCode ? computedExitCode : 0;
                 sourcePaths = deduped.Roots.ToArray();
             }
         }
+
+        // #2614: run dependencies before the bundles that consume them, whatever order the caller
+        // listed. Everything downstream — the pre-passes, the per-bundle peek, and the execution
+        // loop — uses this one order, so the symbols a bundle compiles against and the assembly it
+        // dispatches into come from the same point in the request. See
+        // SortBundlesInDependencyOrder for why the compile-time pre-pass alone did not close this.
+        //
+        // requestOrder keeps the caller's listing so the RESULTS come back in it (below), leaving
+        // the streamed `test` line order as the only visible change — documented in
+        // docs/server-mode.md.
+        var requestOrder = sourcePaths;
+        sourcePaths = SortBundlesInDependencyOrder(sourcePaths);
 
         var bundleList = sourcePaths.ToList();
         var workspaceScratch = new List<string>();
@@ -4139,7 +4319,75 @@ return strictExitCode ? computedExitCode : 0;
             AlRunner.Infrastructure.PhaseLog.EndBundle(emitElapsed, compileElapsed, runElapsed);
             results.Add(result);
         }
+
+        // #2614: execution ran in dependency order; hand the results back in the order the caller
+        // listed the paths. A ServerRunResult carries no bundle path, so the mapping is positional
+        // — sourcePaths[k] produced results[k], and requestOrder says where that belongs. Only
+        // reached when the sort actually moved something, so the documented order pays nothing.
+        if (!ReferenceEquals(sourcePaths, requestOrder) && results.Count == sourcePaths.Length)
+        {
+            var byPath = new Dictionary<string, ServerRunResult>(StringComparer.OrdinalIgnoreCase);
+            for (var k = 0; k < sourcePaths.Length; k++) byPath[Path.GetFullPath(sourcePaths[k])] = results[k];
+            var reordered = new List<ServerRunResult>(results.Count);
+            foreach (var path in requestOrder)
+                if (byPath.TryGetValue(Path.GetFullPath(path), out var r)) reordered.Add(r);
+            // Only adopt a complete remapping: a duplicate or unresolvable path must not silently
+            // drop a bundle's results from the response.
+            if (reordered.Count == results.Count) return reordered;
+        }
         return results;
+    }
+
+    /// <summary>
+    /// Each bundle's declared identity, keyed by its full path, reading <c>app.json</c> from the
+    /// bundle root and falling back to its bucket root — the same read
+    /// <see cref="RunLayeredPrePass"/> does to decide which bundles are "impls". A bundle with no
+    /// readable <c>app.json</c> is simply absent from the result; every caller treats "no identity"
+    /// as "cannot be related to anything", never as an error.
+    ///
+    /// <para>Extracted so <see cref="ChangedLaterDependencyBundles"/> and
+    /// <see cref="SortBundlesInDependencyOrder"/> cannot drift on what counts as a bundle's
+    /// identity — they answer two halves of one question and a second copy of this loop is exactly
+    /// the shape #2478 turned into a silent divergence.</para>
+    /// </summary>
+    static Dictionary<string, AlRunner.Infrastructure.BundleIdentity> ReadBundleIdentities(
+        IEnumerable<string> sourcePaths)
+    {
+        var identities = new Dictionary<string, AlRunner.Infrastructure.BundleIdentity>(StringComparer.OrdinalIgnoreCase);
+        foreach (var bundle in sourcePaths)
+        {
+            var abs = Path.GetFullPath(bundle);
+            var appJson = Path.Combine(abs, "app.json");
+            if (!File.Exists(appJson))
+            {
+                var root = FindBucketRoot(abs);
+                if (root != null) appJson = Path.Combine(root, "app.json");
+            }
+            if (!File.Exists(appJson)) continue;
+            var id = AlRunner.Infrastructure.InProcessAppPackager.ReadIdentity(appJson);
+            if (id != null) identities[abs] = id;
+        }
+        return identities;
+    }
+
+    /// <summary>
+    /// <paramref name="sourcePaths"/> reordered so every bundle an in-request bundle depends on is
+    /// executed BEFORE it, whatever order the caller listed them in (#2614). The graph work — and
+    /// the reasoning, the stability contract and the cycle handling — lives in
+    /// <see cref="AlRunner.Infrastructure.BundleDependencyOrder"/>, which is unit-tested directly;
+    /// this is only the filesystem half that reads each bundle's declared identity.
+    ///
+    /// <para>Returns the input array itself when nothing needs to move, which the caller relies on
+    /// (by reference) to skip the paired result-reordering.</para>
+    /// </summary>
+    static string[] SortBundlesInDependencyOrder(string[] sourcePaths)
+    {
+        if (sourcePaths.Length < 2) return sourcePaths;
+        var identities = ReadBundleIdentities(sourcePaths);
+        var sorted = AlRunner.Infrastructure.BundleDependencyOrder.Sort(
+            sourcePaths,
+            path => identities.TryGetValue(Path.GetFullPath(path), out var id) ? id : null);
+        return ReferenceEquals(sorted, sourcePaths) ? sourcePaths : sorted.ToArray();
     }
 
     /// <summary>
@@ -4155,8 +4403,13 @@ return strictExitCode ? computedExitCode : 0;
     /// <para>Both inputs are already paid for: the dependency relation is the same app.json
     /// identity read <see cref="RunLayeredPrePass"/> does, and "did it change" is the per-bundle
     /// result of the peek <c>RunAllBundlesForServer</c> already performs for #2492's union.
-    /// Nothing here compiles anything, and execution order is deliberately left alone — reordering
-    /// would change the order test events stream out.</para>
+    /// Nothing here compiles anything.</para>
+    ///
+    /// <para>#2614 has since made execution order itself dependency-ordered
+    /// (<see cref="AlRunner.Infrastructure.BundleDependencyOrder"/>), so for any request this sort
+    /// can fully order, no dependency is listed later and this returns empty. It is kept rather
+    /// than deleted because that sort cannot order a dependency CYCLE, and this guard still
+    /// applies to whatever ordering comes out of one.</para>
     ///
     /// <para><b>Fail-closed on an unreadable answer.</b> A dependency whose peek could not answer
     /// (no baseline yet, app.json changed, an unclassifiable file — <c>PeekChangedObjects</c>
@@ -4174,22 +4427,8 @@ return strictExitCode ? computedExitCode : 0;
         var forced = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         if (sourcePaths.Length < 2 || peekedChangedCountByBundle.Count == 0) return forced;
 
-        var order = new List<string>();
-        var identities = new Dictionary<string, AlRunner.Infrastructure.BundleIdentity>(StringComparer.OrdinalIgnoreCase);
-        foreach (var bundle in sourcePaths)
-        {
-            var abs = Path.GetFullPath(bundle);
-            order.Add(abs);
-            var appJson = Path.Combine(abs, "app.json");
-            if (!File.Exists(appJson))
-            {
-                var root = FindBucketRoot(abs);
-                if (root != null) appJson = Path.Combine(root, "app.json");
-            }
-            if (!File.Exists(appJson)) continue;
-            var id = AlRunner.Infrastructure.InProcessAppPackager.ReadIdentity(appJson);
-            if (id != null) identities[abs] = id;
-        }
+        var order = sourcePaths.Select(Path.GetFullPath).ToList();
+        var identities = ReadBundleIdentities(order);
         if (identities.Count < 2) return forced;
 
         bool ChangedOrUnknown(string abs) =>
@@ -4201,11 +4440,8 @@ return strictExitCode ? computedExitCode : 0;
             for (int j = i + 1; j < order.Count; j++)
             {
                 if (!identities.TryGetValue(order[j], out var later)) continue;
-                bool dependsOnLater = mine.Dependencies.Any(dep =>
-                    (dep.AppId != Guid.Empty && dep.AppId == later.AppId)
-                    || (string.Equals(dep.Name, later.Name, StringComparison.OrdinalIgnoreCase)
-                        && string.Equals(dep.Publisher, later.Publisher, StringComparison.OrdinalIgnoreCase)));
-                if (dependsOnLater && ChangedOrUnknown(order[j]))
+                if (AlRunner.Infrastructure.BundleDependencyOrder.DependsOn(mine, later)
+                    && ChangedOrUnknown(order[j]))
                 {
                     forced.Add(order[i]);
                     break;
@@ -4410,10 +4646,17 @@ return strictExitCode ? computedExitCode : 0;
             // the request, exactly like an AL-output cache hit.
             bool cached = reusedAsm != null;
             string? cacheKey = null, cachePath = null, sidecarPath = null, querySidecarPath = null;
-            // See AlCacheSidecars: a query bundle without its query-symbols sidecar must MISS.
-            bool bundleDeclaresQuery = BcCompiler.BundleDeclaresQuery(allPaths);
             if (reusedAsm == null && alCacheDir != null)
             {
+                // See AlCacheSidecars: a query bundle without its query-symbols sidecar must
+                // MISS. Computed INSIDE the gate (#2557), same reasoning as the CLI path: both
+                // consumers are in here, and the probe reads every .al file in the tree to
+                // answer "no". Outside the gate, a cross-bundle module reuse (reusedAsm != null)
+                // — the case --server exists to make fast — paid for a whole-tree scan whose
+                // answer it then threw away.
+                bool bundleDeclaresQuery;
+                using (AlRunner.Infrastructure.PhaseLog.AppStage("query-decl-probe"))
+                    bundleDeclaresQuery = BcCompiler.BundleDeclaresQuery(allPaths);
                 cacheKey = ComputeAlCacheKey(allPaths, moduleName,
                     ordered: GetOrderedDepIds(bucketRoot, effectivePkgDirs), appRootDir: bucketRoot);
                 cachePath = Path.Combine(alCacheDir, cacheKey + ".dll");

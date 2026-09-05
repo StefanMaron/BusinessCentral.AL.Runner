@@ -198,6 +198,112 @@ assert_exit "ordinary PR with a clean Closes line and unrelated prose passes" 0 
 
 This adds a script and a test. See CONTRIBUTING.md for details."
 
+# --- #2491: the commit-message route -----------------------------------------
+#
+# The PR body is not the only text GitHub reads. This repository's squash
+# setting is squash_merge_commit_message=COMMIT_MESSAGES, so the branch's
+# commit messages ARE the merge commit's body. PR #2486 proved it: its
+# declared closing references (via closingIssuesReferences) were #2478 and
+# #2480, a COMMIT MESSAGE said "It does not close #2479", and merge commit
+# 28cdcf65 closed #2479. The body-only check passed that PR.
+
+assert_exit_commits() {
+  local desc="$1" expected_rc="$2" title="$3" body="$4" commits="$5"
+  local rc
+  PR_TITLE="$title" PR_BODY="$body" PR_COMMITS="$commits" "$SCRIPT" >/dev/null 2>&1
+  rc=$?
+  if [ "$rc" = "$expected_rc" ]; then
+    echo "ok   - $desc"
+    pass=$((pass + 1))
+  else
+    echo "FAIL - $desc: expected exit $expected_rc, got $rc"
+    fail=$((fail + 1))
+  fi
+}
+
+# The reproducer, in the shape it actually occurred.
+assert_exit_commits "the #2486 shape: a commit message saying it does NOT close an undeclared issue fails" 1 \
+  "fix: something" \
+  "Closes #2478
+Closes #2480" \
+  "fix: the environment-key half
+
+Scope note: this addresses the environment-key half of #2479. It does not close #2479
+ -- the issue's own repro still shows the baseline going missing."
+
+assert_exit_commits "a bare closing keyword in a commit message for an undeclared issue fails" 1 \
+  "fix: something" "Closes #123" "fix: something else
+
+Fixes #456"
+
+# Negative direction, and the one that keeps this from being a blanket ban on
+# the word: a commit message may restate a target the body already declared.
+assert_exit_commits "a commit message restating a DECLARED target passes" 0 \
+  "fix: something" "Closes #123" "fix: something
+
+Closes #123"
+
+assert_exit_commits "a commit message referring to an issue WITHOUT a closing keyword passes" 0 \
+  "fix: something" "Closes #123" "fix: something
+
+Investigated alongside #456; see that issue for the remaining half."
+
+assert_exit_commits "an ordinary multi-commit branch with clean messages passes" 0 \
+  "fix: something" "Closes #123" "fix: first commit
+
+test: add coverage for the first commit
+
+docs: note the behaviour change"
+
+# Additive: the script must behave identically when PR_COMMITS is unset, so a
+# caller that predates this change is not broken by it.
+assert_exit "PR_COMMITS unset still passes a clean body" 0 "fix: something" "Closes #123"
+assert_exit "PR_COMMITS unset still fails a stray body reference" 1 "fix: something" \
+  "Closes #123
+
+This does not close #456."
+
+# --- #2646: the PR template must not answer the check on the author's behalf ---
+#
+# The template exists so the escape hatch is discoverable where the body is
+# written rather than only where CI fails. That puts its own example text into
+# every PR body, which is a trap in two directions, and BOTH were hit while
+# writing it:
+#
+#   * a literal "Closes #<a real number>" anywhere in the template -- including
+#     inside its HTML comment -- closes that issue on merge; and
+#   * a complete "No linked issue: <a reason>" line satisfies the escape hatch,
+#     so an author who edits nothing passes the check with no linked issue and
+#     no reason. That is strictly worse than the failure this template replaces.
+#
+# So the contract is: the UNEDITED template must FAIL, and each of the two
+# completed forms must PASS. These cases read the real file, so a future edit
+# that reintroduces either trap fails here rather than on someone's PR.
+
+TEMPLATE="$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)/.github/pull_request_template.md"
+
+if [ ! -f "$TEMPLATE" ]; then
+  echo "FAIL - .github/pull_request_template.md is missing (issue #2646 added it)"
+  fail=$((fail + 1))
+else
+  template_body="$(cat "$TEMPLATE")"
+
+  assert_exit "the UNEDITED PR template fails: neither form completed" 1 \
+    "fix: something" "$template_body"
+
+  assert_exit "the template with a real Closes number passes" 0 \
+    "fix: something" "$(printf '%s' "$template_body" | sed 's/^Closes #$/Closes #4242/' | sed '/^No linked issue:$/d')"
+
+  assert_exit "the template with the escape hatch completed passes" 0 \
+    "fix: something" "$(printf '%s' "$template_body" | sed '/^Closes #$/d' | sed 's/^No linked issue:$/No linked issue: submodule pin bump/')"
+
+  # The author who fills the reason but leaves the bare "Closes #" behind: a
+  # bare marker with no number is not a reference GitHub acts on, so this is
+  # the escape-hatch case and must pass rather than trip the stray check.
+  assert_exit "escape hatch completed with a bare 'Closes #' left behind passes" 0 \
+    "fix: something" "$(printf '%s' "$template_body" | sed 's/^No linked issue:$/No linked issue: docs typo/')"
+fi
+
 echo ""
 echo "$pass passed, $fail failed"
 if [ "$fail" -ne 0 ]; then

@@ -417,6 +417,13 @@ internal static partial class ProgramSupport
         w.WriteLine("                          automatically by --resume-aborts to carry earlier attempts");
         w.WriteLine("                          forward, and reported on its own summary line so a resumed");
         w.WriteLine("                          total is never mistaken for one clean run's.");
+        w.WriteLine("  --merge-results PATH    Fold a carried attempt's FULL results into --output-json, --out");
+        w.WriteLine("                          and --count-baseline; repeatable. Set automatically by");
+        w.WriteLine("                          --resume-aborts alongside --merge-counts, which covers the");
+        w.WriteLine("                          summary and --output-junit. Separate because a JUnit test");
+        w.WriteLine("                          case has no expectation classification, so a case rebuilt");
+        w.WriteLine("                          from one would read as an unexpected failure rather than as");
+        w.WriteLine("                          the pass-known-gap / pass-oos it was.");
         w.WriteLine("  --resume-aborts N       How many times a run may re-run itself in a fresh process");
         w.WriteLine("                          after a watchdog abort, each time excluding the codeunit");
         w.WriteLine("                          that hung, and every codeunit already attempted, so the");
@@ -425,8 +432,9 @@ internal static partial class ProgramSupport
         w.WriteLine("                          rest of its bundle and cannot be continued in-process (the");
         w.WriteLine("                          hung thread is never killed and keeps mutating shared");
         w.WriteLine("                          state), so a fresh process is the only safe way on. Earlier");
-        w.WriteLine("                          attempts\' totals are carried forward via --merge-counts, so");
-        w.WriteLine("                          the final summary covers the whole run; tests inside an");
+        w.WriteLine("                          attempts\' totals are carried forward via --merge-counts and");
+        w.WriteLine("                          their full results via --merge-results, so every output");
+        w.WriteLine("                          covers the whole run; tests inside an");
         w.WriteLine("                          excluded codeunit are not counted, and the run never reports");
         w.WriteLine("                          clean success because they did not run.");
         w.WriteLine("  --exclude-test PATTERN  Skip tests matching PATTERN; repeatable. PATTERN is a whole");

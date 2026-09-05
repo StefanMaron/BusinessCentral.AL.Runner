@@ -194,6 +194,10 @@ dispatch, and report/request-page variables support a limited standalone surface
   a handler that cancels leaves the report body unexecuted, and one that calls
   `TestRequestPage.SaveAsXml(parametersFile, dataSetFile)` gets the report's dataset written
   to that file (so `Codeunit "Library - Report Dataset"` can load it) instead of a layout.
+  A handler asking for a RENDERED artifact instead — `SaveAsExcel`, `SaveAsPdf`, `SaveAsWord`,
+  print, preview — is refused loudly on the rendering path, like every other rendering request
+  here; it is not answered with a dataset written into the file it named
+  ([#2887](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2887)).
   A handler can also read and write the request page's **controls**
   (`RequestPage.ShowAmountsInLCY.SetValue(true)`): a request-page control is bound to one of
   the report's own globals, and it resolves through BC's own `NavForm.SourceExpressions`
@@ -237,17 +241,38 @@ The runner executes in a single .NET process with no attached BC debugger. Debug
 
 `Debugger.Activate()`, `Debugger.Deactivate()`, and `Debugger.IsActive()` are supported — they are stripped or return `false`.
 
-### Task scheduler — synchronous dispatch
+### Task scheduler — no scheduler, and no inline substitute
 
-`TaskScheduler.CreateTask()` dispatches the target codeunit **synchronously, inline**,
-before returning — the same pattern as `StartSession`. The implications:
+**Tasks are never executed.** `TaskScheduler.CreateTask()` does not run the target codeunit —
+not in the background, and not inline either. [`docs/scope.md` §3.6](scope.md#jobs) is the
+authoritative description of this surface; the summary below only restates what was measured
+against it, so if the two ever disagree again, §3.6 and the Cecil layer win.
 
-- `TaskExists()` always returns `false` — the task already completed before the call returned.
-- `CancelTask()` and `SetTaskReady()` are no-ops — the task has already run.
-- `CanCreateTask()` returns `false` — there is no background job queue.
-- `NotBefore` and `CompanyName` parameters are accepted but ignored — the codeunit runs immediately in the current company context.
+The runner Cecil-rewrites `ALTaskScheduler.CanCreateTask` / `ALCanCreateTask` to return
+`false` and deliberately leaves `ALCreateTaskAsync` **unmodified**, so BC's own body raises
+BC's own exception. Measured on BC 28.1:
 
-AL that tests the *logic* around task creation (what codeunit runs, what state it produces) works here. AL that tests the *scheduling contract* (task still pending, NotBefore delay, cancellation before execution) cannot work here because there is no background scheduler.
+| AL call | What actually happens |
+|---|---|
+| `CanCreateTask()` | `false` |
+| `CreateTask()` | throws `You do not have permission to create or run scheduled tasks.` The target codeunit's `OnRun` does **not** run. |
+| `TaskExists()` | throws a `NullReferenceException` — the real body reaches for a SQL connection that does not exist here. Tracked separately; it should refuse loudly rather than NRE. |
+| `CancelTask()`, `SetTaskReady()` | complete without error, having done nothing (there is no task to act on). |
+
+So: guarded AL (`if TaskScheduler.CanCreateTask() then …`) skips task creation cleanly and is
+the pattern that works here. Unguarded AL that calls `CreateTask()` directly gets BC's loud
+refusal, which is deliberate — an earlier version of the runner rewrote `ALCreateTaskAsync` to
+return `Guid.Empty`, and that was reverted (#1733, #1739) as a silent fake suppressing BC's
+own guard.
+
+AL that tests the *scheduling contract* — a task still pending, a `NotBefore` delay,
+cancellation before execution — cannot work here, because nothing is scheduled and nothing
+runs. AL that needs the target codeunit's logic to actually execute should call it directly
+(`Codeunit.Run`) rather than through `CreateTask`.
+
+> This section previously described `CreateTask()` as dispatching the codeunit
+> "synchronously, inline". That described a design that was reverted, and it was wrong in both
+> directions: no codeunit runs, and `TaskExists()` does not return `false`. See #2565.
 
 ### No DotNet interop
 
@@ -357,6 +382,52 @@ If your AL under test depends on real SA behaviour to mean anything, the support
 2. **Test-only AL codeunit shadowing the SA call.** Add an AL codeunit in your `test/` directory with the same object ID and a hand-rolled implementation that returns the values your test expects. The runner will use your codeunit because it is in the compile unit; in real BC, your production code never sees it.
 
 Concrete example — `Image` codeunit (System Application). A test that asserts on image dimensions cannot rely on the runner's blank-shell `Image.GetWidth()` (which returns `0`). The fix is to write a small stub in your test project that parses a known fixture image, not to ask the runner to ship an `Image` implementation. If the AL pattern under test is widespread enough that everyone needs the same stub, file a runner-gap issue and we can discuss whether a shared stub belongs in `AlRunner/stubs/` (the bar is high — it must be test-automation infrastructure, not business logic).
+
+### Document-service providers (`DOCUMENTSERVICEMOCK`)
+
+Base Application codeunit 9510 `"Document Service Management"` resolves a provider through
+`Microsoft.Dynamics.Nav.DocumentService.DocumentServiceFactory.CreateService`. That factory
+composes a MEF `DirectoryCatalog` over the directory holding
+`Microsoft.Dynamics.Nav.DocumentService.dll`, using the file pattern
+`*.nav.*DocumentService*.dll`, and picks the export whose `IDocumentServiceMetadata.ServiceType`
+matches the requested type, compared case-insensitively.
+
+The only provider Microsoft ships in the public platform artifacts is
+`Microsoft.Dynamics.Nav.SharePointOnlineDocumentService.dll`. The two types Microsoft's own test
+codeunit 139101 `"Document Service Mgmt Test"` asks for — `DOCUMENTSERVICEMOCK` and
+`EMPTYDOCUMENTSERVICEMOCK` — live in internal test binaries. Measured across 25 cached artifacts
+from BC 26.0 through 28.4, the string `DOCUMENTSERVICEMOCK` appears in no shipped DLL.
+
+A test that requests one of those service types therefore fails, with BC's own message:
+
+```
+NavNCLDotNetInvokeException: A call to ...DocumentServiceFactory.CreateService failed with this
+message: <install-dir> The following document service provider could not be found: 'DOCUMENTSERVICEMOCK'.
+```
+
+That is the correct result, and the runner keeps it. It names the API, the missing provider and
+the directory that was searched. `tests/runner-extras/document-service-session-seed` checks it
+from AL, and `AlRunner.Tests/DocumentServiceProviderScopeGuardTests.cs` checks that the runner
+ships no provider of its own.
+
+**The runner will not supply a `DOCUMENTSERVICEMOCK` implementation.** Ten of the eleven failing
+tests in codeunit 139101 need one, and they divide into two halves: five need the handler to
+return a result the test then asserts on, and five assert an exact error string that Microsoft's
+AL marks `Comment = 'Text is copied from Mock assembly.'`. A runner-written handler would have to
+reproduce those strings out of the test codeunit that checks them, so those five would pass
+because the runner matched its own copy, not because it behaved the way Microsoft's mock behaves.
+That is the same problem that caused MockImage to be reverted in #1502.
+
+**Bring your own provider.** The extension point is public, so this needs no runner change:
+
+1. Build a .NET assembly whose file name matches `*.nav.*DocumentService*.dll`.
+2. Export a type implementing `IDocumentServiceHandler`, decorated
+   `[DocumentServiceMetadata("YOURTYPE")]`.
+3. Put it in the artifact directory alongside `Microsoft.Dynamics.Nav.DocumentService.dll`.
+4. Call `SetServiceType('YOURTYPE')` from your AL.
+
+The factory rescans that directory on every `CreateService` call, so the assembly is picked up
+without any further setup.
 
 ---
 
@@ -495,6 +566,79 @@ cannot move quietly.
 No `expect-divergence` entry accompanies this: that mode declares a corpus test that fails on
 the runner, and the corpus test for this table deliberately asserts only the six columns that
 do have a source. This section is the record.
+
+---
+
+### `Record "Object Metadata"` — the rows are synthesised and the payload columns read blank
+
+<a id="object-metadata-system-table"></a>
+
+`Object Metadata` (2000000071) is not a virtual table. It is one of the 43 ids in BC's own
+`SystemTables.ApplicationDatabaseTables`, a real SQL table in the *application* database that
+publishing writes into and Ncl's `ObjectMetadataStorage` reads back with plain SQL. Its content
+is the compiled metadata of the application-database system tables — not an object inventory;
+the table's own AL summary in `System.app` says the inventory role "is now taken by
+[Application Object Metadata]".
+
+The runner has no application database and publishes nothing into one, so:
+
+| Column | Real BC | al-runner |
+|---|---|---|
+| `Object Type`, `Object ID` | One row per application-database system table | Synthesised from BC's own `SystemTables.ApplicationDatabaseTables` |
+| `Emit Version` | The tier's compiler emit version | BC's own `NavEnvironment.Instance.EmitVersion` |
+| `Metadata`, `User Code`, `User AL Code`, `Symbol Reference` (BLOB) | The published metadata payload | Always **empty** |
+| `Metadata Version`, `Hash`, `Object Subtype`, `Has Subscribers`, `Schema Hash` | Derived from that payload | Always **`0` / empty / `false`** |
+
+**The row set is an upper bound derived from Microsoft's code, not a service-tier-confirmed
+equality.** The selecting predicate is the insert in
+`InPlacePublisher.UpsertIntoMetadataStorageImpl`: the System app's own table objects,
+intersected with `ApplicationDatabaseTables`, minus ids with static metadata XML (which is only
+2000001071, so a no-op here). Enumerating the `.al` sources inside `System.app`, all 43 ids have
+a table object on both BC 27.0 and 28.1. What is *not* established is whether the 11 ids
+declared `ObsoleteState = Removed` get rows on a real tier; if one ever reports fewer than 43,
+that is where the difference will be.
+
+An earlier version of this section said the runner and a real tier "cannot disagree about which
+ids belong". That was wrong, and worth recording as a mistake to avoid repeating: it rested on
+Microsoft's `CleanupObjectMetadataFromNonApplicationDatabaseTables` migration, whose
+`DELETE ... WHERE [Object Type] <> 1 OR [Object ID] NOT IN (...)` bounds the retained set from
+*above* and does not create a row for each id. A `DELETE` proves ⊆, never =.
+
+**No service tier has adjudicated any of this**, and not for want of trying. The BC-behaviour
+half belongs in the al-language corpus and cannot be expressed there: the corpus app targets
+Cloud, the table is `Scope = OnPrem`, so `Record "Object Metadata"` fails `AL0296` at compile,
+and the `RecordRef` route is refused at *runtime* by `NavRecordRef.CheckIsOpenAllowed` —
+`"You cannot open record 2000000071 from a RecordRef data type when you are using target Cloud."`
+2000000071 is in `SystemTables.InternalTables`, and the escape hatch
+`SystemTables.OnPremSystemTableRecordRefAllowed` is only `{ 2000000187, 2000000188 }`. Corpus PR
+[#153](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests/pull/153) is closed with
+that evidence, from
+[run 33968379281](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests/actions/runs/33968379281),
+where all 8 BC legs failed on that message before reaching a single assertion. Settling the
+remainder needs an OnPrem-target app in the corpus, or Microsoft's `Tests-SINGLESERVER` bucket,
+which is OnPrem-target and reads this table directly.
+
+The payload columns are a **declared divergence** — there is nothing to reproduce, because
+nothing was ever published. Per `.claude/rules/loud-failures.md` those nine columns should refuse
+by name rather than read blank; that needs a per-(table, field) blob-read seam on the shared
+`TempTableDataProvider` path which does not exist yet, and **issue #2771** tracks it. Throwing at
+row-build time instead is not an option — it would take out `FindSet` / `FindLast` / `Count` as
+well, which is the bug (#2519) this table's support closed.
+
+`tests/runner-extras/object-metadata-system-table` asserts the runner-side behaviour so it cannot
+move quietly. It deliberately uses only ids that are live table objects, so it does not encode
+the open `ObsoleteState = Removed` question as settled in either direction.
+
+**Synthesis never overwrites restored rows, and never guesses whether there are any.** Because
+2000000071 is a real SQL table, a `--test-data` backup can genuinely carry rows for it, so the
+on-demand loader runs first and the populator does nothing when the store already holds a row.
+Deciding that means reading BC's private `TempTableDataProvider.primaryTree` by reflection. A
+*null* tree is BC's own "no row was ever inserted" and synthesis proceeds; the field being
+**absent**, or holding something that cannot be enumerated, means BC's private layout moved and
+the runner cannot tell the two apart — so it refuses with an `out-of-scope:` failure naming the
+member rather than synthesising over rows it cannot see (#2786). That refusal is unreachable on
+every BC version the runner supports; it exists so a future one cannot silently disable the
+precedence rule.
 
 ---
 

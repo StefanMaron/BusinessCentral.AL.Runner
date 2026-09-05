@@ -35,7 +35,7 @@ internal static class ParallelFanOut
         // Both take a value and both must reach a worker: a shard that lost --exclude-test would
         // walk straight back into the hang the parent already excluded, and one that lost
         // --resume-aborts would fall back to the default budget and start its own resume chain.
-        "--exclude-test", "--resume-aborts", "--merge-counts",
+        "--exclude-test", "--resume-aborts", "--merge-counts", "--merge-results",
     };
 
     /// <summary>
@@ -170,6 +170,48 @@ internal static class ParallelFanOut
     public static int EmitTimeoutSecForWorker(int jobs)
         => DefaultEmitTimeoutSec * Math.Max(1, jobs);
 
+    /// <summary>The single-process default for the per-test watchdog (TestExecutor), in
+    /// seconds. Kept in step with TestExecutor.DefaultTestTimeoutSeconds by
+    /// ParallelFanOutTestTimeoutTests, which fails if the two drift apart.</summary>
+    public const int DefaultTestTimeoutSec = 60;
+
+    /// <summary>
+    /// Per-test watchdog timeout to hand one worker, in seconds (issue #2718).
+    ///
+    /// Same wall-clock-under-contention shape as the emit timeout above, but it needed
+    /// measuring rather than assuming, because the two have very different margins and the
+    /// cost of over-scaling is different in kind. The watchdog exists to stop a runaway AL
+    /// loop; stretching it delays catching a real hang, which the emit timeout's equivalent
+    /// does not.
+    ///
+    /// What the margin actually is, measured on a 12-core box (load ~4), single process,
+    /// slowest SINGLE test:
+    ///
+    ///   al-language corpus (2,464 tests):   0.78s  ->  77x headroom to 60s
+    ///   Tests-SMB, a BaseApp bucket (1,027): 4.36s  ->  13.8x headroom to 60s
+    ///
+    /// So the corpus cannot reach this watchdog through contention at any realistic job
+    /// count, and BaseApp is the surface that can. Against the ~7x stretch #2715 measured at
+    /// --jobs 12 (not the 12x a linear model predicts), 4.36s lands near 30s — about half the
+    /// budget. That is a real margin, so this is NOT the demonstrated failure the emit
+    /// timeout was; it is a plausible one with roughly 2x of room left.
+    ///
+    /// Two things close that gap and are why this scales anyway. The Tests-SMB figure is a
+    /// LOWER bound: it was measured without --test-data, where most tests fail early and stop
+    /// short of the work they exist to do (234 of 1,027 passed). And the cost of being wrong
+    /// is lopsided — a spurious abort takes out the rest of its codeunit AND every later
+    /// codeunit in the bundle (one such abort cost 6,097 tests across 189 codeunits), while
+    /// over-scaling costs only bounded extra wall on a genuine hang, which still gets caught
+    /// and still reports as a timeout.
+    ///
+    /// A CPU-time budget would be the precise fix and would also answer #2070's "the thread
+    /// is legitimately blocked, not runaway" — contention inflates wall time and leaves CPU
+    /// time alone, and a runaway loop burns CPU at full rate regardless of job count. That is
+    /// the larger change this defers, exactly as the emit timeout deferred it.
+    /// </summary>
+    public static int TestTimeoutSecForWorker(int jobs)
+        => DefaultTestTimeoutSec * Math.Max(1, jobs);
+
     /// <summary>
     /// Extra environment for a worker process: one GC heap, conserve memory, no background GC,
     /// and a shard-scaled emit timeout. The GC knobs together take about half off peak memory
@@ -192,7 +234,8 @@ internal static class ParallelFanOut
         string? userHeapCount = null,
         string? userConserveMemory = null,
         string? userGcConcurrent = null,
-        string? userEmitTimeoutSec = null)
+        string? userEmitTimeoutSec = null,
+        string? userTestTimeoutSec = null)
     {
         var env = new Dictionary<string, string>(StringComparer.Ordinal);
         if (string.IsNullOrEmpty(userHeapCount))
@@ -206,6 +249,11 @@ internal static class ParallelFanOut
             env["DOTNET_gcConcurrent"] = "0";
         if (string.IsNullOrEmpty(userEmitTimeoutSec))
             env["AL_RUNNER_EMIT_TIMEOUT_SEC"] = EmitTimeoutSecForWorker(jobs).ToString();
+        // #2718. Note this is the ENV var only: an explicit --test-timeout reaches the child
+        // as an argument and TestExecutor.TestTimeout() ranks that above the env var, so a
+        // caller who named a number still gets exactly that number.
+        if (string.IsNullOrEmpty(userTestTimeoutSec))
+            env["AL_RUNNER_TEST_TIMEOUT_SEC"] = TestTimeoutSecForWorker(jobs).ToString();
         return env;
     }
 
@@ -255,7 +303,8 @@ internal static class ParallelFanOut
                          Environment.GetEnvironmentVariable("DOTNET_GCHeapCount"),
                          Environment.GetEnvironmentVariable("DOTNET_GCConserveMemory"),
                          Environment.GetEnvironmentVariable("DOTNET_gcConcurrent"),
-                         Environment.GetEnvironmentVariable("AL_RUNNER_EMIT_TIMEOUT_SEC")))
+                         Environment.GetEnvironmentVariable("AL_RUNNER_EMIT_TIMEOUT_SEC"),
+                         Environment.GetEnvironmentVariable("AL_RUNNER_TEST_TIMEOUT_SEC")))
                 psi.Environment[kv.Key] = kv.Value;
             if (viaDotnet && asm != null) psi.ArgumentList.Add(asm);
             foreach (var a in childArgs) psi.ArgumentList.Add(a);
@@ -269,7 +318,7 @@ internal static class ParallelFanOut
         }
 
         var worst = 0;
-        long tests = 0, failures = 0, errors = 0, skipped = 0, notRun = 0;
+        long tests = 0, failures = 0, errors = 0, skipped = 0, notRun = 0, partial = 0;
         for (var i = 0; i < procs.Count; i++)
         {
             var (p, junit, so, se) = procs[i];
@@ -300,6 +349,14 @@ internal static class ParallelFanOut
             // silent loss for every execution failure.
             foreach (var header in NotRunHeaders)
                 notRun += CountOccurrences(stdout, header) + CountOccurrences(stderr, header);
+
+            // #2762: the sibling shape. A bundle that lost SOME suites and still produced tests
+            // is not "not run" — its survivors ARE in the totals above, so counting it as
+            // missing would overstate the loss. But it covers less than it declares, and the
+            // aggregate is the only summary a --jobs caller reads; without this the parent
+            // reprints a clean total for a run in which whole suites never compiled.
+            partial += CountOccurrences(stdout, PartialLossHeader)
+                     + CountOccurrences(stderr, PartialLossHeader);
         }
 
         Console.WriteLine();
@@ -314,6 +371,9 @@ internal static class ParallelFanOut
         if (notRun > 0)
             Console.WriteLine($"  NOT RUN:     {notRun} bundle(s) — COMPILE FAIL or EXEC FAIL in a " +
                                "shard above, excluded from the totals; see that shard's output for which one");
+        if (partial > 0)
+            Console.WriteLine($"  PARTIAL:     {partial} bundle(s) — SUITE ERRORS in a shard above: they " +
+                               "ran, but the tests the lost suites declare are MISSING from the totals");
         Console.WriteLine("=================================================================");
 
         ScratchDirs.Release(tempDir);
@@ -386,6 +446,12 @@ internal static class ParallelFanOut
     /// depends only on WHAT failed (#2779).</summary>
     internal static readonly IReadOnlyList<string> NotRunHeaders =
         new[] { " — COMPILE FAIL ===", " — EXEC FAIL ===" };
+
+    /// <summary>The per-bundle header Reporter.PrintPerTest writes for a bundle that RAN but
+    /// lost one or more suites (#2762). Deliberately NOT in <see cref="NotRunHeaders"/>: such a
+    /// bundle's surviving tests are counted in the JUnit totals, so it is under-reported, not
+    /// absent. Matched without the count so any number of lost suites is found.</summary>
+    internal const string PartialLossHeader = " — SUITE ERRORS (";
 
     /// <summary>How many times a bundle reported COMPILE FAIL or EXEC FAIL in a shard's captured
     /// output — used to tell the aggregate summary how many bundles are missing from its totals,

@@ -139,6 +139,22 @@ public static class WatchDashboard
                 continue;
             }
 
+            // #2762: a bucket that RAN but lost one or more suites. --watch has no exit code,
+            // so this tree and the footer below ARE the verdict — a lost suite that appears in
+            // neither reads as a clean cycle. Rendered as its own node rather than folded into
+            // COMPILE FAILED, because the bucket's surviving tests are real and still listed.
+            if (b.CompileErrors.Count > 0)
+            {
+                any = true;
+                var lostLabel = Markup.Escape(Path.GetFileName(b.BucketPath));
+                var lostNode = tree.AddNode(
+                    $"[blue]{lostLabel}[/]  [red]SUITE ERRORS ({b.CompileErrors.Count})[/]");
+                foreach (var err in b.CompileErrors)
+                    lostNode.AddNode($"[red]{Markup.Escape(err)}[/]");
+                lostNode.AddNode(
+                    "[red]the tests these suites declare are MISSING from this cycle, not passing[/]");
+            }
+
             // Group this bucket's tests by codeunit so each codeunit is one parent node.
             // (A bucket normally maps to one bundle but may contain several codeunits.)
             var byCodeunit = b.Tests
@@ -220,6 +236,11 @@ public static class WatchDashboard
     /// <summary>
     /// Roll-up counts. A compile- or exec-failed bucket has no per-test rows, so it
     /// counts as one error in the footer (consistent with the COMPILE/EXEC tree node).
+    /// #2762 extends the same convention to a bucket that RAN but lost suites: one error per
+    /// lost suite, matching its SUITE ERRORS tree node. Without it the footer of a cycle that
+    /// dropped a whole app read a clean `1P / 0F / 0E`, and under --watch there is no exit
+    /// code to disagree with it. This roll-up is dashboard-only — it never feeds the exit code
+    /// or Reporter's `Tests:` totals, which keep counting only tests that actually ran.
     /// </summary>
     internal static (int Pass, int Fail, int Err, int Total) Tally(IReadOnlyList<BucketResult> results)
     {
@@ -231,6 +252,7 @@ public static class WatchDashboard
                 err++;
                 continue;
             }
+            err += b.CompileErrors.Count;
             foreach (var t in b.Tests)
             {
                 switch (t.Outcome)

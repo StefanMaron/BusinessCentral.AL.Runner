@@ -1,0 +1,19 @@
+{
+  "id": "b2547aa1-4c31-4f0e-9f2a-7d5c1e9a3b47",
+  "name": "Runner Extras - HTTP Egress Boundary OOS",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Issue #2547: AL's HTTP mocking ([HttpClientHandler]) runs here, and REAL egress is refused at NavHttpClient.SendAsync(HttpRequestMessage) -- the one method every send funnels through after BC's mock dispatcher declines. target=OnPrem is required: the [HttpClientHandler] attribute has scope OnPrem, so a Cloud-target app cannot declare one (error AL0296).",
+  "description": "Two of these four tests are plain BC behaviour and would normally live upstream in the al-language corpus. They cannot: that app targets Cloud and the AL compiler rejects [HttpClientHandler] there with 'error AL0296: The application object or method HttpClientHandler has scope OnPrem and cannot be used for Cloud development' -- measured, after an earlier draft of the corpus PR carried them and would not compile. The half the corpus CAN express is upstream as codeunit 60318 (StefanMaron/BusinessCentral.AL.Language.Tests), and TestHttpClient.al covers the absent-policy case. The other two tests here are runner-specific by construction: what the runner does when BC hands a request onward to be sent for real (refuse by name, external-http), and the scoping control that this refusal must NOT fire under BlockOutboundRequests, where BC's own error is the faithful answer.",
+  "dependencies": [],
+  "idRanges": [
+    {
+      "from": 64550,
+      "to": 64559
+    }
+  ],
+  "platform": "27.0.0.0",
+  "application": "27.0.0.0",
+  "runtime": "15.0",
+  "target": "OnPrem"
+}

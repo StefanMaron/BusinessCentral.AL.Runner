@@ -121,6 +121,15 @@ public sealed class TestPageMinMaxValueDispatchTests : IDisposable
                 Row.Init();
                 Row.PK := 'R1';
                 Row.Insert();
+                // Commit the seed explicitly. SetValue_BelowMin_Decimal_RaisesFromTestPageOnly
+                // reads R1 back AFTER an asserterror, and an AL error unwinds the database to
+                // the last commit — so without this the seed is part of what gets rolled back
+                // and the read fails on a row that never should have been the subject of this
+                // test. It used to survive by accident: opening a TestPage marked a commit
+                // point in the runner, which real BC does not do (issue #2400). This test is
+                // about MinValue/MaxValue dispatch, so it says where its own commit boundary
+                // is instead of inheriting one from the page.
+                Commit();
             end;
 
             [Test]

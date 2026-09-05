@@ -72,7 +72,16 @@ public static partial class RecordPatches
                     // AL's default is false; only an explicit `= true` sets it.
                     SingleInstance: PropIs(props, "SingleInstance", "true"),
                     // AL's default is Normal when the codeunit declares no Subtype.
-                    Subtype: PropValue(props, "Subtype")?.ToString()?.Trim());
+                    Subtype: PropValue(props, "Subtype")?.ToString()?.Trim(),
+                    // #2547. BC's AL->C# emit does not put this property on the generated
+                    // type at all (measured: the emitted assembly carries NavCodeunitOptions
+                    // and NavTestAttribute, and no trace of TestHttpRequestPolicy), and
+                    // NCLMetaCodeunit.LoadOptionsFromAttributeOrInstance reads only TableId
+                    // and Subtype off NavCodeunitOptionsAttribute. On a real service tier it
+                    // arrives through the XML object metadata the runner never loads for AL it
+                    // compiles itself, so source is the only place it exists here.
+                    // Null means "declares none", which the consumer reads as AL's default.
+                    TestHttpRequestPolicy: PropValue(props, "TestHttpRequestPolicy")?.ToString()?.Trim());
                 continue;
             }
             _parsedObjectDecls[(kind, id)] = new ParsedAlObjectDecl(kind, id, name);
@@ -81,16 +90,28 @@ public static partial class RecordPatches
 
     /// <summary>Snapshot of every non-table/page/report/query/xmlport AL object declaration parsed from source.</summary>
     internal static IReadOnlyCollection<ParsedAlObjectDecl> ParsedObjectDecls => _parsedObjectDecls.Values;
+
+    /// <summary>
+    /// The codeunit's declared <c>TestHttpRequestPolicy</c> as AL text, or null when it declares
+    /// none (or was never parsed). #2547 — see the parse site above for why source is the only
+    /// place this property exists in this runner.
+    /// </summary>
+    internal static string? TryGetParsedTestHttpRequestPolicy(int codeunitId)
+        => _parsedObjectDecls.TryGetValue(("Codeunit", codeunitId), out var d)
+            ? (string.IsNullOrEmpty(d.TestHttpRequestPolicy) ? null : d.TestHttpRequestPolicy)
+            : null;
 }
 
 /// <summary>
 /// One AL object declaration parsed from source. <paramref name="TableNo"/>,
-/// <paramref name="SingleInstance"/> and <paramref name="Subtype"/> are only populated for
-/// <c>Codeunit</c>; every other kind leaves them at their defaults, which is also what a
-/// codeunit declaring none of them means. <paramref name="TableNo"/> is the reference AS
-/// WRITTEN (a bare id in text form, or a table name) — resolving it to an id needs the run's
-/// table inventory, which does not exist yet at parse time.
+/// <paramref name="SingleInstance"/>, <paramref name="Subtype"/> and
+/// <paramref name="TestHttpRequestPolicy"/> are only populated for <c>Codeunit</c>; every
+/// other kind leaves them at their defaults, which is also what a codeunit declaring none of
+/// them means. <paramref name="TableNo"/> is the reference AS WRITTEN (a bare id in text form,
+/// or a table name) — resolving it to an id needs the run's table inventory, which does not
+/// exist yet at parse time.
 /// </summary>
 internal record ParsedAlObjectDecl(
     string Kind, int Id, string Name,
-    string? TableNo = null, bool SingleInstance = false, string? Subtype = null);
+    string? TableNo = null, bool SingleInstance = false, string? Subtype = null,
+    string? TestHttpRequestPolicy = null);

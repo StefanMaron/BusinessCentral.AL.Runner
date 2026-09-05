@@ -112,4 +112,67 @@ public class ExpectationManifestSchemaTests : IDisposable
             }
         }
     }
+
+    /// <summary>
+    /// Every <c>Doc</c> an expect-divergence entry cites must resolve: the file has to exist, and
+    /// when the reference carries a <c>#anchor</c>, that anchor has to be defined in it.
+    ///
+    /// <para>#2565 is why this exists. A divergence entry's whole justification is "the decision
+    /// is recorded over there" — if the pointer rots, the entry becomes an assertion with nothing
+    /// behind it, and the manifest looks as authoritative as ever. The sibling check above only
+    /// asked that <c>Doc</c> starts with <c>docs/</c>, which a reference to a deleted file or a
+    /// renamed heading passes.</para>
+    ///
+    /// <para>This does not check that the prose is TRUE — nothing automated can — but it does
+    /// catch the mechanical half of the drift that has been expensive here repeatedly: three
+    /// separate cases in one day of a document asserting something the code had stopped doing.
+    /// Anchors are matched against both explicit <c>&lt;a id="..."&gt;</c> tags (what
+    /// <c>docs/scope.md</c> uses) and GitHub's heading-slug convention.</para>
+    /// </summary>
+    [Fact]
+    public void EveryDivergenceDocReference_ResolvesToARealFileAndAnchor()
+    {
+        var repoRoot = Path.GetFullPath(
+            Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
+        var manifest = ExpectationManifest.LoadFromDirectory(
+            Path.Combine(repoRoot, "tests", "expectations"));
+
+        var checkedAny = false;
+        foreach (var e in manifest.Entries)
+        {
+            if (e.Mode != ExpectationMode.ExpectDivergence || string.IsNullOrWhiteSpace(e.Doc)) continue;
+            checkedAny = true;
+
+            var hash = e.Doc!.IndexOf('#');
+            var relPath = hash < 0 ? e.Doc! : e.Doc![..hash];
+            var anchor = hash < 0 ? null : e.Doc![(hash + 1)..];
+
+            var full = Path.Combine(repoRoot, relPath);
+            Assert.True(File.Exists(full),
+                $"{e.SourceFile}: {e.CodeunitName}.{e.Method} cites Doc '{e.Doc}', but {relPath} does not exist.");
+
+            if (anchor == null) continue;
+            var text = File.ReadAllText(full);
+
+            // Explicit anchor tag, e.g. docs/scope.md's `<a id="jobs"></a>`.
+            if (text.Contains($"id=\"{anchor}\"", StringComparison.OrdinalIgnoreCase)) continue;
+
+            // Otherwise GitHub's heading slug: lower-cased, non-alphanumerics dropped, spaces to '-'.
+            var slugs = text.Split('\n')
+                .Where(l => l.TrimStart().StartsWith("#", StringComparison.Ordinal))
+                .Select(l => new string(l.TrimStart('#', ' ', '\t', '\r')
+                        .ToLowerInvariant()
+                        .Select(c => char.IsLetterOrDigit(c) ? c : (c == ' ' ? '-' : '\0'))
+                        .Where(c => c != '\0').ToArray()))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            Assert.True(slugs.Contains(anchor),
+                $"{e.SourceFile}: {e.CodeunitName}.{e.Method} cites Doc '{e.Doc}', but {relPath} defines no "
+                + $"anchor '{anchor}' — neither an <a id=\"...\"> tag nor a heading that slugs to it. "
+                + "A divergence entry whose pointer has rotted is an assertion with nothing behind it.");
+        }
+
+        Assert.True(checkedAny,
+            "no expect-divergence entry carried a Doc reference — this guard would pass vacuously.");
+    }
 }
