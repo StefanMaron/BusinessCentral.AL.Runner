@@ -2226,6 +2226,20 @@ foreach (var bundle in bundles)
                     $"FATAL: dependency compile failed — cannot continue. {ex.Message}");
                 return 1;
             }
+            catch (AlRunner.Infrastructure.BcAppSymbolReadException ex)
+            {
+                // #2712: a resolved dependency .app's SymbolReference.json could not be read
+                // to completion (reported: OutOfMemoryException parsing Base Application's
+                // under a 1 GB heap limit). Before this handler that failure fell through to
+                // the generic DEP-RESOLVE-FAIL catch below, which prints one line and keeps
+                // going — and the run then reported 212 instead of 259 passing with exit 0.
+                // Same posture as DependencyLoadException above: abort with exit 1 rather
+                // than produce plausible-looking wrong results.
+                if (stdoutSilenced) { Console.SetOut(savedOut); Console.SetError(savedErr); }
+                Console.Error.WriteLine(
+                    $"FATAL: dependency symbols unreadable — cannot continue. {ex.Message}");
+                return 1;
+            }
             catch (AlRunner.Infrastructure.MissingDependencyException ex)
             {
                 // A declared dependency is completely absent from every package-cache directory.
