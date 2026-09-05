@@ -146,7 +146,68 @@ public static partial class RecordPatches
             queryJson = _bcQuerySymbolJsonPaths.ToArray();
         }
         return ComputeBcAppSymbolStateKey(
-            apps.Select(p => (p, BcAppSymbolCache.ComputeAppContentHash(p))), queryJson);
+            apps.Select(p => (p, DescribeParsedSymbolState(p))), queryJson);
+    }
+
+    /// <summary>
+    /// What this run actually PARSED out of one .app: its content hash, plus the shape of the
+    /// parse result (table count, table-extension count).
+    ///
+    /// <para><b>Why the content hash alone is not enough — a correction to #2753.</b> #2753 keyed
+    /// the install-baseline on the registered .app set by (path, content hash), on the reasoning
+    /// that identical bytes mean identical symbols. That is false for the one mechanism #2710's
+    /// field incident most likely ran through. #2712 is a measured case of the SAME bytes parsing
+    /// to a DIFFERENT result: an allocation failure part-way through Base Application's
+    /// SymbolReference.json was swallowed and the partial index — 90 of 96 table extensions
+    /// missing — was cached in memory while the process carried on. The install triggers then
+    /// wrote their rows through that degraded metadata, and the snapshot was persisted complete
+    /// and valid under a key that, hashing only the bytes, was byte-identical to a healthy run's.
+    /// Every later run read the wrong snapshot back. That is the cross-process poisoning #2710
+    /// reported, and #2753 did not close it.</para>
+    ///
+    /// <para>#2722 closed the known producer by making a partial table-extension parse fatal, so
+    /// today this is defence in depth rather than the only guard. It is worth having because
+    /// #2722 protects one parse surface, while this makes ANY future divergence between "these
+    /// bytes" and "what we parsed out of them" produce a different key instead of a silent
+    /// cross-process wrong answer — which is the whole lesson of #2710.</para>
+    ///
+    /// <para>Both reads are ordinarily process-cache hits, not fresh work: <c>AddBcAppPath</c>
+    /// already read both surfaces to completion at registration (#2722's ordering), so by the time
+    /// an install-baseline key is computed the answers are memoised.</para>
+    ///
+    /// <para><b>Two conditions this must survive rather than throw on</b>, both because this runs
+    /// on the install-baseline key path and not at registration, where throwing would turn a
+    /// tolerated condition into a hard failure of every run:</para>
+    /// <list type="bullet">
+    /// <item><description>A registered .app that has since VANISHED from disk.
+    /// <see cref="EnsureBcSymbolTableIndex"/> handles exactly that today — a <c>[warn]</c> and the
+    /// index is built without it — so the runner already treats it as survivable. It is a
+    /// materially different symbol state (that app's tables are simply absent), so it earns its
+    /// own distinct term. Checked explicitly rather than relying on
+    /// <c>ComputeAppContentHash</c>'s missing-file "unknown": that helper memoises per path, so an
+    /// app hashed while it existed keeps answering with the OLD hash after it disappears.</description></item>
+    /// <item><description>Any other read failure. It gets a term naming the exception type.</description></item>
+    /// </list>
+    ///
+    /// <para>Neither fallback is a silent default, which is the distinction that matters here:
+    /// both produce a key that DIFFERS from every healthy state, so the effect is a cache MISS and
+    /// a recompute. A sentinel that collided with a healthy key would rebuild the exact defect
+    /// this method exists to close.</para>
+    /// </summary>
+    private static string DescribeParsedSymbolState(string appPath)
+    {
+        try
+        {
+            if (!File.Exists(appPath)) return "absent";
+            var contentHash = BcAppSymbolCache.ComputeAppContentHash(appPath);
+            var symbols = BcAppSymbolCache.Get(appPath);
+            var extensions = BcAppSymbolCache.GetTableExtensions(appPath);
+            return $"{contentHash}|t{symbols.Tables.Count}|x{extensions.Count}";
+        }
+        catch (Exception ex)
+        {
+            return "unreadable:" + ex.GetType().Name;
+        }
     }
 
     /// <summary>
