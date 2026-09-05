@@ -5,6 +5,7 @@
 // Gap being fixed
 // ----------------
 // TryWrite's cachePath is content-keyed (SHA-256 of appPath|hash:<.app content hash>|
+// v<CacheVersion>|shape:<payload-shape fingerprint, #2335>|
 // CacheVersion — the hash component switched from length+mtime to a content hash of the
 // .app's bytes in #1820), so two subprocesses parsing the SAME dependency .app
 // concurrently compute and write the SAME cachePath. The old implementation was a plain

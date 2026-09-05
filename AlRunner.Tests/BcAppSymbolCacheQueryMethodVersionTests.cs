@@ -8,7 +8,9 @@
 // `Method = Sum/Count/Average/Min/Max` property through to RecordPatches.QueryProjection's
 // GROUP BY aggregation. CachePayload (which holds QuerySymbol -> QueryDataItemSymbol ->
 // QueryColumnSymbol) is persisted to disk and read back via JsonSerializer, keyed by
-// `{fullPath}|hash:{contentHash}|v{CacheVersion}` (BcAppSymbolCache.Get). A machine whose
+// `{fullPath}|hash:{contentHash}|v{CacheVersion}|shape:{PayloadShape}` (BcAppSymbolCache.Get;
+// the shape component was added by #2335 and is why this test goes through the seam rather
+// than spelling the key itself). A machine whose
 // on-disk cache was written by the PREVIOUS build has an entry whose JSON has no "Method"
 // property at all — the .app's content hash has not changed, so without a CacheVersion
 // bump that entry keeps matching the key and Method deserialises as null on every
