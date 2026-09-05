@@ -504,6 +504,35 @@ jobs:
               --count-baseline tests/expectations/count-baseline/test-count-baseline.json \
               --out runner-extras-results.json
 
+      - name: Run runner-extras suites that need --isolation disabled
+        # A SECOND invocation because isolation is a process-global flag with no per-bundle
+        # override, and the step above runs one process under the default (Codeunit). Same
+        # shape as the al-language xmlport order-independence guard above: another `dotnet run`
+        # with different flags over a different root.
+        #
+        # What it protects (issue #2826): real BC refuses StartSession from inside a [Test]
+        # unless the TestRunner declares TestIsolation = Disabled — pinned upstream by corpus
+        # codeunit 60397 on all eight BC versions, and implemented by the runner in #2805. That
+        # left the dispatch path BEHIND the guard (#2733, #2752 — worker construction, resolving
+        # OnRun against the OnRunAsync flavour BC's compiler emits for precompiled codeunits,
+        # and awaiting the resulting ValueTask) reachable from AL only with the guard stood
+        # down. #2733 was a genuine silent no-op, so that coverage is worth a second process.
+        #
+        # always() for the same reason the xmlport guard has it: this answers a different
+        # question from the step above and its answer matters most when something is broken.
+        #
+        # Deliberately NO --count-baseline. The baseline is keyed per suite and a third key for
+        # three tests buys a number nobody reads, in a file that is already a merge-conflict
+        # magnet. --strict is what makes this a gate.
+        if: ${{ always() && hashFiles('tests/runner-extras-isolation-disabled/**/*.al') != '' }}
+        run: |
+          dotnet run --no-build --project AlRunner -c Release --framework net8.0 -- \
+              tests/runner-extras-isolation-disabled \
+              --package-cache "$HOME/.al-runner/platform-apps" \
+              --package-cache "$HOME/.al-runner/test-apps" \
+              --isolation disabled \
+              --strict
+
       - name: Phase-log report (runner-extras)
         # The step with the most to say: 25 app groups in ONE process (down from 38 —
         # see #1847, which folded 16 standalone-with-no-hazard suites into
