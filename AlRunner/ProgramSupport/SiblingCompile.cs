@@ -540,7 +540,7 @@ internal static partial class ProgramSupport
             // better message — Program.cs's #2095 handler renders ToDetailedMessage's
             // provisioning-gap report, which the wrapper defeats — but that is an error-reporting
             // change with its own blast radius across CLI and server mode, not part of a cache
-            // key fix. Filed separately.
+            // key fix. Filed as #2956, with both messages measured against the same fixture.
             IReadOnlyList<(AppManifest Manifest, string AppPath)> implDeps = Array.Empty<(AppManifest, string)>();
             string? implResolveFailure = null;
             try { implDeps = implResolver.Resolve(implId.Dependencies); }
