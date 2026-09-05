@@ -498,6 +498,68 @@ do have a source. This section is the record.
 
 ---
 
+### `Record "Object Metadata"` — the rows are synthesised and the payload columns read blank
+
+<a id="object-metadata-system-table"></a>
+
+`Object Metadata` (2000000071) is not a virtual table. It is one of the 43 ids in BC's own
+`SystemTables.ApplicationDatabaseTables`, a real SQL table in the *application* database that
+publishing writes into and Ncl's `ObjectMetadataStorage` reads back with plain SQL. Its content
+is the compiled metadata of the application-database system tables — not an object inventory;
+the table's own AL summary in `System.app` says the inventory role "is now taken by
+[Application Object Metadata]".
+
+The runner has no application database and publishes nothing into one, so:
+
+| Column | Real BC | al-runner |
+|---|---|---|
+| `Object Type`, `Object ID` | One row per application-database system table | Synthesised from BC's own `SystemTables.ApplicationDatabaseTables` |
+| `Emit Version` | The tier's compiler emit version | BC's own `NavEnvironment.Instance.EmitVersion` |
+| `Metadata`, `User Code`, `User AL Code`, `Symbol Reference` (BLOB) | The published metadata payload | Always **empty** |
+| `Metadata Version`, `Hash`, `Object Subtype`, `Has Subscribers`, `Schema Hash` | Derived from that payload | Always **`0` / empty / `false`** |
+
+**The row set is an upper bound derived from Microsoft's code, not a service-tier-confirmed
+equality.** The selecting predicate is the insert in
+`InPlacePublisher.UpsertIntoMetadataStorageImpl`: the System app's own table objects,
+intersected with `ApplicationDatabaseTables`, minus ids with static metadata XML (which is only
+2000001071, so a no-op here). Enumerating the `.al` sources inside `System.app`, all 43 ids have
+a table object on both BC 27.0 and 28.1. What is *not* established is whether the 11 ids
+declared `ObsoleteState = Removed` get rows on a real tier; if one ever reports fewer than 43,
+that is where the difference will be.
+
+An earlier version of this section said the runner and a real tier "cannot disagree about which
+ids belong". That was wrong, and worth recording as a mistake to avoid repeating: it rested on
+Microsoft's `CleanupObjectMetadataFromNonApplicationDatabaseTables` migration, whose
+`DELETE ... WHERE [Object Type] <> 1 OR [Object ID] NOT IN (...)` bounds the retained set from
+*above* and does not create a row for each id. A `DELETE` proves ⊆, never =.
+
+**No service tier has adjudicated any of this**, and not for want of trying. The BC-behaviour
+half belongs in the al-language corpus and cannot be expressed there: the corpus app targets
+Cloud, the table is `Scope = OnPrem`, so `Record "Object Metadata"` fails `AL0296` at compile,
+and the `RecordRef` route is refused at *runtime* by `NavRecordRef.CheckIsOpenAllowed` —
+`"You cannot open record 2000000071 from a RecordRef data type when you are using target Cloud."`
+2000000071 is in `SystemTables.InternalTables`, and the escape hatch
+`SystemTables.OnPremSystemTableRecordRefAllowed` is only `{ 2000000187, 2000000188 }`. Corpus PR
+[#153](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests/pull/153) is closed with
+that evidence, from
+[run 33968379281](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests/actions/runs/33968379281),
+where all 8 BC legs failed on that message before reaching a single assertion. Settling the
+remainder needs an OnPrem-target app in the corpus, or Microsoft's `Tests-SINGLESERVER` bucket,
+which is OnPrem-target and reads this table directly.
+
+The payload columns are a **declared divergence** — there is nothing to reproduce, because
+nothing was ever published. Per `.claude/rules/loud-failures.md` those nine columns should refuse
+by name rather than read blank; that needs a per-(table, field) blob-read seam on the shared
+`TempTableDataProvider` path which does not exist yet, and **issue #2771** tracks it. Throwing at
+row-build time instead is not an option — it would take out `FindSet` / `FindLast` / `Count` as
+well, which is the bug (#2519) this table's support closed.
+
+`tests/runner-extras/object-metadata-system-table` asserts the runner-side behaviour so it cannot
+move quietly. It deliberately uses only ids that are live table objects, so it does not encode
+the open `ObsoleteState = Removed` question as settled in either direction.
+
+---
+
 ## Per-BC-minor engine variants: granularity is per MINOR, not per exact build
 
 Every released `al-runner` binary used to be compiled against exactly one BC minor's
