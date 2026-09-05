@@ -20,6 +20,7 @@ tools/ci-wait.py 2379 --timeout 2400
 | 1 | a required check failed; **the failing log is already printed** |
 | 2 | timed out while still running — **not a verdict**, call again |
 | 3 | could not determine (auth, network, no checks) |
+| 4 | **blocked, not failing** — every check passed but a *required* context is `cancelled` on this commit, so the merge is refused and nothing else says why (#2726). The one case where `gh run rerun` is correct: re-run the cancelled run, it has no failure log to destroy. Never reach for `--admin`. |
 
 It enforces the two rules agents keep getting wrong: checks are matched against the PR's
 **current head SHA**, so a newer completed run for an older push is never reported as this
