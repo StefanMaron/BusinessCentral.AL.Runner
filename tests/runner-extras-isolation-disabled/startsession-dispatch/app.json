@@ -1,0 +1,19 @@
+{
+  "id": "a2826d51-6b47-4c8e-9a13-58f2c7b0e491",
+  "name": "Runner Extras - StartSession Dispatch (isolation disabled)",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Issue #2826: keeps AL coverage of the StartSession dispatch path (#2733, #2752) after #2805 made StartSession refuse from inside a [Test] under the default isolation mode. Runs only under --isolation disabled, which is why it is not in tests/runner-extras.",
+  "description": "The worker has to be genuinely PRECOMPILED. BC's compiler emits a codeunit's trigger OnRun() as an async OnRunAsync on the concrete type for the dependency-compile path, and as a synchronous OnRun override for the runner's own emit; both are virtuals on NavCodeunit with an EMPTY base body, so a sync-name-only reflection lookup always resolves and runs the empty base. That was #2733: StartSession on any Base Application worker returned true having executed none of its AL. A source-compiled sibling app does NOT reproduce it -- measured, and recorded in tests/runner-extras/depapp-dictionary-main -- so these tests use Base Application codeunit 7002 'Price Calculation - V16' and its twin 7003 'Price Calculation - V15', the smallest precompiled workers whose OnRun has an observable effect needing no setup. Every assertion reads a row the worker's body writes; none asserts merely that StartSession returned or did not throw, because the broken behaviour satisfied both.",
+  "dependencies": [],
+  "idRanges": [
+    {
+      "from": 61103,
+      "to": 61109
+    }
+  ],
+  "platform": "27.0.0.0",
+  "application": "27.0.0.0",
+  "runtime": "17.0",
+  "target": "Cloud"
+}
