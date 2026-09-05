@@ -64,6 +64,15 @@ Exactly one agent runs. When it returns, you review, act, and start the next.
 A fresh or drifted box does not announce that it is broken; it produces numbers that look fine.
 Every check below exists because its absence has silently corrupted a result.
 
+**Run `tools/preflight.py`.** It is this section, executable, with a real exit code — 0 all
+passed, 1 something failed and this box would produce untrustworthy results, 2 warnings under
+`--strict`, 3 it could not complete. `--json` for a box profile, `--reap` to remove worktrees
+whose PR is merged and whose tree is clean, `--with-corpus` to include step 1. The prose below
+stays as the specification and the reasoning; the script is how it actually gets run, because a
+check a busy coordinator can decline is not a check — one skipped step 5 across an evening of
+~20 agents and filled a 7.7 GB tmpfs, after which every shell on the box failed without naming
+the cause.
+
 1. **Known-good baseline — run the corpus.** `tests/al-language` is green or it is not, and its
    expected count lives in `tests/expectations/count-baseline/`, checked in and only moved by a
    PR that deliberately bumps it. That makes it the right health check and means no new baseline
