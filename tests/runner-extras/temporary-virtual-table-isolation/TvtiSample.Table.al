@@ -17,3 +17,4 @@ table 64581 "TVTI Sample"
         key(PK; "Code") { Clustered = true; }
     }
 }
+

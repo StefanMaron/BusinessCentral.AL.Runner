@@ -12,8 +12,13 @@
 //   * temporary  → the store holds exactly the one row AL inserted, that row reads back the
 //                  values AL wrote, and a column AL never wrote reads back its default (so a
 //                  fix that fabricates values is caught, not just one that stops injecting).
-//   * NON-temporary → the populate still fires and answers truthfully. Without these, a fix
-//                  that simply disabled the three populates would pass every test above.
+//   * NON-temporary → the populate still fires and answers truthfully. Two of the three are
+//                  SENSITIVITY controls, verified to fail against a mutant that makes all
+//                  three guards unconditional: Date (a range outside the default 1900-2099
+//                  window, so the widening is load-bearing) and Aggregate Permission Set (its
+//                  Tenant Permission Set row written AFTER the aggregate's first touch, so the
+//                  per-request redrive is load-bearing). The Field one is NOT -- see its own
+//                  comment for the measurement showing why no such test can exist.
 codeunit 64582 "TVTI Tests"
 {
     Subtype = Test;
@@ -30,6 +35,13 @@ codeunit 64582 "TVTI Tests"
     local procedure SampleTable(): Integer
     begin
         exit(64581);
+    end;
+
+    local procedure EmptyGuid(): Guid
+    var
+        Empty: Guid;
+    begin
+        exit(Empty);
     end;
 
     // ── Field (2000000041) ──────────────────────────────────────────────────────────────
@@ -59,6 +71,19 @@ codeunit 64582 "TVTI Tests"
         Assert.AreEqual(1, TempField.Count(), 'temporary Record "Field" row count after FindSet');
     end;
 
+    // NOT a sensitivity control, and deliberately not named as one. Unlike the Date and
+    // Aggregate Permission Set controls below, this test does NOT fail when the Field
+    // find-time populate is switched off, and no test can, because switching it off changes
+    // nothing observable: PopulateFieldVirtualTable runs at DataAccess-creation time on EVERY
+    // hand-out and covers every table in RecordPatches._metaTableCache, which by then holds
+    // every table the runner can resolve. Measured, not reasoned: with a probe on both the
+    // generic and the targeted insert inside EnsureFilteredFieldTablePopulated, the find-time
+    // Field populate inserted rows ZERO times across all 243 runner-extras tests and all 2496
+    // al-language corpus tests. Its only observable effect was the #2524 defect itself --
+    // writing into a temporary record's store. Tracked for possible removal in #2792.
+    //
+    // What this test IS: a plain non-regression assertion that the Field table still answers
+    // truthfully for a non-temporary record after the guard was added.
     [Test]
     procedure NonTemporaryFieldRecordStillAnswersFromRealMetadata()
     var
@@ -66,7 +91,7 @@ codeunit 64582 "TVTI Tests"
     begin
         FieldRec.Reset();
         FieldRec.SetRange(TableNo, SampleTable());
-        Assert.IsTrue(FieldRec.FindSet(), 'non-temporary Record "Field": the virtual-table populate stopped firing');
+        Assert.IsTrue(FieldRec.FindSet(), 'non-temporary Record "Field": the Field table stopped answering');
         Assert.IsTrue(FieldRec.Count() >= 3, 'non-temporary Record "Field": fewer rows than the 3 declared fields of table 64581');
 
         Assert.IsTrue(FieldRec.Get(SampleTable(), 3), 'non-temporary Record "Field": Get(64581, 3) found nothing');
@@ -106,8 +131,16 @@ codeunit 64582 "TVTI Tests"
         // a Tenant Permission Set row and then reading it back through the aggregate is what
         // proves the redrive still fires for a NON-temporary record — the half a fix that just
         // switched the populate off would break.
+        // Touch the aggregate BEFORE writing the tenant row. That first touch is what runs the
+        // CREATION-time populate; everything after it can only come from the per-request
+        // redrive. Writing the row first (as this test used to) let the creation-time populate
+        // pick it up, so the assertion passed with the redrive switched off.
+        AggPermSet.Reset();
+        Assert.IsFalse(AggPermSet.Get(AggPermSet.Scope::Tenant, EmptyGuid(), 'TVTI-TENANT'),
+            'non-temporary Record "Aggregate Permission Set": the row must not exist before it is written');
+
         TenantPermissionSet.Init();
-        TenantPermissionSet."App ID" := CreateGuid();
+        TenantPermissionSet."App ID" := EmptyGuid();
         TenantPermissionSet."Role ID" := 'TVTI-TENANT';
         TenantPermissionSet.Name := 'TVTI tenant set';
         TenantPermissionSet.Insert();
@@ -152,10 +185,19 @@ codeunit 64582 "TVTI Tests"
     var
         DateRec: Record Date;
     begin
+        // January 1850 is OUTSIDE the runner's default materialised window
+        // (AL_RUNNER_DATE_WINDOW_MIN_YEAR = 1900 .. _MAX_YEAR = 2099), so answering this range
+        // REQUIRES EnsureDateWindowCoversRequest to widen the window on demand. A range inside
+        // the default window -- January 2099, which this test used to name -- is already
+        // materialised at creation time and passes with the widening switched off entirely.
         DateRec.Reset();
         DateRec.SetRange("Period Type", DateRec."Period Type"::Date);
-        DateRec.SetRange("Period Start", 20990101D, 20990131D);
+        DateRec.SetRange("Period Start", 18500101D, 18500131D);
+        // Count() first, on purpose: it goes through DataAccess_DateWindowGuardForCount, the
+        // CountAsync prepend, which is a different entry point into the same widening than the
+        // find below.
+        Assert.AreEqual(31, DateRec.Count(), 'non-temporary Record Date: days materialised for January 1850');
         Assert.IsTrue(DateRec.FindSet(), 'non-temporary Record Date: the window widening stopped firing');
-        Assert.AreEqual(31, DateRec.Count(), 'non-temporary Record Date: days materialised for January 2099');
+        Assert.AreEqual(18500101D, DateRec."Period Start", 'non-temporary Record Date: first materialised day of January 1850');
     end;
 }
