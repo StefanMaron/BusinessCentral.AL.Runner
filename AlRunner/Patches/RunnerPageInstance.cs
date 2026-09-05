@@ -1511,9 +1511,7 @@ internal sealed class RunnerPageInstance
     /// </summary>
     private object? InvokeRecordTrigger(string name, Type[] parameterTypes, object[] arguments)
     {
-        var trigger = _form.GetType().GetMethod(name,
-            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
-            binder: null, types: parameterTypes, modifiers: null);
+        var trigger = ResolveRecordTrigger(name, parameterTypes);
         if (trigger == null) return null;
         try { return AwaitTriggerResult(trigger.Invoke(_form, arguments)); }
         catch (TargetInvocationException tie) when (tie.InnerException != null)
@@ -1524,6 +1522,59 @@ internal sealed class RunnerPageInstance
             throw; // unreachable
         }
     }
+
+    /// <summary>
+    /// The method carrying page trigger <paramref name="name"/> on this page's compiled type —
+    /// its ASYNC override when the page was compiled async, its synchronous one otherwise.
+    ///
+    /// Issue #2522. <c>NavForm</c> declares every page trigger TWICE: a synchronous virtual
+    /// with an empty body (<c>protected virtual void OnOpenPage() {}</c>) and an async twin
+    /// (<c>protected virtual ValueTask OnOpenPageAsync() =&gt; default</c>). Which one a page
+    /// overrides is decided by the compiler that produced it, and BC's own dispatcher picks
+    /// between them off the page's own <c>__IsAsync</c> — verbatim from
+    /// <c>NavForm.RaiseOnOpenPageAsync</c> in BC 28.1's Ncl.dll:
+    ///
+    /// <code>
+    ///   if (__IsAsync) await OnOpenPageAsync(); else OnOpenPage();
+    /// </code>
+    ///
+    /// The runner's own emit pipeline overrides the SYNCHRONOUS virtual, so a bare
+    /// <c>GetMethod("OnOpenPage")</c> was right for every page the runner compiled itself and
+    /// silently wrong for every PRECOMPILED one: Microsoft's AL compiler overrides
+    /// <c>OnOpenPageAsync</c> instead, so the lookup bound <c>NavForm</c>'s own EMPTY body,
+    /// invoked it, and returned success having run nothing. Measured on Base Application page
+    /// 973 "Time Sheet Card" (BC 28.1.49838.53910): <c>Page973.OnOpenPageAsync()</c> exists,
+    /// the resolved method was <c>NavForm.OnOpenPage</c>, and consequently the page's default
+    /// owner filter never landed, its <c>OnBeforeOnOpenPage</c>/<c>OnAfterOnOpenPage</c>
+    /// integration events never fired, and neither did the <c>OnBeforeFilterTimeSheets</c>
+    /// codeunit event its body reaches — while that same codeunit event fires normally when
+    /// <c>TimeSheetMgt.FilterTimeSheets</c> is called directly. Same shape on page 9807 "User
+    /// Card", whose <c>OnAfterGetRecordAsync</c> is where <c>WebServiceExpiryDate</c> is
+    /// assigned (issue #2361's populated-value arm).
+    ///
+    /// <c>__IsAsync</c> is BC's own discriminator, not a heuristic:
+    /// <c>NavApplicationObjectBase.__IsAsync =&gt; false</c>, and an async-compiled object
+    /// overrides it to true. Falling back to whichever twin exists keeps a page that declares
+    /// only one of them working either way.
+    /// </summary>
+    private MethodInfo? ResolveRecordTrigger(string name, Type[] parameterTypes)
+    {
+        const BindingFlags flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
+        var type = _form.GetType();
+        var sync = type.GetMethod(name, flags, binder: null, types: parameterTypes, modifiers: null);
+        if (!IsAsyncCompiled) return sync ?? type.GetMethod(name + "Async", flags, binder: null, types: parameterTypes, modifiers: null);
+        return type.GetMethod(name + "Async", flags, binder: null, types: parameterTypes, modifiers: null) ?? sync;
+    }
+
+    /// <summary>
+    /// BC's own <c>NavApplicationObjectBase.__IsAsync</c> for this page — false on the base,
+    /// overridden to true by an object Microsoft's AL compiler emitted in its async shape.
+    /// See <see cref="ResolveRecordTrigger"/>.
+    /// </summary>
+    private bool IsAsyncCompiled
+        => _form.GetType()
+            .GetProperty("__IsAsync", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?
+            .GetValue(_form) is true;
 
     /// <summary>
     /// A resolved trigger method plus the OBJECT to invoke it on. Before issue #1923 every
