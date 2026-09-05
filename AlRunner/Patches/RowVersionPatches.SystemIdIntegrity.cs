@@ -245,11 +245,18 @@ public static partial class RowVersionPatches
         if (incomingSystemId.IsZeroOrEmpty) return;
 
         if (provider == null) return;
-        _fPrimaryTree ??= provider.GetType().GetField("primaryTree",
-            BindingFlags.NonPublic | BindingFlags.Instance)
-            ?? throw new InvalidOperationException(
-                $"[RowVersionPatches] {provider.GetType().Name}.primaryTree field not found — " +
-                "SystemId integrity check cannot resolve its reflection target");
+        // primaryTree is PRIVATE on TempTableDataProvider, and GetField(NonPublic) on a
+        // derived type does not return a base class's private fields — BC's own
+        // CrmTableConnection.CrmTestDataProvider (the '@@test@@' CRM test connection, #2725)
+        // derives from it. PrivateMemberLookup walks the hierarchy asking each level for its
+        // OWN declarations, which is right for the exact type AND for a derived one; see that
+        // class for why climbing to a type of a KNOWN NAME instead is wrong.
+        if (!AlRunner.Infrastructure.PrivateMemberLookup.FitsInstance(_fPrimaryTree, provider))
+            _fPrimaryTree = AlRunner.Infrastructure.PrivateMemberLookup
+                .Field(provider.GetType(), "primaryTree")
+                ?? throw new InvalidOperationException(
+                    $"[RowVersionPatches] {provider.GetType().Name}.primaryTree field not found — " +
+                    "SystemId integrity check cannot resolve its reflection target");
         // No rows stored yet for this table instance (EnsureTreeCreated has not run,
         // which happens INSIDE the real Insert body this prepend runs ahead of) —
         // nothing to collide with.

@@ -522,6 +522,7 @@ public static partial class RecordPatches
             // AL's — and BC's RecordImplementation.ChangeCompany returns true immediately for
             // a table that is not per-company.
             var isTableTypeTemporary = PropIs(table.PropertyList, "TableType", "Temporary");
+            var tableTypeName = PropValue(table.PropertyList, "TableType")?.ToString()?.Trim();
             var dataPerCompany = !PropIs(table.PropertyList, "DataPerCompany", "false");
             // LookupPageId / DrillDownPageId feed the Table Metadata (2000000136) virtual
             // table. Kept as the written reference and resolved later: a page declared after
@@ -529,7 +530,8 @@ public static partial class RecordPatches
             var lookupPage = PageRefText(PropValue(table.PropertyList, "LookupPageId"));
             var drillDownPage = PageRefText(PropValue(table.PropertyList, "DrillDownPageId"));
             _parsedTables[tableId] = new ParsedTable(tableId, tableName, fields, pkFieldIds,
-                secondaryKeys, isTableTypeTemporary, dataPerCompany, lookupPage, drillDownPage);
+                secondaryKeys, isTableTypeTemporary, dataPerCompany, lookupPage, drillDownPage,
+                TableTypeName: string.IsNullOrWhiteSpace(tableTypeName) ? null : tableTypeName.Trim());
         }
     }
 
@@ -1141,7 +1143,15 @@ internal record ParsedColumnFilter(string FieldName, ParsedColumnFilterKind Kind
 /// time, where the full page inventory is known. Null means the table declares none, which
 /// is not the same as 0 — see <c>RecordPatches.TableMetadataVirtualTable.cs</c>.</param>
 /// <param name="DrillDownPageName">Same, for <c>DrillDownPageId</c>.</param>
+/// <param name="TableTypeName">The declared <c>TableType</c> as written (<c>CRM</c>,
+/// <c>ExternalSQL</c>, <c>Exchange</c>, <c>MicrosoftGraph</c>, <c>Temporary</c>, ...); null when
+/// the table declares none, i.e. Normal. <see cref="IsTableTypeTemporary"/> is the older
+/// two-valued view of the same property and stays for its existing consumers. BC's
+/// DataAccessSource routes every non-Normal, non-Temporary value through a table connection
+/// rather than SQL, so collapsing them to Normal silently served CRM tables from a plain
+/// temp store (#2725).</param>
 internal record ParsedTable(int TableId, string TableName,
     List<ParsedField> Fields, List<int> PkFieldIds, List<ParsedKey>? SecondaryKeys = null,
     bool IsTableTypeTemporary = false, bool DataPerCompany = true,
-    string? LookupPageName = null, string? DrillDownPageName = null);
+    string? LookupPageName = null, string? DrillDownPageName = null,
+    string? TableTypeName = null);

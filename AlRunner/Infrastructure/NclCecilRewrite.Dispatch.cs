@@ -343,15 +343,13 @@ public static partial class NclCecilRewrite
             }
         }
 
-        // ALDatabase.ALSetDefaultTableConnection / ALHasTableConnection — both NRE
-        // because NavCurrentThread.Session.TableConnectionManager is null on the
-        // headless skeleton. The runner contract documented in
-        // tests/bucket-1/record-table/160-set-default-table-connection and
-        // …/has-table-connection is that SetDefaultTableConnection is a no-op
-        // and HasTableConnection always returns false (no real DB connections
-        // exist in the runner). JmpHook can't reach the bodies because the JIT
-        // inlines these one-liners into the AL-emitted scope wrappers; rewrite
-        // the IL bodies directly so inlined call sites also pick up the change.
+        // ALDatabase.ALCommit — and, formerly, the table-connection one-liners. The
+        // ALSetDefaultTableConnection / ALRegisterTableConnection / ALUnregisterTableConnection
+        // no-ops and the ALHasTableConnection `return false` that used to live here were
+        // silent fakes standing in for a null NavSession.TableConnectionManager; the skeleton
+        // session now carries BC's real manager (TableConnectionPatches, #2725) and those
+        // bodies run unmodified. The one runtime-layer neutralisation they need is
+        // TableConnectionSettingsStorage.Get, further down in this block.
         {
             var alDatabaseType = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.ALDatabase");
             if (alDatabaseType != null)
@@ -367,32 +365,33 @@ public static partial class NclCecilRewrite
                             BindingFlags.Public | BindingFlags.Static)!);
                     Console.Error.WriteLine("[Cecil] Rewrote ALDatabase.ALCommit → end write transaction");
                 }
-                foreach (var m in alDatabaseType.Methods.Where(x =>
-                    x.Name == "ALSetDefaultTableConnection" ||
-                    x.Name == "ALRegisterTableConnection" ||
-                    x.Name == "ALUnregisterTableConnection"))
+
+                // TableConnectionSettingsStorage.Get (#2725) — the one SQL touch on the
+                // table-connection path: TableConnectionManager.RegisterTableConnection and
+                // GetCurrentTableConnection ask NavGlobal.AppDatabase.TableConnectionSettingsStorage
+                // whether a connection of that name was PERSISTED (a SELECT against
+                // $ndo$tableconnections). The runner persists none, so `null` — "no such
+                // stored connection" — is exactly what an empty table answers; anything else
+                // would open a NavSqlConnectionScope on the skeleton. Body → `ldnull; ret`, no
+                // new token references. TableConnectionPatches.PlantTableConnectionSettingsStorage
+                // gives the skeleton NavDatabase the instance this method is invoked on.
+                var storageType = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.TableConnectionSettingsStorage");
+                var storageGet = storageType?.Methods.FirstOrDefault(x =>
+                    x.Name == "Get" && x.Parameters.Count == 2 && x.HasBody);
+                if (storageGet == null)
+                    throw new InvalidOperationException(
+                        "[Cecil] TableConnectionSettingsStorage.Get(TableConnectionType, string) not found — "
+                        + "Ncl shape changed; RegisterTableConnection would open a SQL connection. Do not commit.");
                 {
-                    var body = m.Body;
+                    var body = storageGet.Body;
                     body.Instructions.Clear();
                     body.Variables.Clear();
                     body.ExceptionHandlers.Clear();
                     var il = body.GetILProcessor();
-                    il.Append(il.Create(OpCodes.Ret));
-                    body.MaxStackSize = 0;
-                    Console.Error.WriteLine($"[Cecil] Rewrote ALDatabase.{m.Name} → no-op");
-                }
-                foreach (var m in alDatabaseType.Methods.Where(x =>
-                    x.Name == "ALHasTableConnection"))
-                {
-                    var body = m.Body;
-                    body.Instructions.Clear();
-                    body.Variables.Clear();
-                    body.ExceptionHandlers.Clear();
-                    var il = body.GetILProcessor();
-                    il.Append(il.Create(OpCodes.Ldc_I4_0));
+                    il.Append(il.Create(OpCodes.Ldnull));
                     il.Append(il.Create(OpCodes.Ret));
                     body.MaxStackSize = 1;
-                    Console.Error.WriteLine($"[Cecil] Rewrote ALDatabase.{m.Name} → return false");
+                    Console.Error.WriteLine("[Cecil] Rewrote TableConnectionSettingsStorage.Get → null (no persisted table connections)");
                 }
 
                 // ALDatabase.get_ALSerialNumber (#1883 follow-up) — genuinely NREs standalone,

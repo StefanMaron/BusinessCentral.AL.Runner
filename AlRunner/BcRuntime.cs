@@ -1467,6 +1467,12 @@ public static partial class BcRuntime
             }
         }
 
+        // The session's TreeRoot is planted above, so BC's own TableConnectionManager can now
+        // be parented to it — Database.RegisterTableConnection & friends are one-liners
+        // through this property and NRE'd (or were faked) while it was null (#2725).
+        if (_skeletonSession != null)
+            AlRunner.Patches.TableConnectionPatches.InstallSkeletonTableConnectionManager(_skeletonSession);
+
         // After the real NavEnvironment ctor + skeleton root scope are both ready,
         // inject a skeleton NavSystemTenant + NCLMetadata into the real Tenants collection.
         // No-op if env ctor fell back to skeleton (Tenants is null).

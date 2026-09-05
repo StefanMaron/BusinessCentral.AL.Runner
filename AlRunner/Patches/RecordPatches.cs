@@ -242,6 +242,9 @@ public static partial class RecordPatches
         // Drop the in-memory table rows so an edited re-run starts clean instead of
         // seeing Inserts from the previous run (which would e.g. throw "already exists").
         _dataAccessByTable.Clear();
+        // Registered table connections cache one CrmTestDataProvider per table id, bound to
+        // the previous run's NCLMetaTable — they go with the rows (#2725).
+        TableConnectionPatches.ResetForReload();
     }
 
     public static void AddSourceDir(string dir) => AddSourceDirs(new[] { dir });
@@ -567,6 +570,10 @@ public static partial class RecordPatches
                     "[RecordPatches] No skeleton system tenant available — NavDatabase.Tenant stays null");
             }
         }
+
+        // NavDatabase.tableConnectionSettingsStorage — BC's TableConnectionManager reads it on
+        // every RegisterTableConnection (#2725). See TableConnectionPatches.
+        TableConnectionPatches.PlantTableConnectionSettingsStorage(_skeletonDatabase, _tNavDatabase);
 
         Console.Error.WriteLine($"[RecordPatches] Skeleton NavDatabase built: {_skeletonDatabase.GetType().Name}");
 
@@ -1204,8 +1211,24 @@ public static partial class RecordPatches
         // asserts that contract explicitly. The distinction only became observable once
         // RecordImplementation.SetSecurityFiltering stopped being a no-op; before that the
         // argument passed here was discarded and the field kept its default.
-        var rec = (NavRecord)ctor.Invoke(new object?[] { self, metaTable, isTemp, null, null,
-            SecurityFiltering.Validated });
+        NavRecord rec;
+        try
+        {
+            rec = (NavRecord)ctor.Invoke(new object?[] { self, metaTable, isTemp, null, null,
+                SecurityFiltering.Validated });
+        }
+        catch (System.Reflection.TargetInvocationException tie) when (tie.InnerException != null)
+        {
+            // BC's own CreateTarget goes through table.CreateObjectInstance, a compiled
+            // factory, so an exception raised while the record binds — BC's "table connection
+            // ... must be registered" for a TableType = CRM table with no connection (#2725),
+            // or a RunnerOutOfScopeException from the data-access route — reaches the AL
+            // `asserterror` as itself. ConstructorInfo.Invoke wraps it instead, and AL then
+            // read "Exception has been thrown by the target of an invocation." as the error
+            // text. Rethrow the real one with its stack intact.
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw();
+            throw;
+        }
         StampObjectId(rec, id);
 
         // Register any tableextensions on this (primary) record instance so the extension's
@@ -1446,7 +1469,10 @@ public static partial class RecordPatches
         // `temporary` record — and the two shapes disagree about whether an
         // uncommitted BLOB write reaches the stored row (corpus 60940, issue #1751).
         // This is the one place that still knows, so record it here.
-        if (!isTemporary)
+        // A TableType = CRM table served by BC's CrmTestDataProvider is, in BC too, a
+        // temp-token DataAccess over a TempTableDataProvider (CrmTableConnection.CreateDataAccess
+        // passes DataAccessTableVersionTokens.CreateForTempTable) — not SQL-backed.
+        if (!isTemporary && !TableConnectionPatches.IsExternalTableType(table, out _))
             BlobStoreIsolationPatches.MarkDatabaseBacked(dataAccess);
 
         return dataAccess;
@@ -1464,6 +1490,28 @@ public static partial class RecordPatches
             var perTable = _dataAccessByTable.GetValue(self,
                 static _ => new ConcurrentDictionary<int, object>());
             var tableId = table.TableId;
+
+            // ── External table types (CRM / ExternalSQL / Exchange / MicrosoftGraph) ─────
+            // BC's own GetDataAccessForTable switches on table.TableType here and asks the
+            // session's TableConnectionManager for the CURRENT connection of that type; the
+            // connection builds the DataAccess. Every one of these used to fall through to the
+            // temp store below as if it were a Normal table — a silent fake — because the
+            // metadata layer mapped every TableType to Normal. With '@@test@@' registered the
+            // CRM branch is BC's CrmTestDataProvider (Guid PK auto-assigned on insert); an
+            // unregistered type is BC's own "not registered" error; a live connection is
+            // refused by name. Not cached in perTable: the connection owns one provider per
+            // table id itself (CrmTableConnection.testDataProviders), exactly as on a service
+            // tier, and Unregister must drop it. See TableConnectionPatches (#2725).
+            if (TableConnectionPatches.IsExternalTableType(table, out var externalTableType))
+            {
+                var externalSession = _fDasSession?.GetValue(self)
+                    ?? throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+                        $"Record {tableId} (TableType = {externalTableType})",
+                        "table-connections — DataAccessSource has no skeleton session; see docs/scope.md",
+                        "table-connections");
+                return TableConnectionPatches.GetExternalDataAccess(
+                    externalSession, table, externalTableType, _fDasGlobalFilters?.GetValue(self));
+            }
 
             // ── Virtual Field system table (2000000041) ──────────────────────────────────
             // The Field table is virtual: the service tier computes its rows on the fly from

@@ -1,0 +1,19 @@
+{
+  "id": "3f6b8c1e-2a7d-4e59-9b0c-7d1e5a2f8c43",
+  "name": "Runner Extras - Table Connection Live OOS",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Issue #2725: Database.RegisterTableConnection used to throw an untyped InvalidOperationException from a Roslyn shim for source-compiled AL while precompiled callers got a silent Cecil no-op. The skeleton session now carries BC's own TableConnectionManager, so BC's unmodified bodies run. This suite pins the one runner-specific contract left: a CRM connection registered with anything other than the '@@test@@' test string would open a live Dataverse connection and is refused as RunnerOutOfScopeException (docs/scope.md#table-connections), while the '@@test@@' connection is NOT refused and lands on BC's in-process CrmTestDataProvider.",
+  "description": "The plain-BC half of this behaviour — RegisterTableConnection + HasTableConnection true, SetDefault/GetDefault round-trip, Unregister clearing the default, Insert into a TableType = CRM table assigning a Guid primary key, BC's own 'not registered' error without a connection — is BC behaviour and lives upstream in the al-language corpus (session/TestDatabaseTableConnectionCrm.al), where a real service tier adjudicates it. Only the out-of-scope refusal and its scoping stay here.",
+  "dependencies": [],
+  "idRanges": [
+    {
+      "from": 65530,
+      "to": 65539
+    }
+  ],
+  "platform": "27.0.0.0",
+  "application": "27.0.0.0",
+  "runtime": "15.0",
+  "target": "Cloud"
+}
