@@ -118,7 +118,29 @@ public sealed class TestExecutor
 {
     private const int DefaultTestTimeoutSeconds = 60;
 
-    public TestIsolation Isolation { get; set; } = TestIsolation.Codeunit;
+    private static TestIsolation _activeIsolation = TestIsolation.Codeunit;
+
+    /// <summary>
+    /// The isolation mode of the executor currently running tests in this process.
+    ///
+    /// <para>Static because the consumer is a static patch on a BC seam:
+    /// <c>BcRuntime.AlRunnerStartSession</c> has to answer BC's guard "is this session's
+    /// TestIsolation anything other than Disabled" (#2805) and has no executor instance to ask.
+    /// BC reads the equivalent off <c>session.TestExecution</c>, which is likewise ambient rather
+    /// than passed down the call chain.</para>
+    ///
+    /// <para>Only meaningful together with <see cref="BcRuntime.InTestExecutionScope"/>: outside a
+    /// test this holds whatever the last executor set, which is exactly why the guard checks both
+    /// and why this is not a "are we isolated right now" flag on its own.</para>
+    /// </summary>
+    public static TestIsolation ActiveIsolation => _activeIsolation;
+
+    public TestIsolation Isolation
+    {
+        get => _isolation;
+        set { _isolation = value; _activeIsolation = value; }
+    }
+    private TestIsolation _isolation = TestIsolation.Codeunit;
 
     /// <summary>
     /// Optional substring filter applied to "Codeunit.Method" and "Codeunit" before
