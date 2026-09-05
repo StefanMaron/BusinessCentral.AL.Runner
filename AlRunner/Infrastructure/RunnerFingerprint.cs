@@ -82,11 +82,49 @@ internal static class RunnerFingerprint
     internal static string ComputeContentHash(string assemblyLocation)
     {
         if (string.IsNullOrEmpty(assemblyLocation) || !File.Exists(assemblyLocation))
-            return "unknown";
+            return UnknownContentHash;
         using var sha = System.Security.Cryptography.SHA256.Create();
         using var fs = File.OpenRead(assemblyLocation);
         return Convert.ToHexString(sha.ComputeHash(fs)).ToLowerInvariant();
     }
+
+    /// <summary>
+    /// The answer <see cref="ComputeContentHash"/> gives for a path it cannot read. Named
+    /// rather than spelled out at each comparison, because a caller that keys a cache on
+    /// this value gives every unidentifiable file ONE shared key — the exact wrong-answer
+    /// shape content addressing exists to remove (#2955).
+    /// </summary>
+    internal const string UnknownContentHash = "unknown";
+
+    // Path -> content hash memo. Moved down here from BcAppSymbolCache (#1820) so every
+    // layer that needs "which bytes is this file?" as a cache-key term shares ONE memo
+    // instead of each growing its own (#2955): AppLoader.ExtractAllDllPaths hashes the same
+    // dependency packages the bc-symbols cache and the AL-output key's dep terms hash, so a
+    // package already hashed by either costs a dictionary lookup here rather than a second
+    // full read of a 100+MB file.
+    //
+    // ComputeContentHash reads the WHOLE file; the call sites ask per virtual-table lookup,
+    // per dependency and per cache key, so an unmemoized hash is a re-read each time.
+    // Content does not change mid-run (nothing in this process writes to a dependency .app),
+    // so "one entry per path, never invalidated" is the whole invalidation policy — and it
+    // is why a test that simulates a process restart has to clear this explicitly.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _fileContentHashes =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// <see cref="ComputeContentHash"/> memoized per full path — the entry point every
+    /// cache key that identifies a FILE by its content should use.
+    /// </summary>
+    internal static string ComputeFileContentHashMemoized(string path)
+    {
+        var fullPath = Path.GetFullPath(path);
+        return _fileContentHashes.GetOrAdd(fullPath, static p => ComputeContentHash(p));
+    }
+
+    /// <summary>Test-only: drops the memo, so a test that rewrites a file in place can
+    /// observe what a fresh process would compute for it. Production code never needs
+    /// this — see the memo's comment for why it is never invalidated in a real run.</summary>
+    internal static void ClearFileContentHashMemoForTests() => _fileContentHashes.Clear();
 
     /// <summary>
     /// Writes the two cache-key framing lines every cache key must carry: the runner

@@ -641,14 +641,36 @@ public static class AppLoader
     /// wall + hundreds of MB of transient RSS, paid again by every one of the 4 parallel
     /// CI processes.
     ///
-    /// Cache key is path+size+mtime (the same cheap-stat approach <see cref="ReadManifest"/>'s
-    /// index uses), not a content hash of the chunk bytes: hashing 200+MB just to decide
-    /// HIT-or-MISS would reintroduce the exact "read the whole file" cost this exists to
-    /// avoid. A stale key (the .app replaced with a new mtime, e.g. CI re-downloading it)
-    /// just re-extracts under a new cache-dir name — safe, not a correctness issue, only a
-    /// forgone warm-cache saving for that one file.
+    /// Cache key is the SHA-256 of the package's own bytes (#2955), not
+    /// <c>path|size|mtime</c>. That stat stood in for content while the entry it guards is
+    /// persisted and shared across processes, so two runs could agree on the stat, disagree
+    /// on the bytes, and the second would load DLL chunks that do not describe the package it
+    /// has — a wrong load, not an error. It also MISSed unconditionally in the case CI
+    /// actually hits: every platform/test-toolkit <c>.app</c> is re-downloaded per run, so
+    /// the mtime is fresh even when the bytes are identical, and #1815's argument (applied to
+    /// every other persisted key here) says the whole entry was then dead weight.
+    ///
+    /// <para>The earlier note that hashing would "reintroduce the read-the-whole-file cost"
+    /// does not survive contact with what the hash costs HERE: it is
+    /// <see cref="RunnerFingerprint.ComputeFileContentHashMemoized"/>, one memo shared with
+    /// the bc-symbols cache and the AL-output key's dependency terms, which hash the same
+    /// packages in the same process anyway — so the usual outcome is a dictionary lookup.
+    /// Where it is genuinely first, it is a sequential read the MISS path was about to make
+    /// regardless. Measured, per package hashed cold: Base Application (~98MB) 0.16s,
+    /// System Application (~24MB) 0.04s, the whole 34-package platform dir 0.28s.</para>
+    ///
+    /// <para>Entries are named <c>sha256-&lt;hash&gt;</c> — the prefix keeps them from ever
+    /// being confused with the pre-#2955 stat-keyed directories (also 64 hex characters,
+    /// meaning something else entirely), and is the thing to bump if the RULE for which zip
+    /// entries make up a chunk set ever changes, since the package bytes alone would not
+    /// move for that.</para>
     /// </summary>
     public static IReadOnlyList<string> ExtractAllDllPaths(string appPath)
+        => ExtractAllDllPathsCore(appPath, static p => RunnerFingerprint.ComputeFileContentHashMemoized(p));
+
+    // internal, not private: the identity tests drive the "no identity available" branch
+    // through this overload with a provider that answers the sentinel / throws.
+    internal static IReadOnlyList<string> ExtractAllDllPathsCore(string appPath, Func<string, string> contentHashOf)
     {
         string fullPath;
         FileInfo fi;
@@ -660,9 +682,34 @@ public static class AppLoader
         }
         catch { return Array.Empty<string>(); }
 
-        var keyInput = $"{fullPath}|{fi.Length}|{fi.LastWriteTimeUtc.Ticks}";
-        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(keyInput))).ToLowerInvariant();
-        var cacheDir = Path.Combine(CacheRoots.Resolve("r2r-chunks"), hash);
+        string contentHash;
+        try { contentHash = contentHashOf(fullPath); }
+        catch (Exception ex)
+        {
+            // Hashing reads the file; a package we cannot read is one we cannot identify.
+            PerfTrace.Log($"r2r-chunks identity unavailable for {Path.GetFileName(fullPath)}: {ex.Message} — not consulting or writing the shared cache");
+            contentHash = RunnerFingerprint.UnknownContentHash;
+        }
+
+        if (string.IsNullOrEmpty(contentHash) || contentHash == RunnerFingerprint.UnknownContentHash)
+        {
+            // No identity ⇒ no shared entry, in either direction. Keying on the sentinel
+            // would give EVERY unidentifiable package one cache directory — the same
+            // cross-process wrong-load this change exists to remove, reintroduced by the
+            // fix. Extract for this process only (the temp fallback below already provides
+            // exactly that contract) and publish nothing another process could read.
+            //
+            // Deliberately a guard, not a feature: it can only cost a re-extract, never
+            // serve a wrong answer, which is why it is allowed to sit on a path a real run
+            // reaches only if a package becomes unreadable between the FileInfo check above
+            // and the hash. ExtractAllDllPathsCore's provider parameter is what lets the
+            // tests reach it anyway rather than shipping it unexercised.
+            _r2rExtractInvocationCountByPath.AddOrUpdate(fullPath, 1, static (_, c) => c + 1);
+            var unidentified = ExtractAllDlls(fullPath);
+            return unidentified.Count == 0 ? Array.Empty<string>() : WriteDllsToTempFallback(unidentified);
+        }
+
+        var cacheDir = Path.Combine(CacheRoots.Resolve("r2r-chunks"), "sha256-" + contentHash);
         // Published LAST by the writer below — its presence is the commit point that
         // guarantees every *.dll beside it is a complete, non-torn set (same convention as
         // AlCacheSidecars.IsCompleteEntry / BcAppSymbolCache's DLL-published-last rule).

@@ -150,15 +150,11 @@ internal static partial class BcAppSymbolCache
     // payload loads WITHOUT error and replays those pre-fix wrong answers rather than missing.
     private const int CacheVersion = 29;
     private static readonly ConcurrentDictionary<string, AppSymbols> ProcessCache = new(StringComparer.OrdinalIgnoreCase);
-    // Issue #1820 — path -> content-hash memo. ComputeAppContentHash needs to read the
-    // WHOLE .app to hash it (unlike the FileInfo.Length/LastWriteTimeUtc stat it replaced,
-    // which touched no file bytes), and Get() is called once per virtual-table lookup —
-    // often a dozen or more times for the SAME dependency .app within a single run (Pages,
-    // Tables, Enums, Objects, Reports, Queries each have their own call site). Caching the
-    // hash per full path means that cost is paid once per unique .app per process, not once
-    // per Get() call. Content doesn't change mid-run (nothing in this process writes to a
-    // dependency .app), so no invalidation beyond "one entry per path" is needed.
-    private static readonly ConcurrentDictionary<string, string> AppContentHashCache = new(StringComparer.OrdinalIgnoreCase);
+    // Issue #1820's path -> content-hash memo now lives in
+    // RunnerFingerprint._fileContentHashes (#2955), because AppLoader's persisted r2r-chunks
+    // cache needs the same answer for the same packages on the same run and must not grow a
+    // second memo — or a second hashing convention — to get it. The rationale is unchanged
+    // and moved with it; ComputeAppContentHash below is still the name this layer calls.
 
     // Test-only instrumentation: counts genuine Parse() invocations (i.e. an on-disk cache
     // MISS that required reparsing SymbolReference.json), PER full .app path — not a single
@@ -187,7 +183,7 @@ internal static partial class BcAppSymbolCache
     internal static void ResetProcessCacheForTests()
     {
         ProcessCache.Clear();
-        AppContentHashCache.Clear();
+        RunnerFingerprint.ClearFileContentHashMemoForTests();
     }
 
     internal sealed record AppSymbols(List<ParsedTable> Tables, List<EnumSymbol> Enums, List<QuerySymbol> Queries,
@@ -633,14 +629,12 @@ internal static partial class BcAppSymbolCache
     /// rather than a second hashing convention; that helper already handles the
     /// missing-file "unknown" sentinel generically.
     ///
-    /// Memoized per full path in <see cref="AppContentHashCache"/> — see that field's
-    /// comment for why a per-Get()-call hash would be a regression, not just correct.
+    /// Memoized per full path by <see cref="RunnerFingerprint.ComputeFileContentHashMemoized"/>
+    /// — see that memo's comment for why a per-Get()-call hash would be a regression, not
+    /// just correct, and for why the memo is shared with AppLoader rather than private here.
     /// </summary>
     internal static string ComputeAppContentHash(string appPath)
-    {
-        var fullPath = Path.GetFullPath(appPath);
-        return AppContentHashCache.GetOrAdd(fullPath, static p => RunnerFingerprint.ComputeContentHash(p));
-    }
+        => RunnerFingerprint.ComputeFileContentHashMemoized(appPath);
 
     private static AppSymbols? TryRead(string cachePath, string contentHash)
     {
