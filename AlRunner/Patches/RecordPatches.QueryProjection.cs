@@ -79,20 +79,24 @@ public static partial class RecordPatches
 
     private static void EnsureQueryProjectionReflection(object tempProvider)
     {
-        if (_mTtdpFindImpl != null) return;
         // The provider is not always EXACTLY TempTableDataProvider: BC's own
         // CrmTableConnection.CrmTestDataProvider derives from it (the '@@test@@' CRM test
         // connection, #2725), and GetMethod(NonPublic) on the derived type does not return
-        // the base class's private methods. Walk up to the declaring type.
-        var ttdp = tempProvider.GetType();
-        while (ttdp.BaseType != null && ttdp.Name != "TempTableDataProvider") ttdp = ttdp.BaseType;
-        _mTtdpFindImpl = ttdp.GetMethod("FindImplementation",
-            BindingFlags.NonPublic | BindingFlags.Instance)
+        // the base class's private methods. PrivateMemberLookup walks the hierarchy asking
+        // each level for its OWN declarations — see that class for why climbing to a type of
+        // a KNOWN NAME instead is wrong. FitsInstance also re-resolves rather than reusing a
+        // memo taken from a provider shape this instance is not.
+        if (_mTtdpFindImpl != null
+            && AlRunner.Infrastructure.PrivateMemberLookup.FitsInstance(_mTtdpFindImpl, tempProvider)) return;
+        _mTtdpFindImpl = AlRunner.Infrastructure.PrivateMemberLookup
+            .Method(tempProvider.GetType(), "FindImplementation")
             ?? throw new InvalidOperationException("TempTableDataProvider.FindImplementation not found");
-        _mTtdpFindByPositionImpl = ttdp.GetMethod("FindByPositionImplementation",
-            BindingFlags.NonPublic | BindingFlags.Instance)
+        _mTtdpFindByPositionImpl = AlRunner.Infrastructure.PrivateMemberLookup
+            .Method(tempProvider.GetType(), "FindByPositionImplementation")
             ?? throw new InvalidOperationException("TempTableDataProvider.FindByPositionImplementation not found");
 
+        // The type that actually DECLARES the members above — the Ncl assembly is read off it.
+        var ttdp = _mTtdpFindImpl.DeclaringType!;
         var nclAsm = ttdp.Assembly;
         _tFindTypeEnum = nclAsm.GetType("Microsoft.Dynamics.Nav.Runtime.FindType");
         _tReadOnlyRecordBuffer = nclAsm.GetType("Microsoft.Dynamics.Nav.Runtime.ReadOnlyRecordBuffer")
