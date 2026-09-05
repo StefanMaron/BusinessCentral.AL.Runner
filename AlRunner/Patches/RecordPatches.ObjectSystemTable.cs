@@ -28,8 +28,14 @@
 //   rows are an OBJECT INVENTORY: one row per application object. The runner already has
 //   exactly one such inventory — EnumerateKnownAlObjects, the source AllObj (2000000038) and
 //   AllObjWithCaption (2000000058) are answered from. This file projects that same inventory
-//   into Object's column shape rather than building a second one, which is what keeps AllObj
-//   and Object from disagreeing about which objects exist.
+//   into Object's column shape rather than building a second one.
+//
+//   That does NOT make the two tables agree about which objects exist, and saying so would
+//   overstate it: Object's "Type" option cannot name an enum, an interface, a permission set
+//   or any *extension kind, so it lists strictly fewer KINDS than AllObj by design (see
+//   below). What the shared inventory buys is narrower and still worth having — for the kinds
+//   BOTH tables can name, neither can list an object the other does not, or give it a
+//   different id or name, because there is only one place the answer comes from.
 //
 // ── WHAT IS NOT SETTLED, AND WHY IT COULD NOT BE SETTLED HERE ────────────────────────────
 //   NO SERVICE TIER HAS CONFIRMED WHAT THIS TABLE HOLDS ON A REAL TIER. The claim belongs
@@ -106,8 +112,12 @@
 //   restored backup can genuinely carry rows for it. So the branch in GetDataAccessForTableCore
 //   lets the --test-data on-demand loader run FIRST on a freshly created store, and the
 //   populator below does nothing for the lifetime of a provider that already had a row on
-//   first touch. Real rows always win; the projection is the fallback for the (normal) case of
-//   a run with no application database.
+//   first touch AND is in a run where such a loader exists at all. Real rows always win; the
+//   projection is the fallback for the (normal) case of a run with no application database.
+//
+//   That second condition is load-bearing rather than defensive — see the latch comment in
+//   PopulateObjectSystemTable. Without it, an install-baseline restore of rows THIS projection
+//   wrote is indistinguishable from a backup's, and the residue that remains is issue #2875.
 //
 // PRECOMPILED-DLL RESPECT
 //   Runtime-engine and Types-assembly members only (NCLMetaTable, NCLMetaField, NavValue,
@@ -204,10 +214,45 @@ public static partial class RecordPatches
                 "Object (system table 2000000001)",
                 "object-system-table — data access has no in-memory provider; see docs/scope.md");
 
+        // THE LATCH ASKS "DID SOMETHING OTHER THAN THIS PROJECTION PUT ROWS HERE?", and
+        // ProviderHasAnyRow alone cannot answer that. An install-baseline restore replays rows
+        // THIS projection wrote earlier in the run into a BRAND-NEW provider, which gets a
+        // fresh ConditionalWeakTable entry — so a bare ProviderHasAnyRow reads true, latches,
+        // and the top-up never runs again for that provider. Harmless for Object Metadata,
+        // whose row set is a fixed BC-declared id list identical whoever produced it; NOT
+        // harmless here, where the row set is THIS run's inventory and a disk baseline keyed by
+        // dependency key can be restored for a different app group.
+        //
+        // So the latch is additionally conditioned on a --test-data loader EXISTING at all,
+        // because that is the only writer besides this projection that can legitimately own
+        // rows in this store. With no loader in the run, any rows present are ours (directly or
+        // replayed through a baseline) and the top-up must go ahead; the per-key
+        // NavRecordAlreadyExistsException catch in InsertVirtualRow absorbs the ones already
+        // there, so a replayed row survives and only genuinely-missing objects are added.
+        //
+        // Deliberately NOT conditioned on the dispatch site's
+        // `ReferenceEquals(objectDa, createdObject)` — the GetOrAdd LOSER of the #2788 race has
+        // that false by construction while the winner may already have hydrated, so keying on
+        // it would make the loser project over real backup rows it currently defers to. This
+        // form is strictly never worse than a bare ProviderHasAnyRow: identical whenever a
+        // loader exists, and correct where a bare one is wrong.
+        //
+        // WHAT THIS DOES NOT CLOSE, and why it is not closed here: --test-data AND an install
+        // baseline together, with AL touching Record "Object" before CaptureInstallBaselineSnapshot
+        // runs. Issue #2875 tracks it. The obvious fix — adding 2000000001 to
+        // IsSelfPopulatingVirtualTableId so the projection is never captured — is NOT a drop-in:
+        // this is the first self-populating table that also calls the on-demand loader, so it
+        // would make AppendBaselineTable's deliberate InvalidOperationException reachable for the
+        // first time on any backup that carries Object rows (a real on-prem database has them).
+        // Resolving that is a change to a shared invariant, not a rider on this fix.
+        var backupLoaderExists = TestDataOnDemandLoader != null;
         var state = _objsStateByProvider.GetValue(
-            provider, static p => new ObjectSystemTableState { DeferToRealRows = ProviderHasAnyRow(p) });
+            provider, p => new ObjectSystemTableState
+            {
+                DeferToRealRows = backupLoaderExists && ProviderHasAnyRow(p),
+            });
 
-        // --test-data (or an install baseline) already put real rows here — leave them alone.
+        // A --test-data backup's real rows are the better answer — leave them alone.
         if (state.DeferToRealRows) return;
 
         var ordinals = EnsureObjectTypeOrdinals(metaTable);

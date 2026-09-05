@@ -85,6 +85,13 @@ codeunit 65551 "OST Tests"
             'Object must not list 65551 as a table; it is a codeunit.');
 
         // Negative arm 2: an id nothing in this run declares, of a kind that does exist.
+        //
+        // 65559 is deliberately the LAST id of this bundle's own idRange (65550-65559) and is
+        // deliberately unused. It has to come from this bundle's range: runner-extras runs 51
+        // bundles in one process and EnumerateKnownAlObjects accumulates the union across all
+        // of them, so an id picked from anywhere else could be claimed by a sibling bundle and
+        // this arm would fail for a reason that has nothing to do with Object.
+        // DO NOT EXTEND THIS BUNDLE'S idRange, OR ADD AN OBJECT 65559, WITHOUT CHANGING THIS TEST.
         Assert.IsFalse(
             Obj.Get(Obj.Type::Codeunit, '', 65559),
             'Object must not list codeunit 65559; no object with that id exists in this run.');
@@ -119,14 +126,20 @@ codeunit 65551 "OST Tests"
     end;
 
     [Test]
-    procedure ObjectAndAllObj_AgreeAboutWhichObjectsExist()
+    procedure ObjectAndAllObj_AgreeOnTheKindsBothCanName()
     var
         Obj: Record "Object";
         AllObj: Record AllObj;
     begin
-        // Both tables are projected from the ONE runner inventory, which is the reason to add
-        // Object as a projection rather than build a second registry. Checked in both
-        // directions on the same concrete ids so a divergence in either shows up.
+        // NOT "the two tables list the same objects" — they deliberately do not. Object's
+        // "Type" option cannot name an enum, an interface, a permission set or any *extension
+        // kind, so it lists strictly fewer KINDS than AllObj, which KindsTheTypeOptionCannotName
+        // pins from the other side.
+        //
+        // The claim here is the narrower one the shared inventory actually buys: for a kind
+        // BOTH tables can name, neither can list an object the other does not, and neither can
+        // give it a different id or name, because there is only one place the answer comes
+        // from. Checked in both directions on the same concrete ids.
         Assert.IsTrue(
             AllObj.Get(AllObj."Object Type"::Codeunit, 65551),
             'AllObj must list codeunit 65551.');
@@ -137,6 +150,8 @@ codeunit 65551 "OST Tests"
             AllObj."Object Name", Obj.Name,
             'Object and AllObj must report the same name for the same object.');
 
+        // 65559: the unused last id of this bundle's own range — see the note in
+        // Key_TypeIsPartOfTheKey_AndUnknownObjectsAreAbsent for why it must come from there.
         Assert.IsFalse(
             AllObj.Get(AllObj."Object Type"::Codeunit, 65559),
             'AllObj must not list codeunit 65559.');

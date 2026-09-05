@@ -703,6 +703,13 @@ the per-(table, field) read seam **issue #2771** tracks — this table is its se
 whether this legacy table's field 20 holds the object's AL caption is a BC claim no tier here
 can adjudicate; **issue #2839** tracks it rather than guessing.
 
+A `--test-data` backup's real rows take precedence over the projection, and that precedence is
+conditioned on such a loader existing in the run at all — an install-baseline restore replays
+rows the projection itself wrote into a fresh provider, which a bare "does the store have rows"
+test cannot tell apart from a backup's. **issue #2875** records what that leaves open
+(`--test-data` and an install baseline together) and why the obvious fix — excluding 2000000001
+from install-baseline capture — is not a drop-in.
+
 `tests/runner-extras/object-system-table` asserts the runner-side behaviour so it cannot move
 quietly.
 
