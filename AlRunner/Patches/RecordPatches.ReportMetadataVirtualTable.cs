@@ -95,7 +95,7 @@ public static partial class RecordPatches
     // build-once cache did: report 1306 stayed invisible while the bundle's own
     // reports resolved fine).
     private static List<ReportRow>? _reportRows;
-    private static (int Apps, int Parsed) _reportRowsBuiltFrom = (-1, -1);
+    private static (int AppEpoch, int Parsed) _reportRowsBuiltFrom = (-1, -1);
     private static readonly object _reportRowsLock = new();
 
     /// <summary>
@@ -251,11 +251,11 @@ public static partial class RecordPatches
     /// </summary>
     private static List<ReportRow> EnumerateKnownReports()
     {
-        var generation = (_bcAppPaths.Count, _parsedReports.Count);
+        var generation = (_bcAppRegistrationEpoch, _parsedReports.Count);
         if (_reportRows != null && _reportRowsBuiltFrom == generation) return _reportRows;
         lock (_reportRowsLock)
         {
-            generation = (_bcAppPaths.Count, _parsedReports.Count);
+            generation = (_bcAppRegistrationEpoch, _parsedReports.Count);
             if (_reportRows != null && _reportRowsBuiltFrom == generation) return _reportRows;
 
             var rows = new Dictionary<int, ReportRow>();
@@ -376,12 +376,12 @@ public static partial class RecordPatches
     // Assembly count is part of the generation: a Tier-1 precompiled dependency's reports
     // only become knowable once its DLL is loaded, which happens AFTER this set is first
     // asked for. Without it the empty answer would be memoized for the whole run.
-    private static (int Apps, int Parsed, int Assemblies) _knownReportIdsBuiltFrom = (-1, -1, -1);
+    private static (int AppEpoch, int Parsed, int Assemblies) _knownReportIdsBuiltFrom = (-1, -1, -1);
 
     /// <summary>Memoized backing set, rebuilt on the same generation key as the row cache.</summary>
     internal static HashSet<int> KnownReportIdSet()
     {
-        var generation = (_bcAppPaths.Count, _parsedReports.Count,
+        var generation = (_bcAppRegistrationEpoch, _parsedReports.Count,
             AppDomain.CurrentDomain.GetAssemblies().Length);
         if (_knownReportIds != null && _knownReportIdsBuiltFrom == generation) return _knownReportIds;
 

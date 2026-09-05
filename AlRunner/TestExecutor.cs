@@ -320,10 +320,13 @@ public sealed class TestExecutor
     /// triggers and Company-Initialize wrote, and they write them through table metadata the
     /// runner builds from the BC .app symbol sources REGISTERED IN THIS PROCESS
     /// (RecordPatches._bcAppPaths). That registered set is an input to the snapshot and it
-    /// varies independently of all three terms this key used to carry — --server/--watch
-    /// accumulate it across bundles while ResetForNewBundle resets the dependency-assembly
-    /// term, and RegisterBundleSymbolApps drops an unreadable bundle-root .app with only a
-    /// [warn]. So a run with a degraded or merely different symbol state persisted a snapshot
+    /// varies independently of all three terms this key used to carry: RegisterBundleSymbolApps
+    /// drops an unreadable bundle-root .app with only a [warn], and two bundles simply register
+    /// different sets. (--server/--watch used to ACCUMULATE the set across bundles too — nothing
+    /// cleared it while ResetForNewBundle reset the dependency-assembly term. #2755 fixed that
+    /// asymmetry, so the set now describes only the current bundle; naming it in the key is what
+    /// keeps the two cases distinguishable either way.) So a run with a degraded or merely
+    /// different symbol state persisted a snapshot
     /// under the identical key a healthy run then read back, with nothing at read time able to
     /// tell: the file header's claim that this is "a pure function of (dependency assembly
     /// set, runner build, BC version)" was false. RegisteredBcAppSymbolStateKey() names the

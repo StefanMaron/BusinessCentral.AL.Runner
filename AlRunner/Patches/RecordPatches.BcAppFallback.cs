@@ -32,6 +32,22 @@ public static partial class RecordPatches
     // .app file paths registered by Program.cs after DependencyLoader.LoadAll.
     private static readonly List<string> _bcAppPaths = new();
 
+    /// <summary>
+    /// How many times the .app registration set has changed in this process — bumped by
+    /// <see cref="InvalidateBcAppIndexes"/>, which is the single funnel every registration
+    /// and every reload already goes through. Monotonic and never reset.
+    ///
+    /// <para>The row-set caches on the virtual-table partials (Table Metadata, Page Metadata,
+    /// Page Control Field, Report Metadata, Codeunit Metadata, and the dependency
+    /// processing-only report set) each memoize "what I was built from" as a tuple. They used
+    /// <c>_bcAppPaths.Count</c> for the .app term, which was sound only while the list could
+    /// never shrink. #2755 gives it a clear, so a count can now return to a value it already
+    /// had — request 1 registering two .apps and request 2 registering two DIFFERENT ones
+    /// reads as the same generation, and the second request is served the first's rows. An
+    /// epoch cannot ABA that way.</para>
+    /// </summary>
+    private static int _bcAppRegistrationEpoch;
+
     // Temp .app file extracted from Microsoft.BusinessCentral.SystemApp.dll's embedded
     // SystemPackage; persists for the lifetime of the runner process so the index can
     // re-read its source on demand.
@@ -81,6 +97,10 @@ public static partial class RecordPatches
     /// </summary>
     private static void InvalidateBcAppIndexes()
     {
+        // Monotonic, never reset. Every cache keyed on "which .app registrations was I built
+        // from" reads THIS, not _bcAppPaths.Count — see its declaration for why a count
+        // stopped being a safe answer the moment the list gained a clear (#2755).
+        _bcAppRegistrationEpoch++;
         _bcTableIndex = null;
         _bcSymbolTableIndex = null;
         // Built in the same pass as _bcSymbolTableIndex and gated on it being null, so it
@@ -89,6 +109,67 @@ public static partial class RecordPatches
         _bcSymbolTableCaptions = null;
         _bcSymbolQueryIndex = null;
         _bcSymbolExtensionIndexBuilt = false;
+        // The negative cache is derived from the same registration set as the indexes above:
+        // it records "no registered .app declares table N". Registering another .app — or
+        // dropping the set on a reload — makes every one of those answers a guess about a
+        // registration set that no longer exists. Leaving it behind meant an .app registered
+        // AFTER a miss could never satisfy that miss for the life of the process, which bites
+        // a plain CLI multi-bundle run (bundle 2's dependency declares what bundle 1 looked
+        // for and missed) as much as --server/--watch. #2755.
+        _bcMissCache.Clear();
+    }
+
+    /// <summary>
+    /// Drop the .app symbol registrations this bundle/request is derived from, so the next
+    /// one starts from its own — the registration-set half of what <c>ResetForReload</c>
+    /// already does for the source-parsed half.
+    ///
+    /// <para>#2755. <see cref="_bcAppPaths"/> only ever grew, while every index built from it
+    /// was dropped per bundle precisely so it would rebuild FROM it. The two halves of those
+    /// indexes therefore reset on different boundaries: the source-parsed half per bundle,
+    /// the .app-symbol half never. In <c>--server</c> and <c>--watch</c> that made bundle 2
+    /// resolve against its own symbol sources UNION every earlier bundle's, where a fresh
+    /// single-bundle process sees only its own — a wrong answer with an unchanged exit
+    /// code.</para>
+    ///
+    /// <para>It also lost enum metadata in the opposite direction.
+    /// <c>BcRuntime.ResetForNewBundleReload</c> calls <c>AlEnumMetadataRegistry.Clear()</c>
+    /// and then <c>ResetForReload</c>, and <see cref="AddBcAppPath"/> is the only live path
+    /// by which a precompiled dependency's enums reach that registry — but its first act is
+    /// <c>if (_bcAppPaths.Contains(appPath)) return</c>. Program.cs re-registers every
+    /// dependency .app on every request; from request 2 on that call did nothing, so the
+    /// per-value Captions and the DefaultImplementation / UnknownValueImplementation
+    /// fallbacks the registry had just been emptied of never came back. Clearing the list
+    /// makes the re-registration real again, which is what puts them back.</para>
+    ///
+    /// <para>What survives: the SystemApp package, and only it — see
+    /// <see cref="BcAppPathsSurvivingReload"/>. It is re-added through
+    /// <see cref="AddBcAppPath"/> rather than left in place so its enums are re-published
+    /// too; the symbol read behind that call is memoized per path by
+    /// <c>BcAppSymbolCache</c>, so re-registering costs a dictionary lookup.</para>
+    ///
+    /// <para>Not called between CLI bundles: <c>ResetForReload</c> has no CLI call site — the
+    /// one-shot bucket loop deliberately accumulates across an app + test-app pair, and
+    /// <c>--server</c> resets once per REQUEST (before its bundle loop), not per bundle, so
+    /// that pairing is preserved on both. This resets exactly where
+    /// <see cref="_parsedTables"/> already did.</para>
+    /// </summary>
+    internal static void ResetBcAppRegistrationsForReload()
+    {
+        string[] survivors;
+        lock (_bcTableIndexLock)
+        {
+            survivors = BcAppPathsSurvivingReload(_bcAppPaths, _systemAppTempPath);
+            _bcAppPaths.Clear();
+            // This run's own freshly-compiled query symbols, written by BcCompiler.Emit into
+            // the bundle's output dir. Bundle-derived by definition, so they go with the rest.
+            _bcQuerySymbolJsonPaths.Clear();
+            InvalidateBcAppIndexes();
+        }
+        // Outside the mutation above only for readability — AddBcAppPath takes the same lock,
+        // and lock() is reentrant on the same thread.
+        foreach (var path in survivors)
+            AddBcAppPath(path);
     }
 
     /// <summary>
@@ -110,15 +191,18 @@ public static partial class RecordPatches
     /// <para>The set genuinely varies between two runs whose (dependency assemblies, runner
     /// build, BC version) are identical — the three terms the key did name:</para>
     /// <list type="bullet">
-    /// <item><description><b>--server / --watch accumulate it.</b> <see cref="_bcAppPaths"/>
-    /// is process-global and nothing ever clears it: <see cref="InvalidateBcAppIndexes"/>
-    /// drops the DERIVED indexes so they rebuild FROM this list, and <c>ResetForReload</c>
-    /// (the per-bundle reload path) calls exactly that. Meanwhile the key's only per-bundle
-    /// term is reset per bundle — <c>InstallTriggerRunner.ResetForNewBundle</c> clears
-    /// <c>_depAssemblies</c>. Two writers of the same per-bundle state, one keeping the
-    /// invariant and one not: the second bundle in a server process computes its snapshot
-    /// against its own apps UNION every earlier bundle's, then persists it under the key a
-    /// fresh single-bundle process will look up.</description></item>
+    /// <item><description><b>Two bundles register different sets.</b> That is the ordinary
+    /// case and the reason this term exists at all. It used to be worse: <see cref="_bcAppPaths"/>
+    /// only ever grew — <see cref="InvalidateBcAppIndexes"/> dropped the DERIVED indexes so
+    /// they would rebuild FROM this list, and <c>ResetForReload</c> called exactly that and
+    /// nothing more — while the key's only other per-bundle term WAS reset per bundle
+    /// (<c>InstallTriggerRunner.ResetForNewBundle</c> clears <c>_depAssemblies</c>). Two
+    /// writers of the same per-bundle state, one keeping the invariant and one not, so the
+    /// second bundle in a server process computed its snapshot against its own apps UNION
+    /// every earlier bundle's. #2755 closed that: <see cref="ResetBcAppRegistrationsForReload"/>
+    /// now drops the set on the same boundary the source-parsed half already reset on. This
+    /// term stays because the sets still differ per bundle — it is now naming an honest
+    /// difference rather than an accumulation.</description></item>
     /// <item><description><b><see cref="RegisterBundleSymbolApps"/> skips what it cannot
     /// read.</b> An unreadable bundle-root .app is skipped as a whole with a <c>[warn]</c>
     /// line and the run continues — which is the right call for an optional input, but it
@@ -191,6 +275,31 @@ public static partial class RecordPatches
     {
         lock (_bcTableIndexLock) return _bcAppPaths.ToArray();
     }
+
+    /// <summary>Test seam: the by-id .app symbol fallback, so a test can assert what a
+    /// lookup answers before and after a registration without having to drive a whole
+    /// NCLMetaTable build to get at it (#2755's negative-cache arm).</summary>
+    internal static bool TryPopulateParsedTableFromBcAppsForTests(int tableId)
+        => TryPopulateParsedTableFromBcApps(tableId);
+
+    /// <summary>
+    /// Which registered .app paths survive a per-bundle reload: the SystemApp package and
+    /// nothing else. Pure and explicit — same core/wrapper split as
+    /// <see cref="ComputeBcAppSymbolStateKey"/> — so the "must not clear too much" half of
+    /// #2755 is provable without driving the process-global registry.
+    ///
+    /// <para>Everything else in <see cref="_bcAppPaths"/> is bundle-derived: Program.cs
+    /// re-registers a bundle's dependency .apps and its bundle-root .app on every request
+    /// (and <c>--watch</c> cycle), so dropping them is recoverable by construction. The
+    /// SystemApp package is not: <see cref="RegisterSystemAppPackage"/> is called exactly
+    /// once, from <c>Register()</c> at hook-install time, and never again — clearing it
+    /// would silently remove the NCL-internal system tables (Field 2000000041, RecordLink
+    /// 2000000068, Object 2000000038, …) from the second request onward.</para>
+    /// </summary>
+    internal static string[] BcAppPathsSurvivingReload(IEnumerable<string> registered, string? systemAppPath)
+        => string.IsNullOrEmpty(systemAppPath)
+            ? Array.Empty<string>()
+            : registered.Where(p => string.Equals(p, systemAppPath, StringComparison.OrdinalIgnoreCase)).ToArray();
 
     /// <summary>
     /// Register a BC dependency .app path so its AL table sources can be used

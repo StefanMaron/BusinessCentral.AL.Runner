@@ -20,12 +20,14 @@
 //
 // The set varies between two runs whose (deps, runner, BC version) are identical:
 //
-//   * --server / --watch ACCUMULATE it. _bcAppPaths is process-global and nothing clears it —
-//     RecordPatches.ResetForReload (the per-bundle reload path) calls InvalidateBcAppIndexes,
-//     which drops the DERIVED indexes precisely so they rebuild FROM that list. Meanwhile the
-//     key's only per-bundle term IS reset per bundle: InstallTriggerRunner.ResetForNewBundle
-//     clears _depAssemblies. Two writers of the same per-bundle state, one holding the
-//     invariant and one not.
+//   * Two bundles simply register different sets — the ordinary case, and the reason this
+//     term exists. It used to be worse: --server / --watch ACCUMULATED the set, because
+//     _bcAppPaths only ever grew while RecordPatches.ResetForReload dropped only the DERIVED
+//     indexes (which rebuild FROM that list) and the key's other per-bundle term WAS reset
+//     per bundle (InstallTriggerRunner.ResetForNewBundle clears _depAssemblies). #2755 closed
+//     that asymmetry — RecordPatches.ResetBcAppRegistrationsForReload drops the registration
+//     set on the same boundary — so this term now names an honest per-bundle difference
+//     rather than an accumulation. See BcAppRegistrationReloadIsolationTests.
 //   * RegisterBundleSymbolApps SKIPS what it cannot read — an unreadable bundle-root .app is
 //     dropped with a [warn] and the run continues, which silently removes a symbol source
 //     without moving any other key term. Pinned below.
@@ -36,9 +38,10 @@
 // The fix is a key term, not a detector: RegisteredBcAppSymbolStateKey() names the input, so a
 // run with a different symbol state simply MISSES instead of reading someone else's snapshot.
 //
-// Note on isolation: _bcAppPaths has no unregister, so these tests assert that registering
-// something CHANGES the key rather than asserting an absolute key value — correct regardless of
-// what an earlier test in the same process already registered.
+// Note on isolation: AddBcAppPath has no unregister (the only thing that empties _bcAppPaths
+// is a reload, which these tests do not perform), so they assert that registering something
+// CHANGES the key rather than asserting an absolute key value — correct regardless of what an
+// earlier test in the same process already registered.
 
 using System.IO.Compression;
 using System.Text;

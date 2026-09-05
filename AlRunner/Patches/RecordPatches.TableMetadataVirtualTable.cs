@@ -84,7 +84,7 @@ public static partial class RecordPatches
     // would permanently hide every Base Application table — the same trap the Report
     // Metadata provider documents.
     private static List<TableMetadataRow>? _tableMetadataRows;
-    private static (int Apps, int Parsed, int Pages) _tableMetadataRowsBuiltFrom = (-1, -1, -1);
+    private static (int AppEpoch, int Parsed, int Pages) _tableMetadataRowsBuiltFrom = (-1, -1, -1);
     private static readonly object _tableMetadataRowsLock = new();
 
     /// <summary>
@@ -154,11 +154,11 @@ public static partial class RecordPatches
     /// </summary>
     private static List<TableMetadataRow> EnumerateKnownTableMetadata()
     {
-        var generation = (_bcAppPaths.Count, _parsedTables.Count, _parsedPages.Count);
+        var generation = (_bcAppRegistrationEpoch, _parsedTables.Count, _parsedPages.Count);
         if (_tableMetadataRows != null && _tableMetadataRowsBuiltFrom == generation) return _tableMetadataRows;
         lock (_tableMetadataRowsLock)
         {
-            generation = (_bcAppPaths.Count, _parsedTables.Count, _parsedPages.Count);
+            generation = (_bcAppRegistrationEpoch, _parsedTables.Count, _parsedPages.Count);
             if (_tableMetadataRows != null && _tableMetadataRowsBuiltFrom == generation) return _tableMetadataRows;
 
             // Built once and closed over below rather than through ResolvePageReference's own

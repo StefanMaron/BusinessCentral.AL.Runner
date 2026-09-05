@@ -242,8 +242,13 @@ public static partial class RecordPatches
         // tableextension fields silently vanished from every metatable from the second request on.
         // Shares InvalidateBcAppIndexes with AddBcAppPath (RecordPatches.BcAppFallback.cs) so the
         // two call sites can't drift apart again the way they did here.
-        lock (_bcTableIndexLock)
-            InvalidateBcAppIndexes();
+        //
+        // #2755: dropping the derived indexes is only half of it — they rebuild FROM
+        // _bcAppPaths, which nothing cleared, so the .app-symbol half of every index reset on
+        // a different boundary from the source-parsed half cleared above. ResetBcAppRegistrations
+        // ForReload drops the registration set with them (keeping only the once-registered
+        // SystemApp package) and calls InvalidateBcAppIndexes itself.
+        ResetBcAppRegistrationsForReload();
         _fieldTriggersWiredTables.Clear();
         _parsedPages.Clear();
         _parsedPageExtensions.Clear();

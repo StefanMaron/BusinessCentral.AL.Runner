@@ -67,7 +67,7 @@ public static partial class RecordPatches
         string Enabled, string Editable, string Visible, string SourceExpression, int Sequence);
 
     private static List<PageControlFieldRow>? _pageControlFieldRows;
-    private static (int Apps, int Parsed) _pageControlFieldRowsBuiltFrom = (-1, -1);
+    private static (int AppEpoch, int Parsed) _pageControlFieldRowsBuiltFrom = (-1, -1);
     private static readonly object _pageControlFieldRowsLock = new();
 
     private static void PopulatePageControlFieldVirtualTable(object dataAccess, NCLMetaTable metaTable)
@@ -117,11 +117,11 @@ public static partial class RecordPatches
 
     private static List<PageControlFieldRow> EnumerateKnownPageControlFields()
     {
-        var generation = (_bcAppPaths.Count, _parsedPages.Count);
+        var generation = (_bcAppRegistrationEpoch, _parsedPages.Count);
         if (_pageControlFieldRows != null && _pageControlFieldRowsBuiltFrom == generation) return _pageControlFieldRows;
         lock (_pageControlFieldRowsLock)
         {
-            generation = (_bcAppPaths.Count, _parsedPages.Count);
+            generation = (_bcAppRegistrationEpoch, _parsedPages.Count);
             if (_pageControlFieldRows != null && _pageControlFieldRowsBuiltFrom == generation) return _pageControlFieldRows;
 
             var rows = new List<PageControlFieldRow>();

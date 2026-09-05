@@ -87,7 +87,7 @@ public static partial class RecordPatches
         int CardPageId);
 
     private static List<PageMetaRow>? _pageMetaRows;
-    private static (int Apps, int Parsed) _pageMetaRowsBuiltFrom = (-1, -1);
+    private static (int AppEpoch, int Parsed) _pageMetaRowsBuiltFrom = (-1, -1);
     private static readonly object _pageMetaRowsLock = new();
 
     // Resolved once per process from the parsed Page Metadata metatable's own "PageType"
@@ -167,11 +167,11 @@ public static partial class RecordPatches
     /// </summary>
     private static List<PageMetaRow> EnumerateKnownPageMetadata()
     {
-        var generation = (_bcAppPaths.Count, _parsedPages.Count);
+        var generation = (_bcAppRegistrationEpoch, _parsedPages.Count);
         if (_pageMetaRows != null && _pageMetaRowsBuiltFrom == generation) return _pageMetaRows;
         lock (_pageMetaRowsLock)
         {
-            generation = (_bcAppPaths.Count, _parsedPages.Count);
+            generation = (_bcAppRegistrationEpoch, _parsedPages.Count);
             if (_pageMetaRows != null && _pageMetaRowsBuiltFrom == generation) return _pageMetaRows;
 
             var rows = new Dictionary<int, PageMetaRow>();

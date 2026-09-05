@@ -131,7 +131,7 @@ public static partial class RecordPatches
     /// </summary>
     internal static bool IsDependencyReportProcessingOnly(int reportId)
     {
-        var generation = _bcAppPaths.Count;
+        var generation = _bcAppRegistrationEpoch;
         var set = _depProcessingOnlyReportIds;
         if (set == null || _depProcessingOnlyBuiltFrom != generation)
         {

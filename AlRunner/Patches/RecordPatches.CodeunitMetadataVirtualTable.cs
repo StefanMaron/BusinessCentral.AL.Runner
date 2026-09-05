@@ -78,7 +78,7 @@ public static partial class RecordPatches
     private sealed record CodeunitMetaRow(int Id, string Name, int TableNo, bool SingleInstance, string Subtype);
 
     private static List<CodeunitMetaRow>? _codeunitMetaRows;
-    private static (int Apps, int Decls) _codeunitMetaRowsBuiltFrom = (-1, -1);
+    private static (int AppEpoch, int Decls) _codeunitMetaRowsBuiltFrom = (-1, -1);
     private static readonly object _codeunitMetaRowsLock = new();
 
     // Resolved once per process from the parsed CodeUnit Metadata metatable's own "Subtype"
@@ -153,11 +153,11 @@ public static partial class RecordPatches
     /// </summary>
     private static List<CodeunitMetaRow> EnumerateKnownCodeunitMetadata()
     {
-        var generation = (_bcAppPaths.Count, _parsedObjectDecls.Count);
+        var generation = (_bcAppRegistrationEpoch, _parsedObjectDecls.Count);
         if (_codeunitMetaRows != null && _codeunitMetaRowsBuiltFrom == generation) return _codeunitMetaRows;
         lock (_codeunitMetaRowsLock)
         {
-            generation = (_bcAppPaths.Count, _parsedObjectDecls.Count);
+            generation = (_bcAppRegistrationEpoch, _parsedObjectDecls.Count);
             if (_codeunitMetaRows != null && _codeunitMetaRowsBuiltFrom == generation) return _codeunitMetaRows;
 
             var rows = new Dictionary<int, CodeunitMetaRow>();
