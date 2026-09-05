@@ -39,16 +39,63 @@
 //        DELETE FROM [dbo].[Object Metadata]
 //        WHERE [Object Type] <> 1 OR [Object ID] NOT IN (<SystemTables.ApplicationDatabaseTables>)
 //
-//      Object Type 1 is "Table". So after any BC upgrade the retained rows are EXACTLY
-//      "Object Type = Table, over the application-database system table ids", and nothing else.
+//   NOTE WHAT THAT DELETE DOES AND DOES NOT ESTABLISH. It bounds the retained set from ABOVE:
+//   nothing outside "Object Type = Table over ApplicationDatabaseTables" survives. It does NOT
+//   create a row per id, so on its own it proves a SUBSET relation, not equality. An earlier
+//   version of this header rested the row set on it and claimed the runner and a real tier
+//   "cannot disagree about which ids belong" — a stronger claim than that evidence carries.
 //
-//   That is the row set this file synthesises, read out of BC's OWN
-//   SystemTables.ApplicationDatabaseTables rather than a second copy of the list that would
-//   drift — the same technique the Feature Key provider uses for BC's hardcoded feature list.
-//   Issue #2519's own "expected behavior" note said one row per COMPILED object; that is what
-//   the table held in NAV and up to early BC, and the two Microsoft sources above are why this
-//   implementation does not do that. AllObj / System Object (2000000029) are where the full
-//   object inventory lives, and the runner already answers AllObj.
+//   THE INSERT SIDE IS WHAT SELECTS THE ROWS, in
+//   Microsoft.BusinessCentral.InPlacePublisher.InPlacePublisher.UpsertIntoMetadataStorageImpl,
+//   on the branch taken when the package being published is the System app
+//   (record.RuntimePackageId == NavAppPackageCompiler.InternalSystemAppRuntimePackageId):
+//
+//        List<NavAppObjectMetadata> records = (from m in MovedObjectHelpers.ExcludeMovedObjects(outputter)
+//            where m.ObjectType == ObjectType.Table
+//            where SystemTables.ApplicationDatabaseTables.Contains(m.ObjectId)
+//            where NCLMetaTable.GetStaticTableMetadataXml(m.ObjectId) == null
+//            select m).ToList();
+//        objectMetadataUpdater.UpdateOrInsertMetadataRecords(records, nodeId);
+//
+//   Three filters over the System app's own compilation output. Two are no-ops for this id
+//   range, checked rather than assumed:
+//     * GetStaticTableMetadataXml returns non-null for exactly ONE id — 2000001071, "Object
+//       Metadata Snapshot" — and throws for seven withdrawn ids. For every id in
+//       ApplicationDatabaseTables it returns null.
+//     * ExcludeMovedObjects is a pass-through unless the package carries a MovedObjectManifest
+//       resource. System.app carries none on BC 27.0 or BC 28.1.
+//   So the row set is (System.app's table objects) INTERSECT ApplicationDatabaseTables.
+//   Enumerating the .al sources shipped inside System.app: on BOTH BC 27.0 and BC 28.1 every
+//   one of the 43 ids has a table object, none missing, highest 2000000400.
+//
+// ── WHAT IS NOT SETTLED, AND WHY IT COULD NOT BE SETTLED HERE ────────────────────────────
+//   NO SERVICE TIER HAS CONFIRMED THIS ROW SET. The claim belongs upstream and could not go
+//   there: corpus PR StefanMaron/BusinessCentral.AL.Language.Tests#153 was withdrawn after all
+//   8 BC legs of run 33968379281 refused the only route a Cloud-target app has —
+//   "You cannot open record 2000000071 from a RecordRef data type when you are using target
+//   Cloud" (NavRecordRef.CheckIsOpenAllowed; 2000000071 is in SystemTables.InternalTables, and
+//   the escape hatch SystemTables.OnPremSystemTableRecordRefAllowed is only {2000000187,
+//   2000000188}). Everything above is read off Microsoft's code, which
+//   .claude/rules/ask-the-corpus-before-claiming-bc-behavior.md ranks BELOW a tier verdict.
+//
+//   One sub-question stays open even on that reading: 11 of the 43 ids are declared
+//   ObsoleteState = Removed in System.app (2000000072, 74, 100, 104, 150, 151, 155, 160, 161,
+//   176, 186), and 4 more are ObsoleteState = Pending (2000000004, 5, 78, 82). They are full
+//   table objects with real field definitions rather than tombstones — NAV App Object Metadata
+//   (2000000150) still declares 13 fields — so they should reach outputter.ObjectMetadata and
+//   get rows. "Should" is not "does". If a tier ever reports fewer than 43 rows, that is where
+//   the difference will be, and EnumerateApplicationDatabaseTableIds is the one place to fix it.
+//
+//   A hypothesis raised in review and CHECKED, recorded so it is not re-raised: that 2000000004
+//   (Permission Set) and 2000000005 (Permission) are excluded because SystemTables.VirtualTables
+//   appends them when UsePermissionSetsFromExtensions is on (it defaults to true), leaving 41
+//   rows. The insert predicate above never consults IsVirtualTable or VirtualTables — that
+//   setting routes DATA ACCESS for those tables, it does not decide whether their compiled
+//   metadata is published — and both are ordinary Scope = Cloud, ObsoleteState = Pending table
+//   objects present in System.app on 27.0 and 28.1. So 43, not 41, on this evidence.
+//
+//   What would settle the remainder: an OnPrem-target app in the corpus, or Microsoft's
+//   Tests-SINGLESERVER bucket, which is OnPrem-target and reads this table directly.
 //
 // ── THE COLUMNS, AND WHICH ONES ARE A DECLARED DIVERGENCE ────────────────────────────────
 //   Answered truthfully:
@@ -185,9 +232,16 @@ public static partial class RecordPatches
     /// <summary>
     /// BC's own list of application-database system tables, read off
     /// <c>Microsoft.Dynamics.Nav.Types.SystemTables.ApplicationDatabaseTables</c> — the very
-    /// collection the cleanup migration interpolates into its DELETE, so the row set here and
-    /// the row set a real tier retains cannot disagree. Ascending, so a FindLast without a
-    /// filter and a FindLast filtered to Table agree about which row is last.
+    /// collection Microsoft's publisher intersects with the System app's own table objects to
+    /// decide which rows to INSERT, and the one its cleanup migration interpolates into its
+    /// DELETE. Ascending, so a FindLast without a filter and a FindLast filtered to Table agree
+    /// about which row is last.
+    ///
+    /// <para>This is an UPPER BOUND on what a real tier holds, not a confirmed equality. No
+    /// service tier has adjudicated it — see the file header for why the upstream corpus test
+    /// could not be written, and for the 11 <c>ObsoleteState = Removed</c> ids that are the
+    /// open part of the question. If a tier ever disagrees, this method is the one place to
+    /// filter.</para>
     /// </summary>
     private static int[] EnumerateApplicationDatabaseTableIds()
     {
@@ -300,7 +354,10 @@ public static partial class RecordPatches
     ///
     /// A layout change in BC's private fields answers FALSE (i.e. "populate"), not "leave it
     /// alone": the failure this guards against is shadowing real --test-data rows, and a run
-    /// with no test data must still get its rows.
+    /// with no test data must still get its rows. That makes an absent field indistinguishable
+    /// from BC's genuine "no row was ever inserted", where the two sibling readers of this same
+    /// private field (RecordPatches.StoredTableCensus.cs) deliberately fail loud instead —
+    /// issue #2786 tracks reconciling the three.
     /// </summary>
     private static bool ProviderHasAnyRow(object provider)
     {

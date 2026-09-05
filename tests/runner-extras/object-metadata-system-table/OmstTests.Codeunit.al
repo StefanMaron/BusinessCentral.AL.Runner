@@ -1,12 +1,20 @@
 // Issue #2519. Object Metadata (2000000071) on the runner: where the rows come from when
 // there is no application database, and what the columns the runner cannot answer read.
 //
-// WHY THIS IS A RUNNER TEST AND NOT A CORPUS TEST
-//   The table's CONTENT is plain BC behaviour and is adjudicated upstream against a real
-//   service tier — tests/al-language .../record/TestObjectMetadataSystemTable.al pins that
-//   every retained row is Object Type = Table over an application-database system table id,
-//   and that neither an application table (18) nor a virtual system table (2000000038) has a
-//   row. None of that is repeated here.
+// WHY THIS IS A RUNNER TEST AND NOT A CORPUS TEST — AND WHAT IS THEREFORE UNVERIFIED
+//   The table's CONTENT is plain BC behaviour and BELONGS upstream. It could not go there.
+//   Corpus PR StefanMaron/BusinessCentral.AL.Language.Tests#153 tried and was withdrawn: the
+//   corpus app targets Cloud and this table is Scope = OnPrem, so `Record "Object Metadata"`
+//   does not compile there (AL0296), and the RecordRef route is refused at RUNTIME by
+//   NavRecordRef.CheckIsOpenAllowed on all 8 BC legs of run 33968379281 —
+//   "You cannot open record 2000000071 from a RecordRef data type when you are using target
+//   Cloud." 2000000071 is in SystemTables.InternalTables, and the escape hatch
+//   SystemTables.OnPremSystemTableRecordRefAllowed is only { 2000000187, 2000000188 }.
+//
+//   SO NO SERVICE TIER HAS CONFIRMED THE ROW SET THIS SUITE OBSERVES. It is derived from
+//   Microsoft's own publish-side code (see the C# file's header). Treat the assertions below
+//   as pinning what the RUNNER does, which is what a runner suite is for — not as evidence
+//   about BC.
 //
 //   What IS runner-specific: on a real tier those rows exist because publishing wrote them
 //   into a SQL table. The runner has no application database and never publishes anything, so
@@ -20,6 +28,13 @@
 //   BC's own default rather than fabricated, which is a DECLARED divergence (docs/limitations.md)
 //   — declared precisely because this suite asserts it. Issue #2771 tracks making them refuse
 //   by name instead; when that lands, this half of the suite is what tells you the answer moved.
+//
+// IDS USED BELOW ARE ALL LIVE TABLES ON PURPOSE
+//   11 of the 43 ids in SystemTables.ApplicationDatabaseTables are declared
+//   ObsoleteState = Removed in System.app (2000000151 among them). Whether real BC publishes a
+//   row for those is the one part of the row set that is genuinely open — see the C# header —
+//   so this suite asserts only ids that are live table objects on both BC 27.0 and 28.1, and
+//   does not encode the open question as settled either way.
 codeunit 65541 "OMST Tests"
 {
     Subtype = Test;
@@ -58,7 +73,7 @@ codeunit 65541 "OMST Tests"
         // so a synthesis that emitted only its own id, or only a contiguous block, fails here.
         AssertHasRow(2000000001, 'Object');
         AssertHasRow(2000000071, 'Object Metadata itself');
-        AssertHasRow(2000000151, 'NAV App Object Metadata');
+        AssertHasRow(2000000212, 'Application Object Metadata');
         AssertHasRow(2000000400, 'the highest listed id');
 
         // ...and two BC lists as VIRTUAL system tables, which have no SQL schema in the
@@ -106,21 +121,34 @@ codeunit 65541 "OMST Tests"
     end;
 
     [Test]
-    procedure EmitVersion_IsBcsOwnValueForThisProcess()
+    procedure EmitVersion_IsABuildEmitVersionReadFromBc_NotAChosenConstant()
     var
         ObjectMetadata: Record "Object Metadata";
         FirstEmitVersion: Integer;
     begin
-        // "Emit Version" is the third primary-key field, so it cannot be left unset. The
-        // runner reads NavEnvironment.Instance.EmitVersion — BC's own compiler emit version
-        // for the artifact under test — rather than choosing a number. It is > 0 whenever the
-        // real NavEnvironment constructor ran, and identical on every row because one process
-        // has one emit version.
+        // "Emit Version" is the third primary-key field, so it cannot be left unset. The runner
+        // reads NavEnvironment.Instance.EmitVersion rather than choosing a number.
+        //
+        // BC's emit version is <major><3-digit build counter>: measured off the NavEnvironment
+        // constructor in each artifact, BC 27.5 is 27024 and BC 28.1 is 28014. Pinning the exact
+        // value would need a per-BC-minor table this suite has no source for, so the assertion is
+        // the range every supported minor (27.0-28.4) falls in. That is deliberately narrow
+        // enough to fail a chosen constant: 0, 1 and 42 are all outside it. An earlier version of
+        // this test asserted only "> 0 and uniform", which a `return 1;` in
+        // ReadNavEnvironmentEmitVersion passes -- exactly the mutation tdd.md's "would this pass
+        // against a default?" question is asking about.
         ObjectMetadata.SetRange("Object Type", ObjectMetadata."Object Type"::Table);
         Assert.IsTrue(ObjectMetadata.FindFirst(), 'Object Metadata must not be empty.');
         FirstEmitVersion := ObjectMetadata."Emit Version";
-        Assert.IsTrue(FirstEmitVersion > 0, 'BC''s own emit version must be a real value, not 0.');
 
+        Assert.IsTrue(
+            FirstEmitVersion >= 27000,
+            StrSubstNo('Emit Version %1 is below every supported BC build''s emit version (27.0 onwards), so it is not BC''s own value.', FirstEmitVersion));
+        Assert.IsTrue(
+            FirstEmitVersion < 30000,
+            StrSubstNo('Emit Version %1 is above every supported BC build''s emit version, so it is not BC''s own value.', FirstEmitVersion));
+
+        // One process has one emit version, so every row carries it.
         ObjectMetadata.SetFilter("Emit Version", '<>%1', FirstEmitVersion);
         Assert.IsTrue(
             ObjectMetadata.IsEmpty(),

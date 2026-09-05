@@ -1873,6 +1873,10 @@ public static partial class RecordPatches
             // below does nothing when the store already holds a row: real rows win, synthesis
             // is the fallback. Every other branch in this method serves a table no backup can
             // ever have rows for, which is why only this one loads before populating.
+            // KNOWN RACE, issue #2788: only the GetOrAdd winner runs the loader, but both
+            // racers populate, so a loser can observe the store between "created" and
+            // "hydrated" and synthesise first — inverting that precedence. Narrow window,
+            // observable only under --test-data, tracked rather than fixed here.
             // See RecordPatches.ObjectMetadataSystemTable.cs.
             if (IsObjectMetadataSystemTable(table))
             {
