@@ -352,26 +352,56 @@ public static partial class RecordPatches
     /// <c>TempTableDataProvider.primaryTree</c> the stored-table census reads, where a null
     /// tree is BC's own representation of "no row was ever inserted".
     ///
-    /// A layout change in BC's private fields answers FALSE (i.e. "populate"), not "leave it
-    /// alone": the failure this guards against is shadowing real --test-data rows, and a run
-    /// with no test data must still get its rows. That makes an absent field indistinguishable
-    /// from BC's genuine "no row was ever inserted", where the two sibling readers of this same
-    /// private field (RecordPatches.StoredTableCensus.cs) deliberately fail loud instead —
-    /// issue #2786 tracks reconciling the three.
+    /// <para>THE TWO REASONS THIS READ CAN COME BACK EMPTY ARE NOT THE SAME REASON (#2786).
+    /// A null <c>primaryTree</c> is BC's own "no row was ever inserted", and answering FALSE —
+    /// "go ahead and synthesise" — is right. The field being ABSENT means BC renamed or
+    /// restructured it and the runner has no idea what the store holds; answering FALSE there
+    /// would silently shadow whatever --test-data restored into this table, disabling the
+    /// precedence rule in this file's header with no diagnostic anywhere. It used to do
+    /// exactly that. Now it refuses, naming the member, the way every sibling reader of this
+    /// same private field already does: RecordPatches.StoredTableCensus.cs (twice),
+    /// RecordPatches.TransactionSnapshot.cs and RecordPatches.InstallBaseline.cs all go
+    /// through <c>RequiredField</c>, which throws <see cref="MissingFieldException"/>, and
+    /// RowVersionPatches.SystemIdIntegrity.cs throws naming the member. See
+    /// .claude/rules/loud-failures.md.</para>
+    ///
+    /// <para>A refusal here is a BUG REPORT ABOUT THE RUNNER, not a permanent scope
+    /// boundary — but <see cref="RunnerOutOfScopeException"/> is what this whole file already
+    /// raises when a BC surface it reflects on is not where it expects (SystemTables,
+    /// NavEnvironment, the "Object Type" option string), it names the API and a
+    /// docs/scope.md reason, and AL <c>asserterror</c> cannot swallow it. Same choice here.</para>
+    ///
+    /// <para>Resolution goes through <see cref="PrivateMemberLookup"/> rather than a plain
+    /// <c>GetField</c>, because <c>primaryTree</c> is PRIVATE on <c>TempTableDataProvider</c>
+    /// and <c>GetField(NonPublic)</c> on a DERIVED type does not return a base class's private
+    /// fields — BC's own <c>CrmTableConnection.CrmTestDataProvider</c> derives from it (#2725).
+    /// Reading a derived provider's inherited field as "absent" would turn a perfectly readable
+    /// store into a hard failure now that absence refuses.</para>
     /// </summary>
     private static bool ProviderHasAnyRow(object provider)
     {
-        try
-        {
-            var field = provider.GetType().GetField("primaryTree",
-                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-            if (field?.GetValue(provider) is not IEnumerable tree) return false;
-            foreach (var _ in tree) return true;
-            return false;
-        }
-        catch (TargetInvocationException)
-        {
-            return false;
-        }
+        var field = PrivateMemberLookup.Field(provider.GetType(), "primaryTree")
+            ?? throw new RunnerOutOfScopeException(
+                "Object Metadata (system table 2000000071)",
+                $"object-metadata-system-table — {provider.GetType().Name}.primaryTree not found, so the "
+                + "runner cannot tell a store BC never inserted into from one --test-data already filled; "
+                + "synthesising rows would silently shadow the restored ones. BC's private provider layout "
+                + "moved; see docs/scope.md");
+
+        // A null tree is BC's own "no row was ever inserted": nothing to shadow, synthesise.
+        var tree = field.GetValue(provider);
+        if (tree == null) return false;
+
+        if (tree is not IEnumerable rows)
+            throw new RunnerOutOfScopeException(
+                "Object Metadata (system table 2000000071)",
+                $"object-metadata-system-table — {provider.GetType().Name}.primaryTree is a "
+                + $"{tree.GetType().Name}, which cannot be enumerated, so the runner cannot tell whether "
+                + "--test-data already filled this table. BC's private provider layout moved; see "
+                + "docs/scope.md");
+
+        // Short-circuit: one row is the whole answer, and a restored backup can be large.
+        foreach (var _ in rows) return true;
+        return false;
     }
 }
