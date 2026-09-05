@@ -151,7 +151,57 @@ public static partial class RecordPatches
             RedriveAggregatePermissionSetForRequest(self, request);
             return false;
         }
-        return tableId == FieldFindTableId;
+        if (tableId != FieldFindTableId) return false;
+
+        // Issue #2524: a `Record "Field" temporary` is an ordinary in-memory table that happens
+        // to have the Field table's SHAPE, holding exactly the rows AL put in it. It must not
+        // take this bypass — the bypass exists to serve the virtual Field table's REAL metadata
+        // rows, and taking it for a temporary record both hid AL's own rows behind 178 metadata
+        // rows and, worse, wrote those metadata rows INTO the AL programmer's temporary table
+        // (EnsureFilteredFieldTablePopulated below inserts into whatever provider the DataAccess
+        // carries). Base Application report 8621 "Config. Package - Process" keys its
+        // transformation rules off `TempField."No."` and read back 0 for every one of them.
+        //
+        // The discriminator is NOT anything on the request or the metatable — both are identical
+        // for the two cases, and both DataAccesses are built by the same CreateTempDataAccess,
+        // because the runner serves every table from a TempTableDataProvider. The one place that
+        // still knows is where the DataAccess was handed out:
+        // NavDataAccessSource_GetDataAccessForTable marks the provider database-backed exactly
+        // when isTemporary is false, and BlobStoreIsolationPatches already exposes that fact for
+        // the same reason (a `temporary` record's BLOB and rowversion semantics differ too).
+        //
+        // Every other virtual table the runner populates — AllObj, Table Metadata, Page
+        // Metadata, Integer — is already correct here by construction: their populate call sites
+        // sit AFTER GetDataAccessForTableCore's `if (isTemporary) return` early exit, so a
+        // temporary instance of those never sees injected rows. This gate is what gives the
+        // Field table the same property.
+        return IsDatabaseBackedFindTarget(self);
+    }
+
+    /// <summary>
+    /// Whether this find's DataAccess stands in for SQL (a non-temporary table) rather than
+    /// serving an AL `temporary` record. Reads the same marker
+    /// <see cref="BlobStoreIsolationPatches.MarkDatabaseBacked"/> stamps at DataAccess hand-out.
+    ///
+    /// Answering TRUE when the marker cannot be read is deliberate: that is the behaviour this
+    /// gate had before #2524, so a reflection failure degrades to the old path rather than
+    /// silently turning the virtual Field table into an empty one, which would make real field
+    /// metadata disappear across the whole run.
+    /// </summary>
+    private static bool IsDatabaseBackedFindTarget(object dataAccess)
+    {
+        try
+        {
+            var provider = dataAccess.GetType()
+                .GetProperty("DataProvider", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+                ?.GetValue(dataAccess);
+            if (provider == null) return true;
+            return BlobStoreIsolationPatches.IsDatabaseBacked(provider);
+        }
+        catch
+        {
+            return true;
+        }
     }
 
     private static bool IsFieldFindRequest(object request)
