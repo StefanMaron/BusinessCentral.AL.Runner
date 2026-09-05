@@ -52,8 +52,13 @@ Every check below exists because its absence has silently corrupted a result.
 6. **No stale worktree for this identity**, and no leftover scratch directories from a killed
    run.
 
-Record the preflight result. If a later cycle behaves oddly, the first question is whether the
-box drifted since.
+**Print the preflight as a readable report** — one line per check, PASS or FAIL with the reason
+and the command that produced it. That report is what a new contributor reads to find out
+whether their box is set up correctly, so write it for a person who has never run this before,
+not as a log line. A FAIL should say what to do about it.
+
+Record the result. If a later cycle behaves oddly, the first question is whether the box
+drifted since.
 
 ## Priority order
 
@@ -69,8 +74,14 @@ a merge can turn `main` red, which outranks everything you were about to do.
    — never merged, never commented on unattended.
 4. **A corpus PR has all legs green.** Merge it, then fold the submodule pin bump and the
    count-baseline update into the runner PR that needs it. A pin bump is never its own PR.
-5. **An issue is `status: ready`.** Take the highest-value one — prefer a measured failure count
+5. **An issue is ready to work.** Take the highest-value one — prefer a measured failure count
    over a guess — and implement it. One issue at a time.
+
+   Use the `status: ready` label where it exists, but **do not depend on it.** The loop must work
+   on a repository whose labels are absent, stale, or organised differently. Fall back to: open,
+   unclaimed, and carrying enough to act on — a reproducer, a failing test name, or a concrete
+   file and mechanism. An issue too thin to act on is not a candidate; say so on it and move on
+   rather than guessing (`.claude/rules/no-assumption-fixes.md`).
 6. **The ready queue is empty — generate work.** This is what keeps the loop from idling, and it
    is the step most able to do harm, so it has a mandatory gate:
 
@@ -88,6 +99,39 @@ a merge can turn `main` red, which outranks everything you were about to do.
    all failures were missing setup data rather than defects — clustering that would have
    produced a stream of confident, wrong issues. Never file from a run whose configuration you
    cannot vouch for.
+
+## Claiming, and not colliding with other contributors
+
+Several people may run this loop at once, against the same repository, with no coordination
+between them. Nothing may depend on them talking to each other.
+
+**The GitHub assignee is the lock.** It is visible to everyone, survives a crashed box, and
+needs no shared state. A dedicated label (`agent: autonomous`, or a per-contributor one) is
+useful for telling afterwards which work the loop produced — but the label is bookkeeping; the
+assignee is what prevents two agents doing the same issue.
+
+**Claiming is read-then-write, so it races.** Two loops that list candidates at the same moment
+will pick the same top issue. Use a compare-and-swap shape instead of trusting the write:
+
+1. Skip anything already assigned to anyone.
+2. Assign it to yourself.
+3. **Re-read the issue.** If it now carries another assignee, or yours is not there, release and
+   take the next candidate. Losing a race costs one API call; two agents silently doing the same
+   issue costs both of them.
+4. Only then start work.
+
+**Reclaim abandoned work.** A box can die mid-issue and leave a claim behind forever. Treat a
+claim as stale when it has no linked PR and no activity for several hours, and reclaim it —
+noting on the issue that you did. Without this, every crash permanently removes an issue from
+circulation.
+
+**Release when you stop.** Finished without a fix, blocked, or shutting down for budget: remove
+your assignment so someone else can take it. An issue you cannot finish should go back to the
+pool, not stay parked under your name.
+
+**Namespace anything per-contributor** that lives on disk or in a branch name — worktrees,
+branches, scratch directories, cache directories. Two contributors must never write to the same
+path or push to the same branch. Derive the namespace from the account running the loop.
 
 ## Pacing
 
