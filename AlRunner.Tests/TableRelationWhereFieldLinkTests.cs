@@ -63,7 +63,10 @@ public class TableRelationWhereFieldLinkTests
         return appPath;
     }
 
-    // Field 3 is the shape #2518 is about. Field 4 is the same relation WITHOUT the field()
+    // The two linked fields are named AND numbered apart on purpose — "Parent Group" is field
+    // 5 of DRWF Parent, "Child Group" is field 2 of DRWF Child — so neither the name pair nor
+    // the id pair a role swap would produce can collide with the correct one. Field 3 is the
+    // shape #2518 is about. Field 4 is the same relation WITHOUT the field()
     // link — it parsed before the fix and must keep parsing, so "the parser stopped refusing
     // everything" cannot pass as a fix. Field 5 declares no TableRelation at all (the "must
     // still be null" direction). Fields 6/7 are AL's two mode-carrying spellings of the same
@@ -83,8 +86,8 @@ public class TableRelationWhereFieldLinkTests
                   "Name": "DRWF Parent",
                   "Fields": [
                     { "Id": 1, "Name": "Code", "TypeDefinition": { "Name": "Code", "Subtype": { "Name": "20" } } },
-                    { "Id": 2, "Name": "Group Code", "TypeDefinition": { "Name": "Code", "Subtype": { "Name": "20" } } },
-                    { "Id": 3, "Name": "Date Filter", "TypeDefinition": { "Name": "Date" } }
+                    { "Id": 5, "Name": "Parent Group", "TypeDefinition": { "Name": "Code", "Subtype": { "Name": "20" } } },
+                    { "Id": 6, "Name": "Parent Date Filter", "TypeDefinition": { "Name": "Date" } }
                   ],
                   "Keys": [ { "Name": "PK", "FieldNames": [ "Code" ] } ]
                 },
@@ -93,12 +96,12 @@ public class TableRelationWhereFieldLinkTests
                   "Name": "DRWF Child",
                   "Fields": [
                     { "Id": 1, "Name": "Entry No.", "TypeDefinition": { "Name": "Integer" } },
-                    { "Id": 2, "Name": "Group Code", "TypeDefinition": { "Name": "Code", "Subtype": { "Name": "20" } } },
+                    { "Id": 2, "Name": "Child Group", "TypeDefinition": { "Name": "Code", "Subtype": { "Name": "20" } } },
                     {
                       "Id": 3, "Name": "Where Field Ref",
                       "TypeDefinition": { "Name": "Code", "Subtype": { "Name": "20" } },
                       "Properties": [
-                        { "Name": "TableRelation", "Value": "\"DRWF Parent\".\"Code\" where(\"Group Code\" = field(\"Group Code\"))" }
+                        { "Name": "TableRelation", "Value": "\"DRWF Parent\".\"Code\" where(\"Parent Group\" = field(\"Child Group\"))" }
                       ]
                     },
                     {
@@ -113,29 +116,29 @@ public class TableRelationWhereFieldLinkTests
                       "Id": 6, "Name": "Filter Link Ref",
                       "TypeDefinition": { "Name": "Code", "Subtype": { "Name": "20" } },
                       "Properties": [
-                        { "Name": "TableRelation", "Value": "\"DRWF Parent\".\"Code\" where(\"Group Code\" = field(filter(\"Group Code\")))" }
+                        { "Name": "TableRelation", "Value": "\"DRWF Parent\".\"Code\" where(\"Parent Group\" = field(filter(\"Child Group\")))" }
                       ]
                     },
                     {
                       "Id": 7, "Name": "Upper Limit Ref",
                       "TypeDefinition": { "Name": "Code", "Subtype": { "Name": "20" } },
                       "Properties": [
-                        { "Name": "TableRelation", "Value": "\"DRWF Parent\".\"Code\" where(\"Date Filter\" = field(upperlimit(\"Date Filter\")))" }
+                        { "Name": "TableRelation", "Value": "\"DRWF Parent\".\"Code\" where(\"Parent Date Filter\" = field(upperlimit(\"Child Date Filter\")))" }
                       ]
                     },
-                    { "Id": 8, "Name": "Date Filter", "TypeDefinition": { "Name": "Date" } },
+                    { "Id": 8, "Name": "Child Date Filter", "TypeDefinition": { "Name": "Date" } },
                     {
                       "Id": 9, "Name": "Conditional Where Ref",
                       "TypeDefinition": { "Name": "Code", "Subtype": { "Name": "20" } },
                       "Properties": [
-                        { "Name": "TableRelation", "Value": "if (\"Group Code\" = const('')) \"DRWF Parent\".\"Code\"\r\n            else\r\n            if (\"Group Code\" = filter(<> '')) \"DRWF Parent\".\"Code\" where(\"Group Code\" = field(\"Group Code\"))" }
+                        { "Name": "TableRelation", "Value": "if (\"Child Group\" = const('')) \"DRWF Parent\".\"Code\"\r\n            else\r\n            if (\"Child Group\" = filter(<> '')) \"DRWF Parent\".\"Code\" where(\"Parent Group\" = field(\"Child Group\"))" }
                       ]
                     },
                     {
                       "Id": 10, "Name": "Field Link In Condition",
                       "TypeDefinition": { "Name": "Code", "Subtype": { "Name": "20" } },
                       "Properties": [
-                        { "Name": "TableRelation", "Value": "if (\"Group Code\" = field(\"Group Code\")) \"DRWF Parent\".\"Code\"" }
+                        { "Name": "TableRelation", "Value": "if (\"Child Group\" = field(\"Child Group\")) \"DRWF Parent\".\"Code\"" }
                       ]
                     }
                   ],
@@ -183,11 +186,19 @@ public class TableRelationWhereFieldLinkTests
             // argument is a field of the REFERENCING table (DRWF Child). BC's
             // NCLMetaFilterField reads filterValue as a field of the table it is handed —
             // which NCLMetaField's ctor sets to the referencing table — so swapping them
-            // builds a filter against the wrong row. Both are spelled "Group Code" here on
-            // purpose, exactly as Customer.City's is, so the assertions below pin the
-            // ROLES rather than the spelling.
-            Assert.Equal("Group Code", filter.SourceFieldName);
-            Assert.Equal("Group Code", filter.ParentFieldName);
+            // builds a filter against the wrong row.
+            //
+            // The two sides are deliberately spelled APART. An earlier version of this
+            // fixture named both "Group Code" — mirroring Customer.City, where they really
+            // are the same word — and claimed in this comment to pin the ROLES rather than
+            // the spelling. It did not: with both expected strings identical, a parser that
+            // swapped LeftHandSide and Identifier passed both assertions unchanged. Same
+            // blind spot the upstream corpus fixture still has (#2876). Renaming them is
+            // what makes the next two lines discriminate; verified by swapping the two
+            // arguments in RelationConditionList's SimpleFieldExpressionSyntax arm and
+            // watching this test fail.
+            Assert.Equal("Parent Group", filter.SourceFieldName);
+            Assert.Equal("Child Group", filter.ParentFieldName);
 
             // A plain field() link carries neither mode flag; fields 6 and 7 below are the
             // spellings that do.
@@ -249,7 +260,8 @@ public class TableRelationWhereFieldLinkTests
             // compare against, so getting this flag wrong changes which rows match.
             var filterLink = Assert.Single(Assert.Single(FieldOf(appPath, ChildTableId, 6).RelationArms!).Filters);
             Assert.Equal(ParsedCalcFilterKind.Field, filterLink.Kind);
-            Assert.Equal("Group Code", filterLink.ParentFieldName);
+            Assert.Equal("Parent Group", filterLink.SourceFieldName);
+            Assert.Equal("Child Group", filterLink.ParentFieldName);
             Assert.True(filterLink.ValueIsFilter);
             Assert.False(filterLink.OnlyMaxLimit);
 
@@ -258,7 +270,8 @@ public class TableRelationWhereFieldLinkTests
             // a fix that sets them together from passing.
             var upperLimit = Assert.Single(Assert.Single(FieldOf(appPath, ChildTableId, 7).RelationArms!).Filters);
             Assert.Equal(ParsedCalcFilterKind.Field, upperLimit.Kind);
-            Assert.Equal("Date Filter", upperLimit.ParentFieldName);
+            Assert.Equal("Parent Date Filter", upperLimit.SourceFieldName);
+            Assert.Equal("Child Date Filter", upperLimit.ParentFieldName);
             Assert.False(upperLimit.ValueIsFilter);
             Assert.True(upperLimit.OnlyMaxLimit);
         }
@@ -292,7 +305,12 @@ public class TableRelationWhereFieldLinkTests
 
             Assert.Equal("DRWF Parent", arms[1].TableName);
             Assert.Equal(ParsedCalcFilterKind.Filter, Assert.Single(arms[1].Conditions).Kind);
-            Assert.Equal(ParsedCalcFilterKind.Field, Assert.Single(arms[1].Filters).Kind);
+            var condArmFilter = Assert.Single(arms[1].Filters);
+            Assert.Equal(ParsedCalcFilterKind.Field, condArmFilter.Kind);
+            // Same role pair as the single-arm case: losing the distinction only in the
+            // conditional path would otherwise pass every other assertion in this file.
+            Assert.Equal("Parent Group", condArmFilter.SourceFieldName);
+            Assert.Equal("Child Group", condArmFilter.ParentFieldName);
         }
         finally
         {
