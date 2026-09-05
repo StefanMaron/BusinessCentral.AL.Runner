@@ -12,6 +12,8 @@ the verdict or the summary in a way the reader cannot miss (negative).
 Run: python3 scripts/tests/ms-bucket-summary.test.py
 """
 import importlib.util
+import contextlib
+import io
 import os
 import tempfile
 import unittest
@@ -133,6 +135,23 @@ class ComposeTests(unittest.TestCase):
             self.assertIn(needle, md, needle)
         self.assertIn("No caveats", md)
 
+    def test_the_reader_line_names_the_repository_that_actually_exists(self):
+        """#2780. The summary's reader line is what a human follows to go look at the reader,
+        and it used to name BusinessCentral.BakReader — the repository's OLD name, which
+        resolves only through GitHub's rename redirect. A redirect is not a contract, and
+        nothing here covered this line, so the wrong name could sit indefinitely. Both
+        directions, because the positive alone would still pass with both names present."""
+        md = mbs.compose(META, mbs.parse_junit_totals(JUNIT), mbs.scan_log(CLEAN_LOG), rc=1, elapsed_s=10)
+        self.assertIn("Backup reader: BusinessCentral.DbReader v0.1.1.", md)
+        self.assertNotIn("BakReader", md)
+
+    def test_no_reader_line_at_all_when_the_run_had_no_reader(self):
+        """The negative arm for the line's existence: without --test-data there is no reader,
+        and inventing one would mislabel the run."""
+        md = mbs.compose(dict(META, test_data=False, reader=None),
+                         mbs.parse_junit_totals(JUNIT), mbs.scan_log(CLEAN_LOG), rc=1, elapsed_s=10)
+        self.assertNotIn("Backup reader:", md)
+
     def test_caveats_are_listed_verbatim_so_a_wrong_number_cannot_hide(self):
         scan = mbs.scan_log("NOT RUN: 1 bundle(s)\n" + CLEAN_LOG)
         md = mbs.compose(META, mbs.parse_junit_totals(JUNIT), scan, rc=1, elapsed_s=10)
@@ -215,6 +234,98 @@ class MainTests(unittest.TestCase):
             text = step.read_text()
             self.assertTrue(text.startswith("existing\n"))
             self.assertIn("| 9496 |", text)
+
+
+class KnownBlockerTests(unittest.TestCase):
+    """#2780 recognition — what makes the knowingly-red nightly readable instead of noise."""
+
+    # The reader's own words, as they reach the log through the runner's EXEC-FAIL line (#2782).
+    READER_REFUSAL = (
+        "=== Tests-SMB \u2014 EXEC FAIL ===\n"
+        "  Tests-SMB: EXEC-FAIL: the backup reader failed (exit 1): block 116504 of MSDA region is "
+        "neither mapped by the derived extent list nor padding filler \u2014 backup layout differs "
+        "from the derived model, refusing to guess\n")
+
+    def test_reader_refusal_is_recognised_and_names_the_issue(self):
+        blocker = mbs.known_blocker(self.READER_REFUSAL)
+        self.assertIsNotNone(blocker)
+        self.assertIn("#2780", blocker["detail"])
+
+    def test_an_unrelated_failure_is_not_a_known_blocker(self):
+        # The negative direction: without this, ANY red run would claim to be the known one,
+        # which is exactly the "says nothing" failure the recognition exists to avoid.
+        self.assertIsNone(mbs.known_blocker("=== Tests-SMB \u2014 COMPILE FAIL ===\n"))
+
+    def _run_blocked(self):
+        with tempfile.TemporaryDirectory() as d:
+            log = Path(d, "run.log"); log.write_text(self.READER_REFUSAL)
+            summary = Path(d, "summary.md")
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                code = mbs.main(["--log", str(log), "--rc", "2", "--elapsed", "60",
+                                 "--bucket", "Tests-SMB", "--bc-version", "28.4.53241.54318",
+                                 "--test-data", "true", "--reader", "v0.1.1", "--out", str(summary)])
+            return code, summary.read_text(), buf.getvalue()
+
+    def test_blocked_run_still_reports_no_measurement_and_leads_with_the_blocker(self):
+        code, md, _ = self._run_blocked()
+        # The exit contract does not change: no number is still no number.
+        self.assertEqual(code, 1)
+        self.assertIn("Known blocker", md)
+        self.assertIn("#2780", md)
+
+    def test_blocked_run_names_the_repository_that_actually_exists(self):
+        """The BLOCKED path's own name check. The clean-path test above
+        (test_the_reader_line_names_the_repository_that_actually_exists) covers the summary's
+        reader line, and it passes whatever the blocker detail says, because that detail only
+        appears when a refusal is in the log. That is exactly how "BusinessCentral.BakReader"
+        survived here after #2863 removed it everywhere else: no test rendered this path's text.
+        Both directions, so a revert to the redirect name cannot pass in silence."""
+        _, md, stdout = self._run_blocked()
+        self.assertIn("StefanMaron/BusinessCentral.DbReader", md)
+        self.assertNotIn("BakReader", md)
+        self.assertNotIn("BakReader", stdout)
+
+    def test_blocked_run_does_not_claim_the_fixed_limitation_is_current(self):
+        """v0.1.2 reads BC 28.2, 28.3 and 28.4 (#2863 moved READER_TAG to it), so the detail
+        must not still assert that --test-data cannot produce a number on those versions. It
+        said so until this test existed, which would have printed three wrong facts into CI the
+        first time the blocker fired."""
+        _, md, _ = self._run_blocked()
+        self.assertNotIn("cannot produce a number on", md)
+        self.assertIn("v0.1.2", md)
+
+    def test_blocked_run_emits_a_named_annotation(self):
+        _, _, stdout = self._run_blocked()
+        self.assertIn("::error title=Known blocker", stdout)
+        self.assertIn("#2780", stdout)
+
+    def test_unexplained_failure_emits_a_DIFFERENT_annotation(self):
+        # A red run whose cause is not understood must not look like the expected one.
+        with tempfile.TemporaryDirectory() as d:
+            log = Path(d, "run.log"); log.write_text("=== Tests-SMB \u2014 COMPILE FAIL ===\n")
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                code = mbs.main(["--log", str(log), "--rc", "3", "--elapsed", "9",
+                                 "--bucket", "Tests-SMB", "--bc-version", "28.4.53241.54318",
+                                 "--test-data", "true"])
+            out = buf.getvalue()
+        self.assertEqual(code, 1)
+        self.assertIn("::error title=No measurement", out)
+        self.assertNotIn("Known blocker", out)
+
+    def test_a_measured_run_emits_no_annotation_at_all(self):
+        with tempfile.TemporaryDirectory() as d:
+            log = Path(d, "run.log"); log.write_text(CLEAN_LOG)
+            junit = Path(d, "junit.xml"); junit.write_text(JUNIT)
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                code = mbs.main(["--log", str(log), "--junit", str(junit), "--rc", "1",
+                                 "--elapsed", "9", "--bucket", "Tests-SMB",
+                                 "--bc-version", "28.1.1.1", "--test-data", "true"])
+            out = buf.getvalue()
+        self.assertEqual(code, 0)
+        self.assertNotIn("::error", out)
 
 
 if __name__ == "__main__":

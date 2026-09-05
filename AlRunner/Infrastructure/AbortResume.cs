@@ -91,7 +91,8 @@ internal static class AbortResume
     /// </summary>
     public static int Rerun(IReadOnlyList<string> originalArgs, IReadOnlyCollection<string> exclusions,
         int remainingBudget, IReadOnlyCollection<string>? carryFiles = null,
-        IReadOnlyCollection<string>? carryResultFiles = null)
+        IReadOnlyCollection<string>? carryResultFiles = null,
+        string? carryDirectory = null)
     {
         var childArgs = BuildChildArgs(originalArgs, exclusions, remainingBudget,
             carryFiles ?? Array.Empty<string>(), carryResultFiles ?? Array.Empty<string>());
@@ -122,6 +123,20 @@ internal static class AbortResume
             Console.Error.WriteLine("resume: could not start the retry process; reporting the aborted run as-is.");
             return 3;
         }
+
+        // #2824: the carry directory is written by THIS process but READ by the child, at the very
+        // end of a run that may take minutes. Owned by us, it dies with us — SIGTERM here runs our
+        // ProcessExit and deletes it out from under a live child, and SIGKILL leaves an owner that
+        // is dead, so the next runner start on the machine sweeps it correctly. The child is the
+        // one that needs it, so the child should own it. Done HERE rather than before the spawn
+        // because the pid to name does not exist until Process.Start returns.
+        //
+        // This lowers the PROBABILITY of the loss; it does not remove the need to shout when a
+        // carry file is missing anyway (a /tmp cleaner, a full disk, an operator rm). #2747's
+        // loud refusal stays exactly as it is.
+        if (carryDirectory != null)
+            AlRunner.Infrastructure.ScratchDirs.TransferOwnership(carryDirectory, p.Id);
+
         p.WaitForExit();
 
         // A resumed run must NEVER report clean success. The retry can legitimately exit 0 — the

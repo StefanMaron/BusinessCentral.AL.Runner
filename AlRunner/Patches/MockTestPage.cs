@@ -619,6 +619,39 @@ internal class LiveNavTestPage : MockITestPage
         finally { _suppressTeardownOnLoad = false; }
     }
 
+    /// <summary>
+    /// Run the "a row became the page's current row" sequence for the row the page is ALREADY
+    /// on, without moving the cursor — <see cref="Loaded"/>'s OnAfterGetRecord /
+    /// OnAfterGetCurrRecord, the xRec before-image, and the linked-part refresh.
+    ///
+    /// Needed because a page handed to a [ModalPageHandler] / [PageHandler] is constructed
+    /// already-open by BC's ShowDialog, so RunnerTestPageState.MarkOpened — the code that runs
+    /// the open sequence for a page the AL test opened itself — never runs on that path.
+    /// RunnerTestClientSession.GetPage compensated with MoveFirstDuringOpen, but only for a
+    /// record nothing had positioned yet: a caller that opened the page ON a specific row
+    /// (<c>PAGE.RunModal(id, Rec)</c>) must not have that row silently re-queried away (corpus
+    /// CU60848 RunModal_OpensOnTheRecordSetByTheCaller). That guard is right about the CURSOR
+    /// and wrong about the TRIGGERS: the row-load triggers belong to every row a page shows,
+    /// however it came to be on it.
+    ///
+    /// Measured on Base Application page 403 "Purchase Order Statistics", whose totals are
+    /// computed in RefreshOnAfterGetRecord() off OnAfterGetRecord and NOT in OnOpenPage: opened
+    /// modally on a caller-positioned Purchase Header, it received OnOpenPage (raised by BC's
+    /// own OpenForm inside RunnerModalDispatch.FormRunModal) but never OnAfterGetRecord, so
+    /// every total it showed was its type default. See issue #2797.
+    ///
+    /// Shares MoveFirstDuringOpen's teardown suppression for the same reason: this is the
+    /// page-construction-time row load, not a navigation call the AL test made, so an AL error
+    /// raised in the trigger must propagate as itself rather than being converted into BC's
+    /// "The TestPage is not open."
+    /// </summary>
+    internal bool MarkRowLoadedDuringOpen()
+    {
+        _suppressTeardownOnLoad = true;
+        try { return Loaded(found: true); }
+        finally { _suppressTeardownOnLoad = false; }
+    }
+
     // Real BC's own exception for this ("The TestPage is not open.") is not part of the
     // runner's own type surface — construct BC's own NavNCLDialogException (the same
     // AL-catchable-by-asserterror mechanism every other faithful platform error in this file
@@ -2967,6 +3000,9 @@ internal sealed class LiveNavTestPart : LiveNavTestPage, ITestPart
         if (_links.Length == 0) return;
         var record = RequireRecord("subpage link");
         var primaryKeyFieldNos = PrimaryKeyFieldNos(record);
+        // What was actually stamped, in stamping order — BC's own
+        // `fieldsInitializedFromFilters`, which is the exact set its validate step runs over.
+        var stamped = new List<(int FieldNo, NavValue Value)>();
         foreach (var link in _links)
         {
             // Not part of the primary key: BC leaves it at its Init() value, so the runner
@@ -2976,14 +3012,60 @@ internal sealed class LiveNavTestPart : LiveNavTestPage, ITestPart
             switch (link.Kind)
             {
                 case Microsoft.Dynamics.Nav.Types.Metadata.FilterType.FIELD:
-                    record.SetFieldValue(link.PartFieldNo, _parentRecord!.GetFieldValue(link.ParentFieldNo));
+                    var linked = _parentRecord!.GetFieldValue(link.ParentFieldNo);
+                    record.SetFieldValue(link.PartFieldNo, linked);
+                    stamped.Add((link.PartFieldNo, linked));
                     break;
                 default:
                     if (TryGetSingleFilterValue(record, link.PartFieldNo, out var single))
+                    {
                         record.SetFieldValue(link.PartFieldNo, single);
+                        stamped.Add((link.PartFieldNo, single));
+                    }
                     break;
             }
         }
+        ValidateStampedFields(record, stamped);
+    }
+
+    /// <summary>
+    /// Run OnValidate on the fields the link just stamped — <c>NavForm.NewRecordAsync</c>'s
+    /// second step, which the runner did not perform at all (issue #2551, gap 2).
+    ///
+    /// <para>BC's body is two steps in order: copy the link's values onto a freshly reset
+    /// buffer, then
+    /// <c>if (ValidateFieldsInOnNewRecord) SourceTable.ValidateFieldsAsync(fieldsInitializedFromFilters, ...)</c>
+    /// — OnValidate on exactly the fields step 1 copied, and nothing else. The runner performed
+    /// step 1 and stopped, so a field carrying a value from the link arrived RAW: its own
+    /// OnValidate never ran, and anything that trigger derives stayed at its Init() default
+    /// while the field itself already held the linked value. That is a wrong answer rather than
+    /// a missing feature, which is why it is fixed rather than declared out of scope.</para>
+    ///
+    /// <para><c>ValidateFieldsInOnNewRecord</c> is a plain auto-property with no setter anywhere
+    /// in Ncl, so nothing in the decompiled runtime says which way it is set — only a service
+    /// tier can answer it. It is answered: corpus codeunit 60653 "NRB Tests"
+    /// (StefanMaron/BusinessCentral.AL.Language.Tests#150) measured on all eight BC legs that a
+    /// New() through a field(...) link DOES run the stamped field's OnValidate. So the flag is
+    /// set by whatever drives a TestPage's New(), and the runner validates unconditionally here
+    /// rather than modelling a flag nothing it can see ever writes.</para>
+    ///
+    /// <para>Copy-then-validate, not validate-during-copy: BC hands its validate step the whole
+    /// set after the copy loop finishes, so an OnValidate on the first stamped field already
+    /// sees the others in place. Validating inside the loop would show it a half-stamped row.</para>
+    ///
+    /// <para>Deliberately NOT wrapped in the <c>CurrFieldNo</c> assignment that
+    /// <c>ValueControl.SetValue</c> uses (#2705). That one models a PAGE-ORIGINATED write, and
+    /// BC's step here is <c>SourceTable.ValidateFieldsAsync</c> — a record-level call, the same
+    /// shape as <c>Rec.Validate</c>, which real BC leaves CurrFieldNo at 0 for. No corpus test
+    /// pins CurrFieldNo during New(), so this follows the mechanism rather than guessing.</para>
+    ///
+    /// <para>Errors propagate. An OnValidate that refuses the linked value is BC refusing to
+    /// start the row, and swallowing it here would hand the test a row real BC never creates.</para>
+    /// </summary>
+    private static void ValidateStampedFields(NavRecord record, List<(int FieldNo, NavValue Value)> stamped)
+    {
+        foreach (var (fieldNo, value) in stamped)
+            record.ALValidateAsync(fieldNo, value, null).GetAwaiter().GetResult();
     }
 
     /// <summary>The field numbers making up the record's primary key — the membership test

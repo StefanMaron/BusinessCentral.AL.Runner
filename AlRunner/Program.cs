@@ -3696,6 +3696,24 @@ var willResume = resumeAborts > 0
 // JUnitReport.WriteJUnit fold the carried attempts in themselves, so a merged `results` would
 // count every carried case twice, once in each shape. Empty carry list => the same object,
 // so a run that never resumed is bit-for-bit unchanged.
+// #2824: a parent that resumed into this process handed us its carry directory — it rewrote the
+// sidecar to name our pid so its own death could not take the files with it. Take responsibility
+// for deleting it at our exit, so the handoff does not turn into a leak. Done HERE rather than at
+// argument-parsing time because the parent rewrites the sidecar AFTER Process.Start, so at parse
+// time it may still name the parent; by the time the run is over it never does.
+//
+// AdoptIfHandedToThisProcess adopts ONLY when the sidecar already names this process, which is
+// what makes it safe to call on the directory of an arbitrary --merge-counts path: a file the
+// caller passed by hand has no such sidecar, and this process must not delete a directory of
+// theirs at exit.
+foreach (var carriedFile in mergeCountsFiles.Concat(mergeResultsFiles))
+{
+    if (string.IsNullOrEmpty(carriedFile)) continue;
+    var carriedDir = Path.GetDirectoryName(Path.GetFullPath(carriedFile));
+    if (!string.IsNullOrEmpty(carriedDir))
+        AlRunner.Infrastructure.ScratchDirs.AdoptIfHandedToThisProcess(carriedDir);
+}
+
 var carriedResults = AlRunner.Infrastructure.ResumeCarry.Read(mergeResultsFiles, out _);
 
 // #2747: every attempt this run was PROMISED must actually be here. Both carry readers shrug at
@@ -3915,7 +3933,7 @@ if (willResume)
     if (carryResultsPath != null) carryResults.Add(carryResultsPath);
 
     return AlRunner.Infrastructure.AbortResume.Rerun(
-        args, nextExclusions, resumeAborts - 1, carry, carryResults);
+        args, nextExclusions, resumeAborts - 1, carry, carryResults, carryDir);
 }
 if (tddMode)
 {

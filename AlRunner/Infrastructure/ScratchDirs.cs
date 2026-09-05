@@ -156,6 +156,87 @@ public static class ScratchDirs
         DeleteTreeAndMarker(full);
     }
 
+    /// <summary>
+    /// Hand <paramref name="dir"/> to <paramref name="pid"/>: stop deleting it at this process's
+    /// exit, and rewrite the sidecar so the sweep judges it by that pid's liveness instead of
+    /// this one's (issue #2824).
+    ///
+    /// The case this exists for is the watchdog resume's carry directory. It is written by the
+    /// PARENT attempt, which then sits waiting while the child runs — and the child does not read
+    /// it until it writes its own outputs, at the very end. So the file must survive the child's
+    /// whole run under an owner that is not using it, and killing the parent alone loses it two
+    /// ways: SIGTERM runs the parent's ProcessExit, which deletes what it owns, and SIGKILL runs
+    /// nothing but leaves an owner that is dead, so the next runner start sweeps it correctly.
+    /// Naming the child instead makes both harmless.
+    ///
+    /// ORDER MATTERS. Disown first, then rewrite. Killed in between, this leaves a sidecar naming
+    /// a dead parent, which the next sweep reclaims — exactly today's behaviour, so the window is
+    /// no worse than not doing this at all. The other order has a window where the parent's own
+    /// ProcessExit deletes a directory the sidecar has already promised to the child, which is
+    /// worse than today.
+    ///
+    /// The recorded start time must be the one the SWEEP will compute for that pid, which on
+    /// Linux is boot-relative (/proc/&lt;pid&gt;/stat field 22), not Process.StartTime — see this
+    /// file's header for why the two disagree by accumulated clock skew. Writing the wall-clock
+    /// value here would reintroduce precisely the drift #2706 removed, and it would do it to a
+    /// directory whose whole point is to outlive its writer.
+    ///
+    /// Best-effort: a sidecar that cannot be rewritten leaves the directory owned as it was, which
+    /// is the pre-#2824 behaviour and still correct, just more fragile.
+    /// </summary>
+    /// <returns>True when the sidecar now names <paramref name="pid"/>.</returns>
+    public static bool TransferOwnership(string dir, int pid)
+    {
+        if (pid <= 0) return false;
+        var full = Path.GetFullPath(dir);
+
+        // Disown BEFORE rewriting — see the order note above.
+        lock (Gate) Owned.Remove(full);
+
+        long startTicks = 0;
+        try { using var p = Process.GetProcessById(pid); startTicks = p.StartTime.ToUniversalTime().Ticks; }
+        catch { /* already gone, or not inspectable: pid liveness alone will decide */ }
+        var jiffies = TryReadStartJiffies(pid) ?? 0;
+
+        try
+        {
+            File.WriteAllText(MarkerPathFor(full),
+                $"pid={pid}\nstart={startTicks}\nstartjiffies={jiffies}\ncreated={DateTime.UtcNow:O}\n");
+            return true;
+        }
+        catch (IOException) { return false; }
+        catch (UnauthorizedAccessException) { return false; }
+    }
+
+    /// <summary>
+    /// Take responsibility for a directory a previous process handed to THIS one, so it is
+    /// deleted at this process's exit rather than leaking (issue #2824).
+    ///
+    /// Adopts ONLY when the sidecar already names this process — which is true exactly when a
+    /// parent called <see cref="TransferOwnership"/> for us, and false for a path a user typed on
+    /// the command line. That condition is the whole safety argument: <c>--merge-counts</c> takes
+    /// an arbitrary path, and a rule like "adopt the directory of every carry file" would have
+    /// this process delete a directory of the caller's own at exit.
+    /// </summary>
+    /// <returns>True when this process now owns it.</returns>
+    public static bool AdoptIfHandedToThisProcess(string dir)
+    {
+        var full = Path.GetFullPath(dir);
+        if (!TryReadOwner(MarkerPathFor(full), out var pid, out _, out _)) return false;
+        if (pid != Environment.ProcessId) return false;
+
+        lock (Gate)
+        {
+            Owned.Add(full);
+            if (!_exitHooked)
+            {
+                _exitHooked = true;
+                AppDomain.CurrentDomain.ProcessExit += (_, _) => ReleaseAll();
+            }
+        }
+        return true;
+    }
+
     /// <summary>True when <paramref name="dir"/> was reserved by THIS process and not yet released.</summary>
     internal static bool IsOwnedByThisProcess(string dir)
     {
