@@ -329,6 +329,42 @@ public class DependencyPageMetadataXmlTests
                   ],
                   "Id": 88123597,
                   "Name": "DPXConstPart"
+                },
+                {
+                  "Kind": 6,
+                  "RelatedPagePartId": { "Name": "", "Id": 88123502 },
+                  "Properties": [
+                    { "Name": "SubPageLink", "Value": "\"Part Link Field\" = field(\"Host Link Field\"), \"Table ID\" = const(Database::\"DPX Host Table\")" }
+                  ],
+                  "Id": 88123596,
+                  "Name": "DPXConstDatabasePart"
+                },
+                {
+                  "Kind": 6,
+                  "RelatedPagePartId": { "Name": "", "Id": 88123502 },
+                  "Properties": [
+                    { "Name": "SubPageLink", "Value": "\"Part Link Field\" = const(\"DPX Kind\"::\"On Hold\")" }
+                  ],
+                  "Id": 88123595,
+                  "Name": "DPXConstEnumPart"
+                },
+                {
+                  "Kind": 6,
+                  "RelatedPagePartId": { "Name": "", "Id": 88123502 },
+                  "Properties": [
+                    { "Name": "SubPageLink", "Value": "\"Part Link Field\" = const('SPECIAL')" }
+                  ],
+                  "Id": 88123594,
+                  "Name": "DPXConstQuotedPart"
+                },
+                {
+                  "Kind": 6,
+                  "RelatedPagePartId": { "Name": "", "Id": 88123502 },
+                  "Properties": [
+                    { "Name": "SubPageLink", "Value": "\"Part Link Field\" = filter(Open | \"Bank Acc. Entry Applied\")" }
+                  ],
+                  "Id": 88123593,
+                  "Name": "DPXFilterPart"
                 }
               ]
             },
@@ -445,9 +481,9 @@ public class DependencyPageMetadataXmlTests
 
     /// <summary>
     /// A CONST-kind SubPageLink (10.7% of Base Application 28.1's SubPageLink entries,
-    /// measured) is reproduced with its REAL FilterType rather than defaulted to FIELD, so
-    /// MockTestPage.SubPageLinks' existing "only FilterType.FIELD is implemented" refusal
-    /// names the true reason instead of a wrong one.
+    /// measured) is reproduced with its REAL FilterType, and a numeric literal passes
+    /// through as written — the representation BC's own compiler emits, which
+    /// MockTestPage.SubPageLinks applies as a single-value filter on the part's field (#2469).
     /// </summary>
     [Fact]
     public void TryBuildDependencyPageMetadata_PartWithConstLink_PreservesConstFilterType()
@@ -469,6 +505,83 @@ public class DependencyPageMetadataXmlTests
             var link = (XmlElement)part.SelectSingleNode("m:SubFormLink", ns)!;
             Assert.Equal("CONST", link.GetAttribute("FilterType"));
             Assert.Equal("88123520", link.GetAttribute("FilterValue"));
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// #2469 — the AL-text shapes a dependency's <c>const(...)</c> arrives in must reach the
+    /// part as the representation BC's compiler would have written for a source-compiled
+    /// page (measured on 28.1: <c>Database::X</c> compiles to the table id, a quoted text
+    /// literal to its bare text), or an equivalent BC's filter grammar reads the same way
+    /// (an enum member by NAME rather than ordinal). Each arm asserts a specific value that
+    /// only the right normalisation produces; the raw AL text passing through would fail all
+    /// three.
+    /// </summary>
+    [Theory]
+    [InlineData(88123596, "88123520")]      // const(Database::"DPX Host Table") -> the host table's id
+    [InlineData(88123595, "On Hold")]       // const("DPX Kind"::"On Hold")      -> the member name, unquoted
+    [InlineData(88123594, "SPECIAL")]       // const('SPECIAL')                  -> the bare text
+    public void TryBuildDependencyPageMetadata_ConstLink_NormalisesToCompilerRepresentation(int controlId, string expected)
+    {
+        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var appPath = WriteApp(dir, PartsSymbolReference);
+            RecordPatches.AddBcAppPath(appPath);
+
+            var xml = RecordPatches.TryBuildDependencyPageMetadata(PartsHostPageId);
+            var doc = new XmlDocument();
+            doc.LoadXml(xml!);
+            var ns = new XmlNamespaceManager(doc.NameTable);
+            ns.AddNamespace("m", "urn:schemas-microsoft-com:dynamics:NAV:MetaObjects");
+
+            var part = GetPartControl(doc, ns, controlId);
+            var links = part.SelectNodes("m:SubFormLink", ns)!.Cast<XmlElement>().ToList();
+            var constLink = Assert.Single(links, l => l.GetAttribute("FilterType") == "CONST");
+            Assert.Equal(expected, constLink.GetAttribute("FilterValue"));
+            // The part-side field resolved to a real number for every kind — 0 is what
+            // MockTestPage.SubPageLinks refuses by name.
+            Assert.NotEqual("0", constLink.GetAttribute("FieldID"));
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// #2469 — a <c>filter(...)</c> link keeps FilterType FILTER and has its AL-quoted
+    /// identifiers re-quoted for BC's filter grammar, exactly as the CalcFormula
+    /// <c>filter(...)</c> path does (#2305): the tokenizer has no case for <c>"</c>, so
+    /// <c>"Bank Acc. Entry Applied"</c> carried through verbatim would be a 25-character
+    /// literal matching no option member.
+    /// </summary>
+    [Fact]
+    public void TryBuildDependencyPageMetadata_FilterLink_RequotesIdentifiersForFilterGrammar()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var appPath = WriteApp(dir, PartsSymbolReference);
+            RecordPatches.AddBcAppPath(appPath);
+
+            var xml = RecordPatches.TryBuildDependencyPageMetadata(PartsHostPageId);
+            var doc = new XmlDocument();
+            doc.LoadXml(xml!);
+            var ns = new XmlNamespaceManager(doc.NameTable);
+            ns.AddNamespace("m", "urn:schemas-microsoft-com:dynamics:NAV:MetaObjects");
+
+            var part = GetPartControl(doc, ns, 88123593);
+            var link = (XmlElement)part.SelectSingleNode("m:SubFormLink", ns)!;
+            Assert.Equal("FILTER", link.GetAttribute("FilterType"));
+            Assert.Equal("5", link.GetAttribute("FieldID"));
+            Assert.Equal("Open | 'Bank Acc. Entry Applied'", link.GetAttribute("FilterValue"));
         }
         finally
         {

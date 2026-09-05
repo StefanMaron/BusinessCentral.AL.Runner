@@ -755,7 +755,7 @@ public static partial class RecordPatches
     /// an option member named <c>On Hold</c> is never matched by the 9-character
     /// <c>"On Hold"</c>. AL's doubled-quote escape is resolved with it.</para>
     /// </summary>
-    private static string ConstValueText(string? text)
+    internal static string ConstValueText(string? text)
     {
         var s = (text ?? "").Trim();
         if (s.Length >= 2 && s[0] == '"' && s[^1] == '"') return s[1..^1].Replace("\"\"", "\"");
@@ -782,7 +782,7 @@ public static partial class RecordPatches
     /// <c>filter(...)</c> condition, 44 of them quoted — threw
     /// <c>NavInvalidFilterExpressionException</c> instead of calculating.</para>
     /// </summary>
-    private static string FilterValueText(string? text)
+    internal static string FilterValueText(string? text)
     {
         var s = (text ?? "").Trim();
         if (s.IndexOf('"') < 0) return s;
