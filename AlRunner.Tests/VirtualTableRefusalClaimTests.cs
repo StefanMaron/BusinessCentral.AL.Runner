@@ -80,6 +80,22 @@ public sealed class VirtualTableRefusalClaimTests
         "RecordPatches.WindowsLanguageVirtualTable.cs",
     };
 
+    /// <summary>
+    /// Two files OUTSIDE the *VirtualTable.cs set that raise refusals for the same surfaces —
+    /// found by asking question 2 of "fix the shape, not just the reported line", not by the
+    /// issue's own grep. RecordPatches.cs's DataAccess dispatch chain refuses for Field,
+    /// Aggregate Permission Set and Feature Key; AllProfileWritePatches.cs refuses for All
+    /// Profile. Same table, same anchor, so leaving them would have left one table claiming two
+    /// different things depending on which code path reached it. They route through the same
+    /// factories now — but they legitimately carry OTHER, genuinely permanent refusals too, so
+    /// the whole-file guard below does not apply to them.
+    /// </summary>
+    private static readonly string[] SiblingFiles =
+    {
+        "RecordPatches.cs",
+        "AllProfileWritePatches.cs",
+    };
+
     /// <summary>factory name → (api, surface anchor, doc link). One row per corrected surface.</summary>
     public static IEnumerable<object[]> Surfaces() => new[]
     {
@@ -271,15 +287,48 @@ public sealed class VirtualTableRefusalClaimTests
     [Fact]
     public void AllFortyEightRefusalsStillExist_SoNoneWasDeletedRatherThanCorrected()
     {
-        var total = CoveredFiles.Sum(file =>
+        var total = CoveredFiles.Concat(SiblingFiles).Sum(file =>
         {
             var src = File.ReadAllText(Path.Combine(RepoRoot, "AlRunner", "Patches", file));
-            return Regex.Matches(src, @"throw [A-Za-z]+ShapeGap\(").Count;
+            return Regex.Matches(src, @"throw (RecordPatches\.)?[A-Za-z]+ShapeGap\(").Count;
         });
 
-        // 48 corrected sites. A refusal DELETED rather than corrected would mean a precondition
-        // went back to being read as a default, which is the failure this whole change is about.
-        Assert.Equal(48, total);
+        // 48 in the sixteen populators + 3 in RecordPatches.cs's dispatch chain + 4 in
+        // AllProfileWritePatches.cs. A refusal DELETED rather than corrected would mean a
+        // precondition went back to being read as a default, which is the failure this whole
+        // change is about, so the count is asserted exactly.
+        Assert.Equal(55, total);
+    }
+
+
+    [Fact]
+    public void EachSurfaceAnchorIsSpelledInExactlyOneFile_SoOneTableCannotClaimTwoThings()
+    {
+        // The defect this guards against is what the sibling sweep found: RecordPatches.cs
+        // spelled "field-virtual-table" itself instead of calling the Field factory, so the
+        // same table refused with one claim from the populator and another from the dispatch
+        // chain. One anchor, one file, one claim.
+        var sources = Directory
+            .EnumerateFiles(Path.Combine(RepoRoot, "AlRunner"), "*.cs", SearchOption.AllDirectories)
+            .ToDictionary(
+                path => path,
+                path => string.Join('\n', File.ReadAllLines(path)
+                    .Where(l => !l.TrimStart().StartsWith("//", StringComparison.Ordinal))));
+
+        foreach (var row in Surfaces())
+        {
+            var anchor = (string)row[2];
+            // Whole-token match: "field-virtual-table" is a SUBSTRING of
+            // "page-control-field-virtual-table", so a plain Contains reports a false collision.
+            var whole = new Regex("(?<![a-z-])" + Regex.Escape(anchor) + "(?![a-z-])");
+            var owners = sources.Where(kv => whole.IsMatch(kv.Value))
+                                .Select(kv => Path.GetFileName(kv.Key))
+                                .OrderBy(n => n, StringComparer.Ordinal)
+                                .ToList();
+
+            Assert.True(owners.Count == 1,
+                $"anchor '{anchor}' is spelled in {owners.Count} files: {string.Join(", ", owners)}");
+        }
     }
 
     // ── The mechanism: a docAnchor may name its own doc file ─────────────────────────────

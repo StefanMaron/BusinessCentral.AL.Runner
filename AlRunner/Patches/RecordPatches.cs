@@ -1646,9 +1646,7 @@ public static partial class RecordPatches
                 // on demand there. This whole path is now DEFAULT-ON (no env gate): the find
                 // interception means a populated Field table no longer crashes under R2R.
                 var session = _fDasSession?.GetValue(self)
-                    ?? throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
-                        "Field (virtual table 2000000041)",
-                        "field-virtual-table — DataAccessSource has no skeleton session; see docs/scope.md");
+                    ?? throw FieldVirtualShapeGap("DataAccessSource has no skeleton session");
                 PopulateFieldVirtualTable(fieldDa, table, session);
                 return fieldDa;
             }
@@ -1821,11 +1819,9 @@ public static partial class RecordPatches
                     aggPermSetDa = perTable.GetOrAdd(tableId, createdAggPermSet);
                 }
                 var aggPermSetSession = _fDasSession?.GetValue(self)
-                    ?? throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
-                        "Aggregate Permission Set (virtual table 2000000167)",
-                        "aggregate-permission-set-virtual-table — DataAccessSource has no skeleton "
-                        + "session, so BC's own AggregatePermissionSetDataProvider cannot be "
-                        + "constructed; see docs/scope.md");
+                    ?? throw AggregatePermissionSetShapeGap(
+                        "DataAccessSource has no skeleton session, so BC's own "
+                        + "AggregatePermissionSetDataProvider cannot be constructed");
                 PopulateAggregatePermissionSetVirtualTable(aggPermSetDa, table, aggPermSetSession);
                 return aggPermSetDa;
             }
@@ -1914,10 +1910,9 @@ public static partial class RecordPatches
                     featureKeyDa = perTable.GetOrAdd(tableId, createdFeatureKey);
                 }
                 var featureKeySession = _fDasSession?.GetValue(self)
-                    ?? throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
-                        "Feature Key (system table 2000000211)",
-                        "feature-key-virtual-table — DataAccessSource has no skeleton session, so "
-                        + "BC's own FeatureKeyDataProvider cannot be constructed; see docs/scope.md");
+                    ?? throw FeatureKeyShapeGap(
+                        "DataAccessSource has no skeleton session, so BC's own "
+                        + "FeatureKeyDataProvider cannot be constructed");
                 PopulateFeatureKeyVirtualTable(featureKeyDa, table, featureKeySession);
                 return featureKeyDa;
             }
