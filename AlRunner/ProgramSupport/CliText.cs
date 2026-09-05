@@ -411,10 +411,11 @@ internal static partial class ProgramSupport
         w.WriteLine("                          a bundle's emit phase roughly N times slower in wall time,");
         w.WriteLine("                          so the wall-clock timeout is scaled to match. An explicit");
         w.WriteLine("                          AL_RUNNER_EMIT_TIMEOUT_SEC set before the run is left alone.");
-        w.WriteLine("  --merge-counts PATH     Fold a JUnit file's totals into this run's summary;");
-        w.WriteLine("                          repeatable. Set automatically by --resume-aborts to carry");
-        w.WriteLine("                          earlier attempts forward, and reported on its own line so a");
-        w.WriteLine("                          resumed total is never mistaken for one clean run's.");
+        w.WriteLine("  --merge-counts PATH     Fold a JUnit file's totals into this run's summary, and its");
+        w.WriteLine("                          test cases into this run's --output-junit; repeatable. Set");
+        w.WriteLine("                          automatically by --resume-aborts to carry earlier attempts");
+        w.WriteLine("                          forward, and reported on its own summary line so a resumed");
+        w.WriteLine("                          total is never mistaken for one clean run's.");
         w.WriteLine("  --resume-aborts N       How many times a run may re-run itself in a fresh process");
         w.WriteLine("                          after a watchdog abort, each time excluding the codeunit");
         w.WriteLine("                          that hung, and every codeunit already attempted, so the");

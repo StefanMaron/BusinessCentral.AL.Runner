@@ -3600,6 +3600,10 @@ if (resumeAborts > 0
     var carryDir = Path.Combine(Path.GetTempPath(), "al-runner-resume-" + Guid.NewGuid().ToString("N"));
     Directory.CreateDirectory(carryDir);
     var carryPath = Path.Combine(carryDir, "attempt.xml");
+    // THIS attempt's results only — deliberately not the carried-files overload. Each carry file
+    // must hold exactly one attempt, because the final attempt folds the whole list into its
+    // --output-junit (#2716); a carry file that already contained the earlier files would put
+    // every attempt into the final XML once per later resume.
     try { JUnitReport.WriteJUnit(carryPath, results); } catch { carryPath = null!; }
     var carry = new List<string>(mergeCountsFiles);
     if (carryPath != null) carry.Add(carryPath);
@@ -3639,7 +3643,12 @@ if (outPath != null)
 }
 if (outputJunitPath != null)
 {
-    JUnitReport.WriteJUnit(outputJunitPath, results);
+    // #2716: after a watchdog resume this process ran only the codeunits no earlier attempt
+    // reached, so `results` is a slice. The earlier attempts' cases arrive as --merge-counts
+    // files and go into the XML too — the printed summary above already folded their totals in,
+    // and under --jobs the parent reads ONLY this file, so a slice here silently shrank the
+    // aggregate by everything the earlier attempts ran. Empty list on a run that never resumed.
+    JUnitReport.WriteJUnit(outputJunitPath, results, mergeCountsFiles);
     if (!outputJson) Console.WriteLine($"JUnit XML → {outputJunitPath}");
 }
 if (coverageEnabled)

@@ -21,8 +21,15 @@
 // left in place, or a fix that merely changes the return value's shape without
 // surfacing anything) makes the assertions below fail because the output carries
 // neither the codeunit name, nor the count "2", nor a non-zero exit code.
+//
+// #2716 extends this file with a RESUME fixture (two codeunits, the first hangs): the JUnit a
+// resumed run writes must be the whole run — the earlier attempt's cases as well as the final
+// attempt's — because under --jobs the parent aggregates ONLY that XML. Measured on the full
+// BaseApp surface at --jobs 12, the aggregate was missing 26% of the tests the shards had run.
 using System.Diagnostics;
 using System.Text;
+using System.Xml.Linq;
+using AlRunner.Infrastructure;
 using Xunit;
 
 namespace AlRunner.Tests;
@@ -34,17 +41,22 @@ public sealed class SuiteAbortOnTimeoutTests : IDisposable
     private static readonly string ProjectPath = Path.Combine(RepoRoot, "AlRunner");
 
     private readonly string _root;
+    private readonly string _resumeRoot;
 
     public SuiteAbortOnTimeoutTests()
     {
         _root = Path.Combine(Path.GetTempPath(), "al-runner-suite-abort-on-timeout", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(_root);
         WriteFixture(_root);
+        _resumeRoot = Path.Combine(Path.GetTempPath(), "al-runner-suite-abort-resume", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(_resumeRoot);
+        WriteResumeFixture(_resumeRoot);
     }
 
     public void Dispose()
     {
         try { Directory.Delete(_root, recursive: true); } catch { }
+        try { Directory.Delete(_resumeRoot, recursive: true); } catch { }
     }
 
     /// <summary>
@@ -92,11 +104,77 @@ public sealed class SuiteAbortOnTimeoutTests : IDisposable
         """);
     }
 
+    /// <summary>
+    /// The shape a watchdog RESUME needs (#2280): two codeunits, the FIRST hangs part-way, so
+    /// the abort abandons a later codeunit and AbortResumePlan judges a retry worthwhile.
+    ///   attempt 1 runs First:  RanBeforeHang passes, Hangs errors, AbandonedInFirst never runs.
+    ///   attempt 2 runs Second: SecondA and SecondB pass (First is excluded as attempted+hung).
+    /// The whole run is therefore 4 tests / 1 error; each attempt on its own is 2.
+    /// </summary>
+    private static void WriteResumeFixture(string dir)
+    {
+        File.WriteAllText(Path.Combine(dir, "app.json"), """
+        {
+          "id": "d4e5f6a7-b8c9-0123-4567-890abcdef123",
+          "name": "Suite Abort Resume Test Fixture",
+          "publisher": "AL Runner",
+          "version": "1.0.0.0",
+          "dependencies": [],
+          "platform": "1.0.0.0",
+          "idRanges": [ { "from": 62210, "to": 62219 } ],
+          "runtime": "14.0"
+        }
+        """);
+
+        File.WriteAllText(Path.Combine(dir, "First.Codeunit.al"), """
+        codeunit 62212 "Suite Abort Resume First"
+        {
+            Subtype = Test;
+
+            [Test]
+            procedure RanBeforeHang()
+            begin
+            end;
+
+            [Test]
+            procedure Hangs()
+            begin
+                while true do;
+            end;
+
+            [Test]
+            procedure AbandonedInFirst()
+            begin
+            end;
+        }
+        """);
+
+        File.WriteAllText(Path.Combine(dir, "Second.Codeunit.al"), """
+        codeunit 62213 "Suite Abort Resume Second"
+        {
+            Subtype = Test;
+
+            [Test]
+            procedure SecondA()
+            begin
+            end;
+
+            [Test]
+            procedure SecondB()
+            begin
+            end;
+        }
+        """);
+    }
+
     private (string output, int exit) RunRunner(params string[] extraArgs)
+        => RunRunner(_root, 120_000, extraArgs);
+
+    private (string output, int exit) RunRunner(string bundle, int waitMs, params string[] extraArgs)
     {
         var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
         args.Append(TestBuildConfig.BcVersionArg);
-        args.Append($" \"{_root}\"");
+        args.Append($" \"{bundle}\"");
         foreach (var a in extraArgs) args.Append($" {a}");
         var psi = new ProcessStartInfo
         {
@@ -113,7 +191,7 @@ public sealed class SuiteAbortOnTimeoutTests : IDisposable
         // The fixture's first [Test] never returns on its own; give the runner
         // subprocess enough headroom above the (short) --test-timeout to finish the
         // whole run, but well under a genuine hang.
-        if (!p.WaitForExit(120_000)) { try { p.Kill(true); } catch { } throw new TimeoutException("runner hung"); }
+        if (!p.WaitForExit(waitMs)) { try { p.Kill(true); } catch { } throw new TimeoutException("runner hung"); }
         p.WaitForExit();
         lock (sb) return (sb.ToString(), p.ExitCode);
     }
@@ -157,5 +235,77 @@ public sealed class SuiteAbortOnTimeoutTests : IDisposable
 
         Assert.Contains("Hangs", output);
         Assert.Contains("Test exceeded 2s timeout.", output);
+    }
+
+    private static List<(string ClassName, string Name)> TestCases(string junitPath)
+        => XDocument.Load(junitPath).Descendants("testcase")
+            .Select(tc => ((string?)tc.Attribute("classname") ?? "", (string?)tc.Attribute("name") ?? ""))
+            .ToList();
+
+    /// <summary>
+    /// #2716 positive: after a watchdog resume, --output-junit must hold the WHOLE run — the
+    /// earlier attempt's cases (RanBeforeHang, Hangs) as well as the final attempt's (SecondA,
+    /// SecondB). The worker's own printed summary already said "4 total (carried: 2)"; the XML
+    /// said 2, and under --jobs the parent reads only the XML, so the aggregate lost the 2.
+    /// </summary>
+    [SkippableFact]
+    public void ResumedRun_JUnitContainsEarlierAttemptsCases()
+    {
+        TestArtifacts.SkipIfMissing();
+        var junit = Path.Combine(_resumeRoot, "out", "resumed.xml");
+        Directory.CreateDirectory(Path.GetDirectoryName(junit)!);
+
+        // Two attempts, each a full BC boot: generous wait, still far below a real hang.
+        var (output, exit) = RunRunner(_resumeRoot, 300_000,
+            "--test-timeout 2", "--resume-aborts 1", $"--output-junit \"{junit}\"");
+
+        Assert.NotEqual(0, exit);
+        // Sanity: the resume really happened, and the printed summary already carried attempt 1.
+        Assert.Contains("resume: a watchdog abort ended this attempt early", output);
+        Assert.Contains("carried from earlier attempt(s): 2 tests", output);
+        Assert.True(File.Exists(junit), $"JUnit not written: {junit}\n{output}");
+
+        var cases = TestCases(junit);
+        var names = cases.Select(c => c.Name).OrderBy(n => n).ToList();
+        Assert.Equal(new[] { "Hangs", "RanBeforeHang", "SecondA", "SecondB" }, names);
+        // Once each: the carried suites and the final attempt's suites are disjoint by
+        // construction (the resume excludes every attempted codeunit), and the XML must reflect
+        // that rather than, say, the whole earlier file being appended twice down a chain.
+        Assert.Equal(cases.Count, cases.Distinct().Count());
+        // A test inside the HUNG codeunit that never ran is not invented into the record.
+        Assert.DoesNotContain("AbandonedInFirst", names);
+
+        // The parent's own aggregation path (ParallelFanOut.Run -> JUnitCounts.Read) now sees
+        // the whole worker, not its last slice.
+        var totals = JUnitCounts.Read(junit);
+        Assert.Equal(4, totals.Tests);
+        Assert.Equal(1, totals.Errors);
+        Assert.Equal(0, totals.Failures);
+        Assert.Equal(0, totals.Skipped);
+    }
+
+    /// <summary>
+    /// #2716 negative: with resume disabled the same fixture writes exactly attempt 1's two
+    /// cases — nothing is carried in from nowhere, and the count is not inflated.
+    /// </summary>
+    [SkippableFact]
+    public void NonResumedRun_JUnitHoldsOnlyWhatThisProcessRan()
+    {
+        TestArtifacts.SkipIfMissing();
+        var junit = Path.Combine(_resumeRoot, "out", "single.xml");
+        Directory.CreateDirectory(Path.GetDirectoryName(junit)!);
+
+        var (output, exit) = RunRunner(_resumeRoot, 180_000,
+            "--test-timeout 2", "--resume-aborts 0", $"--output-junit \"{junit}\"");
+
+        Assert.NotEqual(0, exit);
+        Assert.DoesNotContain("resume: a watchdog abort ended this attempt early", output);
+        Assert.DoesNotContain("carried from earlier attempt(s)", output);
+
+        var names = TestCases(junit).Select(c => c.Name).OrderBy(n => n).ToList();
+        Assert.Equal(new[] { "Hangs", "RanBeforeHang" }, names);
+        var totals = JUnitCounts.Read(junit);
+        Assert.Equal(2, totals.Tests);
+        Assert.Equal(1, totals.Errors);
     }
 }

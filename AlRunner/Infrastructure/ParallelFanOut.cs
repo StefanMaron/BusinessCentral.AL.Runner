@@ -81,6 +81,11 @@ internal static class ParallelFanOut
             // same earlier-attempt totals six times and report a number larger than the tests
             // that exist. Listed in ValueTakingFlags above so its value is still recognised as a
             // value rather than read as a bundle path; dropped here so it reaches no worker.
+            //
+            // The OTHER direction is not this code's job and is not affected by the strip: a
+            // worker that resumes itself builds its own --merge-counts chain (AbortResume) and
+            // writes the carried cases into the JUnit it hands back (#2716), so Run() reading
+            // that one file per shard sees everything the worker's attempts ran.
             if (a == "--merge-counts")
             {
                 if (i + 1 < originalArgs.Count) i++;

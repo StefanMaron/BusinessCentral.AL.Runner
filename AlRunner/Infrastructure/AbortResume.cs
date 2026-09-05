@@ -87,8 +87,9 @@ internal static class AbortResume
             + $"skipping {exclusions.Count} codeunit(s) already attempted or hung; "
             + $"{remainingBudget} resume attempt(s) left after this one.");
         Console.Error.WriteLine(
-            "resume: this attempt's totals are carried forward, so the next summary covers the "
-            + "whole run. Tests inside a HUNG codeunit still never ran and are not counted.");
+            "resume: this attempt's results are carried forward, so the next summary and its "
+            + "--output-junit cover the whole run. Tests inside a HUNG codeunit still never ran "
+            + "and are not counted.");
         Console.Error.WriteLine();
 
         var exe = Environment.ProcessPath ?? "dotnet";
