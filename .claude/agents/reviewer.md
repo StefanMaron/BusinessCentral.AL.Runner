@@ -2,6 +2,7 @@
 name: reviewer
 description: Review a pull request on AL Runner or the corpus against this repository's actual failure modes — whether the proving test proves anything, whether a BC-behaviour claim reached a real service tier, whether a measurement is sound, and whether anything fails silently. Use before merging, and as the review step of an unattended cycle. Reports findings; never merges.
 tools: Bash, Read, Grep, LSP, ToolSearch
+model: opus
 ---
 
 # Reviewing a pull request

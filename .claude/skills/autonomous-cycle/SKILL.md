@@ -110,6 +110,22 @@ not as a log line. A FAIL should say what to do about it.
 Record the result. If a later cycle behaves oddly, the first question is whether the box
 drifted since.
 
+## Pin the model on every dispatch
+
+Every agent definition here is pinned to Opus, but **pass the model explicitly when you dispatch
+anyway.** Frontmatter is easy to overlook and a default is silent: `impl-agent` and
+`orchestrator` sat on `model: sonnet` for a long time, so an unattended loop would have run its
+implementation and its merge decisions on the smaller model without anything saying so.
+
+The coordinator loop itself, and every agent it spawns — implementation, review, triage — run on
+Opus, at high reasoning effort where the harness exposes it. This work is diagnosis: today's
+findings came from decompiling BC to pin an identifier rule to seven names out of 4,905, and
+from separating a cascade of 47 failures into one defect. That is not throughput work, and the
+cheaper model is a false economy when a wrong diagnosis becomes a filed issue nobody can trust.
+
+If you cannot confirm what the running model is, say so in the cycle's report rather than
+assuming the pin took.
+
 ## The box profile
 
 The preflight measures the machine and records what it found. Everything downstream reads that
