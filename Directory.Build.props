@@ -55,6 +55,54 @@
   </PropertyGroup>
 
   <!--
+    #2818: the SECOND way the build path — rather than the source — leaked into
+    al-runner.dll's bytes, and therefore into RunnerFingerprint.ContentHash and every cache
+    key derived from it (ncl-cecil, al-out, compiled-deps, workspace-deps, install-baseline).
+
+    Same defect family as the commit-SHA embedding above (#1881), found the same way and
+    worth stating as a measurement rather than a claim. Two git worktrees of the SAME tree
+    (`git rev-parse HEAD^{tree}` identical, both clean), same SDK, same machine, same
+    `dotnet build AlRunner/ -c Release`:
+
+        .claude/worktrees/stma-auto-1-issue-2818  ->  89e843a3fcfd30c8…
+        <another absolute path>                  ->  b5e957c29b60c0ea…
+
+    Byte-diffing the two DLLs located the term exactly: the DLL embeds the ABSOLUTE path of
+    its own PDB in the CodeView debug-directory entry
+    (`/home/…/<checkout>/AlRunner/obj/Release/net8.0/al-runner.pdb`), and the deterministic
+    PDB ID and MVID hash the source documents' absolute paths as well — so moving the
+    checkout shifts bytes in three independent places. A rebuild IN PLACE was, and remains,
+    byte-stable (measured: two clean rebuilds at one path, identical hash); only moving broke
+    it.
+
+    That falsifies the guarantee RunnerFingerprint.cs and NclCecilRewrite.ComputeCacheKey
+    both stated — "stable across rebuilds of unchanged source". It is stable across rebuilds
+    at ONE path. Two checkouts of one commit computed different keys, so nothing they cached
+    was shared: on a box running N agent worktrees, N copies of every runner-owned cache
+    entry, against an ncl-cecil prune that keeps only the 8 newest 11 MB entries.
+
+    PathMap rewrites those paths to a fixed repo-relative root (`/_/AlRunner/…`), which is the
+    same convention the SDK's own DeterministicSourcePaths uses. Verified by rebuilding both
+    worktrees above with it: byte-identical output. Guarded by
+    AlRunner.Tests/BuildDeterminismTests.cs, both on a probe project and directly on
+    al-runner.dll's own CodeView entry.
+
+    Scoped to SuppressImplicitGitSourceLink=true — i.e. every dev, CI and test build, and NOT
+    the release pack. publish.yml packs with `-p:SuppressImplicitGitSourceLink=false`
+    specifically to keep source-stepping working for consumers, and SourceLink maps the
+    ORIGINAL absolute paths to raw.githubusercontent.com URLs; rewriting the document names
+    to /_/ underneath it would leave the sourcelink.json map pointing at paths no document
+    carries any more, breaking exactly the feature that override exists to provide. A global
+    `-p:SuppressImplicitGitSourceLink=false` overrides this file's assignment above, so the
+    condition here reads false on that path and no mapping is applied. The released package's
+    bytes are fixed per version anyway, so it never needed this (same argument the block
+    above makes for the informational version).
+  -->
+  <PropertyGroup Condition="'$(SuppressImplicitGitSourceLink)' == 'true'">
+    <PathMap>$(MSBuildThisFileDirectory)=/_/</PathMap>
+  </PropertyGroup>
+
+  <!--
     #2102: declared here, ONCE, so AlRunner.csproj and AlRunner.Tests.csproj cannot drift
     apart again. They used to each carry their own default (28.1.49838.53910 vs
     28.1.49838.50794) — a project-level MSBuild property never flows to a sibling project,

@@ -23,6 +23,18 @@
 // together — shipping finding 2 without finding 3 is a cache-poisoning regression, not
 // a fix.
 //
+// #2818: "stable across rebuilds of unchanged source" holds only because the build is
+// configured to make it hold, and that configuration lives in a different file. Two SDK
+// behaviours embed the git commit into these bytes (#1881) and a third embeds the build
+// machine's absolute paths — the PDB path in the CodeView debug-directory entry, plus the
+// deterministic PDB ID and MVID, which hash the source documents' absolute paths. Measured:
+// two git worktrees of a byte-identical tree, same SDK, same machine, same build command,
+// produced two different al-runner.dll hashes, so two checkouts of one commit shared nothing
+// they cached. All three are switched off in the repo-root Directory.Build.props
+// (IncludeSourceRevisionInInformationalVersion, SuppressImplicitGitSourceLink, PathMap) and
+// guarded by AlRunner.Tests/BuildDeterminismTests.cs. Deleting any of them silently turns
+// every persisted runner cache key back into a hash of WHERE and WHEN it was built.
+//
 // SHA-256 of the full assembly bytes was chosen over the module's MVID. A clean Release
 // rebuild of an unchanged source tree was verified (see issue #1815) to produce
 // byte-identical output (.NET SDK's Deterministic=true default is on for this project),
