@@ -47,10 +47,34 @@ public sealed class CalcNumericAggregateTests
     private static NavValue?[] Dates(params NavDate[] values)
         => values.Select(v => (NavValue?)v).ToArray();
 
+    // Every unsigned aggregate goes through here, and supplies a negation that FAILS the test
+    // if it is ever called — so the 12 tests below assert not only their value but that an
+    // unsigned formula is never routed through the negation at all.
     private static NavValue Aggregate(
         NCLMetaCalculationMethod method, INavValueMetadata meta, NavValue?[] sourceValues, int? rowCount = null)
         => RecordPatches.ComputeCalcNumericAggregate(
-            method, meta, rowCount ?? sourceValues.Length, sourceValues, "CFM Header.Test Field");
+            method, meta, rowCount ?? sourceValues.Length, sourceValues, "CFM Header.Test Field",
+            negateResult: false,
+            negate: _ => throw new InvalidOperationException(
+                "negation applied to a formula whose NegateResult is false"));
+
+    // The signed counterpart. `negate` stands in for BC's own
+    // NCLMetaCalculationFormula.NegateValue, which CANNOT run in a unit test: it resolves
+    // SourceField through the metadata registry, and without a live session that throws
+    // PlatformNotSupportedException ("Windows Principal functionality is not supported on this
+    // platform") — measured, not assumed. So these tests pin the WIRING (is the aggregate
+    // negated, exactly when NegateResult says so), not BC's negation semantics. Those are
+    // pinned upstream on eight real service tiers by the corpus's own CFS Tests (codeunit
+    // 60912, TestCalcFormulaSignFilters*), which cover `CalcFormula = -sum(...)` end to end.
+    //
+    // The stand-in mirrors the Decimal arm of BC's method, quoted in FlowFieldPatches:
+    //     NavType.Decimal => NavDecimal.Create(-((NavDecimal)value).Value)
+    private static NavValue NegatedAggregate(
+        NCLMetaCalculationMethod method, INavValueMetadata meta, NavValue?[] sourceValues, int? rowCount = null)
+        => RecordPatches.ComputeCalcNumericAggregate(
+            method, meta, rowCount ?? sourceValues.Length, sourceValues, "CFM Header.Test Field",
+            negateResult: true,
+            negate: v => NavDecimal.Create(-v.ToDecimal()));
 
     private static decimal AsDecimal(NavValue v) => (decimal)v.ToDecimal();
 
@@ -159,5 +183,74 @@ public sealed class CalcNumericAggregateTests
         Assert.Equal("TempTableDataProvider.CalcNumeric", ex.Api);
         Assert.Contains(method.ToString(), ex.Message, StringComparison.Ordinal);
         Assert.Contains("CFM Header.Test Field", ex.Message, StringComparison.Ordinal);
+    }
+
+    // ── NegateResult: CalcFormula = -sum(...) at the provider level (#1708, #2937) ──────
+    // BC applies the leading minus inside the provider — NavSqlAggregateCommand's aggregate
+    // reader negates every aggregated FlowField value whose formula has NegateResult, before
+    // the FieldDictionary goes back to FlowFieldsHelper. TempTableDataProvider_CalcNumeric is
+    // the runner's stand-in for that provider, and before this change it dropped the sign:
+    // a `-sum(...)` came back POSITIVE. Each assertion below is a value the pre-fix code got
+    // wrong, not merely a value it did not compute.
+
+    // The headline case: the same D1 rows that sum to +125 must answer -125 when signed.
+    [Fact]
+    public void Sum_NegateResult_ReturnsTheNegatedAggregate()
+    {
+        var d1 = Decimals(40, -10, 75, 20);
+        Assert.Equal(125m, AsDecimal(Aggregate(NCLMetaCalculationMethod.Sum, DecimalMeta, d1)));
+        Assert.Equal(-125m, AsDecimal(NegatedAggregate(NCLMetaCalculationMethod.Sum, DecimalMeta, d1)));
+    }
+
+    // Negation composes with the Min/Max aggregation this issue added, rather than being
+    // applied to the never-written sum accumulator the old catch-all arm returned.
+    [Fact]
+    public void MinMaxAverageCount_NegateResult_NegateTheirOwnAggregate()
+    {
+        var d1 = Decimals(40, -10, 75, 20);
+        Assert.Equal(10m, AsDecimal(NegatedAggregate(NCLMetaCalculationMethod.Min, DecimalMeta, d1)));
+        Assert.Equal(-75m, AsDecimal(NegatedAggregate(NCLMetaCalculationMethod.Max, DecimalMeta, d1)));
+        Assert.Equal(-31.25m, AsDecimal(NegatedAggregate(NCLMetaCalculationMethod.Average, DecimalMeta, d1)));
+        Assert.Equal(-4m, AsDecimal(NegatedAggregate(NCLMetaCalculationMethod.Count, IntegerMeta, d1)));
+    }
+
+    // An empty source set answers the typed default, and -0 is still 0 — the sign must not
+    // turn "no matching rows" into something else.
+    [Fact]
+    public void EmptySourceSet_NegateResult_StillAnswersZero()
+    {
+        var none = Array.Empty<NavValue?>();
+        Assert.Equal(0m, AsDecimal(NegatedAggregate(NCLMetaCalculationMethod.Sum, DecimalMeta, none)));
+        Assert.Equal(0m, AsDecimal(NegatedAggregate(NCLMetaCalculationMethod.Min, DecimalMeta, none)));
+        Assert.Equal(0m, AsDecimal(NegatedAggregate(NCLMetaCalculationMethod.Max, DecimalMeta, none)));
+    }
+
+    // Negative case: a signed formula with no negation supplied must throw rather than hand
+    // back the POSITIVE aggregate — that silent wrong value is exactly issue #1708.
+    [Fact]
+    public void NegateResult_WithoutANegation_Throws_RatherThanAnsweringPositive()
+    {
+        var ex = Assert.Throws<ArgumentNullException>(
+            () => RecordPatches.ComputeCalcNumericAggregate(
+                NCLMetaCalculationMethod.Sum, DecimalMeta, 4, Decimals(40, -10, 75, 20),
+                "CFM Header.Test Field", negateResult: true, negate: null!));
+        Assert.Contains("#1708", ex.Message, StringComparison.Ordinal);
+    }
+
+    // #2323: exist FlowFields must never reach the negation, because BC's NegateValue switches
+    // on the SOURCE field's type and would mis-handle a boolean. Here that is structural — the
+    // unsupported-method throw happens first — and the negation asserts it is never called.
+    [Theory]
+    [InlineData(NCLMetaCalculationMethod.Exists)]
+    [InlineData(NCLMetaCalculationMethod.Lookup)]
+    public void UnsupportedCalculationMethod_WithNegateResult_ThrowsBeforeNegating(
+        NCLMetaCalculationMethod method)
+    {
+        Assert.Throws<RunnerOutOfScopeException>(
+            () => RecordPatches.ComputeCalcNumericAggregate(
+                method, DecimalMeta, 4, Decimals(40, -10, 75, 20), "CFM Header.Test Field",
+                negateResult: true,
+                negate: _ => throw new InvalidOperationException(
+                    "negation reached for a method CalcNumeric cannot aggregate")));
     }
 }

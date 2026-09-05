@@ -841,6 +841,14 @@ public static partial class RecordPatches
     /// BC's own NCLMetaCalculationFormula.NegateValue, reached through
     /// <see cref="FlowFieldPatches.NegateAggregateResult"/> so the two runner paths that negate
     /// a FlowField aggregate share one implementation (#1708, #2323).</para>
+    /// <para>REACHABILITY, measured rather than assumed (#2937 left this open): instrumenting
+    /// this method's result loop and running the whole al-language corpus (2496 tests) plus all
+    /// of tests/runner-extras (264 tests) produced ZERO hits. FlowFieldPatches hooks
+    /// NavRecord.CalcFieldsAsync ahead of FlowFieldsHelper, so ordinary CalcFields — on a
+    /// temporary record too, since every runner table is backed by TempTableDataProvider — never
+    /// arrives here. That is why the coverage for this method is C# (CalcNumericAggregateTests)
+    /// and not AL: there is no AL shape today that reaches it, so an AL test would pass without
+    /// executing a line of it.</para>
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static object TempTableDataProvider_CalcNumeric(object self, object request)
@@ -904,17 +912,23 @@ public static partial class RecordPatches
         for (int j = 0; j < fieldCount; j++)
         {
             var field = (NCLMetaField)fieldsToCalc[j];
+            var formula = field.CalculationFormula;
+
+            // BC negates at this level too — see the method's doc comment. The negation is
+            // passed IN rather than applied after the call so that "aggregate, then negate iff
+            // NegateResult" is one decision with one owner, and so a test can drive it: BC's
+            // own NCLMetaCalculationFormula.NegateValue resolves SourceField through the
+            // metadata registry and therefore needs a live session, which a unit test does not
+            // have. Exists never reaches the negation (ComputeCalcNumericAggregate throws for
+            // it first), so the #2323 exist carve-out in FlowFieldPatches has no counterpart to
+            // make here.
             var navValue = ComputeCalcNumericAggregate(
                 methods[j], field, recordCount,
                 (IEnumerable<NavValue?>?)sourceValues[j] ?? Array.Empty<NavValue?>(),
-                $"{field.Parent?.TableName}.{field.FieldName}");
-
-            // BC negates at this level too — see the method's doc comment. Exists never reaches
-            // here (ComputeCalcNumericAggregate throws for it), so the #2323 exist carve-out in
-            // FlowFieldPatches has no counterpart to make here.
-            if (field.CalculationFormula.NegateResult)
-                navValue = FlowFieldPatches.NegateAggregateResult(
-                    field.CalculationFormula, navValue, "TempTableDataProvider.CalcNumeric");
+                $"{field.Parent?.TableName}.{field.FieldName}",
+                formula.NegateResult,
+                v => FlowFieldPatches.NegateAggregateResult(
+                    formula, v, "TempTableDataProvider.CalcNumeric"));
 
             tuples[j] = new Tuple<INavFieldMetadata, NavValue>(field, navValue);
         }
@@ -942,7 +956,34 @@ public static partial class RecordPatches
     /// them here either, because the aggregation is exactly the same work and a wrong constant
     /// was the #2937 defect.</para>
     /// </summary>
+    /// <param name="negateResult">the formula's <c>NegateResult</c> — the leading minus in
+    /// <c>CalcFormula = -sum(...)</c> (#1708).</param>
+    /// <param name="negate">applies that minus, and is only ever called when
+    /// <paramref name="negateResult"/> is true. Required rather than optional: a null default
+    /// would let a caller silently answer the POSITIVE aggregate for a negated formula, which
+    /// is the exact silent wrong value #1708 is about. Production passes
+    /// <see cref="FlowFieldPatches.NegateAggregateResult"/>, so BC's own
+    /// NCLMetaCalculationFormula.NegateValue stays the single owner of the negation.</param>
     internal static NavValue ComputeCalcNumericAggregate(
+        NCLMetaCalculationMethod method,
+        INavValueMetadata resultMetadata,
+        int rowCount,
+        IEnumerable<NavValue?> sourceValues,
+        string fieldDescription,
+        bool negateResult,
+        Func<NavValue, NavValue> negate)
+    {
+        if (negateResult && negate == null)
+            throw new ArgumentNullException(nameof(negate),
+                $"NegateResult is set on '{fieldDescription}' but no negation was supplied — "
+                + "answering the positive aggregate would be the silent wrong value of #1708");
+
+        var aggregate = ComputeCalcNumericAggregateCore(
+            method, resultMetadata, rowCount, sourceValues, fieldDescription);
+        return negateResult ? negate(aggregate) : aggregate;
+    }
+
+    private static NavValue ComputeCalcNumericAggregateCore(
         NCLMetaCalculationMethod method,
         INavValueMetadata resultMetadata,
         int rowCount,
