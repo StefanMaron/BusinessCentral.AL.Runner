@@ -27,9 +27,9 @@
 //   MEASURED on BC 28.1.49838.53910 (SessionUserRowNameCollision, below) it does not: the
 //   runner's in-memory provider enforces only the PRIMARY key on "User Security ID", so the
 //   seed lands and the session user keeps its own row. The run is instead left holding two rows
-//   with the same user name, which real BC would refuse — a separate provider gap, filed
-//   rather than fixed here, and NOT asserted by the fixture, which would be writing a wrong
-//   number into a test.
+//   with the same user name, which real BC would refuse — a separate provider gap, filed as
+//   AlRunner#2983 rather than fixed here, and NOT asserted by the fixture, which would be
+//   writing a wrong number into a test.
 //
 //   Consequence worth stating plainly: the Refused branch is correct and is what the review
 //   asked for, but nothing reachable from AL can trigger it today. It is exercised by the

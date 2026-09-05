@@ -40,8 +40,7 @@ codeunit 70521 "SURC Tests"
         // The count is deliberately NOT asserted here. Two rows sharing a user name is a real
         // divergence from BC, which would refuse the second one — but it is a gap in the
         // provider's key handling, not something this suite should bless by writing the wrong
-        // number into an assertion. It is tracked separately; see this fixture's app.json and
-        // the runner-gap issue linked from SessionUserRowRefusalTests.
+        // number into an assertion. It is tracked separately as AlRunner#2983.
         //
         // WHEN THAT GAP IS FIXED, THIS TEST WILL START FAILING — and that is the point. At that
         // moment the seed genuinely is refused, RecordPatches' Refused branch becomes reachable

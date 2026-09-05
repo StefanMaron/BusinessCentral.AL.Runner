@@ -71,12 +71,20 @@
 //   The insert uses DataError.TrapError, whose entire purpose is to report a refusal as a
 //   `false` return rather than an exception. Discarding that bool made "the row is now there"
 //   and "the insert was refused and there is no row" indistinguishable, logged neither, and
-//   marked the bundle seeded either way. The concrete bite: BC's User table has a UNIQUE key on
-//   "User Name" as well as its primary key, so a --test-data backup carrying its own TESTUSER
-//   refuses this insert and leaves NO row for the runner's security id — silently defeating the
-//   fix on exactly the bucket configuration this issue came from. The three outcomes are now
-//   separated (UserRowSeedOutcome), a refusal is reported loudly with the colliding row named,
-//   and _userRowSeededForThisBundle stays false when no row was written.
+//   marked the bundle seeded either way. The three outcomes are now separated
+//   (UserRowSeedOutcome), a refusal is reported loudly with the colliding row named, and
+//   _userRowSeededForThisBundle stays false when no row was written.
+//
+//   WHICH REFUSALS ARE REACHABLE, MEASURED. The review that found this predicted the bite would
+//   be BC's UNIQUE key on "User Name": a --test-data backup carrying its own TESTUSER would
+//   refuse the insert and leave no row for the runner's security id. On BC 28.1.49838.53910 it
+//   does not, because the runner's in-memory provider enforces only the PRIMARY key — the seed
+//   lands and the run is left with two rows sharing a user name instead, which real BC would
+//   refuse (AlRunner#2983, with the reproducer). So today the reachable refusal is the primary-key
+//   one, which is the benign AlreadyPresent case, and Refused is reached only from the exception
+//   path. It is implemented anyway: the bug was discarding the signal, and #2983 is exactly the
+//   change that would make Refused reachable from AL.
+//   AlRunner.Tests/Fixtures/SessionUserRowNameCollision is the canary for that moment.
 //
 // PRECOMPILED-DLL RESPECT
 //   No AL business-logic body is touched. NavRecord, NCLMetaTable, NCLMetaField and NavValue are
@@ -109,11 +117,12 @@ public static partial class RecordPatches
     /// somebody looks. Discarding that <c>bool</c> made the two indistinguishable, logged
     /// neither, and marked the bundle seeded either way.
     ///
-    /// The refusal that matters is not hypothetical: BC's User table carries a UNIQUE key on
-    /// "User Name" as well as its primary key on "User Security ID", so a <c>--test-data</c>
-    /// backup that already contains a user named TESTUSER refuses this insert while leaving
-    /// NO row for the runner's own security id — silently defeating the entire fix on exactly
-    /// the bucket configuration #2296 was filed from.
+    /// Which refusals are reachable is measured, not assumed. Real BC's User table also carries
+    /// a UNIQUE key on "User Name", but the runner's in-memory provider enforces only the
+    /// primary key (AlRunner#2983), so today a same-named foreign user does NOT refuse this
+    /// insert. <see cref="Refused"/> is therefore reached only from the exception path for now.
+    /// It is implemented regardless: the defect was discarding the signal, and #2983 is exactly
+    /// the change that makes the second refusal reachable from AL.
     /// </summary>
     internal enum UserRowSeedOutcome
     {
