@@ -170,10 +170,10 @@ public static class Reporter
         {
             w.WriteLine($"  suspect:     {suspect}  — these fail/error results are in bucket(s) "
                 + $"that also lost {lostSuites} suite(s).");
-            w.WriteLine("               A test fails when an object it needs was declared in a "
-                + "lost suite, so treat");
-            w.WriteLine("               them as UNVERIFIED: fix the suite errors below and "
-                + "re-run before believing them.");
+            w.WriteLine("               A missing object, or state an aborted suite left "
+                + "behind, makes unrelated tests");
+            w.WriteLine("               fail — so treat them as UNVERIFIED: fix the suite "
+                + "errors below and re-run first.");
         }
         w.WriteLine($"Time:");
         w.WriteLine($"  AL emit:     {emit.TotalSeconds:F1}s");
@@ -321,8 +321,9 @@ public static class Reporter
                 // bucket can fail because of what the lost suites took with them. Said here, on
                 // the way in to the results, so the reader meets the caveat before the failures.
                 w.WriteLine("  → FAIL/ERROR results below are marked "
-                    + $"{SuspectMarker(b)}: an object from a lost suite can make an unrelated "
-                    + "test fail, so they are UNVERIFIED until this bundle compiles.");
+                    + $"{SuspectMarker(b)}: a missing object, or state an aborted suite left "
+                    + "behind, makes unrelated tests fail — so they are UNVERIFIED until the "
+                    + "suite error above is fixed and the run repeats.");
             }
             // Skip silent buckets — only emit a per-bucket header if there's anything to show.
             var visible = b.Tests.Where(t => showPass || t.Outcome != TestOutcome.Pass).ToList();
