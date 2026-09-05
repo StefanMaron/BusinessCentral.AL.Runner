@@ -269,7 +269,7 @@ internal static class ParallelFanOut
         }
 
         var worst = 0;
-        long tests = 0, failures = 0, errors = 0, skipped = 0, notRun = 0;
+        long tests = 0, failures = 0, errors = 0, skipped = 0, notRun = 0, partial = 0;
         for (var i = 0; i < procs.Count; i++)
         {
             var (p, junit, so, se) = procs[i];
@@ -300,6 +300,14 @@ internal static class ParallelFanOut
             // silent loss for every execution failure.
             foreach (var header in NotRunHeaders)
                 notRun += CountOccurrences(stdout, header) + CountOccurrences(stderr, header);
+
+            // #2762: the sibling shape. A bundle that lost SOME suites and still produced tests
+            // is not "not run" — its survivors ARE in the totals above, so counting it as
+            // missing would overstate the loss. But it covers less than it declares, and the
+            // aggregate is the only summary a --jobs caller reads; without this the parent
+            // reprints a clean total for a run in which whole suites never compiled.
+            partial += CountOccurrences(stdout, PartialLossHeader)
+                     + CountOccurrences(stderr, PartialLossHeader);
         }
 
         Console.WriteLine();
@@ -314,6 +322,9 @@ internal static class ParallelFanOut
         if (notRun > 0)
             Console.WriteLine($"  NOT RUN:     {notRun} bundle(s) — COMPILE FAIL or EXEC FAIL in a " +
                                "shard above, excluded from the totals; see that shard's output for which one");
+        if (partial > 0)
+            Console.WriteLine($"  PARTIAL:     {partial} bundle(s) — SUITE ERRORS in a shard above: they " +
+                               "ran, but the tests the lost suites declare are MISSING from the totals");
         Console.WriteLine("=================================================================");
 
         ScratchDirs.Release(tempDir);
@@ -386,6 +397,12 @@ internal static class ParallelFanOut
     /// depends only on WHAT failed (#2779).</summary>
     internal static readonly IReadOnlyList<string> NotRunHeaders =
         new[] { " — COMPILE FAIL ===", " — EXEC FAIL ===" };
+
+    /// <summary>The per-bundle header Reporter.PrintPerTest writes for a bundle that RAN but
+    /// lost one or more suites (#2762). Deliberately NOT in <see cref="NotRunHeaders"/>: such a
+    /// bundle's surviving tests are counted in the JUnit totals, so it is under-reported, not
+    /// absent. Matched without the count so any number of lost suites is found.</summary>
+    internal const string PartialLossHeader = " — SUITE ERRORS (";
 
     /// <summary>How many times a bundle reported COMPILE FAIL or EXEC FAIL in a shard's captured
     /// output — used to tell the aggregate summary how many bundles are missing from its totals,

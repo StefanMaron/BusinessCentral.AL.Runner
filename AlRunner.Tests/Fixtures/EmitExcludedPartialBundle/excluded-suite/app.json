@@ -1,0 +1,23 @@
+{
+  "id": "e4f5a6b7-8c9d-4e0f-a1b2-c3d4e5f60718",
+  "name": "Runner Tests Fixture - Emit Excluded Partial",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "A suite where ONE object is EMIT-EXCLUDED, so the whole module is dropped and the tests its healthy siblings declare go missing too.",
+  "description": "Issue #2762. One object cannot bind, so BC's emit-retry loop excludes it and Program.cs empties this module's sources — the healthy test codeunit next to it never runs either. Paired with a healthy sibling SUITE (same bundle) the bucket still reports Stage=Ran, which is the shape in which the loss used to be absent from every report surface.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "idRanges": [
+    {
+      "from": 61300,
+      "to": 61349
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}

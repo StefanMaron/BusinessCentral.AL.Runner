@@ -1,0 +1,23 @@
+{
+  "id": "f5a6b7c8-9d0e-4f1a-b2c3-d4e5f6071829",
+  "name": "Runner Tests Fixture - Emit Excluded Partial Healthy",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "The healthy sibling suite that keeps the bucket non-empty, so its Stage stays Ran.",
+  "description": "Its surviving PASS is what kept the excluded sibling's loss out of every report surface: a bucket only reports CompileErrors when Stage is CompileFailed, and Stage is CompileFailed only when the bucket produced zero tests.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "idRanges": [
+    {
+      "from": 61350,
+      "to": 61399
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}
