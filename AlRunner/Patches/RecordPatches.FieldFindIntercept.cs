@@ -175,8 +175,20 @@ public static partial class RecordPatches
         // sit AFTER GetDataAccessForTableCore's `if (isTemporary) return` early exit, so a
         // temporary instance of those never sees injected rows. This gate is what gives the
         // Field table the same property.
-        return IsDatabaseBackedFindTarget(self);
+        return ShouldTakeFieldFindBypass(tableId, IsDatabaseBackedFindTarget(self));
     }
+
+    /// <summary>
+    /// The gate rule of <see cref="DataAccess_IsManagedFindRequest"/>, as a pure function of the
+    /// two facts it turns on, so it can be pinned without a BC runtime — see
+    /// AlRunner.Tests/FieldFindBypassTemporaryGateTests.cs.
+    ///
+    /// Take the managed Field bypass only for the virtual Field table AND only when the find's
+    /// DataAccess stands in for SQL. Both conjuncts matter and each has its own failure: dropping
+    /// the first sends every table through the bypass; dropping the second is issue #2524.
+    /// </summary>
+    internal static bool ShouldTakeFieldFindBypass(int tableId, bool isDatabaseBacked)
+        => tableId == FieldFindTableId && isDatabaseBacked;
 
     /// <summary>
     /// Whether this find's DataAccess stands in for SQL (a non-temporary table) rather than
