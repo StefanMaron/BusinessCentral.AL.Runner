@@ -332,6 +332,10 @@ string? testFilter = null;
 // --test-timeout SECONDS: per-test timeout override (v1 carryover; v2 previously
 // hardcoded 60s with no CLI override — see #1648). Takes precedence over the
 // AL_RUNNER_TEST_TIMEOUT_SEC env var. Null = env var / 60s default.
+// Under --jobs, ParallelFanOut.WorkerEnvironment sets AL_RUNNER_TEST_TIMEOUT_SEC on each
+// worker to the 60s default scaled by shard count, because the watchdog is wall-clock and a
+// worker sharing cores runs slower in wall time for the same work (#2718). This flag still
+// outranks that, so naming a number here gets exactly that number in every worker.
 int? testTimeoutSeconds = null;
 // --watch: stay resident with warm dependencies and re-run IN-PROCESS on every .al
 // change. Each cycle resets the per-bundle caches (BcRuntime.ResetForNewBundleReload),
