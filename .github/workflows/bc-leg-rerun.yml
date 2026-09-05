@@ -1,0 +1,64 @@
+name: BC single-leg re-run (diagnostic)
+
+# One BC leg, on demand, against a ref that already has a verdict — the second
+# measurement `.claude/rules/ci-verdicts.md` section 5 requires before anyone may call a
+# failure a "pre-existing unrelated flake".
+#
+#   gh workflow run bc-leg-rerun.yml --repo StefanMaron/BusinessCentral.AL.Runner \
+#     --ref <branch> -f bc-version=28.4
+#
+# It exists because section 3 bans `gh run rerun` outright — a re-run overwrites the failed
+# run's log in place, and those logs have been the entire evidence base for real
+# investigations. This gives the same repeat measurement while leaving the original run and
+# its log untouched: a separate workflow run, its own log, nothing overwritten.
+#
+# ---------------------------------------------------------------------------------------
+# WHY THIS IS A SEPARATE FILE AND NOT A `workflow_dispatch:` ON test-matrix.yml
+# ---------------------------------------------------------------------------------------
+# `All BC versions passed` is the ONE required status check in main's branch ruleset (the
+# other is `Tests updated`; the individual `bc-tests / BC <ver>` legs are NOT required
+# contexts — verified against the live ruleset, not assumed). If a single-leg run could
+# report that context, one leg's green would satisfy a gate that means "all eight passed".
+# That is far worse than the flake it would be diagnosing.
+#
+# Adding `workflow_dispatch:` to test-matrix.yml could not be made safe by condition alone:
+# gating its `all-tests` job with an `if:` makes the job report `skipped` rather than not
+# report, and GitHub has historically treated a skipped check run as satisfying a required
+# check. The only durable guarantee is structural — this workflow does not contain the job
+# at all, so there is no conclusion, skipped or otherwise, for it to report. A test asserts
+# the string stays absent from this file.
+#
+# It also means a dispatch cannot disturb a normal run: no `push` or `pull_request` trigger
+# here, a distinct workflow name (so a distinct default concurrency group from
+# test-matrix.yml's `${{ github.workflow }}-${{ github.ref }}`), and `cancel-in-progress:
+# false` so two diagnostic runs of different legs on one branch do not cancel each other.
+#
+# The calling job is named `single-leg`, not `bc-tests`, so its legs report as
+# `single-leg / BC <ver> (required)` — visibly distinct from the pull-request path's
+# `bc-tests / BC <ver> (required)` in `gh pr checks` output. Measured on the corpus repo,
+# a dispatched run's check runs did not replace the pull-request run's verdict for the
+# same context name on the same SHA; but that is one observation of undocumented GitHub
+# behaviour, so nothing here relies on it.
+
+on:
+  workflow_dispatch:
+    inputs:
+      bc-version:
+        description: 'BC version prefix from .github/bc-versions.txt, e.g. 28.4'
+        required: true
+        type: string
+
+concurrency:
+  # Per leg, not per ref: re-running 28.4 must not cancel a 27.3 diagnostic on the same
+  # branch. cancel-in-progress is false because each run IS the measurement — cancelling
+  # one to start another would throw away the data point this workflow exists to collect.
+  group: bc-leg-rerun-${{ github.ref }}-${{ inputs.bc-version }}
+  cancel-in-progress: false
+
+jobs:
+  single-leg:
+    # Delegates to the same shared definition test-matrix.yml and publish.yml call, so a
+    # diagnostic leg runs the real leg and not a copy of it that can drift (#1976).
+    uses: ./.github/workflows/bc-tests.yml
+    with:
+      bc-version-filter: ${{ inputs.bc-version }}
