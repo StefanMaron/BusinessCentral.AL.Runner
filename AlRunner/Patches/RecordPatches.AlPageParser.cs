@@ -179,27 +179,50 @@ public static partial class RecordPatches
     internal static string? TryGetActionRefTarget(int declaringObjectId, int memberId, bool isExtension)
     {
         var dict = isExtension ? _parsedPageExtensions : _parsedPages;
-        return dict.TryGetValue(declaringObjectId, out var parsed)
-               && parsed.MemberIdToActionRefTarget.TryGetValue(memberId, out var target)
-            ? target
-            : null;
+        if (dict.TryGetValue(declaringObjectId, out var parsed))
+            return parsed.MemberIdToActionRefTarget.TryGetValue(memberId, out var target) ? target : null;
+        // Precompiled-dependency fallback — same rule and same reason as TryGetPageMemberName
+        // below (#2723): a promoted actionref on a Base Application page points at a target
+        // whose name only the dependency's SymbolReference.json still carries.
+        var depTargets = isExtension
+            ? TryGetDependencyPageExtensionSymbol(declaringObjectId)?.MemberIdToActionRefTarget
+            : TryGetDependencyPageSymbol(declaringObjectId)?.MemberIdToActionRefTarget;
+        return depTargets != null && depTargets.TryGetValue(memberId, out var depTarget) ? depTarget : null;
     }
 
     /// <summary>
     /// The declared AL name of member <paramref name="memberId"/> on the page or
-    /// pageextension <paramref name="declaringObjectId"/>, or null when the object was never
-    /// AL-source-parsed here (a page that ships precompiled in a dependency .app) or does not
-    /// declare the member. <paramref name="isExtension"/> picks the id namespace — a page and
-    /// a pageextension may share an object number (#1710), and the caller always knows which
+    /// pageextension <paramref name="declaringObjectId"/>, or null when neither the runner's
+    /// own AL source parse nor any loaded dependency .app's SymbolReference.json declares the
+    /// member. <paramref name="isExtension"/> picks the id namespace — a page and a
+    /// pageextension may share an object number (#1710), and the caller always knows which
     /// one it is dispatching against.
+    /// <para><b>Precompiled-dependency fallback (issues #2723 / #2517):</b> this used to
+    /// answer from <c>_parsedPages</c> / <c>_parsedPageExtensions</c> only, so for a page
+    /// shipping precompiled in a dependency .app (every Base Application page) it answered
+    /// null, and <c>RunnerPageInstance.FindTriggerOnTarget</c> fell to its BACKWARD scan —
+    /// un-mangle the emitted method name and re-hash. That direction is lossy by
+    /// construction (#1968): <c>Assign_Serial_Noa46_a45_OnAction</c> un-mangles to
+    /// <c>Assign_Serial_Noa46</c>, which hashes to a different id than
+    /// <c>"Assign Serial No."</c>, so every action or control whose AL name contains a space,
+    /// <c>.</c>, <c>&amp;</c> (or is a C# keyword) was unreachable on every precompiled page:
+    /// <c>OnAction</c> refused as "declares no OnAction trigger" (955 failures in Microsoft's
+    /// BaseApp surface), <c>OnValidate</c> silently skipped. The dependency's own
+    /// SymbolReference.json states every member's declared name keyed by BC's own member id
+    /// — the same file <see cref="GetPageControlFieldMap"/> (#2088) and
+    /// <see cref="GetInsertAllowedForPage"/> already fall back to — so the forward
+    /// mangle-and-compare arm now applies to precompiled pages too. Source-parsed wins for an
+    /// object the parser saw, matching every other reader in this file.</para>
     /// </summary>
     internal static string? TryGetPageMemberName(int declaringObjectId, int memberId, bool isExtension)
     {
         var dict = isExtension ? _parsedPageExtensions : _parsedPages;
-        return dict.TryGetValue(declaringObjectId, out var parsed)
-               && parsed.MemberIdToName.TryGetValue(memberId, out var name)
-            ? name
-            : null;
+        if (dict.TryGetValue(declaringObjectId, out var parsed))
+            return parsed.MemberIdToName.TryGetValue(memberId, out var name) ? name : null;
+        var depNames = isExtension
+            ? TryGetDependencyPageExtensionSymbol(declaringObjectId)?.MemberIdToName
+            : TryGetDependencyPageSymbol(declaringObjectId)?.MemberIdToName;
+        return depNames != null && depNames.TryGetValue(memberId, out var depName) ? depName : null;
     }
 
     /// <summary>
@@ -282,6 +305,20 @@ public static partial class RecordPatches
         foreach (var ext in _parsedPageExtensions.Values)
             if (NamesEqual(ext.BaseName, baseName))
                 result.Add(ext.Id);
+        // Issue #2723's pageextension arm: a pageextension that itself ships PRECOMPILED in a
+        // dependency .app (Base Application's "Activity Log Extension" over "Activity Log",
+        // its approval extensions over the Job Queue pages, …) declares actions with
+        // triggers exactly like a source-parsed one, compiled onto its own
+        // PageExtension{id} type, which is already loaded and which
+        // RunnerPageInstance.GetOrCreateExtensionInstance already knows how to construct —
+        // but this method never listed it, so FindTrigger never searched it and every such
+        // action was refused as "the page declares no OnAction trigger". A source-parsed
+        // extension of the same number wins (the runner's own parse outranks a dependency
+        // symbol everywhere else in this file); otherwise the dependency's declared
+        // TargetObject name is matched with the same NamesEqual rule as BaseName above.
+        foreach (var depExtId in DependencyPageExtensionIdsForPage(baseName))
+            if (!_parsedPageExtensions.ContainsKey(depExtId) && !result.Contains(depExtId))
+                result.Add(depExtId);
         result.Sort();
         return result;
     }
