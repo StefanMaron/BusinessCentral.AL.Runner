@@ -1,0 +1,50 @@
+[
+  {
+    "codeunitId": 60990,
+    "CodeunitName": "Test Query Dependency Table",
+    "Method": "QueryOverDependencyTable_Open_Read_ReturnsInsertedRow",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2960",
+    "Note": "Item.Insert(true) reaches Item.OnInsert -> DimensionManagement.UpdateDefaultDim -> GetGLSetup -> GLSetup.Get(), which raises \"The General Ledger Setup does not exist\" because the per-company install seed is truncated. Measured with a direct AL probe reading GLSetup.Get() in the same bundle: Yes before #2932's event-subscriber fix, No after. The fix does not remove the row; it stops MASKING the install-trigger defect. Install triggers are themselves abandoned at their first await (#2960, which stays open after this entry lands), so the retention-policy allowed-tables registration never completes; with precompiled table-event subscribers finally executing, Codeunit3902.VerifyRetentionPolicyAllowedTablesOnBeforeInsertRetenPolSetup then raises \"Table 2000000265 Performance Profile Scheduler is not in the list of allowed tables\" and \"Table 405 Change Log Entry ...\" inside install seeding, aborting Codeunit1933.OnInstallAppPerCompany and Codeunit3999.OnInstallAppPerCompany. Real BC runs every install trigger to completion and has a General Ledger Setup row, which is why this test is green upstream. Same shape as known-gaps-allobj-subtype.json: a gap that was always there, exposed by a fix that made precompiled AL actually run."
+  },
+  {
+    "codeunitId": 60990,
+    "CodeunitName": "Test Query Dependency Table",
+    "Method": "QueryOverDependencyTable_SetRange_ExcludingValue_ReturnsNoRows",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2960",
+    "Note": "The sibling of the entry above, failing on the same Item.Insert(true) -> GetGLSetup -> GLSetup.Get() path before it ever reaches the query it is about. Listed separately because a fix that restored the General Ledger Setup row must make BOTH pass; one entry would hide the other."
+  },
+  {
+    "codeunitId": 60207,
+    "CodeunitName": "Test XmlPort Advanced",
+    "Method": "XmlPort_NestedTableElements_ExportIncludesChildRecordsAndAttribute",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2960",
+    "Note": "The parent and child rows still export; the one assertion that fails is Amount=\"15.00\", the decimal formatted to the setup's places. Same missing General Ledger Setup row as the two entries above, measured the same way (GLSetup.Get() answers Yes on main and No with #2932's fix applied), reached through a different surface \u2014 which is why it is a third entry and not a duplicate. I did not close the last link in the chain, from \"Codeunit1933/Codeunit3999 install triggers abort\" to \"the General Ledger Setup row is gone\": the state change and the aborted triggers are both measured, the connection between them is inferred. #2960 records that as the first thing to establish."
+  },
+  {
+    "codeunitId": 65502,
+    "CodeunitName": "Bpodt Tests",
+    "Method": "BundlePageOverDependencyTable_SetValueThenGet_PersistsRow",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2960",
+    "Note": "Same missing General Ledger Setup row as the al-language entries in this file, reached through Salesperson/Purchaser (table 13) OnInsert -> DimensionManagement.UpdateDefaultDim -> GetGLSetup -> GLSetup.Get(). This is a runner-extras test, so it is not a claim about BC: what it pins is that a bundle page over a dependency table persists a row, and it can no longer get as far as that claim while the per-company install seed is truncated (#2960, which stays open after this entry lands)."
+  },
+  {
+    "codeunitId": 65264,
+    "CodeunitName": "Ttit Trigger Tests",
+    "Method": "UnrelatedTableWithNoSubscriber_InsertViaTestPageSucceeds",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2960",
+    "Note": "Same cause and the same Salesperson/Purchaser OnInsert -> GetGLSetup path as the entry above. The test's own claim - that a table with no subscriber still inserts through a TestPage - is unaffected by the event-subscriber fix; it is blocked earlier, on the truncated install seed."
+  },
+  {
+    "codeunitId": 61251,
+    "CodeunitName": "FVTITX Whse Flow Tests",
+    "Method": "PurchLine2ReceiptLine_LotTrackedWithReservation_ExtensionSubscriberLookupWorks",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2960",
+    "Note": "The same truncated per-company install seed, one table further along: Library - Warehouse.NoSeriesSetup raises \"The Warehouse Setup does not exist\" (table 5769) instead of the General Ledger Setup row the other entries name. Listed separately rather than folded in, because a fix that restored only General Ledger Setup would leave this one red and the entry would then be stale."
+  }
+]

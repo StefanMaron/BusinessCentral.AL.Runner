@@ -1251,7 +1251,13 @@ public static class EventSubscriberPatches
     private static object? BuildSubscription(SubscriberHandle sub)
     {
         // NavEventSubscriberMethodInfo(MethodInfo)
-        var methodInfoObj = _ciNavEventSubscriberMethodInfo!.Invoke(new object?[] { sub.Method });
+        // An ASYNC subscriber body (ValueTask-returning — the shape the AL compiler emits for
+        // essentially every Base App / System App subscriber) must have its result observed:
+        // we build the subscription with memberId 0, which sends BC's
+        // CallEventSubscriberInternalAsync down the `SubscriberMethodInfo.Invoke(...)` branch,
+        // and that branch DISCARDS the return value. See AwaitingSubscriberMethodInfo (#2932).
+        var methodInfoObj = _ciNavEventSubscriberMethodInfo!.Invoke(
+            new object?[] { AwaitingSubscriberMethodInfo.WrapIfAwaitable(sub.Method) });
         // Replace the captured NavEventSubscriberAttribute with a zeroed copy (no
         // SkipOnMissing{License,Permission}) so BC's SkipCallDueToLackOfPermissions
         // short-circuits — accessing subscriberInstance.Session.Permissions / Company

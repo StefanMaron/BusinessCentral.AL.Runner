@@ -1,0 +1,19 @@
+{
+  "id": "b01c9a47-0550-42c6-83a6-3da2d58d97be",
+  "name": "Runner Extras - Precompiled Async Subscriber",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Issue #2932: a PRECOMPILED app's table-event [EventSubscriber] is emitted as an async ValueTask method, and the runner must observe that ValueTask so the subscriber body runs to completion.",
+  "description": "Runner-mechanism claim, not a claim about AL. What Base Application codeunit 9002 does on User/OnBeforeModifyEvent is plain BC behaviour and needs no corpus test. What this pins is the runner's own dispatch: EventSubscriberPatches builds every injected NavEventSubscription with memberId 0, which sends BC's CallEventSubscriberInternalAsync down the reflection branch that DISCARDS the return value. Every Base App / System App subscriber measured on BC 28.1 returns ValueTask, so the body started, suspended at its first await and was abandoned - BC's own NoOfCalls counter recorded the call while the Error() the subscriber existed to raise never reached the caller and the write went through. A source-compiled subscriber in the bundle under test is emitted void, so it was unaffected, which is why the defect read as 'precompiled subscribers never fire'.",
+  "dependencies": [],
+  "idRanges": [
+    {
+      "from": 65550,
+      "to": 65559
+    }
+  ],
+  "platform": "27.0.0.0",
+  "application": "27.0.0.0",
+  "runtime": "17.0",
+  "target": "Cloud"
+}
