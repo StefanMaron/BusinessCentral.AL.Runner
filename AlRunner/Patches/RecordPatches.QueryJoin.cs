@@ -185,7 +185,7 @@ public static partial class RecordPatches
     /// AlRunner.QueryJoin executor. Materialised eagerly inside the executor so any failure
     /// surfaces as a managed exception here, never a native crash mid-enumeration.
     /// </summary>
-    private static IEnumerable ExecuteJoinQuery(object nclMetaQuery)
+    private static IEnumerable ExecuteJoinQuery(object nclMetaQuery, object? flowFiltersAndMarks)
     {
         EnsureJoinExecutorLoaded();
         var queryDef = _tNCLMetaQuery!.GetProperty("QueryDefinition", BindingFlags.Public | BindingFlags.Instance)!
@@ -197,11 +197,19 @@ public static partial class RecordPatches
 
         try
         {
-            return (IEnumerable)_mExecute!.Invoke(null, new[] { _joinCtx, nclMetaQuery, dataAccessSource })!;
+            return (IEnumerable)_mExecute!.Invoke(null,
+                new[] { _joinCtx, nclMetaQuery, dataAccessSource, flowFiltersAndMarks })!;
         }
         catch (TargetInvocationException tie) when (tie.InnerException != null)
         {
-            throw tie.InnerException; // surface the executor's real exception (e.g. OOS)
+            // Surface the executor's real exception (e.g. OOS) — via ExceptionDispatchInfo, NOT
+            // `throw tie.InnerException`. A bare rethrow RESETS the stack trace to this frame, so
+            // every failure inside the executor was reported as originating HERE, at
+            // RecordPatches.QueryJoin.cs. That is how #2925's second cluster (4 Tests-SMB tests)
+            // looked like a different bug from its first (21 tests): the same
+            // FlowFieldsHelper.GetFilterFromMetaFilterCollection NRE, with its origin erased.
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw(tie.InnerException);
+            throw; // unreachable; satisfies definite assignment
         }
     }
 
