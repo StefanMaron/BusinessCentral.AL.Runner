@@ -504,6 +504,41 @@ internal static partial class ProgramSupport
     // 67c4f8c4622a928aae07bf1857af515bb37fc5df4ac16eb047855f5dd2f9bba8 — a warm cache then
     // serves a DLL compiled against a different dependency closure. Same defect family as
     // the --define symbols that were missing from this key.
+    /// <summary>
+    /// The name of the first dependency <paramref name="appRootDir"/>'s own app.json declares
+    /// whose AppId is in <paramref name="changedAppIds"/>, or null when it declares none of them.
+    ///
+    /// <para>#2683. Used under <c>--watch</c> to decide whether a bundle may replay its previous
+    /// generated C#: a bundle whose own AL files are byte-identical still cannot, if a bundle it
+    /// depends on was re-synthesised this cycle, because the replayed output was compiled against
+    /// that dependency's previous surface.</para>
+    ///
+    /// <para>Matched on AppId only. Unlike RunLayeredPrePass, which also falls back to
+    /// Name+Publisher so a bundle without a declared id is still recognisable as somebody's
+    /// dependency, the ids here come from that same pre-pass and are therefore always real —
+    /// and the answer feeds a "may I take the fast path" decision, where a false NEGATIVE is
+    /// the dangerous direction. A dependency that the pre-pass matched by name and this method
+    /// cannot match by id would be one whose AppId is empty, which the pre-pass never adds.</para>
+    ///
+    /// <para>An unreadable or absent app.json answers null: a bundle whose manifest cannot be
+    /// read has no declared dependencies to speak of, and its own compile will fail on that
+    /// separately and loudly.</para>
+    /// </summary>
+    internal static string? DeclaredDependencyOn(string? appRootDir, IReadOnlyCollection<Guid> changedAppIds)
+    {
+        if (appRootDir == null || changedAppIds.Count == 0) return null;
+        var appJson = Path.Combine(appRootDir, "app.json");
+        if (!File.Exists(appJson)) return null;
+        AlRunner.Infrastructure.BundleIdentity? id;
+        try { id = AlRunner.Infrastructure.InProcessAppPackager.ReadIdentity(appJson); }
+        catch { return null; }
+        if (id == null) return null;
+        foreach (var dep in id.Dependencies)
+            if (dep.AppId != Guid.Empty && changedAppIds.Contains(dep.AppId))
+                return string.IsNullOrEmpty(dep.Name) ? dep.AppId.ToString() : dep.Name;
+        return null;
+    }
+
     internal static IReadOnlyList<string> GetOrderedDepIds(
         string? bucketRoot, IReadOnlyList<string> packageCacheDirs, string? bundleAbs = null)
     {

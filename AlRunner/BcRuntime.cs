@@ -335,7 +335,15 @@ public static partial class BcRuntime
     /// sibling in a multi-bundle invocation), so the registry stays accurate for apps
     /// that are not currently executing too — see <see cref="_latestGenerationByAssemblyName"/>.
     /// </summary>
-    private static void RegisterAssemblyGeneration(Assembly asm)
+    /// <para>#2683: also called from <see cref="DependencyLoader"/> for a Tier-3
+    /// source-compiled dependency. Before that, only bundle assemblies were registered here,
+    /// so <see cref="IsStaleBundleAssembly"/> returned false for EVERY generation of a
+    /// dependency module — its simple name was never in the registry — and the AL type
+    /// finders happily resolved an object from a previous cycle's copy. That is #1901's own
+    /// failure mode, one app-kind short of being fixed: the comment above describes a call
+    /// from app B into an edited app A, and a source dependency compiled by
+    /// DependencyLoader is exactly that shape.</para>
+    internal static void RegisterAssemblyGeneration(Assembly asm)
     {
         var name = asm.GetName().Name;
         if (name != null) _latestGenerationByAssemblyName[name] = asm;

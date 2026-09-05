@@ -68,6 +68,43 @@ public sealed class DependencyLoader
     /// a source suite) omits `publisher` — both paths, both fields missing at once. If you
     /// change either default, keep the other in sync or this comparison silently drifts.
     /// </summary>
+    /// <summary>
+    /// Forget the cached module for each of <paramref name="appIds"/>, so the next
+    /// <see cref="LoadAll"/> for that AppId compiles and loads it again instead of handing back
+    /// the module from a previous reload cycle.
+    ///
+    /// <para>#2683. <see cref="_cache"/> is keyed on AppId and its reuse gate compares
+    /// Name/Publisher/Version — none of which move when a developer edits a dependency's AL
+    /// under <c>--watch</c>, since app.json keeps saying 1.0.0.0 all through development. So a
+    /// dependent bundle went on EXECUTING the dependency module compiled in cycle 1 for the rest
+    /// of the process's life, however many times the dependency was recompiled afterwards. With
+    /// the AL-output cache and the incremental replay path both fixed to notice the change, this
+    /// was the last layer still answering from the previous compile — and the only one visible
+    /// purely at runtime, where a passing test is the only symptom.</para>
+    ///
+    /// <para>Deliberately NOT a blanket flush, and deliberately not a content check inside
+    /// <see cref="LoadAll"/>. Two sibling bundles resolving the same app from two different
+    /// directories in one run must keep sharing one module — that is <see cref="RegisterLoaded"/>'s
+    /// "an earlier module wins" contract (#1892), and a SourcePath comparison in the reuse gate
+    /// would break it by handing each bundle its own copy. The caller here passes exactly the
+    /// apps whose layered workspace package the pre-pass resolved to a DIFFERENT path than it did
+    /// last cycle, which is a positive statement that their content moved, not an inference from
+    /// where they happen to live.</para>
+    /// </summary>
+    internal static void InvalidateApps(IEnumerable<Guid> appIds)
+    {
+        foreach (var appId in appIds)
+        {
+            if (!_cache.TryRemove(appId, out var removed)) continue;
+            // The by-name map is what AssemblyResolve answers from (see EnsureResolverInstalled).
+            // Leaving the stale module there would let a type load resolve to the assembly this
+            // call just evicted, which is the same wrong answer one indirection further away.
+            var simpleName = removed.Asm.GetName().Name;
+            if (!string.IsNullOrEmpty(simpleName))
+                _byName.TryRemove(simpleName!, out _);
+        }
+    }
+
     private static bool IdentityMatches(LoadedAppEntry entry, string name, string publisher, string version)
         => string.Equals(entry.Name, name, StringComparison.OrdinalIgnoreCase)
         && string.Equals(entry.Publisher, publisher, StringComparison.OrdinalIgnoreCase)
@@ -210,6 +247,15 @@ public sealed class DependencyLoader
             {
                 _cache[m.AppId] = new LoadedAppEntry(asm, m.Name, m.Publisher, m.Version.ToString(), path, tier3CacheKey);
                 _byName[asm.GetName().Name ?? ""] = asm;
+                // #2683: this assembly is now the CURRENT generation for its simple name.
+                // Without this, BcRuntime.IsStaleBundleAssembly answered false for every
+                // generation of a dependency module — the registry only ever held bundle
+                // assemblies — so the AL type finders (Codeunit/Record/Page…) enumerated the
+                // previous cycle's copy and, per #1901, in practice found it FIRST, because
+                // AppDomain.CurrentDomain.GetAssemblies() tends to return the oldest first.
+                // A --watch edit to a dependency then recompiled and reloaded everything
+                // correctly and still executed the previous cycle's bodies.
+                BcRuntime.RegisterAssemblyGeneration(asm);
                 // Register app metadata so AlCallStackCapture can decorate frames.
                 AlCallStackCapture.RegisterAssemblyInfo(asm, m.Name, m.Publisher, m.Version.ToString());
                 // Register the assembly's app package so NavApp.GetResource can serve

@@ -306,7 +306,19 @@ internal static partial class ProgramSupport
     // Detects inter-bundle dependencies, emits impl bundles in topo order into a
     // per-run workspace cache dir, and prepends that dir to packageCacheDirs.
     // Completely inert when bundles.Count <= 1 or no inter-bundle dep edges exist.
-    internal static List<string> RunLayeredPrePass(List<string> bundles, List<string> packageCacheDirs, List<string> workspaceDirsOut)
+    /// <param name="implAppPathsOut">Optional. Receives, for every impl this call handled, the
+    /// path of the workspace package a dependent bundle will resolve it from — whether this call
+    /// wrote that package or served it from its content-keyed directory.
+    ///
+    /// <para>Comparing this map between two <c>--watch</c> cycles is how a dependent bundle
+    /// learns that its dependency moved (#2683). Deliberately NOT "did this call re-synthesise
+    /// it": each impl's directory is keyed on its source content, so reverting an edit resolves
+    /// back to a package written cycles ago and re-synthesises nothing — and the dependent, which
+    /// has been running the EDITED module in between, still has to be told. A test that only ever
+    /// moved forward would pass while the revert kept executing the code the developer just
+    /// undid.</para></param>
+    internal static List<string> RunLayeredPrePass(List<string> bundles, List<string> packageCacheDirs, List<string> workspaceDirsOut,
+        IDictionary<Guid, string>? implAppPathsOut = null)
     {
         // Read identity of every bundle.
         var identities = new Dictionary<string, AlRunner.Infrastructure.BundleIdentity>(StringComparer.OrdinalIgnoreCase);
@@ -620,6 +632,10 @@ internal static partial class ProgramSupport
 
             sw.Stop();
             var info = new FileInfo(outPath);
+            // Recorded for HIT and WROTE alike — the caller compares paths across cycles, and a
+            // HIT that resolves a DIFFERENT package than last cycle (an edit reverted) is exactly
+            // the case a "was it written" flag would miss.
+            if (implAppPathsOut != null) implAppPathsOut[implId.AppId] = outPath;
             var cacheVerb = hadApp && hadSymbols ? "cache HIT" : "WROTE";
             Console.WriteLine($"[layered] {cacheVerb} {implId.Name} {implId.Version} → {appFileName} (src .app + sidecar symbols, {info.Length} bytes, {sw.ElapsedMilliseconds}ms)");
             emitted++;
