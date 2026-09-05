@@ -162,44 +162,51 @@ public sealed class TestPageNewRowLinePromotionTests
             + "of modify.");
     }
 
-    // The draft line is not blank in every column: it carries the page's own single-valued
-    // filters on the PRIMARY-KEY fields, which is BC's RecordImplementation.InitRecordFromFilters
-    // rule. EnterNewRowLine cleared the key and stopped, so the runner answered blank in a
-    // linked part's key column where real BC answers the link's value.
+    // What the draft line IS, measured on all 8 BC legs across two corpus runs (33995429394
+    // and 33997895349, codeunit 60996): BC's NavForm.NewRecord and nothing after it. The blank
+    // line reads the SubPageLink's value in the linked primary-key column, has already run the
+    // page's OnNewRecord before anyone types, still reads 0 in the AutoSplitKey column, and
+    // writes nothing while nobody types.
     //
-    // Measured on all 8 BC legs, corpus run 33995429394: the original corpus assertion said
-    // "the draft line must read blank in the column the SubPageLink constrains" and every leg
-    // returned Expected:<> Actual:<H1>. Corrected upstream to
-    // LinkedPart_DraftLine_ReadsTheLinkValueInTheLinkedKeyColumn.
-    //
-    // Reading it off the FILTER rather than off the SubPageLink is what keeps the two
-    // neighbouring corpus suites green: CU60743's standalone page has no filters and stays
-    // blank, and CU60648's link on a non-key field is never visited because the loop only walks
-    // the primary key.
+    // Both of this file's original expectations were corrected by that measurement — it had
+    // asserted the linked column reads blank, and that OnNewRecord had not run. EnterNewRowLine
+    // did a subset of NewRecord by hand (ALInit, then clear every primary-key field), which is
+    // why the runner answered blank in a linked part's key column and never raised the trigger.
     [Fact]
-    public void EnterNewRowLine_PutsThePagesSingleValuedKeyFiltersBackOnTheBlankedBuffer()
+    public void EnterNewRowLine_RunsBcsNewRecordWithoutSavingTheRow()
     {
         var type = LoadType(typeof(AlRunner.LiveNavTestPage));
         var m = Method(type, "EnterNewRowLine");
 
+        Assert.True(Calls(m, "TryNewRecord"),
+            "EnterNewRowLine must ask the page to start the record — BC's NavForm.NewRecord: "
+            + "ALInit, copy the page's single-valued filters onto the primary key "
+            + "(InitRecordFromFilters), raise OnNewRecord. Doing a subset of that by hand left a "
+            + "linked part's key column blank and its OnNewRecord unrun, and both are measured.");
+
+        // The record-only fallback, for a page the runner built no AL page object for: BC's
+        // filter step cannot run, so the two halves are done by hand.
         Assert.True(Calls(m, "ClearFieldValue"),
-            "EnterNewRowLine must still clear the primary-key fields ALInit preserves — without "
-            + "that the draft line reports the key of the row the cursor just walked off.");
-
+            "EnterNewRowLine's record-only fallback must still clear the primary-key fields "
+            + "ALInit preserves — without that the draft line reports the key of the row the "
+            + "cursor just walked off.");
         Assert.True(Calls(m, "TryGetSingleFilterValue"),
-            "EnterNewRowLine must read each primary-key field's single-valued filter — BC's "
-            + "InitRecordFromFilters rule. Clearing the key and stopping made the runner answer "
-            + "blank in a linked part's key column where real BC answers the link's value.");
-
+            "EnterNewRowLine's record-only fallback must read each primary-key field's "
+            + "single-valued filter, the same rule BC's own step applies.");
         Assert.True(Calls(m, "SetFieldValue"),
-            "EnterNewRowLine must write the filter's value back onto the blanked buffer, not "
-            + "merely read it.");
+            "EnterNewRowLine's record-only fallback must write the filter's value back onto the "
+            + "blanked buffer, not merely read it.");
 
         Assert.False(Calls(m, "ALValidateAsync"),
-            "EnterNewRowLine must NOT validate what it copies. That validate belongs to "
-            + "NavForm.NewRecordAsync — starting a row — and merely standing on the blank line "
-            + "starts nothing (corpus CU60743 NewRowLine_LeftUntouched_InsertsNothing). Running "
-            + "OnValidate here would give walking a page side effects.");
+            "EnterNewRowLine must NOT validate what the filter copy wrote. That is "
+            + "NavForm.NewRecordAsync's second half, and the promotion path "
+            + "(LiveNavTestPart.InsertEmptyRow -> ValidateStampedFields) runs it when a write "
+            + "actually starts the row.");
+
+        Assert.False(Calls(m, "ProposeAutoSplitKey"),
+            "EnterNewRowLine must NOT number the row. AutoSplitKey belongs to NavForm.SaveRecord "
+            + "— corpus CU60996 LinkedPart_DraftLine_ReadsZeroInTheAutoSplitKeyColumn measures "
+            + "the draft line still reading 0 even though OnNewRecord has run for it.");
     }
 
     // The wiring between the two: the page has to hand its promotion callback to the fields it

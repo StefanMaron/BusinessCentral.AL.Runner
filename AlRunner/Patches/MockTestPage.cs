@@ -1514,49 +1514,57 @@ internal class LiveNavTestPage : MockITestPage
         // real insert later.
         CaptureInsertPosition();
 
-        // ALInit is AL's Init(), which deliberately PRESERVES the primary key — so on its own
-        // it left the key fields reading the row that was just walked off (the new-row line
-        // reported the last row's "No."). The draft line does not show the previous row's key,
-        // so the key fields are cleared.
+        // BC'S NavForm.NewRecord, MINUS THE SAVE. Measured on all 8 BC legs, corpus codeunit
+        // 60996 (runs 33995429394 and 33997895349), that the draft line of a linked part:
         //
-        // ClearFieldValue per key field rather than NavRecord.Clear(): Clear() is AL's
-        // Clear(Rec), which also drops filters and the current key — and the page's filters
-        // are what make the rowset the page's own (a part's SubPageLink above all). Blanking
-        // the buffer must not silently widen what the page is showing.
+        //   * reads the SubPageLink's value in the linked PRIMARY-KEY column, not blank
+        //     (LinkedPart_DraftLine_ReadsTheLinkValueInTheLinkedKeyColumn — the first run
+        //     answered 'H1' where this file had asserted blank);
+        //   * has ALREADY run the page's OnNewRecord before anyone types
+        //     (LinkedPart_DraftLine_HasRunTheOnNewRecordTrigger — the second run answered
+        //     'NEWREC' where this file had asserted blank);
+        //   * still reads 0 in the AutoSplitKey column
+        //     (LinkedPart_DraftLine_ReadsZeroInTheAutoSplitKeyColumn), and writes nothing while
+        //     nobody types (LinkedPart_DraftLineLeftUntouched_InsertsNothing).
         //
-        // THEN PUT THE PAGE'S OWN FILTER BACK ON, which is the half this was missing. The
-        // draft line is NOT blank in every column: it carries the page's single-valued filters
-        // on the primary-key fields — BC's RecordImplementation.InitRecordFromFilters rule,
-        // the same one a row started by New() goes through. Measured on all 8 BC legs (corpus
-        // codeunit 60996 LinkedPart_DraftLine_ReadsTheLinkValueInTheLinkedKeyColumn, corpus
-        // run 33995429394): a part linked "Header No." = field("No.") from a card on 'H1'
-        // shows 'H1' in that column on its draft line, not blank. This file previously cleared
-        // the key and stopped, so the runner answered blank there.
+        // Those four together are exactly NewRecord and nothing after it: ALInit, copy the
+        // page's single-valued filters onto the primary key
+        // (RecordImplementation.InitRecordFromFilters), raise OnNewRecord — while SplitKey,
+        // OnInsertRecord and the Insert all belong to NavForm.SaveRecord, which is where
+        // FlushPendingNewRow does them. So the client starts the record when the blank line
+        // becomes current; it just never saves it.
         //
-        // The two neighbouring measurements are what fix the rule's shape rather than just
-        // this one column:
-        //   * corpus CU60743 — a STANDALONE page's draft line reads blank in its key column.
-        //     It has no filters, so the copy finds nothing. Same rule, no special case.
-        //   * corpus CU60648 "PKFL Tests" — a part linked on a NON-key field shows that field
-        //     blank on its draft row. Key membership is the gate, which is why this loop only
-        //     visits primary-key fields.
+        // This is the SAME call InsertEmptyRow makes for New(). The runner used to do a subset
+        // of it by hand here — ALInit, then clear every primary-key field — which left a linked
+        // part's key column blank and its OnNewRecord unrun.
         //
-        // Deliberately NO ALValidateAsync on what is copied here, unlike the stamping
-        // LiveNavTestPart.InsertEmptyRow does. That validate is part of NavForm.NewRecordAsync
-        // — starting a row — and merely standing on the blank line starts nothing (corpus
-        // CU60743 NewRowLine_LeftUntouched_InsertsNothing, CU60996
-        // LinkedPart_DraftLineLeftUntouched_InsertsNothing). Running OnValidate here would let
-        // walking a page have side effects.
-        record.ALInit();
-        var primaryKey = record.MetaTable?.PrimaryKey;
-        if (primaryKey != null)
-            for (var i = 0; i < primaryKey.KeyFieldCount; i++)
-            {
-                var keyFieldNo = primaryKey.KeyFieldsList[i].FieldNo;
-                record.ClearFieldValue(keyFieldNo);
-                if (TryGetSingleFilterValue(record, keyFieldNo, out var fromFilter))
-                    record.SetFieldValue(keyFieldNo, fromFilter);
-            }
+        // Deliberately NOT _pendingNewRow (that is what makes walking a page insert nothing)
+        // and deliberately NO ALValidateAsync of what the filter copy wrote. The validate step
+        // is NavForm.NewRecordAsync's second half, which the promotion path
+        // (LiveNavTestPart.InsertEmptyRow -> ValidateStampedFields) runs when a write actually
+        // starts the row.
+        if (!(_page?.TryNewRecord(belowXRec: true) ?? false))
+        {
+            // Record-only mode: no page to ask, so BC's filter step never runs. Do the two
+            // halves by hand — ALInit is AL's Init(), which deliberately PRESERVES the primary
+            // key, so without the clear the draft line reported the key of the row just walked
+            // off; without the copy back it reads blank where the page's filter says otherwise.
+            //
+            // ClearFieldValue per key field rather than NavRecord.Clear(): Clear() is AL's
+            // Clear(Rec), which also drops filters and the current key — and the page's filters
+            // are what make the rowset the page's own (a part's SubPageLink above all).
+            // Blanking the buffer must not silently widen what the page is showing.
+            record.ALInit();
+            var primaryKey = record.MetaTable?.PrimaryKey;
+            if (primaryKey != null)
+                for (var i = 0; i < primaryKey.KeyFieldCount; i++)
+                {
+                    var keyFieldNo = primaryKey.KeyFieldsList[i].FieldNo;
+                    record.ClearFieldValue(keyFieldNo);
+                    if (TryGetSingleFilterValue(record, keyFieldNo, out var fromFilter))
+                        record.SetFieldValue(keyFieldNo, fromFilter);
+                }
+        }
 
         _onNewRowLine = true;
         return true;
