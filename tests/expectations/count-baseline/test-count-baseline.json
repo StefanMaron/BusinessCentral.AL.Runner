@@ -2,7 +2,7 @@
   "_comment": "Schema, semantics and how to bump: README.md in this directory. Per-bump rationale: history.md, never a prose line in here (#2485).",
   "suites": {
     "al-language": {
-      "tests": { "default": 2523 },
+      "tests": { "default": 2554 },
       "appGroups": { "default": 1 }
     },
     "runner-extras": {
@@ -23,7 +23,7 @@
         "field-virtual-table-item-tracking-ext": { "tests": 0, "absentOn": ["27.0", "27.3", "27.5"] },
         "field-virtual-table-item-tracking-test": { "tests": 1, "absentOn": ["27.0", "27.3", "27.5"] },
         "http-egress-boundary-oos": { "tests": 4 },
-        "install-trigger-seed": { "tests": 2 },
+        "install-trigger-seed": { "tests": 3 },
         "install-trigger-text-constant": { "tests": 2 },
         "manual-binding-dep": { "tests": 3, "absentOn": ["27.0", "27.3", "27.5"] },
         "microsoft-dependencies": { "tests": 24 },
@@ -42,7 +42,7 @@
         "server-multibundle-main": { "tests": 4 },
         "server-reload-dep": { "tests": 0 },
         "server-reload-main": { "tests": 1 },
-        "standalone-suites": { "tests": 107 },
+        "standalone-suites": { "tests": 108 },
         "static-runmodal-record": { "tests": 5 },
         "table-connection-live-oos": { "tests": 2 },
         "tableext-eviction-field-trigger-timing": { "tests": 2 },
