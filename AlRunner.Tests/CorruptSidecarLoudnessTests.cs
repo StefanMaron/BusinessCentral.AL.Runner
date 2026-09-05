@@ -128,6 +128,13 @@ public sealed class CorruptSidecarLoudnessTests
 /// than the console-filter one. Being loud at the point of discovery is only half the fix —
 /// on a long run the discovery line scrolls thousands of lines above the summary the caller
 /// actually reads (#2587).
+///
+/// It deliberately does NOT swap Console.Error to silence ProvisionGapLog.Report's stderr
+/// write. It cannot be in ConsoleFilterSerialCollection (it needs THIS collection for
+/// ProvisionGapLog), and xunit parallelises across collections, so a swap here would race
+/// with the console-filter classes exactly as those race with each other — a class outside
+/// that collection swapping the console is the same bug, not a smaller one. Eight lines of
+/// stderr noise in the test log is the price, and it is cheaper than the flake.
 /// </summary>
 [Collection(RecordPatchesSerialCollection.Name)]
 public sealed class CorruptSidecarGapSummaryTests
@@ -135,10 +142,8 @@ public sealed class CorruptSidecarGapSummaryTests
     [Fact]
     public void CorruptSidecarGap_IsRecordedForTheRunSummary()
     {
-        var savedErr = Console.Error;
         try
         {
-            Console.SetError(TextWriter.Null);
             ProvisionGapLog.Reset();
             ProvisionGapLog.Report(
                 ProvisioningCheck.BuildPrecompiledSidecarLoadFailedMessage(
@@ -152,7 +157,6 @@ public sealed class CorruptSidecarGapSummaryTests
         finally
         {
             ProvisionGapLog.Reset();
-            Console.SetError(savedErr);
         }
     }
 }

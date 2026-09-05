@@ -741,6 +741,35 @@ class PartialScanTests(unittest.TestCase):
         self.assertIn("OK: all 1 .dll/.exe file(s)", result.stdout)
         self.assertNotIn("::error::", result.stderr)
 
+    def test_unreadable_directory_holding_no_pe_files_is_still_an_error(self):
+        # The other side of test_unreadable_non_pe_file_is_not_an_error, and a
+        # deliberate asymmetry rather than an oversight -- so it gets its own
+        # test instead of only a comment. An unreadable FILE can be classified
+        # by its name: `.txt` is never opened, so it cannot hide an unsigned
+        # binary and stays silent. An unreadable DIRECTORY cannot: the whole
+        # point is that we could not look inside, so "it holds no PE files" is
+        # not something this gate is in a position to know. It fails.
+        #
+        # Blast radius, stated out loud: this is a NEW hard-fail on the release
+        # path. A permissions accident anywhere under the scanned roots now
+        # stops a release even when nothing signable was hidden by it. That is
+        # the intended trade -- a release that silently ships an unsigned
+        # binary is worse than one that stops and names a directory to chmod --
+        # and the error text says which path and why.
+        root = self._tmpdir()
+        (root / "signed.dll").write_bytes(build_fake_pe(0x20B, cert_table_size=4096))
+        empty_hidden = root / "empty-hidden"
+        empty_hidden.mkdir()
+        self._unreadable(empty_hidden)
+
+        result = self._verify(root)
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertNotIn("OK", result.stdout)
+        self.assertIn(str(empty_hidden), result.stderr)
+        self.assertIn("could not read directory", result.stderr)
+        self.assertIn("PARTIAL", result.stderr)
+
     def test_an_empty_but_fully_readable_scan_still_reports_the_2298_message(self):
         # The #2760 guard and this one are independent: a complete walk that
         # classified nothing must still fail with the empty-scan wording, not

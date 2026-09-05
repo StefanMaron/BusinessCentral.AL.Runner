@@ -18,6 +18,20 @@
 //
 // Tests that spawn the real runner as a SUBPROCESS do NOT need to join this collection:
 // each subprocess gets its own Console and its own Log statics.
+//
+// WHAT THIS DOES NOT COVER — read this before assuming the hole is closed.
+// Every class that calls Log.Install() is in here, and that is the whole of it. The race
+// described above needs neither Log.Install() nor Log.Verbose: two classes swapping
+// Console.Out/Console.Error is enough on its own. These swap and are NOT in this collection —
+// AlCallStackCaptureNoFallbackTests, HotPathHookCostTests, PhaseLogTests, WatchSourceTests
+// (no collection at all) and ProvisionGapLogTests (in RecordPatchesSerialCollection, because
+// ProvisionGapLog is process-global state; a class cannot be in two collections, so it cannot
+// simply join this one). Tracked in #2913, with the options.
+//
+// The consequence for anything added HERE: a class that needs another serial collection must
+// NOT swap the console as well — it would be a sixth perpetrator of the same race rather than
+// a smaller one. CorruptSidecarGapSummaryTests (CorruptSidecarLoudnessTests.cs) is the worked
+// example: it needs RecordPatchesSerialCollection, so it takes the stderr noise instead.
 using Xunit;
 
 namespace AlRunner.Tests;
