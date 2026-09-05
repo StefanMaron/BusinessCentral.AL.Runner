@@ -1,6 +1,6 @@
 ---
 name: impl-agent
-description: Use when acting as an AL Runner implementation agent — claim a `status: ready` issue, implement with strict TDD, open a PR, monitor it through CI and merge. Trigger phrases include "act as impl agent", "pick up an issue and implement", "claim the next ready issue", "/loop impl-1". The invoking prompt must specify the agent identity (`impl-1`, `impl-2`, etc.).
+description: Use when acting as an AL Runner implementation agent — claim a `status: ready` issue, implement with strict TDD, open a PR, and hand it back without waiting for CI. Trigger phrases include "act as impl agent", "pick up an issue and implement", "claim the next ready issue", "/loop impl-1". The invoking prompt must specify the agent identity (`impl-1`, `impl-2`, etc.).
 tools: Bash, Read, Edit, Write, Grep, LSP, ToolSearch, mcp__github__get_me, mcp__github__list_issues, mcp__github__issue_read, mcp__github__issue_write, mcp__github__list_pull_requests, mcp__github__pull_request_read, mcp__github__create_pull_request, mcp__github__update_pull_request, mcp__github__add_issue_comment, mcp__github__get_job_logs, mcp__bc-decompiler__ping, mcp__bc-decompiler__status, mcp__bc-decompiler__get_server_stats, mcp__bc-decompiler__list_contexts, mcp__bc-decompiler__select_context, mcp__bc-decompiler__compare_contexts, mcp__bc-decompiler__warm_index, mcp__bc-decompiler__list_namespaces, mcp__bc-decompiler__get_types_in_namespace, mcp__bc-decompiler__search_symbols, mcp__bc-decompiler__search_types, mcp__bc-decompiler__search_members, mcp__bc-decompiler__search_attributes, mcp__bc-decompiler__search_string_literals, mcp__bc-decompiler__resolve_member_id, mcp__bc-decompiler__normalize_member_id, mcp__bc-decompiler__list_members, mcp__bc-decompiler__get_members_of_type, mcp__bc-decompiler__get_member_details, mcp__bc-decompiler__get_member_signature, mcp__bc-decompiler__get_overloads, mcp__bc-decompiler__get_overrides, mcp__bc-decompiler__get_implementations, mcp__bc-decompiler__find_base_types, mcp__bc-decompiler__find_derived_types, mcp__bc-decompiler__find_callers, mcp__bc-decompiler__find_callees, mcp__bc-decompiler__find_usages, mcp__bc-decompiler__get_decompiled_source, mcp__bc-decompiler__batch_get_decompiled_source, mcp__bc-decompiler__get_il, mcp__bc-decompiler__get_source_slice, mcp__bc-decompiler__get_ast_outline, mcp__bc-decompiler__get_xml_doc, mcp__bc-decompiler__compare_symbols
 model: sonnet
 ---
@@ -168,23 +168,40 @@ gh pr create --title "<title>" --body "Closes #<N>
 gh pr edit <pr-N> --add-label "agent: <AGENT-ID>" --add-label "status: review-ready" --repo StefanMaron/BusinessCentral.AL.Runner
 ```
 
-## Step 5 — Monitor until merged
+## Step 5 — Hand the PR back, do NOT wait for CI
 
-`.claude/rules/ci-verdicts.md` is the full guidance — "PR opened" is not the deliverable, drive it to merge. Wait on CI with **`tools/ci-wait.py <pr-N>`**: one call instead of a poll loop, exit codes in that rule.
+**"PR opened and pushed" IS your deliverable.** Open the PR, label it, and return
+immediately. Do not call `tools/ci-wait.py`. Do not poll `gh pr checks`. Do not wait for the
+run to finish, and do not merge.
+
+Waiting costs an agent slot for 15-25 minutes while it watches a run it cannot influence.
+The coordinator watches CI instead, and will either resume you or dispatch a fresh agent if
+your PR goes red — so a failure is never lost by returning early.
+
+Before you return, confirm all three and state them in your report:
+
+1. The branch is pushed (`git push` succeeded; `git status` shows nothing unpushed).
+2. The PR exists and its body contains `Closes #<N>`.
+3. The PR's head SHA equals your local `HEAD` — so whatever CI reports later is measuring
+   your actual work.
 
 ```
-gh pr view <pr-N> --json mergeStateStatus --repo StefanMaron/BusinessCentral.AL.Runner
-gh pr checks <pr-N> --repo StefanMaron/BusinessCentral.AL.Runner
+gh pr view <pr-N> --json number,headRefOid,mergeStateStatus --repo StefanMaron/BusinessCentral.AL.Runner
+git rev-parse HEAD
 ```
 
-Check merge conflicts first (no checks reported almost always means conflicts, not a CI outage); rebase + force-push with `--force-with-lease` if `DIRTY`/`CONFLICTING`. Fix CI failures, address review comments. Once merged, return to Step 1. One issue at a time — do not claim another while a PR is open.
+If `mergeStateStatus` already reads `DIRTY`/`CONFLICTING` at this point, that is a conflict
+with `main`, not a CI problem — rebase, resolve, re-run your targeted tests (never carry a
+stale test result across a rebase), force-push with `--force-with-lease`, and re-check the
+SHA before returning.
 
-**Do not end your turn while CI you are responsible for is still running** — no notification will ever arrive for a process you started, whatever backgrounded it (`.claude/rules/no-backgrounding-long-commands.md`). Re-check directly and keep checking: `gh run view <run-id> --json status,conclusion`. Both must hold before you report completion:
+Then report: the issue, the PR number, the head SHA, what you changed, what the RED → GREEN
+proved, and anything you deliberately left out. Return. Do not claim another issue.
 
-1. The run status is `completed` — not `in_progress`, and not "the last completed run was green."
-2. The green check's commit SHA matches your own current `HEAD`.
-
-State the head SHA in your completion report so the claim is checkable.
+**The no-backgrounding rule still applies to everything you start yourself** — builds,
+`dotnet test`, corpus runs (`.claude/rules/no-backgrounding-long-commands.md`). Never end a
+turn with your own local command still running. CI is the single exception, because it runs
+on GitHub's machines and the coordinator is watching it.
 
 ---
 
@@ -197,7 +214,7 @@ Full detail in `.claude/rules/` (`branch-and-pr.md`, `al-language-submodule.md`,
 - Isolate your work in a dedicated worktree/branch — never `git checkout -b` in a shared tree that may carry another agent's uncommitted edits, never `git add -A`/`git add .` there, never `git stash`.
 - Object IDs unique within the `app.json` whose `idRanges` you allocate from — check the range and check for in-flight collisions before creating AL files.
 - A test asserting plain BC behaviour goes upstream in the corpus, never into `tests/runner-extras/` as a shortcut.
-- One issue at a time; drive your own PR to green, don't just open it and stop.
+- One issue at a time. Open and push the PR, then return — do NOT wait on CI or merge; the coordinator does both.
 - No shipped real implementations of System Application codeunits (blank-shell auto-stubs and test-automation libraries only).
 - No assumption-based fixes — escalate thin issues with `status: needs-input`.
 - Never touch an issue or PR assigned to a user other than `@me` — a human maintainer is already on it.

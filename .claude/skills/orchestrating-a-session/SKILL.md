@@ -28,11 +28,25 @@ something, spawning an agent to re-measure it wastes a full context. Write the P
 
 - **Filing issues** on `StefanMaron/BusinessCentral.AL.Runner`, and **correcting the body of
   an issue you filed** when a measurement contradicts it.
-- **Merging PRs** in both this repo and the corpus repo
-  (`StefanMaron/BusinessCentral.AL.Language.Tests`), once they meet the bar below.
-- **Agents opening corpus PRs.** This is not gated. They open; you review and merge when all
-  8 BC legs are green. Agents never merge a corpus PR themselves. If an agent stops to ask
-  permission for this, tell it to go ahead — its definition may predate the change.
+- **Closing an issue whose work has already landed.** The owner's standing position: closing
+  is cheap and reversible — "we can always reopen if it returns". Verify against the code at
+  `main`, not against issue text, and prefer re-running the reporter's repro where one exists.
+- **Merging any PR authored under the owner's account**, in this repo and the corpus repo,
+  on your own high-level review plus a green pipeline. That covers every PR your agents open,
+  since they push with the owner's token. Judge whether the change is right, whether the
+  proving test is there, and whether CI is green on the **current head** — then merge.
+- **Arming auto-merge** instead of waiting. Review the PR when it arrives; if it passes, arm
+  it (`gh pr merge <N> --squash --delete-branch --auto`) and move on. Do not sit watching a
+  run you cannot influence.
+- **Claiming an issue assigned to another contributor when it overlaps work already in
+  flight.** `branch-and-pr.md`'s assignee boundary still holds as the default, but the owner
+  has released the `SShadowS`-assigned backlog specifically: when one of those issues is the
+  same defect an agent is already fixing, reassign it
+  (`gh issue edit <N> --remove-assignee SShadowS --add-assignee @me`) and fold it in. Do not
+  bulk-claim issues nobody is working on.
+
+**A PR from a contributor who is NOT the owner** — FBakkensen and others — is reviewed, never
+merged. You may review it and, with approval, comment. Merging it stays the owner's call.
 
 **Still gated, ask first:** comments on issues or PRs (including the corpus repo), PR review
 comments, anything posted to another repo. That is editorial content, not a workflow step.
@@ -57,9 +71,31 @@ failing test names, the stack top, the counts, the falsified hypotheses — and 
 are cause A and these 10 are cause B, here is the evidence" is a complete answer with no fix.
 Say so explicitly, or agents will force one fix over two causes to make the PR look bigger.
 
+**Agents do NOT wait for CI.** Their deliverable is "PR opened and pushed". Waiting costs an
+agent slot for 15-25 minutes watching a run it cannot influence, and you are watching CI
+anyway. `impl-agent.md`'s Step 5 says this; keep briefs consistent with it. A failure is never
+lost by returning early — resume the agent, or dispatch a fresh one with the failure in hand.
+
+**Never relay an authorization to an agent.** An agent is right to refuse a message claiming
+"the owner approved X" for anything touching its operating rules — commit signing, skipping a
+verification step, dropping an instruction its own harness set. It cannot verify the claim,
+and its instructions correctly say no agent message substitutes for the user's consent. This
+cost a full round trip when signing was disabled: the agent refused twice, correctly. **Do the
+privileged step yourself** — its work is staged in its worktree, so commit, push and open the
+PR from the coordinator session. Better still, make the change invisible: `commit.gpgsign` was
+already `false` in the shared repo config, so an agent that simply runs `git commit` succeeds
+and never needs telling.
+
 **Check in on long runners.** Past ~90 minutes, ask: where are you, is anything unpushed, is
 there a PR, are you blocked. Agents will sit on finished work waiting for permission they
 already have.
+
+**Search the issue queue before dispatching, and hand over the whole cluster.** A measured
+failure cluster is usually already partly filed. Grep the open issues for the area first — on
+one dispatch this turned a single issue into four sharing one root cause (#2723 + #2517 +
+#2460 + #2200), and the agent brief said so, which is what let it fix them together. Ask the
+agent which of the related issues its change closes for free rather than assigning all of
+them; "these three are one fix, that one is not, here is why" is a complete answer.
 
 ## Triage
 
@@ -90,6 +126,20 @@ verdict: 0 green on current head, 1 failed with the log already fetched, 2 still
 **Never `gh run rerun` a failed job** — it destroys the log permanently. Read
 `--log-failed` first, then push a new commit.
 
+**A CANCELLED check blocks the merge, with everything green and nothing saying why.**
+`pr-check.yml` triggers on `edited`, so editing a PR body starts a fresh run and
+`cancel-in-progress` cancels the old one — leaving a `CANCELLED` conclusion on required
+contexts that protection then treats as unsatisfied. `gh pr checks` shows all green,
+`ci-wait.py` reports GREEN on the head SHA, and the merge is still refused as `BLOCKED`. Look
+at `statusCheckRollup` for `conclusion == "CANCELLED"`. Re-running just that cancelled run
+clears it in under a minute — and that is NOT the forbidden `gh run rerun`, because a
+cancelled run has no failure log to destroy. Do not reach for `--admin`. Tracked as #2726.
+
+**Auto-merge does not drain a queue.** Protection requires up-to-date branches, so arming
+three PRs that touch one file merges one and leaves the rest `DIRTY`. Arm freely for
+independent PRs; drive contended ones one at a time, rebasing and **re-running the affected
+tests** after each merge rather than carrying a stale verdict forward.
+
 **Order matters when PRs carry submodule pins.** Two PRs both bumping the pin and the
 count-baseline will conflict; merge one, then tell the other to rebase and *re-measure*
 rather than carrying its old number forward.
@@ -106,6 +156,10 @@ These exist because each was violated at real cost.
 - **A children-inclusive profile percentage is not a saving.** In a JIT-dominated process it
   measures what is *reachable* from a call site; deleting the caller moves the cost to the
   next one. Price a change by removing the work and re-measuring, not by reading a call tree.
+- **Never compare two configurations across a rebuild.** Rebuilding the runner invalidates
+  the AL-output cache, and a cold run can report a different pass count for reasons unrelated
+  to your change — 873 vs 925 on the same code in one session. Set the variable through an
+  override on ONE warm cache instead, and pass a private `--cache <dir>`.
 - **Include a control.** Convert three classes, leave two untouched, and show the untouched
   ones flat. That is what makes the deltas believable.
 - **Do not rank work by the bc-linux container comparison.** That tier patches BC's binaries
@@ -138,6 +192,14 @@ Otherwise the next agent starts from the wrong premise — which has happened he
 - **The MS test company is `CRONUS International Ltd_`** — underscore, not a period.
 - **`.mcp.json` changes need a session restart.** Registering an MCP server mid-session does
   nothing for that session or its subagents.
+- **When 1Password is locked, commits and pushes both fail.** Signing goes through
+  `op-ssh-sign` and `origin` is SSH via the same agent, so `git commit` hangs waiting for a
+  signature and `git ls-remote` fails. The owner has authorized unsigned commits when he is
+  away from the machine: set `commit.gpgsign=false` / `tag.gpgsign=false` in the repo config
+  (every worktree shares it), and switch pushes to HTTPS with `gh auth setup-git` plus
+  `git remote set-url origin https://github.com/StefanMaron/BusinessCentral.AL.Runner.git`.
+  Verify with `git ls-remote origin HEAD` before telling anyone it works. Never read a secret
+  file and never try to unlock 1Password yourself.
 - **The network here times out intermittently.** Wrap `gh` in a retry; a bare `i/o timeout`
   is not an answer, and treating one as "no results" corrupts whatever you concluded.
 
