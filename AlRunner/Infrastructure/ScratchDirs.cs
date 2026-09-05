@@ -36,6 +36,24 @@
 // unmarked litter is either legacy (a one-time manual `rm`) or from an old build; neither is
 // worth the risk of pulling a directory out from under a live run.
 //
+// The liveness test compares a BOOT-RELATIVE start time, not a wall-clock one. Process.StartTime
+// on Linux is not anchored to the kernel's /proc/stat btime: each process derives its own base as
+// (realtime now - /proc/uptime) the first time it asks, so two processes asking at different
+// moments get bases that differ by the realtime-against-boottime skew accumulated in between.
+// Measured on the reporting machine: .NET puts pid 1's StartTime at unix 1788245948.07 while
+// btime + /proc/<pid>/stat field 22 gives 1788245947.13 — 0.95 s apart after 4.2 days of uptime,
+// about 2.6 ppm. Under the old 2-second tolerance a --watch or --server session crossed it after
+// roughly nine days and had its scratch directory deleted while still using it; a clock STEP
+// (chrony makestep, a VM snapshot restore, suspend/resume) crossed it instantly and for EVERY
+// sidecar on the machine at once, so one runner start could delete every live owner's directory,
+// including a test host's in-use --cache root — a wrong test result rather than a visible failure.
+// So the sidecar also records /proc/<pid>/stat field 22 (`startjiffies=`), which both the writer
+// and the sweeper compute identically because it has no wall-clock anchor at all, and that value
+// decides whenever it is present on both sides. The wall-clock comparison remains only as the
+// fallback for a sidecar written without it (a pre-#2706 build, or a non-Linux host where
+// StartTime is a fixed creation FILETIME and does not drift), with a 60 s tolerance so ordinary
+// drift cannot reach it either.
+//
 // The sweep is synchronous and cheap in steady state: one directory enumeration (plus one per
 // al-runner-* container) when there is nothing stale. It only costs real time when there IS
 // garbage — which is precisely the situation the issue is about — and the first sweep on a
@@ -76,6 +94,13 @@ public static class ScratchDirs
     private static readonly HashSet<string> Owned = new(StringComparer.Ordinal);
     private static bool _exitHooked;
     private static long? _ownStartTicks;
+    private static long? _ownStartJiffies;
+
+    /// <summary>Tolerance for the FALLBACK wall-clock start-time comparison (see the file header).
+    /// Only reached when no boot-relative value is available on both sides. Generous on purpose:
+    /// a false "alive" costs one stale directory, a false "dead" costs a live run's data, and the
+    /// pid-reuse case this guards against needs the pid space to wrap pid_max first.</summary>
+    private const long WallClockStartToleranceTicks = 60 * TimeSpan.TicksPerSecond;
 
     /// <summary>The sidecar path for <paramref name="dir"/>.</summary>
     public static string MarkerPathFor(string dir)
@@ -97,7 +122,7 @@ public static class ScratchDirs
             var parent = Path.GetDirectoryName(full);
             if (!string.IsNullOrEmpty(parent)) Directory.CreateDirectory(parent);
             File.WriteAllText(MarkerPathFor(full),
-                $"pid={Environment.ProcessId}\nstart={OwnStartTicks}\ncreated={DateTime.UtcNow:O}\n");
+                $"pid={Environment.ProcessId}\nstart={OwnStartTicks}\nstartjiffies={OwnStartJiffies}\ncreated={DateTime.UtcNow:O}\n");
         }
         catch (IOException) { }
         catch (UnauthorizedAccessException) { }
@@ -170,6 +195,36 @@ public static class ScratchDirs
         }
     }
 
+    /// <summary>This process's boot-relative start time, or 0 where it cannot be read (non-Linux).
+    /// 0 in a sidecar means "not recorded" and sends the reader to the wall-clock fallback.</summary>
+    private static long OwnStartJiffies
+        => _ownStartJiffies ??= TryReadStartJiffies(Environment.ProcessId) ?? 0;
+
+    /// <summary>
+    /// The boot-relative start time of <paramref name="pid"/> in kernel clock ticks —
+    /// <c>/proc/&lt;pid&gt;/stat</c> field 22 (<c>starttime</c>). Null when /proc is unavailable or
+    /// the entry cannot be parsed. Unlike <see cref="Process.StartTime"/> this number is a property
+    /// of the process rather than of the reader's clock, so the writer and a later sweeper always
+    /// compute the same value for the same process.
+    /// </summary>
+    internal static long? TryReadStartJiffies(int pid)
+    {
+        if (!OperatingSystem.IsLinux() || pid <= 0) return null;
+        string text;
+        try { text = File.ReadAllText("/proc/" + pid.ToString(CultureInfo.InvariantCulture) + "/stat"); }
+        catch { return null; }
+
+        // Field 2 (comm) is the executable name in parentheses and may itself contain spaces and
+        // parentheses, so the only safe split point is the LAST ')'.
+        var close = text.LastIndexOf(')');
+        if (close < 0 || close + 1 >= text.Length) return null;
+        var fields = text.Substring(close + 1).Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        // fields[0] is field 3 (state), so field 22 (starttime) is fields[19].
+        if (fields.Length <= 19) return null;
+        return long.TryParse(fields[19], NumberStyles.None, CultureInfo.InvariantCulture, out var t) && t > 0
+            ? t : null;
+    }
+
     // ── Sweep ─────────────────────────────────────────────────────────────────────────────
 
     /// <summary>What one <see cref="SweepStale"/> pass did. <see cref="Removed"/> lists the
@@ -239,10 +294,10 @@ public static class ScratchDirs
 
     private static void HandleSidecar(string markerPath, SweepResult result)
     {
-        if (!TryReadOwner(markerPath, out var pid, out var startTicks))
+        if (!TryReadOwner(markerPath, out var pid, out var startTicks, out var startJiffies))
             return;   // not ours to interpret; leave it and whatever it points at
         var target = markerPath.Substring(0, markerPath.Length - OwnerMarkerSuffix.Length);
-        if (IsOwnerAlive(pid, startTicks)) { result.Kept++; return; }
+        if (IsOwnerAlive(pid, startTicks, startJiffies)) { result.Kept++; return; }
         if (DeleteTreeAndMarker(target)) result.Removed.Add(target);
         else result.Failed++;
     }
@@ -270,10 +325,15 @@ public static class ScratchDirs
         return false;
     }
 
-    /// <summary>Parse a sidecar. <c>start</c> is optional (0 = unknown, pid liveness alone decides).</summary>
+    /// <summary>Parse a sidecar. Both start values are optional (0 = not recorded); with neither,
+    /// pid liveness alone decides.</summary>
     internal static bool TryReadOwner(string markerPath, out int pid, out long startTicks)
+        => TryReadOwner(markerPath, out pid, out startTicks, out _);
+
+    /// <inheritdoc cref="TryReadOwner(string, out int, out long)"/>
+    internal static bool TryReadOwner(string markerPath, out int pid, out long startTicks, out long startJiffies)
     {
-        pid = 0; startTicks = 0;
+        pid = 0; startTicks = 0; startJiffies = 0;
         string[] lines;
         try { lines = File.ReadAllLines(markerPath); } catch { return false; }
         var havePid = false;
@@ -282,6 +342,8 @@ public static class ScratchDirs
             var line = raw.Trim();
             if (line.StartsWith("pid=", StringComparison.Ordinal))
                 havePid = int.TryParse(line.AsSpan(4), NumberStyles.None, CultureInfo.InvariantCulture, out pid);
+            else if (line.StartsWith("startjiffies=", StringComparison.Ordinal))
+                long.TryParse(line.AsSpan(13), NumberStyles.None, CultureInfo.InvariantCulture, out startJiffies);
             else if (line.StartsWith("start=", StringComparison.Ordinal))
                 long.TryParse(line.AsSpan(6), NumberStyles.None, CultureInfo.InvariantCulture, out startTicks);
         }
@@ -292,21 +354,36 @@ public static class ScratchDirs
     /// Is the recorded owner still running? "Alive" needs the pid to exist AND, when a start
     /// time was recorded, the live process's start time to match it — a pid that has been
     /// reused by an unrelated process is a dead owner. Anything that cannot be determined
-    /// (a process we are not allowed to inspect) counts as alive: the sweep's failure mode
-    /// must be "left a stale directory behind", never "deleted a live one".
+    /// (a process we are not allowed to inspect, a /proc entry that will not parse) counts as
+    /// alive: the sweep's failure mode must be "left a stale directory behind", never "deleted
+    /// a live one".
+    ///
+    /// <paramref name="startJiffies"/> — <c>/proc/&lt;pid&gt;/stat</c> field 22 — decides whenever
+    /// it was recorded and can still be read, because it is the only one of the two the writer and
+    /// this reader are guaranteed to compute identically. See the file header for why
+    /// <see cref="Process.StartTime"/> alone is not safe to compare here.
     /// </summary>
-    internal static bool IsOwnerAlive(int pid, long startTicks)
+    internal static bool IsOwnerAlive(int pid, long startTicks, long startJiffies = 0)
     {
         if (pid <= 0) return true;
         try
         {
             using var p = Process.GetProcessById(pid);
             if (p.HasExited) return false;
+
+            if (startJiffies > 0)
+            {
+                // Both sides read the same kernel field; a mismatch really is a different process.
+                var liveJiffies = TryReadStartJiffies(pid);
+                if (liveJiffies is not long lj) return true;   // cannot compare -> assume alive
+                return lj == startJiffies;
+            }
+
             if (startTicks <= 0) return true;
             long live;
             try { live = p.StartTime.ToUniversalTime().Ticks; }
             catch { return true; }
-            return Math.Abs(live - startTicks) <= 2 * TimeSpan.TicksPerSecond;
+            return Math.Abs(live - startTicks) <= WallClockStartToleranceTicks;
         }
         catch (ArgumentException) { return false; }         // no process with that id
         catch (InvalidOperationException) { return false; } // exited between lookup and use

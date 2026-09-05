@@ -228,6 +228,12 @@ if (args[0] == "--emit-app")
 try
 {
     var swept = AlRunner.Infrastructure.ScratchDirs.SweepStale();
+    // Deleting other processes' directories is the only destructive thing the runner does on
+    // its own initiative, so say so UNCONDITIONALLY — not behind AL_RUNNER_PERF. On a clean
+    // machine this never prints; if the liveness test ever misjudges a live owner, this line is
+    // the only evidence that would exist. Detail stays behind PerfTrace.
+    if (swept.Removed.Count > 0)
+        Console.Error.WriteLine($"scratch sweep: reclaimed {swept.Removed.Count} stale dir(s) from dead runners under {Path.GetTempPath()}");
     if (swept.Removed.Count > 0 || swept.Failed > 0)
         PerfTrace.Log($"scratch sweep: removed {swept.Removed.Count} stale dir(s), kept {swept.Kept}, failed {swept.Failed} under {Path.GetTempPath()}");
 }

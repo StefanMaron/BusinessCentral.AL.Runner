@@ -16,7 +16,10 @@
 //   - a directory whose `.owner` sidecar names a process that no longer exists -> removed
 //   - the legacy pid-named leaves (al-runner-deps/p<pid>, al-runner-navserver/user/<pid>)
 //     whose pid is dead -> removed
-//   - a directory whose owner is THIS test host (alive) -> kept, untouched
+//   - a directory whose owner is THIS test host (alive) -> kept, untouched, INCLUDING when the
+//     recorded wall-clock start time has drifted from the one the runner computes for this pid
+//     (see the ScratchDirs header: that drift is real, grows with the owner's age, and jumps for
+//     every sidecar at once on a clock step)
 //   - an unmarked directory with no pid in its name -> kept: the sweep never guesses by age,
 //     because several runners share one TMPDIR on a busy machine and an age heuristic is the
 //     only rule that can delete a live process's directory out from under it
@@ -28,6 +31,7 @@
 
 using System.Diagnostics;
 using System.Text;
+using AlRunner.Infrastructure;
 using Xunit;
 
 namespace AlRunner.Tests;
@@ -41,8 +45,9 @@ public class ScratchDirsRunnerStartupTests
     /// <summary>The sidecar format the runner's sweep reads. Written by hand here (rather than
     /// through the runner's own helper) so the format itself is pinned as a contract — a
     /// leftover from a killed run must still be recognised by a later build.</summary>
-    private static void WriteOwnerMarker(string dir, int pid, long startTicks)
-        => File.WriteAllText(dir + ".owner", $"pid={pid}\nstart={startTicks}\n");
+    private static void WriteOwnerMarker(string dir, int pid, long startTicks, long? startJiffies = null)
+        => File.WriteAllText(dir + ".owner",
+            $"pid={pid}\nstart={startTicks}\n" + (startJiffies is long j ? $"startjiffies={j}\n" : ""));
 
     /// <summary>A pid that no process on this machine has. Linux pid_max tops out at
     /// 4,194,304 and Windows pids are far smaller in practice, so counting down from two
@@ -113,6 +118,15 @@ public class ScratchDirsRunnerStartupTests
         File.WriteAllText(Path.Combine(liveMarked, "payload.bin"), "x");
         WriteOwnerMarker(liveMarked, me.Id, myStart);
 
+        // Same live owner, but with a wall-clock start time ten seconds off what the runner will
+        // compute for this pid — days of ordinary drift, or one clock step. The boot-relative value
+        // it also carries is what makes this survivable.
+        var liveSkewed = Path.Combine(temp, "al-runner-startup-sweep-tests", tag + "-live-skewed");
+        Directory.CreateDirectory(liveSkewed);
+        File.WriteAllText(Path.Combine(liveSkewed, "payload.bin"), "x");
+        WriteOwnerMarker(liveSkewed, me.Id, myStart + 10 * TimeSpan.TicksPerSecond,
+            ScratchDirs.TryReadStartJiffies(me.Id));
+
         var unmarked = Path.Combine(temp, "al-runner-startup-sweep-tests", tag + "-unmarked");
         Directory.CreateDirectory(unmarked);
         File.WriteAllText(Path.Combine(unmarked, "payload.bin"), "x");
@@ -132,11 +146,13 @@ public class ScratchDirsRunnerStartupTests
 
             Assert.True(File.Exists(Path.Combine(liveMarked, "payload.bin")), "a LIVE owner's scratch dir was deleted");
             Assert.True(File.Exists(liveMarked + ".owner"), "a LIVE owner's marker was deleted");
+            Assert.True(File.Exists(Path.Combine(liveSkewed, "payload.bin")),
+                "a LIVE owner's scratch dir was deleted because its recorded wall-clock start time had drifted");
             Assert.True(File.Exists(Path.Combine(unmarked, "payload.bin")), "an unmarked directory was deleted — the sweep must not guess by age");
         }
         finally
         {
-            foreach (var d in new[] { deadMarked, deadFlatMarked, legacyDeps, legacyNavUser, liveMarked, unmarked })
+            foreach (var d in new[] { deadMarked, deadFlatMarked, legacyDeps, legacyNavUser, liveMarked, liveSkewed, unmarked })
             {
                 try { if (Directory.Exists(d)) Directory.Delete(d, recursive: true); } catch { }
                 try { File.Delete(d + ".owner"); } catch { }

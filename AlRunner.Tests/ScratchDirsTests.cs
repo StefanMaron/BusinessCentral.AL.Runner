@@ -10,7 +10,10 @@
 //   - a directory whose owner is alive is never touched;
 //   - the two legacy pid-named shapes are swept by pid liveness;
 //   - an unmarked directory — however old — and anything not named al-runner-*/alrunner-* is
-//     never touched: the sweep does not guess by age.
+//     never touched: the sweep does not guess by age;
+//   - a live owner whose recorded WALL-CLOCK start time has drifted from the one this process
+//     computes for it is still alive (the drift is real and unbounded — see the ScratchDirs
+//     header), while a mismatched BOOT-RELATIVE start time is still a dead owner.
 
 using System.Diagnostics;
 using AlRunner.Infrastructure;
@@ -31,8 +34,9 @@ public sealed class ScratchDirsTests : IDisposable
 
     public void Dispose() => ScratchDirs.Release(_root);
 
-    private static void WriteMarker(string dir, int pid, long startTicks)
-        => File.WriteAllText(ScratchDirs.MarkerPathFor(dir), $"pid={pid}\nstart={startTicks}\n");
+    private static void WriteMarker(string dir, int pid, long startTicks, long? startJiffies = null)
+        => File.WriteAllText(ScratchDirs.MarkerPathFor(dir),
+            $"pid={pid}\nstart={startTicks}\n" + (startJiffies is long j ? $"startjiffies={j}\n" : ""));
 
     private static string MakeDir(string path, string? payload = "payload")
     {
@@ -47,6 +51,9 @@ public sealed class ScratchDirsTests : IDisposable
     {
         get { using var me = Process.GetCurrentProcess(); return me.StartTime.ToUniversalTime().Ticks; }
     }
+    /// <summary>/proc/self/stat field 22. 0 off Linux, where it is not recorded.</summary>
+    private static long LiveStartJiffies => ScratchDirs.TryReadStartJiffies(Environment.ProcessId) ?? 0;
+    private const long TenSeconds = 10 * TimeSpan.TicksPerSecond;
 
     // ── Reserve / Create / Release ──────────────────────────────────────────────
 
@@ -131,6 +138,61 @@ public sealed class ScratchDirsTests : IDisposable
 
         Assert.False(Directory.Exists(dir), "pid reuse must not keep a dead owner's directory alive");
         Assert.Single(r.Removed);
+    }
+
+    [Fact]
+    public void Sweep_KeepsLiveOwner_WhenItsRecordedWallClockStartTimeHasDrifted()
+    {
+        // Process.StartTime on Linux is derived per process from (realtime now - /proc/uptime), so
+        // the value an owner records and the value a later sweeper computes for that same owner
+        // drift apart with the owner's age, and jump together on any clock step. Ten seconds is
+        // days of ordinary drift, or one chrony makestep. Both shapes must survive: with the
+        // boot-relative value recorded (the fix), and without it (a sidecar from an older build).
+        var bootRelative = MakeDir(Path.Combine(_root, "al-runner-drift", "boot-relative"));
+        WriteMarker(bootRelative, LivePid, LiveStartTicks + TenSeconds, LiveStartJiffies);
+        var wallClockOnly = MakeDir(Path.Combine(_root, "al-runner-drift", "wall-clock-only"));
+        WriteMarker(wallClockOnly, LivePid, LiveStartTicks + TenSeconds);
+
+        var r = ScratchDirs.SweepStale(_root);
+
+        Assert.True(File.Exists(Path.Combine(bootRelative, "f.bin")),
+            "a LIVE owner's directory was deleted because its recorded wall-clock start time had drifted");
+        Assert.True(File.Exists(Path.Combine(wallClockOnly, "f.bin")),
+            "a LIVE owner's directory with a pre-#2706 sidecar was deleted over wall-clock drift");
+        Assert.Empty(r.Removed);
+        Assert.Equal(2, r.Kept);
+    }
+
+    [Fact]
+    public void Sweep_BootRelativeStartTime_IsAuthoritative_SoPidReuseIsStillDetected()
+    {
+        // /proc/<pid>/stat field 22 is a Linux fact; off Linux there is nothing to be authoritative.
+        if (!OperatingSystem.IsLinux()) return;
+
+        // The wall-clock start time matches exactly — under the widened tolerance alone this would
+        // read as "same process". The boot-relative value says otherwise and wins, so the wider
+        // tolerance is a fallback, not a hole in pid-reuse detection.
+        var dir = MakeDir(Path.Combine(_root, "al-runner-jiffies", "reused"));
+        WriteMarker(dir, LivePid, LiveStartTicks, LiveStartJiffies + 1);
+
+        var r = ScratchDirs.SweepStale(_root);
+
+        Assert.False(Directory.Exists(dir),
+            "a mismatched boot-relative start time must be treated as a reused pid, i.e. a dead owner");
+        Assert.Single(r.Removed);
+    }
+
+    [Fact]
+    public void Create_RecordsTheBootRelativeStartTimeToo()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+
+        var dir = ScratchDirs.Create(Path.Combine(_root, "al-runner-jf", "a"));
+
+        Assert.True(ScratchDirs.TryReadOwner(ScratchDirs.MarkerPathFor(dir), out var pid, out _, out var jiffies));
+        Assert.Equal(Environment.ProcessId, pid);
+        Assert.True(jiffies > 0, "sidecar carries no startjiffies= — the sweep would fall back to the drifting wall clock");
+        Assert.Equal(LiveStartJiffies, jiffies);
     }
 
     [Fact]
