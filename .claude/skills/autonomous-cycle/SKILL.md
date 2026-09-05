@@ -50,12 +50,22 @@ Exactly one agent runs. When it returns, you review, act, and start the next.
 A fresh or drifted box does not announce that it is broken; it produces numbers that look fine.
 Every check below exists because its absence has silently corrupted a result.
 
-1. **Known-good baseline.** Run one pinned bucket and compare against its recorded count. This
-   single check catches a poisoned cache, a wrong BC version, a missing package cache, a broken
-   artifact set and a bad backup reader — all of which otherwise surface as believable failure
-   clusters that the loop would file as issues. **If the number does not match, stop and open an
-   issue. Do not continue.** Use a private `--cache` dir so the check is about the box, not about
-   whatever a previous run left behind.
+1. **Known-good baseline — run the corpus.** `tests/al-language` is green or it is not, and its
+   expected count lives in `tests/expectations/count-baseline/`, checked in and only moved by a
+   PR that deliberately bumps it. That makes it the right health check and means no new baseline
+   needs inventing: a box that cannot reproduce it is a box whose results cannot be trusted.
+
+   Do **not** gate on a Microsoft bucket's pass count. There is no green there — it is a number
+   that rises as the runner improves, so equality-gating on it would halt the loop on its first
+   success, and recording "whatever this box last saw" would ratify drift instead of catching it.
+
+   Run it against the **shared cache the work will actually use**, not a private one. The failure
+   this catches is a cache left inconsistent by a killed run, which once cost 76% of passing
+   tests with no error and an unchanged exit code — a private cache is blind to exactly that.
+
+   If it does not reproduce: stop, notify, and open an issue. Everything downstream is untrusted
+   until it does.
+
 2. **Push works.** `git ls-remote origin HEAD`. Push auth fails silently when it is routed
    through an interactive credential agent.
 3. **Commits work.** Either signing succeeds, or signing is off. A locked signing agent makes
@@ -186,9 +196,25 @@ a merge can turn `main` red, which outranks everything you were about to do.
    change reaches `main`.
 2. **One of our PRs is red.** Drive it green, or close it with the reason. A red PR left open is
    worse than no PR: it looks like progress.
-3. **A PR is waiting on review.** Dispatch a review agent, or review it directly. Ours can be
-   merged on a green pipeline; someone else's is reviewed and its findings go to the human queue
-   — never merged, never commented on unattended.
+3. **A PR is waiting on review.** Dispatch the `reviewer` agent. A PR authored by the account
+   the loop runs as may be merged unattended **only when every one of these aligns** — any one
+   missing sends it to the human queue instead:
+
+   - the reviewer says it meets the bar, having actually reviewed this head SHA;
+   - every required check is green **on the current head**, with no `CANCELLED` required context;
+   - `git merge-tree` is clean against current `main`, and the affected tests were re-run if the
+     branch was rebased;
+   - if it asserts anything about BC's behaviour, the corpus PR proving it **has merged**, and
+     its pin bump and count-baseline update are folded into this PR;
+   - it is not a release window (`publish.yml` pushes a fast-forward; a merge during its run
+     kills it).
+
+   A PR from anyone else is reviewed, and its findings go to the human queue. Never merged.
+
+   The reviewer is dispatched by the loop, so it is not independent oversight — it is a second
+   pass by the same lineage. It catches carelessness, not a shared wrong assumption. That is why
+   the other gates are mechanical and checkable rather than judgement calls, and why repeated
+   failure in one area escalates to a person.
 
    **Every review must answer one question before the merge bar: does this PR assert something
    about what BC does?** If it does, the proving test belongs upstream in the corpus, and this PR
