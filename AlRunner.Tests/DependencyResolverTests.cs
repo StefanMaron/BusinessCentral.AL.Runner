@@ -715,6 +715,95 @@ public sealed class DependencyResolverTests : IDisposable
     }
 
     /// <summary>
+    /// NEGATIVE — #2739: a symbols-only package paired with a committed Tier-1 sidecar DLL
+    /// under <c>&lt;bundle&gt;/.deps-bin/</c> is fully servable, because DependencyLoader
+    /// prefers that DLL over every other tier. Reporting it as "NO IMPLEMENTATION … no other
+    /// copy was found" fired on every green CI leg and, on 2026-09-05, produced a wrong
+    /// diagnosis of a red PR whose actual cause was several lines further down.
+    /// </summary>
+    [Fact]
+    public void SymbolsOnlyButHasPrecompiledSidecarDll_IsNotReported()
+    {
+        var appId = "c7a1b2d3-4e5f-4a6b-8c9d-0e1f2a3b4c5d";
+        var bundleRoot = MakeDir("sidecar-bundle");
+        var pkgDir = Directory.CreateDirectory(Path.Combine(bundleRoot, ".alpackages")).FullName;
+        WriteApp(pkgDir, "AL_Runner_Fixtures_Sidecar_Dep_1.0.0.0.app", appId,
+            "Sidecar Dep", "AL Runner Fixtures", "1.0.0.0", r2r: false);
+
+        // Exactly the name DependencyLoader.LoadOne builds: <Publisher>_<Name>_<Version>.dll.
+        var depsBin = Directory.CreateDirectory(Path.Combine(bundleRoot, ".deps-bin")).FullName;
+        File.WriteAllBytes(
+            Path.Combine(depsBin, "AL_Runner_Fixtures_Sidecar_Dep_1.0.0.0.dll"), new byte[] { 0x4D, 0x5A });
+
+        var resolver = new DependencyResolver(
+            new[] { pkgDir }, Array.Empty<string>(), bundleRoot);
+        var result = resolver.Resolve(new[]
+        {
+            new DependencyRef(Guid.Parse(appId), "Sidecar Dep", "AL Runner Fixtures", new Version(1, 0, 0, 0))
+        });
+        Assert.Single(result);
+
+        Assert.Empty(resolver.UnservableDependencies);
+    }
+
+    /// <summary>
+    /// POSITIVE control for the test above — the SAME symbols-only package with NO sidecar
+    /// DLL beside it must still be reported. Without this, an implementation that simply
+    /// stopped reporting unservable dependencies altogether would pass the negative test,
+    /// and the real #1689 diagnostic would be silently lost.
+    /// </summary>
+    [Fact]
+    public void SymbolsOnlyWithoutSidecarDll_IsStillReported()
+    {
+        var appId = "c7a1b2d3-4e5f-4a6b-8c9d-0e1f2a3b4c5e";
+        var bundleRoot = MakeDir("no-sidecar-bundle");
+        var pkgDir = Directory.CreateDirectory(Path.Combine(bundleRoot, ".alpackages")).FullName;
+        WriteApp(pkgDir, "AL_Runner_Fixtures_Sidecar_Dep_1.0.0.0.app", appId,
+            "Sidecar Dep", "AL Runner Fixtures", "1.0.0.0", r2r: false);
+        // No .deps-bin directory at all.
+
+        var resolver = new DependencyResolver(
+            new[] { pkgDir }, Array.Empty<string>(), bundleRoot);
+        resolver.Resolve(new[]
+        {
+            new DependencyRef(Guid.Parse(appId), "Sidecar Dep", "AL Runner Fixtures", new Version(1, 0, 0, 0))
+        });
+
+        var report = Assert.Single(resolver.UnservableDependencies);
+        Assert.Contains("AL Runner Fixtures/Sidecar Dep", report);
+        Assert.Contains("NO IMPLEMENTATION", report);
+    }
+
+    /// <summary>
+    /// #2739 — a sidecar DLL for a DIFFERENT version must not satisfy the probe. The loader
+    /// builds the file name from the resolved manifest's exact version, so a v2 DLL cannot
+    /// serve a v1 resolution, and claiming otherwise would suppress a real gap.
+    /// </summary>
+    [Fact]
+    public void SidecarDllForAnotherVersion_DoesNotSuppressTheReport()
+    {
+        var appId = "c7a1b2d3-4e5f-4a6b-8c9d-0e1f2a3b4c5f";
+        var bundleRoot = MakeDir("wrong-version-sidecar");
+        var pkgDir = Directory.CreateDirectory(Path.Combine(bundleRoot, ".alpackages")).FullName;
+        WriteApp(pkgDir, "AL_Runner_Fixtures_Sidecar_Dep_1.0.0.0.app", appId,
+            "Sidecar Dep", "AL Runner Fixtures", "1.0.0.0", r2r: false);
+
+        var depsBin = Directory.CreateDirectory(Path.Combine(bundleRoot, ".deps-bin")).FullName;
+        File.WriteAllBytes(
+            Path.Combine(depsBin, "AL_Runner_Fixtures_Sidecar_Dep_2.0.0.0.dll"), new byte[] { 0x4D, 0x5A });
+
+        var resolver = new DependencyResolver(
+            new[] { pkgDir }, Array.Empty<string>(), bundleRoot);
+        resolver.Resolve(new[]
+        {
+            new DependencyRef(Guid.Parse(appId), "Sidecar Dep", "AL Runner Fixtures", new Version(1, 0, 0, 0))
+        });
+
+        var report = Assert.Single(resolver.UnservableDependencies);
+        Assert.Contains("NO IMPLEMENTATION", report);
+    }
+
+    /// <summary>
     /// NEGATIVE — Microsoft platform apps are legitimately symbols-only; their runtime comes
     /// from the service tier. The existing carve-out must survive.
     /// </summary>

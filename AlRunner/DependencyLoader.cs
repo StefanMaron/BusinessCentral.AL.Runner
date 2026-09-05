@@ -247,22 +247,38 @@ public sealed class DependencyLoader
         }
     }
 
+    /// <summary>
+    /// The Tier-1 precompiled sidecar DLL for <paramref name="m"/> under
+    /// <paramref name="bucketRoot"/>, or <c>null</c> when there is none.
+    /// </summary>
+    /// <remarks>
+    /// Shared with <see cref="DependencyResolver"/> on purpose. The resolver has to decide
+    /// whether ANY loader tier can serve a symbols-only package, and it used to answer that
+    /// question with its own list of tiers that did not include this one — so a dependency
+    /// this method serves perfectly well was reported as "no other copy was found in the
+    /// package caches" on every healthy run (#2739). One method, so the two cannot disagree
+    /// about what Tier 1 covers.
+    /// </remarks>
+    internal static string? FindPrecompiledSidecar(AppManifest m, string bucketRoot)
+    {
+        var fileName = SanitizeFileName($"{m.Publisher}_{m.Name}_{m.Version}.dll");
+        var precompiled = Path.Combine(bucketRoot, ".deps-bin", fileName);
+        if (File.Exists(precompiled)) return precompiled;
+
+        // A bundle that is a PARENT of many apps has no .deps-bin of its own — the one
+        // that matters belongs to the suite that declares the dependency, one level
+        // down. Without this the Tier-1 DLL was simply not found when the same suite ran
+        // as part of the parent bundle (it loads fine standalone, where bucketRoot IS
+        // the suite), and the dep silently fell through to a lower tier — for a
+        // source-less fixture .app that means its objects never exist at all.
+        return SafeEnumerateFiles(bucketRoot, fileName).FirstOrDefault();
+    }
+
     private (Assembly? Asm, string? Tier3CacheKey) LoadOne(AppManifest m, string appPath, string bucketRoot)
     {
         // Tier 1: precompiled DLL.
-        var fileName = SanitizeFileName($"{m.Publisher}_{m.Name}_{m.Version}.dll");
-        var precompiled = Path.Combine(bucketRoot, ".deps-bin", fileName);
-        if (!File.Exists(precompiled))
-        {
-            // A bundle that is a PARENT of many apps has no .deps-bin of its own — the one
-            // that matters belongs to the suite that declares the dependency, one level
-            // down. Without this the Tier-1 DLL was simply not found when the same suite ran
-            // as part of the parent bundle (it loads fine standalone, where bucketRoot IS
-            // the suite), and the dep silently fell through to a lower tier — for a
-            // source-less fixture .app that means its objects never exist at all.
-            precompiled = SafeEnumerateFiles(bucketRoot, fileName).FirstOrDefault() ?? precompiled;
-        }
-        if (File.Exists(precompiled))
+        var precompiled = FindPrecompiledSidecar(m, bucketRoot);
+        if (precompiled != null)
         {
             try
             {

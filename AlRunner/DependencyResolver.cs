@@ -55,6 +55,11 @@ public sealed class DependencyResolver
     // same app — see FromSource in SelectBestVersion for why version cannot decide it.
     private readonly IReadOnlyList<string> _sourceSupersedingDirs;
 
+    // Bundle root to probe for DependencyLoader's Tier-1 precompiled sidecar DLLs
+    // (<root>/**/.deps-bin/<Publisher>_<Name>_<Version>.dll). Null means "not supplied",
+    // which suppresses nothing — the unservable check then behaves exactly as before.
+    private readonly string? _precompiledSidecarRoot;
+
     public DependencyResolver(IReadOnlyList<string> cacheDirs)
         : this(cacheDirs, Array.Empty<string>())
     {
@@ -62,10 +67,12 @@ public sealed class DependencyResolver
 
     public DependencyResolver(
         IReadOnlyList<string> cacheDirs,
-        IReadOnlyList<string> sourceSupersedingDirs)
+        IReadOnlyList<string> sourceSupersedingDirs,
+        string? precompiledSidecarRoot = null)
     {
         _cacheDirs = cacheDirs;
         _sourceSupersedingDirs = sourceSupersedingDirs;
+        _precompiledSidecarRoot = precompiledSidecarRoot;
     }
 
     /// <summary>
@@ -90,6 +97,16 @@ public sealed class DependencyResolver
     // Microsoft platform apps the runner provides via precompiled service-tier DLLs +
     // bundle .alpackages symbols, never by loading a resolved .app — so a missing .app is
     // expected and non-fatal. Kept in sync with Program.IsMicrosoftPlatformApp.
+    /// <summary>
+    /// Whether DependencyLoader's Tier-1 precompiled sidecar DLL exists for this manifest.
+    /// Answered by the loader's own lookup rather than a copy of it, so the resolver cannot
+    /// drift from what the loader will actually do at run time — the drift was the defect
+    /// in #2739.
+    /// </summary>
+    private bool HasPrecompiledSidecar(AppManifest m)
+        => _precompiledSidecarRoot != null
+           && DependencyLoader.FindPrecompiledSidecar(m, _precompiledSidecarRoot) != null;
+
     internal static bool IsMicrosoftPlatformApp(string name, string publisher)
     {
         if (!string.Equals(publisher, "Microsoft", StringComparison.OrdinalIgnoreCase)) return false;
@@ -366,8 +383,15 @@ public sealed class DependencyResolver
             // and nothing else, as produced by a symbol-only package download. No loader tier
             // can implement it, so every call into it ends at
             // "The object with ID 0 does not have a member with that ID".
+            // Tier 1 counts too. A committed sidecar DLL under <bundle>/**/.deps-bin/ is a
+            // complete implementation that DependencyLoader.LoadOne prefers over every other
+            // tier, so a package paired with one is fully servable no matter what the .app
+            // itself carries. Leaving it out of this list is what made the notice fire on
+            // every green CI leg for tests/runner-extras/testpage-precompiled-dep-control,
+            // whose fixture ships exactly that pairing on purpose (#2739).
             if (!Executable(best.Path)
                 && !AppLoader.HasAlSource(best.Path)
+                && !HasPrecompiledSidecar(best.Manifest)
                 && !IsMicrosoftPlatformApp(best.Manifest.Name, best.Manifest.Publisher))
             {
                 var tooOld = candidates
