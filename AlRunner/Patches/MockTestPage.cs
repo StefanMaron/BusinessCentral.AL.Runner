@@ -2128,32 +2128,58 @@ internal static class TestPageBooleanValue
     /// <summary>
     /// The inverse: the text a TestPage write carries, back to a Boolean.
     ///
-    /// Accepts BOTH spellings, deliberately. "Yes"/"No" is what <c>ValueToString</c> now
-    /// produces, so <c>SetValue(&lt;Boolean&gt;)</c> round-trips through it (see the chain in
-    /// <c>NavTestField.ALSetValue</c> — a non-string value goes out through
-    /// <c>ValueToString</c> and comes back in through this). "True"/"False" is kept because it
-    /// is the spelling AL's own <c>Evaluate</c> accepts for a Boolean, and because a test
-    /// writing it works on this runner today — removing it would be a silent regression of a
-    /// working surface in the name of fixing an unrelated one.
+    /// <para>Accepts "Yes"/"No" ONLY. That is what <see cref="FormatObject"/> now produces, so
+    /// <c>SetValue(&lt;Boolean&gt;)</c> round-trips through it — see the chain in
+    /// <c>NavTestField.ALSetValue</c>, where a non-string value goes out through
+    /// <c>ValueToString</c> and comes back in through this.</para>
     ///
-    /// Which of the two real BC accepts on THIS surface is a genuine BC question rather than a
-    /// derivation, and it is in front of a service tier as
-    /// <c>TestPageField_SetValue_TrueFalseSpelling_IsAlsoAccepted</c> in the corpus suite that
-    /// accompanies this fix. Anything else still refuses loudly rather than guessing.
+    /// <para><b>"True"/"False" is refused, and that is measured, not assumed.</b> An earlier
+    /// version of this fix accepted it, reasoning that it is the spelling AL's own
+    /// <c>Evaluate</c> takes for a Boolean. Corpus PR #163 put the question in front of a
+    /// service tier and all eight BC legs answered identically:</para>
+    /// <code>
+    ///   Validation error for Field: RecTrue,  Message = 'Your entry of 'False' is not an
+    ///   acceptable value for 'Rec True'. (Select Refresh to discard errors)'
+    /// </code>
+    /// <para>So this is not an unsupported surface the runner should refuse as out of scope —
+    /// BC has a defined answer for it, and the runner's job is to give the same one. Hence a
+    /// validation error in BC's own shape rather than a <c>RunnerOutOfScopeException</c>, built
+    /// the same way <see cref="TestPageMinMaxValue.MakeError"/> already builds that shape for a
+    /// MinValue/MaxValue refusal.</para>
+    ///
+    /// <para>One fidelity gap, stated rather than hidden: BC puts the control's declared NAME in
+    /// the <c>Field:</c> slot and its CAPTION in the quoted target ("RecTrue" and "Rec True"
+    /// above). This runner's <c>ITestField.Name</c> answers the caption, so both slots read the
+    /// caption here. A test asserting the message as a substring — as the corpus one does — is
+    /// unaffected; one asserting it verbatim would see the difference.</para>
     /// </summary>
-    internal static NavValue Resolve(string value, string context)
+    internal static NavValue Resolve(string value, string caption)
     {
-        if (string.Equals(value, "True", StringComparison.OrdinalIgnoreCase)) return NavBoolean.Create(true);
-        if (string.Equals(value, "False", StringComparison.OrdinalIgnoreCase)) return NavBoolean.Create(false);
         if (string.Equals(value, "Yes", StringComparison.OrdinalIgnoreCase)) return NavBoolean.Create(true);
         if (string.Equals(value, "No", StringComparison.OrdinalIgnoreCase)) return NavBoolean.Create(false);
 
-        throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
-            context,
-            $"testpage-boolean-value — '{value}' is none of 'Yes', 'No', 'True' or 'False'. Those "
-            + "are the spellings a TestPage Boolean write is known to carry; other text-to-Boolean "
-            + "forms (locale spellings, ...) are a separate, not-yet-implemented surface. "
-            + "See docs/scope.md");
+        throw MakeNotAcceptableError(value, caption);
+    }
+
+    /// <summary>
+    /// BC's own refusal for a value a control will not take, verbatim in shape:
+    /// <c>Validation error for Field: {caption},  Message = 'Your entry of '{value}' is not an
+    /// acceptable value for '{caption}'. (Select Refresh to discard errors)'</c> — including
+    /// the double space after the comma, which is BC's, not a typo.
+    /// </summary>
+    private static System.Exception MakeNotAcceptableError(string value, string caption)
+    {
+        var msg = $"Validation error for Field: {caption},  Message = 'Your entry of '{value}' "
+            + $"is not an acceptable value for '{caption}'. (Select Refresh to discard errors)'";
+
+        var t = System.Type.GetType(
+            "Microsoft.Dynamics.Nav.Types.Exceptions.NavNCLDialogException, Microsoft.Dynamics.Nav.Types");
+        if (t != null)
+        {
+            var ctor = t.GetConstructor(new[] { typeof(string) });
+            if (ctor != null) return (System.Exception)ctor.Invoke(new object[] { msg });
+        }
+        return new System.InvalidOperationException(msg);
     }
 }
 
@@ -2245,7 +2271,7 @@ internal sealed class LiveNavTestField : ITestField
                 ? TestPageOptionValue.Resolve(option, value, OptionCaptions(),
                     $"TestPage SetValue (field {_fieldNo})")
                 : FieldType == NavType.Boolean
-                    ? TestPageBooleanValue.Resolve(value, $"TestPage SetValue (field {_fieldNo})")
+                    ? TestPageBooleanValue.Resolve(value, Caption)
                     : ALCompiler.ToNavValue(value);
 
             // MinValue/MaxValue (#2495): measured against real BC (28.1/28.4), a bounded field's
@@ -2503,7 +2529,7 @@ internal sealed class PageVariableTestField : ITestField
         {
             NavOption option => TestPageOptionValue.Resolve(option, value, _page.TryGetOptionCaptions(_controlId, option),
                 $"TestPage SetValue (control {_controlId})"),
-            NavBoolean => TestPageBooleanValue.Resolve(value, $"TestPage SetValue (control {_controlId})"),
+            NavBoolean => TestPageBooleanValue.Resolve(value, Caption),
             NavCode current => new NavCode(current.MaxLength, value),
             NavDate => TestPageDateValue.Resolve(value, $"TestPage SetValue (control {_controlId})"),
             _ => ALCompiler.ToNavValue(value),

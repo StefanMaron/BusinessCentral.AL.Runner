@@ -16,10 +16,20 @@
 // produce is what ValueToString emits, which was Convert.ToString(bool) — "True"/"False". The
 // premise was right and the value was wrong: real BC's ValueToString for a Boolean control
 // emits "Yes"/"No", so those are exactly the spellings the round trip carries, and refusing
-// them refused BC's own. That is why the negative cases below are now the genuinely unknown
-// spellings only.
+// them refused BC's own.
+//
+// The mirror of that also turned out to be true, and it took a service tier to settle it. A
+// first draft of the fix ACCEPTED "True"/"False" as well, reasoning that it is the spelling AL's
+// own Evaluate takes. Corpus PR #163 asked, and all eight BC legs answered with a refusal:
+//
+//   Validation error for Field: RecTrue,  Message = 'Your entry of 'False' is not an acceptable
+//   value for 'Rec True'. (Select Refresh to discard errors)'
+//
+// So BC has a defined answer here and it is "no". That makes it a validation error to reproduce,
+// not an unsupported surface to refuse as out of scope — which is why the negative assertions
+// below check for that message rather than for a RunnerOutOfScopeException.
 using AlRunner;
-using AlRunner.Infrastructure;
+using Microsoft.Dynamics.Nav.Types.Exceptions;
 using Microsoft.Dynamics.Nav.Runtime;
 using Xunit;
 
@@ -85,28 +95,29 @@ public sealed class TestPageBooleanValueTests
     }
 
     [Theory]
-    [InlineData("True", true)]
-    [InlineData("true", true)]
-    [InlineData("TRUE", true)]
-    [InlineData("False", false)]
-    [InlineData("false", false)]
-    [InlineData("FALSE", false)]
-    public void Resolve_TrueFalseSpelling_IsStillAccepted(string input, bool expected)
+    [InlineData("True")]
+    [InlineData("true")]
+    [InlineData("False")]
+    [InlineData("FALSE")]
+    public void Resolve_TrueFalseSpelling_IsRefusedTheWayBcRefusesIt(string input)
     {
-        // Kept deliberately: it is the spelling AL's own Evaluate accepts for a Boolean, and a
-        // test writing it works on this runner today. Whether real BC accepts it on the TestPage
-        // surface is in front of a service tier as
-        // TestPageField_SetValue_TrueFalseSpelling_IsAlsoAccepted in the corpus suite; dropping
-        // it here on a guess would regress a working surface while fixing an unrelated one.
-        var boolean = Assert.IsType<NavBoolean>(TestPageBooleanValue.Resolve(input, "unit test"));
-        Assert.Equal(expected, boolean.Value);
+        // Measured on all eight BC legs via corpus PR #163, not derived: BC rejects this spelling
+        // on a Boolean control as an ordinary field validation error. Accepting it would make the
+        // runner take a write a service tier refuses — the silent-divergence shape that is worse
+        // than a loud gap, because a test written against the runner would then fail upstream.
+        var ex = Assert.Throws<NavNCLDialogException>(
+            () => TestPageBooleanValue.Resolve(input, "Rec True"));
+
+        Assert.Contains("is not an acceptable value", ex.Message);
+        Assert.Contains(input, ex.Message);
+        Assert.Contains("Rec True", ex.Message);
     }
 
     /// <summary>
-    /// The negative direction, and it still matters: a spelling neither the control's own
-    /// rendering nor AL's Evaluate produces must refuse LOUDLY rather than default to false.
-    /// A silent false here would make an assertion about a Boolean control pass for the wrong
-    /// reason, which is the failure mode loud-failures.md exists for.
+    /// Anything else is refused the same way, for the same reason: BC answers a bad entry with a
+    /// validation error naming the control, so the runner must too rather than defaulting to
+    /// false. A silent false here would make an assertion about a Boolean control pass for the
+    /// wrong reason.
     /// </summary>
     [Theory]
     [InlineData("1")]
@@ -114,12 +125,13 @@ public sealed class TestPageBooleanValueTests
     [InlineData("Ja")]
     [InlineData("Blorp")]
     [InlineData("")]
-    public void Resolve_AnUnknownSpelling_ThrowsOutOfScope_NamingTheReason(string input)
+    public void Resolve_AnUnacceptableSpelling_RaisesBcsValidationError(string input)
     {
-        var ex = Assert.Throws<RunnerOutOfScopeException>(
-            () => TestPageBooleanValue.Resolve(input, "unit test context"));
+        var ex = Assert.Throws<NavNCLDialogException>(
+            () => TestPageBooleanValue.Resolve(input, "Rec True"));
 
-        Assert.Contains("testpage-boolean-value", ex.Reason);
-        Assert.Contains("unit test context", ex.Message);
+        Assert.Contains("Validation error for Field: Rec True", ex.Message);
+        Assert.Contains("is not an acceptable value", ex.Message);
+        Assert.Contains("(Select Refresh to discard errors)", ex.Message);
     }
 }
