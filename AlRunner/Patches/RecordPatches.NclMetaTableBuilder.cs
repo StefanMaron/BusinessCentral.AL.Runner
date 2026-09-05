@@ -801,6 +801,30 @@ public static partial class RecordPatches
                         $"[RecordPatches] TableRelation on '{forFieldName}': where() field '{w.SourceFieldName}' not found on '{target.TableName}' — relation dropped");
                     return null;
                 }
+
+                // #2518 — `where(<target field> = field(<referencing field>))`. BC's
+                // NCLMetaFilterField.CreateFromMetaFilter reads filterValue as the field id of
+                // a field on the PARENT table it is handed, and NCLMetaField's ctor hands it
+                // `parent` — the table declaring the relation, i.e. referencingTable here, NOT
+                // the related table. Same encoding a CalcFormula's field() link already uses
+                // above, including the two mode flags for field(filter(X)) /
+                // field(upperlimit(X)).
+                if (w.Kind == ParsedCalcFilterKind.Field)
+                {
+                    var refField = referencingTable?.Fields.FirstOrDefault(x =>
+                        string.Equals(x.FieldName, w.ParentFieldName, StringComparison.OrdinalIgnoreCase));
+                    if (refField == null)
+                    {
+                        Console.Error.WriteLine(
+                            $"[RecordPatches] TableRelation on '{forFieldName}': where() field() link '{w.ParentFieldName}' not found on '{referencingTable?.TableName}' — relation dropped");
+                        return null;
+                    }
+                    filterObjects.Add(BuildMetaFilter(srcField.FieldId, "FIELD",
+                        refField.FieldId.ToString(CultureInfo.InvariantCulture),
+                        w.ValueIsFilter, w.OnlyMaxLimit));
+                    continue;
+                }
+
                 filterObjects.Add(BuildMetaFilter(srcField.FieldId,
                     w.Kind == ParsedCalcFilterKind.Const ? "CONST" : "FILTER", w.Value ?? ""));
             }

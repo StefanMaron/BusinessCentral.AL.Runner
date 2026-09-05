@@ -359,7 +359,14 @@ jobs:
       - name: Run check_required_contexts.py's own unit tests
         run: python3 .github/scripts/test_check_required_contexts.py
 
-      - name: Check no required context can be left cancelled
+      # Also compares DEFAULT_REQUIRED_CONTEXTS and tools/ci-wait.py's
+      # RULESET_CONTEXTS against what the branch ruleset requires RIGHT NOW, and
+      # fails on drift in either direction (#2785). The branch-rules endpoint
+      # answers unauthenticated on a public repo; GITHUB_TOKEN is passed only to
+      # buy the higher rate limit on a shared runner IP.
+      - name: Check no required context can be left cancelled, and the list has not drifted
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python3 .github/scripts/check_required_contexts.py
 
   ci-wait-tests:
