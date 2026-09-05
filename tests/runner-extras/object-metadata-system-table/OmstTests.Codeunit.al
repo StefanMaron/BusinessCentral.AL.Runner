@@ -73,7 +73,7 @@ codeunit 65541 "OMST Tests"
         // so a synthesis that emitted only its own id, or only a contiguous block, fails here.
         AssertHasRow(2000000001, 'Object');
         AssertHasRow(2000000071, 'Object Metadata itself');
-        AssertHasRow(2000000212, 'Application Object Metadata');
+        AssertHasRow(2000000212, 'Installed Application');
         AssertHasRow(2000000400, 'the highest listed id');
 
         // ...and two BC lists as VIRTUAL system tables, which have no SQL schema in the

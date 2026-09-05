@@ -80,7 +80,7 @@
 //
 //   One sub-question stays open even on that reading: 11 of the 43 ids are declared
 //   ObsoleteState = Removed in System.app (2000000072, 74, 100, 104, 150, 151, 155, 160, 161,
-//   176, 186), and 4 more are ObsoleteState = Pending (2000000004, 5, 78, 82). They are full
+//   176, 186), and 5 more are ObsoleteState = Pending (2000000001, 4, 5, 78, 82). They are full
 //   table objects with real field definitions rather than tombstones — NAV App Object Metadata
 //   (2000000150) still declares 13 fields — so they should reach outputter.ObjectMetadata and
 //   get rows. "Should" is not "does". If a tier ever reports fewer than 43 rows, that is where
