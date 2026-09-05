@@ -31,8 +31,11 @@
 //   resulting STATE, never on timing. On the fixed code the second thread cannot get in at all,
 //   so the release never comes and the parked thread's bounded wait expires instead — the
 //   expiry is what lets the test finish, never the thing being asserted.
+using System.Reflection;
 using AlRunner.Patches;
 using Microsoft.Dynamics.Nav.Runtime;
+using Mono.Cecil;
+using Mono.Cecil.Cil;
 using Xunit;
 
 namespace AlRunner.Tests;
@@ -304,5 +307,104 @@ public sealed class InstallBaselineAppendConcurrencyTests : IDisposable
         Assert.Equal(2, sources.Count);
         Assert.Equal(new[] { TableA, TableB },
             sources.Single(s => ReferenceEquals(s.Source, source)).Tables.Select(t => t.TableId).ToArray());
+    }
+
+    // ───────────────────────────────────── the two structural guards ──
+    //
+    // The four tests above prove the LOCK and prove the walk helper. Neither proves that the
+    // production walkers actually go through the helper, or that the helper takes the lock while
+    // it copies — revert either and all four still pass. These two close that, the same way
+    // TestPageErrorTeardownContractTests does: over the compiled IL of the loaded al-runner.dll,
+    // because there is no reflection surface for "which method calls which" and a source-text
+    // scan of this repo has deterministically failed under Linux CI before.
+
+    private static MethodDefinition RecordPatchesMethod(string name)
+    {
+        var path = typeof(RecordPatches).Assembly.Location;
+        var asm = AssemblyDefinition.ReadAssembly(path);
+        var type = asm.MainModule.GetType(typeof(RecordPatches).FullName);
+        Assert.True(type != null, "RecordPatches not found in the loaded al-runner.dll");
+        var m = type!.Methods.FirstOrDefault(x => x.Name == name && x.HasBody);
+        Assert.True(m != null, $"could not locate '{name}' on RecordPatches");
+        return m!;
+    }
+
+    private static bool Calls(MethodDefinition m, string memberName)
+        => m.Body.Instructions.Any(i =>
+            (i.OpCode == OpCodes.Call || i.OpCode == OpCodes.Callvirt)
+            && i.Operand is MethodReference mr && mr.Name == memberName);
+
+    /// <summary>
+    /// Adoption, not availability. Every production walker of the baseline lists has to go
+    /// through StableBaselineSourcesForWalk — a helper nobody calls fixes nothing, and reverting
+    /// any single call site leaves every behavioural test in this file green.
+    ///
+    /// The list is exactly the methods that enumerate a snapshot's Sources: the boundary restore
+    /// and the three disk-codec walkers. A new walker added later fails review, not this test —
+    /// what this test catches is one of these four quietly going back to the live list.
+    /// </summary>
+    [Theory]
+    [InlineData("RestoreInstallBaselineSnapshot")]
+    [InlineData("TrySerializeInstallBaselineSnapshot")]
+    [InlineData("ComputeRoundTripDigest")]
+    [InlineData("ComputePersistableContentDigest")]
+    public void EveryProductionWalker_GoesThroughTheStableView(string method)
+    {
+        Assert.True(Calls(RecordPatchesMethod(method), nameof(RecordPatches.StableBaselineSourcesForWalk)),
+            $"{method} walks the baseline lists directly instead of the stable copy (#2914) — "
+            + "an append landing mid-walk tears the enumeration.");
+    }
+
+    /// <summary>
+    /// …and the copy itself is taken under the lock. A StableBaselineSourcesForWalk that copied
+    /// without it would hand out a stable-looking result read from a list being appended to —
+    /// the same tear, one level down, and invisible to every test above because they all append
+    /// before or after the copy, never during it. `lock` compiles to Monitor.Enter/Exit, so its
+    /// absence in the IL is the absence of the lock.
+    /// </summary>
+    [Fact]
+    public void TheStableView_TakesTheLockWhileItCopies()
+    {
+        var m = RecordPatchesMethod(nameof(RecordPatches.StableBaselineSourcesForWalk));
+        Assert.True(Calls(m, "Enter") && Calls(m, "Exit"),
+            "StableBaselineSourcesForWalk copies without taking _baselineMutationLock (#2914).");
+    }
+
+    /// <summary>
+    /// The tripwire in AppendInto fires. It guards a call site that does not exist yet — both of
+    /// today's are inside the lock and the method is private — so without this it is an assertion
+    /// nobody has ever run, and a future third caller would find out it never worked.
+    ///
+    /// Both directions: without the lock it throws and names the reason; with the lock held the
+    /// same call goes through and appends. Reflection is the only way in, and that is the point —
+    /// there is no legitimate caller to borrow.
+    /// </summary>
+    [Fact]
+    public void AppendInto_RefusesToRunWithoutTheLock_AndRunsWithIt()
+    {
+        var appendInto = typeof(RecordPatches).GetMethod(
+            "AppendInto", BindingFlags.NonPublic | BindingFlags.Static);
+        Assert.True(appendInto != null, "AppendInto not found — the guard cannot be exercised");
+        var lockObj = typeof(RecordPatches)
+            .GetField("_baselineMutationLock", BindingFlags.NonPublic | BindingFlags.Static)
+            ?.GetValue(null);
+        Assert.NotNull(lockObj);
+
+        var source = new object();
+        var sources = new List<RecordPatches.BaselineSource>();
+        object?[] args = { sources, source, TableA, new object(), Rows("GUARDED") };
+
+        var refused = Assert.Throws<TargetInvocationException>(() => appendInto!.Invoke(null, args));
+        var inner = Assert.IsType<InvalidOperationException>(refused.InnerException);
+        Assert.Contains("_baselineMutationLock", inner.Message);
+        Assert.Contains("#2914", inner.Message);
+        Assert.Empty(sources);                       // …and it refused before mutating anything
+
+        lock (lockObj!)
+            appendInto!.Invoke(null, args);
+
+        var only = Assert.Single(sources);
+        Assert.Same(source, only.Source);
+        Assert.Equal(TableA, Assert.Single(only.Tables).TableId);
     }
 }
