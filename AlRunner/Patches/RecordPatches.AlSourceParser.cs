@@ -384,9 +384,11 @@ public static partial class RecordPatches
         var arms = new List<ParsedRelationArm>();
         for (var node = tr; node != null; node = node.ElseExpression?.ElseTableRelationCondition)
         {
-            var parts = NameParts(node.RelatedTableField);
-            // 1 part = table; 2 parts = table + field. A 3+-part (namespace-qualified) name
-            // is ambiguous without symbol resolution, so the relation stays uncaptured.
+            var parts = RelationTargetNameParts(node.RelatedTableField);
+            // 1 part = table; 2 parts = table + field, OR namespace + table — BuildMetaFieldRelations
+            // tries both readings and that ambiguity is already its job. RelationTargetNameParts drops
+            // any leading namespace segments (#2851), so reaching here with any other count means the
+            // name did not read as a name at all, and the relation stays uncaptured.
             if (parts.Count is not (1 or 2))
             {
                 Console.Error.WriteLine(
@@ -523,6 +525,64 @@ public static partial class RecordPatches
         }
         Walk(name);
         return parts;
+    }
+
+    /// <summary>
+    /// The parts of a TableRelation TARGET name, with any namespace qualification dropped:
+    /// at most the last two (#2851).
+    /// <para>AL lets a relation name its table through the table's namespace, and Base
+    /// Application does — <c>Microsoft.Manufacturing.Capacity."Capacity Ledger Entry"</c>,
+    /// <c>System.Azure.Identity.Plan."Plan ID"</c>, and six other shapes across 8 fields of
+    /// 28.1.49838.53910. Those used to be refused for having three or more parts, which drops
+    /// the WHOLE relation, so <c>FieldRef.Relation</c> answered 0 — the value that also means
+    /// "this field declares no TableRelation" (#2851, the silent zero #2518 was reported as).
+    /// </para>
+    /// <para>Object names are global in AL — the namespace organises source, it does not
+    /// namespace the name a relation resolves by — so the namespace segments carry no
+    /// information the runner needs and are dropped here rather than plumbed through
+    /// <see cref="ParsedRelationArm"/> and the on-disk symbol cache.</para>
+    /// <para>Keeping the last TWO, not the last one, is what makes both shipped shapes work:
+    /// the last part is the TABLE in <c>NS.NS.Table</c> but the FIELD in
+    /// <c>NS.NS.Table."Field"</c>, and nothing here can tell them apart without symbol
+    /// resolution. That ambiguity is not new and is not this method's to settle —
+    /// <c>BuildMetaFieldRelations</c> already disambiguates a two-part name by trying
+    /// <c>Table.Field</c> first and falling back to reading the last part as the table, so
+    /// handing it the last two parts routes the namespace-qualified shapes through the resolver
+    /// that already exists. Checked against the real 28.1 closure (Base Application + System
+    /// Application + Business Foundation + System.app): every namespace segment Base
+    /// Application uses in this position — <c>Capacity</c>, <c>Forecast</c>, <c>Identity</c>,
+    /// <c>Reflection</c> — is not a table name, so the fallback fires and lands on the right
+    /// table, while <c>Plan</c>, <c>AllObjWithCaption</c> and <c>Production Forecast Name</c>
+    /// are real tables that really do carry the field named after them.</para>
+    /// </summary>
+    private static List<string> RelationTargetNameParts(NavSyntax.NameSyntax? name)
+    {
+        var parts = NameParts(name);
+        return parts.Count <= 2 ? parts : parts.GetRange(parts.Count - 2, 2);
+    }
+
+    /// <summary>
+    /// The last part of a (possibly namespace-qualified) name — the table name a CalcFormula
+    /// source resolves by (#2851).
+    /// <para>Unlike a TableRelation target this is unambiguous: <c>count</c>/<c>exist</c> carry
+    /// a table and no field, and <c>sum</c>/<c>lookup</c>/<c>average</c>/<c>min</c>/<c>max</c>
+    /// carry <c>Table.Field</c> as a qualified name whose Left half is the table, so in both
+    /// positions the last part IS the table and no fallback reading is needed.</para>
+    /// <para>This read the name's whole text before #2851, so a namespace-qualified source
+    /// arrived as the literal <c>Microsoft.Manufacturing.Forecast."Production Forecast Entry"</c>,
+    /// matched no table, and <c>BuildMetaCalcFormula</c> returned null — a FlowField that
+    /// silently never computes. Four Base Application 28.1 FlowFields are that shape:
+    /// Gen. Journal Line and Purchase Line's "Alloc. Acc. Modified by User",
+    /// Item."Prod. Forecast Quantity (Base)" and User Group Plan."Plan Name".</para>
+    /// <para><paramref name="fallbackText"/> is the pre-#2851 expression, used when the node is
+    /// a NameSyntax shape <see cref="NameParts"/> does not walk. Without it an unrecognised
+    /// shape would yield the empty string, which <c>CalcFormulaFrom</c> refuses — turning a
+    /// formula that used to parse into a refused one, a regression rather than a fix.</para>
+    /// </summary>
+    private static string LastNamePart(NavSyntax.NameSyntax? name, string? fallbackText)
+    {
+        var parts = NameParts(name);
+        return parts.Count > 0 ? parts[^1] : Unquote(fallbackText?.Trim() ?? "");
     }
 
     private static void TryParseTableFile(string text)
@@ -690,14 +750,14 @@ public static partial class RecordPatches
         {
             case NavSyntax.FieldCalculationFormulaSyntax f:
                 formulaType = f.FormulaKeywordToken.ValueText;
-                sourceTableName = Unquote(f.Field?.Left?.ToString()?.Trim() ?? "");
+                sourceTableName = LastNamePart(f.Field?.Left, f.Field?.Left?.ToString());
                 sourceFieldName = f.Field?.Right == null ? null : Unquote(f.Field.Right.ToString().Trim());
                 where = f.WhereExpression;
                 signText = f.Sign.ValueText ?? "";
                 break;
             case NavSyntax.TableCalculationFormulaSyntax t:
                 formulaType = t.FormulaKeywordToken.ValueText;
-                sourceTableName = Unquote(t.Table?.ToString()?.Trim() ?? "");
+                sourceTableName = LastNamePart(t.Table, t.Table?.ToString());
                 sourceFieldName = null; // count/exist have no field part
                 where = t.WhereExpression;
                 signText = t.Sign.ValueText ?? "";
