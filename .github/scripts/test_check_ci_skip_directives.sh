@@ -62,6 +62,42 @@ assert_exit "prose mention without literal brackets does not trip the check" 0 \
   "fix: document the skip mechanism" \
   "This describes a skip-ci directive without using the literal bracketed form."
 
+# --- #2491: the commit-message route -----------------------------------------
+#
+# This repository's squash setting is squash_merge_commit_message=COMMIT_MESSAGES,
+# so the branch's commit messages become the merge commit's body. A skip
+# directive there skips every workflow on main, and the title/body-only check
+# could not see it.
+
+assert_exit_commits() {
+  local desc="$1" expected_rc="$2" title="$3" body="$4" commits="$5"
+  local rc
+  PR_TITLE="$title" PR_BODY="$body" PR_COMMITS="$commits" "$SCRIPT" >/dev/null 2>&1
+  rc=$?
+  if [ "$rc" = "$expected_rc" ]; then
+    echo "ok   - $desc"
+    pass=$((pass + 1))
+  else
+    echo "FAIL - $desc: expected exit $expected_rc, got $rc"
+    fail=$((fail + 1))
+  fi
+}
+
+assert_exit_commits "a skip directive in a commit message fails" 1 \
+  "fix: something" "Closes #123" "fix: something
+
+[skip ci]"
+assert_exit_commits "an alternate spelling in a commit message fails" 1 \
+  "fix: something" "Closes #123" "chore: release plumbing ***NO_CI***"
+assert_exit_commits "a clean multi-commit branch passes" 0 \
+  "fix: something" "Closes #123" "fix: first commit
+
+test: add coverage"
+assert_exit_commits "prose about a skip directive in a commit message, without the literal brackets, passes" 0 \
+  "fix: something" "Closes #123" "docs: explain why a skip-ci directive is dangerous here"
+
+assert_exit "PR_COMMITS unset still passes a clean PR" 0 "fix: something" "Closes #123"
+
 echo ""
 echo "$pass passed, $fail failed"
 if [ "$fail" -ne 0 ]; then

@@ -2,9 +2,29 @@
 # Validates that a PR body's closing references are correct in BOTH directions.
 # See #2121 (missing direction) and #2128 (unintended direction).
 #
-# This repo squash-merges, and GitHub folds the PR title + body into the
-# squash commit message (see .claude/rules/branch-and-pr.md). GitHub's
-# closing-reference parser (Closes/Fixes/Resolves + one of "#N",
+# This repo squash-merges, and a closing reference reaches the merged result
+# by TWO independent routes (#2491). Both are live; covering one is not
+# covering the bug:
+#
+#   Route A -- the PULL REQUEST's own linkage. GitHub parses the PR title and
+#     body into `closingIssuesReferences` and closes those issues when the PR
+#     merges, whatever the squash message ends up being.
+#   Route B -- the MERGE COMMIT's message. Measured on this repository:
+#     `squash_merge_commit_message` is COMMIT_MESSAGES and
+#     `squash_merge_commit_title` is COMMIT_OR_PR_TITLE
+#     (`gh api repos/StefanMaron/BusinessCentral.AL.Runner`), so the squash
+#     body is the concatenated BRANCH COMMIT MESSAGES -- not the PR body.
+#     GitHub then closes whatever that commit message references when it
+#     lands on the default branch.
+#
+# So a closing keyword written in a commit message closes an issue even
+# though it never appears in the PR body. That is exactly what happened to
+# PR #2486: `closingIssuesReferences` listed only #2478 and #2480, a commit
+# message said "It does not close #2479", and merge commit 28cdcf65 closed
+# #2479 anyway. This script therefore scans the PR title, the PR body AND
+# every commit message on the branch.
+#
+# GitHub's closing-reference parser (Closes/Fixes/Resolves + one of "#N",
 # "owner/repo#N", or a full issue/PR URL, case-insensitive) matches ANYWHERE
 # in that message and does not understand surrounding prose -- negation,
 # qualification, "not", none of it changes what fires on merge. A bare
@@ -41,11 +61,19 @@
 # defeating the point of documenting why there's nothing to link.
 #
 # Inputs (environment variables, both required, may be empty strings):
-#   PR_TITLE - the pull request's title (checked only for the escape hatch
-#              being irrelevant here; closing references in the title are
-#              treated the same as stray body text, since GitHub honors them
-#              there too)
-#   PR_BODY  - the pull request's body/description
+#   PR_TITLE   - the pull request's title (checked only for the escape hatch
+#                being irrelevant here; closing references in the title are
+#                treated the same as stray body text, since GitHub honors
+#                them there too)
+#   PR_BODY    - the pull request's body/description
+#   PR_COMMITS - every commit message on the branch, concatenated (optional;
+#                defaults to empty so the script stays callable with just a
+#                title and body). Scanned for STRAY references only: a
+#                canonical "Closes #N" trailer must appear in the PR BODY,
+#                which is the convention .claude/rules/branch-and-pr.md asks
+#                for and the only place a reviewer reliably reads. A commit
+#                message that names an already-declared target is a harmless
+#                restatement and passes.
 #
 # Exits non-zero with a message on stderr (via ::error::) naming the problem
 # and how to fix it.
@@ -54,6 +82,8 @@ set -uo pipefail
 
 : "${PR_TITLE?PR_TITLE is required (may be empty)}"
 : "${PR_BODY?PR_BODY is required (may be empty)}"
+# Optional and additive: callers that predate #2491 pass only a title and body.
+PR_COMMITS="${PR_COMMITS-}"
 
 KEYWORDS='close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved'
 
@@ -120,11 +150,21 @@ done <<< "$PR_BODY"
 stray_number=""
 stray_source=""
 
+# skip_canonical=1 (the default, used for the PR body and title): a standalone
+# "Closes #N" line is a DECLARATION, not a stray, so it is exempt.
+#
+# skip_canonical=0 (used for commit messages): a commit message cannot declare
+# anything. A standalone "Fixes #456" line in a commit message closes #456 on
+# merge exactly as an inline one does, and the PR body -- where the convention
+# says the declaration belongs, and where a reviewer actually reads it -- never
+# mentioned it. Exempting those lines here is how this whole class stays
+# invisible, so commit messages get no exemption. A commit line naming an
+# ALREADY-DECLARED target still passes, via the is_declared check below.
 check_stray_in_text() {
-  local text="$1" source="$2" line
+  local text="$1" source="$2" skip_canonical="${3:-1}" line
   while IFS= read -r line; do
     [ -z "$line" ] && continue
-    if printf '%s' "$line" | command grep -qiP "$CANONICAL_LINE_RE"; then
+    if [ "$skip_canonical" = "1" ] && printf '%s' "$line" | command grep -qiP "$CANONICAL_LINE_RE"; then
       continue
     fi
     if printf '%s' "$line" | command grep -qiP "$STRAY_MATCH_RE"; then
@@ -143,9 +183,19 @@ check_stray_in_text() {
   return 1
 }
 
-check_stray_in_text "$PR_BODY" "body" || check_stray_in_text "$PR_TITLE" "title"
+check_stray_in_text "$PR_BODY" "body" \
+  || check_stray_in_text "$PR_TITLE" "title" \
+  || check_stray_in_text "$PR_COMMITS" "commit message" 0
 
 if [ -n "$stray_number" ]; then
+  # The remedy differs by source: a title or body is edited in place, a commit
+  # message has to be reworded and force-pushed. Saying "edit the body" to
+  # someone whose problem is in a commit message sends them looking in the
+  # wrong file.
+  if [ "$stray_source" = "commit message" ]; then
+    echo "::error::A COMMIT MESSAGE on this branch contains a closing keyword (one of Close/Closes/Closed/Fix/Fixes/Fixed/Resolve/Resolves/Resolved, case-insensitive) next to issue number $stray_number, which is not one of this PR's declared canonical targets. This repository's squash setting is squash_merge_commit_message=COMMIT_MESSAGES, so the branch's commit messages ARE the merge commit's body -- GitHub's closing-reference parser fires on that text and does not understand negation or surrounding qualification. This happened for real: PR #2486's commit message said 'It does not close #2479' and merge commit 28cdcf65 closed #2479 anyway. Fix it in the commit message (git commit --amend, or an interactive reword, then force-push): refer to the issue WITHOUT a closing keyword, e.g. 'see #$stray_number'. If it IS meant to close, add a standalone 'Closes #$stray_number' line to the PR BODY so the intent is declared where a reviewer reads it." >&2
+    exit 1
+  fi
   echo "::error::This PR's $stray_source contains a closing keyword (one of Close/Closes/Closed/Fix/Fixes/Fixed/Resolve/Resolves/Resolved, case-insensitive) next to issue number $stray_number, written inline in a sentence rather than as its own standalone 'Closes #N' trailer line. This repo squash-merges the PR title + body into the merge commit message, and GitHub's closing-reference parser fires on that pattern ANYWHERE in the message -- it does not understand negation or surrounding qualification. Whatever the sentence says, this will close issue $stray_number on merge (this happened for real: PR #2127's body said a sentence did NOT close an issue, and merge commit fe789a13 closed it anyway). If issue $stray_number is not one of this PR's declared canonical targets, refer to it WITHOUT a closing keyword instead, e.g. 'see #$stray_number' or 'its investigation found ...', which still creates the cross-reference on merge without the closing behavior. If it IS meant to close, add its own standalone 'Closes #$stray_number' line." >&2
   exit 1
 fi
