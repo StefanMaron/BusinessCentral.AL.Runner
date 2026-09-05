@@ -98,3 +98,7 @@ AlRunner/Win32Stubs/*.so
 # `git add -A`, the same rationale as /engine.runsettings above.
 /graphify-out/
 AlRunner/graphify-out/
+
+# Per-box state written by the autonomous-cycle preflight (machine profile,
+# claimed label slot, baseline result). Describes one box, never the repository.
+.claude/autonomous-state.json

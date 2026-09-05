@@ -17,11 +17,23 @@ agents can work without a human in the loop:
   the orchestrator reviews and merges it when all 8 BC legs are green.** You still do
   not merge it.
 
+**Also ungated, on these two repositories only** (`BusinessCentral.AL.Runner` and
+`BusinessCentral.AL.Language.Tests`): commenting on issues and PRs, closing issues, and applying
+labels. A decision recorded as a comment on the issue outlives any agent's memory, and requiring
+approval for each one stalls an unattended session for no benefit.
+
+Two conditions come with it. **Every state change carries its reasoning** — closing, claiming,
+reclaiming, marking needs-input, declaring something out of scope — so the history is auditable
+by someone reading the repository later, without a transcript. And **every agent-authored issue,
+comment and PR body says so**, naming the agent, because these post under the account holder's
+name and a reader cannot otherwise tell an agent from a person. Comment on state changes and
+findings, never on progress.
+
 Everything else needs approval first:
 
-- Comments on issues or PRs (this repo or any other), including on the corpus repo.
-- PR review comments.
-- Anything else posted to another repo.
+- Comments or posts on **any other repository**.
+- PR review comments submitted as a formal review.
+- Anything sent outside GitHub — email, chat, anywhere else.
 
 This does not gate the mechanical steps of the established agent workflow (claiming an
 issue, opening your own implementation PR with `Closes #N`, labelling) — those are the

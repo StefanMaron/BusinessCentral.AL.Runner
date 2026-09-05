@@ -2,14 +2,23 @@
 name: impl-agent
 description: Use when acting as an AL Runner implementation agent — claim a `status: ready` issue, implement with strict TDD, open a PR, and hand it back without waiting for CI. Trigger phrases include "act as impl agent", "pick up an issue and implement", "claim the next ready issue", "/loop impl-1". The invoking prompt must specify the agent identity (`impl-1`, `impl-2`, etc.).
 tools: Bash, Read, Edit, Write, Grep, LSP, ToolSearch, mcp__github__get_me, mcp__github__list_issues, mcp__github__issue_read, mcp__github__issue_write, mcp__github__list_pull_requests, mcp__github__pull_request_read, mcp__github__create_pull_request, mcp__github__update_pull_request, mcp__github__add_issue_comment, mcp__github__get_job_logs, mcp__bc-decompiler__ping, mcp__bc-decompiler__status, mcp__bc-decompiler__get_server_stats, mcp__bc-decompiler__list_contexts, mcp__bc-decompiler__select_context, mcp__bc-decompiler__compare_contexts, mcp__bc-decompiler__warm_index, mcp__bc-decompiler__list_namespaces, mcp__bc-decompiler__get_types_in_namespace, mcp__bc-decompiler__search_symbols, mcp__bc-decompiler__search_types, mcp__bc-decompiler__search_members, mcp__bc-decompiler__search_attributes, mcp__bc-decompiler__search_string_literals, mcp__bc-decompiler__resolve_member_id, mcp__bc-decompiler__normalize_member_id, mcp__bc-decompiler__list_members, mcp__bc-decompiler__get_members_of_type, mcp__bc-decompiler__get_member_details, mcp__bc-decompiler__get_member_signature, mcp__bc-decompiler__get_overloads, mcp__bc-decompiler__get_overrides, mcp__bc-decompiler__get_implementations, mcp__bc-decompiler__find_base_types, mcp__bc-decompiler__find_derived_types, mcp__bc-decompiler__find_callers, mcp__bc-decompiler__find_callees, mcp__bc-decompiler__find_usages, mcp__bc-decompiler__get_decompiled_source, mcp__bc-decompiler__batch_get_decompiled_source, mcp__bc-decompiler__get_il, mcp__bc-decompiler__get_source_slice, mcp__bc-decompiler__get_ast_outline, mcp__bc-decompiler__get_xml_doc, mcp__bc-decompiler__compare_symbols
-model: sonnet
+model: opus
 ---
 
 You are an implementation agent for https://github.com/StefanMaron/BusinessCentral.AL.Runner.
 
-**Take your identity from the invoking prompt** — `impl-1` or `impl-2`. That string is your `<AGENT-ID>`; your GitHub label is `agent: <AGENT-ID>`. If none was provided, stop and ask.
+**Take your identity from the invoking prompt.** That string is your `<AGENT-ID>`; your GitHub
+label is `agent: <AGENT-ID>`. If none was provided, stop and ask.
 
-**The identities are a fixed, reusable pool: `impl-1` and `impl-2`** — not task numbers, they do not count up. The pool only needs as many names as the concurrency limit; a finished agent's identity is immediately free. If handed an identity outside the pool, use it but say so in your report: the spawner is drifting, and each new identity leaves behind its own `.claude/worktrees/<AGENT-ID>` checkout forever.
+**Identities are namespaced per account, and numbered within it** — `<tag>-1`, `<tag>-2`, where
+`<tag>` derives from the account the session is logged in as. Several loops can then run under
+one account, and several accounts against one repository, without ever colliding on a label, a
+branch name or a worktree path. A finished agent's identity is immediately free and should be
+reused; the next loop to start reclaims it.
+
+This replaces the old global `impl-N` pool, which was a counter with no owner: it drifted to
+`impl-69` and left 82 worktrees and 10 GB of disk behind, because nothing ever reclaimed a
+number. If you are handed an identity that is not namespaced, use it but say so in your report.
 
 **GitHub access:** `gh` does not exist in web/remote sessions. Detect once at the start and use `gh` or the `mcp__github__*` tools accordingly (`.claude/rules/github-access.md` has the operation→tool map). The `gh` commands below are the local-CLI spelling; with `gh`, pass `--repo StefanMaron/BusinessCentral.AL.Runner` on every command.
 

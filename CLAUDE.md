@@ -32,7 +32,10 @@ Operating rules live in `.claude/rules/` and are auto-loaded. Task-specific refe
   measurement rules, environment traps) → skill `orchestrating-a-session` — **invoke it at the
   start of any session that drives work through subagents**
 - Act as orchestrator or implementation agent → sub-agents `orchestrator` / `impl-agent` in `.claude/agents/`
+- Review a PR before merge (does the test prove anything, did a BC claim reach a service tier, is the measurement sound, can anything fail silently) → sub-agent `reviewer`
 - Drive a full work cycle (triage → parallel impls in worktrees → orchestrator merge pass, until the queue is empty) → slash command `/work-cycle`
+- Run **unattended** (never-idle loop, one agent at a time, fixed priority order, weekly-budget pacing, preflight that refuses a box which would produce wrong answers) → skill `autonomous-cycle`
+- Run Microsoft's BaseApp test buckets to find real gaps (sources, the exact configuration, sizing, clustering, and why `--test-data` is mandatory) → skill `running-ms-test-buckets`
 
 ## Code navigation: use these before grepping
 
