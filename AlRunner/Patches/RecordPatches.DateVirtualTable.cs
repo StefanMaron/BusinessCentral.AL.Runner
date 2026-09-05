@@ -402,6 +402,12 @@ public static partial class RecordPatches
     /// </summary>
     internal static void EnsureDateWindowCoversRequest(object dataAccess, object cacheRequest)
     {
+        // A `Record Date temporary` holds exactly the rows AL inserted -- widening the
+        // materialised window into its private store injected real Date rows AL never wrote
+        // (measured: Count went 1 -> 31 across one filtered Count(), and the subsequent
+        // FindSet returned an injected row instead of AL's). Issue #2524.
+        if (IsTemporaryRecordDataAccess(dataAccess)) return;
+
         DateTime? wantLow = null, wantHigh = null;
         NCLMetaTable meta;
         object session;

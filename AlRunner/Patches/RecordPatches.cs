@@ -86,6 +86,45 @@ public static partial class RecordPatches
     // cache every Record-instance creates a fresh empty in-memory store.
     private static readonly ConditionalWeakTable<object, ConcurrentDictionary<int, object>> _dataAccessByTable = new();
 
+    // ── Temporary-record DataAccess registry (issue #2524) ───────────────────────────────
+    // A `Record X temporary` gets its OWN DataAccess from the isTemporary branch of
+    // GetDataAccessForTableCore, and its store must contain EXACTLY the rows AL inserted --
+    // nothing the runner puts there behind AL's back. That branch already honours the
+    // invariant by construction: it skips every virtual-table populate below it.
+    //
+    // The runner's virtual-table populates, however, do not all run at DataAccess-creation
+    // time. Three of them re-populate at FIND time, from DataAccess_IsManagedFindRequest /
+    // DataAccess_AggregatePermissionSetGuardForGet, keyed only on the table id of the request
+    // -- which a temporary record's request carries just the same. Those paths therefore wrote
+    // real metadata rows into a temporary record's private store (measured on BC 28.1: a
+    // `Record "Field" temporary` holding one AL row went from Count = 1 to Count = 178 across a
+    // single FindSet, and FindSet returned the injected `timestamp` row, "No." = 0, instead of
+    // AL's; `Record "Aggregate Permission Set" temporary` went 1 -> 123 and returned SECURITY;
+    // `Record Date temporary` with a closed "Period Start" filter went 1 -> 31).
+    //
+    // Membership here is the signal the find-time paths lacked: it says "this DataAccess belongs
+    // to a `temporary` record". It is registered in exactly one place, the isTemporary branch of
+    // GetDataAccessForTableCore, which is the whole funnel -- Ncl's
+    // DataAccessSource.GetDataAccessForTable is Cecil-REPLACED by
+    // NavDataAccessSource_GetDataAccessForTable (NclCecilRewrite.Records.cs), so no Record
+    // acquires a DataAccess by another route.
+    //
+    // Weak, so a temporary record's DataAccess stays collectable with the record; the value is
+    // an unused sentinel, membership is the whole signal (same shape as
+    // BlobStoreIsolationPatches._databaseBackedProviders).
+    private static readonly ConditionalWeakTable<object, object> _temporaryRecordDataAccess = new();
+    private static readonly object _temporaryRecordSentinel = new();
+
+    /// <summary>
+    /// Whether <paramref name="dataAccess"/> was handed out for a <c>temporary</c> record, whose
+    /// store holds exactly what AL wrote to it. Every runner-side virtual-table populate must
+    /// check this before writing rows: a temporary instance of a virtual table is an ordinary
+    /// in-memory table that merely borrows that table's SHAPE, and the service tier's virtual
+    /// provider never sees it. See issue #2524.
+    /// </summary>
+    internal static bool IsTemporaryRecordDataAccess(object? dataAccess)
+        => dataAccess != null && _temporaryRecordDataAccess.TryGetValue(dataAccess, out _);
+
     // Source directories scanned for AL table definitions.
     private static readonly List<string> _sourceDirs = new();
 
@@ -1483,7 +1522,15 @@ public static partial class RecordPatches
         try
         {
             if (isTemporary)
-                return _mCreateTempDataAccess!.Invoke(self, new object[] { table })!;
+            {
+                // A `temporary` record gets a fresh, private store and NONE of the
+                // virtual-table populates below. Register it so the populates that run later
+                // (at find/Get time, keyed only on table id) honour the same invariant this
+                // early return does -- issue #2524.
+                var tempDataAccess = _mCreateTempDataAccess!.Invoke(self, new object[] { table })!;
+                _temporaryRecordDataAccess.AddOrUpdate(tempDataAccess, _temporaryRecordSentinel);
+                return tempDataAccess;
+            }
 
             // Per-(DataAccessSource, tableId) cache so Insert+Find on the same regular table
             // share storage.

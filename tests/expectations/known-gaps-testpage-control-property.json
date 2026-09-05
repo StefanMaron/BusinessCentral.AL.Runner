@@ -1,0 +1,34 @@
+[
+  {
+    "codeunitId": 60755,
+    "CodeunitName": "TPCF Tests",
+    "Method": "AtOpen_SourceFieldVisible_IsBlank_EvenOnANonDefaultRow",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2596",
+    "Note": "Pulled in by this PR's submodule pin bump, NOT caused by it -- see the sibling known-gaps-testpage-blank-temporal.json for why the pin could not advance to #155 alone. A control property expression that reads a source-table field raises RunnerOutOfScopeException (testpage-control-property: \"'Flag' is not a name the page publishes a binding for\") where real BC evaluates it. Tracked as #2596, which is open, labelled 'status: blocked', and is NOT closed by this PR; the fix for it removes this entry."
+  },
+  {
+    "codeunitId": 60755,
+    "CodeunitName": "TPCF Tests",
+    "Method": "DirectOpenOnTheOnlyRow_SourceFieldVisible_IsStillBlank",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2596",
+    "Note": "Pulled in by this PR's submodule pin bump, NOT caused by it -- see the sibling known-gaps-testpage-blank-temporal.json for why the pin could not advance to #155 alone. A control property expression that reads a source-table field raises RunnerOutOfScopeException (testpage-control-property: \"'Flag' is not a name the page publishes a binding for\") where real BC evaluates it. Tracked as #2596, which is open, labelled 'status: blocked', and is NOT closed by this PR; the fix for it removes this entry."
+  },
+  {
+    "codeunitId": 60755,
+    "CodeunitName": "TPCF Tests",
+    "Method": "EditingTheFieldThroughThePage_DoesNotUnfreezeSourceFieldVisible",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2596",
+    "Note": "Pulled in by this PR's submodule pin bump, NOT caused by it -- see the sibling known-gaps-testpage-blank-temporal.json for why the pin could not advance to #155 alone. A control property expression that reads a source-table field raises RunnerOutOfScopeException (testpage-control-property: \"'Flag' is not a name the page publishes a binding for\") where real BC evaluates it. Tracked as #2596, which is open, labelled 'status: blocked', and is NOT closed by this PR; the fix for it removes this entry."
+  },
+  {
+    "codeunitId": 60755,
+    "CodeunitName": "TPCF Tests",
+    "Method": "ReopeningThePage_StillReadsBlank_EvenThoughTheRowNowHasRealData",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2596",
+    "Note": "Pulled in by this PR's submodule pin bump, NOT caused by it -- see the sibling known-gaps-testpage-blank-temporal.json for why the pin could not advance to #155 alone. A control property expression that reads a source-table field raises RunnerOutOfScopeException (testpage-control-property: \"'Flag' is not a name the page publishes a binding for\") where real BC evaluates it. Tracked as #2596, which is open, labelled 'status: blocked', and is NOT closed by this PR; the fix for it removes this entry."
+  }
+]
