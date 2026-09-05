@@ -60,8 +60,24 @@ Unlike every other command, `runTests` is **not** a single response line. It
 emits zero or more `test` lines — one per completed test, in the order each
 test finishes, flushed immediately so a client sees results as they happen
 instead of waiting for the whole bundle — followed by exactly one terminal
-`summary` line. A request naming multiple `sourcePaths` runs them in order and
+`summary` line. A request naming multiple `sourcePaths` runs all of them and
 streams `test` lines across all of them before the one final `summary`.
+
+Bundles execute in **dependency order**, not the order they were listed: if one
+bundle in the request declares a dependency on another, the dependency runs
+first (#2614). Without that, a dependency listed last was compiled against —
+the pre-pass publishes its new symbols before any bundle runs — but its runtime
+assembly was not reloaded until after its consumer's tests had already run, so
+the consumer dispatched freshly resolved member ids into the previous request's
+assembly and the request failed where a cold run of the same sources passed.
+
+A request whose listed order already satisfies its dependencies is unchanged,
+and bundles with no dependency between them are not deliberately reordered — but
+a bundle waiting on a dependency is emitted when that dependency lands, which
+can put an unrelated bundle listed after it ahead of it. **Do not depend on
+`test` lines arriving in `sourcePaths` order.** The `summary` totals and the
+per-bundle results are unaffected: results are returned in the order the caller
+listed the paths.
 
 ```jsonc
 {"type":"test","name":"Codeunit60110.MyTest","status":"pass","durationMs":12}
