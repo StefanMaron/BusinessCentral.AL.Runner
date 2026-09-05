@@ -1537,25 +1537,34 @@ public static partial class NclCecilRewrite
                 Console.Error.WriteLine("[Cecil] Prepended PNG-signature mimeType classification to NavMediaFactory.ProcessMediaObject");
             }
 
-            // ── NavRecordRef cluster (Batch 8) — get_Target + open-gates + ALOpen ─
+            // ── NavRecordRef cluster (Batch 8) — get_Target + ALOpen ─────────────
             // get_Target's real body NREs on base.Tree.Session.Company.SharedObjects
             // on the headless skeleton; the replacement constructs a SharedRecordRef
             // parented to the process-wide skeleton container (NavRecordRefPatches).
-            // CheckIsOpenAllowed / IsOpenAllowed gate Open against permissions that
-            // are absent on the skeleton; the 6 ALOpen overloads build the Record via
-            // OpenRecordRefById (which itself calls NavRecordRef_get_Target). These all
-            // sit on the SAME record/RecordRef R2R-inlined path as get_Target, so they
-            // migrate together — a Cecil get_Target coexisting with a JmpHook'd ALOpen
-            // (or vice-versa) reproduced the Batch-7b coexistence spin / NRE. Atomic.
+            // The 6 ALOpen overloads build the Record via OpenRecordRefById (which
+            // itself calls NavRecordRef_get_Target). These all sit on the SAME
+            // record/RecordRef R2R-inlined path as get_Target, so they migrate together
+            // — a Cecil get_Target coexisting with a JmpHook'd ALOpen (or vice-versa)
+            // reproduced the Batch-7b coexistence spin / NRE. Atomic.
+            //
+            // #2783: CheckIsOpenAllowed(CompilationTarget, Int32) and its
+            // IsOpenAllowed(CompilationTarget, Int32) helper used to be replaced here
+            // too — with NoOp3 / ReturnTrue_ThreeArgs, on the (mistaken) grounds that
+            // they "gate Open against permissions that are absent on the skeleton".
+            // They do not check permissions at all: they are BC's compilation-target
+            // scope gate, refusing an id in SystemTables.InternalTables (or an
+            // OnPrem-scoped system table outside
+            // SystemTables.OnPremSystemTableRecordRefAllowed) for a non-OnPrem target.
+            // Neutering them let a "target": "Cloud" bundle open system tables a real
+            // service tier refuses. Both bodies run unmodified now — they are
+            // skeleton-safe (SystemTables is static data, PlatformMetadataProvider
+            // reads Ncl's embedded system symbols, and the trace-tag call resolves
+            // through DiagnosticsResolver's NavDiagnostics.GlobalInstance fallback) —
+            // and NavRecordRefPatches' three ALOpen(CompilationTarget, …) helpers
+            // invoke CheckIsOpenAllowed, which their replaced bodies otherwise skip.
             ReplaceBodyWithHelper(nclMod,
                 FindNclMethod(nclMod, Rt + "NavRecordRef", "get_Target", 0),
                 H(typeof(AlRunner.BcRuntime), "NavRecordRef_get_Target"));
-            ReplaceBodyWithHelper(nclMod,
-                ByParams(Rt + "NavRecordRef", "CheckIsOpenAllowed", "CompilationTarget", "Int32"),
-                H(helperShims, "NoOp3"));
-            ReplaceBodyWithHelper(nclMod,
-                ByParams(Rt + "NavRecordRef", "IsOpenAllowed", "CompilationTarget", "Int32"),
-                H(helperShims, "ReturnTrue_ThreeArgs"));
             ReplaceBodyWithHelper(nclMod,
                 ByParams(Rt + "NavRecordRef", "ALOpen", "Int32"),
                 H(typeof(AlRunner.BcRuntime), "NavRecordRef_ALOpen_Int"));
