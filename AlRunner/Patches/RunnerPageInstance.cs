@@ -1508,12 +1508,45 @@ internal sealed class RunnerPageInstance
     /// discarded awaitable and never reached the AL that called <c>OpenNew()</c> /
     /// <c>Close()</c> — the same silent success the control-trigger half produced.</item>
     /// </list>
+    ///
+    /// <para>Dispatched through BC's OWN <c>NavForm.RaiseOn{trigger}Async</c> rather than by
+    /// resolving the trigger's name on the page type, because resolving the name is not the
+    /// same question as finding the body. BC's compiler emits a page trigger in one of two
+    /// flavours — a synchronous <c>OnOpenPage()</c> override, or an asynchronous
+    /// <c>OnOpenPageAsync()</c> with <c>NavApplicationObjectBase.__IsAsync</c> overridden to
+    /// <c>true</c>. Both are virtuals on <c>NavForm</c> with EMPTY base bodies, so
+    /// <c>GetMethod("OnOpenPage")</c> ALWAYS succeeds and virtual dispatch always runs
+    /// something; on a page that emitted the async flavour, the something it runs is NavForm's
+    /// empty base method. Nothing throws and nothing is skipped — the trigger simply does
+    /// nothing, which is why this was invisible for as long as it was.</para>
+    ///
+    /// <para>The runner's own AL emit produces the SYNC flavour, so every runner-authored page
+    /// worked and every page from a precompiled dependency (Base Application, System
+    /// Application, any ISV .app) ran with dead lifecycle triggers. Measured on Base
+    /// Application page 981 "Payment Registration": its OnOpenPage calls
+    /// <c>PaymentRegistrationMgt.RunSetup()</c>, which opens the modal setup page that creates
+    /// the current user's setup row. None of it ran — TestPage.OpenEdit() returned cleanly
+    /// having done nothing, and Tests-ERM codeunit 134710 then lost 47 tests to a row that was
+    /// never created (issue #2729).</para>
+    ///
+    /// <para>This is the page twin of the report defect fixed in #2732/#2734, where
+    /// <c>NavReportSync.SyncRun</c> invoked only the sync virtual and every Base Application
+    /// report ran with empty report-level triggers. The fix takes the same shape and for the
+    /// same reason: BC's <c>RaiseOn{trigger}Async</c> is the method BC's own page pipeline
+    /// calls, it applies the <c>__IsAsync</c> rule, and it then runs every PAGEEXTENSION's copy
+    /// of the trigger and raises the trigger's integration event. Re-deriving the flavour rule
+    /// here would get the first of those three right and silently drop the other two.</para>
+    ///
+    /// <para>The fallback to the plain virtual is kept for triggers BC exposes no
+    /// <c>RaiseOn…Async</c> for, so an unrecognised trigger name still behaves as before rather
+    /// than becoming a silent no-op.</para>
     /// </summary>
     private object? InvokeRecordTrigger(string name, Type[] parameterTypes, object[] arguments)
     {
-        var trigger = _form.GetType().GetMethod(name,
-            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
-            binder: null, types: parameterTypes, modifiers: null);
+        var trigger = FindNavFormMethod("Raise" + name + "Async", parameterTypes)
+            ?? _form.GetType().GetMethod(name,
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+                binder: null, types: parameterTypes, modifiers: null);
         if (trigger == null) return null;
         try { return AwaitTriggerResult(trigger.Invoke(_form, arguments)); }
         catch (TargetInvocationException tie) when (tie.InnerException != null)

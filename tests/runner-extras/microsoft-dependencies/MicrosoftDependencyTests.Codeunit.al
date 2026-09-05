@@ -460,6 +460,88 @@ codeunit 61001 "Microsoft Dependency Tests"
             'The Error() in the precompiled report''s OnPreReport must propagate through Report.Run().');
     end;
 
+    // ---------------------------------------------------------------------------------
+    // Precompiled dependency PAGES: lifecycle triggers must run in the flavour BC emitted
+    // them in. Same defect shape as PrecompiledReport_* above (#2732/#2734), one layer over:
+    // BC's compiler emits a page trigger either as a sync `OnOpenPage()` override or as
+    // `OnOpenPageAsync()` with `__IsAsync` true. Both are virtuals on NavForm with EMPTY
+    // base bodies, so resolving the sync name by reflection always succeeds — it just binds
+    // the empty base method on every precompiled page, which ships the async flavour. The
+    // runner's own emit produces the sync one, which is why runner-authored pages never
+    // showed this and every Base Application page ran with dead lifecycle triggers.
+    //
+    // Page 982 "Payment Registration Setup" is the smallest Base Application page with an
+    // OnOpenPage whose effect is observable from AL: it creates the current user's setup row
+    // when there is none.
+    //
+    // RED (before the fix): OnOpenPage binds NavForm's empty base body, no row is created,
+    // and both tests below fail — the positive on a missing row, the negative because
+    // OnQueryClosePage is dead too and OK() closes without validating anything.
+    [Test]
+    procedure PrecompiledPage_OpenEdit_OnOpenPage_CreatesTheCurrentUsersRow()
+    var
+        PaymentRegistrationSetup: Record "Payment Registration Setup";
+        SetupPage: TestPage "Payment Registration Setup";
+    begin
+        PaymentRegistrationSetup.DeleteAll();
+        Assert.IsFalse(PaymentRegistrationSetup.Get(UserId()),
+            'Precondition: the current user must have no "Payment Registration Setup" row before the page opens.');
+
+        SetupPage.OpenEdit();
+        SetupPage.Close();
+
+        Assert.IsTrue(PaymentRegistrationSetup.Get(UserId()),
+            'Page 982''s OnOpenPage must have inserted the current user''s "Payment Registration Setup" row.');
+        Assert.IsTrue(PaymentRegistrationSetup."User ID" = UserId(),
+            StrSubstNo('The row OnOpenPage created must be keyed on the current user; got "%1".', PaymentRegistrationSetup."User ID"));
+        Assert.IsTrue(PaymentRegistrationSetup.Count() = 1,
+            StrSubstNo('OnOpenPage must create exactly one row; found %1.', PaymentRegistrationSetup.Count()));
+    end;
+
+    // Negative, and the shape issue #2729 reported: page 981 "Payment Registration"'s
+    // OnOpenPage calls PaymentRegistrationMgt.RunSetup(), which opens page 982 modally when
+    // the current user has no setup row. With no [ModalPageHandler] declared, BC's own
+    // "Unhandled UI" refusal is the correct outcome. A page whose OnOpenPage never runs opens
+    // silently instead — which is exactly what the three Tests-ERM tests named in #2729 did.
+    [Test]
+    procedure PrecompiledPage_OnOpenPage_ModalWithNoHandler_IsRefusedLoudly()
+    var
+        PaymentRegistrationSetup: Record "Payment Registration Setup";
+        PaymentRegistrationPage: TestPage "Payment Registration";
+    begin
+        PaymentRegistrationSetup.DeleteAll();
+
+        asserterror PaymentRegistrationPage.OpenEdit();
+
+        Assert.Contains(GetLastErrorText(), 'Unhandled UI: ModalPage 982',
+            'Page 981''s OnOpenPage must run RunSetup(), which opens page 982 modally; with no handler declared that must be refused, not opened silently.');
+    end;
+
+    // The same path WITH a handler: the modal setup page's own OnOpenPage creates the current
+    // user's row, and that row must still be there once the modal closes and OpenEdit returns.
+    // This is the assertion Tests-ERM 134710 EmptySetup makes right after OpenEdit/Close.
+    [Test]
+    [HandlerFunctions('PaymentRegistrationSetupModalHandler')]
+    procedure PrecompiledPage_OnOpenPage_ModalSetupPagesRowSurvivesTheHandler()
+    var
+        PaymentRegistrationSetup: Record "Payment Registration Setup";
+        PaymentRegistrationPage: TestPage "Payment Registration";
+    begin
+        PaymentRegistrationSetup.DeleteAll();
+
+        PaymentRegistrationPage.OpenEdit();
+        PaymentRegistrationPage.Close();
+
+        Assert.IsTrue(PaymentRegistrationSetup.Get(UserId()),
+            'The row page 982''s OnOpenPage inserted while running modally from page 981''s OnOpenPage must still exist after OpenEdit returns.');
+    end;
+
+    [ModalPageHandler]
+    procedure PaymentRegistrationSetupModalHandler(var SetupPage: TestPage "Payment Registration Setup")
+    begin
+        SetupPage.OK().Invoke();
+    end;
+
     local procedure EnsureGeneralLedgerSetupExists()
     var
         GeneralLedgerSetup: Record "General Ledger Setup";
