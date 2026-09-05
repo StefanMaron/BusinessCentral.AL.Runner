@@ -24,6 +24,72 @@
 //      same code path — so the compile that consumes it behaves identically. All that is
 //      lost is cross-compile reuse of this one key, which is a cache miss, not a wrong
 //      answer. That is strictly better than discarding a run that is already half done.
+//
+// SCRATCH-DIR CLASSIFICATION (#2967): al-runner-pkgdedup is SAFELY SHARED BY CONTENT ADDRESS
+// and deliberately outlives its creator, so it is not a ScratchDirs-owned per-process
+// directory and must not become one — deduplication across concurrent runners is the entire
+// point of it. What was NOT safe is how a shared entry was REUSED, and that is what IsIntact
+// below fixes.
+//
+// WHAT IS *NOT* WRONG WITH IT, MEASURED (#2967)
+//   Three cross-process hazards were proposed for this site from a code read. Two do not
+//   survive measurement, and saying so matters: the fix they imply is a cross-process
+//   publication protocol, which is real complexity bought for a problem that is not there.
+//
+//   * "`lock (_stageSync)` in BcCompiler is in-process, so publication is unsynchronised
+//     across the dozen runners on this box." True, and it does not matter. Publication needs
+//     no lock because it is a single rename, and the lost-race case is handled explicitly
+//     below by adopting the winner's directory.
+//   * "`Directory.Exists(stage)` cannot tell a finished publish from one in progress, so a
+//     reader compiles out of a partially populated stage." FALSE. `tmp` is a SIBLING of
+//     `stage` (`stage + ".tmp-" + rand`), so both are on one filesystem and .NET's
+//     `Directory.Move` is exactly one `rename(2)` — confirmed under strace, one
+//     `rename("…/k2.tmp-f3c96bf6", "…/k2") = 0` per publish. `rename` is atomic, so the path
+//     names either nothing or the fully populated directory; there is no third state to
+//     observe. Measured on this machine, a reader process spinning on the same gate
+//     BcCompiler uses, against a writer doing 1,500 publish cycles of 200 files each:
+//     27,168 observations, ZERO partially populated. (A first run reported 91% partial and
+//     was wrong — the harness tore the stage down with an in-place recursive delete, and was
+//     measuring its own teardown. Renaming the directory away before deleting it removed
+//     that, which is also why TryMoveAside below renames rather than deleting in place.)
+//   * "`Publish` can return the scratch dir, so the result is not the content-addressed
+//     path." True and harmless. That directory is GUID-named, private to this process, and
+//     holds the identical staged set — a cache miss, never a wrong answer.
+//
+// WHY A REUSE CHECK IS NEEDED ANYWAY (#2967)
+//   The key is a hash of the picked .app set's absolute PATHS, and each staged entry is a
+//   symlink to one of those paths. A path is not the file: the target can be deleted (a test
+//   fixture's temp tree is reclaimed at its owner's exit, a worktree is removed, a submodule
+//   is deinitialized) long after the stage that points at it was published. The stage then
+//   survives forever holding an entry that resolves to nothing, because the only gate on
+//   reuse was `Directory.Exists(stage)` — which cannot see inside it — and nothing ever
+//   prunes this root.
+//
+//   That is not hypothetical. Measured on the reporting machine on 2026-09-06, with nine
+//   runners active: 138 stage directories, 28,004 staged entries, all of them symlinks, and
+//   455 of those dangling across 73 of the 138 stages — 53% of the shared cache holding at
+//   least one entry that does not resolve. Every dangling target's PARENT directory was gone
+//   too, i.e. a whole source tree had been removed under a live stage.
+//
+//   Handing such a directory to BC's native package reader is a run-killing failure with
+//   bundle-wide blast radius: it reports the missing package as
+//   `AL1023 ... is not valid`, and DeduplicateAppPackageDirs' own comment records that the
+//   error is attributed to the COMPILATION rather than to the package, so one unresolvable
+//   entry fails every compile that scans the directory even when nothing references it.
+//
+//   So a stage is only adoptable when every entry in it still resolves. A stage that fails
+//   that test is REPLACED rather than adopted — moved aside under a `.stale-<rand>` name
+//   (one rename, atomic) so a concurrent reader is never left staring at a half-deleted
+//   directory, then the freshly staged tmp is published in its place. Replacing rather than
+//   merely bypassing matters: bypassing leaves the poison in place for the next runner, and
+//   the next, forever.
+//
+// WHAT THIS DOES NOT FIX
+//   Stages whose picked path set never recurs are still never reclaimed — they are dead disk
+//   until someone clears the temp root. Self-healing on reuse is the part that affects
+//   correctness; an age- or ownership-based prune of a deliberately shared, owner-less cache
+//   is a separate decision, and ScratchDirs' header explains why an age rule on a directory a
+//   live process may be reading is the one rule that can do harm.
 using System.Diagnostics;
 
 namespace AlRunner.Infrastructure;
@@ -60,10 +126,24 @@ internal static class PkgDedupStaging
                 // Another compile — in this process or a concurrent al-runner — published the
                 // same key first. The key is a hash of the picked .app set, so their directory
                 // is ours by construction: adopt it and drop the duplicate.
+                //
+                // Only when it is INTACT, though. The key addresses paths, not bytes, so an
+                // older stage under the same key can be holding entries whose targets have
+                // since been deleted (see the file header for the measurement). Adopting one
+                // of those would throw away the good tmp we just staged and hand the caller a
+                // directory BC rejects with AL1023 — so replace it instead.
                 if (Directory.Exists(stage))
                 {
-                    TryDelete(tmp);
-                    return stage;
+                    if (IsIntact(stage))
+                    {
+                        TryDelete(tmp);
+                        return stage;
+                    }
+                    // Rename the poisoned stage out of the way rather than deleting it in
+                    // place: a rename is one atomic step, so a concurrent reader either sees
+                    // the old directory whole or sees it gone, never a directory being
+                    // emptied file by file underneath it.
+                    if (TryMoveAside(stage, warn)) continue;
                 }
                 if (attempt == attempts)
                 {
@@ -82,6 +162,79 @@ internal static class PkgDedupStaging
             else Thread.Sleep(10 * attempt);
         }
         return tmp; // not reachable: the attempts==attempt branch above always returns
+    }
+
+    /// <summary>
+    /// True when <paramref name="stage"/> is a directory that can still be handed to BC's
+    /// package reader: it exists, it is not empty, and every entry in it can be OPENED.
+    /// <para>An empty stage counts as not intact. The staging branch only runs when there is
+    /// at least one picked package, so an empty directory under a key is never a legitimate
+    /// published result — it is an interrupted publish or an emptied leftover.</para>
+    /// </summary>
+    /// <remarks>
+    /// It opens each entry rather than asking whether it exists, and that is not
+    /// belt-and-braces. MEASURED on .NET 8 / Linux, against a symlink whose target had been
+    /// deleted:
+    /// <code>
+    ///   File.Exists(dangling)                   = True
+    ///   new FileInfo(dangling).Exists           = True
+    ///   fi.ResolveLinkTarget(returnFinalTarget) = &lt;the missing path, non-null&gt;
+    ///   File.OpenRead(dangling)                 = FileNotFoundException
+    /// </code>
+    /// Every existence-shaped API reports a broken link as present — the link itself is a
+    /// directory entry that exists — so a check written with any of them would pass on
+    /// exactly the directories this method exists to reject. Opening it is the same thing
+    /// BC's native package reader does before it accepts a package, so it is also the
+    /// question actually being asked. One open per entry, on directories that hold a few
+    /// hundred at most, against a whole-run compile failure if it is wrong.
+    /// </remarks>
+    internal static bool IsIntact(string stage)
+    {
+        try
+        {
+            if (!Directory.Exists(stage)) return false;
+            var any = false;
+            foreach (var entry in Directory.EnumerateFileSystemEntries(stage))
+            {
+                any = true;
+                try { using var probe = File.OpenRead(entry); }
+                catch { return false; }
+            }
+            return any;
+        }
+        catch
+        {
+            // Unreadable is not usable. Treating it as intact would hand the caller a
+            // directory we could not even enumerate.
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Rename a poisoned stage to a unique sibling so the caller's freshly staged tmp can take
+    /// its place, and delete the renamed copy. Returns false when it could not be moved — the
+    /// caller then keeps retrying and ultimately falls back to its own scratch directory,
+    /// which is always a correct answer.
+    /// </summary>
+    private static bool TryMoveAside(string stage, TextWriter? warn)
+    {
+        var aside = stage + ".stale-" + Guid.NewGuid().ToString("N")[..8];
+        try
+        {
+            Directory.Move(stage, aside);
+        }
+        catch
+        {
+            // Lost the race to another process doing the same repair, or the directory is
+            // held. Either is fine: if it is now gone or intact the next attempt adopts or
+            // publishes normally.
+            return false;
+        }
+        warn?.WriteLine(
+            $"  [pkgdedup] replaced stale staging dir '{stage}' — it held at least one entry " +
+            "whose target no longer exists (BC reports those as AL1023)");
+        TryDelete(aside);
+        return true;
     }
 
     private static void TryDelete(string dir)

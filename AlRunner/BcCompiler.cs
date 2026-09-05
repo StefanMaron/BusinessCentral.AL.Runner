@@ -33,6 +33,7 @@ using NavEmit = Microsoft.Dynamics.Nav.CodeAnalysis.Emit;
 using NavDiag = Microsoft.Dynamics.Nav.CodeAnalysis.Diagnostics;
 using NavSymRef = Microsoft.Dynamics.Nav.CodeAnalysis.SymbolReference;
 using NavDotNet = Microsoft.Dynamics.Nav.CodeAnalysis.DotNet;
+using AlRunner.Infrastructure;
 
 namespace AlRunner;
 
@@ -1019,7 +1020,18 @@ public sealed partial class BcCompiler
         {
             _stageRootCache ??= Path.Combine(Path.GetTempPath(), "al-runner-pkgdedup");
             var stage = Path.Combine(_stageRootCache, key);
-            if (!Directory.Exists(stage))
+            // #2967: existence is a valid test of COMPLETENESS — a stage is only ever created
+            // by one atomic rename, measured — but it is NOT a test of VALIDITY. The key
+            // hashes the picked .app set's PATHS, and each staged entry is a symlink to one of
+            // them, so a stage outlives the files it points at: delete a worktree, deinitialize
+            // a submodule, or let a test fixture's temp tree be reclaimed, and the entry
+            // resolves to nothing while the directory it lives in still exists. Nothing prunes
+            // this root, so that state is permanent. Measured on the reporting machine with
+            // nine runners active: 455 dangling entries across 73 of 138 stages. Reusing one
+            // hands BC's package reader a package it reports as AL1023 — attributed to the
+            // COMPILATION, not to the package, so it fails the whole compile (see the
+            // symbol-less-package comment above for why that blast radius is bundle-wide).
+            if (!PkgDedupStaging.IsIntact(stage))
             {
                 var tmp = stage + ".tmp-" + Guid.NewGuid().ToString("N")[..8];
                 Directory.CreateDirectory(tmp);
@@ -1039,7 +1051,7 @@ public sealed partial class BcCompiler
                 // at emit time (#1691). Publish retries, then falls back to the scratch dir —
                 // same staged files, so the compile is unaffected; only the cross-compile
                 // reuse of this key is lost.
-                var published = AlRunner.Infrastructure.PkgDedupStaging.Publish(tmp, stage, Console.Error);
+                var published = PkgDedupStaging.Publish(tmp, stage, Console.Error);
                 _stageProvenance[published] = (packageDirs.ToList(), unstaged);
                 return new List<string> { published };
             }
