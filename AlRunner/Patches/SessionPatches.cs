@@ -339,6 +339,37 @@ public static partial class BcRuntime
     /// where a trapped StartSession returns false without rethrowing).
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
+    /// <summary>
+    /// BC's refusal for <c>StartSession</c> called inside a test codeunit under any isolation mode
+    /// other than <c>Disabled</c> (#2805), carried as <c>NavNCLDialogException</c> — the AL
+    /// <c>Error()</c> carrier, so AL <c>asserterror</c> traps it and <c>GetLastErrorText</c>
+    /// returns the message, which is what the corpus test does.
+    ///
+    /// <para>Deliberately NOT <c>RunnerOutOfScopeException</c>: that type is a plain
+    /// <c>System.Exception</c> specifically so <c>asserterror</c> CANNOT swallow it
+    /// (loud-failures.md), and it announces a runner limitation. This is the opposite on both
+    /// counts — it is real BC behaviour faithfully reproduced, and AL is entitled to trap it.
+    /// Same shape and reasoning as <c>MakeDataTransferException</c>.</para>
+    ///
+    /// <para>The text is BC's own, measured byte-identical on all eight corpus legs (27.0, 27.3,
+    /// 27.5, 28.0, 28.1, 28.2, 28.3, 28.4). <c>Assert.ExpectedError</c> is a substring match and
+    /// the corpus pins the middle of this sentence, so the wording is not free to drift.</para>
+    /// </summary>
+    internal static System.Exception MakeStartSessionNotAllowedInTestException()
+    {
+        const string msg =
+            "Sessions can only be started in tests that are run by a TestRunner that has "
+            + "TestIsolation set to Disabled.";
+        var t = System.Type.GetType(
+            "Microsoft.Dynamics.Nav.Types.Exceptions.NavNCLDialogException, Microsoft.Dynamics.Nav.Types");
+        if (t != null)
+        {
+            var ctor = t.GetConstructor(new[] { typeof(string) });
+            if (ctor != null) return (System.Exception)ctor.Invoke(new object[] { msg });
+        }
+        return new System.InvalidOperationException(msg);
+    }
+
     public static bool AlRunnerStartSession(
         Microsoft.Dynamics.Nav.Types.DataError errorLevel,
         Microsoft.Dynamics.Nav.Runtime.ByRef<int> sessionId,
@@ -346,6 +377,39 @@ public static partial class BcRuntime
         string? companyName,
         Microsoft.Dynamics.Nav.Runtime.NavRecord? record)
     {
+        // #2805 — BC's TestIsolation guard, and it goes FIRST, outside the try, exactly where BC
+        // puts it. Decompiled from ALSession.ALStartSessionAsyncImpl (bc281):
+        //
+        //     if (session.TestExecution != null
+        //         && (!session.TestExecution.CommitTestCodeunits
+        //             || !session.TestExecution.CommitTestFunctions))
+        //     {
+        //         throw new NavTestStartSessionNotAllowedException();
+        //     }
+        //
+        // Three things about that placement are load-bearing, and all three are why this is not
+        // simply folded into the try below:
+        //
+        //   * It precedes the session-id assignment. BC assigns sessionId.ObjectValue about forty
+        //     lines later, after the new session is opened, so a refused call leaves the caller's
+        //     by-ref untouched. The corpus pins that directly (SessionId = 0 after the refusal),
+        //     and the runner's own "allocate the id up front so SessionId > 0 holds even if
+        //     dispatch throws" ordering — right for a dispatch failure — is wrong for this one.
+        //   * TrapError does NOT swallow it. BC's guard throws BEFORE its try block, so the catch
+        //     that returns false for a trapped NavBaseException never sees this exception. Whether
+        //     NavTestStartSessionNotAllowedException derives from NavBaseException is therefore
+        //     irrelevant — settled by control flow, not by the type hierarchy, which is worth
+        //     stating because #2805 asked for the derivation to be checked against the DLL and the
+        //     answer is that it cannot matter. `trap` is deliberately not consulted here.
+        //   * It is CONDITIONAL. Under TestIsolation = Disabled both commit flags are true and BC
+        //     runs the session normally, so an unconditional refusal would be a different bug.
+        //
+        // The two conditions map to: InTestExecutionScope (BC's session.TestExecution != null,
+        // read off BC's own executingTestCodeUnit field) and the run's isolation mode. Outside a
+        // [Test] body — `execute` mode, an install trigger, a report — nothing is refused.
+        if (InTestExecutionScope && TestExecutor.ActiveIsolation != TestIsolation.Disabled)
+            throw MakeStartSessionNotAllowedInTestException();
+
         bool trap = errorLevel == Microsoft.Dynamics.Nav.Types.DataError.TrapError;
         try
         {

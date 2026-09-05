@@ -94,6 +94,30 @@ public static partial class BcRuntime
     /// only the per-test flag is undone; the process-lifetime SetTestTenantEnvironmentType(true)
     /// tuple set by EnterTestExecutionScope's first call is intentionally left in place.
     /// </summary>
+    /// <summary>
+    /// True while a <c>[Test]</c> method is executing — the runner's answer to BC's own
+    /// <c>session.TestExecution != null</c>.
+    ///
+    /// <para>Read straight off BC's <c>NavTestExecution.executingTestCodeUnit</c>, the very field
+    /// <see cref="EnterTestExecutionScope(object, MethodInfo?)"/> pokes and
+    /// <see cref="LeaveTestExecutionScope"/> clears, rather than from a parallel bool of our own.
+    /// A second copy of "are we in a test" would be one more thing that can drift out of step with
+    /// the state BC's own bodies read (<c>InTest</c>, and through it <c>IsSandbox()</c>).</para>
+    ///
+    /// <para>False when the seam never resolved (<c>_testExecutionInstance</c> null), which is the
+    /// safe direction: the #2805 guard that consults this refuses StartSession, so failing to know
+    /// must mean "not in a test" and let the call through, never a refusal nobody can explain.</para>
+    /// </summary>
+    public static bool InTestExecutionScope
+    {
+        get
+        {
+            if (_testExecutionInstance == null || _fExecutingTestCodeUnit == null) return false;
+            try { return _fExecutingTestCodeUnit.GetValue(_testExecutionInstance) != null; }
+            catch { return false; }
+        }
+    }
+
     public static void LeaveTestExecutionScope()
     {
         if (_testExecutionInstance == null || _fExecutingTestCodeUnit == null) return;
