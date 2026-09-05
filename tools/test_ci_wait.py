@@ -130,13 +130,19 @@ v = cw.classify(runs)
 check("a queued 'All BC versions passed' keeps the verdict pending",
       v.code is None, f"(code={v.code})")
 
-# --- a required context that never reports at all must not hang the tool: a
-# --- docs-only PR skips 'Tests updated' entirely
+# --- #2807: a required context ABSENT from the rollup is not evidence of
+# --- anything. This block used to assert `v.code == 0` for exactly this input,
+# --- which is the defect #2807 reports written down as the expected answer:
+# --- "has not appeared yet" and "will never appear" are indistinguishable from
+# --- the rollup alone, and the tie was broken toward GREEN. The rollup alone can
+# --- no longer decide it -- the workflow-run list for the commit is what says
+# --- whether anything is still coming.
 runs = [run(n, "success") for n in LEGS]
 runs.append(run("All BC versions passed", "success"))
 v = cw.classify(runs)
-check("a required context absent from the rollup does not block the verdict",
-      v.code == 0, f"(code={v.code}) {v.lines}")
+check("a required context absent from the rollup is pending, not green, "
+      "when nothing says whether it is still coming",
+      v.code is None, f"(code={v.code}) {v.lines}")
 
 # --- neutral/skipped are not failures
 runs = [run(n, "success") for n in LEGS]
@@ -177,6 +183,200 @@ check("an older cancelled entry does not stall the verdict", v.code == 0, f"(cod
 # --- an empty rollup is not a verdict
 v = cw.classify([])
 check("an empty rollup is pending, not green", v.code is None, f"(code={v.code})")
+
+
+# ===========================================================================
+# #2807 -- GREEN reported while the required contexts had not registered yet
+# ===========================================================================
+# Real shape, PR #2793 head 50551f4c, measured seconds after the push: the only
+# check run on the commit was "Tests updated" (8s), every bc-tests leg was still
+# pending and "All BC versions passed" was not in the rollup at all. classify()
+# built a pool of ONE, found it complete and clean, and returned GREEN saying
+# "all 1 required checks passed".
+JUST_PUSHED = [run("Tests updated", "success")]
+
+QUEUED_RUNS = [{"id": 33964656436, "name": "Test Matrix", "status": "queued",
+                "conclusion": None},
+               {"id": 33964852712, "name": "PR Check", "status": "completed",
+                "conclusion": "success"}]
+ALL_DONE_RUNS = [{"id": 33964656436, "name": "Test Matrix", "status": "completed",
+                  "conclusion": "success"},
+                 {"id": 33964852712, "name": "PR Check", "status": "completed",
+                  "conclusion": "success"}]
+
+v = cw.classify(JUST_PUSHED, workflow_runs=QUEUED_RUNS)
+check("a rollup missing 'All BC versions passed' while its run is queued is NOT green",
+      v.code is None, f"(code={v.code}) {v.lines}")
+
+v = cw.classify(JUST_PUSHED, workflow_runs=[])
+check("...nor when no workflow run has even registered for the commit yet",
+      v.code is None, f"(code={v.code}) {v.lines}")
+
+v = cw.classify(JUST_PUSHED, workflow_runs=None)
+check("...nor when the workflow-run list could not be read at all "
+      "(unknown resolves toward 'call again', never toward green)",
+      v.code is None, f"(code={v.code}) {v.lines}")
+
+# The escape hatch the old behaviour was bought with -- a context that will never
+# report must not hang the tool forever -- is kept, but it resolves to BLOCKED
+# rather than GREEN: a required context with no report on the head commit is
+# precisely "everything passed and the merge is refused with nothing saying why".
+v = cw.classify(JUST_PUSHED, workflow_runs=ALL_DONE_RUNS)
+check("a required context still absent once every workflow run completed is BLOCKED",
+      v.code == 4, f"(code={v.code}) {v.lines}")
+check("...and names the context that never reported",
+      any("All BC versions passed" in l for l in v.lines), v.lines)
+check("...and does not claim anything failed",
+      not any("failed" in l.lower() for l in v.lines), v.lines)
+
+# ...and the ordinary green case is unaffected once both contexts are present.
+v = cw.classify(green_set(), workflow_runs=ALL_DONE_RUNS)
+check("a complete rollup with both ruleset contexts is still GREEN",
+      v.code == 0, f"(code={v.code}) {v.lines}")
+check("...and says which ruleset contexts it actually confirmed",
+      any("All BC versions passed" in l and "Tests updated" in l for l in v.lines), v.lines)
+
+
+# ===========================================================================
+# #2785 -- a context added to the live ruleset must be waited for
+# ===========================================================================
+# The verdict has to be driven by the contexts the ruleset requires RIGHT NOW,
+# not by a tuple frozen into the module. Passing a third context in must change
+# the answer, or the live lookup is decorative.
+v = cw.classify(green_set(), contexts=("All BC versions passed", "Tests updated",
+                                       "Provenance attested"),
+                workflow_runs=QUEUED_RUNS)
+check("a context newly added to the ruleset keeps the verdict pending",
+      v.code is None, f"(code={v.code}) {v.lines}")
+
+v = cw.classify(green_set(), contexts=("All BC versions passed", "Tests updated"),
+                workflow_runs=QUEUED_RUNS)
+check("...while the same rollup with the known context set is green",
+      v.code == 0, f"(code={v.code}) {v.lines}")
+
+# Real payload from GET /repos/{o}/{r}/rules/branches/main, 2026-09-05. That
+# endpoint returns the EFFECTIVE rules, so only ACTIVE rulesets appear -- there
+# is no ruleset id to get wrong, which is the point of using it.
+BRANCH_RULES = [
+    {"type": "deletion", "ruleset_source_type": "Repository", "ruleset_id": 15001420},
+    {"type": "non_fast_forward", "ruleset_source_type": "Repository", "ruleset_id": 15001420},
+    {"type": "pull_request", "parameters": {}, "ruleset_id": 15001420},
+    {"type": "required_status_checks",
+     "parameters": {"strict_required_status_checks_policy": False,
+                    "do_not_enforce_on_create": False,
+                    "required_status_checks": [{"context": "All BC versions passed"},
+                                               {"context": "Tests updated"}]},
+     "ruleset_source_type": "Repository",
+     "ruleset_source": "StefanMaron/BusinessCentral.AL.Runner",
+     "ruleset_id": 15001420},
+]
+check("the required contexts are read out of the live branch-rules payload",
+      cw.contexts_from_branch_rules(BRANCH_RULES)
+      == ("All BC versions passed", "Tests updated"),
+      str(cw.contexts_from_branch_rules(BRANCH_RULES)))
+
+# The trap from #2785: ruleset 15039643 is disabled and carries no
+# required_status_checks rule, so querying it answers with an empty list. An
+# empty answer must read as UNKNOWN, never as "nothing is required" -- the latter
+# would silently disable every gate this module exists to apply.
+check("a payload with no required_status_checks rule is UNKNOWN, not 'nothing required'",
+      cw.contexts_from_branch_rules(
+          [{"type": "pull_request", "parameters": {}, "ruleset_id": 15039643}]) is None)
+check("...and so is an empty context list",
+      cw.contexts_from_branch_rules(
+          [{"type": "required_status_checks",
+            "parameters": {"required_status_checks": []}}]) is None)
+check("...and so is a payload that is not a list at all",
+      cw.contexts_from_branch_rules({"message": "Not Found"}) is None)
+
+
+# ===========================================================================
+# #2748 -- several runs of one workflow on one SHA
+# ===========================================================================
+# A check run's id is allocated when its JOB STARTS, not when its workflow run is
+# created, so ordering by check-run id alone does not order by run recency.
+# Measured on PR #2742 head 22e5c13b: Test Matrix run 33964656436 (created
+# 11:56:25) owns check run 101303131614, a HIGHER id than every check run of PR
+# Check run 33964852712 (created 12:00:55, max 101303055107).
+#
+# Two runs of ONE workflow overlapping on one SHA is the designed behaviour for
+# require-tests.yml, which produces the required "Tests updated" context: it
+# carries no `concurrency` block at all (deliberately, #2726) and triggers on
+# 'labeled'/'unlabeled'.
+OLD_RUN, NEW_RUN = 33964786612, 33964852712
+
+
+def cr(name, conclusion, wf_run, check_id, status="completed"):
+    return {"name": name, "status": status, "conclusion": conclusion, "id": check_id,
+            "details_url": "https://github.com/StefanMaron/BusinessCentral.AL.Runner"
+                           f"/actions/runs/{wf_run}/job/{check_id}"}
+
+
+def two_run_set(old_conclusion, new_conclusion):
+    runs = [cr(n, "success", NEW_RUN, 101303055000 + i) for i, n in enumerate(LEGS)]
+    runs.append(cr("All BC versions passed", "success", NEW_RUN, 101303055107))
+    # the OLDER run's job started later, so it carries the HIGHER check-run id
+    runs.append(cr("Tests updated", old_conclusion, OLD_RUN, 101303131614))
+    runs.append(cr("Tests updated", new_conclusion, NEW_RUN, 101303055037))
+    return runs
+
+
+v = cw.classify(two_run_set("failure", "success"), workflow_runs=ALL_DONE_RUNS)
+check("a failure from an OLDER workflow run does not outrank the newer run's "
+      "success, even holding the higher check-run id",
+      v.code == 0, f"(code={v.code}) {v.lines}")
+
+# ...and the mirror, so this is not just 'prefer success'.
+v = cw.classify(two_run_set("success", "failure"), workflow_runs=ALL_DONE_RUNS)
+check("...and the NEWER run's failure still fails, though its check-run id is lower",
+      v.code == 1, f"(code={v.code}) {v.lines}")
+check("...and the failing entry names the workflow run it came from",
+      any(str(NEW_RUN) in l for l in v.lines), v.lines)
+
+check("the workflow run id is read out of a details_url",
+      cw.run_id_from("https://github.com/o/r/actions/runs/33964852712/job/101303055037")
+      == 33964852712)
+check("...and a details_url with no run segment reads as unknown, not as 0",
+      cw.run_id_from("https://example.invalid/nothing") is None)
+
+# Within ONE workflow run a re-run attempt still wins on check-run id.
+runs = [cr(n, "success", NEW_RUN, 101303055000 + i) for i, n in enumerate(LEGS)]
+runs.append(cr("All BC versions passed", "success", NEW_RUN, 101303055107))
+runs.append(cr("Tests updated", "failure", NEW_RUN, 101303055037))
+runs.append(cr("Tests updated", "success", NEW_RUN, 101303099999))
+v = cw.classify(runs, workflow_runs=ALL_DONE_RUNS)
+check("inside one workflow run the newer check-run id still wins",
+      v.code == 0, f"(code={v.code}) {v.lines}")
+
+
+# ===========================================================================
+# The failing list is PARTIAL until every required check has reported
+# ===========================================================================
+# A coordinator read "1 of 9 required checks failed" as "only BC 27.0 is
+# affected" and started a version-specific diagnosis; `gh pr checks` after the
+# run finished showed eight legs failing. The tool was not wrong -- it says what
+# it knows -- so the wording has to say that it is not the whole list yet.
+runs = [cr(LEGS[0], "failure", NEW_RUN, 101303055001),
+        cr(LEGS[1], None, NEW_RUN, 101303055002, status="in_progress"),
+        cr("All BC versions passed", None, NEW_RUN, 101303055107, status="queued"),
+        cr("Tests updated", "success", NEW_RUN, 101303055037)]
+v = cw.classify(runs, workflow_runs=QUEUED_RUNS)
+check("a failure while others are still running is still a FAILED verdict",
+      v.code == 1, f"(code={v.code}) {v.lines}")
+check("...and says how many required checks have not reported yet",
+      any("not reported" in l.lower() for l in v.lines), v.lines)
+check("...and warns the failing list can still grow",
+      any("grow" in l.lower() for l in v.lines), v.lines)
+
+# When everything HAS reported the caveat must not be printed, or it is noise.
+runs = [cr(LEGS[0], "failure", NEW_RUN, 101303055001),
+        cr(LEGS[1], "success", NEW_RUN, 101303055002),
+        cr("All BC versions passed", "failure", NEW_RUN, 101303055107),
+        cr("Tests updated", "success", NEW_RUN, 101303055037)]
+v = cw.classify(runs, workflow_runs=ALL_DONE_RUNS)
+check("a complete rollup's failing list carries no 'still to come' caveat",
+      v.code == 1 and not any("grow" in l.lower() for l in v.lines),
+      f"(code={v.code}) {v.lines}")
 
 print()
 if FAILURES:

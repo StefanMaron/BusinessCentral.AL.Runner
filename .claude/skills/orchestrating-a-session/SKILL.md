@@ -121,7 +121,15 @@ Merge when **all of**:
 
 **Use `tools/ci-wait.py <PR>`** rather than a poll loop. It polls internally and returns one
 verdict: 0 green on current head, 1 failed with the log already fetched, 2 still running
-(*not* a verdict), 3 undetermined, 4 blocked by a cancelled required context (below).
+(*not* a verdict), 3 undetermined, 4 blocked with everything green — a cancelled required
+context (below), or a required context that produced no check run at all once every
+workflow run finished (#2807).
+
+**A FAILED verdict names what has reported so far.** While other required checks are
+still running the failing list can grow, and the tool says how many have not reported.
+Do not scope a diagnosis to those names until it has: reading "1 of 9 required checks
+failed" as "only BC 27.0 is affected" started a version-specific investigation of what
+turned out to be eight failing legs.
 
 **Never `gh run rerun` a failed job** — it destroys the log permanently. Read
 `--log-failed` first, then push a new commit.

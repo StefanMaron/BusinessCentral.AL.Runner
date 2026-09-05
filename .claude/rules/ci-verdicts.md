@@ -17,10 +17,23 @@ tools/ci-wait.py 2379 --timeout 2400
 | exit | meaning |
 |---|---|
 | 0 | every required check passed **on the current head** — safe to report green |
-| 1 | a required check failed; **the failing log is already printed** |
+| 1 | a required check failed; **the failing log is already printed**. The list is what has reported SO FAR — while other required checks are still running it can still grow, and the verdict says how many have not reported. Do not scope a diagnosis to those names until every check has reported (a one-leg failure that turned out to be eight cost a version-specific diagnosis that was never relevant). |
 | 2 | timed out while still running — **not a verdict**, call again |
 | 3 | could not determine (auth, network, no checks) |
-| 4 | **blocked, not failing** — every check passed but a *required* context is `cancelled` on this commit, so the merge is refused and nothing else says why (#2726). The one case where `gh run rerun` is correct: re-run the cancelled run, it has no failure log to destroy. Never reach for `--admin`. |
+| 4 | **blocked, not failing** — every check passed but the merge is still refused and nothing else says why. Two causes: a *required* context is `cancelled` on this commit (#2726) — the one case where `gh run rerun` is correct, since a cancelled run has no failure log to destroy; or a *required* context produced **no check run at all** and every workflow run for the commit has finished (#2807), which is a trigger/`paths:` filter question, not a re-run. Never reach for `--admin` for either. |
+
+`ci-wait.py` reads the required contexts from the **live branch ruleset** on each
+invocation (`GET /repos/{owner}/{repo}/rules/branches/main`, which reports only *active*
+rulesets), falling back to its built-in list and saying so loudly if that call fails. A
+required context added in the GitHub UI is therefore waited for immediately rather than
+ignored until someone edits the tool (#2785); `check_required_contexts.py` fails CI when the
+built-in lists and the live ruleset drift apart in either direction.
+
+Where several runs of one workflow exist on one commit — normal for `require-tests.yml`, which
+has no `concurrency` block and triggers on `labeled`/`unlabeled` — the verdict comes from the
+**newest workflow run**, not the highest check-run id. A check run's id is allocated when its
+*job starts*, so id order inverts as soon as two runs overlap, and the older run's conclusion
+would otherwise be reported as the verdict (#2748).
 
 It enforces the two rules agents keep getting wrong: checks are matched against the PR's
 **current head SHA**, so a newer completed run for an older push is never reported as this
