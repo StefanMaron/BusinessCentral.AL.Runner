@@ -1,0 +1,10 @@
+[
+  {
+    "codeunitId": 60820,
+    "CodeunitName": "TP Control OnValidate Error",
+    "Method": "ControlOnValidate_AcceptsAValueItDoesNotRefuse",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2326",
+    "Note": "Base Application page 9170 \"Profile Card\" validates its Role Center ID in OnInsertRecord, via ValidateRoleCenterIdExists -> AllObjWithCaption.TestField(\"Object Subtype\", 'RoleCenter') for page 9022. The runner leaves \"Object Subtype\" at BC's default (empty) on every AllObj / AllObjWithCaption row, so that TestField raises \"Object Subtype must be equal to 'RoleCenter' ... Current value is ''\". Tracked as #2326, which stays open after this entry lands. This surfaced only once #2729 made precompiled pages' lifecycle triggers run at all: before that, page 9170's OnInsertRecord resolved to NavForm's empty base virtual, returned true, and the insert proceeded without ever validating anything -- so the test passed by not executing the check it is about. The entry records a gap that was always there, not a new one; removing it is part of fixing #2326."
+  }
+]
