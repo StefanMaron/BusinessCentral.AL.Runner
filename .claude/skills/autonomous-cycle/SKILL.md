@@ -21,6 +21,15 @@ doing its job — and anything not pinned there is a claim nobody is checking.
 Read every priority below through that lens. A fix that closes an issue and adds no upstream
 coverage has moved a number; a fix that lands with a corpus test has moved the guarantee.
 
+The test for whether a fix owes a corpus test is wider than "is this a claim about BC?":
+**wherever it is possible to red-test something with AL tests, that should add tests to the
+corpus.** A BC-behaviour claim is the common case, not the whole rule.
+
+The runner fix is still the priority, and the work never stalls on the corpus. Open the corpus
+PR and keep the runner fix moving — implemented, pushed, reviewed — rather than idling until
+the corpus legs report; priority 3's merge bar decides when it may *merge*, and nothing before
+that waits.
+
 ## Working unattended
 
 This runs without anyone watching. That changes what matters: not throughput, but never
@@ -229,6 +238,15 @@ a merge can turn `main` red, which outranks everything you were about to do.
    — the test would take the source-compiled path and pass. That answer is acceptable when the
    PR names that structural reason and puts its proving test in `tests/runner-extras/`. It is not
    acceptable as a way to avoid writing the upstream test.
+
+   That claim is the **implementer's** to test up front, not only the reviewer's to challenge,
+   and the answer belongs in the PR body whichever way it comes out. Both have happened: a
+   defect assumed precompiled-only also reproduced on a source-compiled table, and the corpus
+   app declares a Base Application dependency, so a corpus test does reach the precompiled path
+   after all (issue #2518, corpus PR #165, merged green on 8 legs); while table `2000000001`
+   really is out of reach, being `Scope = OnPrem` and in `SystemTables.InternalTables`, which
+   `NavRecordRef.IsSystemTableAllowedForRecordRefUsage` refuses outright — measured across all
+   8 legs of corpus PR #153 (issue #2774).
 
    **Do not merge a PR that closes a BC-behaviour issue on the strength of a runner-local test
    alone.** That is the exact failure `bc-behavior-tests-go-upstream.md` exists to prevent, and it
