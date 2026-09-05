@@ -1,0 +1,19 @@
+{
+  "id": "8d24f61b-90ae-4c73-b5e2-1a7f30c6d948",
+  "name": "Runner Extras - Precompiled Table Relation",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Issue #2528: a PRECOMPILED dependency table's TableRelation must survive into the runner's metadata, so FieldRef.Relation answers the related table and Validate() enforces the relation.",
+  "description": "Runner-mechanism claim, not a claim about AL: what BC does with a TableRelation is plain BC behaviour and already true here for a table compiled from AL source in the bundle under test. What this pins is the runner's own reconstruction of that property for a table it never source-parsed, read back from the dependency's SymbolReference.json. Before the fix, FieldRef.Relation answered 0 for all 7,787 relation-bearing Base Application fields and Validate() silently accepted a value with no matching related row. Customer.City is included deliberately: it carries ValidateTableRelation = 0, so it proves the fix reads that second property rather than switching validation on wholesale.",
+  "dependencies": [],
+  "idRanges": [
+    {
+      "from": 61400,
+      "to": 61419
+    }
+  ],
+  "platform": "27.0.0.0",
+  "application": "27.0.0.0",
+  "runtime": "17.0",
+  "target": "Cloud"
+}
