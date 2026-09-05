@@ -210,9 +210,15 @@ public static partial class RowVersionPatches
         public void Dispose() => _suppressSystemIdUniqueness = _previous;
     }
 
+    private static readonly bool _diag2700 = Environment.GetEnvironmentVariable("AL_RUNNER_DIAG_2700") == "1";
+
     private static void CheckNoDuplicateSystemId(object? provider, object? recordBuffer)
     {
-        if (_suppressSystemIdUniqueness) return;
+        if (_suppressSystemIdUniqueness)
+        {
+            if (_diag2700) DiagLogSuppressedInsert(provider, recordBuffer);
+            return;
+        }
         if (recordBuffer == null || !BlobStoreIsolationPatches.IsDatabaseBacked(provider)) return;
 
         var bufferType = recordBuffer.GetType();
@@ -238,6 +244,7 @@ public static partial class RowVersionPatches
                 $"[RowVersionPatches] {bufferType.Name}.SystemId property not found — " +
                 "SystemId integrity check cannot resolve its reflection target");
         var incomingSystemId = (NavGuid)_pSystemIdProp.GetValue(recordBuffer)!;
+        if (_diag2700) DiagLogLiveInsert(metaTable, incomingSystemId);
         // A zero/empty incoming SystemId means the AL statement supplied none — the
         // UUID-generation hook (SequentialUuidCreator, Cecil-owned — see
         // RecordWritePatches.cs header) assigns a fresh, always-unique value before
@@ -363,5 +370,43 @@ public static partial class RowVersionPatches
         return new InvalidOperationException(string.Format(
             "There is already a record in table {0} that has the same values in a unique index for the following fields: {1}",
             tableCaption, fieldsAndValues));
+    }
+
+    // ── TEMPORARY diagnostic for #2700, gated on AL_RUNNER_DIAG_2700=1 — remove before merge ──
+    private static bool IsUserSetupTable(object metaTable)
+    {
+        if (metaTable is NCLMetaTable ncl && ncl.TableId == 91) return true;
+        var caption = ResolveTableCaptionSafe(metaTable);
+        return caption.IndexOf("user setup", StringComparison.OrdinalIgnoreCase) >= 0;
+    }
+
+    private static void DiagLogLiveInsert(object metaTable, NavGuid incomingSystemId)
+    {
+        try
+        {
+            if (!IsUserSetupTable(metaTable)) return;
+            Console.Error.WriteLine(
+                $"[diag2700] LIVE insert table={ResolveTableCaptionSafe(metaTable)} systemid={incomingSystemId.Value} " +
+                $"stack={Environment.StackTrace.Replace(Environment.NewLine, " | ")}");
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"[diag2700] DiagLogLiveInsert threw: {ex}"); }
+    }
+
+    private static void DiagLogSuppressedInsert(object? provider, object? recordBuffer)
+    {
+        try
+        {
+            if (recordBuffer == null) return;
+            var bufferType = recordBuffer.GetType();
+            var metaTable = ResolveMetaTable(recordBuffer, bufferType);
+            if (!IsUserSetupTable(metaTable)) return;
+            _pSystemIdProp ??= bufferType.GetProperty("SystemId",
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            var systemId = _pSystemIdProp?.GetValue(recordBuffer) as NavGuid;
+            Console.Error.WriteLine(
+                $"[diag2700] SUPPRESSED insert table={ResolveTableCaptionSafe(metaTable)} systemid={systemId?.Value} " +
+                $"stack={Environment.StackTrace.Replace(Environment.NewLine, " | ")}");
+        }
+        catch (Exception ex) { Console.Error.WriteLine($"[diag2700] DiagLogSuppressedInsert threw: {ex}"); }
     }
 }
