@@ -6,6 +6,12 @@ codeunit 61000 "MD Assert"
             Error('Assert.IsTrue failed. %1', Msg);
     end;
 
+    procedure IsFalse(Condition: Boolean; Msg: Text)
+    begin
+        if Condition then
+            Error('Assert.IsFalse failed. %1', Msg);
+    end;
+
     procedure AreEqual(Expected: Integer; Actual: Integer; Msg: Text)
     begin
         if Expected <> Actual then
