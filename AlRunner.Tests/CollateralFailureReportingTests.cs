@@ -436,4 +436,223 @@ public sealed class CollateralFailureReportingTests
         Assert.Contains($"and {24 - Infrastructure.BundleProgressLine.MaxInlineErrors} more",
             lines[^1], StringComparison.Ordinal);
     }
+
+    // ── The note is only printed when there is something below it to mark ────────────
+    //
+    // Review of #2898 found both notes sitting inside `if (b.CompileErrors.Count > 0)` and
+    // ungated on whether anything in the bucket is actually suspect. A partial bucket whose
+    // survivors all passed announced "FAIL/ERROR results below are marked …" and then printed
+    // no results at all — `visible.Count == 0` skips the section on the very next line. The
+    // summary already got this right (Summary_PartialBucketWithNoFailures_PrintsNoSuspectLine);
+    // these hold the other two surfaces to the same standard.
+
+    private static BucketResult PartialBucketAllSurvivorsPassed(
+        string path = "/runner-extras", int lostSuites = 1)
+    {
+        var errors = Enumerable.Range(1, lostSuites)
+            .Select(i => $"<bundled>: COMPILE-FAIL ({i}): suite {i} did not compile").ToArray();
+        return new BucketResult(path, BucketStage.Ran, errors, null,
+            new[] { Pass("Codeunit60100", "Healthy_StillPasses"),
+                    Pass("Codeunit60101", "AlsoHealthy_StillPasses") },
+            TimeSpan.Zero, TimeSpan.Zero, TimeSpan.Zero, 1, null);
+    }
+
+    [Fact]
+    public void PerTest_PartialBucketWhoseSurvivorsAllPassed_PrintsNoSuspectNote()
+    {
+        var report = PerTest(showPass: false, PartialBucketAllSurvivorsPassed());
+
+        // #2762's half is untouched: the loss is still named, loudly.
+        Assert.Contains("SUITE ERRORS (1)", report, StringComparison.Ordinal);
+        Assert.Contains("MISSING from this run", report, StringComparison.Ordinal);
+        // …but there is nothing below to mark, so nothing claims there is.
+        Assert.DoesNotContain("marked [suspect", report, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void WatchTree_PartialBucketWhoseSurvivorsAllPassed_PrintsNoSuspectNote()
+    {
+        var output = RenderWatch(PartialBucketAllSurvivorsPassed("/tmp/runner-extras"));
+
+        Assert.Contains("SUITE ERRORS (1)", output, StringComparison.Ordinal);
+        Assert.DoesNotContain("suspect", output, StringComparison.Ordinal);
+    }
+
+    // ── One marker, one number ───────────────────────────────────────────────────────
+    //
+    // The summary used to quote the RUN-WIDE lost-suite total while every per-result marker
+    // quoted its own bucket's. With one bucket losing 23 suites and passing everything, and
+    // another losing 1 and failing twice, the summary said "lost 24 suite(s)" and every marked
+    // line said "bucket lost 1 suite(s)" — the same two-numbers-one-marker defect the single
+    // IsSuspect predicate exists to prevent, one level up. Summary_OnlyTheFailuresSharing…
+    // could not catch it: its second bucket is clean, so the two numbers coincide.
+
+    [Fact]
+    public void Summary_SuspectLine_QuotesOnlyTheSuitesLostByBucketsThatContributedSuspects()
+    {
+        var summary = Summarize(
+            PartialBucketAllSurvivorsPassed("/lost-23-but-all-green", lostSuites: 23),
+            PartialBucketWithFailures("/lost-1-and-failed"));
+
+        Assert.Contains("suspect:     2", summary, StringComparison.Ordinal);
+        // Only the bucket that produced those 2 is quoted…
+        Assert.Contains("that also lost 1 suite(s).", summary, StringComparison.Ordinal);
+        Assert.DoesNotContain("that also lost 24 suite(s)", summary, StringComparison.Ordinal);
+        // …and the run-wide total is still reported where it belongs, on the `partial:` line.
+        Assert.Contains("partial:     2  (ran, but 24 suite(s) did not", summary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Summary_SuspectLineNumber_MatchesThePerResultMarker()
+    {
+        var buckets = new[] { PartialBucketAllSurvivorsPassed("/lost-23-but-all-green", lostSuites: 23),
+                              PartialBucketWithFailures("/lost-1-and-failed") };
+
+        var summary = Summarize(buckets);
+        var perTest = PerTest(false, buckets);
+
+        var summaryCount = System.Text.RegularExpressions.Regex
+            .Match(summary, @"that also lost (\d+) suite\(s\)").Groups[1].Value;
+        var markerCounts = System.Text.RegularExpressions.Regex
+            .Matches(perTest, @"bucket lost (\d+) suite\(s\)")
+            .Select(m => m.Groups[1].Value).Distinct().ToList();
+
+        Assert.Equal("1", summaryCount);
+        Assert.Equal(new[] { "1" }, markerCounts);
+    }
+
+    // ── The cause of a suite error is not its own collateral ─────────────────────────
+    //
+    // In general the runner cannot know which failure caused a suite error. In the watchdog
+    // case it can: the abort reason names the codeunit and method that hung, and that result
+    // is the one thing in the run that is definitely real. Marking it "unverified" points the
+    // reader away from the only genuine problem — the same argument that already keeps the
+    // `"kind": "suite"` record in --out unmarked.
+
+    /// <summary>A real abort line, built by the executor's own formatter so the two cannot drift.</summary>
+    private static string AbortError(string codeunit, string method) =>
+        "runner-extras/timeout: " + Infrastructure.BundleFailureStage.TestTimeoutAbort + ": "
+        + Infrastructure.BundleFailureStage.AbortReasonHead($"Codeunit 62212 \"Hang Suite\"", codeunit, method)
+        + " — 2 further [Test] method(s) in this codeunit did not run (2 total)";
+
+    private static BucketResult AbortedBucket(string path = "/runner-extras") =>
+        new(path, BucketStage.Ran,
+            new[] { AbortError("Codeunit62212", "Hangs") }, null,
+            new[]
+            {
+                Pass("Codeunit62212", "Fine"),
+                Error("Codeunit62212", "Hangs"),
+                Fail("Codeunit60100", "Unrelated_Fails"),
+            },
+            TimeSpan.Zero, TimeSpan.Zero, TimeSpan.Zero, 1, null);
+
+    [Fact]
+    public void PerTest_TheTestNamedByAWatchdogAbort_IsNotMarkedSuspect()
+    {
+        var report = PerTest(showPass: false, AbortedBucket());
+
+        var hung = report.Split('\n').Single(l => l.StartsWith("ERROR", StringComparison.Ordinal)
+            && l.Contains("Codeunit62212.Hangs", StringComparison.Ordinal));
+        Assert.DoesNotContain("[suspect", hung, StringComparison.Ordinal);
+
+        // The control in the same bucket: an unrelated failure IS still collateral, so an
+        // implementation that simply stopped marking errors fails here.
+        var other = report.Split('\n').Single(l => l.StartsWith("FAIL", StringComparison.Ordinal)
+            && l.Contains("Unrelated_Fails", StringComparison.Ordinal));
+        Assert.Contains("[suspect", other, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Summary_TheTestNamedByAWatchdogAbort_IsNotCounted()
+    {
+        var summary = Summarize(AbortedBucket());
+
+        // 1 fail + 1 error in the bucket, but the error is the named cause.
+        Assert.Contains("suspect:     1", summary, StringComparison.Ordinal);
+        Assert.Contains("fail:        1", summary, StringComparison.Ordinal);
+        Assert.Contains("error:       1", summary, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The negative control for the exclusion. A COMPILE-FAIL suite error names no test, so the
+    /// runner cannot tell cause from collateral and marks both — an implementation that excluded
+    /// every error, or matched on the outcome rather than on the named test, fails here.
+    /// </summary>
+    [Fact]
+    public void PerTest_WhenTheSuiteErrorNamesNoTest_EveryFailureIsStillMarked()
+    {
+        var bucket = new BucketResult("/runner-extras", BucketStage.Ran,
+            new[] { SuiteError }, null,
+            new[]
+            {
+                Pass("Codeunit62212", "Fine"),
+                Error("Codeunit62212", "Hangs"),
+                Fail("Codeunit60100", "Unrelated_Fails"),
+            },
+            TimeSpan.Zero, TimeSpan.Zero, TimeSpan.Zero, 1, null);
+
+        var report = PerTest(showPass: false, bucket);
+
+        Assert.Equal(2, report.Split('\n').Count(l => l.Contains("[suspect", StringComparison.Ordinal)
+            && (l.StartsWith("FAIL", StringComparison.Ordinal) || l.StartsWith("ERROR", StringComparison.Ordinal))));
+    }
+
+    /// <summary>
+    /// A different test in the SAME codeunit as the hung one is still collateral: the watchdog
+    /// abandons the rest of the codeunit, so anything else attributed to it is exactly the kind
+    /// of result the marker exists for. Pins that the match is on the test, not the codeunit.
+    /// </summary>
+    [Fact]
+    public void PerTest_ASiblingMethodOfTheHungTest_IsStillMarked()
+    {
+        var bucket = new BucketResult("/runner-extras", BucketStage.Ran,
+            new[] { AbortError("Codeunit62212", "Hangs") }, null,
+            new[] { Error("Codeunit62212", "Hangs"), Fail("Codeunit62212", "HangsToo") },
+            TimeSpan.Zero, TimeSpan.Zero, TimeSpan.Zero, 1, null);
+
+        var report = PerTest(showPass: false, bucket);
+
+        var sibling = report.Split('\n').Single(l => l.Contains("HangsToo", StringComparison.Ordinal));
+        Assert.Contains("[suspect", sibling, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The round trip. TestExecutor formats the abort reason and Reporter reads it back; if the
+    /// wording changes on one side only, the exclusion silently stops applying and every aborted
+    /// suite goes back to marking its own cause. This is what makes the string match safe.
+    /// </summary>
+    [Fact]
+    public void AbortReasonHead_IsRecognisedAsNamingTheTestItWasBuiltFor()
+    {
+        var line = "app-group: " + Infrastructure.BundleFailureStage.TestTimeoutAbort + ": "
+            + Infrastructure.BundleFailureStage.AbortReasonHead("Codeunit 50000 \"X\"", "Codeunit50000", "Slow")
+            + " — 3 further [Test] method(s) in this codeunit did not run (3 total)";
+
+        Assert.True(Infrastructure.BundleFailureStage.AbortReasonNamesTest(line, "Codeunit50000", "Slow"));
+        Assert.False(Infrastructure.BundleFailureStage.AbortReasonNamesTest(line, "Codeunit50000", "Fast"));
+        Assert.False(Infrastructure.BundleFailureStage.AbortReasonNamesTest(line, "Codeunit50001", "Slow"));
+        // A line without the marker never names a test, whatever it happens to contain.
+        Assert.False(Infrastructure.BundleFailureStage.AbortReasonNamesTest(
+            "app-group: COMPILE-FAIL: (Codeunit50000).Slow: watchdog timeout aborted the run",
+            "Codeunit50000", "Slow"));
+    }
+
+    /// <summary>
+    /// The sibling parser, asked the same question. AbortResumePlan reads the SAME reason string
+    /// with its own regex to decide which codeunits a watchdog resume must skip — it predates the
+    /// shared formatter and still carries its own copy of the wording. Pinned against the
+    /// formatter here so a reword breaks a test rather than silently disabling BOTH the resume
+    /// and the cause-exclusion above, each in a way nothing else would report.
+    /// </summary>
+    [Fact]
+    public void AbortReasonHead_IsAlsoParsedByTheWatchdogResumePlanner()
+    {
+        var reason = Infrastructure.BundleFailureStage.AbortReasonHead(
+                "Codeunit 62212 \"Hang Suite\"", "Codeunit62212", "Hangs")
+            + " — 2 further [Test] method(s) in this codeunit did not run (2 total)";
+
+        Assert.Contains("Codeunit62212",
+            Infrastructure.AbortResumePlan.NextExclusions(new[] { reason }, Array.Empty<string>()));
+    }
+
 }

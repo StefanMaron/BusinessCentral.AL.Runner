@@ -231,9 +231,14 @@ public sealed class BcAssembler
     /// one per live compilation.</para>
     ///
     /// <para>Keyed on the file's stamp as well as its path, never the path alone: a
-    /// <c>--bc-version</c> switch, or a rebuilt <c>al-runner.dll</c> (which is itself in the
-    /// list), points the same path at different bytes, and serving the old metadata would compile
-    /// AL against a version no longer on disk.</para>
+    /// <c>--bc-version</c> switch points the same path at different bytes, and serving the old
+    /// metadata would compile AL against a version no longer on disk.</para>
+    ///
+    /// <para>One path is deliberately NOT served from here: the runner's own assembly, which is
+    /// in the list too. It is held for the process instead (<see cref="RunnerAssemblyReference"/>)
+    /// — a stamp key would make it re-read per compile, and the loaded assembly is what the
+    /// compiled AL binds against at run time anyway, so a newer file on disk would be skew
+    /// rather than accuracy. #2880.</para>
     /// </summary>
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<
         (string Path, long Ticks, long Length), MetadataReference> _metadataReferenceCache = new();
@@ -247,7 +252,7 @@ public sealed class BcAssembler
             // #2880: the one mandatory reference is served from the held instance rather than
             // re-stamped and re-read, so a moment in which the file is unreadable — the shape
             // #2880 points at, MSBuild's delete-then-write during a concurrent build — cannot
-            // drop it or fault the whole run.
+            // drop it from a compile that happens after it resolved once.
             if (!string.IsNullOrEmpty(runnerDll) && string.Equals(path, runnerDll, StringComparison.Ordinal))
             {
                 refs.Add(RunnerAssemblyReference);
@@ -290,18 +295,40 @@ public sealed class BcAssembler
     /// names a generated file the reader has never seen and a namespace, and says nothing about
     /// a missing reference.</para>
     ///
-    /// <para>Holding it also removes the window entirely: the loaded assembly is the one the
-    /// compiled AL will bind against at run time, so its metadata is fixed for the process
-    /// whatever happens to the file on disk afterwards. Re-reading the path per compile could
-    /// only ever introduce absence or skew, never accuracy. (The mtime-keyed
+    /// <para>Holding it NARROWS the window to first resolution — it does not remove it. Once
+    /// resolved, the metadata is fixed for the process whatever happens to the file on disk
+    /// afterwards, and the loaded assembly is the one the compiled AL will bind against at run
+    /// time anyway, so re-reading the path per compile could only introduce absence or skew,
+    /// never accuracy. A transient that lands BEFORE the first compile still faults that
+    /// compile — loudly, by the throw below, which is the point. It is retryable rather than
+    /// terminal because the holder uses <c>PublicationOnly</c>; the default
+    /// <c>ExecutionAndPublication</c> would cache the exception and rethrow it on every later
+    /// compile even after the file returned. (The mtime-keyed
     /// <see cref="_metadataReferenceCache"/> stays as it is for every OTHER path: those really
     /// can point at different bytes after a <c>--bc-version</c> switch.)</para>
     /// </summary>
     internal static MetadataReference RunnerAssemblyReference => _runnerAssemblyReference.Value;
 
-    private static readonly Lazy<MetadataReference> _runnerAssemblyReference = new(() =>
-        MetadataReference.CreateFromFile(ResolveRunnerAssemblyPath(
-            typeof(BcAssembler).Assembly.Location, File.Exists)));
+    private static readonly Lazy<MetadataReference> _runnerAssemblyReference =
+        NewRunnerAssemblyReferenceHolder(() =>
+            MetadataReference.CreateFromFile(ResolveRunnerAssemblyPath(
+                typeof(BcAssembler).Assembly.Location, File.Exists)));
+
+    // PublicationOnly, not the Lazy<T> default. ExecutionAndPublication CACHES the factory's
+    // exception, so a single unreadable moment at the first compile of the process would make
+    // every later compile rethrow it for as long as the process lived — turning exactly the
+    // momentary condition #2880 points at into a permanent one, which is the opposite of what
+    // holding the reference is for. PublicationOnly retries on the next ask. It can run the
+    // factory concurrently and discard the losers; MetadataReference.CreateFromFile is safe to
+    // call that way, and a discarded duplicate costs one extra read of a file already in the
+    // page cache.
+    private static Lazy<MetadataReference> NewRunnerAssemblyReferenceHolder(
+        Func<MetadataReference> factory)
+        => new(factory, System.Threading.LazyThreadSafetyMode.PublicationOnly);
+
+    /// <summary>Test seam for <see cref="NewRunnerAssemblyReferenceHolder"/>.</summary>
+    internal static Lazy<MetadataReference> NewRunnerAssemblyReferenceHolderForTests(
+        Func<MetadataReference> factory) => NewRunnerAssemblyReferenceHolder(factory);
 
     /// <summary>Test seam for <see cref="ResolveRunnerAssemblyPath"/>.</summary>
     internal static string ResolveRunnerAssemblyPathForTests(string location, Func<string, bool> exists)

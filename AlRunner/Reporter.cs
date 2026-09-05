@@ -59,7 +59,32 @@ public static class Reporter
     /// exactly what it measured.</para>
     /// </summary>
     internal static bool IsSuspect(BucketResult b, TestResult t)
-        => IsPartialLoss(b) && t.Outcome is TestOutcome.Fail or TestOutcome.Error;
+        => IsPartialLoss(b)
+           && t.Outcome is TestOutcome.Fail or TestOutcome.Error
+           && !IsNamedCauseOfASuiteError(b, t);
+
+    /// <summary>
+    /// Whether this result is the CAUSE of one of the bucket's suite errors rather than one of
+    /// its casualties (#2880 review). In general the runner cannot tell the two apart — a module
+    /// that did not compile names no test. The watchdog case is the exception: the abort reason
+    /// names the codeunit and method that hung, and that result is the one thing in the run that
+    /// is definitely real. Marking it unverified would point the reader away from the only
+    /// genuine problem, which is the same argument that already keeps the <c>"kind": "suite"</c>
+    /// record in --out unmarked.
+    ///
+    /// <para>Both sides of the string go through
+    /// <see cref="Infrastructure.BundleFailureStage.AbortReasonHead"/>, so a reworded abort
+    /// reason cannot silently stop the exclusion applying without failing its round-trip test.
+    /// If it ever did, the failure mode is over-marking — the pre-review behaviour — not a real
+    /// failure hidden.</para>
+    /// </summary>
+    internal static bool IsNamedCauseOfASuiteError(BucketResult b, TestResult t)
+        => b.CompileErrors.Any(e =>
+            Infrastructure.BundleFailureStage.AbortReasonNamesTest(e, t.Codeunit, t.Method));
+
+    /// <summary>Whether anything in this bucket is marked — i.e. whether the notes that
+    /// introduce the marker have anything below them to introduce.</summary>
+    internal static bool HasSuspects(BucketResult b) => b.Tests.Any(t => IsSuspect(b, t));
 
     /// <summary>The inline marker, e.g. <c>[suspect — bucket lost 23 suite(s)]</c>.</summary>
     internal static string SuspectMarker(BucketResult b)
@@ -95,6 +120,12 @@ public static class Reporter
         int lostSuites = 0;
         // #2880: how many of the fail/error results below share a bucket with a suite error.
         int suspect = 0;
+        // …and how many suites those buckets lost. NOT `lostSuites`: with one bucket losing 23
+        // suites but passing everything and another losing 1 and failing twice, the run-wide
+        // total would make this line say "lost 24 suite(s)" while every per-result marker below
+        // said "bucket lost 1 suite(s)" — one marker quoting two different numbers, which is
+        // the defect the single IsSuspect predicate exists to prevent, one level up.
+        int suspectLostSuites = 0;
         TimeSpan emit = TimeSpan.Zero, comp = TimeSpan.Zero, run = TimeSpan.Zero;
         foreach (var b in buckets)
         {
@@ -106,6 +137,7 @@ public static class Reporter
                 partialBuckets.Add(b);
                 lostSuites += b.CompileErrors.Count;
             }
+            if (HasSuspects(b)) suspectLostSuites += b.CompileErrors.Count;
             foreach (var t in b.Tests)
             {
                 if (IsSuspect(b, t)) suspect++;
@@ -169,7 +201,7 @@ public static class Reporter
         if (suspect > 0)
         {
             w.WriteLine($"  suspect:     {suspect}  — these fail/error results are in bucket(s) "
-                + $"that also lost {lostSuites} suite(s).");
+                + $"that also lost {suspectLostSuites} suite(s).");
             w.WriteLine("               A missing object, or state an aborted suite left "
                 + "behind, makes unrelated tests");
             w.WriteLine("               fail — so treat them as UNVERIFIED: fix the suite "
@@ -320,10 +352,16 @@ public static class Reporter
                 // #2880: and the half that is easy to miss — the tests that DID run in this
                 // bucket can fail because of what the lost suites took with them. Said here, on
                 // the way in to the results, so the reader meets the caveat before the failures.
-                w.WriteLine("  → FAIL/ERROR results below are marked "
-                    + $"{SuspectMarker(b)}: a missing object, or state an aborted suite left "
-                    + "behind, makes unrelated tests fail — so they are UNVERIFIED until the "
-                    + "suite error above is fixed and the run repeats.");
+                //
+                // Only when there is something below to mark. A partial bucket whose survivors
+                // all passed has no marked result, and `visible.Count == 0` two lines down then
+                // skips the section entirely — so an ungated note announced a convention for
+                // results that were never printed.
+                if (HasSuspects(b))
+                    w.WriteLine("  → FAIL/ERROR results below are marked "
+                        + $"{SuspectMarker(b)}: a missing object, or state an aborted suite left "
+                        + "behind, makes unrelated tests fail — so they are UNVERIFIED until the "
+                        + "suite error above is fixed and the run repeats.");
             }
             // Skip silent buckets — only emit a per-bucket header if there's anything to show.
             var visible = b.Tests.Where(t => showPass || t.Outcome != TestOutcome.Pass).ToList();

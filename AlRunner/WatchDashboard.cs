@@ -157,9 +157,15 @@ public static class WatchDashboard
                 // — an object the lost suite declared makes an unrelated test fail. --watch has
                 // no exit code and no summary to scroll to, so a red FAIL node beside a red
                 // SUITE ERRORS node otherwise reads as two independent problems.
-                lostNode.AddNode(
-                    "[red]FAIL/ERROR nodes in this bucket are marked suspect: they may be "
-                    + "collateral, not real failures[/]");
+                //
+                // Gated on there actually being a marked node, for the same reason as
+                // Reporter.PrintPerTest's copy: a partial bucket whose survivors all passed has
+                // nothing marked, and a node announcing a convention nothing below it uses is
+                // noise on the one surface that has no summary to correct it.
+                if (Reporter.HasSuspects(b))
+                    lostNode.AddNode(
+                        "[red]FAIL/ERROR nodes in this bucket are marked suspect: they may be "
+                        + "collateral, not real failures[/]");
             }
 
             // Group this bucket's tests by codeunit so each codeunit is one parent node.

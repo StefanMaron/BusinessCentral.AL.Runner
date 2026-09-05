@@ -92,6 +92,34 @@ public sealed class RunnerAssemblyReferenceTests
     }
 
     /// <summary>
+    /// A transient must stay transient. Review of #2898 found the held reference behind a plain
+    /// <c>Lazy&lt;T&gt;</c>, whose default <c>ExecutionAndPublication</c> mode CACHES the
+    /// factory's exception: one unreadable moment at the first compile of the process would make
+    /// every later compile rethrow it, long after the file came back. That converts the exact
+    /// momentary condition #2880 points at into a permanent one — the opposite of the fix.
+    /// <c>PublicationOnly</c> retries instead, which is asserted here as behaviour rather than
+    /// as the value of an enum.
+    /// </summary>
+    [Fact]
+    public void RunnerAssemblyReferenceHolder_AfterATransientFailure_RetriesInsteadOfCachingIt()
+    {
+        int calls = 0;
+        var holder = BcAssembler.NewRunnerAssemblyReferenceHolderForTests(() =>
+        {
+            calls++;
+            if (calls == 1) throw new IOException("the file is being replaced right now");
+            return Microsoft.CodeAnalysis.MetadataReference.CreateFromFile(
+                typeof(BcAssembler).Assembly.Location);
+        });
+
+        Assert.Throws<IOException>(() => _ = holder.Value);
+        var second = holder.Value;          // the file came back — so must the reference
+        Assert.NotNull(second);
+        Assert.Same(second, holder.Value);  // and once resolved it is held, as before
+        Assert.Equal(2, calls);
+    }
+
+    /// <summary>
     /// The loud-failure half (.claude/rules/loud-failures.md). A mandatory reference that cannot
     /// be resolved must say so, naming the assembly and what it would have broken — not fall
     /// through to 24 CS0400s in a generated file the reader has never seen.
