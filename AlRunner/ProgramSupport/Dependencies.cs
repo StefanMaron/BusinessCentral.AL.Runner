@@ -601,36 +601,28 @@ internal static partial class ProgramSupport
                 // the process, and a normal run hashes these same packages anyway for the
                 // bc-symbols key — so for the packages that reach both, this is a
                 // dictionary lookup. For the rest it is one SHA-256 pass over bytes the
-                // run reads regardless (measured on this machine: 122 MB of platform .apps
-                // in ~0.08 s warm). The stat was cheaper per call and answered a different
-                // question.
+                // run reads regardless. Order of magnitude, from a standalone streaming
+                // SHA-256 over the six .app files in ~/.al-runner/platform-apps (122 MB)
+                // on a page-cache-warm dev box, best of three: ~0.07 s. That is a rough
+                // bound on the added work, not a measurement of the runner. The stat was
+                // cheaper per call and answered a different question.
                 //
                 // It also strictly IMPROVES the hit rate in the safe direction, the same
                 // finding #1815/#1820 made one cache layer over: a byte-identical package
                 // re-downloaded or re-copied with a fresh mtime used to MISS
                 // unconditionally, and now HITs.
-                .Select(d =>
-                {
-                    // ComputeAppContentHash answers "unknown" for a missing/empty path
-                    // rather than throwing. Letting that through would put every
-                    // unhashable dependency under one shared term, which is the same
-                    // collision one level down — so make it loud instead: the throw lands
-                    // in the catch below, which prints and keys on the failure so this
-                    // bundle cannot share a cache entry with a resolvable one. A package
-                    // the resolver just read a manifest out of is expected to be hashable;
-                    // if it is not, the compile is about to fail on it anyway.
-                    var hash = AlRunner.Patches.BcAppSymbolCache.ComputeAppContentHash(d.AppPath);
-                    if (hash == "unknown")
-                        throw new IOException(
-                            $"resolved dependency package '{d.AppPath}' could not be hashed for the "
-                            + "AL-output cache key (missing or unreadable at hash time)");
-                    return $"{d.Manifest.AppId:N}:{d.Manifest.Version}:sha256:{hash}";
-                })
+                .Select(d => $"{d.Manifest.AppId:N}:{d.Manifest.Version}:{DependencyContentTerm(d.AppPath)}")
                 .OrderBy(s => s, StringComparer.Ordinal)
                 .ToList();
         }
         catch (Exception ex)
         {
+            // Reached only when RESOLUTION itself failed — there is no dependency list to
+            // speak of, so collapsing to a single term costs no per-dependency information.
+            // A per-dependency problem must NEVER arrive here: DependencyContentTerm handles
+            // its own failures precisely so that one unhashable package cannot erase every
+            // other dependency's identity (see its comment).
+            //
             // Never collapse to "no deps": an empty list is indistinguishable from a bundle
             // that genuinely has none, so two different closures would share a key and the
             // cache would hand back the wrong DLL. Fold the failure itself into the key
@@ -642,6 +634,83 @@ internal static partial class ProgramSupport
                 $"bundle cannot share a cache entry with a resolvable one.");
             return new[] { $"unresolved:{ex.GetType().Name}:{ex.Message}" };
         }
+    }
+
+    /// <summary>
+    /// The content half of one resolved dependency's cache-key term: <c>sha256:&lt;hash of the
+    /// package's bytes&gt;</c>, or — when the package cannot be hashed — a degraded term naming
+    /// that ONE package.
+    ///
+    /// <para><b>Why this never throws.</b> An earlier revision of #2754 threw here, letting the
+    /// caller's catch key the whole bundle on <c>unresolved:&lt;exception&gt;</c>. That is
+    /// strictly worse than what it replaced. The pre-#2754 code degraded the single bad term to
+    /// <c>"?"</c> and kept every other dependency's stamp; collapsing the LIST discards them
+    /// all, so a run where package X is unhashable and package Y has changed content produces
+    /// the same string — an exception type and message, both deterministic across runs — as the
+    /// run before it. Identical string, identical key, HIT, and the DLL compiled against Y's
+    /// previous bytes gets served. It also inherited the exact property #2754 exists to remove:
+    /// a term whose comment claimed it "simply cannot HIT" while in fact hitting reliably.</para>
+    ///
+    /// <para><b>Why "cannot hash" is not "about to fail the compile".</b>
+    /// RunnerFingerprint.ComputeContentHash answers <c>"unknown"</c> for an empty or NON-EXISTENT
+    /// path, and the resolver read this very package's manifest moments earlier — so reaching
+    /// that branch means a time-of-check/time-of-use window, not a broken package. A package
+    /// that vanished and came back would not fail the compile at all. (The manifest read can
+    /// itself be served from AppLoader's on-disk index without opening the file, so "the
+    /// resolver saw it" does not even imply the bytes were readable.)</para>
+    ///
+    /// <para><b>The degraded term.</b> Full path plus whatever the filesystem will still say —
+    /// mtime+size when a stat succeeds, <c>absent</c> when it does not. The path is what the
+    /// pathless <c>sha256:</c> term deliberately omits (that omission is what lets byte-identical
+    /// packages in different directories share a cache entry); here it is wanted, because a
+    /// term that cannot describe content should at least move when the package moves. mtime+size
+    /// makes the degraded term no less discriminating than the pre-#2754 stamp was for EVERY
+    /// dependency.</para>
+    ///
+    /// <para><b>Residual, stated rather than papered over.</b> A package that is unhashable on
+    /// two consecutive runs AND whose content changes between them without changing path, size
+    /// or mtime is still not distinguished — the pre-#2754 exposure, now narrowed to packages
+    /// the runner could not read at all. Closing it means not claiming a cache identity for such
+    /// a run at all (a "do not cache this run" signal threaded out to the cache gate), which is
+    /// a wider change than this one and is tracked on #2846. It is not closed by anything
+    /// cheaper here: a per-run nonce would force a MISS, but it would also be a code path no
+    /// test in this repo can construct, and an untestable branch is what this method exists to
+    /// stop shipping.</para>
+    /// </summary>
+    private static string DependencyContentTerm(string appPath)
+    {
+        string failure;
+        try
+        {
+            var hash = AlRunner.Patches.BcAppSymbolCache.ComputeAppContentHash(appPath);
+            if (hash != "unknown") return $"sha256:{hash}";
+            failure = "missing or empty at hash time";
+        }
+        catch (Exception ex)
+        {
+            failure = $"{ex.GetType().Name}: {ex.Message}";
+        }
+
+        string fullPath;
+        try { fullPath = Path.GetFullPath(appPath); }
+        catch { fullPath = appPath; }
+
+        var stamp = "absent";
+        try
+        {
+            var fi = new FileInfo(fullPath);
+            if (fi.Exists) stamp = $"{fi.LastWriteTimeUtc.Ticks}:{fi.Length}";
+        }
+        catch { /* the stat failed too — "absent" is the honest answer, not a guess */ }
+
+        // Loud, because the cache is now keying this dependency on something weaker than its
+        // content and nothing else in the run would say so.
+        Console.Error.WriteLine(
+            $"  [cache] could not hash dependency package '{fullPath}' for the AL-output cache " +
+            $"key ({failure}) — keying it on path+stat instead. Every OTHER dependency keeps its "
+            + "content hash; this one is only as precise as its mtime and size.");
+
+        return $"unhashable:{fullPath}:{stamp}";
     }
 }
 
