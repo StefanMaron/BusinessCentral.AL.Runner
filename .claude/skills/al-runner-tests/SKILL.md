@@ -94,6 +94,41 @@ Today the reporter prints raw PASS / FAIL / ERROR per test plus aggregate counts
 
 Drift is loud in every direction: a test passing despite an entry fails with "remove the entry"; a test raising an OOS signal without an entry fails with "add an entry"; a wrong or near-miss `Reason` still fails. See `docs/expectations.md`.
 
+## If a run dies with no output (exit 139 / 134)
+
+An exit of 139 is SIGSEGV and 134 is SIGABRT — the process was killed by a signal, so there
+is no managed stack, no test result and usually nothing in the log but the missing output.
+#2819 is one such corpus run: it died seconds in, before any test reported, and four further
+runs of the same tree finished 2523/2523.
+
+**Do not re-run hoping to see it again.** A rare crash re-run without dump capture produces
+another sighting and no evidence, and on a shared box it costs everyone else queue time.
+
+Capture a dump instead. Set these before the run and the next fault leaves something to read:
+
+```bash
+export DOTNET_DbgEnableMiniDump=1
+export DOTNET_DbgMiniDumpType=2          # heap; see below on why not 4
+export DOTNET_DbgMiniDumpName="$PWD/crash-dumps/coredump.%p"
+mkdir -p crash-dumps                     # createdump does NOT create this itself
+```
+
+Verified locally on .NET 8: a real `SIGSEGV` (`signal 11`) is caught and written, not only a
+managed `AccessViolationException`. `createdump` prints `Writing minidump with heap to file
+…` on the dying process's stderr, so its absence tells you the settings did not take.
+
+`DOTNET_DbgMiniDumpType=4` is full memory. Measured: type 2 on a trivial hello-world process
+is already ~127 MB, and it scales with committed memory — a runner with BC loaded is measured
+in GB. Type 2 carries the faulting native stack, the module list and the managed heap, which
+is what the first read of an unexplained crash needs. Reach for 4 only when 2 has been read
+and found wanting.
+
+CI sets all three at job level in `.github/workflows/bc-tests.yml` and uploads anything
+produced as `crash-dumps-<bc-version>`, so a crash on any leg leaves an artifact rather than
+an exit code.
+
+Read one with `dotnet-dump analyze <file>` (`clrstack`, `clrmodules`, `eeversion`).
+
 ## Proving-test rules
 
 A skeptic must be able to read any test and say: "yes, if this passes, feature X works correctly." Every test satisfies all four:

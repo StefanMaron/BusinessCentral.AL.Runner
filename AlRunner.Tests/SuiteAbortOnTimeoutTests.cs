@@ -275,6 +275,49 @@ public sealed class SuiteAbortOnTimeoutTests : IDisposable
             .ToList();
 
     /// <summary>
+    /// The precondition every assertion in the two resume tests rests on: the fixture's
+    /// <c>Hangs</c> test really did hang, the per-test watchdog really did fire, and that really
+    /// did escalate to a suite abort.
+    ///
+    /// It is asserted separately, and first, because when it does NOT hold the consequences fail
+    /// in a shape that describes the wrong problem. On CI (issue #2801, seen on BC 28.4 across
+    /// two unrelated PRs) these tests failed as a bare collection diff —
+    /// <c>Expected ["Hangs","RanBeforeHang"]</c> vs <c>Actual [... ,"SecondA","SecondB"]</c> —
+    /// and as a missing <c>resume:</c> line. Both reduce to one fact: <c>Hangs</c> did not report
+    /// <c>TimedOut</c>, so <c>TestExecutor</c> never took its abort path
+    /// (<c>if (IsTimeout(raw)) { RecordAbortedSuite(...); return results; }</c>), so the run
+    /// carried on into the second codeunit AND there was nothing for a resume to resume.
+    ///
+    /// What made <c>Hangs</c> fail to time out on those legs is NOT established. Anything that
+    /// makes it fail FAST instead of hanging produces exactly this shape, and #2801 stays open on
+    /// that question — this method does not fix the flake, it makes the next occurrence say what
+    /// happened instead of nothing.
+    ///
+    /// The whole runner output goes into the failure message on purpose: the assertions below
+    /// compare name lists and discard <c>output</c>, which is why the CI failures carried no
+    /// evidence at all. xUnit truncates its own previews, so <c>Assert.Contains</c> is not enough
+    /// here.
+    /// </summary>
+    private static void AssertHangEscalatedToAbort(string output, int timeoutSeconds)
+    {
+        var timedOut = $"Test exceeded {timeoutSeconds}s timeout.";
+        Assert.True(output.Contains(timedOut, StringComparison.Ordinal),
+            $"PRECONDITION FAILED: the fixture's Hangs test never hit the {timeoutSeconds}s per-test "
+            + $"watchdog, so \"{timedOut}\" is absent. Nothing asserted after this point is "
+            + "interpretable: with no timeout there is no suite abort, so the run continues into "
+            + "the next codeunit and no resume is triggered. This is issue #2801, and the cause of "
+            + "the missing timeout is still unknown — see it before reading the run below as a "
+            + "resume/JUnit defect."
+            + "\n--- runner output ---\n" + output);
+
+        Assert.True(output.Contains("SUITE ABORTED", StringComparison.Ordinal),
+            "PRECONDITION FAILED: Hangs timed out but TestExecutor did not escalate it to a suite "
+            + "abort, so the rest of the run was never abandoned. That is a different defect from "
+            + "the timeout not firing at all, and it is the half #2801 has never observed."
+            + "\n--- runner output ---\n" + output);
+    }
+
+    /// <summary>
     /// #2716 positive: after a watchdog resume, --output-junit must hold the WHOLE run — the
     /// earlier attempt's cases (RanBeforeHang, Hangs) as well as the final attempt's (SecondA,
     /// SecondB). The worker's own printed summary already said "4 total (carried: 2)"; the XML
@@ -292,6 +335,9 @@ public sealed class SuiteAbortOnTimeoutTests : IDisposable
             "--test-timeout 2", "--resume-aborts 1", $"--output-junit \"{junit}\"");
 
         Assert.NotEqual(0, exit);
+        // Before anything resume-specific: did the hang hang, and did that abort the suite?
+        // Without this the failure below reads as a resume defect when it is not one (#2801).
+        AssertHangEscalatedToAbort(output, timeoutSeconds: 2);
         // Sanity: the resume really happened, and the printed summary already carried attempt 1.
         Assert.Contains("resume: a watchdog abort ended this attempt early", output);
         Assert.Contains("carried from earlier attempt(s): 2 tests", output);
@@ -465,11 +511,16 @@ public sealed class SuiteAbortOnTimeoutTests : IDisposable
             "--test-timeout 2", "--resume-aborts 0", $"--output-junit \"{junit}\"");
 
         Assert.NotEqual(0, exit);
+        AssertHangEscalatedToAbort(output, timeoutSeconds: 2);
         Assert.DoesNotContain("resume: a watchdog abort ended this attempt early", output);
         Assert.DoesNotContain("carried from earlier attempt(s)", output);
 
         var names = TestCases(junit).Select(c => c.Name).OrderBy(n => n).ToList();
-        Assert.Equal(new[] { "Hangs", "RanBeforeHang" }, names);
+        Assert.True(names.SequenceEqual(new[] { "Hangs", "RanBeforeHang" }),
+            "JUnit must hold exactly attempt 1's two cases. Got: ["
+            + string.Join(", ", names) + "]. With --resume-aborts 0 the abort ends the run, so "
+            + "SecondA/SecondB appearing here means the run continued past the hang."
+            + "\n--- runner output ---\n" + output);
         var totals = JUnitCounts.Read(junit);
         Assert.Equal(2, totals.Tests);
         Assert.Equal(1, totals.Errors);
