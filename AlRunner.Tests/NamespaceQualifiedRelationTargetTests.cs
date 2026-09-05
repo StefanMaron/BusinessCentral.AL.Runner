@@ -199,7 +199,7 @@ public class NamespaceQualifiedRelationTargetTests
 
     private static string NewDir()
     {
-        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.Dir("al-runner-namespace-qualified-relation-tests");
         Directory.CreateDirectory(dir);
         return dir;
     }
