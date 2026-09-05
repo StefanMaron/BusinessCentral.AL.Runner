@@ -2091,17 +2091,69 @@ internal static class TestPageNumericValue
 
 internal static class TestPageBooleanValue
 {
+    /// <summary>
+    /// How a Boolean control RENDERS. Issue #2795: real BC answers "Yes"/"No", measured on all
+    /// eight BC legs of the corpus CI (27.0 through 28.4, run 33967745688 on corpus PR #150 —
+    /// <c>Actual:&lt;Yes&gt;</c> on every failing leg, no other value anywhere in the run) and
+    /// pinned upstream by <c>BooleanFieldControl_ReadsAsYesOrNo</c>. The runner answered
+    /// <c>Convert.ToString(bool)</c>, i.e. "True"/"False".
+    ///
+    /// <para>Read through by BOTH <see cref="LiveNavTestField"/> (a Rec-bound control) and
+    /// <see cref="PageVariableTestField"/> (a page-global one), the same pairing
+    /// <see cref="TestPageNumericValue"/> and <see cref="TestPageOptionValue"/> already use, so
+    /// neither binding shape can drift from the other.</para>
+    ///
+    /// <para>It is also what <c>ValueToString</c> must answer, and that is not a nicety.
+    /// <c>NavTestField.ALAssertEquals</c> — BC's own precompiled method — converts a non-string
+    /// expected value through <c>testField.ValueToString</c> and then compares it ORDINALLY
+    /// against the control's value:</para>
+    /// <code>
+    ///   value = NavValue.CreateNavValueFromObject(NavValueMetadata.DefaultMetadata(testField.FieldType), value);
+    ///   text  = testField.ValueToString(value.ClientObject);
+    ///   if (string.CompareOrdinal(ALValue, text) != 0) throw ...
+    /// </code>
+    /// <para>So changing the getter alone would have broken every
+    /// <c>AssertEquals(&lt;Boolean&gt;)</c> — "Yes" against "True" — which passes today only
+    /// because both halves are wrong in the same way.</para>
+    /// </summary>
+    internal static string? Format(NavValue? navValue)
+        => navValue is NavBoolean b
+            ? (Convert.ToBoolean(b.ClientObject, CultureInfo.InvariantCulture) ? "Yes" : "No")
+            : null;
+
+    /// <summary>The same rendering for an already-unwrapped CLR value, as ValueToString sees it.</summary>
+    internal static string? FormatObject(object? value)
+        => value is bool b ? (b ? "Yes" : "No") : null;
+
+    /// <summary>
+    /// The inverse: the text a TestPage write carries, back to a Boolean.
+    ///
+    /// Accepts BOTH spellings, deliberately. "Yes"/"No" is what <c>ValueToString</c> now
+    /// produces, so <c>SetValue(&lt;Boolean&gt;)</c> round-trips through it (see the chain in
+    /// <c>NavTestField.ALSetValue</c> — a non-string value goes out through
+    /// <c>ValueToString</c> and comes back in through this). "True"/"False" is kept because it
+    /// is the spelling AL's own <c>Evaluate</c> accepts for a Boolean, and because a test
+    /// writing it works on this runner today — removing it would be a silent regression of a
+    /// working surface in the name of fixing an unrelated one.
+    ///
+    /// Which of the two real BC accepts on THIS surface is a genuine BC question rather than a
+    /// derivation, and it is in front of a service tier as
+    /// <c>TestPageField_SetValue_TrueFalseSpelling_IsAlsoAccepted</c> in the corpus suite that
+    /// accompanies this fix. Anything else still refuses loudly rather than guessing.
+    /// </summary>
     internal static NavValue Resolve(string value, string context)
     {
         if (string.Equals(value, "True", StringComparison.OrdinalIgnoreCase)) return NavBoolean.Create(true);
         if (string.Equals(value, "False", StringComparison.OrdinalIgnoreCase)) return NavBoolean.Create(false);
+        if (string.Equals(value, "Yes", StringComparison.OrdinalIgnoreCase)) return NavBoolean.Create(true);
+        if (string.Equals(value, "No", StringComparison.OrdinalIgnoreCase)) return NavBoolean.Create(false);
 
         throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
             context,
-            $"testpage-boolean-value — '{value}' is neither 'True' nor 'False'. Only the exact "
-            + "round-trip spelling TestPage SetValue(Boolean) itself produces is supported here; "
-            + "arbitrary text-to-Boolean spellings ('Yes'/'No', locale forms, ...) are a separate, "
-            + "not-yet-implemented surface. See docs/scope.md");
+            $"testpage-boolean-value — '{value}' is none of 'Yes', 'No', 'True' or 'False'. Those "
+            + "are the spellings a TestPage Boolean write is known to carry; other text-to-Boolean "
+            + "forms (locale spellings, ...) are a separate, not-yet-implemented surface. "
+            + "See docs/scope.md");
     }
 }
 
@@ -2175,6 +2227,8 @@ internal sealed class LiveNavTestField : ITestField
                    ? TestPageOptionValue.Display(option, OptionCaptions())
                    : null)
                ?? TestPageNumericValue.Format(_record.GetFieldValue(_fieldNo) as NavValue)
+               // #2795: "Yes"/"No", not Convert.ToString's "True"/"False".
+               ?? TestPageBooleanValue.Format(_record.GetFieldValue(_fieldNo) as NavValue)
                ?? Convert.ToString(ObjectValue, CultureInfo.InvariantCulture)
                ?? string.Empty;
         set
@@ -2340,6 +2394,10 @@ internal sealed class LiveNavTestField : ITestField
     // 'Pending Approval' and report a mismatch for the value the record actually held.
     public string ValueToString(object? value)
         => TestPageOptionValue.DisplayOrdinal(CurrentOption(), value, OptionCaptions())
+           // #2795: BC's ALAssertEquals converts the EXPECTED value through here and compares it
+           // ordinally against the control's Value, so this has to answer with the same word the
+           // getter above does or AssertEquals(<Boolean>) can never match.
+           ?? TestPageBooleanValue.FormatObject(value)
            ?? Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty;
 
     // AL that walks an option set (building a picker, asserting the members a field offers) got
@@ -2403,6 +2461,8 @@ internal sealed class PageVariableTestField : ITestField
                    ? TestPageOptionValue.Display(option, _page.TryGetOptionCaptions(_controlId, option))
                    : null)
                ?? TestPageNumericValue.Format(RunnerPageInstance.GetValue(_expression))
+               // #2795: the page-global half of the same rule — see TestPageBooleanValue.Format.
+               ?? TestPageBooleanValue.Format(RunnerPageInstance.GetValue(_expression))
                ?? Convert.ToString(ObjectValue, CultureInfo.InvariantCulture)
                ?? string.Empty;
         set
@@ -2525,6 +2585,8 @@ internal sealed class PageVariableTestField : ITestField
     public string ValueToString(object? value)
         => TestPageOptionValue.DisplayOrdinal(CurrentOption(), value,
                CurrentOption() is { } option ? _page.TryGetOptionCaptions(_controlId, option) : null)
+           // #2795: the page-global half of the same rule — see the Rec-bound sibling above.
+           ?? TestPageBooleanValue.FormatObject(value)
            ?? Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty;
     public string GetOption(int index)
         => CurrentOption() is { } option
