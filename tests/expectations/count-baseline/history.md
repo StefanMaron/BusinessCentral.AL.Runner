@@ -512,3 +512,13 @@ not computed. appGroups is unchanged: every new test joined the single existing 
 group, and al-language carries no byBcVersion override -- CI's eight legs confirm whether one is
 needed. Only the al-language number moved here; the runner-extras values are main's, taken
 unmodified through a rebase conflict in this file.
+
+The runner-extras `session-user-row` group (4 tests, issue #2296) is a new bundle: the runner
+seeds its own session user into the User system table (2000000120), and the suite pins that the
+row exists with the identity BcRuntime put on the skeleton NavSession, that it carries the User
+Property (2000000121) companion row BC creates alongside every user, that a TableRelation to
+User."User Security ID" accepts UserSecurityId(), and -- the negative control -- that a security
+id belonging to no user is still refused. Measured on an actual run (BC 28.1.49838.53910):
+268 tests across 51 app groups, up from 264/50. No `absentOn`: the bundle declares
+`"platform": "27.0.0.0"`, names only System-application tables that exist on 27.0 and carries no
+preprocessor gating, so it contributes the same 4 tests on every leg.

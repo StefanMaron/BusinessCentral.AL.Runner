@@ -42,6 +42,7 @@
         "server-multibundle-main": { "tests": 4 },
         "server-reload-dep": { "tests": 0 },
         "server-reload-main": { "tests": 1 },
+        "session-user-row": { "tests": 4 },
         "standalone-suites": { "tests": 108 },
         "static-runmodal-record": { "tests": 5 },
         "table-connection-live-oos": { "tests": 2 },
