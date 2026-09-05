@@ -126,7 +126,12 @@ internal static partial class BcAppSymbolCache
     // Account") would then be served from a plain temp store instead of BC's own
     // CrmTestDataProvider through the registered test connection. A wrong answer replayed
     // from cache rather than a cache miss, so this needs the bump.
-    private const int CacheVersion = 25;
+    // v26: ParsedField gained RelationArms / RelationValidate (#2528) — a precompiled table's
+    // TableRelation, re-parsed from the SymbolReference.json property text. A v25 payload
+    // deserialises them as null/true, which reads as "this field has no relation": FieldRef.Relation
+    // answers 0 and Validate() accepts a value with no matching related row. That is a wrong ANSWER
+    // replayed from cache rather than a cache miss, so it needs the bump.
+    private const int CacheVersion = 26;
     private static readonly ConcurrentDictionary<string, AppSymbols> ProcessCache = new(StringComparer.OrdinalIgnoreCase);
     // Issue #1820 — path -> content-hash memo. ComputeAppContentHash needs to read the
     // WHOLE .app to hash it (unlike the FileInfo.Length/LastWriteTimeUtc stat it replaced,
@@ -1337,8 +1342,21 @@ internal static partial class BcAppSymbolCache
                     && (autoIncrement == "1" || autoIncrement.Equals("true", StringComparison.OrdinalIgnoreCase));
                 props.TryGetValue("MinValue", out var minValue); // #2495
                 props.TryGetValue("MaxValue", out var maxValue);
+                // #2528 — TableRelation, re-parsed from the property TEXT the same way
+                // CalcFormula above is. Without this every field of every PRECOMPILED table
+                // reported FieldRef.Relation = 0 and Validate() skipped the relation check, so
+                // `Customer.Validate("Currency Code", 'NOSUCHCUR')` silently ACCEPTED a value
+                // real BC refuses. 7,787 Base Application fields carry one.
+                // ValidateTableRelation = "0" turns the check off while leaving the relation
+                // itself readable (Customer.City is exactly that shape), so the two properties
+                // are read independently — matching the AL-source path's own two lines.
+                props.TryGetValue("TableRelation", out var tableRelation);
+                var relationArms = RecordPatches.TryParseRelationArmsText(tableRelation, fieldName);
+                var relationValidate = !(props.TryGetValue("ValidateTableRelation", out var vtr)
+                    && (vtr == "0" || vtr.Equals("false", StringComparison.OrdinalIgnoreCase)));
                 fields.Add(new ParsedField(fieldId, fieldName, typeName, SymbolTypeLength(typeName), isFlowField, calcFormula,
                     optionMembers, initValue, isAutoIncrement, IsFlowFilter: isFlowFilter,
+                    RelationArms: relationArms, RelationValidate: relationValidate,
                     MinValue: minValue, MaxValue: maxValue));
             }
         }
