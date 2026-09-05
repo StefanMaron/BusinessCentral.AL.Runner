@@ -715,6 +715,89 @@ public static partial class NclCecilRewrite
             }
         }
 
+        // ── NavDotNet.InvokeStaticPropertyGet<T>: answer the [RunOnClient] IsAvailable probe ──
+        // #2772. AL `SomeClientVar.IsAvailable()` on a [RunOnClient] DotNet variable compiles
+        // to `navDotNet.InvokeStaticPropertyGet<bool>("IsAvailable", methodIndex)`, whose first
+        // act is CheckTypeIsLoaded() → Session.ClientCallback.CreateDotNetHandle(...) →
+        // NavNCLCallbackNotAllowedException on a session with no client. The probe exists so AL
+        // can ask "can I use this here?" WITHOUT raising, and all 17 shipped call sites use it
+        // as the condition of an `if` — so raising turns "no client here" into a test failure
+        // (page 9042 "Team Member Activities".OnOpenPage, page 189 "Incoming Document".OnOpenPage
+        // via System App codeunit 1907 "Camera"). Full faithfulness argument, and the list of
+        // client-side surfaces that deliberately keep raising, in
+        // NavDotNetPatches.IsUnavailableClientCapabilityProbe's doc comment.
+        //
+        // Prepended as a guarded early return; BC's original body and every branch target in it
+        // are untouched, so any call that is not the boolean `IsAvailable` probe on a
+        // [RunOnClient] variable behaves exactly as before:
+        //     ldarg.0                                  // this
+        //     ldfld  bool NavDotNet::runOnClient
+        //     ldarg.1                                  // propertyName
+        //     ldtoken !!T ; call Type::GetTypeFromHandle
+        //     call   bool NavDotNetPatches::IsUnavailableClientCapabilityProbe(bool,string,Type)
+        //     brfalse <original first instruction>
+        //     ldc.i4.0 ; box bool ; unbox.any !!T ; ret
+        // The box/unbox.any round trip is what makes the constant well-typed inside a generic
+        // method; the predicate returns true only when T is bool, so unbox.any never sees
+        // another instantiation.
+        {
+            var navDotNetType = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.NavDotNet")
+                ?? throw new InvalidOperationException(
+                    "[Cecil] type NavDotNet not found — Ncl shape changed; do not commit (#2772)");
+            // The 2-parameter overload is the parameterless property get. The 3-parameter
+            // (params object[] dimensions) overload is for INDEXED properties and can never be
+            // the IsAvailable probe, so it is deliberately left alone.
+            var mProbe = navDotNetType.Methods.FirstOrDefault(x =>
+                    x.Name == "InvokeStaticPropertyGet"
+                    && x.HasGenericParameters && x.GenericParameters.Count == 1
+                    && x.Parameters.Count == 2
+                    && x.Parameters[0].ParameterType.FullName == "System.String"
+                    && x.Parameters[1].ParameterType.FullName == "System.UInt32")
+                ?? throw new InvalidOperationException(
+                    "[Cecil] NavDotNet.InvokeStaticPropertyGet<T>(string, uint) not found — "
+                    + "Ncl shape changed; do not commit (#2772)");
+            var runOnClientField = navDotNetType.Fields.FirstOrDefault(
+                    f => f.Name == "runOnClient" && f.FieldType.FullName == "System.Boolean")
+                ?? throw new InvalidOperationException(
+                    "[Cecil] NavDotNet.runOnClient (bool) not found — Ncl shape changed; "
+                    + "do not commit (#2772)");
+
+            var probeMi = typeof(AlRunner.Patches.NavDotNetPatches).GetMethod(
+                    nameof(AlRunner.Patches.NavDotNetPatches.IsUnavailableClientCapabilityProbe),
+                    BindingFlags.Public | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "[Cecil] NavDotNetPatches.IsUnavailableClientCapabilityProbe not found — do not commit");
+            var probeRef = asm.MainModule.ImportReference(probeMi);
+            var getTypeFromHandleRef = asm.MainModule.ImportReference(
+                typeof(Type).GetMethod(nameof(Type.GetTypeFromHandle),
+                    BindingFlags.Public | BindingFlags.Static)!);
+            var boolTypeRef = asm.MainModule.TypeSystem.Boolean;
+            var tRef = mProbe.GenericParameters[0];
+
+            var body = mProbe.Body;
+            var il = body.GetILProcessor();
+            var first = body.Instructions[0];
+            foreach (var instr in new[]
+            {
+                il.Create(OpCodes.Ldarg_0),
+                il.Create(OpCodes.Ldfld, runOnClientField),
+                il.Create(OpCodes.Ldarg_1),
+                il.Create(OpCodes.Ldtoken, tRef),
+                il.Create(OpCodes.Call, getTypeFromHandleRef),
+                il.Create(OpCodes.Call, probeRef),
+                il.Create(OpCodes.Brfalse, first),
+                il.Create(OpCodes.Ldc_I4_0),
+                il.Create(OpCodes.Box, boolTypeRef),
+                il.Create(OpCodes.Unbox_Any, tRef),
+                il.Create(OpCodes.Ret),
+            })
+                il.InsertBefore(first, instr);
+            body.MaxStackSize = Math.Max(body.MaxStackSize, 3);
+            Console.Error.WriteLine(
+                "[Cecil] Prepended IsAvailable client-probe guard to "
+                + "NavDotNet.InvokeStaticPropertyGet<T>(string, uint)");
+        }
+
         // ALNumberSequence — runner-emitted AL calls the synchronous entry points, while
         // precompiled Microsoft apps call the async entry points directly. Rewrite both
         // public surfaces so neither can reach SQL and both observe the same store.
@@ -889,6 +972,11 @@ public static partial class NclCecilRewrite
         // NavNCLDotNetCreateException (which is trappable and would be silently swallowed
         // by TryInvokeAsync → TryInitializeFromCurrentApp returns false with no OOS signal).
         set.Add("Microsoft.Dynamics.Nav.Runtime.NavDotNet::CreateDotNet/1");
+        // NavDotNet.InvokeStaticPropertyGet<T>(string, uint) — guarded early return so the
+        // `IsAvailable` probe on a [RunOnClient] DotNet variable answers false instead of
+        // raising NavNCLCallbackNotAllowedException out of CheckTypeIsLoaded (#2772). Every
+        // other call runs BC's original body; every other client-side surface still raises.
+        set.Add("Microsoft.Dynamics.Nav.Runtime.NavDotNet::InvokeStaticPropertyGet/2");
         // ALTaskScheduler cluster (scope.md §3.6, #1733) — CanCreateTask/ALCanCreateTask
         // rewritten to return false (no scheduler headlessly) and CheckCodeUnit no-op'd so
         // ALCreateTaskAsync's real body reaches that CanCreateTask gate instead of throwing
