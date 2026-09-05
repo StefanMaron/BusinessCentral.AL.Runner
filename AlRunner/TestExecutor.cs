@@ -438,6 +438,7 @@ public sealed class TestExecutor
         {
             CompanyInitializer.ResetForNewBundle();
             AlRunner.Patches.RecordPatches.ResetCompanySystemTableForNewBundle();
+            AlRunner.Patches.RecordPatches.ResetUserSystemTableForNewBundle();
         }
         using (AlRunner.Infrastructure.PhaseLog.AppStage("install-seed-set-test-assembly"))
             InstallTriggerRunner.SetTestAssembly(assembly);
@@ -591,6 +592,13 @@ public sealed class TestExecutor
         // added after it would survive only until the first codeunit boundary.
         using (AlRunner.Infrastructure.PhaseLog.AppStage("install-seed-company-row"))
             AlRunner.Patches.RecordPatches.EnsureCompanySystemTableRowSeeded();
+        // #2296 — the session user's own row in the User system table. Same ordering constraint
+        // as the Company row above and for the same reason: the per-codeunit restore puts the
+        // store back to the baseline captured below, so a row added after it would survive only
+        // until the first codeunit boundary. Without it every TableRelation pointing at
+        // User."User Security ID" refuses the id UserSecurityId() itself returns.
+        using (AlRunner.Infrastructure.PhaseLog.AppStage("install-seed-user-row"))
+            AlRunner.Patches.RecordPatches.EnsureUserSystemTableRowSeeded();
         using (AlRunner.Infrastructure.PhaseLog.AppStage("install-seed-capture-baseline"))
             AlRunner.Patches.RecordPatches.CaptureInstallBaseline();
         seedSw.Stop();
