@@ -1,0 +1,255 @@
+name: MS bucket (manual)
+
+# Runs ONE Microsoft BaseApp test bucket (default Tests-ERM, 9,496 tests) through AL Runner
+# in the full configuration — including --test-data — and reports total / pass / fail /
+# error and wall time in the job summary. Issue #2724.
+#
+# This is a VERIFICATION NET, not a gate:
+#   * `on: workflow_dispatch` only. No push, no pull_request, no schedule. A 9,500-test
+#     bucket is a multi-hour job and must never land on a PR.
+#   * Not a required check and not in any branch ruleset. Nothing about `main`'s gate
+#     ("All BC versions passed", test-matrix.yml) changes.
+#   * It measures; it does not try to make the suite green. The job is GREEN when it
+#     produced a number (runner exit 0 or 1 plus a JUnit file) and RED only when it did not
+#     (compile fail, exec fail, crash, or no JUnit) — thousands of failing tests are the
+#     expected outcome and are reported, not failed on.
+#
+# Why it exists: running the Microsoft surface on a developer desktop competes with the
+# implementation agents for memory and has OOMed the machine twice. A hosted runner gives a
+# trustworthy number without that contention.
+#
+# What it reuses (see the composite action's description and bc-tests.yml's header for why
+# these steps are never hand-copied): .github/actions/provision-bc builds the runner against
+# the BC version and fills BOTH package caches. Everything the matrix does NOT provision is
+# fetched here through the same ranged-ZIP read tools/DownloadArtifacts already uses:
+#   * `test-sources` — the bucket's Source.zip, from the platform artifact (2.4 MB for ERM);
+#   * `test-data`    — BusinessCentral-W1.bak from the sandbox w1 artifact (~977 MB), streamed
+#                      to disk and cached across runs with actions/cache keyed on the build;
+#   * the backup reader `bcbak` — StefanMaron/BusinessCentral.BakReader's Native AOT
+#                      `bcdb-linux-x64` release asset, checksum-verified, installed under the
+#                      old name the runner probes (BackupReaderTool.cs).
+#
+# Configuration recorded from working local runs — wrong values do not fail the run, they
+# make its number meaningless (AlRunner.Tests/MsBucketWorkflowTests.cs pins them):
+#   * company `CRONUS International Ltd_` — SQL form, TRAILING UNDERSCORE, not a period;
+#   * both --package-cache directories;
+#   * AL_RUNNER_EMIT_TIMEOUT_SEC far above the 120 s default (Tests-ERM's emit alone is
+#     minutes);
+#   * a private --cache root, never the shared default.
+#
+# Reading the number — two known ways it can be wrong until their fixes land, both surfaced
+# verbatim in the summary by scripts/ms-bucket-summary.py:
+#   * a bundle lost to COMPILE FAIL silently vanishes from the totals (#2715; #2721 adds a
+#     "NOT RUN: N bundle(s)" line);
+#   * a run resumed after a watchdog abort (--resume-aborts, default 5) carries earlier
+#     attempts forward via --merge-counts; #2716 / #2720 cover the JUnit under-reporting that
+#     came with it. The "resume:" and "(carried from earlier attempt(s): …)" lines tell you it
+#     happened.
+# Always state whether a number was measured WITH or WITHOUT --test-data: the two differ by
+# 3x on Tests-SINGLESERVER and are not comparable.
+
+on:
+  workflow_dispatch:
+    inputs:
+      bucket:
+        description: >-
+          Microsoft BaseApp test bucket — the <name> in Applications/BaseApp/Test/<name>.Source.zip
+          (Tests-ERM, Tests-SCM, Tests-Misc, Tests-Cash Flow, …). A wrong name fails fast and
+          lists what the artifact ships.
+        type: string
+        required: true
+        default: Tests-ERM
+      bc-version:
+        description: >-
+          BC build: a full four-part build (28.4.53241.54318) or a prefix (28.4) resolved to
+          its newest published build. Empty = the newest prefix in .github/bc-versions.txt,
+          the one the matrix marks required.
+        type: string
+        required: false
+        default: ''
+      test-data:
+        description: >-
+          Hydrate CRONUS International Ltd_ from the sandbox backup (--test-data). Off measures
+          the empty-database number, which is a different number.
+        type: boolean
+        required: false
+        default: true
+
+permissions:
+  contents: read
+
+# One run per bucket at a time. A second dispatch of the same bucket queues behind the first
+# rather than cancelling a multi-hour measurement in flight.
+concurrency:
+  group: ms-bucket-${{ inputs.bucket }}
+  cancel-in-progress: false
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  run:
+    name: ${{ inputs.bucket }} on BC ${{ inputs.bc-version || 'newest' }}
+    runs-on: ubuntu-latest
+    # The hosted maximum. Tests-SINGLESERVER (834 tests) takes ~4 minutes warm; Tests-ERM is
+    # 11x the tests plus a cold build, provisioning and a cold emit.
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v6
+
+      # The provisioning action sets up .NET too; this earlier copy is for the version
+      # resolution below, which has to run BEFORE the action can be given a version.
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Resolve the BC build
+        id: bc
+        env:
+          REQUESTED: ${{ inputs.bc-version }}
+        run: |
+          # Same resolver bc-tests.yml uses (tools/DownloadArtifacts resolve-version), never a
+          # second implementation of it — re-resolving differently is the drift #2010 was.
+          req="${REQUESTED// /}"
+          if [ -z "$req" ]; then
+            req=$(grep -v '^#' .github/bc-versions.txt | tr ' ' '\n' | grep . | sort -V | tail -1)
+            echo "No version given; using the newest prefix in .github/bc-versions.txt: $req"
+          fi
+          dots=$(printf '%s' "$req" | tr -dc . | wc -c)
+          if [ "$dots" -eq 3 ]; then
+            full="$req"
+          else
+            full=$(dotnet run --project tools/DownloadArtifacts -- resolve-version "$req" 2>/dev/null || true)
+            if [ -z "$full" ]; then
+              echo "::error::could not resolve BC '$req' to a published build"
+              exit 1
+            fi
+          fi
+          echo "version=$full" >> "$GITHUB_OUTPUT"
+          echo "BC build: $full"
+
+      - uses: ./.github/actions/provision-bc
+        with:
+          bc-version: ${{ steps.bc.outputs.version }}
+
+      - name: Fetch the bucket sources
+        env:
+          BUCKET: ${{ inputs.bucket }}
+        run: |
+          dotnet run --project tools/DownloadArtifacts -- \
+            test-sources ${{ steps.bc.outputs.version }} "$RUNNER_TEMP/ms-buckets" "$BUCKET"
+          bundle="$RUNNER_TEMP/ms-buckets/$BUCKET"
+          echo "AL files in $bundle: $(find "$bundle" -name '*.al' | wc -l)"
+          test -f "$bundle/app.json"
+
+      - name: Install the backup reader (bcbak)
+        if: ${{ inputs.test-data }}
+        id: reader
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # bcbak is StefanMaron/BusinessCentral.BakReader's `bcdb`, consumed as the latest
+          # release's Native AOT asset rather than built here: a source build needs the .NET 10
+          # SDK plus clang and adds minutes, and the release binary is the one that repo's own
+          # hermetic test suite gated before publishing. The runner probes the OLD name at
+          # ~/.cache/al-runner/bcbak/bcbak (BackupReaderTool.CandidateExecutables), so the
+          # asset is installed under that name. The tag lands in the summary: the reader's
+          # identity keys the install-baseline cache and a reader fix changes decoded values.
+          tag=$(gh release view --repo StefanMaron/BusinessCentral.BakReader --json tagName --jq .tagName)
+          mkdir -p "$RUNNER_TEMP/reader"
+          cd "$RUNNER_TEMP/reader"
+          gh release download "$tag" --repo StefanMaron/BusinessCentral.BakReader \
+            --pattern bcdb-linux-x64 --pattern SHA256SUMS
+          grep 'bcdb-linux-x64$' SHA256SUMS | sha256sum -c -
+          install -D -m 0755 bcdb-linux-x64 "$HOME/.cache/al-runner/bcbak/bcbak"
+          "$HOME/.cache/al-runner/bcbak/bcbak" --version
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the cached backup
+        if: ${{ inputs.test-data }}
+        id: bak-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.al-runner/test-data/${{ steps.bc.outputs.version }}
+          key: bc-test-data-w1-${{ steps.bc.outputs.version }}
+
+      - name: Fetch the backup (BusinessCentral-W1.bak)
+        if: ${{ inputs.test-data && steps.bak-cache.outputs.cache-hit != 'true' }}
+        run: |
+          dotnet run --project tools/DownloadArtifacts -- \
+            test-data ${{ steps.bc.outputs.version }} "$HOME/.al-runner/test-data/${{ steps.bc.outputs.version }}" w1
+
+      # Explicit restore/save pair rather than actions/cache: its implicit save runs only
+      # when the job succeeds, and a multi-hour bucket run can legitimately end red (no
+      # number) for reasons that have nothing to do with the backup. The 1 GB download is
+      # worth keeping either way.
+      - name: Save the backup to the cache
+        if: ${{ inputs.test-data && steps.bak-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.al-runner/test-data/${{ steps.bc.outputs.version }}
+          key: bc-test-data-w1-${{ steps.bc.outputs.version }}
+
+      - name: Run the bucket
+        id: run
+        env:
+          # The 120 s default is sized for a corpus app, not a 9,500-test bucket whose emit
+          # alone is minutes. #2721 scales the default by --jobs worker count; this is a single
+          # process, so the base value is what applies.
+          AL_RUNNER_EMIT_TIMEOUT_SEC: "3600"
+          BUCKET: ${{ inputs.bucket }}
+          BC_VERSION: ${{ steps.bc.outputs.version }}
+          WITH_TEST_DATA: ${{ inputs.test-data }}
+        run: |
+          set +e
+          bundle="$RUNNER_TEMP/ms-buckets/$BUCKET"
+          bak="$HOME/.al-runner/test-data/$BC_VERSION/BusinessCentral-W1.bak"
+          args=( "$bundle"
+                 --package-cache "$HOME/.al-runner/platform-apps"
+                 --package-cache "$HOME/.al-runner/test-apps"
+                 --cache "$RUNNER_TEMP/al-runner-cache"
+                 --output-junit "$GITHUB_WORKSPACE/junit.xml"
+                 --out "$GITHUB_WORKSPACE/results.json"
+                 --quiet )
+          if [ "$WITH_TEST_DATA" = "true" ]; then
+            # SQL form of the company name: trailing underscore. With a period the run fails
+            # loudly and lists both companies.
+            args+=( "--test-data=$bak" --test-data-company "CRONUS International Ltd_" )
+          fi
+          # cwd OUTSIDE the checkout: the runner auto-probes ./tests/expectations from cwd as
+          # a fallback (ExpectationsDirectoryResolution.cs), and the corpus manifest has no
+          # business reclassifying a Microsoft bucket.
+          cd "$RUNNER_TEMP"
+          start=$SECONDS
+          "$GITHUB_WORKSPACE/AlRunner/bin/Release/net8.0/al-runner" "${args[@]}" 2>&1 \
+            | tee "$GITHUB_WORKSPACE/run.log"
+          rc=${PIPESTATUS[0]}
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          echo "elapsed=$(( SECONDS - start ))" >> "$GITHUB_OUTPUT"
+          echo "runner exit code: $rc (1 = tests failed, the expected outcome; the summary step decides the verdict)"
+
+      - name: Job summary
+        if: always()
+        run: |
+          # Exit 0 = a number was produced (runner exit 0/1 + JUnit); 1 = no measurement.
+          python3 scripts/ms-bucket-summary.py \
+            --log run.log --junit junit.xml \
+            --rc "${{ steps.run.outputs.rc || 2 }}" \
+            --elapsed "${{ steps.run.outputs.elapsed || 0 }}" \
+            --bucket "${{ inputs.bucket }}" \
+            --bc-version "${{ steps.bc.outputs.version }}" \
+            --test-data "${{ inputs.test-data }}" \
+            --reader "${{ steps.reader.outputs.tag }}" \
+            --step-summary "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload results (JUnit for clustering, classification JSON, full log)
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ms-bucket-${{ inputs.bucket }}-${{ steps.bc.outputs.version }}
+          path: |
+            junit.xml
+            results.json
+            run.log
+          if-no-files-found: ignore

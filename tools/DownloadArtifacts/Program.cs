@@ -14,6 +14,14 @@
 //                                                            the stable 3-arg CI invocation is
 //                                                            unaffected.
 //   test-apps       <bc-version> <output-dir>              test-toolkit .app files
+//   test-sources    <bc-version> <output-dir> <bucket>     ONE Microsoft BaseApp test bucket's AL
+//                                                            source (issue #2724), e.g. Tests-ERM,
+//                                                            unpacked to <output-dir>/<bucket>/ as
+//                                                            a runnable bundle. Same platform
+//                                                            artifact as test-apps.
+//   test-data       <bc-version> <output-dir> [country]     BusinessCentral-<CC>.bak, the demo
+//                                                            backup --test-data hydrates from
+//                                                            (issue #2724). ~1 GB, streamed.
 //   al-compiler     <tool-version> <output-dir>             AL compiler DLLs (RID-aware NuGet pkg)
 //   resolve-version <bc-prefix>                             latest full version → stdout
 
@@ -22,8 +30,10 @@ using AlRunner.Provisioning;
 if (args.Length < 2)
 {
     Console.Error.WriteLine("Usage: DownloadArtifacts service-tier <bc-version> <output-dir>");
-    Console.Error.WriteLine("       DownloadArtifacts platform-apps <bc-version> <output-dir>");
+    Console.Error.WriteLine("       DownloadArtifacts platform-apps <bc-version> <output-dir> [country]");
     Console.Error.WriteLine("       DownloadArtifacts test-apps <bc-version> <output-dir>");
+    Console.Error.WriteLine("       DownloadArtifacts test-sources <bc-version> <output-dir> <bucket>");
+    Console.Error.WriteLine("       DownloadArtifacts test-data <bc-version> <output-dir> [country]");
     Console.Error.WriteLine("       DownloadArtifacts al-compiler <tool-version> <output-dir>");
     Console.Error.WriteLine("       DownloadArtifacts resolve-version <bc-prefix>");
     return 1;
@@ -42,6 +52,15 @@ switch (mode)
         var country = args.Length >= 4 ? args[3] : "w1";
         return ArtifactDownloader.PlatformApps(version, outputDir, country);
     case "test-apps": return ArtifactDownloader.TestApps(version, outputDir);
+    case "test-sources":
+        if (args.Length < 4)
+        {
+            Console.Error.WriteLine("Error: test-sources needs a bucket name: DownloadArtifacts test-sources <bc-version> <output-dir> <bucket>");
+            return 1;
+        }
+        return ArtifactDownloader.TestSources(version, outputDir, args[3]);
+    case "test-data":
+        return ArtifactDownloader.TestData(version, outputDir, args.Length >= 4 ? args[3] : "w1");
     case "al-compiler": return ArtifactDownloader.AlCompiler(version, outputDir);
     case "resolve-version":
         var resolved = ArtifactDownloader.ResolveVersion(version);
