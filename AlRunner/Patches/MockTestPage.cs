@@ -1516,18 +1516,47 @@ internal class LiveNavTestPage : MockITestPage
 
         // ALInit is AL's Init(), which deliberately PRESERVES the primary key — so on its own
         // it left the key fields reading the row that was just walked off (the new-row line
-        // reported the last row's "No."). The draft line is blank in every column, so the key
-        // fields are cleared too.
+        // reported the last row's "No."). The draft line does not show the previous row's key,
+        // so the key fields are cleared.
         //
         // ClearFieldValue per key field rather than NavRecord.Clear(): Clear() is AL's
         // Clear(Rec), which also drops filters and the current key — and the page's filters
         // are what make the rowset the page's own (a part's SubPageLink above all). Blanking
         // the buffer must not silently widen what the page is showing.
+        //
+        // THEN PUT THE PAGE'S OWN FILTER BACK ON, which is the half this was missing. The
+        // draft line is NOT blank in every column: it carries the page's single-valued filters
+        // on the primary-key fields — BC's RecordImplementation.InitRecordFromFilters rule,
+        // the same one a row started by New() goes through. Measured on all 8 BC legs (corpus
+        // codeunit 60996 LinkedPart_DraftLine_ReadsTheLinkValueInTheLinkedKeyColumn, corpus
+        // run 33995429394): a part linked "Header No." = field("No.") from a card on 'H1'
+        // shows 'H1' in that column on its draft line, not blank. This file previously cleared
+        // the key and stopped, so the runner answered blank there.
+        //
+        // The two neighbouring measurements are what fix the rule's shape rather than just
+        // this one column:
+        //   * corpus CU60743 — a STANDALONE page's draft line reads blank in its key column.
+        //     It has no filters, so the copy finds nothing. Same rule, no special case.
+        //   * corpus CU60648 "PKFL Tests" — a part linked on a NON-key field shows that field
+        //     blank on its draft row. Key membership is the gate, which is why this loop only
+        //     visits primary-key fields.
+        //
+        // Deliberately NO ALValidateAsync on what is copied here, unlike the stamping
+        // LiveNavTestPart.InsertEmptyRow does. That validate is part of NavForm.NewRecordAsync
+        // — starting a row — and merely standing on the blank line starts nothing (corpus
+        // CU60743 NewRowLine_LeftUntouched_InsertsNothing, CU60996
+        // LinkedPart_DraftLineLeftUntouched_InsertsNothing). Running OnValidate here would let
+        // walking a page have side effects.
         record.ALInit();
         var primaryKey = record.MetaTable?.PrimaryKey;
         if (primaryKey != null)
             for (var i = 0; i < primaryKey.KeyFieldCount; i++)
-                record.ClearFieldValue(primaryKey.KeyFieldsList[i].FieldNo);
+            {
+                var keyFieldNo = primaryKey.KeyFieldsList[i].FieldNo;
+                record.ClearFieldValue(keyFieldNo);
+                if (TryGetSingleFilterValue(record, keyFieldNo, out var fromFilter))
+                    record.SetFieldValue(keyFieldNo, fromFilter);
+            }
 
         _onNewRowLine = true;
         return true;
@@ -1563,6 +1592,33 @@ internal class LiveNavTestPage : MockITestPage
     {
         _onNewRowLine = false;
         _newRowLineReturnPosition = null;
+    }
+
+    /// <summary>The one value a field's current filter selects, or false when the filter is
+    /// not a single value (BC's <c>GetRangeMin</c>/<c>GetRangeMax</c> raise for a filter that
+    /// is not a range; a range whose ends differ is not a single value either).
+    ///
+    /// On the base class rather than on <see cref="LiveNavTestPart"/> because BOTH users of
+    /// BC's filter-copy rule need it: the part's New() stamping, and
+    /// <see cref="EnterNewRowLine"/>'s draft line. The rule is about the record's FILTERS, not
+    /// about a SubPageLink — so reading it off the filters covers const/filter/field links and
+    /// a plain filtered page with one mechanism, and answers "nothing to copy" for an
+    /// unfiltered page without needing a special case.</summary>
+    private protected static bool TryGetSingleFilterValue(NavRecord record, int fieldNo, out NavValue value)
+    {
+        try
+        {
+            var min = record.ALGetRangeMin(fieldNo);
+            var max = record.ALGetRangeMax(fieldNo);
+            if (min != null && min.Equals(max)) { value = min; return true; }
+        }
+        catch (NavBaseException)
+        {
+            // Not a range: a multi-value expression (1|2), an open-ended one (>1), or a
+            // wildcard. BC's own InitRecordFromFilters stamps nothing for these either.
+        }
+        value = null!;
+        return false;
     }
 
     /// <summary>
@@ -3266,23 +3322,4 @@ internal sealed class LiveNavTestPart : LiveNavTestPage, ITestPart
         return fieldNos;
     }
 
-    /// <summary>The one value a field's current filter selects, or false when the filter is
-    /// not a single value (BC's <c>GetRangeMin</c>/<c>GetRangeMax</c> raise for a filter that
-    /// is not a range; a range whose ends differ is not a single value either).</summary>
-    private static bool TryGetSingleFilterValue(NavRecord record, int fieldNo, out NavValue value)
-    {
-        try
-        {
-            var min = record.ALGetRangeMin(fieldNo);
-            var max = record.ALGetRangeMax(fieldNo);
-            if (min != null && min.Equals(max)) { value = min; return true; }
-        }
-        catch (NavBaseException)
-        {
-            // Not a range: a multi-value expression (1|2), an open-ended one (>1), or a
-            // wildcard. BC's own InitRecordFromFilters stamps nothing for these either.
-        }
-        value = null!;
-        return false;
-    }
 }

@@ -162,6 +162,46 @@ public sealed class TestPageNewRowLinePromotionTests
             + "of modify.");
     }
 
+    // The draft line is not blank in every column: it carries the page's own single-valued
+    // filters on the PRIMARY-KEY fields, which is BC's RecordImplementation.InitRecordFromFilters
+    // rule. EnterNewRowLine cleared the key and stopped, so the runner answered blank in a
+    // linked part's key column where real BC answers the link's value.
+    //
+    // Measured on all 8 BC legs, corpus run 33995429394: the original corpus assertion said
+    // "the draft line must read blank in the column the SubPageLink constrains" and every leg
+    // returned Expected:<> Actual:<H1>. Corrected upstream to
+    // LinkedPart_DraftLine_ReadsTheLinkValueInTheLinkedKeyColumn.
+    //
+    // Reading it off the FILTER rather than off the SubPageLink is what keeps the two
+    // neighbouring corpus suites green: CU60743's standalone page has no filters and stays
+    // blank, and CU60648's link on a non-key field is never visited because the loop only walks
+    // the primary key.
+    [Fact]
+    public void EnterNewRowLine_PutsThePagesSingleValuedKeyFiltersBackOnTheBlankedBuffer()
+    {
+        var type = LoadType(typeof(AlRunner.LiveNavTestPage));
+        var m = Method(type, "EnterNewRowLine");
+
+        Assert.True(Calls(m, "ClearFieldValue"),
+            "EnterNewRowLine must still clear the primary-key fields ALInit preserves — without "
+            + "that the draft line reports the key of the row the cursor just walked off.");
+
+        Assert.True(Calls(m, "TryGetSingleFilterValue"),
+            "EnterNewRowLine must read each primary-key field's single-valued filter — BC's "
+            + "InitRecordFromFilters rule. Clearing the key and stopping made the runner answer "
+            + "blank in a linked part's key column where real BC answers the link's value.");
+
+        Assert.True(Calls(m, "SetFieldValue"),
+            "EnterNewRowLine must write the filter's value back onto the blanked buffer, not "
+            + "merely read it.");
+
+        Assert.False(Calls(m, "ALValidateAsync"),
+            "EnterNewRowLine must NOT validate what it copies. That validate belongs to "
+            + "NavForm.NewRecordAsync — starting a row — and merely standing on the blank line "
+            + "starts nothing (corpus CU60743 NewRowLine_LeftUntouched_InsertsNothing). Running "
+            + "OnValidate here would give walking a page side effects.");
+    }
+
     // The wiring between the two: the page has to hand its promotion callback to the fields it
     // builds, or the ordering proven above never runs for any real control.
     [Fact]
