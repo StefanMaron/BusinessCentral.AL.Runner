@@ -122,7 +122,14 @@ def required_checks(sha: str) -> list[dict] | None:
 
 
 # The contexts the `main` branch ruleset requires, verbatim. Re-derive with:
-#   gh api repos/StefanMaron/BusinessCentral.AL.Runner/rulesets/15039643 ...
+#   gh api repos/StefanMaron/BusinessCentral.AL.Runner/rulesets/15001420 \
+#     --jq '[.rules[]|select(.type=="required_status_checks")
+#            |.parameters.required_status_checks[].context]'
+# 15001420 is the ACTIVE "main" ruleset and the only one carrying a
+# required_status_checks rule. Do NOT query 15039643 ("Copilot review for
+# default branch"): it is disabled and has no such rule, so it answers with an
+# empty list, and emptying this list on the strength of that would restore the
+# exact false-green this module exists to prevent.
 # (see .github/scripts/check_required_contexts.py, which carries the exact query
 # and is the CI guard for the same list).
 #
