@@ -256,8 +256,9 @@ BC's own exception. Measured on BC 28.1:
 |---|---|
 | `CanCreateTask()` | `false` |
 | `CreateTask()` | throws `You do not have permission to create or run scheduled tasks.` The target codeunit's `OnRun` does **not** run. |
-| `TaskExists()` | throws a `NullReferenceException` — the real body reaches for a SQL connection that does not exist here. Tracked separately; it should refuse loudly rather than NRE. |
-| `CancelTask()`, `SetTaskReady()` | complete without error, having done nothing (there is no task to act on). |
+| `TaskExists()` | refuses by name: `out-of-scope: TaskScheduler.TaskExists — task-scheduler — … — see docs/scope.md#jobs`. There is no scheduled-task store to query, and BC's real body has no answer it reaches without one. (#2866; before that it threw a `NullReferenceException` out of `NavSqlConnectionScope`.) |
+| `CancelTask()` | refuses by name the same way — **except** for an empty task id, where BC's own body answers `false` before it touches the scheduler, so the runner answers `false` too. (#2866; before that it threw a `NullReferenceException` out of `ALCancelTaskAsync`.) |
+| `SetTaskReady()` | throws the same `You do not have permission to create or run scheduled tasks.` as `CreateTask()` — its real body runs the same `CanCreateTask` guard. An empty task id answers `false` before that guard, as on BC. |
 
 So: guarded AL (`if TaskScheduler.CanCreateTask() then …`) skips task creation cleanly and is
 the pattern that works here. Unguarded AL that calls `CreateTask()` directly gets BC's loud
@@ -272,7 +273,10 @@ runs. AL that needs the target codeunit's logic to actually execute should call 
 
 > This section previously described `CreateTask()` as dispatching the codeunit
 > "synchronously, inline". That described a design that was reverted, and it was wrong in both
-> directions: no codeunit runs, and `TaskExists()` does not return `false`. See #2565.
+> directions: no codeunit runs, and `TaskExists()` does not return `false`. See #2565. It then
+> described `CancelTask()` and `SetTaskReady()` as completing quietly, which measurement (#2866)
+> showed neither did. The table above is now pinned by `tests/runner-extras/task-scheduler-oos`,
+> so it fails a CI leg rather than drifting again.
 
 ### No DotNet interop
 
