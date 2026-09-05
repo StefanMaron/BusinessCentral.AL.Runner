@@ -5,6 +5,24 @@ description: Run AL Runner development unattended — a never-idle loop that kee
 
 # Autonomous cycle
 
+## What the loop is for
+
+The runner exists to behave exactly like Business Central. Tests are not overhead and not a
+box to tick — they are the only thing that establishes that claim, and **only the corpus
+establishes it against a real service tier.** A runner-local test that passes proves the runner
+agrees with itself; it says nothing about BC.
+
+So the measure of a good cycle is not how many issues it closed. It is whether the proof that
+the runner matches BC got larger and stayed green. The corpus is a ratchet: every behaviour
+pinned there is validated on real BC on every push and can never silently regress afterwards.
+As long as the corpus stays green and the runner stays green against the corpus, the runner is
+doing its job — and anything not pinned there is a claim nobody is checking.
+
+Read every priority below through that lens. A fix that closes an issue and adds no upstream
+coverage has moved a number; a fix that lands with a corpus test has moved the guarantee.
+
+## Working unattended
+
 This runs without anyone watching. That changes what matters: not throughput, but never
 producing confident wrong work. An unattended loop that files issues from a poisoned cache, or
 merges on a stale verdict, does not just waste a window — it fills the backlog with plausible
@@ -116,6 +134,17 @@ a merge can turn `main` red, which outranks everything you were about to do.
 
    **The clean-cache confirmation is not optional.** It is the difference between the loop
    compounding value and compounding noise.
+
+7. **Still nothing to do — grow the corpus.** Pick AL behaviour the runner supports but nothing
+   upstream pins, write the test, and open the corpus PR. This is real work, not filler: it
+   converts behaviour that currently happens to work into behaviour a real service tier
+   guarantees, and it is the only priority that makes the runner harder to regress rather than
+   just less broken.
+
+   Good candidates are surfaces a fix recently touched without adding upstream coverage, areas
+   where a runner-local test is doing a job the corpus should be doing, and anything a past fix
+   proved by reasoning rather than by a service tier's verdict. The corpus CI adjudicates the
+   claim, so a wrong guess costs a red leg and nothing worse.
 
    Configuration matters as much as the run. In one measured no-test-data run, roughly 40% of
    all failures were missing setup data rather than defects — clustering that would have
