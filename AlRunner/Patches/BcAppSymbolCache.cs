@@ -1351,7 +1351,23 @@ internal static partial class BcAppSymbolCache
                 // itself readable (Customer.City is exactly that shape), so the two properties
                 // are read independently — matching the AL-source path's own two lines.
                 props.TryGetValue("TableRelation", out var tableRelation);
-                var relationArms = RecordPatches.TryParseRelationArmsText(tableRelation, fieldName);
+                // Gated on field class exactly as the AL-source path is
+                // (RecordPatches.AlSourceParser.cs's `if (!isFlowField && !isFlowFilter && ...)`).
+                // A FlowFilter's TableRelation is a LOOKUP hint for the filter's own UI, not a
+                // stored value's referential constraint, and in Base Application 28.1 that is 204
+                // fields (196 FlowFilter, 8 FlowField), ~144 of them with a relation this parser
+                // accepts — "Item Statistics Buffer"."Item Filter" -> Item, "Analysis
+                // Line"."Location Filter" -> Location, "Config. Line"."Company Filter" -> Company.
+                // ParsedField.RelationArms feeds BOTH the Validate check AND the reverse index
+                // NCLMetaTable_ComputeReferencingRelations builds for rename propagation, and that
+                // index filters only on TableId >= 2000000000, not on field class — so without
+                // this gate renaming an Item, Location or Company would pull FlowFilter
+                // pseudo-columns into the cascade. The invariant this whole change is for is that
+                // the source-parsed and symbol-read paths agree; ungated, they would disagree for
+                // exactly these 204 fields, and the source path is the one the corpus validates.
+                var relationArms = (!isFlowField && !isFlowFilter)
+                    ? RecordPatches.TryParseRelationArmsText(tableRelation, fieldName)
+                    : null;
                 var relationValidate = !(props.TryGetValue("ValidateTableRelation", out var vtr)
                     && (vtr == "0" || vtr.Equals("false", StringComparison.OrdinalIgnoreCase)));
                 fields.Add(new ParsedField(fieldId, fieldName, typeName, SymbolTypeLength(typeName), isFlowField, calcFormula,

@@ -16,10 +16,27 @@
 // satisfies for source-compiled tables.
 //
 // Customer."Currency Code" is the plain single-arm shape (TableRelation = Currency).
-// Customer.City is deliberately included as the negative control: it carries
-// ValidateTableRelation = 0 in the Base Application, so a fix that switched relation checking on
-// wholesale — rather than reading BOTH properties — would make it raise, and this suite would go
-// red.
+//
+// "My Item"."User ID" is the negative control for the SECOND property: TableRelation =
+// User."User Name" (single arm, which this parser accepts), ValidateTableRelation = false, and —
+// the part that took two attempts to get right — NO OnValidate trigger, so nothing but the
+// relation check can raise. A fix that switched relation checking on wholesale rather than
+// reading BOTH properties makes this raise and the suite goes red. Verified by deleting the
+// relationValidate line in BcAppSymbolCache: this test, and only this test, fails.
+//
+// Item."Base Unit of Measure" and User Setup."User ID" were both tried first and are unusable:
+// each carries its own OnValidate that rejects an unmatched value in Microsoft's AL ("The Unit of
+// Measure with Code X does not exist"), so they raise whatever the flag says and prove nothing
+// about it.
+//
+// The control was originally Customer.City, which was VACUOUS: City's relation is the two-arm
+// conditional `if (...) "Post Code".City else if (...) ... where(...)`, whose where-clause hits
+// RelationConditionList's default arm, so ParseRelationArms refuses the WHOLE property and the
+// field reaches the metadata with no relations at all. It would have passed identically with the
+// ValidateTableRelation read deleted. The flag is not cosmetic: 235 Base Application fields carry
+// ValidateTableRelation = 0 together with a relation this parser accepts (about 150 of them user-id
+// fields), and if that read regressed they would start REFUSING values real BC accepts — the same
+// silent wrongness this PR fixes, inverted.
 codeunit 61401 "PTR Tests"
 {
     Subtype = Test;
@@ -108,19 +125,43 @@ codeunit 61401 "PTR Tests"
     end;
 
     [Test]
+    procedure FieldRefRelation_FieldWithValidateTableRelationOff_StillAnswersTheRelation()
+    var
+        RecRef: RecordRef;
+        FieldRef: FieldRef;
+        MyItm: Record "My Item";
+    begin
+        // Precondition for the control below, asserted rather than assumed: the relation must
+        // actually be PRESENT on this field. If it were refused by the parser — as Customer.City's
+        // conditional form is — the "does not raise" test underneath would pass for the wrong
+        // reason and prove nothing about ValidateTableRelation. This assertion is what makes the
+        // control non-vacuous, and it is the check the first version of this suite was missing.
+        RecRef.Open(Database::"My Item");
+        FieldRef := RecRef.Field(MyItm.FieldNo("User ID"));
+
+        Assert.AreEqual(
+            Database::User, FieldRef.Relation,
+            '"My Item"."User ID" declares TableRelation = User."User Name", so the relation must ' +
+            'be present even though ValidateTableRelation is false — otherwise the ' +
+            'ValidateTableRelation control below is vacuous');
+    end;
+
+    [Test]
     procedure Validate_PrecompiledFieldWithValidateTableRelationOff_DoesNotRaise()
     var
-        Cust: Record Customer;
+        MyItm: Record "My Item";
     begin
-        // The negative control for the SECOND property. Customer.City carries a TableRelation to
-        // "Post Code".City AND ValidateTableRelation = 0, so BC accepts an unmatched value here.
-        // A fix that turned relation checking on wholesale would raise and fail this test.
-        Cust.Init();
-        Cust."No." := 'PTR-C-3';
-        Cust.Validate(City, 'PTRNOSUCHCITY');
+        // The negative control for the SECOND property, on a field whose relation the parser DOES
+        // accept (the test above pins that) and which carries no OnValidate of its own, so the
+        // relation check is the only thing that could raise. "My Item"."User ID" declares
+        // TableRelation = User."User Name" AND ValidateTableRelation = false, so BC accepts an
+        // unmatched value. Deleting the relationValidate read in BcAppSymbolCache makes this test
+        // raise and fail — that is what makes it a control rather than a comment.
+        MyItm.Init();
+        MyItm.Validate("User ID", 'PTRNOUSER');
 
-        Assert.AreEqual('PTRNOSUCHCITY', Cust.City,
-            'Customer.City declares ValidateTableRelation = 0, so an unmatched value must be ' +
-            'accepted — the fix must read that property, not just TableRelation');
+        Assert.AreEqual('PTRNOUSER', MyItm."User ID",
+            '"My Item"."User ID" declares ValidateTableRelation = false, so an unmatched value ' +
+            'must be accepted — the fix must read that property, not just TableRelation');
     end;
 }
