@@ -49,9 +49,12 @@
 //   Record_Insert_UnrelatedAssertError_NoCommit_RowIsRolledBack for what looks like the
 //   identical shape (an uncommitted, untriggered Insert() then a later, unrelated Error()).
 //   Real BC passes all three (confirmed against CI run 33273501078, BC 27.5 and 28.3) — they
-//   are NOT contradictory. This runner currently does NOT special-case that shape at all —
-//   Test04 and Error_After_Insert_Before_Commit_RecordPersists both fail here, openly, with no
-//   known-gaps entry masking it, exactly as on unmodified main.
+//   are NOT contradictory. Both Test04 and Error_After_Insert_Before_Commit_RecordPersists now
+//   PASS here, fixed by cc9e1615 (PR #2405), which also deleted the
+//   known-gaps-transaction-rollback-boundary.json entries that had masked them. Nothing masks
+//   them today: bc-tests.yml runs the corpus with --strict, so either would fail its leg.
+//   (This paragraph previously said both still failed openly — that was true when 90579baf
+//   wrote it and stopped being true two weeks later. AlRunner#2167 tracked it and is closed.)
 //
 //   Without any of this the runner either never rolled anything back (silently wrong for a
 //   test that checks the table afterwards) or rolled back to the wrong boundary.
