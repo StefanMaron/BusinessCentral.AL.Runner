@@ -98,8 +98,8 @@
 //   Caption is deliberately in the blank list even though the shared inventory DOES carry a
 //   caption for most objects (AllObjWithCaption is answered from it). Whether this legacy
 //   table's field 20 holds the object's AL Caption is a claim about BC that no tier can
-//   adjudicate here, and #2774 asks only for Type / ID / Name. Answering it is tracked
-//   separately rather than guessed at.
+//   adjudicate here, and #2774 asks only for Type / ID / Name. Issue #2839 tracks it rather
+//   than guessing.
 //
 // ── PRECEDENCE AGAINST --test-data ───────────────────────────────────────────────────────
 //   Like Object Metadata and unlike every virtual table, 2000000001 is a real SQL table and a
