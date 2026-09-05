@@ -7,6 +7,10 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **artifacts:** relocate the BC artifacts root with AL_RUNNER_ARTIFACTS_ROOT
+- **agents:** an autonomous-cycle skill for running AL Runner development unattended
+- **cli:** a hung codeunit no longer takes the whole run down
+- **cli:** --jobs N runs bundles across worker processes
 - **server:** iterationTracking on execute pairs loop iterations with values, messages and lines
 - **report:** resolve request-page controls against the report globals they bind to
 - **report:** run the request page from Report.Run and write the dataset it asks for
@@ -15,6 +19,30 @@ All notable changes to this project are documented here. Format based on
 - **all-profile:** populate the All Profile system virtual table (2000000178)
 
 ### Fixed
+- **testpage:** fall back to the source table field's OnLookup trigger
+- **capture-values:** unwrap ByRef<T> so a var parameter renders its value
+- **watch:** stop serving a dependent bundle the previous compile of its dependency
+- **ci:** pe_signing verify must fail on a scan that classified no PE files
+- **shutdown:** make BC's ExecutionScheduler thread background so a one-shot run exits; bound --jobs worker wait
+- **testpage:** run precompiled pages' lifecycle triggers in the flavour BC emitted them in
+- **cache:** key the install-baseline on the BC symbol state it was derived from
+- **deps:** count the Tier-1 sidecar DLL as an implementation, so the provisioning-gap notice stops firing on healthy runs
+- **table-connections:** run BC's own TableConnectionManager and CRM '@@test@@' test connection on the skeleton session
+- **temp:** give every runner-written scratch dir an owner, and sweep dead owners' leftovers at startup
+- **testpage:** apply const()/filter() SubPageLinks on subpage parts instead of refusing them
+- **testpage:** resolve mangled member names on precompiled pages from SymbolReference.json
+- **report:** run precompiled reports' OnPre/OnPostReport in the flavour BC emitted them in
+- **jobs:** write a resumed run's carried cases into its JUnit so the --jobs aggregate is the whole run
+- **jobs:** scale the AL emit timeout by worker count so --jobs stops losing bundles
+- **symbols:** a table-extension parse that fails part-way is fatal, never a cached partial
+- **enum:** keep compiled-deps enum sidecar base/extension entries separate
+- **testpage:** stamp CurrFieldNo for a TestPage SetValue's validate
+- **testpage:** fire an eagerly-adopted subpage part's OnOpenPage on first reification
+- **events:** purge injected-subscriber guard on tableextension eviction
+- **resume:** continue where the run stopped instead of re-running it from the start
+- **record:** raise BC's read-only-field error on Feature Key Modify
+- **record:** a snapshot replay is not an AL Insert — don't refuse its SystemIds
+- **deps:** extract a dependency's AL source per process, not into a shared dir
 - **diagnostics:** unwrap TargetInvocationException so EXEC-FAIL names the real cause
 - **deps:** let a source-built package supersede a packaged copy of the same app
 - **testpage:** format Decimal-typed TestPage controls with decimal places
@@ -106,9 +134,16 @@ All notable changes to this project are documented here. Format based on
 - **alsid:** answer Sid(name) with BC's not-mapped empty string on a host with no Windows identity store
 
 ### Documentation
+- **rules:** resolve the never-rerun vs flake-evidence contradiction in ci-verdicts.md
+- **rules:** the corpus default branch is master, not main
+- **patches:** correct a transaction-snapshot comment that still says two fixed tests fail
+- **agents:** record the coordinator's standing authority and the traps found running one
 - **agents:** opening a corpus PR needs no approval
 
 ### Changed
+- add a single-leg diagnostic re-run, so the flake-evidence recipe works in this repo too
+- manual-dispatch workflow to run one Microsoft BaseApp bucket with --test-data
+- **jobs:** tune each worker for footprint — half the peak memory for 6-7% wall
 - **ci:** run the C# unit suite on 2 BC legs instead of 8
 - **compiler:** route source-dependency symbol synthesis through the RAD incremental path
 - **program:** split static helper functions out of Program.cs
