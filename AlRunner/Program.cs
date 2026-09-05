@@ -1919,9 +1919,10 @@ var compilerPackageDirs = new List<string>();
 // FIRST cycle's dependency sources, and a dependent bundle went on compiling against the
 // frozen *.symbols.json and EXECUTING the frozen .app's source — reporting a confident green
 // for a dependency whose code had changed underneath it. Its AL-output cache could not catch
-// that either: GetOrderedDepIds stamps each resolved .app with mtime:length precisely so a
-// sibling source app's content invalidates the dependent, but nothing rewrote that .app after
-// cycle 1, so the stamp never moved and the key HIT.
+// that either: GetOrderedDepIds stamps each resolved .app with a hash of its bytes (#2754;
+// mtime:length before that) precisely so a sibling source app's content invalidates the
+// dependent, but nothing rewrote that .app after cycle 1, so the stamp never moved and the
+// key HIT.
 //
 // Re-running is cheap when nothing changed. Each impl's workspace dir is keyed on its own
 // source content (ComputeSourceWorkspaceKey), so an unchanged dependency finds its .app and

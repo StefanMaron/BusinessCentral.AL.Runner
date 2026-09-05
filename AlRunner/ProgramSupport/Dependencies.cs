@@ -349,9 +349,9 @@ internal static partial class ProgramSupport
     }
 
     // Deterministic cache key for the bundled-mode emit:
-    //   sha256( runner-asm-mtime-ticks
+    //   sha256( runner-assembly content hash + selected BC version
     //         | moduleName
-    //         | each (ordered dep id+version)
+    //         | each (ordered dep id + version + sha256 of the resolved package's bytes)
     //         | each (.al file relpath + sha256-of-contents) sorted )
     // Hashed in a single pass with line-separated framing so two different file
     // layouts can't collide. The key is hex-encoded sha256 (64 chars).
@@ -420,7 +420,17 @@ internal static partial class ProgramSupport
         //        a normal run reusing a --tdd-generated DLL, or (just as bad) a later --tdd
         //        run reusing a normal-mode DLL and reporting the excluded tests' vanished
         //        instead of failed. v11 entries never hashed this and must not be served.
-        WriteLine("schema:v12");
+        //    v13 (issue #2754): each `dep:` term now identifies its resolved package by a
+        //        SHA-256 of the package bytes instead of `{mtime.Ticks}:{Length}` (see
+        //        GetOrderedDepIds). The term carries no path, so under v12 the identity of a
+        //        dependency across the whole filesystem was (declared id, declared version,
+        //        size, mtime) — two same-version packages of the same size with the same
+        //        mtime and different bytes hashed to the same key, and a warm cache served
+        //        the DLL compiled against the other one, green and with an unchanged exit
+        //        code. A v12 entry and a v13 entry are not interchangeable in EITHER
+        //        direction (v13 HITs where v12 MISSed, for a byte-identical package with a
+        //        fresh mtime), so v12 entries must not be served under the new shape.
+        WriteLine("schema:v13");
         WriteLine($"tdd:{(AlRunner.BcCompiler.IsTddMode() ? "1" : "0")}");
 
         // 1. Runner assembly fingerprint (content hash, not mtime — see v10 note above) +
@@ -561,22 +571,60 @@ internal static partial class ProgramSupport
             return ordered
                 // Id:Version alone is NOT a content identity: a sibling source app keeps
                 // its app.json version while its schema evolves during development, so a
-                // key without the winning .app's file stamp served the test bundle a
+                // key without the winning .app's own identity served the test bundle a
                 // stale compiled assembly after e.g. a field removal — a runtime
                 // NavNCLFieldNotFoundException where a fresh compile correctly fails.
-                // mtime+size (not a content hash) keeps big platform .apps cheap to
-                // stamp; the layered pre-pass only rewrites a synthesized sibling .app
-                // when its source actually changed, so stamps are stable across runs.
+                //
+                // That identity is the package's CONTENT HASH, not a filesystem stat
+                // (#2754). This used to write `{mtime.Ticks}:{Length}`, and note what the
+                // term as a whole does NOT contain: the path. So the identity of a
+                // dependency — across the entire filesystem, not merely within one
+                // directory — was (declared id, declared version, size, mtime). Two .app
+                // packages declaring the same publisher/name/version, of the same size,
+                // carrying the same mtime therefore produced the same AL-output cache key
+                // with different bytes, and a warm cache served the DLL compiled against
+                // whichever one was seen first: same exit code, same green tests, code
+                // linked against a dependency surface the run never saw. Same defect
+                // family as the --define symbols that were missing from this key (a silent
+                // no-op on a cache hit) and the dependency closure that was missing
+                // entirely (3175424 -> 3206144 bytes emitted, key unchanged).
+                //
+                // It is not an exotic coincidence. cp -p, rsync -a, tar -x, unzip and CI
+                // cache restores all carry an mtime along with the bytes, so equal mtimes
+                // across two directories is the ordinary case; a locally rebuilt ISV
+                // dependency keeps its declared version while its content changes; and
+                // Program.cs folds ProvisioningCheck.CollectRunnerOwnedProvisionDirs(...)
+                // into the package-cache search set, so WHICH directories are searched
+                // depends on what artifact directories happen to exist on the machine.
+                //
+                // Cost: BcAppSymbolCache.ComputeAppContentHash memoizes per full path for
+                // the process, and a normal run hashes these same packages anyway for the
+                // bc-symbols key — so for the packages that reach both, this is a
+                // dictionary lookup. For the rest it is one SHA-256 pass over bytes the
+                // run reads regardless (measured on this machine: 122 MB of platform .apps
+                // in ~0.08 s warm). The stat was cheaper per call and answered a different
+                // question.
+                //
+                // It also strictly IMPROVES the hit rate in the safe direction, the same
+                // finding #1815/#1820 made one cache layer over: a byte-identical package
+                // re-downloaded or re-copied with a fresh mtime used to MISS
+                // unconditionally, and now HITs.
                 .Select(d =>
                 {
-                    string stamp = "?";
-                    try
-                    {
-                        var fi = new FileInfo(d.AppPath);
-                        if (fi.Exists) stamp = $"{fi.LastWriteTimeUtc.Ticks}:{fi.Length}";
-                    }
-                    catch { /* unreadable path keys as "?" and simply cannot HIT */ }
-                    return $"{d.Manifest.AppId:N}:{d.Manifest.Version}:{stamp}";
+                    // ComputeAppContentHash answers "unknown" for a missing/empty path
+                    // rather than throwing. Letting that through would put every
+                    // unhashable dependency under one shared term, which is the same
+                    // collision one level down — so make it loud instead: the throw lands
+                    // in the catch below, which prints and keys on the failure so this
+                    // bundle cannot share a cache entry with a resolvable one. A package
+                    // the resolver just read a manifest out of is expected to be hashable;
+                    // if it is not, the compile is about to fail on it anyway.
+                    var hash = AlRunner.Patches.BcAppSymbolCache.ComputeAppContentHash(d.AppPath);
+                    if (hash == "unknown")
+                        throw new IOException(
+                            $"resolved dependency package '{d.AppPath}' could not be hashed for the "
+                            + "AL-output cache key (missing or unreadable at hash time)");
+                    return $"{d.Manifest.AppId:N}:{d.Manifest.Version}:sha256:{hash}";
                 })
                 .OrderBy(s => s, StringComparer.Ordinal)
                 .ToList();
