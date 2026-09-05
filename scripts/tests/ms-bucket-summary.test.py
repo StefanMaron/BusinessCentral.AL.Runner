@@ -133,6 +133,23 @@ class ComposeTests(unittest.TestCase):
             self.assertIn(needle, md, needle)
         self.assertIn("No caveats", md)
 
+    def test_the_reader_line_names_the_repository_that_actually_exists(self):
+        """#2780. The summary's reader line is what a human follows to go look at the reader,
+        and it used to name BusinessCentral.BakReader — the repository's OLD name, which
+        resolves only through GitHub's rename redirect. A redirect is not a contract, and
+        nothing here covered this line, so the wrong name could sit indefinitely. Both
+        directions, because the positive alone would still pass with both names present."""
+        md = mbs.compose(META, mbs.parse_junit_totals(JUNIT), mbs.scan_log(CLEAN_LOG), rc=1, elapsed_s=10)
+        self.assertIn("Backup reader: BusinessCentral.DbReader v0.1.1.", md)
+        self.assertNotIn("BakReader", md)
+
+    def test_no_reader_line_at_all_when_the_run_had_no_reader(self):
+        """The negative arm for the line's existence: without --test-data there is no reader,
+        and inventing one would mislabel the run."""
+        md = mbs.compose(dict(META, test_data=False, reader=None),
+                         mbs.parse_junit_totals(JUNIT), mbs.scan_log(CLEAN_LOG), rc=1, elapsed_s=10)
+        self.assertNotIn("Backup reader:", md)
+
     def test_caveats_are_listed_verbatim_so_a_wrong_number_cannot_hide(self):
         scan = mbs.scan_log("NOT RUN: 1 bundle(s)\n" + CLEAN_LOG)
         md = mbs.compose(META, mbs.parse_junit_totals(JUNIT), scan, rc=1, elapsed_s=10)

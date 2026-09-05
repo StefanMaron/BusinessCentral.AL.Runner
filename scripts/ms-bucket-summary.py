@@ -116,7 +116,11 @@ def compose(meta, totals, scan, rc, elapsed_s):
     rc_text = RC_MEANING.get(rc, "unexpected exit code")
     out.append(f"Runner exit code {rc} — {rc_text}. Wall time {fmt_elapsed(elapsed_s)} for the runner step.")
     if meta.get("reader"):
-        out.append(f"Backup reader: BusinessCentral.BakReader {meta['reader']}.")
+        # BusinessCentral.DbReader, not .BakReader: that repository was renamed and the old
+        # name survives only through GitHub's rename redirect. This line is read by a human
+        # deciding where to go look, so an old name sends them to a redirect that may not be
+        # there later.
+        out.append(f"Backup reader: BusinessCentral.DbReader {meta['reader']}.")
     out.append("")
     if totals is None:
         out += ["**No number: no JUnit file was produced.** The runner did not get as far as running tests"
