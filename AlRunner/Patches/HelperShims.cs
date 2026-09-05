@@ -204,10 +204,30 @@ public static partial class BcRuntime
     /// <para>Same mechanism as <see cref="MakeNavDrilldownActionNotSupportedException"/>, and the
     /// same fallback if the type cannot be resolved: an InvalidOperationException carrying the
     /// identical message, which is strictly better than throwing nothing.</para>
+    ///
+    /// <para>The message names the VERB (<c>HttpClient.Get</c>, not a collapsed
+    /// <c>HttpClient.Send</c>) because that is what the AL author wrote and what
+    /// loud-failures.md asks for. An unreadable request degrades to
+    /// <c>HttpClient.request</c> rather than losing the refusal.</para>
     /// </summary>
-    public static System.Exception MakeHttpEgressOutOfScopeException()
+    public static System.Exception MakeHttpEgressOutOfScopeException(object? requestMessage)
     {
-        const string msg = "out-of-scope: HttpClient request — external-http — see docs/scope.md#external-http";
+        // loud-failures.md wants the API that was touched, and at this frame the AL verb is
+        // still recoverable: AL's HttpClient.Get/Post/Put/Delete/Patch each set the matching
+        // HTTP method on the request, and HttpClient.Send carries whatever the caller built.
+        // So the HTTP method IS the verb, read back off the request rather than guessed.
+        // Reflected rather than typed so this helper's signature stays `object` and the Cecil
+        // import cannot pick up a second System.Net.Http identity.
+        var verb = "request";
+        try
+        {
+            var m = requestMessage?.GetType().GetProperty("Method")?.GetValue(requestMessage);
+            var name = m?.GetType().GetProperty("Method")?.GetValue(m) as string;
+            if (!string.IsNullOrEmpty(name))
+                verb = char.ToUpperInvariant(name![0]) + name!.Substring(1).ToLowerInvariant();
+        }
+        catch { /* fall back to the un-named form below */ }
+        var msg = $"out-of-scope: HttpClient.{verb} — external-http — see docs/scope.md#external-http";
         var t = System.Type.GetType(
             "Microsoft.Dynamics.Nav.Types.Exceptions.NavNCLDialogException, Microsoft.Dynamics.Nav.Types");
         if (t != null)

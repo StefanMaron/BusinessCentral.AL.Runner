@@ -24,7 +24,10 @@ codeunit 64551 "Heb Allow Tests"
         asserterror Client.Get('https://example.invalid/runner-extras', Response);
 
         Assert.ExpectedError('out-of-scope:');
-        Assert.ExpectedError('HttpClient request');
+        // The VERB the AL author wrote, not a collapsed 'HttpClient.Send'. loud-failures.md
+        // asks for the API that was touched, and the refusal recovers it from the request's
+        // HTTP method rather than guessing — so a Post refused here would say HttpClient.Post.
+        Assert.ExpectedError('HttpClient.Get');
         Assert.ExpectedError('external-http');
     end;
 }

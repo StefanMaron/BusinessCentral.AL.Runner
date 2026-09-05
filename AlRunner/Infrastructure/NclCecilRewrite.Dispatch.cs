@@ -256,6 +256,13 @@ public static partial class NclCecilRewrite
                     // the original — the expectation classifier then reports "no out-of-scope
                     // signal". A BC-native AL error survives. See
                     // BcRuntime.MakeHttpEgressOutOfScopeException.
+                    // ldarg.2 = the HttpRequestMessage (0 = this, 1 = errorLevel, 2 = requestMessage,
+                    // 3 = response). The helper reads the HTTP method off it so the refusal names
+                    // the verb the AL author wrote — HttpClient.Get, not a collapsed
+                    // HttpClient.Send. AlRunner.Tests' ExpectationManifestWiringTests asserts that
+                    // exact spelling, which is how the first version of this change (which
+                    // collapsed the label) got caught.
+                    il.Append(il.Create(OpCodes.Ldarg_2));
                     il.Append(il.Create(OpCodes.Call, asm.MainModule.ImportReference(
                         typeof(AlRunner.BcRuntime).GetMethod(
                             nameof(AlRunner.BcRuntime.MakeHttpEgressOutOfScopeException))!)));
