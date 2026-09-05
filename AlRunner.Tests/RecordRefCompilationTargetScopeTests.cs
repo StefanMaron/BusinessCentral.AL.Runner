@@ -174,13 +174,26 @@ public sealed class RecordRefCompilationTargetScopeTests : IDisposable
             /// A system table that is NOT internal and NOT OnPrem-scoped (2000000026
             /// "Integer"). BC allows it from every target; a gate that blanket-refuses
             /// 2000000000+ ids from Cloud fails here.
+            ///
+            /// The filtered Count() is the second half of this arm and covers the SIBLING
+            /// gate: BC's NavRecordRef.CheckOperationIsAllowed runs on every RecordRef
+            /// operation (not just Open), consults the same
+            /// IsSystemTableAllowedForRecordRefUsage, and only engages for ids above
+            /// 2000000000 when the calling object is not compiled for on-premise — i.e.
+            /// exactly this Cloud fixture. It is BC's own unreplaced body, so this asserts
+            /// it neither refuses a permitted table nor breaks on the headless skeleton.
+            /// 3 is a specific non-default answer: a stubbed Count() returning 0 fails.
             [Test]
             procedure NonScopedSystemTable_IsAllowed()
             var
                 RecRef: RecordRef;
+                FldRef: FieldRef;
             begin
                 RecRef.Open(2000000026);
                 Assert.AreEqual(2000000026, RecRef.Number, 'RecordRef.Open(2000000026) must succeed for every target');
+                FldRef := RecRef.Field(1);
+                FldRef.SetRange(1, 3);
+                Assert.AreEqual(3, RecRef.Count(), 'A filtered Count() on an open RecordRef must not be refused either');
                 RecRef.Close();
             end;
 
