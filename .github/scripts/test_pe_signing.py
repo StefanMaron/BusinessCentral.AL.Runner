@@ -19,6 +19,7 @@ Run directly: python3 .github/scripts/test_pe_signing.py
 
 import importlib.util
 import os
+import shutil
 import struct
 import subprocess
 import sys
@@ -546,6 +547,210 @@ class ListUnsignedCrossDriveTests(unittest.TestCase):
             self.assertEqual(result, 0)
             self.assertEqual(captured_stdout.getvalue().strip(), "unsigned.dll")
 
+
+@unittest.skipIf(
+    sys.platform == "win32" or (hasattr(os, "geteuid") and os.geteuid() == 0),
+    "needs a POSIX permission bit that actually denies access: root ignores mode "
+    "0o000 and Windows does not honour it, so these tests could not fail there "
+    "and would pass vacuously (#2765)",
+)
+class PartialScanTests(unittest.TestCase):
+    """#2765: a scan that could not read part of the tree must not report a
+    complete result.
+
+    os.walk() swallows traversal errors unless given an onerror callback, so
+    a readable root containing an unreadable subdirectory yields the files it
+    could reach and silently omits the rest. Measured before the fix: a root
+    holding one signed DLL plus a mode-0o000 subdirectory hiding an *unsigned*
+    DLL exited 0 with "OK: all 1 .dll/.exe file(s) checked are
+    Authenticode-signed." -- the gate reporting clean over a binary it never
+    looked at, which is the one outcome it exists to prevent.
+
+    The same conflation had a sibling one layer down:
+    read_certificate_table_size() caught OSError and returned None, so a
+    mode-0o000 *file* was counted as "not a PE image" and dropped, and verify
+    again printed OK over it.
+
+    This is a different member of the #2298 family than the one PR #2760
+    fixed. #2760 covers "the walk returned NOTHING"; this covers "the walk
+    returned SOME of it". Both guards are live and independent: the
+    empty-scan messages below must keep firing for a complete-but-empty walk.
+
+    Both directions are covered, as in EmptyScanTests: the unreadable cases
+    must fail naming the path, and the control cases in the same class must
+    still succeed quietly, so a fix that simply always fails is caught.
+    """
+
+    def _tmpdir(self) -> Path:
+        """A temp tree torn down via addCleanup rather than a `with` block.
+
+        Cleanups run LIFO, so registering the rmtree FIRST makes it run LAST
+        -- after every _unreadable() restore below. A `with
+        tempfile.TemporaryDirectory()` cannot work here: it exits before
+        addCleanup fires, so it tries to rmtree a mode-0o000 directory and
+        the test ERRORs during teardown instead of reporting its assertion.
+        """
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        return Path(tmp)
+
+    def _unreadable(self, path: Path):
+        """chmod a path to 0o000 and guarantee it is restored, so the
+        _tmpdir() cleanup can still remove the tree."""
+        original = path.stat().st_mode
+        os.chmod(path, 0o000)
+        self.addCleanup(os.chmod, path, original)
+
+    def _verify(self, *roots):
+        return subprocess.run(
+            [sys.executable, SCRIPT_PATH, "verify", *[str(r) for r in roots]],
+            capture_output=True, text=True,
+        )
+
+    def _list_unsigned(self, root, catalog=None):
+        argv = [sys.executable, SCRIPT_PATH, "list-unsigned", str(root),
+                "--relative-to", str(root)]
+        if catalog is not None:
+            argv += ["--catalog", str(catalog)]
+        return subprocess.run(argv, capture_output=True, text=True)
+
+    def _tree_with_unreadable_subdir(self, root: Path) -> Path:
+        """One reachable SIGNED dll, plus an unreadable subdirectory hiding an
+        UNSIGNED one. Everything reachable is clean, so a partial scan looks
+        exactly like a passing one -- which is the bug."""
+        (root / "signed.dll").write_bytes(build_fake_pe(0x20B, cert_table_size=4096))
+        hidden = root / "hidden"
+        hidden.mkdir()
+        (hidden / "unsigned.dll").write_bytes(build_fake_pe(0x20B, cert_table_size=0))
+        self._unreadable(hidden)
+        return hidden
+
+    # --- the partial scans that must now fail ----------------------------
+
+    def test_verify_fails_naming_an_unreadable_subdirectory(self):
+        root = self._tmpdir()
+        hidden = self._tree_with_unreadable_subdir(root)
+
+        result = self._verify(root)
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        # The pre-fix output, verbatim -- it must be gone.
+        self.assertNotIn("OK", result.stdout)
+        # Loud, and specific about WHICH path could not be read: an
+        # operator cannot act on "the scan was partial" alone.
+        self.assertIn(str(hidden), result.stderr)
+        self.assertIn("could not read directory", result.stderr)
+        self.assertIn("Permission denied", result.stderr)
+        self.assertIn("PARTIAL", result.stderr)
+
+    def test_list_unsigned_fails_on_unreadable_subdir_and_writes_no_catalog(self):
+        # The catalog IS the file list the signing step consumes, so a
+        # partial walk here means an unsigned binary is never sent to be
+        # signed -- and pre-fix this exited 0 with an empty stdout listing.
+        root = self._tmpdir()
+        hidden = self._tree_with_unreadable_subdir(root)
+        catalog = Path(str(root) + "-catalog.txt")
+
+        result = self._list_unsigned(root, catalog=catalog)
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn(str(hidden), result.stderr)
+        self.assertIn("could not read directory", result.stderr)
+        self.assertFalse(catalog.exists(), "no catalog may be written from a partial scan")
+
+    def test_verify_fails_naming_an_unreadable_pe_file(self):
+        # The sibling of the same assumption, one layer down: an OSError
+        # opening a .dll was caught and reported as None ("not a PE image"),
+        # so the file was dropped from the classified set and verify printed
+        # OK over the one file it COULD read.
+        root = self._tmpdir()
+        (root / "signed.dll").write_bytes(build_fake_pe(0x20B, cert_table_size=4096))
+        locked = root / "locked.dll"
+        locked.write_bytes(build_fake_pe(0x20B, cert_table_size=0))
+        self._unreadable(locked)
+
+        result = self._verify(root)
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertNotIn("OK", result.stdout)
+        self.assertIn(str(locked), result.stderr)
+        self.assertIn("could not read", result.stderr)
+        self.assertIn("Permission denied", result.stderr)
+
+    def test_scan_raises_rather_than_yielding_a_short_list_by_default(self):
+        # scan() is a public generator. With no on_error callback it must
+        # raise, so no future caller can quietly receive a partial listing --
+        # that default is the whole defect, not just verify's handling of it.
+        root = self._tmpdir()
+        self._tree_with_unreadable_subdir(root)
+
+        with self.assertRaises(PermissionError):
+            list(pe_signing.scan([root]))
+
+    def test_scan_reports_every_unreadable_directory_not_just_the_first(self):
+        # With a collector, the walk continues: reporting one unreadable
+        # directory per run would make a multi-directory failure take as many
+        # release attempts as there are directories.
+        root = self._tmpdir()
+        (root / "signed.dll").write_bytes(build_fake_pe(0x20B, cert_table_size=4096))
+        hidden = []
+        for name in ("a", "b"):
+            d = root / name
+            d.mkdir()
+            self._unreadable(d)
+            hidden.append(d)
+
+        errors = []
+        found = list(pe_signing.scan([root], on_error=errors.append))
+
+        self.assertEqual([p.name for p in found], ["signed.dll"])
+        self.assertEqual(
+            sorted(str(e.filename) for e in errors),
+            sorted(str(d) for d in hidden),
+        )
+
+    # --- the control cases that must still pass, quietly -----------------
+
+    def test_fully_readable_tree_still_reports_ok_with_the_real_count(self):
+        # A fix that just always fails is caught here.
+        root = self._tmpdir()
+        (root / "signed-a.dll").write_bytes(build_fake_pe(0x20B, cert_table_size=999))
+        nested = root / "nested"
+        nested.mkdir()
+        (nested / "signed-b.exe").write_bytes(build_fake_pe(0x10B, cert_table_size=1))
+
+        result = self._verify(root)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("OK: all 2 .dll/.exe file(s)", result.stdout)
+        self.assertNotIn("::error::", result.stderr)
+
+    def test_unreadable_non_pe_file_is_not_an_error(self):
+        # Only .dll/.exe files are ever opened, so an unreadable file with
+        # any other extension must stay silent -- the fix must fail on what
+        # it could not CLASSIFY, not on every permission bit in the tree.
+        root = self._tmpdir()
+        (root / "signed.dll").write_bytes(build_fake_pe(0x20B, cert_table_size=4096))
+        secret = root / "secret.txt"
+        secret.write_text("private")
+        self._unreadable(secret)
+
+        result = self._verify(root)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("OK: all 1 .dll/.exe file(s)", result.stdout)
+        self.assertNotIn("::error::", result.stderr)
+
+    def test_an_empty_but_fully_readable_scan_still_reports_the_2298_message(self):
+        # The #2760 guard and this one are independent: a complete walk that
+        # classified nothing must still fail with the empty-scan wording, not
+        # be reclassified as a partial scan.
+        tmp = self._tmpdir()
+        result = self._verify(tmp)
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("no .dll/.exe files", result.stderr)
+        self.assertNotIn("PARTIAL", result.stderr)
 
 if __name__ == '__main__':
     unittest.main()

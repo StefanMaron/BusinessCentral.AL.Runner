@@ -48,6 +48,17 @@ signing nothing" for the same reason. Note what is NOT affected: zero
 for list-unsigned (an already-signed tree writes a legitimately empty
 catalog); it is zero *scanned* files that fails.
 
+BOTH subcommands also exit 1 when the scan could not read part of the tree --
+an unreadable subdirectory, or a .dll/.exe that cannot be opened (#2765). That
+is a distinct failure from the empty scan above: the walk returned *some* of
+the tree rather than none of it, so the result looks perfectly healthy. os.walk
+skips an unreadable directory silently unless given an onerror callback, and
+read_certificate_table_size used to report an OSError as "not a PE image", so a
+root holding one signed DLL plus an unreadable subdirectory hiding an *unsigned*
+DLL exited 0 with "OK: all 1 .dll/.exe file(s) checked are Authenticode-signed."
+A partial scan is not a clean one; the error names the path that could not be
+read, since "the scan was partial" alone is not actionable.
+
 Both subcommands share the same walk: recurse into `.dll`/`.exe` files,
 skipping any path with a `ref` or `refint` directory component (MSBuild's
 compile-only reference-assembly output -- never copied into a publish/pack
@@ -66,7 +77,7 @@ import os
 import struct
 import sys
 from pathlib import Path
-from typing import Iterator, Optional
+from typing import Callable, Iterator, Optional
 
 PE_EXTENSIONS = (".dll", ".exe")
 DEFAULT_EXCLUDE_DIRS = frozenset({"ref", "refint"})
@@ -101,68 +112,101 @@ def read_certificate_table_size(path: Path) -> Optional[int]:
     optional header, unrecognized optional-header magic, or too few data
     directories to reach the Security entry). A return of 0 means "valid PE,
     no Authenticode signature"; a return of None means "not something this
-    check can classify as signed or unsigned at all"."""
-    try:
-        with open(path, "rb") as f:
-            dos_header = f.read(64)
-            if len(dos_header) < 64 or dos_header[0:2] != b"MZ":
-                return None
-            (e_lfanew,) = struct.unpack_from("<I", dos_header, 0x3C)
+    check can classify as signed or unsigned at all".
 
-            f.seek(e_lfanew)
-            pe_sig = f.read(4)
-            if pe_sig != b"PE\x00\x00":
-                return None
+    Raises OSError if the file cannot be opened or read. This used to be
+    caught and reported as None, which conflated "I read it and it is not a
+    PE image" with "I could not read it" -- a mode-0o000 .dll was silently
+    dropped from the classified set and verify printed OK over it (#2765).
+    Callers decide what to do with the failure; they may not be denied the
+    fact that one happened."""
+    with open(path, "rb") as f:
+        dos_header = f.read(64)
+        if len(dos_header) < 64 or dos_header[0:2] != b"MZ":
+            return None
+        (e_lfanew,) = struct.unpack_from("<I", dos_header, 0x3C)
 
-            coff_header = f.read(20)
-            if len(coff_header) < 20:
-                return None
-            (size_of_optional_header,) = struct.unpack_from("<H", coff_header, 16)
-            if size_of_optional_header == 0:
-                # Object files (.obj) have no optional header; not a signable image.
-                return None
+        f.seek(e_lfanew)
+        pe_sig = f.read(4)
+        if pe_sig != b"PE\x00\x00":
+            return None
 
-            optional_header = f.read(size_of_optional_header)
-            if len(optional_header) < 2:
-                return None
-            (magic,) = struct.unpack_from("<H", optional_header, 0)
-            data_dir_offset = _DATA_DIRECTORY_OFFSET_BY_MAGIC.get(magic)
-            if data_dir_offset is None:
-                return None
+        coff_header = f.read(20)
+        if len(coff_header) < 20:
+            return None
+        (size_of_optional_header,) = struct.unpack_from("<H", coff_header, 16)
+        if size_of_optional_header == 0:
+            # Object files (.obj) have no optional header; not a signable image.
+            return None
 
-            entry_offset = data_dir_offset + _CERT_TABLE_DIRECTORY_INDEX * 8
-            if len(optional_header) < entry_offset + 8:
-                # Fewer than 5 data directories present at all -- no room for
-                # a Security entry, so there is no certificate table.
-                return 0
+        optional_header = f.read(size_of_optional_header)
+        if len(optional_header) < 2:
+            return None
+        (magic,) = struct.unpack_from("<H", optional_header, 0)
+        data_dir_offset = _DATA_DIRECTORY_OFFSET_BY_MAGIC.get(magic)
+        if data_dir_offset is None:
+            return None
 
-            _virtual_address, size = struct.unpack_from(
-                "<II", optional_header, entry_offset
-            )
-            return size
-    except OSError:
-        return None
+        entry_offset = data_dir_offset + _CERT_TABLE_DIRECTORY_INDEX * 8
+        if len(optional_header) < entry_offset + 8:
+            # Fewer than 5 data directories present at all -- no room for
+            # a Security entry, so there is no certificate table.
+            return 0
+
+        _virtual_address, size = struct.unpack_from(
+            "<II", optional_header, entry_offset
+        )
+        return size
 
 
 def is_signed(path: Path) -> Optional[bool]:
     """True/False if path is a classifiable PE image, None if it isn't (see
-    read_certificate_table_size)."""
+    read_certificate_table_size). Propagates OSError if the file cannot be
+    read at all -- that is an unanswered question, not a negative answer."""
     size = read_certificate_table_size(path)
     if size is None:
         return None
     return size > 0
 
 
-def scan(roots: list[Path], exclude_dirs: frozenset[str] = DEFAULT_EXCLUDE_DIRS) -> Iterator[Path]:
+def scan(
+    roots: list[Path],
+    exclude_dirs: frozenset[str] = DEFAULT_EXCLUDE_DIRS,
+    on_error: Optional[Callable[[OSError], None]] = None,
+) -> Iterator[Path]:
     """Yield every .dll/.exe file under the given root(s) (files are yielded
     as-is if they already match), skipping any path with an excluded
-    directory component."""
+    directory component.
+
+    os.walk() SWALLOWS traversal errors by default: an unreadable
+    subdirectory is skipped in silence, so a readable root containing one
+    yields the files it could reach and the caller cannot tell a partial walk
+    from a complete one. Measured (#2765): a root holding one signed DLL plus
+    a mode-0o000 subdirectory hiding an unsigned DLL made `verify` exit 0 with
+    "OK: all 1 .dll/.exe file(s) checked are Authenticode-signed."
+
+    So this never uses that default. With no `on_error`, the OSError is
+    RAISED -- the safe behaviour for any future caller, which then cannot
+    receive a short list without knowing. With an `on_error` callback the
+    error is handed over and the walk CONTINUES, so a caller that wants to
+    report every unreadable directory at once (see _classify) can, instead of
+    surfacing them one release attempt at a time.
+
+    Note what this is not: the #2298 guards for a missing root and for a walk
+    that classified nothing are separate and still apply. That family is "the
+    walk returned nothing"; this is "the walk returned some of it".
+    """
+    def _raise(exc: OSError) -> None:
+        raise exc
+
+    handle_error = _raise if on_error is None else on_error
+
     for root in roots:
         if root.is_file():
             if root.suffix.lower() in PE_EXTENSIONS:
                 yield root
             continue
-        for dirpath, dirnames, filenames in os.walk(root):
+        for dirpath, dirnames, filenames in os.walk(root, onerror=handle_error):
             dirnames[:] = [d for d in dirnames if d not in exclude_dirs]
             for name in filenames:
                 if os.path.splitext(name)[1].lower() in PE_EXTENSIONS:
@@ -192,23 +236,69 @@ def _report_missing_roots(roots: list[Path]) -> bool:
 
 
 def _classify(roots: list[Path], exclude_dirs: frozenset[str] = DEFAULT_EXCLUDE_DIRS):
-    """Walk the roots once and return (candidates, classified):
+    """Walk the roots once and return (candidates, classified, unreadable):
 
       candidates  -- every .dll/.exe path scan() yielded, sorted
       classified  -- the (path, is_signed) pairs among them that actually
                      parse as a PE image (is_signed() returned a bool)
+      unreadable  -- ("directory"|"file", OSError) for everything the scan
+                     could not read, so the callers can refuse to report a
+                     complete result over a partial scan (#2765)
 
-    Keeping both counts is what lets the callers below tell "the directory
-    held nothing at all" apart from "it held .dll files that are not PE
-    images" -- different causes, different fixes, and both of them used to
-    print the same "all 0 ... checked" success line."""
-    candidates = sorted(scan(roots, exclude_dirs))
+    Keeping all three is what lets the callers below tell "the directory held
+    nothing at all" apart from "it held .dll files that are not PE images"
+    apart from "part of the tree could not be read". Different causes,
+    different fixes, and the first two used to print the same "all 0 ...
+    checked" success line while the third printed a confident non-zero count.
+
+    The walk collects errors rather than raising on the first one: a release
+    gate that names one unreadable directory per attempt costs an attempt per
+    directory."""
+    walk_errors: list[OSError] = []
+    candidates = sorted(scan(roots, exclude_dirs, on_error=walk_errors.append))
+    unreadable: list[tuple[str, OSError]] = [("directory", exc) for exc in walk_errors]
     classified = []
     for path in candidates:
-        signed = is_signed(path)
+        try:
+            signed = is_signed(path)
+        except OSError as exc:
+            # An unopenable .dll is unclassified, NOT "not a PE image".
+            unreadable.append(("file", exc))
+            continue
         if signed is not None:
             classified.append((path, signed))
-    return candidates, classified
+    return candidates, classified, unreadable
+
+
+def _report_partial_scan(unreadable: list[tuple[str, OSError]], consequence: str) -> None:
+    """Print a ::error:: line naming every path the scan could not read.
+
+    #2765: os.walk() skipping an unreadable subdirectory, and an OSError on a
+    candidate file being reported as "not a PE image", both turned a PARTIAL
+    scan into a confident clean result. Measured before the fix: a root with
+    one signed DLL and an unreadable subdirectory hiding an unsigned one
+    exited 0 with "OK: all 1 .dll/.exe file(s) checked are
+    Authenticode-signed." Naming the path matters as much as failing: an
+    operator cannot act on "the scan was partial"."""
+    for kind, exc in unreadable:
+        location = getattr(exc, "filename", None) or "<unknown path>"
+        reason = exc.strerror or str(exc)
+        if kind == "directory":
+            detail = (
+                f"could not read directory {location}: {reason}. Everything "
+                "under it was left out of this scan"
+            )
+        else:
+            detail = (
+                f"could not read {location}: {reason}. A .dll/.exe that cannot "
+                "be opened is unclassified, not 'not a PE image'"
+            )
+        print(
+            f"::error::{detail}, so this scan is PARTIAL and {consequence} "
+            "Failing loudly instead of reporting a complete result over a "
+            "scan that could not look everywhere (#2765).",
+            file=sys.stderr,
+        )
 
 
 def _report_empty_scan(roots: list[Path], candidates: list[Path], consequence: str) -> None:
@@ -248,7 +338,18 @@ def _cmd_list_unsigned(args: argparse.Namespace) -> int:
     if _report_missing_roots(roots):
         return 1
 
-    candidates, classified = _classify(roots, exclude_dirs)
+    candidates, classified, unreadable = _classify(roots, exclude_dirs)
+    if unreadable:
+        # Before the emptiness guard: "part of the tree was unreadable" is the
+        # more precise cause, and it can coexist with a non-empty result.
+        _report_partial_scan(
+            unreadable,
+            "the signing catalog would be built from a tree that was only "
+            "partly examined -- an unsigned binary hidden in the unread part "
+            "would never be sent to the signing step.",
+        )
+        return 1
+
     if not classified:
         # Note the distinction this does NOT break: zero *unsigned* files in
         # a tree that really was scanned stays a successful, empty catalog
@@ -306,7 +407,14 @@ def _cmd_verify(args: argparse.Namespace) -> int:
     if _report_missing_roots(roots):
         return 1
 
-    candidates, classified = _classify(roots)
+    candidates, classified, unreadable = _classify(roots)
+    if unreadable:
+        _report_partial_scan(
+            unreadable,
+            "this gate did not see the whole tree it was asked to verify.",
+        )
+        return 1
+
     if not classified:
         _report_empty_scan(
             roots,
