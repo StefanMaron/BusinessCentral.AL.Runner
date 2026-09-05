@@ -2590,10 +2590,14 @@ foreach (var bundle in bundles)
             // above with a synthetic FAILED test each), so the guard must subtract this
             // count before deciding there is an unexplained gap left.
             int tddExcludedCount = 0;
-            // Emit-phase timeout: default 120 s, override via AL_RUNNER_EMIT_TIMEOUT_SEC.
+            // Emit-phase timeout: default 120 s, override via AL_RUNNER_EMIT_TIMEOUT_SEC. Under
+            // --jobs, ParallelFanOut.WorkerEnvironment sets AL_RUNNER_EMIT_TIMEOUT_SEC on each
+            // worker's environment to DefaultEmitTimeoutSec scaled by the shard count (#2715),
+            // so this single-process default and that scaled one share the same source of truth.
             // Note: Task.Run thread continues in background after timeout — acceptable for a CLI tool.
             int emitTimeoutSec = int.TryParse(
-                Environment.GetEnvironmentVariable("AL_RUNNER_EMIT_TIMEOUT_SEC"), out var ts) ? ts : 120;
+                Environment.GetEnvironmentVariable("AL_RUNNER_EMIT_TIMEOUT_SEC"), out var ts)
+                    ? ts : AlRunner.Infrastructure.ParallelFanOut.DefaultEmitTimeoutSec;
             // Containment: keep a symbol-less .app in ONE suite's .alpackages from failing
             // every OTHER suite in the bundle. BC's native .app scanner reports AL1023
             // ("package file is not valid") for a package with no SymbolReference.json and

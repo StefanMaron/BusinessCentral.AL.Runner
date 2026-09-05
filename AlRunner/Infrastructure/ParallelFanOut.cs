@@ -145,10 +145,32 @@ internal static class ParallelFanOut
         => 1;
 
     /// <summary>
-    /// Extra environment for a worker process: one GC heap, conserve memory, no background GC.
-    /// Together these take about half off peak memory for 6-7% wall (8,183 -> 4,193 MB at
-    /// --jobs 4, 4,983 -> 2,434 MB at --jobs 2, pass count identical in both) — see
-    /// ParallelFanOutGcHeapTests' header for the measurements behind each one.
+    /// The single-process default for the AL emit-phase timeout (Program.cs), in seconds. A
+    /// worker under --jobs scales this by its shard count — see
+    /// <see cref="EmitTimeoutSecForWorker"/> — so it stays the source of truth for both.
+    /// </summary>
+    public const int DefaultEmitTimeoutSec = 120;
+
+    /// <summary>
+    /// Emit-phase timeout to hand one worker, in seconds (issue #2715).
+    ///
+    /// The timeout is wall-clock, but under --jobs N every worker competes with N-1 others for
+    /// the same cores — a bundle that emits comfortably alone can time out purely because other
+    /// workers are running. Measured on a 12-core box at --jobs 12: Tests-ERM's emit was cut off
+    /// at 120.1s of wall while that worker's total wall was 820.1s, roughly the same ~7x the
+    /// contention stretched everything else by. Scaling the default by the shard count is a
+    /// proxy for that stretch, not a precise CPU-time budget — see this file's header comment
+    /// for why CPU time would be the more precise fix and why it is a larger change.
+    /// </summary>
+    public static int EmitTimeoutSecForWorker(int jobs)
+        => DefaultEmitTimeoutSec * Math.Max(1, jobs);
+
+    /// <summary>
+    /// Extra environment for a worker process: one GC heap, conserve memory, no background GC,
+    /// and a shard-scaled emit timeout. The GC knobs together take about half off peak memory
+    /// for 6-7% wall (8,183 -> 4,193 MB at --jobs 4, 4,983 -> 2,434 MB at --jobs 2, pass count
+    /// identical in both) — see ParallelFanOutGcHeapTests' header for the measurements behind
+    /// each one.
     ///
     /// Every knob here is SOFT: it can cost time, never correctness. That rules out
     /// DOTNET_GCHeapHardLimit, which recovers a similar amount and then silently drops
@@ -157,14 +179,15 @@ internal static class ParallelFanOut
     ///
     /// Each knob is skipped when the user has already set it — someone tuning by hand, or a CI
     /// runner setting one globally, must win over a value chosen here. Setting one does not
-    /// suppress the other two.
+    /// suppress the others.
     /// </summary>
     public static Dictionary<string, string> WorkerEnvironment(
         int cores,
         int jobs,
         string? userHeapCount = null,
         string? userConserveMemory = null,
-        string? userGcConcurrent = null)
+        string? userGcConcurrent = null,
+        string? userEmitTimeoutSec = null)
     {
         var env = new Dictionary<string, string>(StringComparer.Ordinal);
         if (string.IsNullOrEmpty(userHeapCount))
@@ -176,6 +199,8 @@ internal static class ParallelFanOut
         // ~150 MB of the measured difference on Tests-SMB.
         if (string.IsNullOrEmpty(userGcConcurrent))
             env["DOTNET_gcConcurrent"] = "0";
+        if (string.IsNullOrEmpty(userEmitTimeoutSec))
+            env["AL_RUNNER_EMIT_TIMEOUT_SEC"] = EmitTimeoutSecForWorker(jobs).ToString();
         return env;
     }
 
@@ -222,7 +247,8 @@ internal static class ParallelFanOut
                          Environment.ProcessorCount, shards.Count,
                          Environment.GetEnvironmentVariable("DOTNET_GCHeapCount"),
                          Environment.GetEnvironmentVariable("DOTNET_GCConserveMemory"),
-                         Environment.GetEnvironmentVariable("DOTNET_gcConcurrent")))
+                         Environment.GetEnvironmentVariable("DOTNET_gcConcurrent"),
+                         Environment.GetEnvironmentVariable("AL_RUNNER_EMIT_TIMEOUT_SEC")))
                 psi.Environment[kv.Key] = kv.Value;
             if (viaDotnet && asm != null) psi.ArgumentList.Add(asm);
             foreach (var a in childArgs) psi.ArgumentList.Add(a);
@@ -236,7 +262,7 @@ internal static class ParallelFanOut
         }
 
         var worst = 0;
-        long tests = 0, failures = 0, errors = 0, skipped = 0;
+        long tests = 0, failures = 0, errors = 0, skipped = 0, notRun = 0;
         for (var i = 0; i < procs.Count; i++)
         {
             var (p, junit, so, se) = procs[i];
@@ -252,6 +278,14 @@ internal static class ParallelFanOut
 
             var c = JUnitCounts.Read(junit);
             tests += c.Tests; failures += c.Failures; errors += c.Errors; skipped += c.Skipped;
+
+            // A bundle that COMPILE FAILs (Reporter.cs's "=== <bundle> — COMPILE FAIL ===")
+            // contributes zero tests to the JUnit this worker writes, so it vanishes from the
+            // totals above with no trace — the exact shape #2715 measured (40,550 tests down to
+            // 14,856, reported as a plain total). Count it here so the aggregate says a bundle
+            // is missing instead of silently reporting the smaller number as complete.
+            notRun += CountOccurrences(stdout, " — COMPILE FAIL ===")
+                    + CountOccurrences(stderr, " — COMPILE FAIL ===");
         }
 
         Console.WriteLine();
@@ -263,6 +297,9 @@ internal static class ParallelFanOut
         Console.WriteLine($"  fail:        {failures}");
         Console.WriteLine($"  error:       {errors}");
         Console.WriteLine($"  skipped:     {skipped}");
+        if (notRun > 0)
+            Console.WriteLine($"  NOT RUN:     {notRun} bundle(s) — COMPILE FAIL in a shard above, " +
+                               "excluded from the totals; see that shard's output for which one");
         Console.WriteLine("=================================================================");
 
         try { Directory.Delete(tempDir, recursive: true); } catch { }
@@ -273,5 +310,21 @@ internal static class ParallelFanOut
     {
         try { return Path.GetFullPath(p).TrimEnd(Path.DirectorySeparatorChar); }
         catch { return p.TrimEnd('/', '\\'); }
+    }
+
+    /// <summary>How many times a bundle reported COMPILE FAIL in a shard's captured output —
+    /// used to tell the aggregate summary how many bundles are missing from its totals, rather
+    /// than reporting the smaller total as though it were complete (#2715).</summary>
+    internal static int CountOccurrences(string haystack, string needle)
+    {
+        if (string.IsNullOrEmpty(haystack)) return 0;
+        var count = 0;
+        var idx = 0;
+        while ((idx = haystack.IndexOf(needle, idx, StringComparison.Ordinal)) >= 0)
+        {
+            count++;
+            idx += needle.Length;
+        }
+        return count;
     }
 }

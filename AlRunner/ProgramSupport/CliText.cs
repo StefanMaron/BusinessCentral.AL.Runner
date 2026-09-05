@@ -406,6 +406,11 @@ internal static partial class ProgramSupport
         w.WriteLine("                          A hung test also ends only its own shard, not the whole run.");
         w.WriteLine("                          Ignored by --watch/--server/--dap (long-lived warm state)");
         w.WriteLine("                          and by a single-bundle run. Default: 1.");
+        w.WriteLine("                          Each worker also gets its own AL_RUNNER_EMIT_TIMEOUT_SEC,");
+        w.WriteLine("                          scaled by the shard count: N workers sharing cores can run");
+        w.WriteLine("                          a bundle's emit phase roughly N times slower in wall time,");
+        w.WriteLine("                          so the wall-clock timeout is scaled to match. An explicit");
+        w.WriteLine("                          AL_RUNNER_EMIT_TIMEOUT_SEC set before the run is left alone.");
         w.WriteLine("  --merge-counts PATH     Fold a JUnit file's totals into this run's summary;");
         w.WriteLine("                          repeatable. Set automatically by --resume-aborts to carry");
         w.WriteLine("                          earlier attempts forward, and reported on its own line so a");
@@ -670,7 +675,9 @@ internal static partial class ProgramSupport
         w.WriteLine("                               ~/.cache/al-runner/ncl-cecil/<key>.dll if present).");
         w.WriteLine("  AL_RUNNER_HOOK_TRACE=1       Trace every JmpHook fire to");
         w.WriteLine("                               /tmp/al-runner-hook-trace.log.");
-        w.WriteLine("  AL_RUNNER_EMIT_TIMEOUT_SEC=N Override the 120 s default emit-phase timeout.");
+        w.WriteLine("  AL_RUNNER_EMIT_TIMEOUT_SEC=N Override the 120 s default emit-phase timeout. Under");
+        w.WriteLine("                               --jobs, setting this yourself is passed to every");
+        w.WriteLine("                               worker unscaled instead of the shard-scaled default.");
         w.WriteLine("  AL_RUNNER_PHASE_LOG=PATH     Append one JSONL cost record per app group, per");
         w.WriteLine("                               bundle and per process to PATH (emit/compile/run");
         w.WriteLine("                               ms, deps, cache HIT/MISS, start + wall clock,");
