@@ -947,8 +947,7 @@ public static partial class NavReportSync
     /// </summary>
     internal static void RunOnPreTrigger(object navReport, Type navReportBase)
     {
-        var onPreTrigger = navReportBase.GetMethod("OnPreTriggerAsync", LifecycleTriggerFlags,
-            null, Type.EmptyTypes, null);
+        var onPreTrigger = SelectPreTriggerMethod(navReportBase);
         if (onPreTrigger == null)
         {
             RunLifecycleTrigger(navReport, navReportBase, "OnPreReport");
@@ -956,6 +955,16 @@ public static partial class NavReportSync
         }
         BcRuntime.AwaitIfTask(Invoke(onPreTrigger, navReport, Array.Empty<object?>()));
     }
+
+    /// <summary>
+    /// BC's whole-pre-report method when this Ncl build has one, else null so
+    /// <see cref="RunOnPreTrigger"/> falls back to the bare trigger. Split out as a pure
+    /// function of the base type so it can be pinned without a BC runtime — see
+    /// AlRunner.Tests/ReportPreTriggerStepTests.cs.
+    /// </summary>
+    internal static MethodInfo? SelectPreTriggerMethod(Type navReportBase)
+        => navReportBase.GetMethod("OnPreTriggerAsync", LifecycleTriggerFlags,
+            null, Type.EmptyTypes, null);
 
     internal static void RunLifecycleTrigger(object navReport, Type navReportBase, string trigger)
     {
