@@ -2529,12 +2529,30 @@ foreach (var bundle in bundles)
         // SetTestAssembly.
         var suiteDirByAssembly = new Dictionary<Assembly, string>();
 
-        // Ordered dep ids feed every app's cache key but depend only on the bucket root
-        // and the package caches — both loop-invariant. Resolving them inside the loop
-        // re-scanned the package caches once per app.
-        IReadOnlyList<string> orderedDepIds;
-        using (AlRunner.Infrastructure.PhaseLog.Stage("ordered-dep-ids"))
-            orderedDepIds = GetOrderedDepIds(bucketRoot, packageCacheDirs, bundleAbs);
+        // Ordered dep ids feed every app's cache key but depend only on the bucket root and
+        // the package caches — both loop-invariant, so resolving them inside the loop
+        // re-scanned the package caches once per app. That was the intent of hoisting them;
+        // the hoist was never wired up (#2557) — the value was assigned here and read
+        // nowhere, while the loop went on calling GetOrderedDepIds again, so the run paid for
+        // BOTH. GetOrderedDepIds builds its own DependencyResolver and EnsureIndexed is an
+        // instance field, so the second resolver re-walked every package-cache directory and
+        // re-read every .app manifest out of its zip, carrying nothing over.
+        //
+        // Lazy, not eager: the only consumer is inside the `needCompile && alCacheDir != null`
+        // cache gate, so a --no-cache run (or one where nothing needs compiling) must not pay
+        // for it at all. Evaluated at most once per bundle, which is what the hoist was for.
+        //
+        // The stage is an AppStage and lives INSIDE the factory deliberately. PhaseLog.BeginApp
+        // is called above, so the first evaluation happens inside an app group, and a bundle
+        // Stage there would overlap it — which #1828's stage sum reports as manufactured
+        // overhead, eating the "unattributed" line. Inside the factory it is also recorded
+        // exactly once, on the app that actually opens the gate, instead of a zero-length row
+        // on every later app.
+        var orderedDepIds = new Lazy<IReadOnlyList<string>>(() =>
+        {
+            using (AlRunner.Infrastructure.PhaseLog.AppStage("ordered-dep-ids"))
+                return GetOrderedDepIds(bucketRoot, packageCacheDirs, bundleAbs);
+        });
 
         int agIdx = 0;
         foreach (var appGroup in appGroups)
@@ -2619,14 +2637,31 @@ foreach (var bundle in bundles)
         string? cachePath = null;
         string? sidecarPath = null;
         string? querySidecarPath = null;
-        // A bundle declaring an AL query also needs its query-symbols sidecar: the
-        // MetaQuery design is built from the compilation's SymbolReference, which only
-        // emit produces. Serving a HIT without it leaves NCLMetaQuery null and every
-        // query Find NREs inside BC's NavQuery.ValidateTablesNotVirtual.
-        bool bundleDeclaresQuery = BcCompiler.BundleDeclaresQuery(allPaths);
+        // A bundle declaring an AL query also needs its query-symbols sidecar: the MetaQuery
+        // design is built from the compilation's SymbolReference, which only emit produces.
+        // Serving a HIT without it leaves NCLMetaQuery null and every query Find NREs inside
+        // BC's NavQuery.ValidateTablesNotVirtual.
+        //
+        // Declared here but PROBED only inside the gate below (#2557). The probe reads AL text
+        // to answer: a bundle that declares a query answers on its first file, but one that
+        // does not — the common case — reads the whole tree to prove the negative. Probing
+        // unconditionally meant --no-cache runs and needCompile == false app groups paid for a
+        // whole-tree scan and then discarded the answer.
+        //
+        // It cannot simply MOVE into the gate: the second consumer is in the separate
+        // `needCompile && cachedBytes != null` block further down, outside the gate's braces.
+        // Defaulting to false is safe there because cachedBytes is only ever assigned non-null
+        // inside the gate, so reaching that consumer implies the gate ran and assigned this.
+        bool bundleDeclaresQuery = false;
         if (needCompile && alCacheDir != null)
         {
-            cacheKey = ComputeAlCacheKey(allPaths, moduleName, ordered: GetOrderedDepIds(bucketRoot, packageCacheDirs, bundleAbs), appRootDir: appGroup.SuiteDir);
+            // Instrumented because it was invisible: a whole-tree read that only showed up as
+            // the report's "unattributed" remainder. An AppStage, not a Stage — BeginApp is
+            // already open here, and a bundle stage overlapping an app group is what #1828's
+            // stage sum reports as manufactured overhead.
+            using (AlRunner.Infrastructure.PhaseLog.AppStage("query-decl-probe"))
+                bundleDeclaresQuery = BcCompiler.BundleDeclaresQuery(allPaths);
+            cacheKey = ComputeAlCacheKey(allPaths, moduleName, ordered: orderedDepIds.Value, appRootDir: appGroup.SuiteDir);
             cachePath = Path.Combine(alCacheDir, cacheKey + ".dll");
             sidecarPath = Path.Combine(alCacheDir, cacheKey + AlRunner.Infrastructure.AlCacheSidecars.EnumRegistrySuffix);
             querySidecarPath = Path.Combine(alCacheDir, cacheKey + AlRunner.Infrastructure.AlCacheSidecars.QuerySymbolsSuffix);
@@ -4414,10 +4449,17 @@ return strictExitCode ? computedExitCode : 0;
             // the request, exactly like an AL-output cache hit.
             bool cached = reusedAsm != null;
             string? cacheKey = null, cachePath = null, sidecarPath = null, querySidecarPath = null;
-            // See AlCacheSidecars: a query bundle without its query-symbols sidecar must MISS.
-            bool bundleDeclaresQuery = BcCompiler.BundleDeclaresQuery(allPaths);
             if (reusedAsm == null && alCacheDir != null)
             {
+                // See AlCacheSidecars: a query bundle without its query-symbols sidecar must
+                // MISS. Computed INSIDE the gate (#2557), same reasoning as the CLI path: both
+                // consumers are in here, and the probe reads every .al file in the tree to
+                // answer "no". Outside the gate, a cross-bundle module reuse (reusedAsm != null)
+                // — the case --server exists to make fast — paid for a whole-tree scan whose
+                // answer it then threw away.
+                bool bundleDeclaresQuery;
+                using (AlRunner.Infrastructure.PhaseLog.AppStage("query-decl-probe"))
+                    bundleDeclaresQuery = BcCompiler.BundleDeclaresQuery(allPaths);
                 cacheKey = ComputeAlCacheKey(allPaths, moduleName,
                     ordered: GetOrderedDepIds(bucketRoot, effectivePkgDirs), appRootDir: bucketRoot);
                 cachePath = Path.Combine(alCacheDir, cacheKey + ".dll");
