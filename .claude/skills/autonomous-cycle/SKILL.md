@@ -67,7 +67,27 @@ Every check below exists because its absence has silently corrupted a result.
 5. **Headroom.** Read free RAM and disk, and derive worker and job counts from them. Never
    hardcode. Set `MemoryHigh` below `MemoryMax` on any long run so a cgroup throttles before the
    kernel's global OOM killer starts choosing victims elsewhere on the machine.
-6. **No stale worktree for this identity**, and no leftover scratch directories from a killed
+6. **Your label namespace is yours alone.** Derive a short agent tag from the account the loop
+   is logged in as — `gh api user --jq .login` — because logins are already unique, so a tag
+   derived from one inherits that for free. Uniqueness only comes back into question when you
+   **abbreviate**, and an abbreviation is exactly what makes a readable label, so verify rather
+   than assume:
+
+   - List the `agent:` labels that already exist on the repository.
+   - Check whether your intended tag already appears on issues or PRs that are **not** yours. If
+     it does, someone else is using it — pick another and re-check, or stop and report it.
+   - Check the same tag is not in flight on open work you did not create.
+
+   Then use it consistently: labels (`agent: <tag>-1`), branch names, worktree directories,
+   scratch and cache paths. One derivation, applied everywhere, and two contributors can run the
+   same loop against the same repository without ever writing to the same name.
+
+   The existing `agent: impl-N` convention is the counter-example worth avoiding: it is a global
+   counter with no owner, and it drifted to `impl-69` while leaving 82 worktrees and 10 GB of
+   disk behind. A per-account namespace cannot drift that way, because the identity is not a
+   number anyone increments.
+
+7. **No stale worktree for this identity**, and no leftover scratch directories from a killed
    run.
 
 **Print the preflight as a readable report** — one line per check, PASS or FAIL with the reason
@@ -155,6 +175,10 @@ a merge can turn `main` red, which outranks everything you were about to do.
 
 Several people may run this loop at once, against the same repository, with no coordination
 between them. Nothing may depend on them talking to each other.
+
+**The assignee locks; your label discriminates.** Both matter and they do different jobs: the
+assignee is what stops two agents working the same issue, and your own agent label is what lets
+you (and anyone reading the repository later) tell which work came from which loop. Set both.
 
 **The GitHub assignee is the lock**, and it decides the order you look in. It is visible to
 everyone, survives a crashed box, and needs no shared state between contributors. A dedicated
