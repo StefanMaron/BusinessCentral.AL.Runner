@@ -240,9 +240,19 @@ public sealed class BcAssembler
 
     internal static List<MetadataReference> SharedMetadataReferences(IEnumerable<string> paths)
     {
+        var runnerDll = typeof(BcAssembler).Assembly.Location;
         var refs = new List<MetadataReference>();
         foreach (var path in paths)
         {
+            // #2880: the one mandatory reference is served from the held instance rather than
+            // re-stamped and re-read, so a moment in which the file is unreadable — the shape
+            // #2880 points at, MSBuild's delete-then-write during a concurrent build — cannot
+            // drop it or fault the whole run.
+            if (!string.IsNullOrEmpty(runnerDll) && string.Equals(path, runnerDll, StringComparison.Ordinal))
+            {
+                refs.Add(RunnerAssemblyReference);
+                continue;
+            }
             (string Path, long Ticks, long Length) key;
             try
             {
@@ -259,6 +269,60 @@ public sealed class BcAssembler
                 key, static k => MetadataReference.CreateFromFile(k.Path)));
         }
         return refs;
+    }
+
+    /// <summary>Test seam: the reference list a compile of this assembler would use.</summary>
+    internal IEnumerable<string> ReferencePathsForTests() => ReferencePaths();
+
+    /// <summary>Test seam: the polyfill source Roslyn parses as <c>_polyfill.cs</c>.</summary>
+    internal static string PolyfillSourceForTests => PolyfillSource;
+
+    /// <summary>
+    /// The runner's own assembly, resolved ONCE and held for the life of the process (#2880).
+    ///
+    /// <para><see cref="PolyfillSource"/> references <c>global::AlRunner</c> unconditionally, so
+    /// this reference is not optional the way the BC service-tier DLLs above it are — a
+    /// compilation without it cannot succeed. It used to be re-resolved per compile, through a
+    /// <c>File.Exists</c> guard that SILENTLY dropped it when the file was not there. The
+    /// resulting compile failed 24 diagnostics later with
+    /// <c>_polyfill.cs(31,24): error CS0400: The type or namespace name 'AlRunner' could not be
+    /// found</c> and a cascade of CS8130 deconstruction-inference errors — an error list that
+    /// names a generated file the reader has never seen and a namespace, and says nothing about
+    /// a missing reference.</para>
+    ///
+    /// <para>Holding it also removes the window entirely: the loaded assembly is the one the
+    /// compiled AL will bind against at run time, so its metadata is fixed for the process
+    /// whatever happens to the file on disk afterwards. Re-reading the path per compile could
+    /// only ever introduce absence or skew, never accuracy. (The mtime-keyed
+    /// <see cref="_metadataReferenceCache"/> stays as it is for every OTHER path: those really
+    /// can point at different bytes after a <c>--bc-version</c> switch.)</para>
+    /// </summary>
+    internal static MetadataReference RunnerAssemblyReference => _runnerAssemblyReference.Value;
+
+    private static readonly Lazy<MetadataReference> _runnerAssemblyReference = new(() =>
+        MetadataReference.CreateFromFile(ResolveRunnerAssemblyPath(
+            typeof(BcAssembler).Assembly.Location, File.Exists)));
+
+    /// <summary>Test seam for <see cref="ResolveRunnerAssemblyPath"/>.</summary>
+    internal static string ResolveRunnerAssemblyPathForTests(string location, Func<string, bool> exists)
+        => ResolveRunnerAssemblyPath(location, exists);
+
+    /// <summary>
+    /// Where the runner's own assembly is on disk, or a loud failure naming what it would have
+    /// broken. Never returns null: an unresolvable mandatory reference is not a condition to
+    /// carry on from (.claude/rules/loud-failures.md), and the 24-diagnostic cascade it used to
+    /// produce is exactly the "silent out-of-scope failure" that rule exists to prevent.
+    /// </summary>
+    private static string ResolveRunnerAssemblyPath(string location, Func<string, bool> exists)
+    {
+        if (!string.IsNullOrEmpty(location) && exists(location)) return location;
+        throw new InvalidOperationException(
+            "AlRunner's own assembly could not be resolved as a compile reference"
+            + (string.IsNullOrEmpty(location) ? " (Assembly.Location was empty)" : $": {location}")
+            + ". _polyfill.cs references global::AlRunner unconditionally, so every emitted "
+            + "module would fail to compile with CS0400 'AlRunner could not be found' and a "
+            + "cascade of CS8130 deconstruction errors that name neither this assembly nor the "
+            + "real cause. See issue #2880.");
     }
 
     private IEnumerable<string> ReferencePaths()
@@ -293,9 +357,12 @@ public sealed class BcAssembler
         // The runner's own assembly — polyfill shims call back into AlRunner.BcRuntime
         // helpers (e.g. NCLEnumMetadata_CreateByIdAlAware) so AL emit-time captured
         // metadata is reachable from compiled-AL call sites.
-        var runnerDll = typeof(BcAssembler).Assembly.Location;
-        if (!string.IsNullOrEmpty(runnerDll) && File.Exists(runnerDll))
-            yield return runnerDll;
+        //
+        // #2880: this used to be `if (!IsNullOrEmpty && File.Exists) yield return`, matching the
+        // BC service-tier entries above. That guard is right for THEM — a BC version that does
+        // not ship Types.Report.Runtime.dll must still compile — and wrong for this one, which
+        // no compilation can succeed without. See RunnerAssemblyReference.
+        yield return ResolveRunnerAssemblyPath(typeof(BcAssembler).Assembly.Location, File.Exists);
     }
 
     // Source patches applied to emitted C# before parsing. Each entry redirects a

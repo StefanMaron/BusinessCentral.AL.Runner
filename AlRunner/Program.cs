@@ -3532,7 +3532,15 @@ foreach (var bundle in bundles)
         if (watchMode)
             Console.WriteLine($"  [watch] re-emitted {rel} ({bundleEmit.TotalSeconds:F1}s) — running…");
         else
-            Console.WriteLine($"  → {sP}P/{sF}F/{sE}E across {bundleTests.Count} tests, {bundleErrors.Count} suite errors ({(bundleEmit + bundleComp + bundleRun).TotalSeconds:F1}s)");
+            // #2746: the count used to be the whole line. `1 suite errors` names neither the
+            // suite nor the reason, and nothing beside it in the running log ever did — the
+            // descriptions only reached the reader in the summary, minutes and thousands of
+            // lines later. BundleProgressLine appends them here, capped, and says how many it
+            // capped; the summary still prints the full list.
+            foreach (var line in AlRunner.Infrastructure.BundleProgressLine.Render(
+                         sP, sF, sE, bundleTests.Count, bundleErrors,
+                         bundleEmit + bundleComp + bundleRun))
+                Console.WriteLine(line);
     }
     // Deliberately still gated on an EMPTY bundle. A non-Ran stage suppresses the bucket's
     // per-test reporting (Reporter treats it as "nothing ran"), so widening it to any suite
