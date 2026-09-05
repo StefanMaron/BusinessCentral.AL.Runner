@@ -73,7 +73,7 @@ public sealed class BcCompilerWarmLoaderReuseTests : IDisposable
 
     public BcCompilerWarmLoaderReuseTests()
     {
-        _root = Path.Combine(Path.GetTempPath(), "al-runner-warm-reuse-tests", Guid.NewGuid().ToString("N"));
+        _root = TestScratch.Dir("al-runner-warm-reuse-tests");
         Directory.CreateDirectory(_root);
         BcCompiler.ResetSharedReferencesForTests();
     }

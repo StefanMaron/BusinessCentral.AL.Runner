@@ -44,7 +44,7 @@ public sealed class BcCompilerEmitDepSymbolsIncrementalTests : IDisposable
     public BcCompilerEmitDepSymbolsIncrementalTests(BcEngineFixture engine)
     {
         _engine = engine;
-        _root = Path.Combine(Path.GetTempPath(), "al-runner-depsym-incr-tests", Guid.NewGuid().ToString("N"));
+        _root = TestScratch.Dir("al-runner-depsym-incr-tests");
         Directory.CreateDirectory(_root);
     }
 

@@ -32,7 +32,7 @@ public sealed class DependencyResolverTests : IDisposable
 
     public DependencyResolverTests()
     {
-        _root = Path.Combine(Path.GetTempPath(), "al-runner-resolver-tests", Guid.NewGuid().ToString("N"));
+        _root = TestScratch.Dir("al-runner-resolver-tests");
         Directory.CreateDirectory(_root);
     }
 

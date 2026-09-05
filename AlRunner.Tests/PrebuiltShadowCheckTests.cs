@@ -21,7 +21,7 @@ public class PrebuiltShadowCheckTests
 {
     private static string NewTempDir()
     {
-        var dir = Path.Combine(Path.GetTempPath(), "al-runner-shadow-" + Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.FlatDir("al-runner-shadow-");
         Directory.CreateDirectory(dir);
         return dir;
     }
@@ -118,7 +118,7 @@ public class PrebuiltShadowCheckTests
     public void NewestAlSourceUtc_MissingDirectory_ReturnsMinValue()
     {
         Assert.Equal(DateTime.MinValue,
-            PrebuiltShadowCheck.NewestAlSourceUtc(Path.Combine(Path.GetTempPath(), "definitely-not-here-" + Guid.NewGuid().ToString("N"))));
+            PrebuiltShadowCheck.NewestAlSourceUtc(TestScratch.FlatDir("definitely-not-here-")));
     }
 }
 
@@ -134,7 +134,7 @@ public class PrebuiltShadowContentCheckTests
 {
     private static string NewTempDir()
     {
-        var dir = Path.Combine(Path.GetTempPath(), "prebuilt-shadow-content", Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.Dir("prebuilt-shadow-content");
         Directory.CreateDirectory(dir);
         return dir;
     }
@@ -341,5 +341,5 @@ public class PrebuiltShadowContentCheckTests
     [Fact]
     public void SourceAlContentHash_IsNullForAMissingDirectory()
         => Assert.Null(PrebuiltShadowCheck.SourceAlContentHash(
-            Path.Combine(Path.GetTempPath(), "no-such-dir-" + Guid.NewGuid().ToString("N"))));
+            TestScratch.FlatDir("no-such-dir-")));
 }

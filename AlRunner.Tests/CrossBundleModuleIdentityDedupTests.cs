@@ -62,7 +62,7 @@ public class CrossBundleModuleIdentityDedupTests
     {
         TestArtifacts.SkipIfMissing();
 
-        var root = Path.Combine(Path.GetTempPath(), "al-runner-xbundle-dedup", Guid.NewGuid().ToString("N"));
+        var root = TestScratch.Dir("al-runner-xbundle-dedup");
         var depDir = Path.Combine(root, "dep-app");
         var testDir = Path.Combine(root, "test-app");
         Directory.CreateDirectory(depDir);

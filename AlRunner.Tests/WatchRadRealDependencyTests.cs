@@ -45,7 +45,7 @@ public class WatchRadRealDependencyTests
     {
         TestArtifacts.SkipIfMissing();
 
-        var bundle = Path.Combine(Path.GetTempPath(), "al-runner-watch-rad-msdep", Guid.NewGuid().ToString("N"));
+        var bundle = TestScratch.Dir("al-runner-watch-rad-msdep");
         Directory.CreateDirectory(bundle);
         foreach (var f in Directory.GetFiles(FixtureSrc))
             File.Copy(f, Path.Combine(bundle, Path.GetFileName(f)));

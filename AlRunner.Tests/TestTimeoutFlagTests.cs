@@ -32,7 +32,7 @@ public sealed class TestTimeoutFlagTests : IDisposable
 
     public TestTimeoutFlagTests()
     {
-        _root = Path.Combine(Path.GetTempPath(), "al-runner-test-timeout-flag", Guid.NewGuid().ToString("N"));
+        _root = TestScratch.Dir("al-runner-test-timeout-flag");
         Directory.CreateDirectory(_root);
         WriteFixture(_root);
     }

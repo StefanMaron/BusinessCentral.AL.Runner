@@ -73,7 +73,7 @@ public class PageBackgroundTaskInlineTests
     {
         TestArtifacts.SkipIfMissing();
 
-        var root = Path.Combine(Path.GetTempPath(), "al-runner-pbt-inline-2514", Guid.NewGuid().ToString("N"));
+        var root = TestScratch.Dir("al-runner-pbt-inline-2514");
         Directory.CreateDirectory(root);
 
         File.WriteAllText(Path.Combine(root, "app.json"), """
@@ -366,7 +366,7 @@ public class PageBackgroundTaskInlineTests
     {
         TestArtifacts.SkipIfMissing();
 
-        var root = Path.Combine(Path.GetTempPath(), "al-runner-pbt-shutdown-2650", Guid.NewGuid().ToString("N"));
+        var root = TestScratch.Dir("al-runner-pbt-shutdown-2650");
         Directory.CreateDirectory(root);
 
         File.WriteAllText(Path.Combine(root, "app.json"), """

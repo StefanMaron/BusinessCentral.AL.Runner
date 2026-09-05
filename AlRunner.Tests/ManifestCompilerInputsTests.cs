@@ -43,7 +43,7 @@ public sealed class ManifestCompilerInputsTests : IDisposable
     public ManifestCompilerInputsTests(BcEngineFixture engine)
     {
         _engine = engine;
-        _root = Path.Combine(Path.GetTempPath(), "al-runner-manifest-compiler-inputs", Guid.NewGuid().ToString("N"));
+        _root = TestScratch.Dir("al-runner-manifest-compiler-inputs");
         Directory.CreateDirectory(_root);
     }
 

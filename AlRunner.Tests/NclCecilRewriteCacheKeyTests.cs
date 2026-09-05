@@ -24,7 +24,7 @@ public sealed class NclCecilRewriteCacheKeyTests
 {
     private static string NewTempDir()
     {
-        var dir = Path.Combine(Path.GetTempPath(), "ncl-cecil-cachekey-tests-" + Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.FlatDir("ncl-cecil-cachekey-tests-");
         Directory.CreateDirectory(dir);
         return dir;
     }

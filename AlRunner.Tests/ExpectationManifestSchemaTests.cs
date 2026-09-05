@@ -13,8 +13,7 @@ namespace AlRunner.Tests;
 
 public class ExpectationManifestSchemaTests : IDisposable
 {
-    private readonly string _dir = Path.Combine(
-        Path.GetTempPath(), "al-runner-manifest-" + Guid.NewGuid().ToString("N"));
+    private readonly string _dir = TestScratch.FlatDir("al-runner-manifest-");
 
     public ExpectationManifestSchemaTests() => Directory.CreateDirectory(_dir);
 

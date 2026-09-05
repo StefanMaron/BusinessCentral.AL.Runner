@@ -36,7 +36,7 @@ public sealed class PhaseLogServerKillTests : IDisposable
 
     public PhaseLogServerKillTests()
     {
-        _root = Path.Combine(Path.GetTempPath(), "al-runner-phaselog-server-kill", Guid.NewGuid().ToString("N"));
+        _root = TestScratch.Dir("al-runner-phaselog-server-kill");
         _logPath = Path.Combine(_root, "logs", "phases.jsonl");
         Directory.CreateDirectory(_root);
     }

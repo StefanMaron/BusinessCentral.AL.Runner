@@ -37,7 +37,7 @@ public class AlPerTestCoverageTests : IClassFixture<SharedCliServer>
     // module cache.
     private static string MakeRunTestsBundle(string sourceFile)
     {
-        var dir = Path.Combine(Path.GetTempPath(), "al-runner-per-test-coverage-tests", Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.Dir("al-runner-per-test-coverage-tests");
         Directory.CreateDirectory(dir);
         File.WriteAllText(Path.Combine(dir, "app.json"), """
         {

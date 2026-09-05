@@ -79,7 +79,7 @@ public sealed class AutoProvisionDefaultTests
 
     private static string NewIsolatedHome()
     {
-        var dir = Path.Combine(Path.GetTempPath(), "al-runner-auto-provision-default", Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.Dir("al-runner-auto-provision-default");
         Directory.CreateDirectory(dir);
         return dir;
     }

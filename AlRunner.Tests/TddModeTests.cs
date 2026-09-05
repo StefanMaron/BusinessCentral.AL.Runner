@@ -32,7 +32,7 @@ public sealed class TddModeTests : IDisposable
 
     public TddModeTests()
     {
-        _scratch = Path.Combine(Path.GetTempPath(), "al-runner-tdd", Guid.NewGuid().ToString("N"));
+        _scratch = TestScratch.Dir("al-runner-tdd");
         Directory.CreateDirectory(_scratch);
     }
 

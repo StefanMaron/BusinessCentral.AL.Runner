@@ -148,7 +148,7 @@ public class LayeredDepSymbolsIncrementalServerTests : IClassFixture<SharedCliSe
 
         var server = await _shared.GetAsync(new[] { "--cache", CacheDir });
 
-        var root = Path.Combine(Path.GetTempPath(), "al-runner-layered-rad", Guid.NewGuid().ToString("N"));
+        var root = TestScratch.Dir("al-runner-layered-rad");
         const int libId = 60560;
         const int testId = 60570;
         var libDir = MakeLibBundle(root, libId, LibBefore(libId));
@@ -230,7 +230,7 @@ public class LayeredDepSymbolsIncrementalServerTests : IClassFixture<SharedCliSe
 
         var server = await _shared.GetAsync(new[] { "--cache", CacheDir });
 
-        var root = Path.Combine(Path.GetTempPath(), "al-runner-layered-rad", Guid.NewGuid().ToString("N"));
+        var root = TestScratch.Dir("al-runner-layered-rad");
         const int libId = 60580;
         const int testId = 60590;
         var libDir = MakeLibBundle(root, libId, LibBefore(libId));

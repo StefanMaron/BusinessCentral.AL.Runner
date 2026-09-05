@@ -22,8 +22,7 @@ namespace AlRunner.Tests;
 
 public sealed class PhaseLogTests : IDisposable
 {
-    private readonly string _dir = Path.Combine(
-        Path.GetTempPath(), "al-runner-phaselog-" + Guid.NewGuid().ToString("N"));
+    private readonly string _dir = TestScratch.FlatDir("al-runner-phaselog-");
 
     public PhaseLogTests() => Directory.CreateDirectory(_dir);
 

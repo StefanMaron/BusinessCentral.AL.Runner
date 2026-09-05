@@ -39,7 +39,7 @@ public sealed class TestPageFieldCaptionCaptureTests : IDisposable
     public TestPageFieldCaptionCaptureTests(BcEngineFixture engine)
     {
         _engine = engine;
-        _root = Path.Combine(Path.GetTempPath(), "al-runner-field-caption-tests", Guid.NewGuid().ToString("N"));
+        _root = TestScratch.Dir("al-runner-field-caption-tests");
         Directory.CreateDirectory(_root);
     }
 

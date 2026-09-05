@@ -41,7 +41,7 @@ public sealed class BcAppSymbolCacheContentAddressedKeyTests
 {
     private static string NewTempDir()
     {
-        var dir = Path.Combine(Path.GetTempPath(), "bc-symbol-cache-content-key-tests-" + Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.FlatDir("bc-symbol-cache-content-key-tests-");
         Directory.CreateDirectory(dir);
         return dir;
     }

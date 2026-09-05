@@ -87,7 +87,7 @@ public sealed class BcVersionDefaultDocumentationTests
         var realEngineDir = Path.Combine(TestArtifacts.StandardCacheDir(realHome), engineVersion.ToString());
         TestArtifacts.SkipIfDirectoryMissing(realEngineDir, $"BC {engineVersion} artifacts");
 
-        var isolatedHome = Path.Combine(Path.GetTempPath(), "al-runner-bcversion-default-doc", Guid.NewGuid().ToString("N"));
+        var isolatedHome = TestScratch.Dir("al-runner-bcversion-default-doc");
         var isolatedArtifacts = TestArtifacts.StandardCacheDir(isolatedHome);
         Directory.CreateDirectory(isolatedArtifacts);
         Directory.CreateSymbolicLink(Path.Combine(isolatedArtifacts, engineVersion.ToString()), realEngineDir);

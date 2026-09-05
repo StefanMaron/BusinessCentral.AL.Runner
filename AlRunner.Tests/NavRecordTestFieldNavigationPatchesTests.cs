@@ -31,7 +31,7 @@ public sealed class NavRecordTestFieldNavigationPatchesTests : IDisposable
     public NavRecordTestFieldNavigationPatchesTests(BcEngineFixture engine)
     {
         _engine = engine;
-        _root = Path.Combine(Path.GetTempPath(), "al-runner-testfield-nav-tests", Guid.NewGuid().ToString("N"));
+        _root = TestScratch.Dir("al-runner-testfield-nav-tests");
         Directory.CreateDirectory(_root);
     }
 

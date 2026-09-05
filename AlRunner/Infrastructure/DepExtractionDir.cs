@@ -20,8 +20,9 @@
 // rewritten on every miss — there was never any cross-process reuse to preserve.
 //
 // The per-process root stays UNDER the shared al-runner-deps parent so anything that cleans
-// that parent still finds it, and it is removed on normal process exit. A killed process leaves
-// its root behind, exactly as the previous shared directory was left behind forever.
+// that parent still finds it. It is created through ScratchDirs (#2706), which removes it on
+// normal process exit and — because the sidecar records the owning pid + start time — lets the
+// next runner start reclaim it when this process was killed instead.
 
 namespace AlRunner.Infrastructure;
 
@@ -37,13 +38,7 @@ internal static class DepExtractionDir
 
     private static readonly Lazy<string> _root = new(() =>
     {
-        var root = RootForProcess(Environment.ProcessId);
-        Directory.CreateDirectory(root);
-        AppDomain.CurrentDomain.ProcessExit += (_, _) =>
-        {
-            try { Directory.Delete(root, recursive: true); } catch { }
-        };
-        return root;
+        return ScratchDirs.Create(RootForProcess(Environment.ProcessId));
     });
 
     /// <summary>This process's extraction root, under the shared al-runner-deps parent.</summary>

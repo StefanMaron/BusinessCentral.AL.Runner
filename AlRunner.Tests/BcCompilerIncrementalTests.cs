@@ -43,7 +43,7 @@ public sealed class BcCompilerIncrementalTests : IDisposable
     public BcCompilerIncrementalTests(BcEngineFixture engine)
     {
         _engine = engine;
-        _root = Path.Combine(Path.GetTempPath(), "al-runner-incremental-tests", Guid.NewGuid().ToString("N"));
+        _root = TestScratch.Dir("al-runner-incremental-tests");
         Directory.CreateDirectory(_root);
     }
 

@@ -192,8 +192,7 @@ public sealed class PackageCacheFinalSearchSetTests
     public void FinalSearchSet_ReflectsRunnerOwnedFoldIn()
     {
         TestArtifacts.SkipIfMissing();
-        var scratchRoot = Path.Combine(
-            Path.GetTempPath(), "al-runner-pkgcache-final", Guid.NewGuid().ToString("N"));
+        var scratchRoot = TestScratch.Dir("al-runner-pkgcache-final");
         var testsDir = WriteFixture(scratchRoot);
         var isolatedHome = Path.Combine(scratchRoot, "home");
         Directory.CreateDirectory(isolatedHome);
@@ -221,8 +220,7 @@ public sealed class PackageCacheFinalSearchSetTests
     public void FinalSearchSet_UnchangedWhenNothingFolds()
     {
         TestArtifacts.SkipIfMissing();
-        var scratchRoot = Path.Combine(
-            Path.GetTempPath(), "al-runner-pkgcache-final-plain", Guid.NewGuid().ToString("N"));
+        var scratchRoot = TestScratch.Dir("al-runner-pkgcache-final-plain");
         var testsDir = WriteFixture(scratchRoot);
         var isolatedHome = Path.Combine(scratchRoot, "home");
         Directory.CreateDirectory(isolatedHome);

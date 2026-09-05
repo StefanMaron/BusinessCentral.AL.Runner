@@ -41,7 +41,7 @@ public sealed class BcCompilerProfileEmitCrashTests : IDisposable
     public BcCompilerProfileEmitCrashTests(BcEngineFixture engine)
     {
         _engine = engine;
-        _root = Path.Combine(Path.GetTempPath(), "al-runner-profile-emit-crash-tests", Guid.NewGuid().ToString("N"));
+        _root = TestScratch.Dir("al-runner-profile-emit-crash-tests");
         Directory.CreateDirectory(_root);
     }
 

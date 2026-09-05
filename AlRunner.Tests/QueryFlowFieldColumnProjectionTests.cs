@@ -83,7 +83,7 @@ public class QueryFlowFieldColumnProjectionTests
 
     private static string WriteBundle()
     {
-        var root = Path.Combine(Path.GetTempPath(), "al-runner-query-flowfield-2300", Guid.NewGuid().ToString("N"));
+        var root = TestScratch.Dir("al-runner-query-flowfield-2300");
         Directory.CreateDirectory(root);
 
         File.WriteAllText(Path.Combine(root, "app.json"), """

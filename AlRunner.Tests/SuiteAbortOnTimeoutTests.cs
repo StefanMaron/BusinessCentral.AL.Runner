@@ -45,7 +45,7 @@ public sealed class SuiteAbortOnTimeoutTests : IDisposable
 
     public SuiteAbortOnTimeoutTests()
     {
-        _root = Path.Combine(Path.GetTempPath(), "al-runner-suite-abort-on-timeout", Guid.NewGuid().ToString("N"));
+        _root = TestScratch.Dir("al-runner-suite-abort-on-timeout");
         Directory.CreateDirectory(_root);
         WriteFixture(_root);
         _resumeRoot = Path.Combine(Path.GetTempPath(), "al-runner-suite-abort-resume", Guid.NewGuid().ToString("N"));

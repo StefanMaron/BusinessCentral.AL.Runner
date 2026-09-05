@@ -58,7 +58,7 @@ public sealed class RecordPatchesWarmReloadExtensionIndexTests : IDisposable
 
     public RecordPatchesWarmReloadExtensionIndexTests()
     {
-        _root = Path.Combine(Path.GetTempPath(), "al-runner-2478-tests", Guid.NewGuid().ToString("N"));
+        _root = TestScratch.Dir("al-runner-2478-tests");
         Directory.CreateDirectory(_root);
     }
 

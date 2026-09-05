@@ -40,7 +40,7 @@ public sealed class BundleRootValidationTests : IDisposable
 
     public BundleRootValidationTests()
     {
-        _root = Path.Combine(Path.GetTempPath(), "al-runner-bundle-root", Guid.NewGuid().ToString("N"));
+        _root = TestScratch.Dir("al-runner-bundle-root");
         Directory.CreateDirectory(_root);
     }
 

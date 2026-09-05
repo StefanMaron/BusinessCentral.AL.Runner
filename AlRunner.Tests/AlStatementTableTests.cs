@@ -43,7 +43,7 @@ public class AlStatementTableTests : IClassFixture<SharedCliServer>
     // this class never collides with another suite's compiled-module cache).
     private static string MakeRunTestsBundle(string sourceFile)
     {
-        var dir = Path.Combine(Path.GetTempPath(), "al-runner-stmt-table-tests", Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.Dir("al-runner-stmt-table-tests");
         Directory.CreateDirectory(dir);
         File.WriteAllText(Path.Combine(dir, "app.json"), """
         {

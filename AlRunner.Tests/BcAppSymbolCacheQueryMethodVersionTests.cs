@@ -62,7 +62,7 @@ public sealed class BcAppSymbolCacheQueryMethodVersionTests
 {
     private static string NewTempDir()
     {
-        var dir = Path.Combine(Path.GetTempPath(), "bc-symbol-cache-query-method-version-tests-" + Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.FlatDir("bc-symbol-cache-query-method-version-tests-");
         Directory.CreateDirectory(dir);
         return dir;
     }

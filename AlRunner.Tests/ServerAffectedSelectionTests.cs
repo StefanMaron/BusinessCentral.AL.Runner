@@ -7,7 +7,7 @@ public class ServerAffectedSelectionTests
 {
     private static string MakeBundle(string helperABody)
     {
-        var dir = Path.Combine(Path.GetTempPath(), "al-runner-server-affected", Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.Dir("al-runner-server-affected");
         Directory.CreateDirectory(dir);
         File.WriteAllText(Path.Combine(dir, "app.json"), """
         {
@@ -188,7 +188,7 @@ public class ServerAffectedSelectionTests
     // narrowing works WITHIN one object, across its procedures).
     private static string MakeMultiProcBundle()
     {
-        var dir = Path.Combine(Path.GetTempPath(), "al-runner-server-affected-scope", Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.Dir("al-runner-server-affected-scope");
         Directory.CreateDirectory(dir);
         File.WriteAllText(Path.Combine(dir, "app.json"), """
         {

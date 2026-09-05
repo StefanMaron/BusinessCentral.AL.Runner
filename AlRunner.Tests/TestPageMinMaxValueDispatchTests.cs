@@ -34,7 +34,7 @@ public sealed class TestPageMinMaxValueDispatchTests : IDisposable
 
     public TestPageMinMaxValueDispatchTests()
     {
-        _root = Path.Combine(Path.GetTempPath(), "al-runner-minmax-dispatch", Guid.NewGuid().ToString("N"));
+        _root = TestScratch.Dir("al-runner-minmax-dispatch");
         Directory.CreateDirectory(_root);
     }
 

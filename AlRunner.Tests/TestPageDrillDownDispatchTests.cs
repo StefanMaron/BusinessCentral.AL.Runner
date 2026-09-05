@@ -47,7 +47,7 @@ public sealed class TestPageDrillDownDispatchTests : IDisposable
 
     public TestPageDrillDownDispatchTests()
     {
-        _root = Path.Combine(Path.GetTempPath(), "al-runner-drilldown-dispatch", Guid.NewGuid().ToString("N"));
+        _root = TestScratch.Dir("al-runner-drilldown-dispatch");
         Directory.CreateDirectory(_root);
     }
 

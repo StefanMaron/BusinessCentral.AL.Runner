@@ -128,7 +128,7 @@ public class WatchBurstSwitchTests
     {
         TestArtifacts.SkipIfMissing();
 
-        var bundle = Path.Combine(Path.GetTempPath(), "al-runner-watch-burst", Guid.NewGuid().ToString("N"));
+        var bundle = TestScratch.Dir("al-runner-watch-burst");
         Directory.CreateDirectory(bundle);
         File.Copy(Path.Combine(FixtureRoot, "app.json"), Path.Combine(bundle, "app.json"));
         File.Copy(Path.Combine(FixtureRoot, "Assert.Codeunit.al"), Path.Combine(bundle, "Assert.Codeunit.al"));

@@ -24,7 +24,7 @@ public sealed class ExpectationsDirectoryResolutionTests : IDisposable
 
     public ExpectationsDirectoryResolutionTests()
     {
-        _root = Path.Combine(Path.GetTempPath(), "al-runner-expectations-resolve", Guid.NewGuid().ToString("N"));
+        _root = TestScratch.Dir("al-runner-expectations-resolve");
         Directory.CreateDirectory(_root);
     }
 
@@ -84,7 +84,7 @@ public sealed class ExpectationsDirectoryResolutionTests : IDisposable
     {
         var manifestDir = Path.Combine(_root, "tests", "expectations");
         Directory.CreateDirectory(manifestDir);
-        var bundleOutsideRoot = Path.Combine(Path.GetTempPath(), "al-runner-expectations-resolve-elsewhere", Guid.NewGuid().ToString("N"));
+        var bundleOutsideRoot = TestScratch.Dir("al-runner-expectations-resolve-elsewhere");
         Directory.CreateDirectory(bundleOutsideRoot);
         try
         {

@@ -29,7 +29,7 @@ public sealed class RecordPatchesAddSourceDirsParseOnceTests : IDisposable
     public RecordPatchesAddSourceDirsParseOnceTests(BcEngineFixture engine)
     {
         _engine = engine;
-        _root = Path.Combine(Path.GetTempPath(), "al-runner-parse-once-tests", Guid.NewGuid().ToString("N"));
+        _root = TestScratch.Dir("al-runner-parse-once-tests");
         Directory.CreateDirectory(_root);
     }
 

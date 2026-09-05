@@ -104,7 +104,11 @@ public static class CacheRoots
         }
         else
         {
-            root = Path.Combine(Path.GetTempPath(), "al-runner-no-cache-" + Guid.NewGuid().ToString("N"));
+            // Reserved (not created — nothing may ever write into it) through ScratchDirs
+            // (#2706) so a run killed before CleanupThrowawayRoot fires is reclaimed by the
+            // next runner start instead of leaking a full cache per killed --no-cache run.
+            root = ScratchDirs.Reserve(
+                Path.Combine(Path.GetTempPath(), "al-runner-no-cache-" + Guid.NewGuid().ToString("N")));
             Environment.SetEnvironmentVariable(NoCacheRootEnvVar, root);
         }
         _override = root;
@@ -127,12 +131,7 @@ public static class CacheRoots
     public static void CleanupThrowawayRoot()
     {
         if (_throwawayRoot == null) return;
-        try
-        {
-            if (Directory.Exists(_throwawayRoot)) Directory.Delete(_throwawayRoot, recursive: true);
-        }
-        catch (IOException) { }
-        catch (UnauthorizedAccessException) { }
+        ScratchDirs.Release(_throwawayRoot);   // best-effort: deletes the root and its .owner sidecar
     }
 
     /// <summary>

@@ -63,7 +63,7 @@ public sealed class DefineFlagIntegrationTests : IDisposable
 
     public DefineFlagIntegrationTests()
     {
-        _root = Path.Combine(Path.GetTempPath(), "al-runner-define-flag", Guid.NewGuid().ToString("N"));
+        _root = TestScratch.Dir("al-runner-define-flag");
         Directory.CreateDirectory(_root);
         WriteFixture(_root);
     }

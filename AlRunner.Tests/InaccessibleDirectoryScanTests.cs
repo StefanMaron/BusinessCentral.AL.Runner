@@ -45,7 +45,7 @@ public sealed class InaccessibleDirectoryScanTests : IDisposable
 
     public InaccessibleDirectoryScanTests()
     {
-        _dir = Path.Combine(Path.GetTempPath(), "al-runner-inaccessible", Guid.NewGuid().ToString("N"));
+        _dir = TestScratch.Dir("al-runner-inaccessible");
         Directory.CreateDirectory(_dir);
     }
 

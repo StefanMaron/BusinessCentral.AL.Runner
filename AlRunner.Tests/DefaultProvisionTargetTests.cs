@@ -28,7 +28,7 @@ public sealed class DefaultProvisionTargetTests : IDisposable
 
     public DefaultProvisionTargetTests()
     {
-        _root = Path.Combine(Path.GetTempPath(), "al-runner-provision-target", Guid.NewGuid().ToString("N"));
+        _root = TestScratch.Dir("al-runner-provision-target");
         Directory.CreateDirectory(_root);
     }
 

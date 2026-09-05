@@ -14,7 +14,7 @@ public sealed class PrecompileSupportTests
 {
     private static string NewTempArtifactsRoot()
     {
-        var dir = Path.Combine(Path.GetTempPath(), "precompile-support-tests-" + Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.FlatDir("precompile-support-tests-");
         Directory.CreateDirectory(dir);
         return dir;
     }
@@ -58,7 +58,7 @@ public sealed class PrecompileSupportTests
         // never provisioned must not conjure a phantom search-path entry the caller can
         // silently rely on (Directory.EnumerateFiles over a missing dir already throws
         // elsewhere in this codebase's .app scanners if this ever regressed).
-        var artifactsRoot = Path.Combine(Path.GetTempPath(), "precompile-support-tests-missing-" + Guid.NewGuid().ToString("N"));
+        var artifactsRoot = TestScratch.FlatDir("precompile-support-tests-missing-");
         const string version = "28.1.49838.50794";
 
         var widened = PrecompileSupport.WidenPackageCacheDirs(Array.Empty<string>(), artifactsRoot, version);

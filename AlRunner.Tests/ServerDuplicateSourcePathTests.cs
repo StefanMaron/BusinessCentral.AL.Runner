@@ -25,7 +25,7 @@ public class ServerDuplicateSourcePathTests
 {
     private static string MakeBundle(string dirName, string appId, int idFrom, int codeunitId)
     {
-        var root = Path.Combine(Path.GetTempPath(), "al-runner-server-dup-2136", Guid.NewGuid().ToString("N"));
+        var root = TestScratch.Dir("al-runner-server-dup-2136");
         var dir = Path.Combine(root, dirName);
         Directory.CreateDirectory(dir);
 
@@ -72,7 +72,7 @@ public class ServerDuplicateSourcePathTests
         TestArtifacts.SkipIfMissing();
 
         var dir = MakeBundle("only", "d4e5f6a7-2136-4a1b-9c3d-000000000001", 62410, 62410);
-        var cacheDir = Path.Combine(Path.GetTempPath(), "al-runner-server-dup-2136-cache", Guid.NewGuid().ToString("N"));
+        var cacheDir = TestScratch.Dir("al-runner-server-dup-2136-cache");
         await using var server = await CliServer.StartAsync(new[] { "--cache", cacheDir });
 
         var req = JsonSerializer.Serialize(new
@@ -101,7 +101,7 @@ public class ServerDuplicateSourcePathTests
 
         var a = MakeBundle("first", "d4e5f6a7-2136-4a1b-9c3d-000000000002", 62420, 62420);
         var b = MakeBundle("second", "d4e5f6a7-2136-4a1b-9c3d-000000000003", 62425, 62425);
-        var cacheDir = Path.Combine(Path.GetTempPath(), "al-runner-server-dup-2136-cache", Guid.NewGuid().ToString("N"));
+        var cacheDir = TestScratch.Dir("al-runner-server-dup-2136-cache");
         await using var server = await CliServer.StartAsync(new[] { "--cache", cacheDir });
 
         var req = JsonSerializer.Serialize(new

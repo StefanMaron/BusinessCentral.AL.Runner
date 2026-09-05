@@ -62,7 +62,7 @@ public class TestPagePartLinkedRowLoadTests
 
     private static string WriteBundle()
     {
-        var root = Path.Combine(Path.GetTempPath(), "al-runner-testpage-part-linked-row-load-2677", Guid.NewGuid().ToString("N"));
+        var root = TestScratch.Dir("al-runner-testpage-part-linked-row-load-2677");
         Directory.CreateDirectory(root);
 
         File.WriteAllText(Path.Combine(root, "app.json"), """

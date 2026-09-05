@@ -28,7 +28,7 @@ public sealed class PkgDedupSearchSetProvenanceTests : IDisposable
 
     public PkgDedupSearchSetProvenanceTests()
     {
-        _root = Path.Combine(Path.GetTempPath(), "al-runner-pkgdedup-provenance", Guid.NewGuid().ToString("N"));
+        _root = TestScratch.Dir("al-runner-pkgdedup-provenance");
         Directory.CreateDirectory(_root);
     }
 

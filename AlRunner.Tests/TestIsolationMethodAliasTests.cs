@@ -33,7 +33,7 @@ public sealed class TestIsolationMethodAliasTests : IDisposable
 
     public TestIsolationMethodAliasTests()
     {
-        _root = Path.Combine(Path.GetTempPath(), "al-runner-isolation-method-alias", Guid.NewGuid().ToString("N"));
+        _root = TestScratch.Dir("al-runner-isolation-method-alias");
         Directory.CreateDirectory(_root);
         WriteFixture(_root);
     }

@@ -31,7 +31,7 @@ public sealed class AlCacheWriterDependencyCacheOrderingTests
 {
     private static string NewTempDir()
     {
-        var dir = Path.Combine(Path.GetTempPath(), "al-cache-writer-dep-order-tests-" + Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.FlatDir("al-cache-writer-dep-order-tests-");
         Directory.CreateDirectory(dir);
         return dir;
     }

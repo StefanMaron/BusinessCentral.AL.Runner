@@ -99,7 +99,7 @@ public class SourceDepCacheEnumMetadataTests
     {
         TestArtifacts.SkipIfMissing();
 
-        var scratchRoot = Path.Combine(Path.GetTempPath(), "al-runner-depcache-enum", Guid.NewGuid().ToString("N"));
+        var scratchRoot = TestScratch.Dir("al-runner-depcache-enum");
         var depDir = Path.Combine(scratchRoot, "dep-app");
         var testsDir = Path.Combine(scratchRoot, "tests-app");
         var alCacheDir = Path.Combine(scratchRoot, "al-out");

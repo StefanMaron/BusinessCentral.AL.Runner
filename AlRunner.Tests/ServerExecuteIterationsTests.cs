@@ -688,7 +688,7 @@ public class ServerExecuteIterationsTests : IClassFixture<SharedCliServer>
     public async Task Execute_RecordDrivenRepeat_EveryPassCarriesTheRecordPosition()
     {
         TestArtifacts.SkipIfMissing();
-        var dir = Path.Combine(Path.GetTempPath(), "al-runner-iter-record", Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.Dir("al-runner-iter-record");
         Directory.CreateDirectory(dir);
         File.WriteAllText(Path.Combine(dir, "LoopRows.Table.al"), """
         table 60328 "Iter Loop Rows SX"
@@ -767,7 +767,7 @@ public class ServerExecuteIterationsTests : IClassFixture<SharedCliServer>
     public async Task Execute_LoopInATableTrigger_IsTrackedUnderItsQualifiedScopeName()
     {
         TestArtifacts.SkipIfMissing();
-        var dir = Path.Combine(Path.GetTempPath(), "al-runner-iter-trigger", Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.Dir("al-runner-iter-trigger");
         Directory.CreateDirectory(dir);
         File.WriteAllText(Path.Combine(dir, "Trig.Table.al"), """
         table 60331 "Iter Trigger SX"
@@ -840,7 +840,7 @@ public class ServerExecuteIterationsTests : IClassFixture<SharedCliServer>
     public async Task Execute_TwoBundles_LoopIdsUniquePerResponse_AndMessageTagsResolve()
     {
         TestArtifacts.SkipIfMissing();
-        var root = Path.Combine(Path.GetTempPath(), "al-runner-iter-multi", Guid.NewGuid().ToString("N"));
+        var root = TestScratch.Dir("al-runner-iter-multi");
         var a = Path.Combine(root, "a"); var b = Path.Combine(root, "b");
         Directory.CreateDirectory(a); Directory.CreateDirectory(b);
         File.WriteAllText(Path.Combine(a, "A.al"),

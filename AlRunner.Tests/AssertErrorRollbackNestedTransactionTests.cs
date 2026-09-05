@@ -62,7 +62,7 @@ public class AssertErrorRollbackNestedTransactionTests
     {
         TestArtifacts.SkipIfMissing();
 
-        var root = Path.Combine(Path.GetTempPath(), "al-runner-assert-error-rollback-ntx-2413", Guid.NewGuid().ToString("N"));
+        var root = TestScratch.Dir("al-runner-assert-error-rollback-ntx-2413");
         Directory.CreateDirectory(root);
 
         File.WriteAllText(Path.Combine(root, "app.json"), """

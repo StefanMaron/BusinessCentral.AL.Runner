@@ -66,7 +66,7 @@ public class NoCacheLastWinsIntegrationTests
     {
         TestArtifacts.SkipIfMissing();
 
-        var scratchRoot = Path.Combine(Path.GetTempPath(), "al-runner-nocache-lastwins", Guid.NewGuid().ToString("N"));
+        var scratchRoot = TestScratch.Dir("al-runner-nocache-lastwins");
         var bundleDir = Path.Combine(scratchRoot, "tests-app");
         var cacheDirA = Path.Combine(scratchRoot, "cache-a");
         var absentPackageCache = Path.Combine(scratchRoot, "no-such-package-cache");
@@ -143,7 +143,7 @@ public class NoCacheLastWinsIntegrationTests
     {
         TestArtifacts.SkipIfMissing();
 
-        var scratchRoot = Path.Combine(Path.GetTempPath(), "al-runner-nocache-noleak", Guid.NewGuid().ToString("N"));
+        var scratchRoot = TestScratch.Dir("al-runner-nocache-noleak");
         var bundleDir = Path.Combine(scratchRoot, "tests-app");
         var absentPackageCache = Path.Combine(scratchRoot, "no-such-package-cache");
         Directory.CreateDirectory(bundleDir);
@@ -175,13 +175,17 @@ public class NoCacheLastWinsIntegrationTests
         }
         """);
 
+        // Set difference, not a count (#2706): the spawned runner sweeps stale al-runner-*
+        // directories of DEAD processes at startup, so the count can legitimately go DOWN
+        // across the run on a machine with leftovers. The claim here is only that this run
+        // left no NEW directory behind.
         var tempRoot = Path.GetTempPath();
-        var before = Directory.GetDirectories(tempRoot, "al-runner-no-cache-*").Length;
+        var before = Directory.GetDirectories(tempRoot, "al-runner-no-cache-*").ToHashSet(StringComparer.Ordinal);
 
         var (output, exit) = RunRunner(bundleDir, absentPackageCache, "--no-cache");
         Assert.True(exit == 0 && output.Contains("1P/0F/0E"), $"run must pass:\n{output}");
 
-        var after = Directory.GetDirectories(tempRoot, "al-runner-no-cache-*").Length;
-        Assert.Equal(before, after);
+        var leaked = Directory.GetDirectories(tempRoot, "al-runner-no-cache-*").Where(d => !before.Contains(d)).ToList();
+        Assert.True(leaked.Count == 0, "the --no-cache run left its throwaway root behind: " + string.Join(", ", leaked));
     }
 }

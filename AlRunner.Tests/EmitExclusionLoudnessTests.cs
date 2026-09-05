@@ -145,7 +145,7 @@ public sealed class EmitExclusionLoudnessTests
     {
         TestArtifacts.SkipIfMissing();
 
-        var tmp = Path.Combine(Path.GetTempPath(), "al-runner-emit-excl", Guid.NewGuid().ToString("N"));
+        var tmp = TestScratch.Dir("al-runner-emit-excl");
         Directory.CreateDirectory(tmp);
         try
         {

@@ -48,7 +48,7 @@ public sealed class ControlAddInFileSystemTests : IDisposable
     public ControlAddInFileSystemTests(BcEngineFixture engine)
     {
         _engine = engine;
-        _root = Path.Combine(Path.GetTempPath(), "al-runner-controladdin-fs-tests", Guid.NewGuid().ToString("N"));
+        _root = TestScratch.Dir("al-runner-controladdin-fs-tests");
         Directory.CreateDirectory(_root);
     }
 

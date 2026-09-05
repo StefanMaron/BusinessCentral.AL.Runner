@@ -53,7 +53,7 @@ public sealed class RecordPatchesSourceDirBatchTests : IDisposable
     public RecordPatchesSourceDirBatchTests(BcEngineFixture engine)
     {
         _engine = engine;
-        _root = Path.Combine(Path.GetTempPath(), "al-runner-source-dir-batch-tests", Guid.NewGuid().ToString("N"));
+        _root = TestScratch.Dir("al-runner-source-dir-batch-tests");
         Directory.CreateDirectory(_root);
     }
 

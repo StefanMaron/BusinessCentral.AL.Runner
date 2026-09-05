@@ -43,7 +43,7 @@ public class ServerStreamingTests : IClassFixture<SharedCliServer>
     // ID (offset by variant*10 from 60200) — see the class doc comment.
     private static string MakeMixedBundle(int variant)
     {
-        var dir = Path.Combine(Path.GetTempPath(), "al-runner-server-streaming", Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.Dir("al-runner-server-streaming");
         Directory.CreateDirectory(dir);
         var baseId = 60200 + variant * 10;
         File.WriteAllText(Path.Combine(dir, "app.json"), $$"""

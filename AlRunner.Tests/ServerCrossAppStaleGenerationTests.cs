@@ -70,8 +70,7 @@ public class ServerCrossAppStaleGenerationTests : IClassFixture<SharedCliServer>
     /// cannot collide inside it because <see cref="MakeLibTestPair"/> now gives each
     /// variant its own app ids, object ids and object names (see below).
     /// </summary>
-    private static readonly string CacheDir = Path.Combine(
-        Path.GetTempPath(), "al-runner-xapp-stale-gen-cache", Guid.NewGuid().ToString("N"));
+    private static readonly string CacheDir = TestScratch.Dir("al-runner-xapp-stale-gen-cache");
 
     /// <param name="variant">
     /// #2377: which fact is asking. Not cosmetic — it is what makes sharing one server

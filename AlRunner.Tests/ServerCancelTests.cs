@@ -76,7 +76,7 @@ public class ServerCancelTests : IClassFixture<SharedCliServer>
     /// </summary>
     private static string MakeFastBundle(int variant)
     {
-        var dir = Path.Combine(Path.GetTempPath(), "al-runner-server-cancel-fast", Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.Dir("al-runner-server-cancel-fast");
         Directory.CreateDirectory(dir);
         var baseId = 60310 + variant * 10;
         File.WriteAllText(Path.Combine(dir, "app.json"), $$"""
@@ -130,7 +130,7 @@ public class ServerCancelTests : IClassFixture<SharedCliServer>
     /// </summary>
     private static string MakeBarrierBundle(int testCount = 2)
     {
-        var dir = Path.Combine(Path.GetTempPath(), "al-runner-server-cancel-barrier", Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.Dir("al-runner-server-cancel-barrier");
         Directory.CreateDirectory(dir);
         File.WriteAllText(Path.Combine(dir, "app.json"), $$"""
         {
@@ -317,7 +317,7 @@ public class ServerCancelTests : IClassFixture<SharedCliServer>
         // cannot affect any other concurrently-running test's server. The server
         // blocks in TestBarrier.WaitForRelease() right after emitting each `test`
         // event; nothing releases it until this test explicitly does so below.
-        var barrierDir = Path.Combine(Path.GetTempPath(), "al-runner-cancel-barrier", Guid.NewGuid().ToString("N"));
+        var barrierDir = TestScratch.Dir("al-runner-cancel-barrier");
         Directory.CreateDirectory(barrierDir);
         var releaseFile = Path.Combine(barrierDir, "release");
 

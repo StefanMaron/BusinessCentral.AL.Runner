@@ -68,7 +68,7 @@ public class AppIdCollisionLoudFailureTests
     {
         TestArtifacts.SkipIfMissing();
 
-        var root = Path.Combine(Path.GetTempPath(), "al-runner-appid-collision-1850", Guid.NewGuid().ToString("N"));
+        var root = TestScratch.Dir("al-runner-appid-collision-1850");
         var suiteADir = Path.Combine(root, "collide-a");
         var suiteBDir = Path.Combine(root, "collide-b");
         Directory.CreateDirectory(suiteADir);

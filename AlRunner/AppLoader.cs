@@ -730,8 +730,10 @@ public static class AppLoader
 
     private static List<string> WriteDllsToTempFallback(IReadOnlyList<byte[]> dlls)
     {
-        var dir = Path.Combine(Path.GetTempPath(), "al-runner-r2r-chunks-fallback", Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(dir);
+        // Per-process scratch, owned via ScratchDirs (#2706): removed at exit, reclaimed by the
+        // next start if this process is killed. Previously never deleted at all.
+        var dir = AlRunner.Infrastructure.ScratchDirs.Create(
+            Path.Combine(Path.GetTempPath(), "al-runner-r2r-chunks-fallback", Guid.NewGuid().ToString("N")));
         var paths = new List<string>(dlls.Count);
         for (int i = 0; i < dlls.Count; i++)
         {

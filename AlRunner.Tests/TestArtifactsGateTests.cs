@@ -29,7 +29,7 @@ public class TestArtifactsGateTests
 
     private static string NewTempHome()
     {
-        var dir = Path.Combine(Path.GetTempPath(), "al-runner-artifacts-gate", Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.Dir("al-runner-artifacts-gate");
         Directory.CreateDirectory(dir);
         return dir;
     }

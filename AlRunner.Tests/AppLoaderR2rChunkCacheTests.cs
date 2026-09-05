@@ -83,7 +83,7 @@ public sealed class AppLoaderR2rChunkCacheTests
         TestArtifacts.SkipIf(appPath == null,
             $"No R2R 'Business Foundation' .app found under '{platformDir}' — provision platform apps first.");
 
-        var cacheRoot = Path.Combine(Path.GetTempPath(), "app-loader-r2r-chunk-cache-tests-" + Guid.NewGuid().ToString("N"));
+        var cacheRoot = TestScratch.FlatDir("app-loader-r2r-chunk-cache-tests-");
         CacheRoots.SetOverride(cacheRoot);
         try
         {
@@ -126,7 +126,7 @@ public sealed class AppLoaderR2rChunkCacheTests
     [SkippableFact]
     public void ExtractAllDllPaths_UnknownOrNonR2RFile_ReturnsEmpty()
     {
-        var cacheRoot = Path.Combine(Path.GetTempPath(), "app-loader-r2r-chunk-cache-tests-" + Guid.NewGuid().ToString("N"));
+        var cacheRoot = TestScratch.FlatDir("app-loader-r2r-chunk-cache-tests-");
         CacheRoots.SetOverride(cacheRoot);
         try
         {

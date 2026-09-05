@@ -1450,7 +1450,14 @@ public static partial class NavReportSync
             ? Environment.ProcessId.ToString()
             : string.Concat(folderName.Where(c => !System.IO.Path.GetInvalidFileNameChars().Contains(c)));
         string basePath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "al-runner-navserver", name);
-        System.IO.Directory.CreateDirectory(basePath);
+        // The per-process (pid-named) folder is owned via ScratchDirs (#2706): deleted at exit,
+        // reclaimed by the next runner start if this process is killed. It used to be left
+        // behind unconditionally — hundreds of dead-pid folders holding report temp files. A
+        // caller-named folder is shared across processes and is left as it was.
+        if (string.IsNullOrEmpty(folderName))
+            AlRunner.Infrastructure.ScratchDirs.Create(basePath);
+        else
+            System.IO.Directory.CreateDirectory(basePath);
 
         void Set(string field, object? value)
         {

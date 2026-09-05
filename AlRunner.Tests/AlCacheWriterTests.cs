@@ -20,7 +20,7 @@ public sealed class AlCacheWriterTests
 {
     private static string NewTempDir()
     {
-        var dir = Path.Combine(Path.GetTempPath(), "al-cache-writer-tests-" + Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.FlatDir("al-cache-writer-tests-");
         Directory.CreateDirectory(dir);
         return dir;
     }

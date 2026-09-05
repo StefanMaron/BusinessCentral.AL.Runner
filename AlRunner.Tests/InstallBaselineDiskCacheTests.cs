@@ -205,7 +205,7 @@ public class InstallBaselineDiskCacheTests
     {
         TestArtifacts.SkipIfMissing();
 
-        var root = Path.Combine(Path.GetTempPath(), "al-runner-ib-disk-roundtrip", Guid.NewGuid().ToString("N"));
+        var root = TestScratch.Dir("al-runner-ib-disk-roundtrip");
         try
         {
             var (dep, main) = WriteUniqueClosure(root, 62000, "rt");
@@ -259,7 +259,7 @@ public class InstallBaselineDiskCacheTests
     {
         TestArtifacts.SkipIfMissing();
 
-        var root = Path.Combine(Path.GetTempPath(), "al-runner-ib-disk-killswitch", Guid.NewGuid().ToString("N"));
+        var root = TestScratch.Dir("al-runner-ib-disk-killswitch");
         try
         {
             var (dep, main) = WriteUniqueClosure(root, 62020, "ks");
@@ -304,7 +304,7 @@ public class InstallBaselineDiskCacheTests
     {
         TestArtifacts.SkipIfMissing();
 
-        var root = Path.Combine(Path.GetTempPath(), "al-runner-ib-disk-corrupt", Guid.NewGuid().ToString("N"));
+        var root = TestScratch.Dir("al-runner-ib-disk-corrupt");
         try
         {
             var (dep, main) = WriteUniqueClosure(root, 62040, "cx");
@@ -365,7 +365,7 @@ public class InstallBaselineDiskCacheTests
     {
         TestArtifacts.SkipIfMissing();
 
-        var root = Path.Combine(Path.GetTempPath(), "al-runner-ib-disk-scope", Guid.NewGuid().ToString("N"));
+        var root = TestScratch.Dir("al-runner-ib-disk-scope");
         try
         {
             var (depA, mainA) = WriteUniqueClosure(root, 62060, "sa");

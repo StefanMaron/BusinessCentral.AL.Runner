@@ -44,7 +44,7 @@ public sealed class TestFilterFlagTests : IDisposable
 
     public TestFilterFlagTests()
     {
-        _root = Path.Combine(Path.GetTempPath(), "al-runner-test-filter-flag", Guid.NewGuid().ToString("N"));
+        _root = TestScratch.Dir("al-runner-test-filter-flag");
         Directory.CreateDirectory(_root);
         WriteFixture(_root);
     }

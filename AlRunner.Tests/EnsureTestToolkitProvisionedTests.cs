@@ -32,7 +32,7 @@ public sealed class EnsureTestToolkitProvisionedTests : IDisposable
 
     public EnsureTestToolkitProvisionedTests()
     {
-        _dir = Path.Combine(Path.GetTempPath(), "al-runner-ensure-toolkit", Guid.NewGuid().ToString("N"));
+        _dir = TestScratch.Dir("al-runner-ensure-toolkit");
         Directory.CreateDirectory(_dir);
     }
 

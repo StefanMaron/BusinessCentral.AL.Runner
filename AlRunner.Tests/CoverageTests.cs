@@ -30,7 +30,7 @@ public sealed class CoverageTests : IDisposable
 
     public CoverageTests()
     {
-        _scratch = Path.Combine(Path.GetTempPath(), "al-runner-coverage-tests", Guid.NewGuid().ToString("N"));
+        _scratch = TestScratch.Dir("al-runner-coverage-tests");
         Directory.CreateDirectory(_scratch);
     }
 

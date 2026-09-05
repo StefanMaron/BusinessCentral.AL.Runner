@@ -39,7 +39,7 @@ public sealed class BcAppSymbolCachePartialParseTests : IDisposable
 
     public BcAppSymbolCachePartialParseTests()
     {
-        _dir = Path.Combine(Path.GetTempPath(), "al-runner-2712-tests", Guid.NewGuid().ToString("N"));
+        _dir = TestScratch.Dir("al-runner-2712-tests");
         Directory.CreateDirectory(_dir);
     }
 

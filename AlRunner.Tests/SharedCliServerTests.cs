@@ -49,7 +49,7 @@ public class SharedCliServerTests
     // to avoid it).
     private static string MakeIsolationProbeBundle()
     {
-        var dir = Path.Combine(Path.GetTempPath(), "al-runner-shared-server-isolation", Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.Dir("al-runner-shared-server-isolation");
         Directory.CreateDirectory(dir);
         File.WriteAllText(Path.Combine(dir, "app.json"), """
         {

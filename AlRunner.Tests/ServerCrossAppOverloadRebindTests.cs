@@ -183,7 +183,7 @@ public class ServerCrossAppOverloadRebindTests
         TestArtifacts.SkipIfMissing();
 
         var c = dependencyFirst ? 1 : 2;
-        var root = Path.Combine(Path.GetTempPath(), "al-runner-xapp-overload", Guid.NewGuid().ToString("N"));
+        var root = TestScratch.Dir("al-runner-xapp-overload");
         Directory.CreateDirectory(root);
         var appDir = MakeAppBundle(root, c, LibBefore(c));
         var testAppDir = MakeTestAppBundle(root, c);

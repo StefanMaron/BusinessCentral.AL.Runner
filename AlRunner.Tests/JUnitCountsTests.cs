@@ -7,7 +7,7 @@ namespace AlRunner.Tests;
 
 public sealed class JUnitCountsTests : IDisposable
 {
-    private readonly string _dir = Path.Combine(Path.GetTempPath(), "junitcounts-" + Guid.NewGuid().ToString("N"));
+    private readonly string _dir = TestScratch.FlatDir("junitcounts-");
 
     public JUnitCountsTests() => Directory.CreateDirectory(_dir);
     public void Dispose() { try { Directory.Delete(_dir, true); } catch { } }

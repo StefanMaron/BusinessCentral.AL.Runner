@@ -143,7 +143,7 @@ public sealed class BcAssemblerParsePipelineTests
 
     private static string NewTempDir()
     {
-        var dir = Path.Combine(Path.GetTempPath(), "al-runner-mdref", Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.Dir("al-runner-mdref");
         Directory.CreateDirectory(dir);
         return dir;
     }

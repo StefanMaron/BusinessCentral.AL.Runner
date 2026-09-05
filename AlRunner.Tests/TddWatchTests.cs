@@ -62,7 +62,7 @@ public class TddWatchTests
     {
         TestArtifacts.SkipIfMissing();
 
-        var bundle = Path.Combine(Path.GetTempPath(), "al-runner-tdd-watch", Guid.NewGuid().ToString("N"));
+        var bundle = TestScratch.Dir("al-runner-tdd-watch");
         Directory.CreateDirectory(bundle);
         foreach (var f in Directory.GetFiles(FixtureSrc))
             File.Copy(f, Path.Combine(bundle, Path.GetFileName(f)));

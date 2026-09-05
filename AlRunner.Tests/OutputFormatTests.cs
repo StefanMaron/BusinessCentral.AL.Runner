@@ -28,7 +28,7 @@ public sealed class OutputFormatTests : IDisposable
 
     public OutputFormatTests()
     {
-        _root = Path.Combine(Path.GetTempPath(), "al-runner-output-format", Guid.NewGuid().ToString("N"));
+        _root = TestScratch.Dir("al-runner-output-format");
         Directory.CreateDirectory(_root);
         WriteFixture(_root);
     }

@@ -39,7 +39,7 @@ public sealed class ManifestDependencyEdgeScanTests : IDisposable
 
     public ManifestDependencyEdgeScanTests()
     {
-        _root = Path.Combine(Path.GetTempPath(), "al-runner-edges", Guid.NewGuid().ToString("N"));
+        _root = TestScratch.Dir("al-runner-edges");
         Directory.CreateDirectory(_root);
     }
 
