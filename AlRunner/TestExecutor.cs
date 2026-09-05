@@ -1070,6 +1070,9 @@ public sealed class TestExecutor
     {
         var sw = System.Diagnostics.Stopwatch.StartNew();
         var timedOut = false;
+        // #2523: set by every path that ends this test with a throw, and read by
+        // ApplyTestTransactionModel in `finally` — BC rolls back on failure, see there.
+        var threw = false;
         PerfTrace.Log($"TestExecutor.RunOne START {codeunit}.{m.Name}");
         // Per-test reset only under Test isolation, which is AL's `TestIsolation =
         // Function`. Codeunit isolation resets at the CODEUNIT boundary instead (see
@@ -1135,6 +1138,7 @@ public sealed class TestExecutor
         }
         catch (TargetInvocationException tex)
         {
+            threw = true;
             var inner = Unwrap(tex);
             PerfTrace.Log($"TestExecutor.RunOne FAIL {codeunit}.{m.Name} {sw.ElapsedMilliseconds}ms {inner.GetType().Name}: {inner.Message}");
             var alStack = AlRunner.Infrastructure.AlCallStackCapture.GetCaptured(inner);
@@ -1152,6 +1156,7 @@ public sealed class TestExecutor
         }
         catch (Exception ex)
         {
+            threw = true;
             PerfTrace.Log($"TestExecutor.RunOne ERROR {codeunit}.{m.Name} {sw.ElapsedMilliseconds}ms {ex.GetType().Name}: {ex.Message}");
             var alStack = AlRunner.Infrastructure.AlCallStackCapture.GetCaptured(ex);
             return new TestResult(codeunit, m.Name, TestOutcome.Error,
@@ -1176,7 +1181,7 @@ public sealed class TestExecutor
             // undone immediately. Skipped on timeout — the abandoned thread may still be
             // writing to the row store.
             if (!timedOut)
-                ApplyTestTransactionModel(m);
+                ApplyTestTransactionModel(m, threw);
 
             BcRuntime.LeaveTestExecutionScope();
             // #2135: close this test's coverage-attribution window — see BeginTest's
@@ -1199,14 +1204,43 @@ public sealed class TestExecutor
         _testAttrCache = new();
 
     /// <summary>
-    /// If <paramref name="m"/> carries [TransactionModel(TransactionModel::AutoRollback)],
-    /// roll the row store back to this test's own commit point (RunOne's own
-    /// MarkCommitPoint() call, right before m.Invoke) — see the call site's comment for why
-    /// this has to happen here rather than through BC's own dispatch.
+    /// Roll the row store back to this test's own commit point (RunOne's own MarkCommitPoint()
+    /// call, right before m.Invoke) in the two cases BC's own
+    /// NavTestCodeunit.ExecuteTestMethodAsync does.
+    ///
+    /// <para>1. <paramref name="m"/> carries [TransactionModel(TransactionModel::AutoRollback)]
+    /// — the `case TestTransactionModel.AutoRollback: activeSession.Rollback();` arm on the
+    /// success path (#2400).</para>
+    ///
+    /// <para>2. The test THREW (<paramref name="threw"/>) — the catch that wraps the whole
+    /// invocation in the same BC method, whatever the transaction model (#2523):
+    /// <code>
+    /// catch (Exception ex)
+    /// {
+    ///     if (activeSession.IsTransactionActive())
+    ///         activeSession.Rollback();
+    ///     MarkExceptions(ex);
+    /// }
+    /// </code>
+    /// #2400 implemented arm 1 and quoted arm 2 in its comment without implementing it, so a
+    /// failing test's uncommitted writes stayed visible to every later test in the same
+    /// codeunit. That is one failing test poisoning its successors: in Microsoft's
+    /// Tests-SINGLESERVER codeunit 136506, a test that failed for an unrelated reason left
+    /// "User Setup"."Time Sheet Admin." = false behind, and because
+    /// LibraryTimeSheet.CreateUserSetup ends in the conditional `if UserSetup.Insert() then;`
+    /// it could not put it back — every later test in the codeunit was then refused by
+    /// report 950.</para>
+    ///
+    /// <para>Deliberately NOT a reset between tests. A test that PASSES has its writes
+    /// committed by BC (`transactionModel == AutoCommit` on the success path, the default),
+    /// and they are meant to be visible to the next test in the codeunit — pinned on real BC
+    /// by the al-language corpus's "Test Isolation Rollback Scope" (60897). Rolling back
+    /// unconditionally here would break that, which is exactly the mistake #2132/#2144 made
+    /// and #2160 reverted.</para>
     /// </summary>
-    private static void ApplyTestTransactionModel(MethodInfo m)
+    private static void ApplyTestTransactionModel(MethodInfo m, bool threw)
     {
-        if (IsAutoRollback(m))
+        if (threw || IsAutoRollback(m))
             AlRunner.Patches.RecordPatches.RollbackToCommitPoint(BcRuntime.SkeletonSession);
     }
 

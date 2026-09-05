@@ -1,0 +1,24 @@
+{
+  "id": "c4e1a97b-30d6-4f52-8a1c-6b9e2d7f4053",
+  "name": "Runner Tests Fixture - Failed Test Rollback Boundary",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Regression test: writes made by a [Test] that FAILS must not survive into the next [Test] of the same codeunit (#2757). Named ExpectedToFail_/Reporter_ throughout: two of the four tests fail BY DESIGN, and their names say so directly in CI output.",
+  "description": "BC's NavTestCodeunit.ExecuteTestMethodAsync wraps every test method in `catch (Exception ex) { if (activeSession.IsTransactionActive()) activeSession.Rollback(); MarkExceptions(ex); }`, so a failing test's uncommitted writes are undone before the next test runs, while a PASSING test's writes are committed and do survive. This fixture pins both halves. Two of its four tests -- both named ExpectedToFail_NN_... -- fail BY DESIGN; FailedTestRollbackBoundaryTests.cs asserts their exact procedure names and messages, so a FAIL line here always reads as intended in CI output rather than as a broken fixture (see #2739, the reason this is spelled out rather than left implicit).",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "platform": "1.0.0.0",
+  "idRanges": [
+    {
+      "from": 70300,
+      "to": 70319
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}
