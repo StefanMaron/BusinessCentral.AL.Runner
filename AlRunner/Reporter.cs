@@ -54,12 +54,24 @@ public static class Reporter
         int totalTests = 0, pass = 0, fail = 0, err = 0, skipped = 0;
         int passOos = 0, passKnownGap = 0, passDivergence = 0;
         int compileFailed = 0, execFailed = 0;
+        // #2762: buckets that RAN but lost one or more suites on the way. Their Stage stays
+        // `Ran` — one surviving sibling suite is enough — so neither counter above sees them,
+        // and every number printed below describes only what survived. computedExitCode in
+        // Program.cs already fails the run for exactly this condition; without these the
+        // summary contradicted it in silence.
+        var partialBuckets = new List<BucketResult>();
+        int lostSuites = 0;
         TimeSpan emit = TimeSpan.Zero, comp = TimeSpan.Zero, run = TimeSpan.Zero;
         foreach (var b in buckets)
         {
             emit += b.EmitTime; comp += b.CompileTime; run += b.RunTime;
             if (b.Stage == BucketStage.CompileFailed) { compileFailed++; continue; }
             if (b.Stage == BucketStage.ExecuteFailed) { execFailed++; continue; }
+            if (b.CompileErrors.Count > 0)
+            {
+                partialBuckets.Add(b);
+                lostSuites += b.CompileErrors.Count;
+            }
             foreach (var t in b.Tests)
             {
                 totalTests++;
@@ -83,6 +95,13 @@ public static class Reporter
         w.WriteLine($"  ran:         {buckets.Count - compileFailed - execFailed}");
         w.WriteLine($"  compile-fail:{compileFailed}");
         w.WriteLine($"  exec-fail:   {execFailed}");
+        // Deliberately NOT folded into `compile-fail`: these buckets really did run and their
+        // surviving results are real, so calling them compile failures would misstate the run
+        // in the other direction. Omitted entirely when there is nothing to say, so a clean
+        // run's summary is byte-identical to before.
+        if (partialBuckets.Count > 0)
+            w.WriteLine($"  partial:     {partialBuckets.Count}  (ran, but {lostSuites} suite(s) "
+                + "did not — see \"Suite errors\" below)");
         if (!carried.IsEmpty)
         {
             // Named rather than folded in silently: these tests ran in an EARLIER process of this
@@ -142,6 +161,25 @@ public static class Reporter
         //
         // Only when there ARE gaps: a section printed on every run is noise, and every
         // integration test asserting on the markers above would then be asserting past it.
+        // #2762: the same argument as the provisioning-gap block below, for a louder failure.
+        // The EMIT-EXCLUDED / EMIT-ZERO / COMPILE-FAIL line that explains a lost suite is
+        // written on stderr at the moment it happens — tens to thousands of lines above this
+        // point on a real run — and the numbers printed just above it read as a clean pass.
+        // Repeat each message VERBATIM: it is what names the surface (EMIT-EXCLUDED), the
+        // module and the objects that were dropped, and a paraphrase would send the reader
+        // back up the log (.claude/rules/loud-failures.md).
+        if (partialBuckets.Count > 0)
+        {
+            w.WriteLine("-----------------------------------------------------------------");
+            w.WriteLine($"Suite errors: {lostSuites} — in {partialBuckets.Count} bucket(s) that "
+                + "otherwise ran. Every test these suites declare is MISSING from the counts "
+                + "above, so this run covers less than it discovered.");
+            foreach (var b in partialBuckets)
+            {
+                w.WriteLine(b.BucketPath);
+                foreach (var e in b.CompileErrors) w.WriteLine($"  {e}");
+            }
+        }
         var gaps = buckets
             .SelectMany(b => b.ProvisionGaps ?? Array.Empty<string>())
             .Distinct(StringComparer.Ordinal)
@@ -190,6 +228,19 @@ public static class Reporter
                 if (b.CompileErrors.Count > 20)
                     w.WriteLine($"  ... and {b.CompileErrors.Count - 20} more errors");
                 continue;
+            }
+            // #2762: a bucket that ran but lost suites. This MUST come before the
+            // `visible.Count == 0` skip below: at default verbosity a bucket whose survivors
+            // all passed has nothing visible, which is precisely the all-green run where a
+            // silently missing suite does the most damage.
+            if (b.CompileErrors.Count > 0)
+            {
+                w.WriteLine();
+                w.WriteLine($"=== {Path.GetFileName(b.BucketPath)} — SUITE ERRORS ({b.CompileErrors.Count}) ===");
+                foreach (var e in b.CompileErrors.Take(20)) w.WriteLine($"  {e}");
+                if (b.CompileErrors.Count > 20)
+                    w.WriteLine($"  ... and {b.CompileErrors.Count - 20} more suite errors");
+                w.WriteLine("  → the tests these suites declare are MISSING from this run, not passing.");
             }
             // Skip silent buckets — only emit a per-bucket header if there's anything to show.
             var visible = b.Tests.Where(t => showPass || t.Outcome != TestOutcome.Pass).ToList();
@@ -333,6 +384,16 @@ public static class Reporter
             })
             .ToList();
 
+        // #2762: exactly the gap #2779 closed for ExecuteFailed buckets, one Stage over. A
+        // bucket that ran but lost a suite is not compile-failed, so it appeared in neither
+        // `compilationErrors` nor `tests` — a consumer read a fully passing document next to
+        // `exitCode: 3` and had nothing to explain it. Additive and null-omitted, so a run
+        // that lost nothing serialises byte-identically.
+        var suiteErrors = buckets
+            .Where(b => b.Stage == BucketStage.Ran && b.CompileErrors.Count > 0)
+            .Select(b => new { file = b.BucketPath, errors = b.CompileErrors.ToList() })
+            .ToList();
+
         var output = new
         {
             tests = tests.Select(t => new
@@ -367,6 +428,7 @@ public static class Reporter
             exitCode,
             compilationErrors = compileErrors.Count > 0 ? compileErrors : null,
             executionErrors = executionErrors.Count > 0 ? executionErrors : null,
+            suiteErrors = suiteErrors.Count > 0 ? suiteErrors : null,
             // #1936: same "real wall clock, not just the measured phases" gap as the
             // `wall:` line in PrintSummary — see that comment. Additive field, so
             // existing consumers reading this JSON are unaffected.
@@ -414,6 +476,20 @@ public static class Reporter
             }
             else
             {
+                // #2762: this branch walked only failing TESTS, so a bucket that lost a whole
+                // suite contributed zero records and the triage file said the run had nothing
+                // wrong with it. Its own kind, not "compile": the bucket ran, and the records
+                // below it are still that bucket's real test failures.
+                if (b.CompileErrors.Count > 0)
+                {
+                    failures.Add(new
+                    {
+                        bucket = b.BucketPath,
+                        kind = "suite",
+                        errors = b.CompileErrors.Take(10).ToList(),
+                        classification = ClassifyCompile(b.CompileErrors),
+                    });
+                }
                 foreach (var t in b.Tests.Where(t => t.Outcome is TestOutcome.Fail or TestOutcome.Error))
                 {
                     failures.Add(new
