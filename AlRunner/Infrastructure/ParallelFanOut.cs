@@ -291,8 +291,13 @@ internal static class ParallelFanOut
             // totals above with no trace — the exact shape #2715 measured (40,550 tests down to
             // 14,856, reported as a plain total). Count it here so the aggregate says a bundle
             // is missing instead of silently reporting the smaller number as complete.
-            notRun += CountOccurrences(stdout, " — COMPILE FAIL ===")
-                    + CountOccurrences(stderr, " — COMPILE FAIL ===");
+            //
+            // BOTH headers, since #2779: a bundle that compiled and then failed at RUN time now
+            // reports "— EXEC FAIL ===" instead. It contributes zero tests for exactly the same
+            // reason, so counting only the compile header would have re-introduced #2715's
+            // silent loss for every execution failure.
+            foreach (var header in NotRunHeaders)
+                notRun += CountOccurrences(stdout, header) + CountOccurrences(stderr, header);
         }
 
         Console.WriteLine();
@@ -305,8 +310,8 @@ internal static class ParallelFanOut
         Console.WriteLine($"  error:       {errors}");
         Console.WriteLine($"  skipped:     {skipped}");
         if (notRun > 0)
-            Console.WriteLine($"  NOT RUN:     {notRun} bundle(s) — COMPILE FAIL in a shard above, " +
-                               "excluded from the totals; see that shard's output for which one");
+            Console.WriteLine($"  NOT RUN:     {notRun} bundle(s) — COMPILE FAIL or EXEC FAIL in a " +
+                               "shard above, excluded from the totals; see that shard's output for which one");
         Console.WriteLine("=================================================================");
 
         ScratchDirs.Release(tempDir);
@@ -319,9 +324,15 @@ internal static class ParallelFanOut
         catch { return p.TrimEnd('/', '\\'); }
     }
 
-    /// <summary>How many times a bundle reported COMPILE FAIL in a shard's captured output —
-    /// used to tell the aggregate summary how many bundles are missing from its totals, rather
-    /// than reporting the smaller total as though it were complete (#2715).</summary>
+    /// <summary>The per-bundle headers Reporter.PrintPerTest writes for a bundle that produced
+    /// no tests. Both mean "this bundle is absent from the JUnit totals"; which one appears
+    /// depends only on WHAT failed (#2779).</summary>
+    internal static readonly IReadOnlyList<string> NotRunHeaders =
+        new[] { " — COMPILE FAIL ===", " — EXEC FAIL ===" };
+
+    /// <summary>How many times a bundle reported COMPILE FAIL or EXEC FAIL in a shard's captured
+    /// output — used to tell the aggregate summary how many bundles are missing from its totals,
+    /// rather than reporting the smaller total as though it were complete (#2715).</summary>
     internal static int CountOccurrences(string haystack, string needle)
     {
         if (string.IsNullOrEmpty(haystack)) return 0;

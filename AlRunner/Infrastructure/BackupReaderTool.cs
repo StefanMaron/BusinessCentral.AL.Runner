@@ -84,11 +84,16 @@ internal static class BackupReaderTool
         var onPath = TryFindOnPath(ExecutableName);
         if (onPath != null) return _resolved = onPath;
 
-        var probed = string.Join("\n    ", CandidateExecutables(env, home).Append($"<each PATH entry>/{ExecutableName}"));
+        // Everything actionable on the FIRST line (#2779), for the same reason TestDataOptions.
+        // ResolveBackupPath does it: the bundle reporter keeps only line 1 of an EXEC-FAIL
+        // message, so a "Probed:" list on line 3 never reached anyone. This message's whole
+        // value is the list of places that were looked in and the env var that overrides them.
+        var probed = string.Join(", ",
+            CandidateExecutables(env, home).Append($"<each PATH entry>/{ExecutableName}").Select(c => $"'{c}'"));
         throw new BackupReaderException(
-            $"--test-data needs the BC backup reader '{ExecutableName}', which was not found.\n"
-            + $"  Probed:\n    {probed}\n"
-            + $"  Set {ExecutableEnvVar} to the executable (or to the directory containing it).");
+            $"--test-data needs the BC backup reader '{ExecutableName}', which was not found — "
+            + $"probed {probed}. Set {ExecutableEnvVar} to the executable "
+            + "(or to the directory containing it).");
     }
 
     /// <summary>Reset the memoised resolution/identity. Test-only seam: the resolution reads
@@ -191,8 +196,43 @@ internal static class BackupReaderTool
         var errText = stderr.GetAwaiter().GetResult();
         if (proc.ExitCode != 0)
             throw new BackupReaderException(
-                $"the backup reader failed (exit {proc.ExitCode}) for: {exe} {string.Join(' ', args)}\n"
-                + $"  {errText.Trim()}");
+                $"the backup reader failed (exit {proc.ExitCode}): {Condense(errText)} "
+                + $"— command: {exe} {string.Join(' ', args)}");
         return outText;
+    }
+
+    /// <summary>
+    /// Collapse a reader diagnostic onto ONE line, because that is the only line that survives
+    /// (#2779).
+    ///
+    /// The reader's stderr IS the diagnosis. It used to be appended as line 2 of the exception
+    /// message, and every bundle-level reporter keeps only line 1 of an EXEC-FAIL message
+    /// (ExecFailure.Describe, and ExecFailureTests pins that one-line contract deliberately —
+    /// a multi-line suite-error line would break every consumer downstream). Measured on the
+    /// ms-bucket workflow's first run (Actions run 33967273260): all that reached results.json
+    /// was "the backup reader failed (exit 1) for: … BusinessCentral-W1.bak", while the reader
+    /// had printed "block 116504 of MSDA region is neither mapped by the derived extent list
+    /// nor padding filler — backup layout differs from the derived model, refusing to guess",
+    /// which names the cause outright. Diagnosing it took a manual re-run against the same
+    /// backup. See .claude/rules/loud-failures.md: a tool that fails with a reason must not be
+    /// reduced to an exit code.
+    ///
+    /// Empty input is reported as such rather than producing a message with a hole in it —
+    /// "the reader said nothing" is itself a fact worth reading, and distinguishes a crashed
+    /// binary from a refusal.
+    /// </summary>
+    internal static string Condense(string? text, int maxLines = 5, int maxChars = 600)
+    {
+        var lines = (text ?? "")
+            .Split('\n')
+            .Select(l => l.Trim())
+            .Where(l => l.Length > 0)
+            .ToList();
+        if (lines.Count == 0) return "(the reader printed nothing to stderr)";
+
+        var kept = string.Join(" | ", lines.Take(maxLines));
+        if (lines.Count > maxLines) kept += $" | (+{lines.Count - maxLines} more line(s))";
+        if (kept.Length > maxChars) kept = kept[..maxChars] + "… (truncated)";
+        return kept;
     }
 }

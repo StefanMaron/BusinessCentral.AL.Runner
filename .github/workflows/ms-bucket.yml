@@ -47,6 +47,24 @@ name: MS bucket (manual)
 #     happened.
 # Always state whether a number was measured WITH or WITHOUT --test-data: the two differ by
 # 3x on Tests-SINGLESERVER and are not comparable.
+#
+# WHICH BC BUILDS --test-data CAN ACTUALLY BE MEASURED ON, as of reader v0.1.1 (#2779, #2780)
+#   The pinned reader opens the W1 demo backup for some builds and refuses others. Measured
+#   directly, one `bcdb companies` per backup, same binary:
+#
+#     28.0.46665.54310  OK      28.2.50931.54319  refused
+#     28.1.49838.54308  OK      28.3.52162.54309  refused
+#     27.5.46862.48827  OK      28.4.53241.54318  refused
+#
+#   The refusal is "block N of MSDA region is neither mapped by the derived extent list nor
+#   padding filler — backup layout differs from the derived model, refusing to guess", from
+#   BcDb.Core's PageFile. It is NOT a regression: reader v0.1.0, v0.1.1 and the source build
+#   before both fail identically, so the reader has never read a 28.2+ backup. Tracked in
+#   #2780; the fix is in StefanMaron/BusinessCentral.BakReader, not here.
+#
+#   Consequence for THIS workflow: the default bc-version (the newest prefix in
+#   .github/bc-versions.txt, currently 28.4) cannot produce a --test-data number. Pass
+#   `bc-version: 28.1` for one, or run with test-data off and say so.
 
 on:
   workflow_dispatch:
@@ -147,16 +165,32 @@ jobs:
         if: ${{ inputs.test-data }}
         id: reader
         env:
+          # PINNED, deliberately (#2779). This used to resolve the LATEST release at run time
+          # (`gh release view … --jq .tagName`), which made this workflow's result depend on
+          # when another repository last published — a change here could not explain a change
+          # in the answer, and the first run's failure was investigated as a reader regression
+          # partly because the tag had moved between the working local baseline and CI. It had
+          # not regressed; but the workflow's own comment already said the reader's identity
+          # keys the install-baseline cache and that a reader fix changes DECODED VALUES, which
+          # is an argument for pinning it, not for floating it.
+          #
+          # To move it: pick the new tag from
+          # https://github.com/StefanMaron/BusinessCentral.BakReader/releases, run this
+          # workflow once on the new pin, and compare the pass/fail totals against the previous
+          # pin's run before merging the bump. A reader upgrade that changes decoded values
+          # changes this measurement, so the bump belongs in its own PR with both numbers in
+          # the body.
+          READER_TAG: v0.1.1
           GH_TOKEN: ${{ github.token }}
         run: |
-          # bcbak is StefanMaron/BusinessCentral.BakReader's `bcdb`, consumed as the latest
+          # bcbak is StefanMaron/BusinessCentral.BakReader's `bcdb`, consumed as a pinned
           # release's Native AOT asset rather than built here: a source build needs the .NET 10
           # SDK plus clang and adds minutes, and the release binary is the one that repo's own
           # hermetic test suite gated before publishing. The runner probes the OLD name at
           # ~/.cache/al-runner/bcbak/bcbak (BackupReaderTool.CandidateExecutables), so the
           # asset is installed under that name. The tag lands in the summary: the reader's
           # identity keys the install-baseline cache and a reader fix changes decoded values.
-          tag=$(gh release view --repo StefanMaron/BusinessCentral.BakReader --json tagName --jq .tagName)
+          tag="$READER_TAG"
           mkdir -p "$RUNNER_TEMP/reader"
           cd "$RUNNER_TEMP/reader"
           gh release download "$tag" --repo StefanMaron/BusinessCentral.BakReader \
