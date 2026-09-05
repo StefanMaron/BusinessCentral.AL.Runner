@@ -153,19 +153,42 @@ internal static class Win32Stubs
             throw new InvalidOperationException(BuildNoCompilerMessage(library));
 
         var src = LocateStubSource();
+        // #2967 — SCRATCH-DIR CLASSIFICATION: deliberately SHARED and it stays shared. The
+        // build product is identical for every runner on the machine and compiling it costs a
+        // `cc` invocation, so making this per-process would pay that cost once per run for no
+        // benefit.
+        //
+        // It was UNSAFE as written. `File.Copy(overwrite: true)` truncated the .c in place and
+        // `cc -o <soFile>` wrote the .so in place, both under fixed names, so a second runner
+        // reaching NativeLibrary.Load while the first was mid-link loaded a partial shared
+        // object. That is a hard failure at best; at worst it resolves some symbols and not
+        // others. Each runner now compiles into its own private directory and publishes the
+        // finished .so with one rename, so a reader sees the name absent or complete.
         var dir = Path.Combine(Path.GetTempPath(), "alrunner-v2-win32-stubs");
-        Directory.CreateDirectory(dir);
-        var cFile = Path.Combine(dir, "win32_stubs.c");
         var soFile = Path.Combine(dir, "libwin32_stubs.so");
-        File.Copy(src, cFile, overwrite: true);
-        var proc = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(compiler,
-            $"-shared -fPIC -o \"{soFile}\" \"{cFile}\"")
-        { RedirectStandardError = true, UseShellExecute = false })!;
-        proc.WaitForExit(10000);
-        if (proc.ExitCode != 0)
-            throw new InvalidOperationException(
-                $"Win32Stubs: '{compiler}' failed to build the Linux Win32 P/Invoke shim needed to resolve "
-                + $"'{library}' (required by {src}). Compiler output:\n{proc.StandardError.ReadToEnd()}");
+        var work = Path.Combine(dir, "build-" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(work);
+        try
+        {
+            var cFile = Path.Combine(work, "win32_stubs.c");
+            var builtSo = Path.Combine(work, "libwin32_stubs.so");
+            File.Copy(src, cFile, overwrite: true);
+            var proc = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(compiler,
+                $"-shared -fPIC -o \"{builtSo}\" \"{cFile}\"")
+            { RedirectStandardError = true, UseShellExecute = false })!;
+            proc.WaitForExit(10000);
+            if (proc.ExitCode != 0)
+                throw new InvalidOperationException(
+                    $"Win32Stubs: '{compiler}' failed to build the Linux Win32 P/Invoke shim needed to resolve "
+                    + $"'{library}' (required by {src}). Compiler output:\n{proc.StandardError.ReadToEnd()}");
+
+            AlRunner.Infrastructure.SharedTempFile.PublishAtomically(
+                soFile, fs => { using var built = File.OpenRead(builtSo); built.CopyTo(fs); });
+        }
+        finally
+        {
+            try { Directory.Delete(work, recursive: true); } catch { }
+        }
         _handle = NativeLibrary.Load(soFile);
         return _handle;
     }

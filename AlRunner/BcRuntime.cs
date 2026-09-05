@@ -689,6 +689,12 @@ public static partial class BcRuntime
         Console.Out.Flush();
         Console.Error.WriteLine(ready);
         Console.Error.Flush();
+        // #2967 — SCRATCH-DIR CLASSIFICATION: a DOCUMENTED TRADE-OFF, deliberately shared and
+        // deliberately not owner-tracked. It is append-only (O_APPEND, so concurrent writes
+        // from any number of runners interleave at line granularity and none is lost) and it
+        // exists precisely to survive the process that wrote it — this line is the marker that
+        // proves patch install completed rather than crashing, and it has to be readable after
+        // the crash. One line per runner start, so it does not grow the way a directory does.
         try { System.IO.File.AppendAllText(Path.Combine(Path.GetTempPath(), "al-runner-startup.log"), ready + "\n"); } catch { }
 
         // Patch install is complete, so the orphan set is final: every Hook(...) site that is

@@ -2369,12 +2369,22 @@ public sealed partial class BcCompiler
     // Serialize the compilation's SymbolReference (which carries Queries[] with the
     // BC-compiler-assigned column ids) to a temp file and register it for query-symbol
     // lookup. One file per (moduleName) — overwritten each run so it tracks the source.
+    //
+    // #2967 — SCRATCH-DIR CLASSIFICATION: this was UNSAFE and is now PER-PROCESS. The path
+    // used to be al-runner-query-symbols/<module>.SymbolReference.json, keyed on the module
+    // NAME alone and opened FileMode.Create, i.e. truncate. Module names are not unique across
+    // bundles on one machine — "tests", "runner-extras", an app's own name all recur — so two
+    // concurrent runners compiling same-named modules took turns truncating one file, and the
+    // BC-assigned query column ids read back could belong to the OTHER run's compile. That is
+    // a wrong answer rather than a crash, which is the worst shape for this to have.
+    //
+    // Nothing outside the writing process ever reads this file — it is registered below for
+    // this process's own query-symbol lookups — so sharing the path bought nothing. Same
+    // treatment as #2586's sibling symbols: put the process in the path.
     private static void EmitAndRegisterBundleQuerySymbols(NavCA.Compilation compilation, string moduleName)
     {
-        var safe = new string(moduleName.Select(c => char.IsLetterOrDigit(c) ? c : '_').ToArray());
-        var dir = Path.Combine(Path.GetTempPath(), "al-runner-query-symbols");
-        Directory.CreateDirectory(dir);
-        var path = Path.Combine(dir, safe + ".SymbolReference.json");
+        var dir = PerProcessScratch.Dir("al-runner-query-symbols", moduleName);
+        var path = Path.Combine(dir, "SymbolReference.json");
         using (var fs = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None))
             SymbolJsonWriter.WriteSymbolJson(compilation, fs);
         AlRunner.Patches.RecordPatches.RegisterBundleQuerySymbolsJson(path);
@@ -2959,6 +2969,12 @@ public sealed partial class BcCompiler
 
             if (Environment.GetEnvironmentVariable("BCCOMPILER_TRACE") == "1")
                 Console.Error.WriteLine($"  emit[{AddCalls}]: {symbol.Name} kind={symbol.GetType().Name} metaLen={metadata?.Length ?? -1}");
+            // #2967 — SCRATCH-DIR CLASSIFICATION: a DOCUMENTED TRADE-OFF that stays as it is.
+            // Off unless a developer sets BCCOMPILER_DUMP_CS=1, and its whole value is that the
+            // dump lands somewhere they can predict; a per-process or GUID-named directory
+            // would make it useless for the one purpose it has. Two concurrent runs with the
+            // flag set overwrite each other's dumps, which is a nuisance for whoever asked for
+            // them and cannot affect a run's RESULT — nothing reads these files back.
             if (Environment.GetEnvironmentVariable("BCCOMPILER_DUMP_CS") == "1")
             {
                 var dir = Path.Combine(Path.GetTempPath(), "bccompiler-dump");
