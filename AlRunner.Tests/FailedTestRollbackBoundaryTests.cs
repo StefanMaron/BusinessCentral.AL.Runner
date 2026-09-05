@@ -43,8 +43,11 @@
 // service tier can adjudicate.
 //
 // The fixture fails two of its four tests ON PURPOSE, and this test asserts their exact
-// messages — so a fixture that silently stopped failing is itself a failure here, and the red
-// lines in its output cannot be mistaken for a broken fixture.
+// messages — so a fixture that silently stopped failing is itself a failure here. Both
+// deliberately-failing procedures carry "ExpectedToFail_" in their own AL procedure name, so
+// a `FAIL  Codeunit70302.ExpectedToFail_...` line in CI output reads as intended at a glance —
+// see #2739, where an unrelated notice worded as a problem on a GREEN leg cost real
+// investigation time; this fixture must never add a second source of that same confusion.
 using System.Diagnostics;
 using System.Text;
 using Xunit;
@@ -102,35 +105,44 @@ public sealed class FailedTestRollbackBoundaryTests
         {
             var (exit, stdout, stderr) = Run(cacheDir);
 
-            // The two deliberate failures must still be failing, and failing for their own
-            // reason. If the fixture ever stops raising these, the two reporters below would
-            // pass vacuously — there would be no failed test whose writes could leak.
+            // The two deliberate failures must still be failing, by their EXPECTED-TO-FAIL
+            // name, and for their own reason. If the fixture ever stops raising these, the two
+            // reporters below would pass vacuously — there would be no failed test whose writes
+            // could leak.
             Assert.True(
-                stdout.Contains("FAIL  Codeunit70302.Test01_FailingWriterInsertsARowThenFails"),
-                $"the fixture's first deliberate failure must still fail.\nstdout:\n{stdout}\nstderr:\n{stderr}");
-            Assert.Contains("FTR-DELIBERATE-FAILURE-01", stdout);
+                stdout.Contains("FAIL  Codeunit70302.ExpectedToFail_01_WriterInsertsARowThenFails"),
+                $"the fixture's first EXPECTED failure must still fail.\nstdout:\n{stdout}\nstderr:\n{stderr}");
+            Assert.Contains("FTR-EXPECTED-TO-FAIL-01", stdout);
             Assert.True(
-                stdout.Contains("FAIL  Codeunit70302.Test03_PassingWriterInsertsARowAndSucceeds"),
-                $"the fixture's second deliberate failure must still fail.\nstdout:\n{stdout}\nstderr:\n{stderr}");
-            Assert.Contains("FTR-DELIBERATE-FAILURE-03", stdout);
+                stdout.Contains(
+                    "FAIL  Codeunit70302.ExpectedToFail_03_WriterInsertsARowThenFailsForAnUnrelatedReason"),
+                $"the fixture's second EXPECTED failure must still fail.\nstdout:\n{stdout}\nstderr:\n{stderr}");
+            Assert.Contains("FTR-EXPECTED-TO-FAIL-03", stdout);
 
             // The claim. Both reporters must PASS: the failing writers' rows are gone, and a
-            // committed row is readable. Before the fix Test02 and Test04 both failed, because
-            // the failing tests' uncommitted Inserts survived into them.
+            // committed row is readable. Before the fix these both failed, because the failing
+            // tests' uncommitted Inserts survived into them.
             Assert.True(
-                stdout.Contains("PASS  Codeunit70302.Test02_TheFailingWritersRowMustNotSurvive"),
+                stdout.Contains("PASS  Codeunit70302.Reporter_02_TheFailingWritersRowMustNotSurvive"),
                 "a FAILING test's uncommitted write must be rolled back before the next test in "
                 + $"the same codeunit runs.\nstdout:\n{stdout}\nstderr:\n{stderr}");
             Assert.True(
-                stdout.Contains("PASS  Codeunit70302.Test04_TheRowCommittedByTest02sPredecessorIsStillGone"),
+                stdout.Contains(
+                    "PASS  Codeunit70302.Reporter_04_RolledBackRowIsGoneAndACommittedRowSurvivesInTheSameTest"),
                 "the rollback boundary is the failing test's own commit point, and a committed "
-                + $"row inside a passing test must still be readable.\nstdout:\n{stdout}\nstderr:\n{stderr}");
+                + $"row inside the same test must still be readable.\nstdout:\n{stdout}\nstderr:\n{stderr}");
 
-            // Exactly two failures, both deliberate. Guards against a fix that unwinds too much
-            // and takes the reporters down with it.
+            // Exactly two failures, both by the EXPECTED-TO-FAIL name. Guards against a fix
+            // that unwinds too much and takes the reporters down with it, or a fixture edit
+            // that adds an unexpected failure under a name this test does not recognize.
             var failCount = stdout.Split("FAIL  Codeunit70302.").Length - 1;
             Assert.True(failCount == 2,
-                $"expected exactly the 2 deliberate failures, saw {failCount}.\nstdout:\n{stdout}");
+                $"expected exactly the 2 EXPECTED failures, saw {failCount}.\nstdout:\n{stdout}");
+            var expectedFailCount = stdout.Split("FAIL  Codeunit70302.ExpectedToFail_").Length - 1;
+            Assert.True(expectedFailCount == 2,
+                "every FAIL in this fixture must carry the ExpectedToFail_ name, so CI output "
+                + $"never shows an unmarked failure here. saw {expectedFailCount} marked of "
+                + $"{failCount} total.\nstdout:\n{stdout}");
 
             // A run with failing tests exits non-zero; that is the fixture working, not a
             // problem. Asserted so the expectation is explicit rather than unstated.
