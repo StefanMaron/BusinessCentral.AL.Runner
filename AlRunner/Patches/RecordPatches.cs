@@ -243,7 +243,31 @@ public static partial class RecordPatches
         // Shares InvalidateBcAppIndexes with AddBcAppPath (RecordPatches.BcAppFallback.cs) so the
         // two call sites can't drift apart again the way they did here.
         lock (_bcTableIndexLock)
+        {
+            // #2755: the REGISTERED set goes too, not just the indexes derived from it.
+            // InvalidateBcAppIndexes drops the derived table/extension indexes so the next lookup
+            // rebuilds them FROM _bcAppPaths — so leaving that list populated meant bundle 2 in a
+            // --server/--watch process rebuilt against its own registrations UNION every earlier
+            // bundle's, while a fresh single-bundle process running bundle 2 alone saw only its
+            // own. The neighbouring per-bundle state already held this invariant
+            // (InstallTriggerRunner.ResetForNewBundle clears _depAssemblies), and the server
+            // path's own comment states the intent: "New bundle in the server session: replace
+            // (not inherit) the install-trigger registrations".
+            //
+            // Safe because every caller re-registers immediately afterwards, and registers the
+            // FULL resolved closure rather than a delta — platform and Base Application .apps
+            // included. ResetForNewBundleReload (BcRuntime.cs, the single caller of this method)
+            // runs at Program.cs 2196 on the CLI path and 4049 on the server path; the matching
+            // registrations are at 2354/2357 and 4533/4534, both AFTER. A clear here therefore
+            // removes nothing the current bundle does not immediately put back.
+            //
+            // #2478 is the reason this is spelled out rather than done quietly: the last defect
+            // in this same reset path was an index reset that did not reset ENOUGH, and it made
+            // precompiled tableextension fields vanish from every metatable from the second
+            // server request on. That failure was silent; this one was too.
+            _bcAppPaths.Clear();
             InvalidateBcAppIndexes();
+        }
         _fieldTriggersWiredTables.Clear();
         _parsedPages.Clear();
         _parsedPageExtensions.Clear();
