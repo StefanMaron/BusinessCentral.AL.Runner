@@ -564,12 +564,41 @@ internal static class TestDataProvisioner
             .Distinct(StringComparer.Ordinal)
             .OrderBy(p => p, StringComparer.Ordinal)
             .ToList();
-        if (apps.Count == 0)
+
+        // #2794: a source sibling (app + tests, both from source) is resolved through the
+        // runner's own workspace-deps NAVX — manifest + src/*.al, no SymbolReference.json, by
+        // design (SiblingCompile). The reader refuses its whole --symbols list on one such
+        // entry ("no SymbolReference.json and no single inner .app"), so the run EXEC-FAILed
+        // before hydrating anything. Only symbol-bearing packages go to the reader; the rest
+        // are named here, because a table that only that package declares cannot be mapped
+        // from the backup and a reader of the run should know why.
+        var (keep, skipped) = PartitionSymbolPackages(apps, AppLoader.HasSymbolReference);
+        foreach (var s in skipped)
+            Console.Error.WriteLine(
+                $"[test-data] not handing '{s}' to the backup reader: source-only package (no "
+                + "SymbolReference.json), so tables it alone declares cannot be mapped from the backup");
+
+        if (keep.Count == 0)
             throw new TestDataUnavailableException(
-                "--test-data: this run resolved no Microsoft/ISV .app dependencies, so the backup reader "
-                + "has no symbols to map SQL columns onto AL fields with. Point --package-cache at the "
-                + "platform apps for the selected BC version.");
-        return apps;
+                "--test-data: this run resolved no Microsoft/ISV .app dependencies carrying a "
+                + "SymbolReference.json, so the backup reader has no symbols to map SQL columns onto "
+                + "AL fields with. Point --package-cache at the platform apps for the selected BC version.");
+        return keep;
+    }
+
+    /// <summary>
+    /// Split the resolved .app closure into the packages the reader can consume (they carry a
+    /// SymbolReference.json) and the source-only ones it refuses. Order is preserved in both
+    /// halves; the predicate is injected so the decision is testable without packages on disk.
+    /// </summary>
+    internal static (IReadOnlyList<string> Keep, IReadOnlyList<string> Skipped) PartitionSymbolPackages(
+        IEnumerable<string> apps, Func<string, bool> hasSymbolReference)
+    {
+        var keep = new List<string>();
+        var skipped = new List<string>();
+        foreach (var a in apps)
+            (hasSymbolReference(a) ? keep : skipped).Add(a);
+        return (keep, skipped);
     }
 
     private static string[] SymbolArgs(IReadOnlyList<string> head, IReadOnlyList<string> symbols)
