@@ -391,6 +391,26 @@ jobs:
       - name: Run tools/test_preflight.py
         run: python3 tools/test_preflight.py
 
+  pr-body-tests:
+    name: pr-body.py unit tests
+    runs-on: ubuntu-latest
+    # tools/pr-body.py is the only sanctioned way to edit a PR body from a
+    # script, and every one of its guards exists because an unguarded edit
+    # destroyed PR #2790's body -- including the standalone closing-reference
+    # line, so the linked issue never auto-closed. Its guards are therefore
+    # worth proving on every PR rather than the first time one of them is
+    # needed. Ungated -- plain Python, no network, seconds to run.
+    #
+    # The suite also asserts PARITY with .github/scripts/check_closing_reference.sh:
+    # pr-body.py reimplements that script's canonical/stray distinction in Python
+    # so a body can be refused locally before pr-check.yml refuses it server-side,
+    # and a silent drift between the two would make the local check meaningless.
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Run tools/test_pr_body.py
+        run: python3 tools/test_pr_body.py
+
   agent-mcp-tools:
     name: Agent definitions must allowlist the MCP tools they document
     runs-on: ubuntu-latest
