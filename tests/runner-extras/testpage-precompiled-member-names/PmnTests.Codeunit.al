@@ -16,7 +16,9 @@
 //   - 9875 "Permission Set Assignments", control "Company Name" (space, OnValidate) Error(EmptyUserNameErr) on a new row
 //   - 710  "Activity Log" + precompiled pageextension 711 "Activity Log Extension", action OpenRelatedRecord
 //                                                            (precompiled pageextension) Message(NoRelatedRecordMsg) on a blank Record ID
-//   - 5098 "Task Card", action "Co&mment"                    (RunObject only) must STILL refuse loudly
+//   - 5098 "Task Card", action "Co&mment"                    (RunObject only) target resolved from
+//                                                            the symbol file; only its RunPageLink refused
+//   - 31   "Item List", action "Item Substitutions"          (RunObject naming an AMBIGUOUS name)
 codeunit 64571 "PMN Precompiled Member Tests"
 {
     Subtype = Test;
@@ -184,6 +186,36 @@ codeunit 64571 "PMN Precompiled Member Tests"
         // runner gave up earlier and happened to refuse".
         Assert.ExpectedError('Rlshp. Mgt. Comment Sheet');
         Assert.ExpectedError('5072');
+    end;
+
+    // #2931, and the reason the resolution above cannot simply trust a name. A precompiled
+    // page's SymbolReference.json states RunObject as a bare NAME with no object type, and
+    // 73 names in Base Application 28.1 are shared between a page and a report / codeunit /
+    // xmlport / query. Page 31's action is one of 326 such actions: its AL says
+    // `RunObject = Report "Item Substitutions"` (report 5701), and there is ALSO a page 5720
+    // of that exact name. Resolving the name to a page and opening it would run the wrong
+    // object and report nothing wrong — the silent-default failure loud-failures.md exists to
+    // prevent — so the runner refuses and names the ambiguity.
+    [Test]
+    procedure AmbiguousRunObjectName_OnPrecompiledBasePage_RefusesRatherThanGuessing()
+    var
+        ItemList: TestPage "Item List";
+    begin
+        // [GIVEN] Page 31 "Item List", which ships precompiled.
+        ItemList.OpenView();
+
+        // [WHEN] The action whose RunObject names "Item Substitutions" is invoked.
+        asserterror ItemList."Item Substitutions".Invoke();
+
+        // [THEN] A loud refusal, anchored as a GAP so an expectations entry can track it.
+        Assert.ExpectedError('out-of-scope: TestPage action');
+        Assert.ExpectedError('not-yet-implemented');
+
+        // [AND] It says WHY it will not act: the name is ambiguous, and it names the other
+        // kind it collides with. Asserting the word "report" is what separates "refused
+        // because ambiguous" from the unrelated refusals in this same method.
+        Assert.ExpectedError('Item Substitutions');
+        Assert.ExpectedError('report');
     end;
 
     [MessageHandler]

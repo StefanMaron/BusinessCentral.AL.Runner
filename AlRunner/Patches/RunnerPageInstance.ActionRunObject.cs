@@ -94,7 +94,7 @@ internal sealed partial class RunnerPageInstance
                 $"not-yet-implemented — the action declares RunObject = {target.Kind} "
                 + $"{Describe(target)}, and the runner only performs a RunObject that names a "
                 + "PAGE so far. Opening a report, codeunit, xmlport or query from an action is "
-                + "tracked separately; see issue #2931");
+                + "tracked by issue #2943");
 
         if (target.HasRunPageLink)
             throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
@@ -102,7 +102,7 @@ internal sealed partial class RunnerPageInstance
                 $"not-yet-implemented — the action declares RunObject = Page {Describe(target)} "
                 + "together with RunPageLink, and the runner does not yet apply an action's "
                 + "RunPageLink filters. Opening the page WITHOUT them would show a different "
-                + "rowset than real BC, so it is refused instead; see issue #2931");
+                + "rowset than real BC, so it is refused instead; tracked by issue #2942");
 
         if (target.ObjectId <= 0)
             throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
@@ -111,7 +111,7 @@ internal sealed partial class RunnerPageInstance
                 + "that name does not resolve to a page this run knows about. It is either a "
                 + "report / codeunit / xmlport / query (which the symbol file states by name "
                 + "only, with no object type) or a page that is not loaded, and the runner will "
-                + "not guess which; see issue #2931");
+                + "not guess which; tracked by issue #2943");
 
         RunTargetPage(target.ObjectId, target.RunPageOnRec);
         return true;
@@ -257,11 +257,26 @@ internal sealed partial class RunnerPageInstance
             }
         if (declared is not { } spec) return null;
 
-        var pageId = RecordPatches.TryResolvePageIdByName(spec.ObjectName);
+        var (pageId, otherKinds) = RecordPatches.ResolveObjectNameAsPage(spec.ObjectName);
+
+        // Ambiguous: the same name also names a report / codeunit / xmlport / query. Measured
+        // on Base Application 28.1, 73 names are shared that way, so this is a routine case and
+        // not a corner one — "Chart of Accounts" is both a page and a report. Opening the page
+        // for an action whose AL said `RunObject = Report "Chart of Accounts"` would be a
+        // silent wrong answer, so ObjectId 0 sends it to the caller's loud refusal.
+        if (pageId > 0 && otherKinds.Count > 0)
+            throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+                $"TestPage action {actionId} on page {_pageId}",
+                $"not-yet-implemented — the action declares RunObject = '{spec.ObjectName}', and this "
+                + "page ships precompiled, so its symbol file states the target by NAME with no "
+                + $"object type. That name is also a {string.Join("/", otherKinds)} in this run, so "
+                + "the runner cannot tell which object the AL named and will not guess; tracked "
+                + "by issue #2943");
+
         return new ActionRunTarget(
-            // A name this run's page inventory answers IS a page. A name it does not answer is
-            // reported by ObjectId 0, and the caller refuses it by name rather than guessing
-            // which of report / codeunit / xmlport / query the symbol file meant.
+            // A name this run's page inventory answers, and nothing else answers, IS a page. A
+            // name it does not answer at all is reported by ObjectId 0, and the caller refuses
+            // it by name rather than guessing which kind the symbol file meant.
             MetaTypes.RunObjectType.Page,
             pageId,
             spec.ObjectName,
