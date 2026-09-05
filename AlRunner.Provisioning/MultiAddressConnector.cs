@@ -22,10 +22,18 @@ public static class MultiAddressConnector
     public delegate ValueTask<Stream> ConnectDelegate(IPAddress address, int port, CancellationToken ct);
 
     /// <summary>
-    /// Per-address connect budget. A black-holed address (firewall dropping SYNs, which is the
-    /// common shape of a broken IPv6 path) never returns an error — it just goes quiet — so
-    /// without a per-address cap one dead address consumes the caller's entire timeout and the
-    /// remaining addresses are never tried. That failure looks exactly like #2926 from outside.
+    /// Connect budget for an address that still has another address behind it. A black-holed
+    /// address never returns an error — it just goes quiet — so without a cap one dead address
+    /// consumes the caller's entire timeout and the addresses behind it are never tried. That
+    /// failure looks exactly like #2926 from outside.
+    ///
+    /// Measured on the machine this was developed on, which reproduces #2926's condition: the
+    /// CDN's IPv6 address fails instantly with NetworkUnreachable on every attempt, and its
+    /// IPv4 address intermittently black-holes — 4 of 15 connects hung for ~135 s before the
+    /// kernel gave up. The stock client hit the same fault and took the full 135 s; the cap
+    /// turns that into a 10 s failure carrying the per-address record.
+    ///
+    /// Deliberately NOT applied to the last address — see <see cref="ConnectAnyAsync"/>.
     /// </summary>
     public static readonly TimeSpan DefaultPerAddressTimeout = TimeSpan.FromSeconds(10);
 
@@ -75,8 +83,14 @@ public static class MultiAddressConnector
                 break;
             }
 
+            // The cap exists to stop a dead address from starving the addresses behind it. On
+            // the LAST address there is nothing behind it to starve, so capping there can only
+            // do harm: it would abandon a merely-slow connect that the caller's own timeout was
+            // willing to wait for, turning a success into a failure. Every address the stock
+            // client would have waited on is therefore still waited on for at least as long.
+            var isLast = i == addresses.Length - 1;
             using var perAddress = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            perAddress.CancelAfter(perAddressTimeout);
+            if (!isLast) perAddress.CancelAfter(perAddressTimeout);
             try
             {
                 var stream = await connect(address, port, perAddress.Token).ConfigureAwait(false);

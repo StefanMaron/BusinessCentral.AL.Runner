@@ -103,7 +103,10 @@ public sealed class ArtifactDownloaderNetworkDiagnosisTests
     public void MixedFailuresAcrossAddresses_NamesNoCauseAtAll()
     {
         // One address had no route, the other actively refused. There is no single cause here
-        // and the tool must not invent one — it reports both and stops.
+        // and the tool must not invent one — it reports both and stops. In particular the IPv6
+        // advice must not appear: the IPv4 address was tried and failed too, so turning IPv6
+        // off would not have helped. This assertion caught the first version of the fix doing
+        // exactly that.
         var attempts = new[]
         {
             AddressAttempt.Failed(CdnV6, Sock(SocketError.NetworkUnreachable)),
@@ -314,6 +317,51 @@ public sealed class ArtifactDownloaderNetworkDiagnosisTests
             TimeSpan.FromMilliseconds(150), CancellationToken.None);
 
         Assert.Equal(new[] { CdnV6, CdnV4 }, tried);
+        Assert.Equal(CdnV4, Assert.IsType<FakeStream>(stream).Address);
+    }
+
+    [Fact]
+    public async Task LastAddressIsNotCapped_SoASlowConnectStillSucceeds()
+    {
+        // The cap exists to stop a dead address starving the ones behind it. On the last
+        // address nothing is behind it, so capping there could only turn a slow-but-working
+        // connect into a failure — a regression against the stock client, which would have
+        // waited. Measured on the development box: its IPv6 address fails instantly and its
+        // IPv4 address intermittently black-holes for ~135s, so this distinction is not
+        // hypothetical.
+        var tried = new List<IPAddress>();
+
+        var stream = await MultiAddressConnector.ConnectAnyAsync(
+            CdnHost, 443, Resolves(CdnV6, CdnV4),
+            async (address, _, ct) =>
+            {
+                tried.Add(address);
+                if (address.AddressFamily == AddressFamily.InterNetworkV6)
+                    throw Sock(SocketError.NetworkUnreachable);
+                // Comfortably longer than the per-address cap below.
+                await Task.Delay(TimeSpan.FromMilliseconds(300), ct);
+                return new FakeStream(address);
+            },
+            TimeSpan.FromMilliseconds(50), CancellationToken.None);
+
+        Assert.Equal(new[] { CdnV6, CdnV4 }, tried);
+        Assert.Equal(CdnV4, Assert.IsType<FakeStream>(stream).Address);
+    }
+
+    [Fact]
+    public async Task SoleAddressIsNotCapped_EitherWay()
+    {
+        // Degenerate case of the same rule: with one address the walk must behave exactly like
+        // the stock client, or this fix would make single-homed hosts worse than before.
+        var stream = await MultiAddressConnector.ConnectAnyAsync(
+            CdnHost, 443, Resolves(CdnV4),
+            async (address, _, ct) =>
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(300), ct);
+                return new FakeStream(address);
+            },
+            TimeSpan.FromMilliseconds(50), CancellationToken.None);
+
         Assert.Equal(CdnV4, Assert.IsType<FakeStream>(stream).Address);
     }
 

@@ -867,10 +867,14 @@ public static class ArtifactDownloader
     /// Sizes a remote artifact and turns a failure into a named, actionable log message
     /// instead of letting <see cref="HttpRequestException"/> propagate as an unhandled
     /// exception with a raw .NET stack trace. A 404 (no artifact published for that exact
-    /// version) gets the <c>resolve-version</c> pointer; any other transport failure
-    /// (DNS, TLS, timeout, 5xx) gets a distinct "could not reach the CDN" message so the
-    /// caller can tell "your version is wrong" from "the network/tool is broken" — the
-    /// two categories the raw stack trace collapsed into one indistinguishable crash.
+    /// version) gets the <c>resolve-version</c> pointer; everything else goes to
+    /// <see cref="NetworkDiagnosis"/>.
+    ///
+    /// Issue #2926 split that second half apart. It used to be one "could not reach the CDN"
+    /// message covering DNS, TLS, timeouts, connect failures and 5xx alike, which let the tool
+    /// tell a user the CDN was down when the real fault was a missing IPv6 route on their own
+    /// machine. Those observations mean different things and are now reported as different
+    /// things; only a response from the server licenses a statement about the server.
     /// </summary>
     internal static bool TryHeadContentLength(
         HttpClient http, string url, string version, string channel, Action<string> logf, out long size)

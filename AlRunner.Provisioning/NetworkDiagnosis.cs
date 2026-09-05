@@ -251,16 +251,15 @@ public static class NetworkDiagnosis
             addressLines.Add($"  {a.Address} ({family}) {outcome}");
         }
 
-        // Only claim the address family is the problem when the addresses say so: an IPv6
-        // address the local routing table rejected, AND an IPv4 address of the same host that
-        // either was never tried or failed for a different reason. If every address failed the
-        // same way, the address family is not what distinguishes them and saying so would be
-        // the same defect in a new spelling.
+        // Only name the address family when the addresses themselves say so: the local routing
+        // table rejected an IPv6 address, AND an IPv4 address of the same host was resolved but
+        // never actually attempted. If the IPv4 address WAS attempted and failed too — for any
+        // reason — then turning IPv6 off cannot help, and suggesting it would be this issue's
+        // own defect in a new spelling: confident advice the observation does not support.
         var v6NoRoute = multi.Attempts.Any(a => a.IsIPv6 && a.Attempted && IsNoRoute(a.Error));
-        var v4Present = multi.Attempts.Any(a => !a.IsIPv6);
-        var v4NoRoute = multi.Attempts.Any(a => !a.IsIPv6 && a.Attempted && IsNoRoute(a.Error));
+        var v4Untried = multi.Attempts.Any(a => !a.IsIPv6 && !a.Attempted);
 
-        if (v6NoRoute && v4Present && !v4NoRoute)
+        if (v6NoRoute && v4Untried)
         {
             addressLines.Add("");
             addressLines.Add("The IPv6 address was rejected by this host's own routing table while an IPv4");
@@ -272,7 +271,7 @@ public static class NetworkDiagnosis
         var single = errors.Count == 1 ? errors[0] : null;
 
         if (single is not null && IsNoRoute(single))
-            return DescribeSocketError(single.Value, multi.Message, what, url, target, addressLines);
+            return DescribeSocketError(single.Value, message: null, what, url, target, addressLines);
 
         if (single == SocketError.TimedOut)
         {
@@ -281,7 +280,7 @@ public static class NetworkDiagnosis
         }
 
         if (single == SocketError.ConnectionRefused)
-            return DescribeSocketError(single.Value, multi.Message, what, url, target, addressLines);
+            return DescribeSocketError(single.Value, message: null, what, url, target, addressLines);
 
         // Mixed or unrecognized failures across the addresses: report them all, claim nothing.
         return new NetworkFailureReport(NetworkFailureKind.Unknown,
@@ -296,11 +295,16 @@ public static class NetworkDiagnosis
                 }).ToList());
     }
 
+    /// <param name="message">
+    /// The OS-level text, when it adds anything. Null when <paramref name="addressLines"/>
+    /// already states the same fact per address — printing both said it twice.
+    /// </param>
     private static NetworkFailureReport DescribeSocketError(
-        SocketError error, string message, string what, string? url, string target,
+        SocketError error, string? message, string what, string? url, string target,
         IReadOnlyList<string> addressLines)
     {
         var request = new[] { $"Request: {url ?? "(url not recorded)"}" };
+        var observed = message is null ? $"Observed: {error}" : $"Observed: {error} — {message}";
 
         switch (error)
         {
@@ -311,7 +315,7 @@ public static class NetworkDiagnosis
                     $"could not resolve the host for {what}.",
                     request.Concat(new[]
                     {
-                        $"Observed: {error} — {message}",
+                        observed,
                         "No connection was attempted, so nothing here is a statement about the CDN —",
                         "check this host's DNS resolver first.",
                     }).ToList());
@@ -320,7 +324,7 @@ public static class NetworkDiagnosis
             case SocketError.HostUnreachable:
                 return new NetworkFailureReport(NetworkFailureKind.NoRouteToAddress,
                     $"this host has no route to {target} for {what}.",
-                    request.Concat(new[] { $"Observed: {error} — {message}" })
+                    request.Concat(new[] { observed })
                         .Concat(addressLines)
                         .Concat(new[]
                         {
@@ -331,7 +335,7 @@ public static class NetworkDiagnosis
             case SocketError.ConnectionRefused:
                 return new NetworkFailureReport(NetworkFailureKind.ConnectionRefused,
                     $"{target} refused the connection for {what}.",
-                    request.Concat(new[] { $"Observed: {error} — {message}" })
+                    request.Concat(new[] { observed })
                         .Concat(addressLines)
                         .Concat(new[]
                         {
@@ -349,7 +353,7 @@ public static class NetworkDiagnosis
             default:
                 return new NetworkFailureReport(NetworkFailureKind.Unknown,
                     $"could not connect to {target} while fetching {what}.",
-                    request.Concat(new[] { $"Observed: {error} — {message}" })
+                    request.Concat(new[] { observed })
                         .Concat(addressLines)
                         .Concat(new[]
                         {
