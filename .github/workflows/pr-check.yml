@@ -374,6 +374,23 @@ jobs:
       - name: Run tools/test_ci_wait.py
         run: python3 tools/test_ci_wait.py
 
+  preflight-tests:
+    name: preflight.py unit tests
+    runs-on: ubuntu-latest
+    # tools/preflight.py decides whether a box is fit to run an autonomous
+    # cycle, so its thresholds and its merged-worktree test are unit-tested
+    # against captured df / git worktree output rather than against whatever the
+    # runner happens to look like. Two of its cases build a real throwaway git
+    # repository: the squash-merge trap (this repo squash-merges, so
+    # `git merge-base --is-ancestor` calls every merged branch unmerged) and the
+    # submodule refusal `git worktree remove` raises. Ungated -- plain Python
+    # plus git, and it takes seconds.
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Run tools/test_preflight.py
+        run: python3 tools/test_preflight.py
+
   agent-mcp-tools:
     name: Agent definitions must allowlist the MCP tools they document
     runs-on: ubuntu-latest

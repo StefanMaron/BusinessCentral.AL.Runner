@@ -408,7 +408,7 @@ def classify_space(free: int, used_pct: int, per_worker: int) -> tuple[str, str]
 
 
 def suggest_workers(*, tmp_free: int, repo_free: int, mem_available: int, cpus: int,
-                    per_worker: int) -> Suggestion:
+                    per_worker: int, scratch_label: str = "/tmp") -> Suggestion:
     """Derive a concurrent-agent count from what this box actually has.
 
     Nothing here is a constant except the per-worker footprint the caller passes
@@ -418,7 +418,11 @@ def suggest_workers(*, tmp_free: int, repo_free: int, mem_available: int, cpus: 
     no cause.
     """
     candidates = {
-        "/tmp free space": int(tmp_free // per_worker) if per_worker else 0,
+        # Named after the scratch root actually measured, not a hardcoded /tmp:
+        # a report that says "limited by /tmp free space" while measuring
+        # somewhere else sends the reader to the wrong filesystem, which is the
+        # same class of mistake as not naming the mount at all.
+        f"{scratch_label} free space": int(tmp_free // per_worker) if per_worker else 0,
         "repo filesystem free space": int(repo_free // per_worker) if per_worker else 0,
         "available RAM": int(mem_available // per_worker) if per_worker else 0,
         "CPU count": int(cpus),
@@ -686,7 +690,7 @@ def check_headroom(tmp_dir: str, repo: str, mounts: list[Mount], mem: dict,
     sug = suggest_workers(tmp_free=tmp_mount.free if tmp_mount else 0,
                           repo_free=repo_mount.free if repo_mount else 0,
                           mem_available=mem.get("MemAvailable", 0), cpus=cpus,
-                          per_worker=per_worker)
+                          per_worker=per_worker, scratch_label=tmp_dir)
     detail = [f"per-worker footprint assumed: {human(per_worker)} ({per_worker_label})",
               "each resource divided by that footprint: "
               + ", ".join(f"{k} -> {v}" for k, v in sorted(sug.detail.items()))]
@@ -769,8 +773,17 @@ def check_worktrees(rows: list[tuple], repo: str, pr_status: str) -> CheckResult
     for wt, pr, is_dirty, unpushed, d, exists in sorted(
             agents, key=lambda r: -(r[0].size_bytes or 0)):
         mark = "REAP " if d.reapable else "keep "
+        flags = []
+        if is_dirty:
+            flags.append("UNCOMMITTED CHANGES")
+        if unpushed:
+            flags.append(f"{unpushed} UNPUSHED COMMIT(S)")
+        # Shown even when the worktree is kept for an unrelated reason: unsaved
+        # work is the thing a person most needs to see in this census, and
+        # disposition() stops at the first reason it finds.
+        suffix = (" -- " + ", ".join(flags)) if flags else ""
         detail.append(f"{mark}{human(wt.size_bytes):>9}  {os.path.basename(wt.path)}  "
-                      f"[{wt.branch or 'detached'}] - {d.reason}")
+                      f"[{wt.branch or 'detached'}] - {d.reason}{suffix}")
     if pr_status != "ok":
         detail.append(f"pull-request states could not be read ({pr_status}); every worktree "
                       f"is therefore reported as merged-state unknown and kept.")
@@ -1021,11 +1034,14 @@ def check_budget(skip_fallback: bool = False) -> CheckResult:
 
     Omarchy-specific, so the binary is probed rather than assumed.
     """
-    now = dt.datetime.now(dt.timezone.utc)
     binary = OMARCHY_USAGE_BIN if os.path.exists(OMARCHY_USAGE_BIN) \
         else shutil.which("omarchy-agent-usage-claude")
     if binary:
         r = run([binary, "--limits-only"], timeout=60)
+        # `now` is taken AFTER the probe: the probe refreshes the reading, so a
+        # clock read before it makes updatedAt look like it is in the future and
+        # prints an age of "-0 min ago".
+        now = dt.datetime.now(dt.timezone.utc)
         if r.ok:
             windows, meta = parse_omarchy_limits(r.out)
             status, summary, detail = classify_budget(windows, now)
@@ -1037,7 +1053,7 @@ def check_budget(skip_fallback: bool = False) -> CheckResult:
                               f"{meta.get('todaySessions', '?')} session(s)")
             updated = _iso(meta.get("updatedAt"))
             if updated is not None:
-                age_min = (now - updated).total_seconds() / 60.0
+                age_min = max(0.0, (now - updated).total_seconds() / 60.0)
                 detail.append(f"figures measured {age_min:.0f} min ago (updatedAt "
                               f"{meta['updatedAt']})")
                 if age_min > BUDGET_STALE_MINUTES and status == "PASS":
@@ -1081,6 +1097,7 @@ def check_budget(skip_fallback: bool = False) -> CheckResult:
                                remedy="Install the omarchy usage plugin for an authoritative "
                                       "percent, or pace from the absolute figures above.",
                                data={"source": "ccusage", "active_block": block})
+    now = dt.datetime.now(dt.timezone.utc)  # noqa: F841 - kept for symmetry of the branches
     return CheckResult(name="budget", status="WARN",
                        summary="budget headroom UNKNOWN - no usage source answered",
                        command=f"{OMARCHY_USAGE_BIN} --limits-only; npx ccusage@latest blocks --json",

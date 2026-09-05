@@ -168,6 +168,15 @@ sug_none = pf.suggest_workers(tmp_free=full["/tmp"].free, repo_free=by_mp["/"].f
                               mem_available=mem["MemAvailable"], cpus=12, per_worker=PW)
 check("a box with no room for one worker suggests zero", sug_none.workers == 0, str(sug_none))
 
+# The limiting resource is named after the scratch root actually measured. A
+# report that says "/tmp" while measuring somewhere else points the reader at the
+# wrong filesystem -- the same mistake as not naming the mount at all.
+sug_named = pf.suggest_workers(tmp_free=1 * GIB, repo_free=900 * GIB,
+                               mem_available=900 * GIB, cpus=64, per_worker=PW,
+                               scratch_label="/mnt/agent-scratch")
+check("the scratch mount is named, not hardcoded as /tmp",
+      sug_named.limited_by == "/mnt/agent-scratch free space", sug_named.limited_by)
+
 # --------------------------------------------------- worktree list parsing
 print()
 print("preflight.py -- git worktree list parsing")
@@ -419,6 +428,145 @@ check("no active block returns None rather than a fabricated zero",
 check("unparseable ccusage output returns None", pf.parse_ccusage_blocks("not json") is None)
 check("unparseable omarchy output yields no windows, not a fake zero-usage one",
       pf.parse_omarchy_limits("not json") == ([], {}))
+
+# ------------------------------------------------- the census a person reads
+print()
+print("preflight.py -- the worktree census")
+
+
+def row(path, branch, pr, dirty=False, unpushed=0, size=100 * 1024 * 1024,
+        is_main=False, exists=True, is_current=False):
+    w = pf.Worktree(path=path, head="a" * 40, branch=branch, detached=branch is None,
+                    is_main=is_main, size_bytes=size)
+    d = pf.disposition(w, pr=pr, dirty=dirty, unpushed=unpushed, is_current=is_current)
+    return (w, pr, dirty, unpushed, d, exists)
+
+
+rows = [
+    row("/r", "main", None, is_main=True),
+    row("/r/.claude/worktrees/a", "agent/x/issue-1", MERGED),
+    row("/r/.claude/worktrees/b", "agent/x/issue-2", OPEN, dirty=True),
+    row("/r/.claude/worktrees/c", "agent/x/issue-3", MERGED, unpushed=2),
+]
+r = pf.check_worktrees(rows, "/r", "ok")
+body = "\n".join([r.summary] + r.detail + [r.remedy])
+check("the main checkout is excluded from the agent count", "3 agent worktree" in r.summary,
+      r.summary)
+check("a reapable worktree is counted", "1 reapable" in r.summary, r.summary)
+check("uncommitted work is counted in the summary", "1 with uncommitted work" in r.summary,
+      r.summary)
+check("the reapable one is marked REAP", "REAP" in body, body)
+# A worktree kept for an unrelated reason (its PR is open) must still show that
+# it holds unsaved work: disposition() stops at the first reason it finds, and
+# unsaved work is what a person most needs out of this census.
+check("uncommitted work is visible even when the worktree is kept for another reason",
+      "UNCOMMITTED CHANGES" in body, body)
+check("unpushed commits are visible on their own line", "UNPUSHED COMMIT" in body, body)
+check("having something to reap is a WARN, not silence", r.status == "WARN", r.status)
+check("...and the remedy names the reaper", "--reap" in r.remedy, r.remedy)
+check("...and cites why nothing ever deleting these matters", "82 worktrees" in r.remedy,
+      r.remedy)
+
+r = pf.check_worktrees(rows, "/r", "gh pr list failed: boom")
+check("unreadable PR states make the census WARN rather than silently reap",
+      r.status == "WARN", r.status)
+check("...and say the merged state is unknown",
+      any("could not be read" in d for d in r.detail), str(r.detail))
+
+r = pf.check_worktrees([row("/r", "main", None, is_main=True),
+                        row("/r/.claude/worktrees/b", "agent/x/issue-2", OPEN)], "/r", "ok")
+check("a tidy box with only live worktrees passes", r.status == "PASS", r.status)
+
+# ------------------------------------------------------ the reaper (real git)
+print()
+print("preflight.py -- the reaper (real git, including the submodule refusal)")
+
+tmp = tempfile.mkdtemp(prefix="preflight-reap-")
+try:
+    env = dict(os.environ,
+               GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@e",
+               GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@e",
+               GIT_CONFIG_GLOBAL=os.path.join(tmp, "nogitconfig"),
+               GIT_CONFIG_SYSTEM=os.path.join(tmp, "nogitconfig"))
+
+    sub = os.path.join(tmp, "sub")
+    os.makedirs(sub)
+    git("init", "-q", "-b", "master", cwd=sub, env=env)
+    open(os.path.join(sub, "s.txt"), "w").write("sub\n")
+    git("add", "s.txt", cwd=sub, env=env)
+    git("commit", "-qm", "sub", cwd=sub, env=env)
+
+    repo = os.path.join(tmp, "main")
+    os.makedirs(repo)
+    git("init", "-q", "-b", "main", cwd=repo, env=env)
+    open(os.path.join(repo, "a.txt"), "w").write("one\n")
+    git("add", "a.txt", cwd=repo, env=env)
+    git("commit", "-qm", "base", cwd=repo, env=env)
+    # file:// submodules are refused by default since the CVE-2022-39253 fix.
+    git("-c", "protocol.file.allow=always", "submodule", "add", "-q", sub, "tests/al-language",
+        cwd=repo, env=env)
+    git("commit", "-qm", "add submodule", cwd=repo, env=env)
+
+    git("branch", "feature", cwd=repo, env=env)
+    wt_path = os.path.join(tmp, "wt")
+    git("worktree", "add", "-q", wt_path, "feature", cwd=repo, env=env)
+    head = git("rev-parse", "HEAD", cwd=wt_path, env=env).stdout.strip()
+    # This is the step that makes the worktree unremovable.
+    git("-c", "protocol.file.allow=always", "submodule", "update", "--init", "-q",
+        cwd=wt_path, env=env)
+
+    refusal = subprocess.run(["git", "worktree", "remove", wt_path], cwd=repo, env=env,
+                             capture_output=True, text=True)
+    check("plain `git worktree remove` refuses a worktree with an initialised submodule",
+          refusal.returncode != 0 and "submodule" in (refusal.stderr + refusal.stdout).lower(),
+          f"rc={refusal.returncode} {refusal.stderr.strip()[:200]}")
+
+    check("submodule_paths reads .gitmodules",
+          pf.submodule_paths(wt_path) == ["tests/al-language"], str(pf.submodule_paths(wt_path)))
+
+    w = pf.Worktree(path=wt_path, head=head, branch="feature", detached=False, is_main=False)
+    pr = {"number": 7, "state": "MERGED", "headRefOid": head}
+    d = pf.disposition(w, pr=pr, dirty=False, unpushed=0)
+    rows = [(w, pr, False, 0, d, True)]
+
+    dry = pf.reap(repo, rows, dry_run=True)
+    check("--dry-run removes nothing", os.path.isdir(wt_path), "the worktree is gone")
+    check("...and says what it would do", any("WOULD REMOVE" in l for l in dry), str(dry))
+
+    # The shared .git/config must be untouched: `git submodule deinit` rewrites
+    # submodule.*.url there, which would disturb the main checkout and every
+    # other live worktree of the same repository.
+    shared_config = open(os.path.join(repo, ".git", "config")).read()
+
+    log = pf.reap(repo, rows, dry_run=False)
+    check("the reaper removes it anyway, working around the submodule refusal",
+          not os.path.isdir(wt_path), str(log))
+    check("...and says so", any("REMOVED" in l for l in log), str(log))
+    check("...and records that submodule deinit was deliberately not used",
+          any("deinit" in l for l in log), str(log))
+    check("the SHARED .git/config is byte-for-byte unchanged",
+          open(os.path.join(repo, ".git", "config")).read() == shared_config,
+          "the reaper edited config other worktrees share")
+    check("the submodule source repository is untouched",
+          os.path.exists(os.path.join(sub, "s.txt")))
+
+    # And it must refuse work that appeared since the census was taken.
+    wt2 = os.path.join(tmp, "wt2")
+    git("branch", "feature2", cwd=repo, env=env)
+    git("worktree", "add", "-q", wt2, "feature2", cwd=repo, env=env)
+    w2 = pf.Worktree(path=wt2, head=head, branch="feature2", detached=False, is_main=False)
+    pr2 = {"number": 8, "state": "MERGED", "headRefOid": head}
+    rows2 = [(w2, pr2, False, 0, pf.disposition(w2, pr=pr2, dirty=False, unpushed=0), True)]
+    open(os.path.join(wt2, "scratch.txt"), "w").write("work done after the census\n")
+    log2 = pf.reap(repo, rows2, dry_run=False)
+    check("a worktree that became dirty since the census is NOT removed",
+          os.path.isdir(wt2), str(log2))
+    check("...and the reason says why", any("became dirty" in l for l in log2), str(log2))
+
+    check("nothing to reap says so rather than printing an empty list",
+          pf.reap(repo, [], dry_run=False) == ["nothing to reap"])
+finally:
+    shutil.rmtree(tmp, ignore_errors=True)
 
 # ---------------------------------------------------------------- exit codes
 print()
