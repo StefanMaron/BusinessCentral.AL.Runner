@@ -3372,8 +3372,10 @@ foreach (var bundle in bundles)
                 // "N suite errors" summary and the exit code (computedExitCode's
                 // CompileErrors check) both reflect the abandoned tests.
                 if (executor.AbortReasons.Count > 0)
+                {
                     bundleErrors.AddRange(executor.AbortReasons.Select(r => $"{rel}: TEST-TIMEOUT-ABORT: {r}"));
                     allAbortReasons.AddRange(executor.AbortReasons);
+                }
             }
             catch (Exception ex)
             {
@@ -3500,8 +3502,10 @@ foreach (var bundle in bundles)
                 // returns normally on a watchdog-timeout abort, so the catch below
                 // never sees it.
                 if (executor.AbortReasons.Count > 0)
+                {
                     bundleErrors.AddRange(executor.AbortReasons.Select(r => $"{suiteName}: TEST-TIMEOUT-ABORT: {r}"));
                     allAbortReasons.AddRange(executor.AbortReasons);
+                }
             }
             catch (Exception ex)
             {
