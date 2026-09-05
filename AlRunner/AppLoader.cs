@@ -656,8 +656,11 @@ public static class AppLoader
     /// the bc-symbols cache and the AL-output key's dependency terms, which hash the same
     /// packages in the same process anyway — so the usual outcome is a dictionary lookup.
     /// Where it is genuinely first, it is a sequential read the MISS path was about to make
-    /// regardless. Measured, per package hashed cold: Base Application (~98MB) 0.16s,
-    /// System Application (~24MB) 0.04s, the whole 34-package platform dir 0.28s.</para>
+    /// regardless. Measured on Base Application (93.5MB, 5 chunks), median of three, warm
+    /// page cache: hashing it costs 0.086s; the first extract goes 0.88s -> 0.99s, a repeat
+    /// call for the same file stays at 0.002-0.006s (the memo), and the case CI actually
+    /// hits — the same bytes re-downloaded to a fresh path and mtime — goes 0.86s -> 0.10s,
+    /// because it stops being a full re-inflate and becomes a hash plus a HIT.</para>
     ///
     /// <para>Entries are named <c>sha256-&lt;hash&gt;</c> — the prefix keeps them from ever
     /// being confused with the pre-#2955 stat-keyed directories (also 64 hex characters,
