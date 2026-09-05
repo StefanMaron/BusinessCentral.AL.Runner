@@ -98,6 +98,9 @@ public static partial class RowVersionPatches
                                                             // with reflected-shape fakes, matching this file's and
                                                             // RowVersionPatchesTests.cs's established convention.
     private static FieldInfo? _fPrimaryTree;              // TempTableDataProvider.primaryTree (internal, private)
+
+    /// <summary>The AL-visible operation a shape gap in this file interrupted.</summary>
+    private const string SystemIdIntegritySurface = "AL Record.Insert (SystemId uniqueness check)";
     private static MethodInfo? _mCreateUniqueConstraint;  // NavCSideDuplicateKeyException.CreateUniqueConstraint
 
     /// <summary>
@@ -287,12 +290,20 @@ public static partial class RowVersionPatches
         // derives from it. PrivateMemberLookup walks the hierarchy asking each level for its
         // OWN declarations, which is right for the exact type AND for a derived one; see that
         // class for why climbing to a type of a KNOWN NAME instead is wrong.
+        //
+        // #2946: BcShapeGapException, not the InvalidOperationException this used to raise.
+        // Three readers of this one private structure raised three different types between
+        // them, so what a caller could catch depended on which one it reached — and none of
+        // the three said the true thing, that the runner could not READ BC's internals. The
+        // type also has to be one an AL [TryFunction] and an AL `asserterror` both let
+        // through; an InvalidOperationException is caught by asserterror, which would make
+        // `asserterror <insert>` PASS where real BC's insert succeeds and the asserterror
+        // fails. See AlRunner/Infrastructure/BcShapeGapException.cs.
         if (!AlRunner.Infrastructure.PrivateMemberLookup.FitsInstance(_fPrimaryTree, provider))
-            _fPrimaryTree = AlRunner.Infrastructure.PrivateMemberLookup
-                .Field(provider.GetType(), "primaryTree")
-                ?? throw new InvalidOperationException(
-                    $"[RowVersionPatches] {provider.GetType().Name}.primaryTree field not found — " +
-                    "SystemId integrity check cannot resolve its reflection target");
+            _fPrimaryTree = AlRunner.Infrastructure.BcShape.RequiredField(
+                provider.GetType(), "primaryTree", SystemIdIntegritySurface,
+                "the SystemId integrity check cannot read the stored rows, so a duplicate "
+                + "SystemId would be inserted with no diagnostic");
         // A NULL primaryTree means no rows are stored yet for this table instance
         // (EnsureTreeCreated has not run, which happens INSIDE the real Insert body this
         // prepend runs ahead of) — nothing to collide with, so a quiet return is right.
@@ -302,11 +313,10 @@ public static partial class RowVersionPatches
         // branch silently skipped the duplicate-SystemId check on every insert (#2786).
         var storedTree = _fPrimaryTree.GetValue(provider);
         if (storedTree == null) return;
-        if (storedTree is not System.Collections.IEnumerable storedRows)
-            throw new InvalidOperationException(
-                $"[RowVersionPatches] {provider.GetType().Name}.primaryTree holds a " +
-                $"{storedTree.GetType().Name}, which cannot be enumerated — " +
-                "SystemId integrity check cannot read the stored rows");
+        var storedRows = AlRunner.Infrastructure.BcShape.RequiredEnumerable(
+            storedTree, $"{provider.GetType().Name}.primaryTree", SystemIdIntegritySurface,
+            "the SystemId integrity check cannot read the stored rows, so a duplicate "
+            + "SystemId would be inserted with no diagnostic");
 
         // #2667: answer from a per-store index instead of walking every stored row. The walk
         // ran on EVERY insert into a database-backed table — note that the zero-SystemId early

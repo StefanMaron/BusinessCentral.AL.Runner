@@ -107,6 +107,21 @@ An exception carrying *neither* is not an out-of-scope signal. A plain
 `expect-oos` entry stays a failure — widening the matcher must not turn it into
 one that says yes to everything.
 
+**A third refusal type exists and `expect-oos` may never absorb it.**
+`BcShapeGapException` — message prefix `bc-shape-gap: `, written up in
+[limitations.md](limitations.md#bc-shape-gaps) — means the runner could not READ
+one of BC's own internals: a private field, a static type or an internal property
+that is not where the reflecting code expects it on this BC build. That is a bug
+report about the runner, not a scope boundary, and it is a property of which BC
+build is on disk rather than of the runner — so it can be true on one BC leg and
+false on another in the same matrix run, and "expected" is never an honest thing
+to call it. `expect-oos` and `expect-divergence` both refuse it explicitly,
+naming the surface and the member, instead of falling through to advice about
+raising `RunnerOutOfScopeException` that would be exactly wrong here.
+`expect-fail-known-gap` still applies, with an open issue, once someone has
+written the gap down. Settled in
+[#2946](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2946).
+
 New Cecil throw sites therefore have to put the **`docs/scope.md` anchor first
 in the reason slot**, and the API name in the API slot. A message shaped
 `out-of-scope: report-rendering-external — RDLC layout processing …` puts a
