@@ -98,9 +98,11 @@ Every check below exists because its absence has silently corrupted a result.
 
    Keep your label on whatever you are working, so a loop starting up can see the slot is live.
    Between units you hold nothing, so a concurrent startup may pick the same slot — that is what
-   the re-read above is for, and it is why the assignee, not the slot, is the real lock. Do not
-   try to judge whether someone else's open work is "still being worked": you cannot tell a dead
-   box from a contributor who is asleep, and the design refuses that judgement elsewhere for the
+   the re-read above is for. Do not read the assignee as the lock that makes up for it: where
+   every loop pushes as one account, the assignee cannot say *which* loop holds an issue, and an
+   **open PR carrying `Closes #N`** is the signal that decides it (#2891). Do not try to judge
+   whether someone else's open work is "still being worked" either: you cannot tell a dead box
+   from a contributor who is asleep, and the design refuses that judgement elsewhere for the
    same reason.
 
    Note the slot is bookkeeping, not safety. The incident it is often credited with preventing —
@@ -374,9 +376,41 @@ The five-hour windows are real, but **exhausting every window burns the weekly l
 couple of days.** The budget that matters is weekly, so run continuously *below* per-window
 capacity rather than sprinting and then idling.
 
-One agent at a time is most of the pacing. Beyond that, use numbers the loop can actually count,
-because **it has no way to read its own token consumption or remaining budget** — an instruction
-to "tune from observed consumption" cannot be followed and will be guessed at.
+One agent at a time is most of the pacing. Beyond that, **the loop can measure both its own
+consumption and its remaining budget**, where the tooling for it is installed. Check for these
+two sources during preflight and record in the box profile which ones this machine has:
+
+- **Consumption, on any machine:** `npx ccusage@latest claude` for daily totals and
+  `npx ccusage@latest blocks` for per-5-hour-block ones, read from Claude Code's own local
+  JSONL. Absolute tokens and cost only — see the two misreadings below.
+- **Remaining budget, where the Omarchy agents panel is installed:**
+  `/usr/share/omarchy/bin/omarchy-agent-usage-claude --limits-only`, or read its state file
+  `~/.local/state/omarchy/agents/usage/claude.json` directly. It carries the authoritative
+  limits from Anthropic's OAuth usage endpoint — a `percent` and a `resetsAt` for the 5-hour
+  and the 7-day window. `percent` is a 0..1 fraction, so `0.47` means 47%. `--limits-only`
+  re-probes the limits while reusing a recent transcript scan; it does not narrow the output.
+
+**A missing limits source leaves the loop half-sighted, not blind.** Measure absolute tokens and
+cost with ccusage, ask the human for the cap percentage, and record any snapshot they give you
+so a burn rate can be derived. One sample for calibration, taken from a panel screenshot:
+35% → 37% of a session across 8 minutes at 9–12 concurrent agents, roughly 15 percentage points
+per hour. Where the limits source *is* present, measure the rate directly rather than
+extrapolating from that figure.
+
+Two ways to misread these numbers, both of which cost real time on 2026-09-05:
+
+- **ccusage's block `%` is not your cap.** It is measured against a *guessed* limit — the largest
+  block ccusage has ever seen. A coordinator read it as "at the cap" and concluded there was no
+  headroom while the authoritative figure was 37%. Take absolute tokens and cost from ccusage;
+  take the percentage from the limits source, or from the human.
+- **ccusage counts the whole machine.** It reads all local Claude Code data, so its totals cover
+  every loop running on the box, not only yours.
+
+**Cost is almost entirely cache reads, so the lever is round trips, not agent count.** Of
+738,650,170 tokens in one measured day, 723,088,774 (97.9%) were cache reads and 8,761 were
+input. Cache reads scale with tool round-trips × context size, so fewer round trips per agent
+and tighter briefs cut cost far more than running fewer agents does — the same finding
+`CLAUDE.md`'s code-navigation section reaches about grep round-trips, and it applies here too.
 
 Put concrete values in the box profile and obey them: a fixed wall-clock gap between cycles, and
 a hard cap on cycles per rolling 24 hours. Count cycles, subagents spawned and elapsed time —
