@@ -2121,7 +2121,12 @@ foreach (var bundle in bundles)
                     bundlePkgDirs = AlRunner.Infrastructure.SafeDirectoryScan.Directories(depRootDir, ".alpackages")
                         .ToList();
                 var resolverDirs = bundlePkgDirs.Concat(packageCacheDirs).Distinct().ToList();
-                var resolver = new DependencyResolver(resolverDirs, AlRunner.Infrastructure.CacheRoots.SourceBuiltPackageDirs());
+                // depRootDir is the same root DependencyLoader.LoadAll gets, so the resolver's
+                // "no loader tier can serve this" verdict is answered against the Tier-1
+                // sidecar DLLs that will actually be loaded, not against a subset of the
+                // tiers (#2739).
+                var resolver = new DependencyResolver(
+                    resolverDirs, AlRunner.Infrastructure.CacheRoots.SourceBuiltPackageDirs(), depRootDir);
                 IReadOnlyList<(AlRunner.AppManifest Manifest, string AppPath)> ordered;
                 using (AlRunner.Infrastructure.PhaseLog.Stage("dep-resolve"))
                     ordered = resolver.Resolve(roots);
