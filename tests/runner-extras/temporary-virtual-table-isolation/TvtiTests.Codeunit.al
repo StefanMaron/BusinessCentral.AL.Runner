@@ -17,8 +17,10 @@
 //                  three guards unconditional: Date (a range outside the default 1900-2099
 //                  window, so the widening is load-bearing) and Aggregate Permission Set (its
 //                  Tenant Permission Set row written AFTER the aggregate's first touch, so the
-//                  per-request redrive is load-bearing). The Field one is NOT -- see its own
-//                  comment for the measurement showing why no such test can exist.
+//                  per-request redrive is load-bearing). The Field one is NOT, and no attempt
+//                  to make it sensitive succeeded -- a source-parsed bundle table, and Base
+//                  Application Customer (18) never touched as a Record, both still pass under
+//                  the mutant. See its own comment.
 codeunit 64582 "TVTI Tests"
 {
     Subtype = Test;
@@ -73,14 +75,22 @@ codeunit 64582 "TVTI Tests"
 
     // NOT a sensitivity control, and deliberately not named as one. Unlike the Date and
     // Aggregate Permission Set controls below, this test does NOT fail when the Field
-    // find-time populate is switched off, and no test can, because switching it off changes
-    // nothing observable: PopulateFieldVirtualTable runs at DataAccess-creation time on EVERY
-    // hand-out and covers every table in RecordPatches._metaTableCache, which by then holds
-    // every table the runner can resolve. Measured, not reasoned: with a probe on both the
-    // generic and the targeted insert inside EnsureFilteredFieldTablePopulated, the find-time
-    // Field populate inserted rows ZERO times across all 243 runner-extras tests and all 2496
-    // al-language corpus tests. Its only observable effect was the #2524 defect itself --
-    // writing into a temporary record's store. Tracked for possible removal in #2792.
+    // find-time populate is disabled.
+    //
+    // What IS established: NOTHING in this repository fails when it is disabled. Against a
+    // mutant that makes all three guards unconditional, runner-extras produces 5 failures
+    // (three Codeunit64561.Date_* plus this suite's two) and the corpus produces 0 -- none of
+    // them Field-related. So the find-time Field populate is UNOBSERVED here.
+    //
+    // Deliberately NOT claimed: that it is inert. Whether it inserts rows at all is disputed
+    // and unresolved. A probe with the counter inside InsertFieldRowsForTable and the flag
+    // spanning the whole dynamic extent of EnsureFilteredFieldTablePopulated -- validated by a
+    // positive control that reports 3334 find-path inserts once the temporary guard is removed
+    // -- measured 0 find-path inserts in both suites, attributing every insert (37492 in
+    // runner-extras, 27577 in the corpus) to the CREATION-time populate. A reviewer's probe
+    // measured 39 and 10 on the find path. Both agree on the row counts per table; they
+    // disagree on which populate performs them. Do not act on either number without
+    // re-measuring. See #2792.
     //
     // What this test IS: a plain non-regression assertion that the Field table still answers
     // truthfully for a non-temporary record after the guard was added.
