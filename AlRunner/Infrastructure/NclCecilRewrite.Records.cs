@@ -1786,13 +1786,16 @@ public static partial class NclCecilRewrite
         // keys so FlowFieldPatches.Register's JmpHook.Apply fallback becomes a no-op.
         set.Add("Microsoft.Dynamics.Nav.Runtime.RecordImplementation::CalcFieldsAsync/2");
         set.Add("Microsoft.Dynamics.Nav.Runtime.RecordImplementation::CalcFieldsAsync/3");
-        // NavRecordRef cluster (Batch 8). get_Target + open-gates + all 6 ALOpen
-        // overloads. ALOpen keys are by arity (Key counts declared params), so /1../4
-        // each cover every overload of that arity — both the (int,…) and
-        // (CompilationTarget,int,…) families. Migrated atomically (same R2R path).
+        // NavRecordRef cluster (Batch 8). get_Target + all 6 ALOpen overloads. ALOpen
+        // keys are by arity (Key counts declared params), so /1../4 each cover every
+        // overload of that arity — both the (int,…) and (CompilationTarget,int,…)
+        // families. Migrated atomically (same R2R path).
+        //
+        // CheckIsOpenAllowed/2 and IsOpenAllowed/2 are deliberately NOT here: #2783
+        // stopped replacing them so BC's own compilation-target scope gate runs. Their
+        // bodies are BC's, nothing hooks them, so registering them as Cecil-owned would
+        // be a false claim.
         set.Add("Microsoft.Dynamics.Nav.Runtime.NavRecordRef::get_Target/0");
-        set.Add("Microsoft.Dynamics.Nav.Runtime.NavRecordRef::CheckIsOpenAllowed/2");
-        set.Add("Microsoft.Dynamics.Nav.Runtime.NavRecordRef::IsOpenAllowed/2");
         set.Add("Microsoft.Dynamics.Nav.Runtime.NavRecordRef::ALOpen/1");
         set.Add("Microsoft.Dynamics.Nav.Runtime.NavRecordRef::ALOpen/2");
         set.Add("Microsoft.Dynamics.Nav.Runtime.NavRecordRef::ALOpen/3");
