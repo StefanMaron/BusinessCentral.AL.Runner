@@ -558,6 +558,17 @@ well, which is the bug (#2519) this table's support closed.
 move quietly. It deliberately uses only ids that are live table objects, so it does not encode
 the open `ObsoleteState = Removed` question as settled in either direction.
 
+**Synthesis never overwrites restored rows, and never guesses whether there are any.** Because
+2000000071 is a real SQL table, a `--test-data` backup can genuinely carry rows for it, so the
+on-demand loader runs first and the populator does nothing when the store already holds a row.
+Deciding that means reading BC's private `TempTableDataProvider.primaryTree` by reflection. A
+*null* tree is BC's own "no row was ever inserted" and synthesis proceeds; the field being
+**absent**, or holding something that cannot be enumerated, means BC's private layout moved and
+the runner cannot tell the two apart — so it refuses with an `out-of-scope:` failure naming the
+member rather than synthesising over rows it cannot see (#2786). That refusal is unreachable on
+every BC version the runner supports; it exists so a future one cannot silently disable the
+precedence rule.
+
 ---
 
 ## Per-BC-minor engine variants: granularity is per MINOR, not per exact build
