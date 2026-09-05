@@ -8,7 +8,7 @@
     "runner-extras": {
       "groups": {
         "bundle-page-over-dep-table": { "tests": 2 },
-        "date-virtual-table-window": { "tests": 3 },
+        "date-virtual-table-window": { "tests": 5 },
         "db-trigger-inject-timing": { "tests": 2 },
         "dep-tableext-invoke-dep": { "tests": 0 },
         "dep-tableext-invoke-main": { "tests": 4 },
