@@ -245,7 +245,14 @@ public static partial class RowVersionPatches
         if (incomingSystemId.IsZeroOrEmpty) return;
 
         if (provider == null) return;
-        _fPrimaryTree ??= provider.GetType().GetField("primaryTree",
+        // primaryTree is PRIVATE on TempTableDataProvider, and GetField(NonPublic) on a
+        // derived type does not return a base class's private fields — BC's own
+        // CrmTableConnection.CrmTestDataProvider (the '@@test@@' CRM test connection, #2725)
+        // derives from it. Walk to the declaring type before asking.
+        var providerType = provider.GetType();
+        while (providerType.BaseType != null && providerType.Name != "TempTableDataProvider")
+            providerType = providerType.BaseType;
+        _fPrimaryTree ??= providerType.GetField("primaryTree",
             BindingFlags.NonPublic | BindingFlags.Instance)
             ?? throw new InvalidOperationException(
                 $"[RowVersionPatches] {provider.GetType().Name}.primaryTree field not found — " +

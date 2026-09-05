@@ -41,6 +41,7 @@ The runner's job is to populate enough state around them that they don't NRE.
 | **Event subscribers** | `[IntegrationEvent]` / `[BusinessEvent]` + subscribers | `RunEvent` is rewritten to `AlCompat.FireEvent`, real subscriber dispatch. |
 | **.NET interop the apps use in-process** | `System.IO.MemoryStream`, `System.Text.Encoding.*`, `System.Text.RegularExpressions.Regex`, in-process `System.Security.Cryptography` primitives | These execute natively, no replacement needed. |
 | **Number / string / date primitives** | `Format`, `Evaluate`, `CalcDate`, `Date2DMY`, etc. | All real BC implementations. |
+| **Table connections — bookkeeping and the CRM test connection** | `Database.RegisterTableConnection` / `HasTableConnection` / `SetDefaultTableConnection` / `GetDefaultTableConnection` / `UnregisterTableConnection`, and `Record` access to a `TableType = CRM` table over a connection registered inside a test with the `'@@test@@'` connection string | BC's own `TableConnectionManager` on the skeleton session and BC's own `CrmTestDataProvider` (an in-memory store that assigns a Guid to an empty Guid primary key on Insert) — the mechanism Microsoft's Tests-CRM integration suite runs on. The one runtime-layer neutralisation is `TableConnectionSettingsStorage.Get` → `null` (the lookup of *persisted* connections; the runner persists none). Live connections are §3.15. |
 
 ---
 
@@ -217,6 +218,17 @@ invokes `OnInitReport` → `OnPreReport` → per-DataItem `OnPreDataItem` / `OnP
 | API | Reason |
 |---|---|
 | `assembly_declaration`, `dotnet_declaration`, `DotNet` variables, `GetDotNetType` | Requires BC service tier's type-resolution. In-process .NET interop the apps themselves use is **in scope** (§1) — only the AL `DotNet` surface is out. |
+
+---
+
+### §3.15. Table connections — live external data sources <a id="table-connections"></a>
+
+| API | Reason |
+|---|---|
+| `Record` access to a `TableType = CRM` table over a connection whose string is **not** `'@@test@@'` (`CrmTableConnection.CreateDataAccess` → `CrmDataProvider`) | A live Dataverse organisation reached through the Xrm connector stack — HTTP egress plus the service tier's credential handling. Refused by name the first time the table is read or written; registering the connection itself is session bookkeeping and succeeds, as on BC. |
+| `Record` access to a `TableType = ExternalSQL` / `Exchange` / `MicrosoftGraph` table | Same: each opens an external data source the runner has no in-process form for. Without a registered connection BC's own "not registered" error is raised (BC's code, unchanged); with one, the runner refuses. |
+
+Reason token: `table-connections`. The test-connection path is §1.
 
 ---
 

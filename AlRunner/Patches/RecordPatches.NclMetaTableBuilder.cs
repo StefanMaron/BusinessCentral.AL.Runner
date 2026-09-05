@@ -210,7 +210,8 @@ public static partial class RecordPatches
             var tableCaption = ResolveTableCaption(tableId);
 
             var defaultMetaTable = CallMetaTableCtor(tableId, parsed.TableName, fields, allKeys.ToArray(),
-                parsed.IsTableTypeTemporary, parsed.DataPerCompany, tableCaption, lookupFormId);
+                parsed.IsTableTypeTemporary, parsed.DataPerCompany, tableCaption, lookupFormId,
+                parsed.TableTypeName);
             if (defaultMetaTable == null) return null;
 
             // NavAppGroup.BaseGroup
@@ -321,7 +322,8 @@ public static partial class RecordPatches
     }
 
     private static object? CallMetaTableCtor(int id, string name, object[] fields, object[] allKeys,
-        bool isTableTypeTemporary, bool isDataPerCompany, string? caption, int lookupFormId = 0)
+        bool isTableTypeTemporary, bool isDataPerCompany, string? caption, int lookupFormId = 0,
+        string? tableTypeName = null)
     {
         if (_tMetaTable == null) return null;
         var ctor = _tMetaTable.GetConstructors()
@@ -373,7 +375,14 @@ public static partial class RecordPatches
             if (p.Name == "lookupFormId") { args[i] = lookupFormId; continue; }
             if (p.Name == "tableType" && p.ParameterType.IsEnum)
             {
-                var enumName = isTableTypeTemporary ? "Temporary" : "Normal";
+                // The declared TableType as written (CRM / ExternalSQL / Exchange /
+                // MicrosoftGraph / Temporary) when the parser captured one; BC's
+                // DataAccessSource routes on this, so a CRM table must not read as Normal
+                // (#2725). An unrecognised spelling falls back to the two-valued view.
+                var enumName = !string.IsNullOrEmpty(tableTypeName)
+                               && Enum.TryParse(p.ParameterType, tableTypeName, ignoreCase: true, out _)
+                    ? tableTypeName
+                    : (isTableTypeTemporary ? "Temporary" : "Normal");
                 args[i] = Enum.TryParse(p.ParameterType, enumName, ignoreCase: true, out var tableType)
                     ? tableType
                     : (p.HasDefaultValue ? p.DefaultValue : Activator.CreateInstance(p.ParameterType));

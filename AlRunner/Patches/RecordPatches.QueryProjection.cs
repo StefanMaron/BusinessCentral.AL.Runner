@@ -80,7 +80,12 @@ public static partial class RecordPatches
     private static void EnsureQueryProjectionReflection(object tempProvider)
     {
         if (_mTtdpFindImpl != null) return;
-        var ttdp = tempProvider.GetType(); // TempTableDataProvider
+        // The provider is not always EXACTLY TempTableDataProvider: BC's own
+        // CrmTableConnection.CrmTestDataProvider derives from it (the '@@test@@' CRM test
+        // connection, #2725), and GetMethod(NonPublic) on the derived type does not return
+        // the base class's private methods. Walk up to the declaring type.
+        var ttdp = tempProvider.GetType();
+        while (ttdp.BaseType != null && ttdp.Name != "TempTableDataProvider") ttdp = ttdp.BaseType;
         _mTtdpFindImpl = ttdp.GetMethod("FindImplementation",
             BindingFlags.NonPublic | BindingFlags.Instance)
             ?? throw new InvalidOperationException("TempTableDataProvider.FindImplementation not found");

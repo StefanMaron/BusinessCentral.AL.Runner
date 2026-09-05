@@ -121,7 +121,12 @@ internal static partial class BcAppSymbolCache
     // which RecordPatches.TryGetPageMemberName reads as "the dependency knows no members" —
     // every spaced-name trigger on every Base Application page silently back on the lossy
     // backward scan, the exact pre-fix behaviour replayed from cache rather than a cache miss.
-    private const int CacheVersion = 24;
+    // v25: ParsedTable gained TableTypeName (#2725). A v24 payload deserialises it as null,
+    // which reads as TableType = Normal — and a Base Application CRM table (e.g. 5341 "CRM
+    // Account") would then be served from a plain temp store instead of BC's own
+    // CrmTestDataProvider through the registered test connection. A wrong answer replayed
+    // from cache rather than a cache miss, so this needs the bump.
+    private const int CacheVersion = 25;
     private static readonly ConcurrentDictionary<string, AppSymbols> ProcessCache = new(StringComparer.OrdinalIgnoreCase);
     // Issue #1820 — path -> content-hash memo. ComputeAppContentHash needs to read the
     // WHOLE .app to hash it (unlike the FileInfo.Length/LastWriteTimeUtc stat it replaced,
@@ -1386,7 +1391,8 @@ internal static partial class BcAppSymbolCache
         return new ParsedTable(tableId, tableName, fields, pkFieldIds, secondaryKeys, isTemporary,
             DataPerCompany: true,
             LookupPageName: string.IsNullOrWhiteSpace(lookupPageName) ? null : lookupPageName,
-            DrillDownPageName: string.IsNullOrWhiteSpace(drillDownPageName) ? null : drillDownPageName);
+            DrillDownPageName: string.IsNullOrWhiteSpace(drillDownPageName) ? null : drillDownPageName,
+            TableTypeName: string.IsNullOrWhiteSpace(tableType) ? null : tableType.Trim());
     }
 
     private static EnumSymbol? TryParseEnumSymbol(JsonElement enumType)

@@ -1559,7 +1559,9 @@ public sealed partial class BcCompiler
         // this top-level path regardless of what the app's own app.json declared.
         var compOpts = new NavCA.CompilationOptions(
             continueBuildOnError: true,
-            target: NavCA.CompilationTarget.OnPrem,
+            // #2725: the manifest's own target (OnPrem when it declares none) — see
+            // ManifestCompilerInputs.EffectiveTarget for what it changes.
+            target: manifestInputs.EffectiveTarget,
             generateOptions:
                 NavCA.CompilationGenerationOptions.Code |
                 NavCA.CompilationGenerationOptions.Navigation,
@@ -2344,7 +2346,8 @@ public sealed partial class BcCompiler
         });
         var compOpts = new NavCA.CompilationOptions(
             continueBuildOnError: true,
-            target: NavCA.CompilationTarget.OnPrem,
+            // #2725: same manifest → target mapping as Emit(); see EffectiveTarget.
+            target: manifestInputs.EffectiveTarget,
             generateOptions:
                 NavCA.CompilationGenerationOptions.Code | NavCA.CompilationGenerationOptions.Navigation,
             // #1941: same manifest → CompilerFeatures mapping as Emit() — a dep declaring
@@ -2551,10 +2554,28 @@ public sealed partial class BcCompiler
     internal readonly record struct ManifestCompilerInputs(
         IReadOnlyList<string> PreprocessorSymbols,
         NavCA.CompilerFeatures CompilerFeatures,
-        string ContextSensitiveHelpUrl)
+        string ContextSensitiveHelpUrl,
+        NavCA.CompilationTarget? Target = null)
     {
         public static readonly ManifestCompilerInputs Empty =
             new(Array.Empty<string>(), NavCA.CompilerFeatures.None, "");
+
+        /// <summary>
+        /// The app.json <c>target</c> when it declares one the compiler knows, else the
+        /// runner's historical default. Every AL bundle used to be compiled as OnPrem
+        /// regardless of its manifest, which changes what the emitted code tells the
+        /// runtime: the AL compiler passes the target into e.g.
+        /// <c>ALDatabase.ALRegisterTableConnection(CompilationTarget, ...)</c>, and BC's
+        /// <c>IsRegisterTableConnectionAllowed</c> refuses ExternalSQL for a Cloud app with
+        /// its "permission" error but lets an OnPrem app through to the connection-string
+        /// validation — so a Cloud-target test expecting the Cloud error (the al-language
+        /// corpus, compiled as Cloud on the real sandbox it is validated against) got a
+        /// different message here (#2725). A manifest that omits <c>target</c> keeps OnPrem:
+        /// that is what every runner-extras suite and test fixture without one has been
+        /// compiled as, and alc's own default (Cloud) would newly reject any OnPrem-only API
+        /// they use.
+        /// </summary>
+        public NavCA.CompilationTarget EffectiveTarget => Target ?? NavCA.CompilationTarget.OnPrem;
 
         /// <summary>
         /// Deterministic fragment that changes iff any manifest property this struct reads
@@ -2565,7 +2586,8 @@ public sealed partial class BcCompiler
         /// </summary>
         public string CacheKeyFragment =>
             string.Join(",", PreprocessorSymbols.OrderBy(s => s, StringComparer.Ordinal)) +
-            "|" + (int)CompilerFeatures + "|" + ContextSensitiveHelpUrl;
+            "|" + (int)CompilerFeatures + "|" + ContextSensitiveHelpUrl +
+            "|" + (int)EffectiveTarget;
     }
 
     /// <summary>
@@ -2618,7 +2640,17 @@ public sealed partial class BcCompiler
                 ? helpEl.GetString() ?? ""
                 : "";
 
-            return new ManifestCompilerInputs(symbols, features, helpUrl);
+            // `target` is mapped onto NavCA.CompilationTarget by NAME (case-insensitive) —
+            // "Cloud" / "OnPrem" / "Internal" / "Extension" as the app.json schema spells
+            // them. An unrecognised or absent value leaves Target null, and
+            // EffectiveTarget keeps the runner's OnPrem default (see its doc comment).
+            NavCA.CompilationTarget? target = null;
+            if (root.TryGetProperty("target", out var targetEl)
+                && targetEl.ValueKind == System.Text.Json.JsonValueKind.String
+                && Enum.TryParse<NavCA.CompilationTarget>(targetEl.GetString(), ignoreCase: true, out var parsedTarget))
+                target = parsedTarget;
+
+            return new ManifestCompilerInputs(symbols, features, helpUrl, target);
         }
         catch { return ManifestCompilerInputs.Empty; }
     }
