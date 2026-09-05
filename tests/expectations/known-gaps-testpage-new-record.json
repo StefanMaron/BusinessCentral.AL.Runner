@@ -4,15 +4,7 @@
     "CodeunitName": "PKFL Tests",
     "Method": "New_NothingTouched_IsDiscardedWhenTheCardCloses",
     "Mode": "expect-fail-known-gap",
-    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2551",
-    "Note": "TestPage.New() starts a row; on real BC a row nothing wrote to is discarded when the card closes. The runner persists it, so the subpart's row count comes back 3 where BC gives 2. This is the buffer half of #2551 (\"New() does not blank the record buffer\"); the validate half is the sibling entry on codeunit 60653. The other five tests in this codeunit already pass. Green on real BC 27.0 through 28.4 -- StefanMaron/BusinessCentral.AL.Language.Tests#145 and #148. Tracked as #2551; the fix removes this entry."
-  },
-  {
-    "codeunitId": 60653,
-    "CodeunitName": "NRB Tests",
-    "Method": "New_StampsTheLinkedFieldAndValidatesIt",
-    "Mode": "expect-fail-known-gap",
-    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2551",
-    "Note": "New() stamps the SubPageLink's value onto the new row AND runs that field's OnValidate trigger on it -- NewRecordAsync's ValidateFieldsInOnNewRecord branch, which has no setter anywhere in Ncl, so only a service tier could answer it. The runner stamps but never validates, so \"No. Validated\" stays at the same Init() default \"Never Validated\" sits at and the AreNotEqual fails with both sides False. The first assertion in the test (the stamp itself) passes, so what fails is specifically the validation. This is the ValidateFieldsInOnNewRecord half of #2551. Green on real BC 27.0 through 28.4 -- StefanMaron/BusinessCentral.AL.Language.Tests#150. Tracked as #2551; the fix removes this entry."
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2869",
+    "Note": "TestPage.New() starts a row; on real BC a row nothing wrote to is discarded when the card closes. The runner persists it, so the subpart's row count comes back 3 where BC gives 2. Green on real BC 27.0 through 28.4 -- StefanMaron/BusinessCentral.AL.Language.Tests#145 and #148; the other five tests in this codeunit already pass. Re-pointed from #2551 to #2869 when #2827 fixed #2551's validate half and closed it: an entry may not link an issue that a merging PR closes, or the gap stops being tracked the moment it lands (loud-failures.md). This is a THIRD claim, not either half of #2551 as filed -- #2551's buffer half was measured to be already correct (InitRecordFromFilters calls ResetRecordBuffer, and New_WhilePositionedOnAnExistingRow_LeavesTheNewRowsDescrBlank passes), and its validate half is the entry removed alongside this edit. Row LIFETIME is decided by neither."
   }
 ]
