@@ -228,11 +228,39 @@ jobs:
     continue-on-error: ${{ !matrix.target.required }}
     env:
       BC_VERSION: ${{ matrix.target.bc-version }}
+      # #2819: a corpus run died with SIGSEGV (exit 139) seconds in, before any test
+      # reported — no stack, no managed exception, nothing to read. One occurrence, not
+      # reproduced in four further runs of the same tree. Without this, every future
+      # sighting is another paragraph describing an exit code.
+      #
+      # Set at JOB level, not on the corpus step, because the same runner binary is
+      # invoked by six steps in this leg (corpus, xmlport isolation, runner-extras, two
+      # server-mode integrations, the unit tests) and a crash in any of them has the same
+      # nothing-to-read problem. These variables cost nothing until a process actually
+      # faults.
+      #
+      # Type 2 (MiniDumpWithPrivateReadWriteMemory) rather than the 4 the issue suggests.
+      # 4 is MiniDumpWithFullMemory, whose size tracks the process's committed memory —
+      # a runner with BC loaded is measured in GB, and a hosted runner has roughly 14 GB
+      # free. Filling the disk would convert a rare crash into a reliable infrastructure
+      # failure, which is a worse trade than a slightly smaller dump. Type 2 still carries
+      # the faulting native stack, the module list and the managed heap, which is what the
+      # first read of an unexplained SIGSEGV actually needs. Override the variable on a
+      # dispatch if a full dump is ever genuinely required.
+      DOTNET_DbgEnableMiniDump: '1'
+      DOTNET_DbgMiniDumpType: '2'
+      DOTNET_DbgMiniDumpName: ${{ github.workspace }}/crash-dumps/coredump.%p
     steps:
       - uses: actions/checkout@v6
         with:
           ref: ${{ inputs.ref }}
           submodules: true
+
+      # createdump does NOT create the directory in DOTNET_DbgMiniDumpName's path — it
+      # fails to write and says so on stderr of a process that is already dying, which
+      # nobody would see. Created before anything can crash.
+      - name: Create the crash-dump directory (#2819)
+        run: mkdir -p "${{ github.workspace }}/crash-dumps"
 
       # setup-dotnet, the Release build against this BC version, the R2R platform apps
       # and the Microsoft test toolkit — moved, comments and all, into ONE composite
@@ -545,6 +573,18 @@ jobs:
           scripts/tests/server-reload-test.sh \
               --package-cache "$HOME/.al-runner/platform-apps" \
               --package-cache "$HOME/.al-runner/test-apps"
+
+      # Separate from the results artifact below so a multi-hundred-MB dump never rides
+      # along with the small JSON every green run uploads. if-no-files-found: ignore is
+      # what keeps this a no-op on the overwhelming majority of runs that do not crash.
+      - name: Upload crash dumps (#2819)
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: crash-dumps-${{ matrix.target.bc-version }}
+          path: crash-dumps/
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Upload result artifacts
         if: always()
