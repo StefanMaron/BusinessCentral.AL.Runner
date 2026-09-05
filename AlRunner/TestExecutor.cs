@@ -1307,6 +1307,11 @@ public sealed class TestExecutor
             return TimeSpan.FromHours(24);
         // Explicit --test-timeout (via TestExecutor.TimeoutSeconds) wins over the env var,
         // which in turn wins over the hardcoded default. See #1648.
+        //
+        // That ordering is load-bearing under --jobs (#2718): a worker is handed
+        // AL_RUNNER_TEST_TIMEOUT_SEC scaled by shard count, since this clock is wall-clock and
+        // contention stretches wall time without changing the work done. A caller who named a
+        // number still gets it — the scaled value only fills the slot nobody asked for.
         if (TimeoutSeconds is int explicitSeconds && explicitSeconds > 0)
             return TimeSpan.FromSeconds(explicitSeconds);
         if (int.TryParse(Environment.GetEnvironmentVariable("AL_RUNNER_TEST_TIMEOUT_SEC"), out var seconds)
