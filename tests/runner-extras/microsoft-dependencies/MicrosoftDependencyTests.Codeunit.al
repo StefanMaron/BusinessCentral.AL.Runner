@@ -567,7 +567,7 @@ codeunit 61001 "Microsoft Dependency Tests"
     // ValueTask — no longer has AL-level coverage here, because from AL it is now only
     // reachable under --isolation disabled, which this suite does not run under. The shared
     // resolver it calls (CodeunitPatches.ResolveOnRunTrigger) keeps its other call site's
-    // coverage through Codeunit.Run. Re-covering the StartSession-specific half is AlRunner#2816.
+    // coverage through Codeunit.Run. Re-covering the StartSession-specific half is AlRunner#2826.
     [Test]
     procedure PrecompiledCodeunit_StartSession_FromATestIsRefusedUnderCodeunitIsolation()
     var
