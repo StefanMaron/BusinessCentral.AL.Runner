@@ -20,9 +20,10 @@
 //     dependency code.
 //
 // And the cache key cannot notice. `GetOrderedDepIds` deliberately stamps each resolved
-// dependency `.app` with `mtime:length` precisely so a sibling source app's changing content
-// invalidates the dependent (see its own comment) — but nothing rewrites that `.app` after
-// cycle 1, so the stamp is frozen and `ComputeAlCacheKey` returns the same key. The dependent
+// dependency `.app` with a hash of its bytes (`mtime:length` when this was written; #2754
+// replaced it) precisely so a sibling source app's changing content invalidates the dependent
+// (see its own comment) — but nothing rewrites that `.app` after cycle 1, so the stamp is
+// frozen and `ComputeAlCacheKey` returns the same key. The dependent
 // re-emits in 0.0s, links against the old symbols, and runs the old code.
 //
 // That is why the fix is to re-run the pre-pass per cycle rather than to add another input to

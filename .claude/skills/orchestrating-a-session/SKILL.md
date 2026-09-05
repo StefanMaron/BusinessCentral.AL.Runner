@@ -201,6 +201,14 @@ process configuration, CI plumbing, error handling, caching, parallelism — gen
 nothing about BC and owes nothing upstream. A change to what the runner *makes AL code
 observe* almost always does.
 
+That question is the common case rather than the whole rule. The wider one: **wherever it is
+possible to red-test something with AL tests, that should add tests to the corpus** — wherever
+the fix can be proven by AL running against a real service tier, it owes an upstream test even
+when its claim does not read as a statement about BC. The service-tier clause is the boundary:
+runner-only claims are red-testable in AL too, and they stay in `tests/runner-extras/`.
+Nothing about this changes when a PR may merge — a PR asserting BC behaviour still merges only
+after its corpus PR has, pin bump folded in.
+
 **"The corpus cannot express this" is a claim, and it needs its evidence like any other.** It
 is sometimes true and the reason is usually structural: corpus tests are compiled from AL
 source *by the runner*, so a defect that only affects **precompiled** dependency artifacts
@@ -209,6 +217,16 @@ is a legitimate answer. What is not legitimate is reaching for it because writin
 test is slower. When an agent gives that answer, make it name the structural reason — and if
 the reason is real, the proving test belongs in `tests/runner-extras/` and the PR should say
 so explicitly.
+
+Brief implementers to test that claim up front and put the answer in the PR body whichever way
+it comes out; it has gone both ways. A defect assumed precompiled-only also reproduced on a
+source-compiled table, and the corpus app declares a Base Application dependency, so a corpus
+test reaches the precompiled path after all (issue #2518, corpus PR #165, merged green on all 8
+legs). Against that, table `2000000001` really is out of reach, sitting in
+`SystemTables.InternalTables`, which `NavRecordRef.IsSystemTableAllowedForRecordRefUsage`
+refuses outright — though note what carries it: a service tier measured the sibling id
+`2000000071` (corpus PR #153, all eight legs red, withdrawn), and `2000000001` follows by set
+membership rather than by its own measurement (issue #2774).
 
 Watch for the shape where a fix closes a BC-behaviour issue with only a runner-local test.
 That is the case `bc-behavior-tests-go-upstream.md` exists to prevent, and it is easiest to
