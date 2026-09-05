@@ -481,6 +481,83 @@ public static partial class RecordPatches
         EnsureDateWindowCoversRequest(self, request);
     }
 
+    /// <summary>
+    /// Prepended to DataAccess.InternalTryGetByPrimaryKeyAsync for every table. A full-primary-key
+    /// <c>Record.Get()</c> never reaches InnerFindAsync — DataAccess has its OWN primary-key path
+    /// straight to provider.TryGetByPrimaryKeyAsync — so neither the find guard nor the count
+    /// guard sees it, and the Date window was never extended for a keyed read.
+    ///
+    /// Measured on main before this existed, each call in its own process so no earlier read had
+    /// already widened the window:
+    ///
+    ///   Date.Get(Date, 18500101D)                          -> FALSE  (no such period)
+    ///   Date.SetRange(...18500101D..18500107D); FindFirst() -> TRUE, 1850-01-01
+    ///   Date.Get(Date, 19500101D)                          -> TRUE   (inside the window)
+    ///
+    /// The same period, reachable one way and not the other. On a real service tier the Date
+    /// table spans years 1..9999 and a keyed Get simply answers, so FALSE here is a wrong answer
+    /// rather than a missing feature — and a quiet one, because "this period does not exist" is
+    /// exactly what a Get returning false normally means.
+    ///
+    /// This is the same gap #2504 fixed for the Aggregate Permission Set table on this very
+    /// method; the Date table shares the primary-key path and was left behind. The window is
+    /// widened from the RECORD ID rather than from a filter, because a keyed Get carries its
+    /// key there and may carry no "Period Start" filter at all.
+    ///
+    /// For every table but 2000000007 this is one integer comparison and returns.
+    /// </summary>
+    public static void DataAccess_DateWindowGuardForGet(object self, object request)
+    {
+        if (FindRequestTableId(request) != DateVirtualTableId) return;
+
+        // Same reason as the find guard: a `Record Date temporary` holds only what AL inserted,
+        // and widening the materialised window into its private store injects rows AL never
+        // wrote (#2524).
+        if (IsTemporaryRecordDataAccess(self)) return;
+
+        try
+        {
+            if (_pReqMaoLight?.GetValue(request) is not NCLMetaTable meta) return;
+            EnsureDateReflection(meta);
+            EnsureDateGuardReflection(self, request);
+            if (_dvtDaSession!.GetValue(self) is not object session) return;
+
+            var wanted = PrimaryKeyPeriodStart(request);
+            if (wanted == null) return;
+
+            // One day is all a keyed Get needs; PopulateDateSpan widens to whole periods itself
+            // and returns immediately when the window already covers it, which is the common case.
+            PopulateDateSpan(self, meta, session, wanted.Value, wanted.Value);
+        }
+        catch (RunnerOutOfScopeException) { throw; }
+        catch
+        {
+            // Best-effort, exactly like the find guard: a request shape we cannot read means we
+            // do not widen, never that we answer something different. The Get then runs over the
+            // window exactly as it would without this guard.
+        }
+    }
+
+    /// <summary>
+    /// The "Period Start" out of a primary-key request's RecordId. Date's primary key is
+    /// ("Period Type", "Period Start"), so it is the SECOND key value. Null for a
+    /// SystemIdCacheRequest, which carries no key values — a Get by SystemId cannot name a
+    /// period the window does not already hold, because the SystemId of an unmaterialised row
+    /// has never been handed out.
+    /// </summary>
+    private static DateTime? PrimaryKeyPeriodStart(object request)
+    {
+        var recordId = request.GetType().GetProperty("RecordId",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(request);
+        if (recordId == null) return null;
+
+        var fields = recordId.GetType().GetProperty("Fields",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(recordId);
+        if (fields is not System.Collections.IList list || list.Count < 2) return null;
+
+        return ToDateTimeOrNull(list[1]);
+    }
+
     /// <summary>The "Period Start" (field 2) FilterExpression on this find request, if any.</summary>
     private static object? FindPeriodStartFilter(object cacheRequest)
     {

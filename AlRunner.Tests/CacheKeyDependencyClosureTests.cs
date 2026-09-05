@@ -148,8 +148,9 @@ public sealed class CacheKeyDependencyClosureTests : IDisposable
     /// </list>
     /// Both runs then keyed on the same closure and the test failed while the cache key was
     /// working correctly. Worse, it PASSED on a developer machine for an accidental reason:
-    /// the key stamps each winning `.app`'s mtime+size, and the freshly-copied file and the
-    /// warm provisioned one merely had different timestamps. A test whose verdict depends on
+    /// the key stamped each winning `.app`'s mtime+size (a hash of its bytes since #2754),
+    /// and the freshly-copied file and the warm provisioned one merely had different
+    /// timestamps. A test whose verdict depends on
     /// the machine's provisioning history is not measuring the cache key. This variant
     /// cannot be restored by any provisioning path, because no artifact Microsoft ships is
     /// published by "Contoso ISV".
