@@ -106,8 +106,39 @@ def run(argv: list[str], *, cwd: Optional[str] = None, timeout: float = 30,
     except (FileNotFoundError, PermissionError, OSError) as exc:
         return Ran(rc=127, out="", err=str(exc))
     return Ran(rc=p.returncode,
-               out=p.stdout.decode("utf-8", "replace"),
+               out=strip_shim_banner(p.stdout.decode("utf-8", "replace")),
                err=p.stderr.decode("utf-8", "replace"))
+
+
+# mise prints a tool-activation banner on STDOUT, ahead of the real output, for
+# every command it shims -- gh and git among them. It is not an error and the
+# exit code stays 0, so it corrupts a capture silently.
+#
+# This is not hypothetical. On the box this was written on, `gh api user --jq
+# .login` returned "mise ~/.config/mise/config.toml tools: gh@2.100.0\nStefanMaron",
+# and `gh api repos/<slug> --jq .permissions` returned the banner followed by the
+# JSON -- so json.loads() raised, perms fell back to {}, and the github check
+# reported "StefanMaron cannot push to StefanMaron/BusinessCentral.AL.Runner".
+# A healthy box was refused. That is precisely the failure mode this tool exists
+# to prevent, arriving through the tool itself.
+#
+# Strip it here, in run(), rather than at each call site: a call site added later
+# would not know to do it, and the symptom is a wrong answer rather than an error.
+_SHIM_BANNER = re.compile(r"^mise\s+.*\btools:\s")
+
+
+def strip_shim_banner(text: str) -> str:
+    """Drop mise's activation banner from captured stdout.
+
+    Only leading banner lines are dropped, and only lines that match the banner
+    shape -- a line of real output that merely begins with "mise" is kept, or the
+    filter would eat data to fix formatting.
+    """
+    lines = text.splitlines(keepends=True)
+    i = 0
+    while i < len(lines) and _SHIM_BANNER.match(lines[i]):
+        i += 1
+    return "".join(lines[i:])
 
 
 def run_retry(argv: list[str], *, attempts: int = 3, **kw) -> Ran:
