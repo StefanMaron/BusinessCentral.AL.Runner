@@ -98,8 +98,8 @@ public sealed class SourceWorkspaceKeyDependencyContentTests : IDisposable
         Assert.False(File.ReadAllBytes(pkgA).AsSpan().SequenceEqual(File.ReadAllBytes(pkgB)),
             "the two synthetic packages are byte-identical — the fixture is not exercising the defect");
 
-        var keyA = ProgramSupport.ComputeSourceWorkspaceKey(new[] { dir }, ids, Resolved(pkgA));
-        var keyB = ProgramSupport.ComputeSourceWorkspaceKey(new[] { dir }, ids, Resolved(pkgB));
+        var keyA = ProgramSupport.ComputeSourceWorkspaceKey(new[] { dir }, ids, Resolved(pkgA), resolutionFailure: null);
+        var keyB = ProgramSupport.ComputeSourceWorkspaceKey(new[] { dir }, ids, Resolved(pkgB), resolutionFailure: null);
 
         // Concrete shape, not just "different": a 64-char lowercase hex digest. A key that
         // degraded to an empty string or a constant would satisfy an inequality-only test in
@@ -132,8 +132,8 @@ public sealed class SourceWorkspaceKeyDependencyContentTests : IDisposable
         Assert.NotEqual(new FileInfo(pkgA).LastWriteTimeUtc.Ticks, new FileInfo(pkgB).LastWriteTimeUtc.Ticks);
         Assert.NotEqual(pkgA, pkgB);
 
-        var keyA = ProgramSupport.ComputeSourceWorkspaceKey(new[] { dir }, ids, Resolved(pkgA));
-        var keyB = ProgramSupport.ComputeSourceWorkspaceKey(new[] { dir }, ids, Resolved(pkgB));
+        var keyA = ProgramSupport.ComputeSourceWorkspaceKey(new[] { dir }, ids, Resolved(pkgA), resolutionFailure: null);
+        var keyB = ProgramSupport.ComputeSourceWorkspaceKey(new[] { dir }, ids, Resolved(pkgB), resolutionFailure: null);
 
         AssertIsWorkspaceKey(keyA);
         Assert.Equal(keyA, keyB);
@@ -155,10 +155,11 @@ public sealed class SourceWorkspaceKeyDependencyContentTests : IDisposable
         var pkgA = WritePackage("closure-a", fill: (byte)'A');
         var extra = WritePackage("closure-extra", fill: (byte)'X', name: "Vendored Extra");
 
-        var one = ProgramSupport.ComputeSourceWorkspaceKey(new[] { dir }, ids, Resolved(pkgA));
+        var one = ProgramSupport.ComputeSourceWorkspaceKey(new[] { dir }, ids, Resolved(pkgA), resolutionFailure: null);
         var two = ProgramSupport.ComputeSourceWorkspaceKey(
             new[] { dir }, ids,
-            Resolved(pkgA).Concat(ResolvedNamed(extra, "Vendored Extra", new Guid("2846c003-1111-4222-8333-444455556666"))).ToList());
+            Resolved(pkgA).Concat(ResolvedNamed(extra, "Vendored Extra", new Guid("2846c003-1111-4222-8333-444455556666"))).ToList(),
+            resolutionFailure: null);
 
         AssertIsWorkspaceKey(one);
         AssertIsWorkspaceKey(two);
@@ -178,8 +179,8 @@ public sealed class SourceWorkspaceKeyDependencyContentTests : IDisposable
         var (dir, ids) = WriteSourceApp("src-edit");
         var pkg = WritePackage("edit-pkg", fill: (byte)'A');
 
-        var before = ProgramSupport.ComputeSourceWorkspaceKey(new[] { dir }, ids, Resolved(pkg));
-        var again = ProgramSupport.ComputeSourceWorkspaceKey(new[] { dir }, ids, Resolved(pkg));
+        var before = ProgramSupport.ComputeSourceWorkspaceKey(new[] { dir }, ids, Resolved(pkg), resolutionFailure: null);
+        var again = ProgramSupport.ComputeSourceWorkspaceKey(new[] { dir }, ids, Resolved(pkg), resolutionFailure: null);
         Assert.Equal(before, again);
 
         File.WriteAllText(Path.Combine(dir, "Probe.Codeunit.al"), """
@@ -192,9 +193,48 @@ public sealed class SourceWorkspaceKeyDependencyContentTests : IDisposable
         }
         """);
 
-        var after = ProgramSupport.ComputeSourceWorkspaceKey(new[] { dir }, ids, Resolved(pkg));
+        var after = ProgramSupport.ComputeSourceWorkspaceKey(new[] { dir }, ids, Resolved(pkg), resolutionFailure: null);
         AssertIsWorkspaceKey(after);
         Assert.NotEqual(before, after);
+    }
+
+    /// <summary>
+    /// A failed resolve must key on the FAILURE, never collapse to "no dependencies" — the rule
+    /// GetOrderedDepIds states for the AL-output key, and for the same reason: an empty closure
+    /// is indistinguishable from a bundle that genuinely has none, so a bundle whose dependency
+    /// is temporarily missing would otherwise share a workspace directory with one that has no
+    /// dependencies at all. It must also move when the reason moves.
+    ///
+    /// <para>RunLayeredPrePass catches the resolve so it can compute this key and rethrows from
+    /// where it threw before; this arm is what makes that catch honest rather than a swallow.</para>
+    /// </summary>
+    [SkippableFact]
+    public void AFailedResolve_KeysOnTheFailure_AndNotOnAnEmptyClosure()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        var (dir, ids) = WriteSourceApp("src-unresolved");
+        var pkg = WritePackage("unresolved-pkg", fill: (byte)'A');
+
+        var empty = Array.Empty<(AppManifest Manifest, string AppPath)>();
+        var failedA = ProgramSupport.ComputeSourceWorkspaceKey(
+            new[] { dir }, ids, empty, "MissingDependencyException: LSC Chain Base not found");
+        var failedB = ProgramSupport.ComputeSourceWorkspaceKey(
+            new[] { dir }, ids, empty, "MissingDependencyException: a different package not found");
+        var genuinelyEmpty = ProgramSupport.ComputeSourceWorkspaceKey(
+            new[] { dir }, ids, empty, resolutionFailure: null);
+        var resolved = ProgramSupport.ComputeSourceWorkspaceKey(
+            new[] { dir }, ids, Resolved(pkg), resolutionFailure: null);
+
+        AssertIsWorkspaceKey(failedA);
+        // A failure is not "no deps", and it is not a successful resolve either.
+        Assert.NotEqual(genuinelyEmpty, failedA);
+        Assert.NotEqual(resolved, failedA);
+        // Two different reasons are two different cache identities.
+        Assert.NotEqual(failedA, failedB);
+        // ...and the same reason is stable, or the directory would never be reused.
+        Assert.Equal(failedA, ProgramSupport.ComputeSourceWorkspaceKey(
+            new[] { dir }, ids, empty, "MissingDependencyException: LSC Chain Base not found"));
     }
 
     // ── fixture ───────────────────────────────────────────────────────────────────────────

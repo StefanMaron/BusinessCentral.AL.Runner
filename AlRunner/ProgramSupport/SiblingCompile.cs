@@ -525,9 +525,28 @@ internal static partial class ProgramSupport
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
             var implResolver = new DependencyResolver(implResolveDirs, AlRunner.Infrastructure.CacheRoots.SourceBuiltPackageDirs());
-            var implDeps = implResolver.Resolve(implId.Dependencies);
 
-            var implKey = ComputeSourceWorkspaceKey(new[] { implPath }, idByKey, implDeps);
+            // The resolve is CAUGHT here, not allowed to escape, and rethrown below from inside
+            // the emit block's own try — where it threw before this moved. Two behaviours depend
+            // on that and neither is this change's to alter:
+            //
+            //   * a WARM workspace (hadSymbols) never resolved at all, so a dependency that has
+            //     since gone missing did not fail here; the per-bundle resolve reports it later,
+            //     with the message and exit code Program.cs's own handlers decide;
+            //   * a COLD one wrapped the failure in "[layered] Failed to emit symbols for impl
+            //     '<name>' from <path>: <reason>" (LayeredSourceChainTests pins that text).
+            //
+            // Letting a MissingDependencyException escape from here instead does produce a
+            // better message — Program.cs's #2095 handler renders ToDetailedMessage's
+            // provisioning-gap report, which the wrapper defeats — but that is an error-reporting
+            // change with its own blast radius across CLI and server mode, not part of a cache
+            // key fix. Filed separately.
+            IReadOnlyList<(AppManifest Manifest, string AppPath)> implDeps = Array.Empty<(AppManifest, string)>();
+            string? implResolveFailure = null;
+            try { implDeps = implResolver.Resolve(implId.Dependencies); }
+            catch (Exception ex) { implResolveFailure = $"{ex.GetType().Name}: {ex.Message}"; }
+
+            var implKey = ComputeSourceWorkspaceKey(new[] { implPath }, idByKey, implDeps, implResolveFailure);
             var wsDir = Path.Combine(workspaceRoot, implKey[..12]);
             Directory.CreateDirectory(wsDir);
             if (!implDirs.Contains(wsDir, StringComparer.OrdinalIgnoreCase))
@@ -574,6 +593,13 @@ internal static partial class ProgramSupport
                     // here rather than recomputed, so the cold path costs exactly what it did.
                     // ScopeCurrentAppIdentity (below) sets _currentAppId to the impl so
                     // GetSharedReferences excludes the impl from its own specs (self-ref guard).
+                    //
+                    // If the resolve failed, redo it so it throws HERE — inside this try, whose
+                    // catch produces the "[layered] Failed to emit symbols for impl …" message
+                    // this path has always produced. The retry only runs on a path that is about
+                    // to abort.
+                    if (implResolveFailure != null)
+                        implDeps = implResolver.Resolve(implId.Dependencies);
                     BcCompiler.SetResolvedDeps(implDeps, implSymbolDirs);
                     // AFTER SetResolvedDeps, which resets _extraSymbolDirs. Passing an empty
                     // list is not the same as not calling it at all — the previous impl's call
@@ -855,7 +881,9 @@ internal static partial class ProgramSupport
 
             // Per-dep cache dir keyed on THIS dep's own sources + dep identities + the CONTENT
             // of the packages that closure actually resolved to.
-            var depKey = ComputeSourceWorkspaceKey(new[] { dir }, sourceApps, resolvedDepDeps);
+            // null: this resolve is not caught — it throws past the key, exactly as it did
+            // before the move, so there is never a failure for the key to describe.
+            var depKey = ComputeSourceWorkspaceKey(new[] { dir }, sourceApps, resolvedDepDeps, resolutionFailure: null);
             var wsDir = Path.Combine(workspaceRoot, depKey[..12]);
             Directory.CreateDirectory(wsDir);
             if (!depDirs.Contains(wsDir, StringComparer.OrdinalIgnoreCase))
@@ -984,11 +1012,21 @@ internal static partial class ProgramSupport
     /// parameter rather than an optional one on purpose: the directory holds a
     /// <c>*.symbols.json</c> compiled against those packages, so a call site that could omit
     /// them would be a call site that silently reintroduces #2846.</para>
+    ///
+    /// <para><paramref name="resolutionFailure"/> is for the one caller that CATCHES a
+    /// resolution failure to compute this key and rethrows it later from where it threw before
+    /// (RunLayeredPrePass). Passing the failure keys the directory on it, following
+    /// <c>GetOrderedDepIds</c>'s rule that an unresolvable closure is its own cache identity:
+    /// an empty list is indistinguishable from a bundle that genuinely has no dependencies, so
+    /// collapsing to "no deps" would let two different closures share a directory. Non-null and
+    /// a non-empty <paramref name="resolvedDeps"/> are mutually exclusive by construction; a
+    /// caller whose resolve simply throws past this point passes null.</para>
     /// </summary>
     internal static string ComputeSourceWorkspaceKey(
         IReadOnlyList<string> sortedDirs,
         IReadOnlyDictionary<string, AlRunner.Infrastructure.BundleIdentity> sourceApps,
-        IReadOnlyList<(AppManifest Manifest, string AppPath)> resolvedDeps)
+        IReadOnlyList<(AppManifest Manifest, string AppPath)> resolvedDeps,
+        string? resolutionFailure)
     {
         using var sha = System.Security.Cryptography.SHA256.Create();
         using var ms = new MemoryStream();
@@ -1045,6 +1083,8 @@ internal static partial class ProgramSupport
         //
         // Sorted so registration/resolution order — an artifact of directory scan order — cannot
         // move the key.
+        if (resolutionFailure != null)
+            WriteLine($"depres-unresolved:{resolutionFailure}");
         foreach (var term in resolvedDeps
                      .Select(d => $"depres:{d.Manifest.AppId:N}:{d.Manifest.Publisher}:{d.Manifest.Name}:{d.Manifest.Version}:{DependencyContentTerm(d.AppPath)}")
                      .OrderBy(t => t, StringComparer.Ordinal))
