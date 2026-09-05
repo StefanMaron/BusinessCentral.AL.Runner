@@ -1,0 +1,17 @@
+{
+  "id": "d47e1c92-6b30-4a58-9e11-3f0c8a75b264",
+  "name": "Runner Tests Fixture - Date Window Lazy Materialisation",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Issue #2648: the Date virtual table (2000000007) must materialise only the periods a request can actually select, not the whole default window.",
+  "description": "Driven by DateVirtualTableLazyWindowTests.cs with AL_RUNNER_DATE_WINDOW_MAX_ROWS set to 2000 — far below the ~87,000 rows the default 1900..2099 window holds, and far above the 25 rows a one-week filter needs. Under that cap a bounded read can only answer if the runner materialised the bounded span rather than the window, and an unbounded read must still refuse, because an unbounded read is still answered from the window. That makes the row count, not a duration, the thing these tests assert.",
+  "dependencies": [],
+  "platform": "1.0.0.0",
+  "idRanges": [
+    {
+      "from": 61630,
+      "to": 61639
+    }
+  ],
+  "runtime": "14.0"
+}

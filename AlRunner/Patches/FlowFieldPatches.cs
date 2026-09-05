@@ -767,6 +767,16 @@ public static class FlowFieldPatches
             catch { }
             if (srcTtdp == null) continue;
 
+            // #2648 — the Date virtual table (2000000007) materialises its rows PER REQUEST, and
+            // this method is a read of the source table's store that carries no request the Date
+            // guards can see: it goes from the handout straight to TempTableDataProvider.Filter,
+            // past DataAccess and past the provider's own public read methods. Measured without
+            // this call, on this branch: `count(Date where …)` returned 0 instead of 73,049,
+            // `exist(Date where …)` No instead of Yes, `min("Date"."Period Start")` blank instead
+            // of 1900-01-01. The call materialises the whole window once per Date store and is a
+            // ConditionalWeakTable miss for every other source table.
+            AlRunner.Patches.RecordPatches.EnsureDateStoreFullyMaterialised(srcTtdp);
+
             // Resolve the formula's where-conditions into a FiltersAndMarks over the SOURCE
             // table, using BC's own FlowFieldsHelper.GetFilterFromMetaFilterCollection.
             //

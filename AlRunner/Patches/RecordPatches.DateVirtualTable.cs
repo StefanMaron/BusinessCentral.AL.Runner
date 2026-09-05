@@ -41,37 +41,62 @@
 //
 // THE WINDOW, AND WHAT IT DOES AND DOES NOT PROMISE
 //   The real table spans years 1 through 9999 — 3.6 million Date rows alone — so it cannot be
-//   materialised whole. We materialise a window of whole years (default 1900-01-01 ..
-//   2099-12-31, about 87,000 rows across all five period types) and EXTEND that window on
-//   demand whenever an AL filter names a closed bound outside it, on all FOUR request paths a
-//   Record Date read can take. They carry four different request types, all deriving from
-//   DataCacheRequest, and each needs its own guard:
+//   materialised whole. There is a bounded WINDOW of whole years (default 1900-01-01 ..
+//   2099-12-31, 86,885 rows across all five period types) that a read is answered from when the
+//   runner cannot see what the read is bounded by.
 //
-//     AL                                  DataAccess method                  request type
+//   NOTHING IS MATERIALISED UNTIL A READ ASKS FOR IT (#2648). The window used to be built at the
+//   handout — RecordImplementation.InitializeImpl, i.e. when the `Record Date` VARIABLE is
+//   constructed, before any filter exists — so a filter naming one week in 1850 cost ~109,000
+//   row inserts (the window, plus a 50-year extension) to return 7 rows, and it made this the
+//   most allocation-heavy surface in tests/runner-extras. Now each read materialises what its
+//   own request can select:
+//
+//     * A read whose "Period Start" filter is CLOSED at both ends of every range materialises
+//       exactly [lowest low .. highest high]. Safe because BC's own filter engine excludes every
+//       row outside those bounds anyway, so a narrower store cannot change an answer.
+//     * A keyed Get materialises the one day its key names.
+//     * Anything else — no "Period Start" filter, an OPEN bound, a filter shape we cannot read —
+//       materialises the whole window, widened by whichever bound IS closed. Those reads ARE
+//       answered from the window, so nothing narrower reproduces them.
+//
+//   FOUR request-carrying guards do the narrowing, not three, because a Record Date read can
+//   take four distinct DataAccess paths. They carry four different request types, all deriving
+//   from DataCacheRequest, and each needs its own guard:
+//
+//     AL                                     DataAccess method               request type
 //     ---------------------------------------------------------------------------------------
 //     Find / FindSet / FindFirst / FindLast  InnerFindAsync                  FindCacheRequest
 //     Count                                  CountAsync                      CountCacheRequest
 //     IsEmpty                                ExistsAsync                     ExistsCacheRequest
 //     Get("Period Type", "Period Start")     InternalTryGetByPrimaryKeyAsync PrimaryKeyCacheRequest
 //
-//   This header said "both request paths ... DataAccess.CountAsync (Count / IsEmpty)" until
-//   #3006. IsEmpty() has never reached CountAsync: RecordImplementation.IsEmptyAsync calls its
-//   own ExistsAsync, which builds an ExistsCacheRequest (decompiled from Ncl.dll 28.1). Because
-//   the comment asserted otherwise, nobody looked, and a closed range outside the window
-//   answered IsEmpty() = true with Count() = 7 on the very next line -- a wrong answer, since a
-//   service tier computes this table across years 1..9999 and answers 7 both ways.
-//
-//   The exists path is shared with more than IsEmpty(): DataAccess.ExistsAsync is also what an
-//   `Exist` FlowField (FlowFieldsHelper), a NavQuery and RecordImplementation.ValidateRelation
-//   reach, so all three now get the widened window too.
+//   This header said "a prepend on DataAccess.CountAsync (Count / IsEmpty)" until #3006, and so
+//   did the count guard's own comment and docs/limitations.md. IsEmpty() has never reached
+//   CountAsync: RecordImplementation.IsEmptyAsync calls its own ExistsAsync, which builds an
+//   ExistsCacheRequest (decompiled from Ncl.dll 28.1). Because three comments asserted
+//   otherwise, nobody looked, and a closed range outside the window answered IsEmpty() = true
+//   with Count() = 7 on the very next line — a wrong answer, since a service tier computes this
+//   table across years 1..9999 and answers 7 both ways.
 //
 //   The find guard lives in RecordPatches.FieldFindIntercept.cs; the other three are prepends
-//   registered in NclCecilRewrite.Runtime.cs. All four funnel into
-//   EnsureDateWindowCoversRequest (or, for the keyed Get, into PopulateDateSpan from the record
-//   id), so one invariant is maintained in one place rather than four copies drifting apart.
-//   Past AL_RUNNER_DATE_WINDOW_MAX_ROWS the extension throws RunnerOutOfScopeException naming
-//   the requested bound, the window and the cap, rather than answering a larger request with
-//   fewer rows.
+//   registered in NclCecilRewrite.Runtime.cs. All four funnel into the same narrowing helper, so
+//   one invariant is maintained in one place rather than four copies drifting apart — which is
+//   how the first three came to disagree in the first place.
+//
+//   Reads that carry NO request — a FlowField whose CalcFormula source is Date, a TableRelation
+//   check — reach the in-memory store without passing ANY of the four, so
+//   EnsureDateStoreFullyMaterialised is the net under those: it materialises the whole window
+//   once per store, from TempTableDataProvider.{Exists,CalcNumeric,CalcMinMax,CalcSums} and from
+//   FlowFieldPatches' own source-table read. Measured without it: a `count(Date …)` FlowField
+//   answered 0 instead of 73,049. Note that this net is a SEPARATE surface from the ExistsAsync
+//   guard above and does not subsume it: the net materialises the DEFAULT window, which does not
+//   contain 1850 or 2300, so an AL IsEmpty() over a closed range outside the window still needs
+//   its own guard to be answered correctly.
+//
+//   Past AL_RUNNER_DATE_WINDOW_MAX_ROWS an extension throws RunnerOutOfScopeException naming the
+//   requested bound, the window and the cap, rather than answering a larger request with fewer
+//   rows.
 //
 //   The one thing the window does NOT cover is an OPEN bound: `SetFilter("Period Start",
 //   '%1..', D)` asks BC for everything up to 9999-12-31, and we answer it from the window.
@@ -238,14 +263,21 @@ public static partial class RecordPatches
         internal DateTime Min = DateTime.MaxValue;
         internal DateTime Max = DateTime.MinValue;
         internal bool Any;
+
+        /// <summary>True once the whole configured window has been materialised into this
+        /// provider. Distinct from <see cref="Any"/>, which is true after ANY span — including a
+        /// single day materialised for one keyed Get.</summary>
+        internal bool WholeWindow;
+
+        /// <summary>The metatable and skeleton session captured when this provider was handed
+        /// out, so a read reaching the provider WITHOUT a DataAccess-level request (a FlowField
+        /// calculation, a TableRelation check) can still materialise. Both are per data-access
+        /// constants; the handout is the only place they are available together.</summary>
+        internal NCLMetaTable? Meta;
+        internal object? Session;
     }
 
     private static readonly ConditionalWeakTable<object, DatePopulatedSpan> _dvtSpanByProvider = new();
-
-    // Remembered so the find-time guard can extend the window without a fresh data-access handout.
-    private static object? _dvtLastDataAccess;
-    private static NCLMetaTable? _dvtLastMetaTable;
-    private static object? _dvtLastSession;
 
     private static bool _dvtReflectionReady;
     private static SystemPopulatedValues? _dvtSystemValues;
@@ -279,16 +311,85 @@ public static partial class RecordPatches
         => table != null && table.TableId == DateVirtualTableId;
 
     /// <summary>
-    /// Populate the in-memory store behind the Date (2000000007) data access with one row per
-    /// period over the configured window. Idempotent per provider; a later call only fills in
-    /// years the provider does not already hold.
+    /// Called when the Date (2000000007) data access is handed out — which is when a
+    /// <c>Record Date</c> VARIABLE is constructed (RecordImplementation.InitializeImpl), before
+    /// any filter exists. It materialises NOTHING (#2648). All it does is the one thing the
+    /// handout has always done to the METATABLE, so the metatable's state at read time is exactly
+    /// what it was when the population lived here.
     /// </summary>
-    private static void PopulateDateVirtualTable(object dataAccess, NCLMetaTable dateMetaTable, object session)
+    private static void PrepareDateVirtualTable(object dataAccess, NCLMetaTable dateMetaTable, object session)
     {
-        var windowStart = new DateTime(DateWindowMinYear, 1, 1);
-        var windowEnd = new DateTime(DateWindowMaxYear, 12, 31);
-        PopulateDateSpan(dataAccess, dateMetaTable, session, windowStart, windowEnd);
+        // Same rationale as the Field and Integer tables: make our metatable report
+        // IsVirtualTable=false so BC's find takes the NORMAL temp-table DataAccess path over our
+        // store. It stays here rather than moving into PopulateDateSpan's caller chain because
+        // it must be true of the metatable from the moment the record exists, not from the moment
+        // the first row is inserted — which is when the eager population used to do it.
+        ClearVirtualBit(dateMetaTable);
+
+        // Register this provider as THE Date store, and park the metatable and session on the
+        // registration. Two things depend on it: EnsureDateStoreFullyMaterialised identifies the
+        // Date provider by this registration alone (a ConditionalWeakTable miss is every other
+        // table, with no reflection and no request), and it needs a metatable and a session to
+        // materialise with when it is reached from a read that carries neither.
+        EnsureDataAccessProviderReflection(dataAccess);
+        if (_pDataAccessDataProvider!.GetValue(dataAccess) is not object provider) return;
+        var span = _dvtSpanByProvider.GetValue(provider, static _ => new DatePopulatedSpan());
+        lock (span)
+        {
+            span.Meta ??= dateMetaTable;
+            span.Session ??= session;
+        }
     }
+
+    /// <summary>
+    /// The safety net under per-request materialisation (#2648), called from the reads of the
+    /// in-memory store that carry NO DataCacheRequest and so are never seen by the find, count or
+    /// keyed-Get guards: TempTableDataProvider.Exists, CalcNumeric, CalcMinMax and CalcSums.
+    ///
+    /// WHY IT HAS TO EXIST. Measured on this branch with the guards wired one layer up instead:
+    /// a `count(Date where …)` FlowField went from 73,049 to 0, an `exist(Date where …)` FlowField
+    /// from Yes to No, a `min("Date"."Period Start")` FlowField from 1900-01-01 to blank, and a
+    /// TableRelation check against a period outside the window stopped raising. FlowFieldsHelper
+    /// and RecordImplementation.ValidateRelation reach the provider without going through
+    /// DataAccess.CalcNumericAsync / ExistsAsync at all, so a prepend there applies and never
+    /// fires — verified by tracing every request that reached it.
+    ///
+    /// WHY IT MATERIALISES THE WHOLE WINDOW rather than something narrower. These callers hold
+    /// the answer to a question the runner cannot see the bounds of from here, so the only span
+    /// that is guaranteed to answer them exactly as the eager scheme did is the one the eager
+    /// scheme built. Doing that ONCE per provider, and only when such a read actually happens,
+    /// means a bundle that reads Date only through finds, counts and keyed Gets — the shape #2648
+    /// is about — never pays for it, and a bundle that does reach one of these paths gets
+    /// precisely the pre-#2648 answers.
+    ///
+    /// For every table but 2000000007 this is one ConditionalWeakTable miss and a return.
+    /// </summary>
+    public static void EnsureDateStoreFullyMaterialised(object provider)
+    {
+        if (!_dvtSpanByProvider.TryGetValue(provider, out var span)) return;   // not the Date store
+        NCLMetaTable meta;
+        object session;
+        lock (span)
+        {
+            if (span.WholeWindow) return;
+            if (span.Meta is not NCLMetaTable m || span.Session is not object s) return;
+            meta = m;
+            session = s;
+        }
+        PopulateDateSpanIntoProvider(provider, meta, session,
+            new DateTime(DateWindowMinYear, 1, 1), new DateTime(DateWindowMaxYear, 12, 31));
+    }
+
+    /// <summary>
+    /// Materialise the whole configured window (default 1900-01-01 .. 2099-12-31, 86,885 rows).
+    /// This is what answers a request that does NOT name a closed bound on both ends of
+    /// "Period Start" — an unfiltered read, an open bound, or a filter shape the runner cannot
+    /// parse — because such a request is answered FROM the window and no narrower store returns
+    /// the same rows. Idempotent per provider.
+    /// </summary>
+    private static void PopulateDefaultDateWindow(object dataAccess, NCLMetaTable dateMetaTable, object session)
+        => PopulateDateSpan(dataAccess, dateMetaTable, session,
+            new DateTime(DateWindowMinYear, 1, 1), new DateTime(DateWindowMaxYear, 12, 31));
 
     /// <summary>
     /// Materialise every period whose start falls in [<paramref name="wantStart"/>..
@@ -299,7 +400,6 @@ public static partial class RecordPatches
     private static void PopulateDateSpan(
         object dataAccess, NCLMetaTable dateMetaTable, object session, DateTime wantStart, DateTime wantEnd)
     {
-        EnsureDateReflection(dateMetaTable);
         EnsureDataAccessProviderReflection(dataAccess);
 
         var provider = _pDataAccessDataProvider!.GetValue(dataAccess)
@@ -307,10 +407,18 @@ public static partial class RecordPatches
                 "the Date data access handed over no in-memory provider, so there is nothing to "
                 + "populate");
 
-        // Remember the handout so the find-time guard can extend the window later without one.
-        _dvtLastDataAccess = dataAccess;
-        _dvtLastMetaTable = dateMetaTable;
-        _dvtLastSession = session;
+        PopulateDateSpanIntoProvider(provider, dateMetaTable, session, wantStart, wantEnd);
+    }
+
+    /// <summary>
+    /// The body of <see cref="PopulateDateSpan"/>, reached either through a DataAccess (the find,
+    /// count and keyed-Get guards) or with the provider already in hand (the provider-level net,
+    /// which has no DataAccess to unwrap).
+    /// </summary>
+    private static void PopulateDateSpanIntoProvider(
+        object provider, NCLMetaTable dateMetaTable, object session, DateTime wantStart, DateTime wantEnd)
+    {
+        EnsureDateReflection(dateMetaTable);
 
         var span = _dvtSpanByProvider.GetValue(provider, static _ => new DatePopulatedSpan());
 
@@ -333,13 +441,15 @@ public static partial class RecordPatches
                         $"[{newMin:yyyy-MM-dd}..{newMax:yyyy-MM-dd}], which is about {estimate:N0} rows, past the ")
                     + System.FormattableString.Invariant(
                         $"{DateWindowMaxRows:N0}-row cap for the materialised window ")
-                    + System.FormattableString.Invariant(
-                        $"(currently [{(span.Any ? span.Min : newMin):yyyy-MM-dd}..{(span.Any ? span.Max : newMax):yyyy-MM-dd}]). ")
+                    + (span.Any
+                        ? System.FormattableString.Invariant(
+                            $"(currently [{span.Min:yyyy-MM-dd}..{span.Max:yyyy-MM-dd}]). ")
+                        : "(nothing is materialised yet — Date rows are materialised per request). ")
                     + "Raise AL_RUNNER_DATE_WINDOW_MAX_ROWS, or narrow the filter");
 
-            // Same rationale as the Field and Integer tables: make our metatable report
-            // IsVirtualTable=false so BC's find takes the NORMAL temp-table DataAccess path
-            // over our populated store.
+            // Belt and braces: PrepareDateVirtualTable already cleared this at handout, and it
+            // is idempotent. It stays here so a future caller that reaches PopulateDateSpan by
+            // some other route cannot leave the bit set.
             ClearVirtualBit(dateMetaTable);
 
             EnsureDateFieldLayout(dateMetaTable);
@@ -354,6 +464,14 @@ public static partial class RecordPatches
             span.Min = newMin;
             span.Max = newMax;
             span.Any = true;
+            span.Meta ??= dateMetaTable;
+            span.Session ??= session;
+            // "The whole configured window is in" — the flag the provider-level net reads. It is
+            // deliberately about the WINDOW, not about the span being non-empty: a single day
+            // materialised for a keyed Get must not convince the net that a FlowField can be
+            // answered.
+            if (newMin <= new DateTime(DateWindowMinYear, 1, 1) && newMax >= new DateTime(DateWindowMaxYear, 12, 31))
+                span.WholeWindow = true;
         }
     }
 
@@ -485,29 +603,39 @@ public static partial class RecordPatches
     private static bool _dvtGuardReady;
 
     /// <summary>
-    /// Called from the InnerFindAsync guard for EVERY find on table 2000000007, before BC's
-    /// own find runs. Reads the request's "Period Start" filter through BC's own
-    /// FilterExpression.ToRangeList and widens the materialised window so it covers every
-    /// CLOSED bound the filter names. Past AL_RUNNER_DATE_WINDOW_MAX_ROWS, PopulateDateSpan
-    /// throws instead of answering a wider request with fewer rows.
+    /// Called from the InnerFindAsync guard for EVERY find on table 2000000007, and prepended to
+    /// DataAccess.CountAsync for every Count()/IsEmpty(), before BC's own read runs. It
+    /// materialises exactly the periods THIS REQUEST can select, which since #2648 is the only
+    /// place Date rows are materialised at all:
     ///
-    /// An OPEN bound (`'%1..'`, `'..%1'`, or a bound sitting at BC's own first/last period
-    /// start) is left to the window: BC would answer it out to year 1 or year 9999, and
-    /// materialising 3.6 million rows is not on the table. That single approximation is
-    /// documented in docs/limitations.md.
+    ///   * Every non-empty range of the "Period Start" filter is closed at BOTH ends → the rows
+    ///     in [lowest low .. highest high] are the only rows the filter can select, so those are
+    ///     the only rows materialised. BC's own filter engine excludes everything outside those
+    ///     bounds regardless of what the store holds, so a narrower store cannot change a single
+    ///     answer. That is the whole safety argument, and it is why the predicate is "every range
+    ///     closed at both ends" rather than "some bound is closed".
+    ///
+    ///   * Anything else — no "Period Start" filter at all, an OPEN bound (`'%1..'`, `'..%1'`, or
+    ///     a bound sitting at BC's own first/last period start), a filter shape ToRangeList
+    ///     cannot express, a request we cannot read → the whole configured window, widened to
+    ///     cover whichever bound IS closed. An open bound is answered FROM the window: BC would
+    ///     answer it out to year 1 or year 9999, and materialising 3.6 million rows is not on the
+    ///     table. That single approximation is documented in docs/limitations.md and is
+    ///     deliberately unchanged here.
+    ///
+    /// Past AL_RUNNER_DATE_WINDOW_MAX_ROWS, PopulateDateSpan throws instead of answering a wider
+    /// request with fewer rows.
     /// </summary>
     internal static void EnsureDateWindowCoversRequest(object dataAccess, object cacheRequest)
     {
-        // A `Record Date temporary` holds exactly the rows AL inserted -- widening the
-        // materialised window into its private store injected real Date rows AL never wrote
-        // (measured: Count went 1 -> 31 across one filtered Count(), and the subsequent
-        // FindSet returned an injected row instead of AL's). Issue #2524.
+        // A `Record Date temporary` holds exactly the rows AL inserted -- materialising into its
+        // private store injected real Date rows AL never wrote (measured: Count went 1 -> 31
+        // across one filtered Count(), and the subsequent FindSet returned an injected row
+        // instead of AL's). Issue #2524.
         if (IsTemporaryRecordDataAccess(dataAccess)) return;
 
-        DateTime? wantLow = null, wantHigh = null;
         NCLMetaTable meta;
         object session;
-
         try
         {
             if (_pReqMaoLight?.GetValue(cacheRequest) is not NCLMetaTable m) return;
@@ -517,64 +645,150 @@ public static partial class RecordPatches
 
             if (_dvtDaSession!.GetValue(dataAccess) is not object s) return;
             session = s;
-
-            var filter = FindPeriodStartFilter(cacheRequest);
-            if (filter == null) return;
-
-            var rangeList = _dvtToRangeList!.Invoke(filter, new[] { session });
-            if (rangeList == null) return;
-            if (_dvtRangeListRanges!.GetValue(rangeList) is not System.Collections.IEnumerable ranges) return;
-
-            // BC's own first and last period start for period type Date — the widest the real
-            // table ever goes. A bound at or past either end is the filter saying "no limit".
-            var bcFirst = (DateTime)_dvtPeriodStartMin!.Invoke(null, new[] { DatePeriodTypeDate() })!;
-            var bcLast = (DateTime)_dvtPeriodStartMax!.Invoke(null, new[] { DatePeriodTypeDate() })!;
-
-            foreach (var range in ranges)
-            {
-                if (range == null) continue;
-                if ((bool)_dvtRangeIsEmpty!.GetValue(range)!) continue;
-
-                if (!(bool)_dvtRangeLowIsMin!.GetValue(range)!
-                    && ToDateTimeOrNull(_dvtRangeLowValue!.GetValue(range)) is DateTime lo
-                    && lo > bcFirst)
-                    wantLow = wantLow == null || lo < wantLow ? lo : wantLow;
-
-                if (!(bool)_dvtRangeHighIsMax!.GetValue(range)!
-                    && ToDateTimeOrNull(_dvtRangeHighValue!.GetValue(range)) is DateTime hi
-                    && hi < bcLast)
-                    wantHigh = wantHigh == null || hi > wantHigh ? hi : wantHigh;
-            }
         }
         catch (RunnerOutOfScopeException) { throw; }
         catch
         {
-            // Reading the filter is best-effort: a shape we cannot parse means we do not widen
-            // the window, never that we answer something different. The find then runs over the
-            // window exactly as it would without this guard.
+            // We could not identify the request or the store behind it, so there is nothing to
+            // materialise against and no answer to protect. Unchanged from before #2648.
             return;
         }
 
-        if (wantLow == null && wantHigh == null) return;
+        DateTime? closedLow, closedHigh;
+        bool fullyBounded;
+        try
+        {
+            fullyBounded = TryReadClosedPeriodStartBounds(cacheRequest, session, out closedLow, out closedHigh);
+        }
+        catch (RunnerOutOfScopeException) { throw; }
+        catch
+        {
+            // Reading the filter is best-effort. A shape we cannot parse falls back to the whole
+            // window — the widest thing the request could be answered from — never to a narrower
+            // store, which WOULD answer something different now that nothing is materialised up
+            // front.
+            fullyBounded = false;
+            closedLow = closedHigh = null;
+        }
+
+        if (fullyBounded && closedLow is DateTime lo && closedHigh is DateTime hi)
+        {
+            PopulateDateSpan(dataAccess, meta, session, lo, hi);
+            return;
+        }
+
+        // The whole configured window, WIDENED by whichever bound the filter did close. Both
+        // sides are clamped to the window rather than substituted for it, because a range list
+        // like `'..%1|%2..'` closes a HIGH bound on its first range and a LOW bound on its
+        // second: taking those as the span produces low=2099-12-30, high=1900-01-02, an inverted
+        // span that materialises nothing. That inversion was harmless before #2648 only because
+        // the window was already in place and PopulateDateSpan's own min/max widened it away;
+        // with nothing materialised up front it returned 0 rows where BC returns 4 (measured).
+        var lowBound = closedLow is DateTime cl && cl < new DateTime(DateWindowMinYear, 1, 1)
+            ? cl : new DateTime(DateWindowMinYear, 1, 1);
+        var highBound = closedHigh is DateTime ch && ch > new DateTime(DateWindowMaxYear, 12, 31)
+            ? ch : new DateTime(DateWindowMaxYear, 12, 31);
 
         // PopulateDateSpan only ever widens, and returns immediately when the span already
-        // covers what was asked for — which is the common case after the first find.
-        PopulateDateSpan(dataAccess, meta, session,
-            wantLow ?? new DateTime(DateWindowMinYear, 1, 1),
-            wantHigh ?? new DateTime(DateWindowMaxYear, 12, 31));
+        // covers what was asked for — the common case after the first such read.
+        PopulateDateSpan(dataAccess, meta, session, lowBound, highBound);
+    }
+
+    /// <summary>
+    /// Reads the request's "Period Start" filter through BC's own FilterExpression.ToRangeList.
+    /// <paramref name="low"/> and <paramref name="high"/> come back as the lowest closed low
+    /// bound and the highest closed high bound any range names, or null when no range names one —
+    /// which is exactly the pair the pre-#2648 guard used to widen the window by.
+    /// </summary>
+    /// <returns>
+    /// True only when the filter names at least one non-empty range AND every non-empty range is
+    /// closed at both ends, i.e. when [low..high] provably contains every row the filter can
+    /// select. False means the request reaches past any bounded span, so the caller must fall
+    /// back to the documented window.
+    /// </returns>
+    private static bool TryReadClosedPeriodStartBounds(
+        object cacheRequest, object session, out DateTime? low, out DateTime? high)
+    {
+        low = null;
+        high = null;
+
+        var filter = FindPeriodStartFilter(cacheRequest);
+        if (filter == null) return false;
+
+        var rangeList = _dvtToRangeList!.Invoke(filter, new[] { session });
+        if (rangeList == null) return false;
+        if (_dvtRangeListRanges!.GetValue(rangeList) is not System.Collections.IEnumerable ranges) return false;
+
+        // BC's own first and last period start for period type Date — the widest the real table
+        // ever goes. A bound at or past either end is the filter saying "no limit", and is
+        // treated as open, exactly as it was before #2648.
+        var bcFirst = (DateTime)_dvtPeriodStartMin!.Invoke(null, new[] { DatePeriodTypeDate() })!;
+        var bcLast = (DateTime)_dvtPeriodStartMax!.Invoke(null, new[] { DatePeriodTypeDate() })!;
+
+        var sawRange = false;
+        var everyRangeClosed = true;
+
+        foreach (var range in ranges)
+        {
+            if (range == null) continue;
+            if ((bool)_dvtRangeIsEmpty!.GetValue(range)!) continue;
+            sawRange = true;
+
+            var lowClosed = false;
+            var highClosed = false;
+
+            if (!(bool)_dvtRangeLowIsMin!.GetValue(range)!
+                && ToDateTimeOrNull(_dvtRangeLowValue!.GetValue(range)) is DateTime lo
+                && lo > bcFirst)
+            {
+                lowClosed = true;
+                low = low == null || lo < low ? lo : low;
+            }
+
+            if (!(bool)_dvtRangeHighIsMax!.GetValue(range)!
+                && ToDateTimeOrNull(_dvtRangeHighValue!.GetValue(range)) is DateTime hi
+                && hi < bcLast)
+            {
+                highClosed = true;
+                high = high == null || hi > high ? hi : high;
+            }
+
+            // One half-open range in a `'..%1|%2..'` shape makes the whole filter unbounded: the
+            // union it selects reaches past anything [low..high] would hold.
+            if (!lowClosed || !highClosed) everyRangeClosed = false;
+        }
+
+        return sawRange && everyRangeClosed;
     }
 
     /// <summary>
     /// Prepended to DataAccess.CountAsync(CountCacheRequest) for every table. Record.Count()
     /// takes the count path, not the find path, so the InnerFindAsync guard never sees it;
-    /// without this a Count over a range outside the materialised Date window would return
-    /// however many rows the window happens to hold. For every table but 2000000007 this does
-    /// one integer comparison and returns.
+    /// without this a Count over a range outside what is materialised would return however many
+    /// rows happen to be there. For every table but 2000000007 this does one integer comparison
+    /// and returns.
     ///
     /// <para>This comment used to say "Record.Count() AND IsEmpty()", and that was wrong — see
-    /// <see cref="DataAccess_DateWindowGuardForExists"/> below. The claim went unchallenged
-    /// long enough to hide a wrong answer for a whole release, which is why the correction is
-    /// spelled out rather than quietly edited: IsEmpty() has never reached CountAsync.</para>
+    /// <see cref="DataAccess_DateWindowGuardForExists"/> below. The claim went unchallenged long
+    /// enough to hide a wrong answer for a whole release, which is why the correction is spelled
+    /// out rather than quietly edited: IsEmpty() has never reached CountAsync.</para>
+    ///
+    /// <para>Which DataAccess entry points are worth guarding was measured twice, from two
+    /// directions, and the two results are easy to mistake for a contradiction:</para>
+    /// <list type="bullet">
+    /// <item>A FlowField calculation and a TableRelation check never reach DataAccess at all —
+    /// they go straight to the in-memory provider — so a prepend on ExistsAsync /
+    /// CalcNumericAsync / CalcMinMaxAsync / CalcSumsAsync applies and then never fires for
+    /// THOSE callers (#2648). That is why the provider-level net
+    /// <see cref="EnsureDateStoreFullyMaterialised"/> exists.</item>
+    /// <item>An AL <c>Record.IsEmpty()</c> DOES reach DataAccess.ExistsAsync, and a prepend
+    /// there fires (#3006): before one existed, a closed range outside the window answered
+    /// IsEmpty() = true and Count() = 7 on the very next line.</item>
+    /// </list>
+    /// <para>So ExistsAsync is guarded and CalcNumericAsync / CalcMinMaxAsync / CalcSumsAsync
+    /// are not. The net does not subsume the ExistsAsync guard: the net materialises the DEFAULT
+    /// window, which does not contain 1850, so IsEmpty() over a closed range outside the window
+    /// still needs a guard that reads that range off the request.</para>
     /// </summary>
     public static void DataAccess_DateWindowGuardForCount(object self, object request)
     {
@@ -653,47 +867,80 @@ public static partial class RecordPatches
         // wrote (#2524).
         if (IsTemporaryRecordDataAccess(self)) return;
 
+        NCLMetaTable meta;
+        object session;
+        DateTime? wanted;
+        bool hasRecordId;
         try
         {
-            if (_pReqMaoLight?.GetValue(request) is not NCLMetaTable meta) return;
+            if (_pReqMaoLight?.GetValue(request) is not NCLMetaTable m) return;
+            meta = m;
             EnsureDateReflection(meta);
             EnsureDateGuardReflection(self, request);
-            if (_dvtDaSession!.GetValue(self) is not object session) return;
-
-            var wanted = PrimaryKeyPeriodStart(request);
-            if (wanted == null) return;
-
-            // One day is all a keyed Get needs; PopulateDateSpan widens to whole periods itself
-            // and returns immediately when the window already covers it, which is the common case.
-            PopulateDateSpan(self, meta, session, wanted.Value, wanted.Value);
+            if (_dvtDaSession!.GetValue(self) is not object s) return;
+            session = s;
+            wanted = PrimaryKeyPeriodStart(request, out hasRecordId);
         }
         catch (RunnerOutOfScopeException) { throw; }
         catch
         {
-            // Best-effort, exactly like the find guard: a request shape we cannot read means we
-            // do not widen, never that we answer something different. The Get then runs over the
-            // window exactly as it would without this guard.
+            // We could not identify the request or the store behind it — nothing to materialise
+            // against. Unchanged from before #2648.
+            return;
         }
+
+        if (wanted != null)
+        {
+            // One day is all a keyed Get needs; PopulateDateSpan widens to whole periods itself
+            // and returns immediately when the span already covers it, which is the common case.
+            PopulateDateSpan(self, meta, session, wanted.Value, wanted.Value);
+            return;
+        }
+
+        // A SystemId-keyed Get names no period, and cannot name one the store does not already
+        // hold: the SystemId of a row that was never materialised has never been handed out.
+        if (!hasRecordId) return;
+
+        // A primary-key Get whose key we could not read. Before #2648 the whole window was
+        // already materialised by the time any Get ran, so such a Get answered from the window;
+        // fall back to exactly that rather than answering from a narrower store.
+        PopulateDefaultDateWindow(self, meta, session);
     }
 
     /// <summary>
     /// The "Period Start" out of a primary-key request's RecordId. Date's primary key is
-    /// ("Period Type", "Period Start"), so it is the SECOND key value. Null for a
-    /// SystemIdCacheRequest, which carries no key values — a Get by SystemId cannot name a
-    /// period the window does not already hold, because the SystemId of an unmaterialised row
-    /// has never been handed out.
+    /// ("Period Type", "Period Start"), so it is the SECOND key value.
     /// </summary>
-    private static DateTime? PrimaryKeyPeriodStart(object request)
+    /// <param name="hasRecordId">
+    /// False for a SystemIdCacheRequest, which carries no RecordId at all — a Get by SystemId
+    /// cannot name a period the store does not already hold, because the SystemId of an
+    /// unmaterialised row has never been handed out. True with a null return means "this IS a
+    /// primary-key Get but the key could not be read", which the caller has to answer
+    /// conservatively; the two cases were indistinguishable while everything was materialised up
+    /// front, and are not any more.
+    /// </param>
+    private static DateTime? PrimaryKeyPeriodStart(object request, out bool hasRecordId)
     {
-        var recordId = request.GetType().GetProperty("RecordId",
-            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(request);
-        if (recordId == null) return null;
+        hasRecordId = false;
+        try
+        {
+            var recordId = request.GetType().GetProperty("RecordId",
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(request);
+            if (recordId == null) return null;
+            hasRecordId = true;
 
-        var fields = recordId.GetType().GetProperty("Fields",
-            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(recordId);
-        if (fields is not System.Collections.IList list || list.Count < 2) return null;
+            var fields = recordId.GetType().GetProperty("Fields",
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(recordId);
+            if (fields is not System.Collections.IList list || list.Count < 2) return null;
 
-        return ToDateTimeOrNull(list[1]);
+            return ToDateTimeOrNull(list[1]);
+        }
+        catch
+        {
+            // Unreadable, not absent: leave hasRecordId as whatever we established, so the caller
+            // widens rather than assuming a SystemId request.
+            return null;
+        }
     }
 
     /// <summary>The "Period Start" (field 2) FilterExpression on this find request, if any.</summary>
