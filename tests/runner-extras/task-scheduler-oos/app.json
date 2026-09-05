@@ -1,0 +1,19 @@
+{
+  "id": "a4d17b52-9c0e-4f38-8b6a-1e5d3c72f904",
+  "name": "Runner Extras - Task Scheduler OOS",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Issue #2866: TaskScheduler.TaskExists and TaskScheduler.CancelTask reached BC's real scheduler data layer and died with a NullReferenceException out of NavSqlConnectionScope / ALCancelTaskAsync. Background job scheduling is permanently out of scope (docs/scope.md#jobs), so both now refuse by name with the out-of-scope signal. This suite pins that refusal and its scope: CanCreateTask still answers false without throwing, and CreateTask / SetTaskReady still get BC's OWN 'You do not have permission to create or run scheduled tasks.' rather than the runner's refusal.",
+  "description": "Every claim here is runner-specific by construction — which surface the runner refuses, under which name, and which surfaces it must NOT take over from BC. The plain-BC half of this surface (CreateTask returning a real task id on a service tier) is upstream in the al-language corpus as TestTaskSchedulerCloudBehavior.al, classified here as an intended divergence in tests/expectations/divergence-session.json.",
+  "dependencies": [],
+  "idRanges": [
+    {
+      "from": 65600,
+      "to": 65609
+    }
+  ],
+  "platform": "27.0.0.0",
+  "application": "27.0.0.0",
+  "runtime": "15.0",
+  "target": "Cloud"
+}
