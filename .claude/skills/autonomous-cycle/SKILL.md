@@ -156,29 +156,38 @@ a merge can turn `main` red, which outranks everything you were about to do.
 Several people may run this loop at once, against the same repository, with no coordination
 between them. Nothing may depend on them talking to each other.
 
-**The GitHub assignee is the lock.** It is visible to everyone, survives a crashed box, and
-needs no shared state. A dedicated label (`agent: autonomous`, or a per-contributor one) is
-useful for telling afterwards which work the loop produced — but the label is bookkeeping; the
-assignee is what prevents two agents doing the same issue.
+**The GitHub assignee is the lock**, and it decides the order you look in. It is visible to
+everyone, survives a crashed box, and needs no shared state between contributors. A dedicated
+label is useful for telling afterwards which work the loop produced — but the label is
+bookkeeping; the assignee is what prevents two agents doing the same issue.
 
-**Claiming is read-then-write, so it races.** Two loops that list candidates at the same moment
-will pick the same top issue. Use a compare-and-swap shape instead of trusting the write:
+**Look in this order, and it works for any account:**
 
-1. Skip anything already assigned to anyone.
-2. Assign it to yourself.
-3. **Re-read the issue.** If it now carries another assignee, or yours is not there, release and
-   take the next candidate. Losing a race costs one API call; two agents silently doing the same
-   issue costs both of them.
-4. Only then start work.
+1. **Issues already assigned to the account you are logged in as.** Finish your own work before
+   starting more. This is also how a restarted loop resumes: a box that died mid-issue comes
+   back, sees its own claim, and picks up where it left off instead of stranding it.
+2. **Unassigned issues.** Take the highest-value one and assign it to yourself.
+3. **Issues assigned to anyone else — leave them alone.** Someone is on it, whether that is a
+   human maintainer or another contributor's loop. Do not take it, do not work it in parallel,
+   do not comment on it.
 
-**Reclaim abandoned work.** A box can die mid-issue and leave a claim behind forever. Treat a
-claim as stale when it has no linked PR and no activity for several hours, and reclaim it —
-noting on the issue that you did. Without this, every crash permanently removes an issue from
-circulation.
+That ordering is the whole cross-contributor story: every loop works its own queue first, draws
+from the common pool second, and never touches another's. No coordination needed.
+
+**Claiming is read-then-write, so it races.** Two loops listing candidates at the same moment
+pick the same top issue. Use compare-and-swap rather than trusting the write: assign it, then
+**re-read**. If another assignee appeared, or yours did not stick, release and take the next
+candidate. Losing a race costs one API call; two agents silently doing the same issue costs
+both.
 
 **Release when you stop.** Finished without a fix, blocked, or shutting down for budget: remove
-your assignment so someone else can take it. An issue you cannot finish should go back to the
-pool, not stay parked under your name.
+your assignment so the issue returns to the pool. An issue you cannot finish should not stay
+parked under your name.
+
+**Your own stale claims are yours to reclaim** — a claim of yours with no linked PR and no
+activity for hours is from a run that died, and rule 1 above picks it up automatically.
+**Someone else's stale claim is not yours to take**, even if it looks abandoned. You cannot tell
+a dead box from a contributor who is asleep. Surface it to the human queue and move on.
 
 **Namespace anything per-contributor** that lives on disk or in a branch name — worktrees,
 branches, scratch directories, cache directories. Two contributors must never write to the same
