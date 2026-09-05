@@ -230,18 +230,19 @@ public static partial class RecordPatches
         // NavRecordAlreadyExistsException catch in InsertVirtualRow absorbs the ones already
         // there, so a replayed row survives and only genuinely-missing objects are added.
         //
-        // Deliberately NOT conditioned on the dispatch site's
-        // `ReferenceEquals(objectDa, createdObject)` — the GetOrAdd LOSER of the #2788 race has
-        // that false by construction while the winner may already have hydrated, so keying on
-        // it would make the loser project over real backup rows it currently defers to. This
-        // form is strictly never worse than a bare ProviderHasAnyRow: identical whenever a
-        // loader exists, and correct where a bare one is wrong.
+        // Deliberately NOT conditioned on "this call materialised the storage". That question is
+        // GetOrCreateHydratedDataAccess's own, and it is the wrong one here: this populate runs
+        // on EVERY touch of the table, not only the materialising one, so keying the latch on it
+        // would skip the top-up for every later caller. Conditioning on the loader existing is
+        // strictly never worse than a bare ProviderHasAnyRow: identical whenever a loader
+        // exists, and correct where a bare one is wrong.
         //
         // WHAT THIS DOES NOT CLOSE, and why it is not closed here: --test-data AND an install
         // baseline together, with AL touching Record "Object" before CaptureInstallBaselineSnapshot
         // runs. Issue #2875 tracks it. The obvious fix — adding 2000000001 to
         // IsSelfPopulatingVirtualTableId so the projection is never captured — is NOT a drop-in:
-        // this is the first self-populating table that also calls the on-demand loader, so it
+        // this is the first self-populating table that also materialises through the on-demand
+        // loader, so it
         // would make AppendBaselineTable's deliberate InvalidOperationException reachable for the
         // first time on any backup that carries Object rows (a real on-prem database has them).
         // Resolving that is a change to a shared invariant, not a rider on this fix.

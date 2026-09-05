@@ -1956,18 +1956,13 @@ public static partial class RecordPatches
             //
             // Same --test-data precedence as Object Metadata directly above, for the same
             // reason (a restored backup can genuinely carry rows for a real SQL table), and
-            // the same known race, issue #2788: only the GetOrAdd winner runs the loader while
-            // both racers populate, so a loser can synthesise before hydration lands.
-            // See RecordPatches.ObjectSystemTable.cs.
+            // through the same ordered materialisation: GetOrCreateHydratedDataAccess is what
+            // stops a second thread being handed this store between "created" and "hydrated",
+            // finding it empty and synthesising over rows that are about to arrive (#2788).
+            // See RecordPatches.ObjectSystemTable.cs and RecordPatches.TableMaterialisation.cs.
             if (IsObjectSystemTable(table))
             {
-                if (!perTable.TryGetValue(tableId, out var objectDa))
-                {
-                    var createdObject = _mCreateTempDataAccess!.Invoke(self, new object[] { table })!;
-                    objectDa = perTable.GetOrAdd(tableId, createdObject);
-                    if (TestDataOnDemandLoader != null && ReferenceEquals(objectDa, createdObject))
-                        InvokeTestDataOnDemandLoader(self, tableId);
-                }
+                var objectDa = GetOrCreateHydratedDataAccess(self, perTable, table, tableId);
                 PopulateObjectSystemTable(objectDa, table);
                 return objectDa;
             }
