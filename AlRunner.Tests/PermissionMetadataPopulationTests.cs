@@ -37,7 +37,8 @@ public sealed class PermissionMetadataPopulationTests
 
     private static readonly Regex DiagLine = new(
         @"\[perm-metadata\] app-group permission-set summaries: (?<summaries>\d+); "
-        + @"meta permission sets resolvable: (?<resolvable>\d+)/(?<known>\d+)",
+        + @"meta permission sets resolvable: (?<resolvable>\d+)/(?<known>\d+); "
+        + @"declared permissions: (?<permissions>\d+)",
         RegexOptions.Compiled);
 
     [Fact]
@@ -74,6 +75,16 @@ public sealed class PermissionMetadataPopulationTests
             // The metadata half, exercised through BC's own TryGetMetaPermissionSetById for
             // every id — the lookup that returned False with a null out param before.
             Assert.Equal(known, resolvable);
+
+            // #2910: the sets must carry their PERMISSIONS, not just resolve. Zero here is
+            // what the metadata layer reported before the masks were transcribed out of
+            // SymbolReference.json — resolvable sets that grant nothing, which composes to an
+            // empty permission table however correctly BC walks them.
+            var permissions = int.Parse(m.Groups["permissions"].Value);
+            Assert.True(permissions > 0,
+                $"the {known} resolvable permission sets declare {permissions} permissions between "
+                + "them; BC's PermissionSetGraphWalker/PermissionComposer can only compose rows out "
+                + "of permissions that are actually there.");
 
             // And the run itself still passes: the fixture's four Aggregate Permission Set
             // tests are the regression guard that populating shared app-group state did not
