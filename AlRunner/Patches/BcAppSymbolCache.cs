@@ -131,7 +131,7 @@ internal static partial class BcAppSymbolCache
     // deserialises them as null/true, which reads as "this field has no relation": FieldRef.Relation
     // answers 0 and Validate() accepts a value with no matching related row. That is a wrong ANSWER
     // replayed from cache rather than a cache miss, so it needs the bump.
-    private const int CacheVersion = 26;
+    private const int CacheVersion = 27;   // v27: PermissionSetSymbol gained Permissions / IncludedPermissionSets / Access (#2910)
     private static readonly ConcurrentDictionary<string, AppSymbols> ProcessCache = new(StringComparer.OrdinalIgnoreCase);
     // Issue #1820 — path -> content-hash memo. ComputeAppContentHash needs to read the
     // WHOLE .app to hash it (unlike the FileInfo.Length/LastWriteTimeUtc stat it replaced,
@@ -219,7 +219,36 @@ internal static partial class BcAppSymbolCache
     /// <c>Assignable</c> mirrors the declared <c>Assignable</c> property; AL's own default
     /// for a permissionset that states none is <c>true</c>, which is what the parse applies.
     /// </summary>
-    internal sealed record PermissionSetSymbol(int Id, string Name, string? Caption, bool Assignable);
+    /// <summary>
+    /// One entry of a permission set's <c>Permissions</c> array, exactly as
+    /// SymbolReference.json states it: <c>{ "PermissionObject": &lt;kind&gt;, "Id": &lt;object id&gt;,
+    /// "Value": &lt;mask&gt; }</c>.
+    ///
+    /// <para><paramref name="ObjectType"/> is the SymbolReference <c>PermissionObject</c> ordinal.
+    /// It maps ONTO BC's own <c>ObjectType</c> as an identity: measured on BC 28.1, CodeAnalysis's
+    /// <c>PermissionObjectKind</c> and AL.Common's <c>ObjectType</c> agree on both ordinal AND name
+    /// for every kind a permission set can name — TableData=0, Table=1, Report=3, Codeunit=5,
+    /// Xmlport=6, Page=8, Query=9, System=10. A guessed mapping here would be a silent wrong
+    /// answer no test could catch, so it was checked rather than assumed.</para>
+    ///
+    /// <para><c>PermissionObject</c> is ABSENT from the JSON when it is 0 (TableData) — the
+    /// commonest case by far — so a reader that skips entries without it drops most of the data.
+    /// Defaulted, not required.</para>
+    ///
+    /// <para><paramref name="Value"/> is BC's <c>PermissionMask</c>: Read=1, Insert=2, Modify=4,
+    /// Delete=8, Execute=16, with the Indirect* variants at 32..512. Not decoded here — it is
+    /// handed to BC's own composer untouched.</para>
+    /// </summary>
+    internal sealed record PermissionSymbol(int ObjectType, int ObjectId, int Value);
+
+    internal sealed record PermissionSetSymbol(
+        int Id, string Name, string? Caption, bool Assignable,
+        // #2910: the permission rows themselves, plus what the set includes and its access
+        // modifier. BC composes the effective permissions from these (includes expansion,
+        // exclusions, extension merge) — the runner only transcribes them.
+        IReadOnlyList<PermissionSymbol>? Permissions = null,
+        IReadOnlyList<string>? IncludedPermissionSets = null,
+        string? Access = null);
 
     /// <summary>
     /// A precompiled dependency's page, as far as SymbolReference.json states it — just
@@ -711,13 +740,58 @@ internal static partial class BcAppSymbolCache
                     // (Base Application's "LOCAL" states `Assignable = false`, while
                     // "D365 Basic - Edit" states nothing and is assignable). Table
                     // 2000000250's own field 4 carries `InitValue = true` for the same reason.
-                    into.TryAdd(id, new PermissionSetSymbol(id, name, caption, !SymbolBoolFalse(props, "Assignable")));
+                    props.TryGetValue("Access", out var access);
+                    into.TryAdd(id, new PermissionSetSymbol(
+                        id, name, caption, !SymbolBoolFalse(props, "Assignable"),
+                        ReadPermissions(el),
+                        ReadIncludedPermissionSets(props),
+                        access));
                 }
             }
             if (container.TryGetProperty("Namespaces", out var namespaces) && namespaces.ValueKind == JsonValueKind.Array)
                 foreach (var ns in namespaces.EnumerateArray())
                     Visit(ns);
         }
+    }
+
+    /// <summary>
+    /// A permission set's own <c>Permissions</c> array. An entry with no <c>PermissionObject</c>
+    /// is TableData (0) — the JSON omits the property at its default, and that is the majority of
+    /// all entries, so treating "absent" as "skip" would drop most of the data.
+    /// </summary>
+    private static IReadOnlyList<PermissionSymbol> ReadPermissions(JsonElement permissionSet)
+    {
+        if (!permissionSet.TryGetProperty("Permissions", out var arr) || arr.ValueKind != JsonValueKind.Array)
+            return Array.Empty<PermissionSymbol>();
+
+        var list = new List<PermissionSymbol>();
+        foreach (var el in arr.EnumerateArray())
+        {
+            if (!el.TryGetProperty("Id", out var idProp) || !idProp.TryGetInt32(out var objectId)) continue;
+            var kind = el.TryGetProperty("PermissionObject", out var kindProp) && kindProp.TryGetInt32(out var k) ? k : 0;
+            var value = el.TryGetProperty("Value", out var valProp) && valProp.TryGetInt32(out var v) ? v : 0;
+            list.Add(new PermissionSymbol(kind, objectId, value));
+        }
+        return list;
+    }
+
+    /// <summary>
+    /// The `IncludedPermissionSets` property, whose value is the AL declaration's own list:
+    /// each name double-quoted, comma separated — <c>"Azure AD Plan - Objects","Azure AD User - View"</c>.
+    /// Names are returned unquoted; BC resolves them by role id.
+    /// </summary>
+    private static IReadOnlyList<string> ReadIncludedPermissionSets(IReadOnlyDictionary<string, string> props)
+    {
+        if (!props.TryGetValue("IncludedPermissionSets", out var raw) || string.IsNullOrWhiteSpace(raw))
+            return Array.Empty<string>();
+
+        var names = new List<string>();
+        foreach (var part in raw.Split(','))
+        {
+            var name = part.Trim().Trim('"').Trim();
+            if (name.Length > 0) names.Add(name);
+        }
+        return names;
     }
 
     /// <summary>
