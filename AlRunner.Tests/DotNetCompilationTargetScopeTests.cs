@@ -83,8 +83,7 @@ public sealed class DotNetCompilationTargetScopeTests
 
     private static string WriteBundle(string label, string target, bool withDeclaration)
     {
-        var root = Path.Combine(
-            Path.GetTempPath(), "al-runner-dotnet-target-" + label, Guid.NewGuid().ToString("N"));
+        var root = TestScratch.Dir("al-runner-dotnet-target-" + label);
         Directory.CreateDirectory(root);
 
         // No "application" property: the Base Application floor is not the subject here and

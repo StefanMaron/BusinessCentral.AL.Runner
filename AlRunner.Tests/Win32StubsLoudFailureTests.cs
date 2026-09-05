@@ -93,7 +93,7 @@ public class Win32StubsLoudFailureTests
     [SkippableFact]
     public void GetOrBuild_HonoursSoOverride_WhenFileExists()
     {
-        var dir = Path.Combine(Path.GetTempPath(), "win32stubs-test-" + Guid.NewGuid());
+        var dir = TestScratch.FlatDir("win32stubs-test-");
         Directory.CreateDirectory(dir);
         var cFile = Path.Combine(dir, "trivial.c");
         var soFile = Path.Combine(dir, "trivial.so");
@@ -217,7 +217,7 @@ public class Win32StubsLoudFailureTests
         TestArtifacts.SkipIf(ridName is null,
             $"no prebuilt-stub convention for this RID ({System.Runtime.InteropServices.RuntimeInformation.RuntimeIdentifier}) — Linux x64/arm64 only.");
 
-        var dir = Path.Combine(Path.GetTempPath(), "win32stubs-prebuilt-test-" + Guid.NewGuid());
+        var dir = TestScratch.FlatDir("win32stubs-prebuilt-test-");
         var stubDir = Path.Combine(dir, "Win32Stubs");
         Directory.CreateDirectory(stubDir);
         var cFile = Path.Combine(dir, "trivial.c");
@@ -263,7 +263,7 @@ public class Win32StubsLoudFailureTests
     [Fact]
     public void GetOrBuild_StillThrows_WhenNoPrebuiltAndNoCompiler()
     {
-        var dir = Path.Combine(Path.GetTempPath(), "win32stubs-no-prebuilt-test-" + Guid.NewGuid());
+        var dir = TestScratch.FlatDir("win32stubs-no-prebuilt-test-");
         Directory.CreateDirectory(dir); // deliberately no Win32Stubs/ subfolder inside it
 
         var savedOverride = Environment.GetEnvironmentVariable("AL_RUNNER_WIN32_STUBS_SO");

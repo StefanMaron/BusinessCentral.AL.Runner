@@ -77,7 +77,7 @@ public sealed class TimeZoneVirtualTableTests
     [Fact]
     public void TimeZone_HostZones_AllFixtureTestsPass()
     {
-        var cacheDir = Path.Combine(Path.GetTempPath(), "al-runner-tzv-tests", "cache-" + Guid.NewGuid().ToString("N"));
+        var cacheDir = TestScratch.Dir("al-runner-tzv-tests");
         try
         {
             var (exit, stdout, stderr) = Run(cacheDir);

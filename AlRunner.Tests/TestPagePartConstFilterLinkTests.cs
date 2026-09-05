@@ -57,7 +57,7 @@ public class TestPagePartConstFilterLinkTests
 
     private static string WriteBundle()
     {
-        var root = Path.Combine(Path.GetTempPath(), "al-runner-testpage-part-const-filter-link-2469", Guid.NewGuid().ToString("N"));
+        var root = TestScratch.Dir("al-runner-testpage-part-const-filter-link-2469");
         Directory.CreateDirectory(root);
 
         File.WriteAllText(Path.Combine(root, "app.json"), """

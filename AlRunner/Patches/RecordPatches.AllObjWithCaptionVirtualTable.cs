@@ -49,6 +49,20 @@ namespace AlRunner.Patches;
 
 public static partial class RecordPatches
 {
+    /// <summary>
+    /// Every refusal in this file, built in one place. See
+    /// RecordPatches.VirtualTableShapeGap.cs for the three-bucket classification and for
+    /// why the anchor is "not-yet-implemented" rather than a docs/scope.md section (#2945).
+    /// </summary>
+    /// <remarks>
+    /// Category (2) for all four. One is a store-wiring gap; the other three are BC metadata
+    /// shapes this file reads rather than owns. Refusing beats guessing an option ordinal: the
+    /// ordinal is a stored column value, so a wrong guess mis-keys every row it writes and no
+    /// test can see it.
+    /// </remarks>
+    internal static RunnerOutOfScopeException AllObjWithCaptionShapeGap(string detail)
+        => VirtualTableShapeGap("AllObjWithCaption (virtual table 2000000058)", "allobjwithcaption-virtual-table", detail);
+
     internal const int AllObjWithCaptionVirtualTableId = 2000000058;
 
     // Per in-memory-provider guard, so repeated data-access handouts within one test only
@@ -71,9 +85,7 @@ public static partial class RecordPatches
         EnsureDataAccessProviderReflection(dataAccess);
 
         var provider = _pDataAccessDataProvider!.GetValue(dataAccess)
-            ?? throw new RunnerOutOfScopeException(
-                "AllObjWithCaption (virtual table 2000000058)",
-                "allobjwithcaption-virtual-table — data access has no in-memory provider; see docs/scope.md");
+            ?? throw AllObjWithCaptionShapeGap("data access has no in-memory provider");
 
         // The Object Type option ordinals live on AllObjWithCaption's OWN field 1, not on
         // AllObj's: the two tables declare the same option set today, but reading the
@@ -140,15 +152,11 @@ public static partial class RecordPatches
 
         var typeField = (GetAllFields(metaTable) ?? Enumerable.Empty<NCLMetaField>())
             .FirstOrDefault(f => NormalizeObjectTypeName(f.FieldName ?? string.Empty) == "objecttype")
-            ?? throw new RunnerOutOfScopeException(
-                "AllObjWithCaption (virtual table 2000000058)",
-                "allobjwithcaption-virtual-table — metatable has no \"Object Type\" field, so its "
-                + "option ordinals cannot be resolved; see docs/scope.md");
+            ?? throw AllObjWithCaptionShapeGap(
+                "metatable has no \"Object Type\" field, so its option ordinals cannot be resolved");
 
         var optionMetadata = typeField.FieldOptionMetadata
-            ?? throw new RunnerOutOfScopeException(
-                "AllObjWithCaption (virtual table 2000000058)",
-                "allobjwithcaption-virtual-table — \"Object Type\" carries no option metadata; see docs/scope.md");
+            ?? throw AllObjWithCaptionShapeGap("\"Object Type\" carries no option metadata");
 
         var optionString = optionMetadata.OptionString ?? string.Empty;
         var map = new Dictionary<string, int>(StringComparer.Ordinal);
@@ -160,10 +168,7 @@ public static partial class RecordPatches
             map.TryAdd(key, i);
         }
         if (map.Count == 0)
-            throw new RunnerOutOfScopeException(
-                "AllObjWithCaption (virtual table 2000000058)",
-                $"allobjwithcaption-virtual-table — \"Object Type\" option string is empty ('{optionString}'); "
-                + "see docs/scope.md");
+            throw AllObjWithCaptionShapeGap($"\"Object Type\" option string is empty ('{optionString}')");
 
         _awcObjectTypeOrdinals = map;
         return map;

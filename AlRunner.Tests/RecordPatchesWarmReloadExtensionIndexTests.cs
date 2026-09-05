@@ -28,11 +28,27 @@
 //   1. Reference an unrelated table so the symbol table + extension indexes get built once
 //      ("request 1"), and confirm the base table's extension field resolves.
 //   2. Call RecordPatches.ResetForReload() directly — the exact method the server calls
-//      between requests — then re-register the SAME source dir (the server re-registers a
-//      bundle's own source on every request; _bcAppPaths is registered once at startup and
-//      is deliberately NOT re-added here, matching production).
+//      between requests — then re-register the SAME source dir AND the SAME .app, which is
+//      what Program.cs does (2196 then 2354/2357 on the CLI path, 4049 then 4533/4534 on the
+//      server path: the reset precedes the bundle's own dep registration in both).
 //   3. Reference the unrelated table again ("request 2") and confirm the extension field
 //      STILL resolves. Without the fix this throws "extension field 50 ... not found".
+//
+// #2755 CORRECTION. Step 2 used to skip the AddBcAppPath call, on the stated grounds that
+// "_bcAppPaths is registered once at startup and is deliberately NOT re-added, matching
+// production". That was wrong about production — Program.cs registers a bundle's resolved dep
+// closure inside the per-bundle loop, AFTER the reset, on both paths — and #2755 made the
+// error visible by clearing the per-bundle registrations in ResetForReload: this test then
+// failed with "no NCLMetaTable for table 93911 (dependency source not parsed)" on CI legs 27.5
+// and 28.4, the two that run AlRunner.Tests.
+//
+// Re-registering is production-faithful, but AddBcAppPath invalidates the indexes itself, so
+// the end-to-end half below would now survive a reintroduced #2478 for the wrong reason. The
+// #2478 claim is therefore ALSO asserted directly, against the reset's own post-state:
+// ResetForReload must leave BOTH _bcSymbolTableIndex null AND _bcSymbolExtensionIndexBuilt
+// false. That pair IS #2478 — the extension merge's only call site is inside
+// EnsureBcSymbolTableIndex, behind its `_bcSymbolTableIndex != null` guard, so a reset that
+// drops the flag but keeps the index short-circuits the merge forever.
 using System.IO.Compression;
 using System.Text;
 using AlRunner.Patches;
@@ -157,11 +173,24 @@ public sealed class RecordPatchesWarmReloadExtensionIndexTests : IDisposable
         Assert.Equal(extFieldName, field1.FieldName);
 
         // ── SIMULATE THE --server / --watch PER-REQUEST RESET ──────────────────────────
-        // Exactly BcRuntime.ResetForNewBundleReload()'s delegate target. _bcAppPaths is
-        // registered once by Program.cs at startup, never per-request, so AddBcAppPath is
-        // deliberately NOT called again here — matching production.
+        // Exactly BcRuntime.ResetForNewBundleReload()'s delegate target.
         RecordPatches.ResetForReload();
+
+        // [THEN, #2478 asserted at the mechanism] the reset dropped the built table index as
+        // well as the extension-built flag. Before #2478's fix _bcSymbolTableIndex survived,
+        // and because EnsureBcSymbolExtensionIndex is only ever called from inside
+        // EnsureBcSymbolTableIndex — after its `if (_bcSymbolTableIndex != null) return;` —
+        // the merge never ran again for the life of the process. Asserted here rather than
+        // only end-to-end below, because the production-faithful re-registration on the next
+        // line invalidates the indexes on its own and would mask a reintroduced #2478.
+        Assert.Null(PrivateStatic("_bcSymbolTableIndex"));
+        Assert.Equal(false, PrivateStatic("_bcSymbolExtensionIndexBuilt"));
+
+        // What Program.cs does next: re-register this bundle's own source AND its resolved dep
+        // closure. #2755 clears the per-bundle .app registrations in the reset above, so the
+        // .app has to be re-added here exactly as production re-adds it.
         RecordPatches.AddSourceDir(baseDir);
+        RecordPatches.AddBcAppPath(appPath);
 
         // ── REQUEST 2 ────────────────────────────────────────────────────────────────
         var trigger2 = RecordPatches.NCLMetadata_GetMetaTableById(skeleton!, triggerTableId, false, 0);
@@ -183,5 +212,21 @@ public sealed class RecordPatchesWarmReloadExtensionIndexTests : IDisposable
             RecordPatches.NCLMetaTable_GetFieldByNoExt(base2!, extId, nonExistentFieldId));
         Assert.Contains($"extension field {nonExistentFieldId}", ex.Message);
         Assert.Contains("not found", ex.Message);
+    }
+
+    /// <summary>
+    /// Read one of RecordPatches' private static index fields. Reflection rather than a
+    /// production accessor: these are the internals #2478 is about, and a named accessor would
+    /// invite callers. Throws with the field name if it is ever renamed, so the test reports
+    /// "the probe is stale" instead of silently asserting null against a field that is gone.
+    /// </summary>
+    private static object? PrivateStatic(string field)
+    {
+        var f = typeof(RecordPatches).GetField(field,
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)
+            ?? throw new InvalidOperationException(
+                $"RecordPatches.{field} is gone — this probe asserts #2478's reset invariant "
+                + "directly and cannot do so against a renamed field. Re-point it, do not delete it.");
+        return f.GetValue(null);
     }
 }

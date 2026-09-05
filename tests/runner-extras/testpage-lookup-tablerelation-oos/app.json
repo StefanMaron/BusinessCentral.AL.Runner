@@ -1,0 +1,19 @@
+{
+  "id": "7a41d0c6-3e58-4b92-9d17-6f2c85b31ae4",
+  "name": "Runner Extras - TestPage Lookup TableRelation OOS",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Issue #2775: a TestPage field whose lookup could only come from a TableRelation must keep refusing by name with reason testpage-lookup, and the two shapes that DO have a trigger must keep running.",
+  "description": "Runner-specific claim, not a claim about AL. On real BC a field with no page-control OnLookup and no table-field OnLookup still has a lookup: the TableRelation opens the related table's list page. The runner cannot stand a list page up, so it refuses by name instead of doing nothing -- doing nothing is what let a test invoke a lookup, observe no change, and compare two empty strings successfully. AlRunner.Tests/TestPageFieldTableLookupTests pins the same three cases from outside, by matching the runner's console output; this asserts them from inside AL through asserterror and GetLastErrorText, which is the surface a consumer actually meets, and it runs on all eight BC legs rather than only the two that carry AlRunner.Tests.",
+  "dependencies": [],
+  "idRanges": [
+    {
+      "from": 65560,
+      "to": 65569
+    }
+  ],
+  "platform": "27.0.0.0",
+  "application": "27.0.0.0",
+  "runtime": "15.0",
+  "target": "Cloud"
+}

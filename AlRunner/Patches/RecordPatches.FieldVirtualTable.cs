@@ -54,6 +54,20 @@ namespace AlRunner.Patches;
 
 public static partial class RecordPatches
 {
+    /// <summary>
+    /// Every refusal in this file, built in one place. See
+    /// RecordPatches.VirtualTableShapeGap.cs for the three-bucket classification and for
+    /// why the anchor is "not-yet-implemented" rather than a docs/scope.md section (#2945).
+    /// </summary>
+    /// <remarks>
+    /// Category (2) for all four: the managed FieldDataProvider row-builder could not be bound,
+    /// the store handed over no provider, BC's own GetFieldRecordBuffer threw for one field, or
+    /// its constructor threw. A field that cannot be projected must not silently vanish -- that
+    /// is the point of the third one -- and none of the four says the table is out of scope.
+    /// </remarks>
+    internal static RunnerOutOfScopeException FieldVirtualShapeGap(string detail)
+        => VirtualTableShapeGap("Field (virtual table 2000000041)", "field-virtual-table", detail);
+
     internal const int FieldVirtualTableId = 2000000041;
 
     // Reflection handles for the managed Field-row build + insert path.
@@ -95,15 +109,11 @@ public static partial class RecordPatches
         AlRunner.BcRuntime.EnsureMetadataProviderSeeded();
         EnsureFieldVirtualTableReflection(fieldMetaTable, session);
         if (_mGetFieldRecordBuffer == null || _mTtdpInsert == null || _ctorMutableFromReadOnly == null)
-            throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
-                "Field (virtual table 2000000041)",
-                "field-virtual-table — managed FieldDataProvider row-builder could not be bound; see docs/scope.md");
+            throw FieldVirtualShapeGap("managed FieldDataProvider row-builder could not be bound");
 
         EnsureDataAccessProviderReflection(dataAccess);
         var provider = _pDataAccessDataProvider!.GetValue(dataAccess)
-            ?? throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
-                "Field (virtual table 2000000041)",
-                "field-virtual-table — Field data access has no in-memory provider; see docs/scope.md");
+            ?? throw FieldVirtualShapeGap("Field data access has no in-memory provider");
 
         // Make our 2000000041 metatable report IsVirtualTable=false so BC's RecordImplementation
         // find takes the NORMAL (temp-table) DataAccess path. IsVirtualTable for table 2000000041
@@ -170,10 +180,9 @@ public static partial class RecordPatches
             {
                 // A single field that cannot be projected must not silently vanish nor
                 // poison the whole table — surface loudly so the gap is visible.
-                throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
-                    "Field (virtual table 2000000041)",
-                    $"field-virtual-table — GetFieldRecordBuffer threw for table {srcMeta.TableId} field: " +
-                    $"{tie.InnerException.GetType().Name}: {tie.InnerException.Message}; see docs/scope.md");
+                throw FieldVirtualShapeGap(
+                    $"GetFieldRecordBuffer threw for table {srcMeta.TableId} field: " +
+                    $"{tie.InnerException.GetType().Name}: {tie.InnerException.Message}");
             }
 
             var mutable = _ctorMutableFromReadOnly!.Invoke(new object?[] { readOnlyBuf })!;
@@ -385,10 +394,9 @@ public static partial class RecordPatches
             var seedState = AlRunner.BcRuntime.IsMetadataProviderSeeded()
                 ? "NavGlobal.MetadataProvider IS seeded (so that is not the cause)"
                 : "NavGlobal.MetadataProvider is NOT seeded";
-            throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
-                "Field (virtual table 2000000041)",
-                $"field-virtual-table — FieldDataProvider ctor failed ({inner.GetType().Name}: {inner.Message}); " +
-                $"{seedState}; see docs/scope.md. Inner stack trace:\n{inner.StackTrace}");
+            throw FieldVirtualShapeGap(
+                $"FieldDataProvider ctor failed ({inner.GetType().Name}: {inner.Message}); " +
+                $"{seedState}. Inner stack trace:\n{inner.StackTrace}");
         }
 
         // Bind base.metaTable to OUR 2000000041 instance so emitted rows align with the

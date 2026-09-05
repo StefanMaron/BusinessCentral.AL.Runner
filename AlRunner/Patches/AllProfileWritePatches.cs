@@ -115,10 +115,8 @@ public static class AllProfileWritePatches
         foreach (var f in RecordPatches.GetAllFields(rec.MetaTable!) ?? Enumerable.Empty<NCLMetaField>())
             if (string.Equals(f.FieldName, fieldName, StringComparison.OrdinalIgnoreCase))
                 return f.FieldNo;
-        throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
-            "All Profile (virtual table 2000000178)",
-            $"all-profile-virtual-table — metatable has no \"{fieldName}\" field, so BC's write rules "
-            + "cannot be applied; see docs/scope.md");
+        throw RecordPatches.AllProfileShapeGap(
+            $"metatable has no \"{fieldName}\" field, so BC's write rules cannot be applied");
     }
 
     // Ncl's own resource class (internal, resx-generated). Located by the presence of the
@@ -134,23 +132,18 @@ public static class AllProfileWritePatches
             if (_messageCache.TryGetValue(resourceName, out var cached)) return cached;
 
             _langType ??= FindLangType()
-                ?? throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
-                    "All Profile (virtual table 2000000178)",
-                    "all-profile-virtual-table — Ncl's profile message resources could not be located, so "
-                    + "BC's own refusal wording cannot be reproduced; see docs/scope.md");
+                ?? throw RecordPatches.AllProfileShapeGap(
+                    "Ncl's profile message resources could not be located, so BC's own refusal "
+                    + "wording cannot be reproduced");
 
             var prop = _langType.GetProperty(resourceName,
                 BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)
-                ?? throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
-                    "All Profile (virtual table 2000000178)",
-                    $"all-profile-virtual-table — Ncl states no '{resourceName}' message resource; "
-                    + "see docs/scope.md");
+                ?? throw RecordPatches.AllProfileShapeGap(
+                    $"Ncl states no '{resourceName}' message resource");
 
             var text = prop.GetValue(null) as string
-                ?? throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
-                    "All Profile (virtual table 2000000178)",
-                    $"all-profile-virtual-table — Ncl's '{resourceName}' message resource is empty; "
-                    + "see docs/scope.md");
+                ?? throw RecordPatches.AllProfileShapeGap(
+                    $"Ncl's '{resourceName}' message resource is empty");
 
             _messageCache[resourceName] = text;
             return text;

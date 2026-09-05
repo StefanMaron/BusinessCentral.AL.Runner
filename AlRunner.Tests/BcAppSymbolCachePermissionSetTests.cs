@@ -109,7 +109,7 @@ public class BcAppSymbolCachePermissionSetTests
     [Fact]
     public void PermissionSets_NestedUnderNamespaces_AreFoundWithTheirOwningAppId()
     {
-        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.Dir("al-runner-bcsym-permset-tests");
         Directory.CreateDirectory(dir);
         try
         {
@@ -145,7 +145,7 @@ public class BcAppSymbolCachePermissionSetTests
     [Fact]
     public void PermissionSets_AssignableDefaultsToTrue_AndAnExplicitFalseIsHonored()
     {
-        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.Dir("al-runner-bcsym-permset-tests");
         Directory.CreateDirectory(dir);
         try
         {
@@ -170,7 +170,7 @@ public class BcAppSymbolCachePermissionSetTests
     [Fact]
     public void PermissionSets_NoDeclaredCaption_StaysNull()
     {
-        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.Dir("al-runner-bcsym-permset-tests");
         Directory.CreateDirectory(dir);
         try
         {
@@ -194,7 +194,7 @@ public class BcAppSymbolCachePermissionSetTests
     [Fact]
     public void PermissionSets_AppDeclaringNone_ReturnsAnEmptyList()
     {
-        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.Dir("al-runner-bcsym-permset-tests");
         Directory.CreateDirectory(dir);
         try
         {

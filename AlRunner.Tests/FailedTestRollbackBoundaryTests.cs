@@ -100,7 +100,7 @@ public sealed class FailedTestRollbackBoundaryTests
     [Fact]
     public void FailedTest_WritesAreRolledBack_PassingTestWritesAreNot()
     {
-        var cacheDir = Path.Combine(Path.GetTempPath(), "al-runner-ftr-tests", "cache-" + Guid.NewGuid().ToString("N"));
+        var cacheDir = TestScratch.Dir("al-runner-ftr-tests");
         try
         {
             var (exit, stdout, stderr) = Run(cacheDir);

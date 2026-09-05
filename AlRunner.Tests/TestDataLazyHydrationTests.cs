@@ -238,8 +238,138 @@ public sealed class TestDataLazyLoadPolicyTests : IDisposable
         TestDataProvisioner.Arm();
 
         Assert.Null(RecordPatches.TestDataOnDemandLoader);
+        Assert.Null(RecordPatches.TestDataDeferredLoadNotifier);
+        Assert.Null(RecordPatches.TestDataDeferredLoadWriteOffNotifier);
         Assert.Empty(ReaderInvocations());
         Assert.Null(TestDataProvisioner.LastSummary);
+    }
+
+    /// <summary>
+    /// #2877's reporting half, end to end through the real provisioner. A table whose storage is
+    /// first created from inside ANOTHER table's hydration used to leave TableOutcome answering
+    /// null for it — and null, under the on-demand policy, means "nothing in this run ever
+    /// touched the table". So the one table that had been touched, published and silently left
+    /// unloaded was the one the run described exactly like a table nobody asked for.
+    ///
+    /// The untouched table is asserted alongside it on purpose: without that arm, a fix that
+    /// recorded something for every id in the plan would pass.
+    /// </summary>
+    [Fact]
+    public void ATableFirstCreatedInsideAnotherTablesHydration_HasARecordedOutcome_NotNull()
+    {
+        TestDataProvisioner.Arm();
+        var realLoader = RecordPatches.TestDataOnDemandLoader!;
+        var perTable = new System.Collections.Concurrent.ConcurrentDictionary<int, object>();
+        var source = new object();
+
+        // Stand in for BC's metadata / NavValue construction reaching a Record of another table
+        // while the outer table is being hydrated. Only the loader is swapped: the deferred-load
+        // notifier Arm() installed is the thing under test and stays in place.
+        RecordPatches.TestDataOnDemandLoader = (src, id) =>
+        {
+            if (id != UntouchedTableId) { realLoader(src, id); return; }
+            RecordPatches.GetOrCreateHydratedDataAccessCore(
+                src, perTable, TouchedTableId, static () => new object());
+        };
+
+        RecordPatches.GetOrCreateHydratedDataAccessCore(
+            source, perTable, UntouchedTableId, static () => new object());
+
+        var deferred = TestDataProvisioner.TableOutcome(TouchedTableId);
+        Assert.NotNull(deferred);
+        Assert.Contains("inside another table's", deferred!, StringComparison.Ordinal);
+        Assert.Contains("nothing has been loaded into it yet", deferred, StringComparison.Ordinal);
+
+        // A table nothing touched still has no outcome — "nested, not loaded" and "never
+        // touched" are two different answers, which is the whole point.
+        Assert.Null(TestDataProvisioner.TableOutcome(NotInTheBackupTableId));
+
+        // …and once the debt is paid the load's OWN outcome replaces it, so the deferred note is
+        // never left standing as the final word.
+        RecordPatches.TestDataOnDemandLoader = realLoader;
+        RecordPatches.GetOrCreateHydratedDataAccessCore(
+            source, perTable, TouchedTableId, static () => new object());
+
+        var settled = TestDataProvisioner.TableOutcome(TouchedTableId);
+        Assert.NotNull(settled);
+        Assert.DoesNotContain("nothing has been loaded into it yet", settled!, StringComparison.Ordinal);
+        Assert.Contains("Touched", settled, StringComparison.Ordinal);
+        // The debt really was paid by reading the backup, not by writing the outcome off.
+        Assert.Contains(TableLoadReads(), l => l.Contains("|Touched|", StringComparison.Ordinal));
+        Assert.Equal(0, TestDataProvisioner.DeferredLoadsWrittenOff);
+    }
+
+    /// <summary>
+    /// The write-off, reported through the real provisioner. Something wrote into the store
+    /// between the nested publication and the touch that would have loaded it, so the backup's
+    /// rows for that table are never loaded — and the run says so, per table, instead of leaving
+    /// a store that looks exactly like a table nothing touched.
+    /// </summary>
+    [Fact]
+    public void ADeferredLoadThatCannotBeRun_IsCountedAndExplained_NotSilentlyDropped()
+    {
+        TestDataProvisioner.Arm();
+        var realLoader = RecordPatches.TestDataOnDemandLoader!;
+        var perTable = new System.Collections.Concurrent.ConcurrentDictionary<int, object>();
+        var source = new object();
+        var occupied = new HashSet<object>();
+        Func<object, bool?> hasRows = store => occupied.Contains(store);
+
+        RecordPatches.TestDataOnDemandLoader = (src, id) =>
+        {
+            if (id != UntouchedTableId) { realLoader(src, id); return; }
+            var nested = RecordPatches.GetOrCreateHydratedDataAccessCore(
+                src, perTable, TouchedTableId, static () => new object(), hasRows);
+            occupied.Add(nested);   // the nested caller writes through the handle it was given
+        };
+
+        RecordPatches.GetOrCreateHydratedDataAccessCore(
+            source, perTable, UntouchedTableId, static () => new object(), hasRows);
+        RecordPatches.TestDataOnDemandLoader = realLoader;
+        RecordPatches.GetOrCreateHydratedDataAccessCore(
+            source, perTable, TouchedTableId, static () => new object(), hasRows);
+
+        Assert.Equal(1, TestDataProvisioner.DeferredLoadsWrittenOff);
+        var outcome = TestDataProvisioner.TableOutcome(TouchedTableId);
+        Assert.NotNull(outcome);
+        Assert.Contains("never loaded", outcome!, StringComparison.Ordinal);
+        Assert.Contains("mix", outcome, StringComparison.Ordinal);
+        // No reader ran for it — the write-off is the reason there are no rows, not a read that
+        // came back empty.
+        Assert.DoesNotContain(TableLoadReads(), l => l.Contains("|Touched|", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// A table the backup does not offer must NOT be reported as a deferred or written-off load:
+    /// nothing was lost, and every runner test table and every table this company has no rows
+    /// for takes this path. It gets the ordinary "the plan has no table with this id" answer.
+    /// </summary>
+    [Fact]
+    public void ANestedCreationOfATableTheBackupDoesNotHave_IsNotReportedAsAMissingLoad()
+    {
+        TestDataProvisioner.Arm();
+        var realLoader = RecordPatches.TestDataOnDemandLoader!;
+        var perTable = new System.Collections.Concurrent.ConcurrentDictionary<int, object>();
+        var source = new object();
+
+        RecordPatches.TestDataOnDemandLoader = (src, id) =>
+        {
+            if (id != UntouchedTableId) { realLoader(src, id); return; }
+            RecordPatches.GetOrCreateHydratedDataAccessCore(
+                src, perTable, NotInTheBackupTableId, static () => new object());
+        };
+
+        RecordPatches.GetOrCreateHydratedDataAccessCore(
+            source, perTable, UntouchedTableId, static () => new object());
+
+        var outcome = TestDataProvisioner.TableOutcome(NotInTheBackupTableId);
+        Assert.NotNull(outcome);
+        Assert.Contains("has no table with this id", outcome!, StringComparison.Ordinal);
+        Assert.DoesNotContain("nothing has been loaded into it yet", outcome, StringComparison.Ordinal);
+        Assert.Equal(0, TestDataProvisioner.DeferredLoadsWrittenOff);
+        // The only table read was the one that really is in the plan.
+        Assert.All(TableLoadReads(),
+            l => Assert.Contains("|Untouched|", l, StringComparison.Ordinal));
     }
 }
 

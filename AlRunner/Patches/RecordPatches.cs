@@ -243,7 +243,47 @@ public static partial class RecordPatches
         // Shares InvalidateBcAppIndexes with AddBcAppPath (RecordPatches.BcAppFallback.cs) so the
         // two call sites can't drift apart again the way they did here.
         lock (_bcTableIndexLock)
-            InvalidateBcAppIndexes();
+        {
+            // #2755: the REGISTERED set goes too, not just the indexes derived from it.
+            // InvalidateBcAppIndexes drops the derived table/extension indexes so the next lookup
+            // rebuilds them FROM _bcAppPaths — so leaving that list populated meant bundle 2 in a
+            // --server/--watch process rebuilt against its own registrations UNION every earlier
+            // bundle's, while a fresh single-bundle process running bundle 2 alone saw only its
+            // own. The neighbouring per-bundle state already held this invariant
+            // (InstallTriggerRunner.ResetForNewBundle clears _depAssemblies), and the server
+            // path's own comment states the intent: "New bundle in the server session: replace
+            // (not inherit) the install-trigger registrations".
+            //
+            // Safe for the PER-BUNDLE registrations because every caller re-registers
+            // immediately afterwards, and registers the FULL resolved closure rather than a
+            // delta — platform and Base Application .apps included. ResetForNewBundleReload
+            // (BcRuntime.cs, the single caller of this method) runs at Program.cs 2196 on the
+            // CLI path and 4049 on the server path; the matching registrations are at 2354/2357
+            // and 4533/4534, both AFTER. A clear therefore removes nothing the current bundle
+            // does not immediately put back.
+            //
+            // NOT safe for all of them, which is why this is ClearPerBundleBcAppPaths and not
+            // _bcAppPaths.Clear(): the SystemApp package is registered once per PROCESS, by
+            // RegisterSystemAppPackage() from Register(), and no per-bundle path re-adds it. A
+            // flat clear unregistered the AL source for every NCL-internal system table for the
+            // rest of a --server/--watch process — and since this method also clears
+            // _parsedTables and _metaTableCache, that registration is the only thing they can
+            // be rebuilt from. Two AlRunner.Tests classes caught it as
+            // "no NCLMetaTable for table N (dependency source not parsed)".
+            //
+            // #2478 is the reason this is spelled out rather than done quietly: the last defect
+            // in this same reset path was an index reset that did not reset ENOUGH, and it made
+            // precompiled tableextension fields vanish from every metatable from the second
+            // server request on. That failure was silent; this one was too.
+            //
+            // Still accumulating, same shape, deliberately NOT changed here: the sibling list
+            // _bcQuerySymbolJsonPaths (RecordPatches.BcAppFallback.cs), tracked in #2939. It
+            // feeds _bcSymbolQueryIndex through the same derived/registered split and is the
+            // other input to RegisteredBcAppSymbolStateKey. Left alone because #2755 scoped
+            // itself to _bcAppPaths and called the blast radius out explicitly — and the
+            // SystemApp regression above is what that caution was warning about.
+            ClearPerBundleBcAppPaths();
+        }
         _fieldTriggersWiredTables.Clear();
         _parsedPages.Clear();
         _parsedPageExtensions.Clear();
@@ -1489,14 +1529,40 @@ public static partial class RecordPatches
     /// </summary>
     internal static Action<object, int>? TestDataOnDemandLoader;
 
+    /// <summary>
+    /// Told the id of a table whose storage was published from inside ANOTHER table's hydration
+    /// and therefore could not be loaded there (#2877). Installed by TestDataProvisioner.Arm()
+    /// alongside the loader, and null for every run without --test-data.
+    ///
+    /// The point is reporting, not mechanism: without it the provisioner has no record for that
+    /// table at all, so TableOutcome answers null — which under the on-demand policy means
+    /// "nothing in this run ever touched it", the opposite of what happened. Same argument as
+    /// #2240.
+    /// </summary>
+    internal static Action<int>? TestDataDeferredLoadNotifier;
+
+    /// <summary>
+    /// Told (table id, reason) when a deferred load could not be run after all, because the
+    /// store had rows by then or could not be read. Arriving here means the table ends the run
+    /// WITHOUT its backup rows, so it is reported rather than skipped — a silent skip is what
+    /// produced #2877. See .claude/rules/loud-failures.md.
+    /// </summary>
+    internal static Action<int, string>? TestDataDeferredLoadWriteOffNotifier;
+
     /// <summary>Re-entrancy depth for the loader — NOT a "which tables are loaded" cache,
     /// which #2262 rules out on purpose.
     ///
     /// Hydrating a table runs BC's own metadata and NavValue construction, and that code can
     /// reach a Record of ANOTHER table, which lands back in GetDataAccessForTableCore and
-    /// would recurse. Skipping the nested load is safe rather than lossy: the nested table is
-    /// left with empty storage, which is the same state it would have had a moment earlier,
-    /// so the next independent touch of it loads it normally.</summary>
+    /// would recurse.
+    ///
+    /// Skipping the nested load is only safe because the omission is RECORDED. The nested call
+    /// has already published the nested table's storage by the time the load is refused, and
+    /// "storage presence IS the have-we-loaded-this answer" then made the omission permanent:
+    /// every later touch found the entry and never loaded it, so the table silently kept none
+    /// of its backup rows for the whole run (#2877). GetOrCreateHydratedDataAccessCore's nested
+    /// branch marks that instance as owing a load, and the next touch outside a materialisation
+    /// settles it — see RecordPatches.TableMaterialisation.cs.</summary>
     [ThreadStatic] private static int _testDataLoadDepth;
 
     private static void InvokeTestDataOnDemandLoader(object source, int tableId)
@@ -1606,9 +1672,7 @@ public static partial class RecordPatches
                 // on demand there. This whole path is now DEFAULT-ON (no env gate): the find
                 // interception means a populated Field table no longer crashes under R2R.
                 var session = _fDasSession?.GetValue(self)
-                    ?? throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
-                        "Field (virtual table 2000000041)",
-                        "field-virtual-table — DataAccessSource has no skeleton session; see docs/scope.md");
+                    ?? throw FieldVirtualShapeGap("DataAccessSource has no skeleton session");
                 PopulateFieldVirtualTable(fieldDa, table, session);
                 return fieldDa;
             }
@@ -1781,11 +1845,9 @@ public static partial class RecordPatches
                     aggPermSetDa = perTable.GetOrAdd(tableId, createdAggPermSet);
                 }
                 var aggPermSetSession = _fDasSession?.GetValue(self)
-                    ?? throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
-                        "Aggregate Permission Set (virtual table 2000000167)",
-                        "aggregate-permission-set-virtual-table — DataAccessSource has no skeleton "
-                        + "session, so BC's own AggregatePermissionSetDataProvider cannot be "
-                        + "constructed; see docs/scope.md");
+                    ?? throw AggregatePermissionSetShapeGap(
+                        "DataAccessSource has no skeleton session, so BC's own "
+                        + "AggregatePermissionSetDataProvider cannot be constructed");
                 PopulateAggregatePermissionSetVirtualTable(aggPermSetDa, table, aggPermSetSession);
                 return aggPermSetDa;
             }
@@ -1874,10 +1936,9 @@ public static partial class RecordPatches
                     featureKeyDa = perTable.GetOrAdd(tableId, createdFeatureKey);
                 }
                 var featureKeySession = _fDasSession?.GetValue(self)
-                    ?? throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
-                        "Feature Key (system table 2000000211)",
-                        "feature-key-virtual-table — DataAccessSource has no skeleton session, so "
-                        + "BC's own FeatureKeyDataProvider cannot be constructed; see docs/scope.md");
+                    ?? throw FeatureKeyShapeGap(
+                        "DataAccessSource has no skeleton session, so BC's own "
+                        + "FeatureKeyDataProvider cannot be constructed");
                 PopulateFeatureKeyVirtualTable(featureKeyDa, table, featureKeySession);
                 return featureKeyDa;
             }
@@ -1936,12 +1997,14 @@ public static partial class RecordPatches
             // is what guarantees it — see RecordPatches.TableMaterialisation.cs — so the populate
             // below always runs on a store that is either hydrated or never will be.
             // See RecordPatches.ObjectMetadataSystemTable.cs.
+            //
+            // A store published by a NESTED materialisation is the one case where the populate
+            // must NOT run yet: it owes a --test-data load that could not run there, and
+            // synthesising into it now would make that load a mix of real and synthesised rows.
+            // MaterialiseObjectMetadataStore holds the populate off until the debt is settled
+            // (#2877) — with no loader installed nothing is ever owed and this is unchanged.
             if (IsObjectMetadataSystemTable(table))
-            {
-                var objectMetadataDa = GetOrCreateHydratedDataAccess(self, perTable, table, tableId);
-                PopulateObjectMetadataSystemTable(objectMetadataDa, table);
-                return objectMetadataDa;
-            }
+                return MaterialiseObjectMetadataStore(self, perTable, table, tableId);
 
             // ── Page Control Field (2000000192) ──────────────────────────────────────────
             // Virtual on the service tier too: one row per field control declared on a

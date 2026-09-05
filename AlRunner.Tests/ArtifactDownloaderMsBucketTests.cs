@@ -90,7 +90,7 @@ public sealed class ArtifactDownloaderMsBucketTests
 
     private static string TempDir()
     {
-        var dir = Path.Combine(Path.GetTempPath(), "al-runner-ms-bucket-" + Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.FlatDir("al-runner-ms-bucket-");
         Directory.CreateDirectory(dir);
         return dir;
     }

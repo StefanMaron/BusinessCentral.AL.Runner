@@ -126,7 +126,7 @@ public class DependencyReportDataItemLinkTests
     [Fact]
     public void ReportDataItem_CarriesItsJoinBackToTheParent()
     {
-        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.Dir("al-runner-dep-report-dataitemlink-tests");
         Directory.CreateDirectory(dir);
         try
         {
@@ -168,7 +168,7 @@ public class DependencyReportDataItemLinkTests
     [Fact]
     public void ReportMetadataXml_StatesTheJoinAndOnlyDatasetColumnTypes()
     {
-        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.Dir("al-runner-dep-report-dataitemlink-tests");
         Directory.CreateDirectory(dir);
         try
         {

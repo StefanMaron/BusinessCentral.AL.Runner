@@ -17,7 +17,7 @@ namespace AlRunner.Tests;
 
 public sealed class JUnitReportCarriedCasesTests : IDisposable
 {
-    private readonly string _dir = Path.Combine(Path.GetTempPath(), "junit-carried-" + Guid.NewGuid().ToString("N"));
+    private readonly string _dir = TestScratch.FlatDir("junit-carried-");
 
     public JUnitReportCarriedCasesTests() => Directory.CreateDirectory(_dir);
     public void Dispose() { try { Directory.Delete(_dir, true); } catch { } }

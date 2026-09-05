@@ -44,7 +44,7 @@ public sealed class PermissionMetadataPopulationTests
     [Fact]
     public void AfterAPermissionTableIsTouched_TheAppGroupAndTheMetadataLayerBothAnswer()
     {
-        var cacheDir = Path.Combine(Path.GetTempPath(), "al-runner-permmeta-" + Guid.NewGuid().ToString("N"));
+        var cacheDir = TestScratch.FlatDir("al-runner-permmeta-");
         try
         {
             var (exit, stdout, stderr) = Run(cacheDir);

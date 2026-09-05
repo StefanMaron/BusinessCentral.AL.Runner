@@ -61,6 +61,19 @@ namespace AlRunner.Patches;
 
 public static partial class RecordPatches
 {
+    /// <summary>
+    /// Every refusal in this file, built in one place. See
+    /// RecordPatches.VirtualTableShapeGap.cs for the three-bucket classification and for
+    /// why the anchor is "not-yet-implemented" rather than a docs/scope.md section (#2945).
+    /// </summary>
+    /// <remarks>
+    /// Category (2) for both. One is a store-wiring gap. The other is a layout Type this BC
+    /// version's option set does not declare: BC's own format fork keys off that ordinal, so
+    /// guessing one would silently send a layout down the wrong renderer.
+    /// </remarks>
+    internal static RunnerOutOfScopeException ReportLayoutListShapeGap(string detail)
+        => VirtualTableShapeGap("Report Layout List (virtual table 2000000234)", "report-layout-list-virtual-table", detail);
+
     internal const int ReportLayoutListVirtualTableId = 2000000234;
 
     // Per in-memory-provider guard so repeated data-access handouts only insert
@@ -81,9 +94,7 @@ public static partial class RecordPatches
         EnsureDataAccessProviderReflection(dataAccess);
 
         var provider = _pDataAccessDataProvider!.GetValue(dataAccess)
-            ?? throw new RunnerOutOfScopeException(
-                "Report Layout List (virtual table 2000000234)",
-                "report-layout-list-virtual-table — data access has no in-memory provider; see docs/scope.md");
+            ?? throw ReportLayoutListShapeGap("data access has no in-memory provider");
 
         var done = _rllPopulatedByProvider.GetValue(provider, static _ => new ConcurrentDictionary<(int, string), byte>());
 
@@ -155,11 +166,10 @@ public static partial class RecordPatches
                     // A layout Type this BC version's option set does not know is not
                     // something we may guess at — BC's format fork keys off this value.
                     if (ordinal < 0)
-                        throw new RunnerOutOfScopeException(
-                            "Report Layout List (virtual table 2000000234)",
-                            $"report-layout-list-virtual-table — report {layout.ReportId} layout '{layout.Name}' declares "
+                        throw ReportLayoutListShapeGap(
+                            $"report {layout.ReportId} layout '{layout.Name}' declares "
                             + $"Type = '{layout.LayoutType}', which is not in this BC version's "
-                            + $"\"{field.FieldName}\" option set ('{field.FieldOptionMetadata?.OptionString}'); see docs/scope.md");
+                            + $"\"{field.FieldName}\" option set ('{field.FieldOptionMetadata?.OptionString}')");
                     return _aovNavOptionCreate!.Invoke(null, new object?[] { field.FieldOptionMetadata, ordinal });
                 }
             // Every other column — Company Name, App ID, Layout/Media GUIDs, User Defined,

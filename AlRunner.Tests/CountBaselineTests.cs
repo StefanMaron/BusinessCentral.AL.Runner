@@ -10,8 +10,7 @@ namespace AlRunner.Tests;
 
 public sealed class CountBaselineManifestSchemaTests : IDisposable
 {
-    private readonly string _path = Path.Combine(
-        Path.GetTempPath(), "al-runner-count-baseline-schema-" + Guid.NewGuid().ToString("N") + ".json");
+    private readonly string _path = TestScratch.FilePath("al-runner-count-baseline-schema", "manifest.json");
 
     public void Dispose()
     {
@@ -105,7 +104,7 @@ public sealed class CountBaselineCheckTests
 {
     private static CountBaselineManifest ManifestWith(string suitesJson)
     {
-        var path = Path.Combine(Path.GetTempPath(), "al-runner-cbc-" + Guid.NewGuid().ToString("N") + ".json");
+        var path = TestScratch.FilePath("al-runner-cbc", "manifest.json");
         try
         {
             File.WriteAllText(path, $$"""{ "suites": {{{suitesJson}}} }""");
@@ -264,7 +263,7 @@ public sealed class CountBaselineGroupsFormTests
 {
     private static CountBaselineManifest Load(string json)
     {
-        var path = Path.Combine(Path.GetTempPath(), "al-runner-cb-groups-" + Guid.NewGuid().ToString("N") + ".json");
+        var path = TestScratch.FilePath("al-runner-cb-groups", "manifest.json");
         try { File.WriteAllText(path, json); return CountBaselineManifest.Load(path); }
         finally { try { File.Delete(path); } catch { } }
     }

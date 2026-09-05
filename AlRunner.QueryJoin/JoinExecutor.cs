@@ -198,7 +198,8 @@ public static class JoinExecutor
     /// (ReadOnlyRecordBuffers as objects). Eagerly materialised so any failure surfaces as a
     /// managed exception at the call site, never a native crash mid-enumeration.
     /// </summary>
-    public static List<object> Execute(JoinContext ctx, object nclMetaQuery, object dataAccessSource)
+    public static List<object> Execute(
+        JoinContext ctx, object nclMetaQuery, object dataAccessSource, object? flowFiltersAndMarks)
     {
         Log(ctx, "ExecuteJoinQuery start");
         EnsureReflection(nclMetaQuery);
@@ -295,7 +296,8 @@ public static class JoinExecutor
                         }
                         else
                         {
-                            fields[col.QuerySlot] = ApplyReverseSign(ctx, col.ColumnObj, ctx.CalcFlowFieldForRow(ownerBuf, col.FlowFieldMeta));
+                            fields[col.QuerySlot] = ApplyReverseSign(ctx, col.ColumnObj,
+                                ctx.CalcFlowFieldForRow(ownerBuf, col.FlowFieldMeta, flowFiltersAndMarks));
                         }
                         continue;
                     }
@@ -322,7 +324,7 @@ public static class JoinExecutor
             // computed over the JOINED rows — mirrors RecordPatches.QueryProjection.cs's
             // single-dataitem GROUP BY (#2137), just fed by `combos` (this executor's own join
             // output) instead of a plain table scan.
-            projected = BuildGroupedRows(ctx, plan, combos);
+            projected = BuildGroupedRows(ctx, plan, combos, flowFiltersAndMarks);
         }
 
         // 4. OrderBy over the projected result slots (top-level ordering).
@@ -470,13 +472,15 @@ public static class JoinExecutor
     /// buffer value at the column's TableSlot, or the child field's typed default for an
     /// unmatched LeftOuterJoin combo, or null if unsupported (ConstValue/no source field).
     /// </summary>
-    private static object? ResolveComboValue(JoinContext ctx, JoinColumn col, Dictionary<string, object?> combo)
+    private static object? ResolveComboValue(
+        JoinContext ctx, JoinColumn col, Dictionary<string, object?> combo, object? flowFiltersAndMarks)
     {
         if (col.FlowFieldMeta != null)
         {
             if (!combo.TryGetValue(col.OwnerName, out var ownerBuf) || ownerBuf == null)
                 return ctx.TypedDefaultForField(col.FlowFieldMeta);
-            return ApplyReverseSign(ctx, col.ColumnObj, ctx.CalcFlowFieldForRow(ownerBuf, col.FlowFieldMeta));
+            return ApplyReverseSign(ctx, col.ColumnObj,
+                ctx.CalcFlowFieldForRow(ownerBuf, col.FlowFieldMeta, flowFiltersAndMarks));
         }
         if (!combo.TryGetValue(col.OwnerName, out var buf) || buf == null)
             return col.SourceField != null ? ctx.TypedDefaultForField(col.SourceField) : null;
@@ -490,11 +494,12 @@ public static class JoinExecutor
     /// row per group. A query with NO non-aggregated column at all is BC's scalar-aggregate
     /// case (SQL's "GROUP BY ()"): exactly one output row always, even over zero joined combos.
     /// </summary>
-    private static List<object?[]> BuildGroupedRows(JoinContext ctx, JoinProjectionPlan plan, List<Dictionary<string, object?>> combos)
+    private static List<object?[]> BuildGroupedRows(JoinContext ctx, JoinProjectionPlan plan,
+        List<Dictionary<string, object?>> combos, object? flowFiltersAndMarks)
     {
         var groupKeyCols = plan.Columns.Where(c => c.Aggregation == "None").ToList();
         if (groupKeyCols.Count == 0)
-            return new List<object?[]> { BuildAggregateRow(ctx, plan, combos) };
+            return new List<object?[]> { BuildAggregateRow(ctx, plan, combos, flowFiltersAndMarks) };
 
         var groups = new Dictionary<JoinGroupKey, List<Dictionary<string, object?>>>();
         var order = new List<JoinGroupKey>();
@@ -502,7 +507,7 @@ public static class JoinExecutor
         {
             var keyValues = new object?[groupKeyCols.Count];
             for (int i = 0; i < groupKeyCols.Count; i++)
-                keyValues[i] = ResolveComboValue(ctx, groupKeyCols[i], combo);
+                keyValues[i] = ResolveComboValue(ctx, groupKeyCols[i], combo, flowFiltersAndMarks);
             var key = new JoinGroupKey(keyValues);
             if (!groups.TryGetValue(key, out var list))
             {
@@ -515,7 +520,7 @@ public static class JoinExecutor
 
         var result = new List<object?[]>(order.Count);
         foreach (var key in order)
-            result.Add(BuildAggregateRow(ctx, plan, groups[key]));
+            result.Add(BuildAggregateRow(ctx, plan, groups[key], flowFiltersAndMarks));
         return result;
     }
 
@@ -528,7 +533,8 @@ public static class JoinExecutor
     /// true combo count and Sum/Average/Min/Max skip exactly the missing ones) and hand them to
     /// ctx.ComputeAggregate — al-runner's own aggregation math, not re-derived here.
     /// </summary>
-    private static object?[] BuildAggregateRow(JoinContext ctx, JoinProjectionPlan plan, IReadOnlyList<Dictionary<string, object?>> groupCombos)
+    private static object?[] BuildAggregateRow(JoinContext ctx, JoinProjectionPlan plan,
+        IReadOnlyList<Dictionary<string, object?>> groupCombos, object? flowFiltersAndMarks)
     {
         var fields = new object?[plan.SlotCount];
         foreach (var col in plan.Columns)
@@ -548,7 +554,7 @@ public static class JoinExecutor
                 continue;
             }
             if (groupCombos.Count > 0)
-                fields[col.QuerySlot] = ResolveComboValue(ctx, col, groupCombos[0]);
+                fields[col.QuerySlot] = ResolveComboValue(ctx, col, groupCombos[0], flowFiltersAndMarks);
         }
         return fields;
     }
