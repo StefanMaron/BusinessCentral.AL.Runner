@@ -59,6 +59,22 @@ public sealed class ObjectMetadataProviderRowProbeTests
         }
     }
 
+    private static void RunObjectMetadataPopulateOnce(object provider, Action populate)
+    {
+        var m = typeof(RecordPatches).GetMethod(
+            "RunObjectMetadataPopulateOnce", BindingFlags.NonPublic | BindingFlags.Static)
+            ?? throw new InvalidOperationException(
+                "test setup: RecordPatches.RunObjectMetadataPopulateOnce(object, Action) not found");
+        try
+        {
+            m.Invoke(null, new object[] { provider, populate });
+        }
+        catch (TargetInvocationException tie) when (tie.InnerException != null)
+        {
+            throw tie.InnerException;
+        }
+    }
+
     // ── The defect: a moved BC layout must not read as "no rows" ─────────────────────
 
     [Fact]
@@ -137,6 +153,99 @@ public sealed class ObjectMetadataProviderRowProbeTests
     public void DerivedProvider_WithNullBaseClassPrivateField_AnswersFalse()
     {
         Assert.False(ProviderHasAnyRow(new DerivedProvider(null)));
+    }
+
+    // ── The populate memo must not record a REFUSED populate as "done" ──────────────
+    // PopulateObjectMetadataSystemTable claims the provider in _omsPopulatedByProvider
+    // BEFORE it does any of the work, so every throw after that point used to leave table
+    // 2000000071 permanently marked "populated" holding whatever rows it had at the moment
+    // it failed — usually none. And a runner refusal IS catchable from AL: asserterror is
+    // MethodScopePatches.NavMethodScope_AssertError, an unfiltered `catch (Exception ex)`.
+    // So `asserterror` around a record-open of this table would swallow the refusal and
+    // leave every later access reading an empty table with no diagnostic anywhere.
+    //
+    // Ten call sites sit after that claim, not one: ProviderHasAnyRow, plus the nine
+    // RunnerOutOfScopeException throws in EnsureObjectMetadataObjectTypeOrdinal /
+    // ReadNavEnvironmentEmitVersion / EnumerateApplicationDatabaseTableIds, plus a
+    // part-way InsertVirtualRow failure. These pin the seam all ten go through.
+
+    [Fact]
+    public void PopulateOnce_BodyThrows_SecondCallRefusesAgain_NeverSilentlyMarksItPopulated()
+    {
+        var provider = new object();
+        var calls = 0;
+        void Body()
+        {
+            calls++;
+            throw new RunnerOutOfScopeException("Object Metadata (system table 2000000071)",
+                "object-metadata-system-table — synthetic refusal; see docs/scope.md");
+        }
+
+        var first = Assert.Throws<RunnerOutOfScopeException>(
+            () => RunObjectMetadataPopulateOnce(provider, Body));
+        // The second access must NOT come back quietly with an empty table.
+        var second = Assert.Throws<RunnerOutOfScopeException>(
+            () => RunObjectMetadataPopulateOnce(provider, Body));
+
+        Assert.Equal(first.Message, second.Message);
+        Assert.Equal("object-metadata-system-table — synthetic refusal; see docs/scope.md", second.Reason);
+        // Latched, not re-derived: the refusal replays from the memo rather than re-running a
+        // populate that may have left rows behind part-way through.
+        Assert.Equal(1, calls);
+    }
+
+    // The end-to-end shape of #2786 at the seam: the body is the real ProviderHasAnyRow
+    // against a provider whose layout moved. Nothing may be synthesised, and no call may
+    // ever answer quietly.
+    [Fact]
+    public void PopulateOnce_ProviderLayoutMoved_RefusesEveryTime_AndSynthesisesNothing()
+    {
+        var provider = new ProviderWithoutPrimaryTree();
+        var rowsSynthesised = 0;
+        void Body()
+        {
+            if (ProviderHasAnyRow(provider)) return;
+            rowsSynthesised++;
+        }
+
+        Assert.Throws<RunnerOutOfScopeException>(() => RunObjectMetadataPopulateOnce(provider, Body));
+        Assert.Throws<RunnerOutOfScopeException>(() => RunObjectMetadataPopulateOnce(provider, Body));
+
+        Assert.Equal(0, rowsSynthesised);
+    }
+
+    // The positive arm: a populate that SUCCEEDS is still once-only. Without this, "poison
+    // the memo on failure" could be satisfied by never memoising at all, which would
+    // re-synthesise 43 rows on every single record-open of the table.
+    [Fact]
+    public void PopulateOnce_BodySucceeds_RunsExactlyOnce_AcrossRepeatedCalls()
+    {
+        var provider = new object();
+        var calls = 0;
+
+        RunObjectMetadataPopulateOnce(provider, () => calls++);
+        RunObjectMetadataPopulateOnce(provider, () => calls++);
+        RunObjectMetadataPopulateOnce(provider, () => calls++);
+
+        Assert.Equal(1, calls);
+    }
+
+    // Two providers are two independent stores: one refusing must not poison the other.
+    [Fact]
+    public void PopulateOnce_RefusalIsPerProvider_AndDoesNotLeakToAnother()
+    {
+        var refusing = new object();
+        var healthy = new object();
+        var healthyCalls = 0;
+
+        Assert.Throws<RunnerOutOfScopeException>(() => RunObjectMetadataPopulateOnce(
+            refusing, () => throw new RunnerOutOfScopeException("api", "reason")));
+
+        var record = Record.Exception(
+            () => RunObjectMetadataPopulateOnce(healthy, () => healthyCalls++));
+
+        Assert.Null(record);
+        Assert.Equal(1, healthyCalls);
     }
 
     // ── Reflected-shape fakes ────────────────────────────────────────────────────────

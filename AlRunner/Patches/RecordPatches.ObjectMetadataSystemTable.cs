@@ -138,6 +138,7 @@
 using System.Collections;
 using System.Reflection;
 using System.Runtime.CompilerServices;
+using System.Runtime.ExceptionServices;
 using AlRunner.Infrastructure;
 using Microsoft.Dynamics.Nav.Runtime;
 
@@ -161,7 +162,13 @@ public static partial class RecordPatches
 
     // Populated-once guard, per in-memory provider. The row set is a fixed BC-declared list,
     // so unlike AllObj there is nothing to top up on a later handout.
+    //
+    // The value is either _omsPopulateSucceeded or the ExceptionDispatchInfo of the refusal
+    // that stopped it — see RunObjectMetadataPopulateOnce for why a failure has to be
+    // remembered rather than forgotten.
     private static readonly ConditionalWeakTable<object, object> _omsPopulatedByProvider = new();
+
+    private static readonly object _omsPopulateSucceeded = new();
 
     private static int[]? _omsApplicationDatabaseTableIds;
     private static int? _omsObjectTypeOrdinal;
@@ -188,24 +195,77 @@ public static partial class RecordPatches
                 "Object Metadata (system table 2000000071)",
                 "object-metadata-system-table — data access has no in-memory provider; see docs/scope.md");
 
+        RunObjectMetadataPopulateOnce(provider, () =>
+        {
+            // --test-data (or an install baseline) already put real rows here — leave them alone.
+            if (ProviderHasAnyRow(provider)) return;
+
+            var objectTypeOrdinal = EnsureObjectMetadataObjectTypeOrdinal(metaTable);
+            var emitVersion = ReadNavEnvironmentEmitVersion();
+
+            foreach (var tableId in EnumerateApplicationDatabaseTableIds())
+            {
+                InsertVirtualRow(provider, metaTable,
+                    new object[] { ObjectMetadataSystemTableId, objectTypeOrdinal, tableId, emitVersion },
+                    field => BuildObjectMetadataValue(field, objectTypeOrdinal, tableId, emitVersion));
+            }
+        });
+    }
+
+    /// <summary>
+    /// Run <paramref name="populate"/> at most once per provider, and never let a populate
+    /// that REFUSED be remembered as one that succeeded.
+    ///
+    /// <para>WHY THE FAILURE PATH EXISTS (#2786 review). The claim below is taken BEFORE any
+    /// of the work, which is what makes the populate once-only under the concurrent handout
+    /// in GetDataAccessForTableCore. Ten things after that claim can throw:
+    /// <see cref="ProviderHasAnyRow"/>, the nine <see cref="RunnerOutOfScopeException"/>
+    /// throws across <see cref="EnsureObjectMetadataObjectTypeOrdinal"/>,
+    /// <see cref="ReadNavEnvironmentEmitVersion"/> and
+    /// <see cref="EnumerateApplicationDatabaseTableIds"/>, and an <c>InsertVirtualRow</c> that
+    /// fails part-way through the row set. Left alone, every one of them marked table
+    /// 2000000071 "populated" holding whatever it had at the moment it failed — usually
+    /// nothing — and every later access read an empty table with no diagnostic.</para>
+    ///
+    /// <para>THAT IS REACHABLE FROM AL, not just in theory. A runner refusal IS catchable:
+    /// AL's <c>asserterror</c> is MethodScopePatches.NavMethodScope_AssertError, an unfiltered
+    /// <c>catch (Exception ex)</c>, and this populate runs on the record-open path an
+    /// <c>asserterror</c> can wrap. So the refusal gets swallowed and the empty table is what
+    /// the rest of the test sees.</para>
+    ///
+    /// <para>A REFUSAL IS REPLAYED, NOT RETRIED. Retrying looks kinder and is worse: an
+    /// <c>InsertVirtualRow</c> that failed on row 20 leaves 19 rows behind, so the retry's own
+    /// <see cref="ProviderHasAnyRow"/> answers "already populated" and returns quietly — a
+    /// silently PARTIAL table, which is the bug this method exists to prevent wearing a
+    /// different hat. None of these failures is transient anyway: BC's layout does not change
+    /// mid-run. Same principle as RowVersionPatches' "no loud-once-then-silent latch"
+    /// (#1986), in the opposite direction — there the latch made a failure go quiet, here it
+    /// is what keeps it loud.</para>
+    /// </summary>
+    private static void RunObjectMetadataPopulateOnce(object provider, Action populate)
+    {
         // One populate per provider; the row set never grows within a run.
         lock (_omsPopulatedByProvider)
         {
-            if (_omsPopulatedByProvider.TryGetValue(provider, out _)) return;
-            _omsPopulatedByProvider.Add(provider, provider);
+            if (_omsPopulatedByProvider.TryGetValue(provider, out var prior))
+            {
+                // Throw() rather than `throw`: it preserves the original refusal's stack, so
+                // the message still points at the member that actually moved.
+                if (prior is ExceptionDispatchInfo refused) refused.Throw();
+                return;
+            }
+            _omsPopulatedByProvider.Add(provider, _omsPopulateSucceeded);
         }
 
-        // --test-data (or an install baseline) already put real rows here — leave them alone.
-        if (ProviderHasAnyRow(provider)) return;
-
-        var objectTypeOrdinal = EnsureObjectMetadataObjectTypeOrdinal(metaTable);
-        var emitVersion = ReadNavEnvironmentEmitVersion();
-
-        foreach (var tableId in EnumerateApplicationDatabaseTableIds())
+        try
         {
-            InsertVirtualRow(provider, metaTable,
-                new object[] { ObjectMetadataSystemTableId, objectTypeOrdinal, tableId, emitVersion },
-                field => BuildObjectMetadataValue(field, objectTypeOrdinal, tableId, emitVersion));
+            populate();
+        }
+        catch (Exception ex)
+        {
+            lock (_omsPopulatedByProvider)
+                _omsPopulatedByProvider.AddOrUpdate(provider, ExceptionDispatchInfo.Capture(ex));
+            throw;
         }
     }
 
@@ -368,8 +428,12 @@ public static partial class RecordPatches
     /// <para>A refusal here is a BUG REPORT ABOUT THE RUNNER, not a permanent scope
     /// boundary — but <see cref="RunnerOutOfScopeException"/> is what this whole file already
     /// raises when a BC surface it reflects on is not where it expects (SystemTables,
-    /// NavEnvironment, the "Object Type" option string), it names the API and a
-    /// docs/scope.md reason, and AL <c>asserterror</c> cannot swallow it. Same choice here.</para>
+    /// NavEnvironment, the "Object Type" option string), and it carries the typed
+    /// <c>Api</c>/<c>Reason</c> pair the expectations manifest matches on. Same choice here.
+    /// It is NOT proof against AL swallowing it — <c>asserterror</c> is
+    /// MethodScopePatches.NavMethodScope_AssertError, an unfiltered <c>catch (Exception ex)</c>
+    /// — which is exactly why <see cref="RunObjectMetadataPopulateOnce"/> has to remember a
+    /// refusal instead of leaving the table marked populated and empty.</para>
     ///
     /// <para>Resolution goes through <see cref="PrivateMemberLookup"/> rather than a plain
     /// <c>GetField</c>, because <c>primaryTree</c> is PRIVATE on <c>TempTableDataProvider</c>
