@@ -29,11 +29,17 @@
 // Measure with Code X does not exist"), so they raise whatever the flag says and prove nothing
 // about it.
 //
-// The control was originally Customer.City, which was VACUOUS: City's relation is the two-arm
-// conditional `if (...) "Post Code".City else if (...) ... where(...)`, whose where-clause hits
-// RelationConditionList's default arm, so ParseRelationArms refuses the WHOLE property and the
-// field reaches the metadata with no relations at all. It would have passed identically with the
-// ValidateTableRelation read deleted. The flag is not cosmetic: 235 Base Application fields carry
+// The control was originally Customer.City, which was VACUOUS at the time: City's relation is
+// the two-arm conditional `if (...) "Post Code".City else if (...) ... where(...)`, and the
+// where-clause's `field(...)` link hit RelationConditionList's default arm, so ParseRelationArms
+// refused the WHOLE property and the field reached the metadata with no relations at all. It
+// would have passed identically with the ValidateTableRelation read deleted.
+//
+// #2518 has since taught RelationConditionList to carry a `field(...)` link in a where() clause,
+// so Customer.City's relation IS read now and the field is no longer a place a vacuous control
+// can hide. The control stays on "My Item"."User ID" anyway: City's own OnValidate is not the
+// point, and the single-arm shape keeps the control's claim about ValidateTableRelation clean.
+// The flag is not cosmetic: 235 Base Application fields carry
 // ValidateTableRelation = 0 together with a relation this parser accepts (about 150 of them user-id
 // fields), and if that read regressed they would start REFUSING values real BC accepts — the same
 // silent wrongness this PR fixes, inverted.
@@ -133,9 +139,11 @@ codeunit 61401 "PTR Tests"
     begin
         // Precondition for the control below, asserted rather than assumed: the relation must
         // actually be PRESENT on this field. If it were refused by the parser — as Customer.City's
-        // conditional form is — the "does not raise" test underneath would pass for the wrong
-        // reason and prove nothing about ValidateTableRelation. This assertion is what makes the
-        // control non-vacuous, and it is the check the first version of this suite was missing.
+        // conditional form was before #2518 — the "does not raise" test underneath would pass for
+        // the wrong reason and prove nothing about ValidateTableRelation. This assertion is what
+        // makes the control non-vacuous, and it is the check the first version of this suite was
+        // missing. It stays whether or not any particular shape is currently refused, because it
+        // is the refusal DISCIPLINE, not one shape, that can hollow the control out.
         RecRef.Open(Database::"My Item");
         FieldRef := RecRef.Field(MyItm.FieldNo("User ID"));
 

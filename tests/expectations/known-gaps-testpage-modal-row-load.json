@@ -1,0 +1,10 @@
+[
+  {
+    "codeunitId": 60403,
+    "CodeunitName": "Test Modal Row Load",
+    "Method": "ModalPageOnACallerPositionedRow_RaisesOnAfterGetRecordForThatRow",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2797",
+    "Note": "Pulled in by this PR's submodule pin bump, NOT caused by it. The pin had to advance to fb54379 to consume StefanMaron/BusinessCentral.AL.Language.Tests#165 (the upstream half of #2518), and corpus master had meanwhile merged five other agents' PRs on top of a307df8 -- corpus history is linear, so #165 cannot be taken without them. This test arrived with corpus PR #164. A page opened modally on a row the caller already positioned (PAGE.RunModal(id, Rec)) never raises its OnAfterGetRecord, so a page deriving its per-row state there shows nothing; real BC raises it for the caller's row before the [ModalPageHandler] runs. Green on real BC on all eight corpus legs. Tracked as #2797, which is open and is NOT closed by this PR. MERGE ORDER MATTERS: runner PR #2812 is the fix and is already open; whichever of #2812 and this PR lands second must delete this file, because #2812 alone makes the test pass and an entry naming a passing test is drift that turns main red (the #2844 / #2859 mechanism)."
+  }
+]
