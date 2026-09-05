@@ -42,7 +42,7 @@ public static class ArtifactDownloader
         var url = $"https://api.nuget.org/v3-flatcontainer/{packageId}/{version}/{packageId}.{version}.nupkg";
 
         Directory.CreateDirectory(outputDir);
-        using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(5) };
+        using var http = ArtifactHttpClient.Create(TimeSpan.FromMinutes(5), logf);
         logf($"Downloading AL compiler {version} from NuGet ({packageId})...");
 
         byte[] nupkg;
@@ -56,7 +56,10 @@ public static class ArtifactDownloader
         }
         catch (Exception ex)
         {
-            logf($"Error downloading: {ex.Message}");
+            // Issue #2926: same shape as the CDN messages — one line for every possible
+            // failure. This one fetches from nuget.org rather than the BC CDN, so a message
+            // blaming "the CDN" would be wrong twice over.
+            NetworkDiagnosis.Describe(ex, $"the AL compiler package {packageId} {version}", url).WriteTo(logf);
             return 1;
         }
 
@@ -105,7 +108,7 @@ public static class ArtifactDownloader
         var artifactUrl = $"{CdnBase}/{version}/platform";
         Directory.CreateDirectory(outputDir);
 
-        using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(5) };
+        using var http = ArtifactHttpClient.Create(TimeSpan.FromMinutes(5), logf);
 
         logf($"Resolving artifact size for BC {version}...");
         if (!TryHeadContentLength(http, artifactUrl, version, "platform", logf, out long totalSize)) return 1;
@@ -174,7 +177,7 @@ public static class ArtifactDownloader
         var artifactUrl = $"{CdnBase}/{version}/platform";
         Directory.CreateDirectory(outputDir);
 
-        using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
+        using var http = ArtifactHttpClient.Create(TimeSpan.FromMinutes(10), logf);
 
         logf($"Resolving artifact size for BC {version} (platform)...");
         if (!TryHeadContentLength(http, artifactUrl, version, "platform", logf, out long totalSize)) return 1;
@@ -261,7 +264,7 @@ public static class ArtifactDownloader
         var artifactUrl = BuildArtifactUrl(version, "platform");
         Directory.CreateDirectory(outputDir);
 
-        using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
+        using var http = ArtifactHttpClient.Create(TimeSpan.FromMinutes(10), logf);
 
         logf($"Resolving artifact size for BC {version} (platform)...");
         if (!TryHeadContentLength(http, artifactUrl, version, "platform", logf, out long totalSize)) return 1;
@@ -398,7 +401,7 @@ public static class ArtifactDownloader
         Directory.CreateDirectory(outputDir);
 
         // Generous: this client streams the whole ~600 MB entry through one response.
-        using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(30) };
+        using var http = ArtifactHttpClient.Create(TimeSpan.FromMinutes(30), logf);
 
         logf($"Resolving artifact size for BC {version} ({countryLower})...");
         if (!TryHeadContentLength(http, artifactUrl, version, countryLower, logf, out long totalSize)) return 1;
@@ -646,7 +649,7 @@ public static class ArtifactDownloader
         var artifactUrl = BuildArtifactUrl(version, countryLower);
         Directory.CreateDirectory(outputDir);
 
-        using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
+        using var http = ArtifactHttpClient.Create(TimeSpan.FromMinutes(10), logf);
 
         logf($"Resolving artifact size for BC {version} ({countryLower})...");
         if (!TryHeadContentLength(http, artifactUrl, version, countryLower, logf, out long totalSize)) return 1;
@@ -716,7 +719,7 @@ public static class ArtifactDownloader
     private static int SystemApp(string version, string outputDir, Action<string> logf)
     {
         var artifactUrl = $"{CdnBase}/{version}/platform";
-        using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
+        using var http = ArtifactHttpClient.Create(TimeSpan.FromMinutes(10), logf);
 
         logf($"Resolving platform artifact for System.app (BC {version})...");
         if (!TryHeadContentLength(http, artifactUrl, version, "platform", logf, out long totalSize))
@@ -771,13 +774,28 @@ public static class ArtifactDownloader
         var url = $"{CdnBase}/{version}/platform";
         try
         {
-            using var http = new HttpClient();
+            using var http = ArtifactHttpClient.Create(log: logf);
             using var resp = http.Send(new HttpRequestMessage(HttpMethod.Head, url));
             return resp.IsSuccessStatusCode;
         }
-        catch (HttpRequestException ex)
+        catch (Exception ex)
         {
-            logf($"[provision] could not probe BC {version} on the CDN: {ex.Message}");
+            // Issue #2926. Two things wrong here, and the second is the one that bites.
+            //
+            // Only HttpRequestException was caught, so a timeout escaped as an unhandled
+            // exception from a method whose whole contract is "answer true or false".
+            //
+            // And `false` here does not mean what the caller reads it as.
+            // BcArtifacts.ResolveProvisionTargetCore treats false as "this exact build is not
+            // published" and walks down to the major-fallback tier, whose own comment calls
+            // that "the one genuinely degraded outcome" — so a five-second network blip gets
+            // reported to the user as Microsoft having withdrawn the build. The signature
+            // cannot carry the third state without changing that contract (tracked separately),
+            // so the log at least has to stop asserting something that was never established.
+            NetworkDiagnosis.Describe(ex, $"BC {version}", url).WriteTo(logf);
+            logf($"       Could not determine whether BC {version} is published. Treating it as " +
+                 "unavailable and falling back; that is a consequence of the failure above, not " +
+                 "evidence the build was withdrawn.");
             return false;
         }
     }
@@ -793,8 +811,16 @@ public static class ArtifactDownloader
         logf($"Resolving BC version prefix '{prefix}'...");
 
         string json;
-        try { using var http = new HttpClient(); json = http.GetStringAsync(indexUrl).Result; }
-        catch (Exception ex) { logf($"Error fetching index: {ex.Message}"); return null; }
+        try { using var http = ArtifactHttpClient.Create(log: logf); json = http.GetStringAsync(indexUrl).Result; }
+        catch (Exception ex)
+        {
+            // Issue #2926: this used to print "Error fetching index: One or more errors
+            // occurred. (A task was canceled.)" — an AggregateException's ToString, which names
+            // neither what failed nor where. NetworkDiagnosis unwraps it and reports the
+            // observation.
+            NetworkDiagnosis.Describe(ex, $"the BC version index (prefix '{prefix}')", indexUrl).WriteTo(logf);
+            return null;
+        }
 
         var searchPrefix = prefix + ".";
         var versions = new List<string>();
@@ -876,9 +902,20 @@ public static class ArtifactDownloader
             size = 0;
             return false;
         }
-        catch (HttpRequestException ex)
+        catch (Exception ex)
         {
-            logf($"Error: could not reach the BC artifact CDN for {version} ({channel}): {ex.Message}");
+            // Issue #2926, two defects in one catch block.
+            //
+            // It caught only HttpRequestException, so a client-timeout — which .NET raises as
+            // TaskCanceledException, not HttpRequestException — escaped this method as an
+            // unhandled exception with a raw stack trace: exactly the crash #1659 fixed for
+            // 404s, still live for the most common transient failure there is.
+            //
+            // And the message it did emit named a cause the observation did not support. "could
+            // not reach the BC artifact CDN" is how a host with no IPv6 route was told Azure was
+            // down. NetworkDiagnosis reports what was observed and only speaks about the CDN
+            // when the CDN actually answered.
+            NetworkDiagnosis.Describe(ex, $"BC {version} ({channel})", url).WriteTo(logf);
             size = 0;
             return false;
         }
@@ -980,6 +1017,7 @@ public static class ArtifactDownloader
 
     private static byte[] DownloadRange(HttpClient http, string url, long from, long to)
     {
+        Exception? last = null;
         for (int attempt = 0; attempt < 2; attempt++)
         {
             try
@@ -992,11 +1030,21 @@ public static class ArtifactDownloader
                 resp.Content.ReadAsStream().CopyTo(ms);
                 return ms.ToArray();
             }
-            catch when (attempt == 0)
+            catch (Exception ex) when (attempt == 0)
             {
-                Console.Error.WriteLine("  Retrying download...");
+                last = ex;
+                Console.Error.WriteLine($"  Retrying download... ({ex.Message})");
+            }
+            catch (Exception ex)
+            {
+                last = ex;
             }
         }
-        throw new Exception($"Failed to download range {from}-{to}");
+        // Issue #2926: this used to throw a bare Exception with no inner, discarding the only
+        // record of WHY both attempts failed. The caller then reported "Failed to download
+        // range 0-65535" — a message that cannot be acted on. Keep the cause attached so the
+        // diagnosis above it has something to classify.
+        throw new HttpRequestException(
+            $"Failed to download range {from}-{to} from {url} after 2 attempts", last);
     }
 }
