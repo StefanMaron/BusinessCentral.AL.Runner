@@ -194,6 +194,10 @@ dispatch, and report/request-page variables support a limited standalone surface
   a handler that cancels leaves the report body unexecuted, and one that calls
   `TestRequestPage.SaveAsXml(parametersFile, dataSetFile)` gets the report's dataset written
   to that file (so `Codeunit "Library - Report Dataset"` can load it) instead of a layout.
+  A handler asking for a RENDERED artifact instead — `SaveAsExcel`, `SaveAsPdf`, `SaveAsWord`,
+  print, preview — is refused loudly on the rendering path, like every other rendering request
+  here; it is not answered with a dataset written into the file it named
+  ([#2887](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2887)).
   A handler can also read and write the request page's **controls**
   (`RequestPage.ShowAmountsInLCY.SetValue(true)`): a request-page control is bound to one of
   the report's own globals, and it resolves through BC's own `NavForm.SourceExpressions`
