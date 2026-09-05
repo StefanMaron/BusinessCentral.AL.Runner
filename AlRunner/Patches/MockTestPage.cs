@@ -232,9 +232,10 @@ internal class LiveNavTestPage : MockITestPage
         // objects with different added behaviour. It is this:
         //
         //   The ONLY behaviour LiveNavTestPart adds over LiveNavTestPage is the SubPageLink.
-        //   A FIELD SubPageLink names a field of the PART's OWN source table (link.FieldID is
-        //   resolved against it — see SubPageLinks below). A part page that declares no source
-        //   table therefore cannot express one, so `links` is necessarily EMPTY, ApplyLink has
+        //   Every SubPageLink entry — field(), const() and filter() alike — names a field of
+        //   the PART's OWN source table (link.FieldID is resolved against it — see SubPageLinks
+        //   below). A part page that declares no source table therefore cannot express one,
+        //   so `links` is necessarily EMPTY, ApplyLink has
         //   nothing to apply, and the wrapper degenerates to exactly LiveNavTestPage over a
         //   null record — the shape #2007 established, where every Rec-dependent member
         //   refuses BY NAME through RequireRecord instead of answering a default.
@@ -307,16 +308,17 @@ internal class LiveNavTestPage : MockITestPage
                 + ". See docs/scope.md");
         }
 
-        // The parent record is only needed to evaluate SubPageLink pairs (issue #2053). A
-        // part with no links never reads it — and a FIELD link can only be declared against
-        // a parent SourceTable field, so a SourceTable-less host (the Worksheet-dialog shape,
-        // legal AL) always lands in the linkless case. Demanding the record up front turned
-        // every part access on such a host into a refusal the operation never required.
+        // The parent record is only needed to evaluate FIELD SubPageLink pairs (issue #2053).
+        // A part with no FIELD link never reads it — a CONST/FILTER link is evaluated against
+        // a literal, and a FIELD link can only be declared against a parent SourceTable field,
+        // so a SourceTable-less host (the Worksheet-dialog shape, legal AL) always lands in the
+        // parent-less case. Demanding the record up front turned every part access on such a
+        // host into a refusal the operation never required.
         var links = SubPageLinks(definition, partPageId);
         var part = new LiveNavTestPart(
             partRecord, RecordPatches.GetPageControlFieldMap(partPageId),
             RecordPatches.GetInsertAllowedForPage(partPageId), partPage, _owner, partPageId,
-            parentRecord: links.Length == 0 ? null : RequireRecord($"subpage part {controlId}"), links: links);
+            parentRecord: LiveNavTestPart.AnyFieldLink(links) ? RequireRecord($"subpage part {controlId}") : null, links: links);
         // A part is never MarkOpened — BC opens the HOST, and the part comes up inside it —
         // so _staticEditable sat at its constructor default of true for every part, whatever
         // the host was opened as. That made a part of a read-only page report itself editable,
@@ -495,30 +497,61 @@ internal class LiveNavTestPage : MockITestPage
     }
 
     /// <summary>
-    /// The SubPageLink as (part field, parent field) pairs. Only FilterType.FIELD is a
-    /// SubPageLink in the AL sense (<c>SubPageLink = ReportId = field(ReportId)</c>); CONST
-    /// and FILTER links are a different, unimplemented shape and refuse loudly rather than
-    /// silently leaving the part unfiltered — an unfiltered part shows other rows' children,
-    /// which is a wrong answer, not a missing one.
+    /// The SubPageLink as compiled entries. All three kinds AL can declare are applied
+    /// (issue #2469): FIELD (<c>ReportId = field(ReportId)</c>) as a SetRange to the parent's
+    /// current value, CONST (<c>Kind = const(Attachment)</c>) as a single-value filter on the
+    /// literal, FILTER (<c>Status = filter(Open | Released)</c>) as the expression itself.
+    /// Before this, CONST and FILTER refused out-of-scope by name — but they are ordinary AL
+    /// (10.9% of Base Application 28.1's SubPageLink entries, measured in the issue), not an
+    /// unsupported surface, and the refusal cost 19 Tests-ERM tests in one bucket alone.
+    ///
+    /// What arrives here is the COMPILER's representation, never AL text — measured on BC
+    /// 28.1's compiler output for corpus codeunit 60324 "TSPL Tests": an option member is its
+    /// ORDINAL (<c>const(Attachment)</c> → <c>1</c>, <c>filter(Open | Released)</c> →
+    /// <c>1|2</c>), <c>const(Database::"TSPL Header")</c> is the table id, and
+    /// <c>const('SPECIAL')</c> on a Code field is the bare text <c>SPECIAL</c>.
+    /// RecordPatches.DependencyPageMetadataXml produces the same shape for a precompiled
+    /// dependency's page, so one consumer serves both routes.
+    ///
+    /// A part field id of 0 (a dependency page whose part field name could not be resolved —
+    /// see DependencyPageMetadataXml.EmitSubFormLinkXml) refuses by name for every kind rather
+    /// than filtering on no field: an unfiltered part shows other rows' children, which is a
+    /// wrong answer, not a missing one.
     /// </summary>
-    private static (int PartFieldNo, int ParentFieldNo)[] SubPageLinks(
+    private static SubPageLinkEntry[] SubPageLinks(
         Microsoft.Dynamics.Nav.Types.Metadata.InfopartPageDefinition definition, int partPageId)
     {
-        var links = new List<(int, int)>();
+        var links = new List<SubPageLinkEntry>();
         foreach (var link in definition.SubFormLink ?? new List<Microsoft.Dynamics.Nav.Types.Metadata.FilterDefinition>())
         {
-            if (link.FilterType != Microsoft.Dynamics.Nav.Types.Metadata.FilterType.FIELD)
+            if (link.FieldID <= 0)
                 throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
                     $"TestPage part → page {partPageId} SubPageLink ({link.FilterType})",
-                    $"testpage-part-link — only FilterType.FIELD SubPageLinks are implemented; "
-                    + $"this part links field {link.FieldID} by {link.FilterType} '{link.FilterValue}'. "
-                    + "See docs/scope.md");
-            if (!int.TryParse(link.FilterValue, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parentFieldNo))
-                throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
-                    $"TestPage part → page {partPageId} SubPageLink",
-                    $"testpage-part-link — a FIELD link's value must be the parent's field number, "
-                    + $"but this one is '{link.FilterValue}'. See docs/scope.md");
-            links.Add((link.FieldID, parentFieldNo));
+                    $"testpage-part-link — the part's own field this link constrains could not be resolved "
+                    + $"(FieldID {link.FieldID}, {link.FilterType} '{link.FilterValue}'). See docs/scope.md");
+            switch (link.FilterType)
+            {
+                case Microsoft.Dynamics.Nav.Types.Metadata.FilterType.FIELD:
+                    if (!int.TryParse(link.FilterValue, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parentFieldNo))
+                        throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+                            $"TestPage part → page {partPageId} SubPageLink",
+                            $"testpage-part-link — a FIELD link's value must be the parent's field number, "
+                            + $"but this one is '{link.FilterValue}'. See docs/scope.md");
+                    links.Add(new SubPageLinkEntry(link.FieldID, link.FilterType, parentFieldNo, string.Empty));
+                    break;
+                case Microsoft.Dynamics.Nav.Types.Metadata.FilterType.CONST:
+                case Microsoft.Dynamics.Nav.Types.Metadata.FilterType.FILTER:
+                    links.Add(new SubPageLinkEntry(link.FieldID, link.FilterType, 0, link.FilterValue ?? string.Empty));
+                    break;
+                default:
+                    // FilterType has exactly FIELD/CONST/FILTER (Types.dll 27.5–28.x). A new
+                    // member in a future BC would land here: refuse by name rather than treat
+                    // it as one of the three and filter wrongly.
+                    throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+                        $"TestPage part → page {partPageId} SubPageLink ({link.FilterType})",
+                        $"testpage-part-link — SubPageLink kind {link.FilterType} is not one of FIELD/CONST/FILTER; "
+                        + $"this part links field {link.FieldID} by {link.FilterType} '{link.FilterValue}'. See docs/scope.md");
+            }
         }
         return links.ToArray();
     }
@@ -2621,6 +2654,15 @@ internal sealed class MockITestPart : MockITestPage, ITestPart
 }
 
 /// <summary>
+/// One entry of a part's SubPageLink, in the shape BC's compiler writes into
+/// <c>InfopartPageDefinition.SubFormLink</c>: the PART's field it constrains, the kind, and
+/// either the PARENT's field number (FIELD) or the compiled literal / filter expression
+/// (CONST / FILTER) — see <c>MockTestPage.SubPageLinks</c> for the representation.
+/// </summary>
+internal readonly record struct SubPageLinkEntry(
+    int PartFieldNo, Microsoft.Dynamics.Nav.Types.Metadata.FilterType Kind, int ParentFieldNo, string Value);
+
+/// <summary>
 /// A subpage part driven live: its own page over its own source table, showing only the
 /// rows the SubPageLink selects for the parent's CURRENT row.
 ///
@@ -2632,23 +2674,25 @@ internal sealed class MockITestPart : MockITestPage, ITestPart
 /// </summary>
 internal sealed class LiveNavTestPart : LiveNavTestPage, ITestPart
 {
-    // Null only when _links is empty (issue #2053: a linkless part on a SourceTable-less
-    // host has no parent record and needs none) — every read below sits inside a _links
-    // loop, so a null parent is never dereferenced.
+    // Null only when _links has no FIELD entry (issue #2053: a part on a SourceTable-less host
+    // has no parent record and needs none; a CONST/FILTER-only part never reads one either) —
+    // every read below sits inside a FIELD case, so a null parent is never dereferenced.
     private readonly NavRecord? _parentRecord;
-    private readonly (int PartFieldNo, int ParentFieldNo)[] _links;
+    private readonly SubPageLinkEntry[] _links;
 
     /// <param name="record">The part page's own source-table cursor, or null when the part
     /// page declares NO SourceTable (issue #2195) — a CardPart bound to page globals, the
     /// info-box shape. Nothing in THIS class needs it in that case, and the reason is a
     /// property of SubPageLink rather than an observation about the parts seen so far: the
-    /// only behaviour this class adds over LiveNavTestPage is the link, a FIELD SubPageLink
-    /// names a field of the part's OWN source table, so a part with no source table cannot
-    /// express one and <see cref="_links"/> is necessarily empty. Everything else is the base
-    /// class's null-record path, where each Rec-dependent member refuses by name.</param>
+    /// only behaviour this class adds over LiveNavTestPage is the link, every SubPageLink
+    /// entry names a field of the part's OWN source table, so a part with no source table
+    /// cannot express one and <see cref="_links"/> is necessarily empty. Everything else is
+    /// the base class's null-record path, where each Rec-dependent member refuses by name.</param>
+    /// <param name="parentRecord">The host's current-row cursor; required only when
+    /// <paramref name="links"/> carries a FIELD entry (<see cref="AnyFieldLink"/>).</param>
     public LiveNavTestPart(NavRecord? record, IReadOnlyDictionary<int, int> controlIdToFieldNo, bool creatable,
         RunnerPageInstance? page, object owner, int pageId,
-        NavRecord? parentRecord, (int PartFieldNo, int ParentFieldNo)[] links)
+        NavRecord? parentRecord, SubPageLinkEntry[] links)
         : base(record, controlIdToFieldNo, creatable, page, owner, pageId)
     {
         _parentRecord = parentRecord;
@@ -2658,12 +2702,22 @@ internal sealed class LiveNavTestPart : LiveNavTestPage, ITestPart
     public bool Enabled => true;
     public bool Visible => true;
 
-    /// <summary>Filter the part's rowset to the parent's current row.</summary>
+    /// <summary>Whether any entry is a FIELD link — the only kind that reads the parent's row.</summary>
+    internal static bool AnyFieldLink(SubPageLinkEntry[] links)
+    {
+        foreach (var link in links)
+            if (link.Kind == Microsoft.Dynamics.Nav.Types.Metadata.FilterType.FIELD) return true;
+        return false;
+    }
+
+    /// <summary>Filter the part's rowset to what its SubPageLink selects for the parent's
+    /// current row: a FIELD entry to the parent's current value, a CONST entry to its literal,
+    /// a FILTER entry to its expression (issue #2469).</summary>
     private void ApplyLink()
     {
         // Nothing to apply, and nothing to demand: an unlinked part shows its own table's
         // full rowset. The early return is what lets a part page with NO SourceTable exist
-        // at all (issue #2195) — such a part cannot carry a FIELD SubPageLink, so it always
+        // at all (issue #2195) — such a part cannot carry any SubPageLink, so it always
         // lands here, and without the return the RequireRecord below would refuse EVERY
         // cursor move on it naming "subpage link", a link the part does not have. The move
         // itself still refuses by its own name through the base class when the AL genuinely
@@ -2674,11 +2728,43 @@ internal sealed class LiveNavTestPart : LiveNavTestPage, ITestPart
         // own source table — so it has one, and this is a guaranteed hit used for its record
         // rather than for its refusal.
         var record = RequireRecord("subpage link");
-        foreach (var (partFieldNo, parentFieldNo) in _links)
+        foreach (var link in _links)
         {
-            var parentValue = _parentRecord!.GetFieldValue(parentFieldNo);
-            record.ALSetRange(partFieldNo, parentValue);
+            switch (link.Kind)
+            {
+                case Microsoft.Dynamics.Nav.Types.Metadata.FilterType.FIELD:
+                    record.ALSetRange(link.PartFieldNo, _parentRecord!.GetFieldValue(link.ParentFieldNo));
+                    break;
+                case Microsoft.Dynamics.Nav.Types.Metadata.FilterType.CONST:
+                    record.ALSetFilter(link.PartFieldNo, ConstFilterExpression(record, link.PartFieldNo, link.Value));
+                    break;
+                case Microsoft.Dynamics.Nav.Types.Metadata.FilterType.FILTER:
+                    // Already in BC's filter grammar (the compiler wrote option members as
+                    // ordinals; DependencyPageMetadataXml re-quoted AL identifiers) — BC's own
+                    // filter parser, the one SetFilter uses, reads it. A malformed expression
+                    // raises BC's own NavInvalidFilterExpressionException naming the text.
+                    record.ALSetFilter(link.PartFieldNo, link.Value);
+                    break;
+            }
         }
+    }
+
+    /// <summary>
+    /// The compiled CONST literal as a filter expression BC's own filter parser reads as that
+    /// ONE value. A Text/Code field gets the literal quoted: the compiler writes
+    /// <c>const('SPECIAL')</c> as the bare text <c>SPECIAL</c>, and a bare literal is parsed as
+    /// an EXPRESSION — a value containing <c>|</c>, <c>..</c>, <c>(</c> or <c>&amp;</c> would be
+    /// read as operators, and an EMPTY literal would clear the filter (SetFilter's own rule for
+    /// <c>''</c>) instead of selecting the blank value. Every other type — an option ordinal,
+    /// a number, a boolean, a date — is handed over as written, exactly the text an AL
+    /// SetFilter call would pass. A field the part's table does not declare is left to
+    /// SetFilter, which refuses it with BC's own error naming the field number.
+    /// </summary>
+    private static string ConstFilterExpression(NavRecord record, int fieldNo, string value)
+    {
+        var navType = record.MetaTable.TryGetFieldByNo(fieldNo, out var field) ? field.FieldNavType : (NavType?)null;
+        var quote = value.Length == 0 || navType is NavType.Text or NavType.Code;
+        return quote ? "'" + value.Replace("'", "''") + "'" : value;
     }
 
     public override bool MoveFirst() { ApplyLink(); return base.MoveFirst(); }
@@ -2686,11 +2772,13 @@ internal sealed class LiveNavTestPart : LiveNavTestPage, ITestPart
     public override bool MoveNext() { ApplyLink(); return base.MoveNext(); }
     public override bool MovePrevious() { ApplyLink(); return base.MovePrevious(); }
 
-    /// <summary>True when this part carries a FIELD SubPageLink at all — the signal
-    /// <see cref="LiveNavTestPage.Loaded"/> uses to decide whether a parent row-load should
-    /// refresh this part too (issue #2677). An unlinked part shows its own table's full
-    /// rowset and is never re-positioned by a parent's cursor move.</summary>
-    internal bool HasLinks => _links.Length > 0;
+    /// <summary>True when this part carries a FIELD SubPageLink — i.e. its rowset depends on
+    /// the PARENT's current row. This is the signal <see cref="LiveNavTestPage.Loaded"/> uses
+    /// to decide whether a parent row-load should refresh this part too (issue #2677). A part
+    /// with no link, or with only CONST/FILTER links, shows a rowset independent of the
+    /// parent's cursor and is never re-positioned by a parent's cursor move; its own initial
+    /// row-load still happens once, from GetPart.</summary>
+    internal bool HasLinks => AnyFieldLink(_links);
 
     /// <summary>
     /// Position this part on the row matching its SubPageLink and, if one exists, run its
@@ -2745,9 +2833,39 @@ internal sealed class LiveNavTestPart : LiveNavTestPage, ITestPart
     }
 
     /// <summary>
-    /// Start a new row already carrying the parent's key. BC stamps the linked fields onto
-    /// the new record, which is why an AL test never sets them — asserting that the link
-    /// field arrived without being written is how the test proves the link ran at all.
+    /// Start a new row already carrying the link's values — for the fields BC actually
+    /// carries them onto, which is NOT every linked field.
+    ///
+    /// <c>ApplyLink</c> above has just put every entry on the record as a filter, and
+    /// <c>base.InsertEmptyRow</c> then asks BC's own <c>NavForm.NewRecord</c> to start the row
+    /// (<c>RunnerPageInstance.TryNewRecord</c>), which runs
+    /// <c>RecordImplementation.InitRecordFromFilters</c>. That method — Ncl 28.1,
+    /// <c>InitRecordFromFilters(includeNonPrimaryKeyFields, includeIdenticalFilters,
+    /// includeNonPrimaryKeyFieldsForFilterGroups)</c> — copies a field's filter onto the new
+    /// record only when the filter is <c>FilterExpressionType.Equal</c> (exactly one value)
+    /// AND one of: the field is part of the PRIMARY KEY, the page sets
+    /// <c>PopulateAllFields</c>, or the caller names the filter's group.
+    /// <c>NavForm.NewRecordAsync(bool)</c> passes <c>Array.Empty&lt;int&gt;()</c> for the
+    /// groups, so on a TestPage it comes down to key membership.
+    ///
+    /// This loop therefore applies the same key-membership gate. Without it the runner
+    /// stamped every single-valued link onto the new row regardless of the key, which real BC
+    /// does not do: measured on all 8 BC legs of corpus codeunit 60324 "TSPL Tests", a
+    /// <c>New()</c> through a part linked <c>Kind = const(Attachment)</c>, where Kind is not
+    /// part of the line table's key, produced a row with Kind still at Comment — outside the
+    /// part's own filter, which BC then reported as "The view is filtered, and the entry is
+    /// outside the filter". The corpus pins both directions: the same const on a table whose
+    /// key CONTAINS the field IS stamped.
+    ///
+    /// The loop is not redundant with BC's own step even for the fields it does write. It
+    /// covers the record-only fallback in <c>LiveNavTestPage.InsertEmptyRow</c>, where there
+    /// is no page to ask and BC's filter step never runs; where BC's step did run it writes
+    /// the same values again, which is a no-op. A FIELD entry is read from the parent's
+    /// current row; a CONST/FILTER entry is read back through BC's own range accessors on the
+    /// filter <c>ApplyLink</c> just set, so a single-value filter answers the same typed value
+    /// for min and max (an option ORDINAL arrives as a NavOption, not as the text "1") and a
+    /// multi-value or open-ended one raises BC's own error and stamps nothing — the
+    /// <c>Equal</c> half of the same rule, decided by BC rather than re-derived from text.
     /// </summary>
     public override void InsertEmptyRow(bool beforeCurrent)
     {
@@ -2755,7 +2873,58 @@ internal sealed class LiveNavTestPart : LiveNavTestPage, ITestPart
         base.InsertEmptyRow(beforeCurrent);
         if (_links.Length == 0) return;
         var record = RequireRecord("subpage link");
-        foreach (var (partFieldNo, parentFieldNo) in _links)
-            record.SetFieldValue(partFieldNo, _parentRecord!.GetFieldValue(parentFieldNo));
+        var primaryKeyFieldNos = PrimaryKeyFieldNos(record);
+        foreach (var link in _links)
+        {
+            // Not part of the primary key: BC leaves it at its Init() value, so the runner
+            // must too — a stamped value here would put a row inside a filter BC would have
+            // reported as outside it.
+            if (!primaryKeyFieldNos.Contains(link.PartFieldNo)) continue;
+            switch (link.Kind)
+            {
+                case Microsoft.Dynamics.Nav.Types.Metadata.FilterType.FIELD:
+                    record.SetFieldValue(link.PartFieldNo, _parentRecord!.GetFieldValue(link.ParentFieldNo));
+                    break;
+                default:
+                    if (TryGetSingleFilterValue(record, link.PartFieldNo, out var single))
+                        record.SetFieldValue(link.PartFieldNo, single);
+                    break;
+            }
+        }
+    }
+
+    /// <summary>The field numbers making up the record's primary key — the membership test
+    /// <c>NCLMetaField.FieldIsPartOfPrimaryKey</c> answers inside BC, read off the same
+    /// <c>MetaTable.PrimaryKey</c> the AutoSplitKey path already uses so both agree on the key
+    /// shape. Empty for a table whose key metadata is unavailable, which makes the caller stamp
+    /// nothing rather than stamp on a guess.</summary>
+    private static HashSet<int> PrimaryKeyFieldNos(NavRecord record)
+    {
+        var fieldNos = new HashSet<int>();
+        var primaryKey = record.MetaTable?.PrimaryKey;
+        if (primaryKey == null) return fieldNos;
+        for (var i = 0; i < primaryKey.KeyFieldCount; i++)
+            fieldNos.Add(primaryKey.KeyFieldsList[i].FieldNo);
+        return fieldNos;
+    }
+
+    /// <summary>The one value a field's current filter selects, or false when the filter is
+    /// not a single value (BC's <c>GetRangeMin</c>/<c>GetRangeMax</c> raise for a filter that
+    /// is not a range; a range whose ends differ is not a single value either).</summary>
+    private static bool TryGetSingleFilterValue(NavRecord record, int fieldNo, out NavValue value)
+    {
+        try
+        {
+            var min = record.ALGetRangeMin(fieldNo);
+            var max = record.ALGetRangeMax(fieldNo);
+            if (min != null && min.Equals(max)) { value = min; return true; }
+        }
+        catch (NavBaseException)
+        {
+            // Not a range: a multi-value expression (1|2), an open-ended one (>1), or a
+            // wildcard. BC's own InitRecordFromFilters stamps nothing for these either.
+        }
+        value = null!;
+        return false;
     }
 }

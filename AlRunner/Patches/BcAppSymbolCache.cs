@@ -306,8 +306,9 @@ internal static partial class BcAppSymbolCache
     /// <c>PartFieldName</c> is the part's own field (quotes stripped); <c>Kind</c> is
     /// "field"/"const"/"filter", exactly the AL keyword, lowercased; <c>Value</c> is
     /// everything inside the parens verbatim — a parent field name (quotes intact) for
-    /// "field", anything else for "const"/"filter" (the runner does not resolve those; see
-    /// MockTestPage.SubPageLinks, which already refuses non-FIELD links by name).
+    /// "field", the literal / expression text for "const"/"filter" (normalised to the
+    /// compiled representation by RecordPatches.DependencyPageMetadataXml's
+    /// EmitSubFormLinkXml, then applied by MockTestPage.SubPageLinks — #2469).
     /// </summary>
     internal sealed record PageSubFormLinkSymbol(string PartFieldName, string Kind, string Value);
 
@@ -1039,9 +1040,9 @@ internal static partial class BcAppSymbolCache
     /// field("No.")</c>, or a comma-separated list of such pairs — into (part field, kind,
     /// value) triples. Measured across Base Application 28.1's 1311 SubPageLink entries:
     /// 1168 are <c>field(...)</c>, 140 are <c>const(...)</c>, 3 are <c>filter(...)</c>; an
-    /// entry this cannot parse is simply dropped, which is safe because
-    /// MockTestPage.SubPageLinks already refuses (loudly, by name) a part whose SubFormLink
-    /// list is shorter than the AL declares — never silently unfiltered.
+    /// entry this cannot parse is dropped and reported on stderr; the three kinds the regex
+    /// accepts are the only ones AL defines, so a drop here means AL text this parser has
+    /// never seen, not a link kind the runner declines.
     /// </summary>
     private static List<PageSubFormLinkSymbol> ParseSubPageLink(string? text)
     {
@@ -1052,7 +1053,11 @@ internal static partial class BcAppSymbolCache
             var entry = rawEntry.Trim();
             if (entry.Length == 0) continue;
             var m = SubPageLinkEntryRegex.Match(entry);
-            if (!m.Success) continue;
+            if (!m.Success)
+            {
+                Console.Error.WriteLine($"[BcAppSymbolCache] SubPageLink entry not understood, dropped: '{entry}'");
+                continue;
+            }
             var partField = m.Groups["left"].Value.Trim('"');
             var kind = m.Groups["kind"].Value.ToLowerInvariant();
             var value = m.Groups["val"].Value.Trim();

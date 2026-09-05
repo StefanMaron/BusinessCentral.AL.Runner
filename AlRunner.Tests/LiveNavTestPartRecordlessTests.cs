@@ -32,7 +32,7 @@ public sealed class LiveNavTestPartRecordlessTests
 {
     private const int PartPageId = 79841;
 
-    private static LiveNavTestPart RecordlessPart((int PartFieldNo, int ParentFieldNo)[] links)
+    private static LiveNavTestPart RecordlessPart(SubPageLinkEntry[] links)
         => new(
             record: null,
             controlIdToFieldNo: new Dictionary<int, int>(),
@@ -83,7 +83,7 @@ public sealed class LiveNavTestPartRecordlessTests
     [Fact]
     public void RecordlessLinkedPart_CursorMove_StillRefusesNamingTheLink()
     {
-        var part = RecordlessPart([(PartFieldNo: 1, ParentFieldNo: 1)]);
+        var part = RecordlessPart([new SubPageLinkEntry(1, Microsoft.Dynamics.Nav.Types.Metadata.FilterType.FIELD, 1, "")]);
 
         var ex = Assert.Throws<RunnerOutOfScopeException>(() => part.MoveFirst());
 

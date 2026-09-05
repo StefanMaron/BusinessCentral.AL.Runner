@@ -55,8 +55,9 @@
 //   NCLMetaForm.LoadPageMetadata walking THIS file's Content — so a part genuinely is
 //   reconstructable data, not guessed data, and EmitPartControlXml below adds it. The
 //   SubFormLink field names it carries ARE resolved (to numeric ids, off the part's own and
-//   the host's SourceTable — see EmitSubFormLinkXml), because MockTestPage.SubPageLinks
-//   already consumes numeric FieldID/FilterValue, never AL text.
+//   the host's SourceTable — see EmitSubFormLinkXml), and its const(...)/filter(...) values
+//   normalised to the compiler's own representation, because MockTestPage.SubPageLinks
+//   consumes the compiled FieldID/FilterType/FilterValue shape, never AL text.
 using System.Text;
 using System.Xml;
 
@@ -246,16 +247,18 @@ public static partial class RecordPatches
     }
 
     /// <summary>
-    /// One <c>SubFormLink</c> entry, resolved from AL text to the numeric field ids BC's own
-    /// compiled metadata carries (MockTestPage.SubPageLinks reads
+    /// One <c>SubFormLink</c> entry, resolved from AL text to the shape BC's own compiled
+    /// metadata carries (MockTestPage.SubPageLinks reads
     /// <c>InfopartPageDefinition.SubFormLink</c> as (FieldID, FilterType, FilterValue), never
-    /// AL text). FIELD is the only kind that resolves to real filtering here — the same kind
-    /// MockTestPage.SubPageLinks already implements. CONST/FILTER, and any FIELD entry whose
-    /// field name this run cannot resolve to an id, are written with a value that reliably
-    /// trips MockTestPage.SubPageLinks' OWN existing refusal (non-FIELD FilterType, or a
-    /// non-numeric FilterValue) — an honest "testpage-part-link" out-of-scope refusal rather
-    /// than a silently unfiltered part, which would show every row of the child table instead
-    /// of only the parent's.
+    /// AL text). All three kinds filter for real: FIELD resolves both field names to numbers,
+    /// CONST normalises its literal to the compiler's representation
+    /// (<see cref="NormalizeConstLinkValue"/>), FILTER re-quotes its expression for BC's
+    /// filter grammar (#2469). A FIELD entry whose parent field name this run cannot resolve
+    /// to an id is written with a value that reliably trips MockTestPage.SubPageLinks' OWN
+    /// existing refusal (a non-numeric FilterValue), and an unresolvable PART field id is
+    /// written as 0, which that method refuses by name for every kind — an honest
+    /// "testpage-part-link" out-of-scope refusal rather than a silently unfiltered part,
+    /// which would show every row of the child table instead of only the parent's.
     /// </summary>
     private static void EmitSubFormLinkXml(
         XmlWriter w, BcAppSymbolCache.PageSymbol hostPage, BcAppSymbolCache.PagePartSymbol part,
@@ -280,14 +283,79 @@ public static partial class RecordPatches
             w.WriteAttributeString("FilterValue",
                 parentFieldId?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? parentFieldName);
         }
+        else if (string.Equals(link.Kind, "const", StringComparison.OrdinalIgnoreCase))
+        {
+            w.WriteAttributeString("FilterType", "CONST");
+            w.WriteAttributeString("FilterValue", NormalizeConstLinkValue(link.Value));
+        }
         else
         {
-            // CONST/FILTER — MockTestPage.SubPageLinks refuses any FilterType other than
-            // FIELD by name already; reproducing the real FilterType here (rather than
-            // defaulting to FIELD) is what makes that refusal name the true reason.
-            w.WriteAttributeString("FilterType", link.Kind.ToUpperInvariant());
-            w.WriteAttributeString("FilterValue", link.Value);
+            // filter(...) — the expression in BC's filter grammar. AL quotes an identifier
+            // with double quotes, BC's filter tokenizer only knows single-quoted literals, so
+            // the same re-quoting the CalcFormula `filter(...)` path already needed (#2305)
+            // applies here: filter(Open | "Bank Acc. Entry Applied") becomes
+            // Open | 'Bank Acc. Entry Applied'.
+            w.WriteAttributeString("FilterType", "FILTER");
+            w.WriteAttributeString("FilterValue", FilterValueText(link.Value));
         }
         w.WriteEndElement(); // SubFormLink
+    }
+
+    /// <summary>
+    /// A <c>const(...)</c> SubPageLink value, from the AL source text SymbolReference.json
+    /// records to the shape BC's own compiler writes into a compiled page's
+    /// <c>SubFormLink/@FilterValue</c> — which is what <c>MockTestPage.SubPageLinks</c>
+    /// consumes for a source-compiled page, so both routes hand the part one representation.
+    /// Measured on BC 28.1's compiler output (corpus codeunit 60324 "TSPL Tests"):
+    /// <c>const(Database::"TSPL Header")</c> compiles to the table id, <c>const('SPECIAL')</c>
+    /// on a Code field to the bare text <c>SPECIAL</c>, and an option member to its ordinal.
+    /// <list type="bullet">
+    /// <item><c>Database::"Some Table"</c> / <c>Database::SomeTable</c> → the table id,
+    /// resolved by name across the loaded apps; left as written when no loaded app declares
+    /// the table, so the filter fails loudly in BC's own parser naming the text rather than
+    /// silently pinning the part to a wrong id.</item>
+    /// <item><c>"Some Enum"::Member</c> / <c>Enum::"Member Name"</c> → the member NAME. The
+    /// compiler would write the ordinal; the runner has no enum ordinal table for a
+    /// dependency's fields at this point, and BC's filter grammar resolves an option/enum
+    /// member by name as readily as by ordinal, so the name is an equivalent
+    /// representation, not an approximation.</item>
+    /// <item>A quoted literal (<c>"On Hold"</c>, <c>'SPECIAL'</c>) → the bare text, AL's
+    /// doubled-quote escape resolved — <c>ConstValueText</c>'s rule, shared with the
+    /// CalcFormula <c>const(...)</c> path.</item>
+    /// <item>Anything else (a number, a bare identifier, true/false) → as written.</item>
+    /// </list>
+    /// </summary>
+    internal static string NormalizeConstLinkValue(string? raw)
+    {
+        var s = (raw ?? string.Empty).Trim();
+        if (s.Length == 0) return s;
+
+        const string dbPrefix = "Database::";
+        if (s.StartsWith(dbPrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            var tableName = ConstValueText(s.Substring(dbPrefix.Length));
+            var tableId = ResolveTableIdByName(tableName);
+            return tableId > 0 ? tableId.ToString(System.Globalization.CultureInfo.InvariantCulture) : s;
+        }
+
+        // <Enum>::<Member> — the enum name may be a quoted identifier containing anything
+        // (including "::"), so find the separator OUTSIDE quotes rather than with IndexOf.
+        var sep = TopLevelScopeSeparator(s);
+        if (sep > 0) return ConstValueText(s.Substring(sep + 2));
+
+        return ConstValueText(s);
+    }
+
+    /// <summary>Index of the first <c>::</c> in <paramref name="s"/> that is not inside a
+    /// double-quoted AL identifier, or -1.</summary>
+    private static int TopLevelScopeSeparator(string s)
+    {
+        var inQuotes = false;
+        for (int i = 0; i + 1 < s.Length; i++)
+        {
+            if (s[i] == '"') { inQuotes = !inQuotes; continue; }
+            if (!inQuotes && s[i] == ':' && s[i + 1] == ':') return i;
+        }
+        return -1;
     }
 }
