@@ -67,6 +67,17 @@
 //   would be inventing state BC does not have. Cascade behaviour on delete/rename across those
 //   tables is #2356, and remains out of this file.
 //
+// WHEN THE INSERT IS REFUSED (#2941 review)
+//   The insert uses DataError.TrapError, whose entire purpose is to report a refusal as a
+//   `false` return rather than an exception. Discarding that bool made "the row is now there"
+//   and "the insert was refused and there is no row" indistinguishable, logged neither, and
+//   marked the bundle seeded either way. The concrete bite: BC's User table has a UNIQUE key on
+//   "User Name" as well as its primary key, so a --test-data backup carrying its own TESTUSER
+//   refuses this insert and leaves NO row for the runner's security id — silently defeating the
+//   fix on exactly the bucket configuration this issue came from. The three outcomes are now
+//   separated (UserRowSeedOutcome), a refusal is reported loudly with the colliding row named,
+//   and _userRowSeededForThisBundle stays false when no row was written.
+//
 // PRECOMPILED-DLL RESPECT
 //   No AL business-logic body is touched. NavRecord, NCLMetaTable, NCLMetaField and NavValue are
 //   runtime-engine types, and the row is inserted through BC's own AL insert entry point exactly
@@ -87,26 +98,88 @@ public static partial class RecordPatches
     private const string UserNameFieldName = "User Name";
     private const string UserFullNameFieldName = "Full Name";
 
+
+    /// <summary>
+    /// What a call to <see cref="EnsureUserSystemTableRowSeeded"/> actually achieved.
+    ///
+    /// This enum exists because of the #2941 review. The insert goes through
+    /// <c>ALInsert(DataError.TrapError, …)</c>, and TrapError's whole job is to convert a
+    /// refusal into a <c>false</c> return instead of an exception — so "the row is now there"
+    /// and "the insert was refused and there is no row" have exactly the same shape unless
+    /// somebody looks. Discarding that <c>bool</c> made the two indistinguishable, logged
+    /// neither, and marked the bundle seeded either way.
+    ///
+    /// The refusal that matters is not hypothetical: BC's User table carries a UNIQUE key on
+    /// "User Name" as well as its primary key on "User Security ID", so a <c>--test-data</c>
+    /// backup that already contains a user named TESTUSER refuses this insert while leaving
+    /// NO row for the runner's own security id — silently defeating the entire fix on exactly
+    /// the bucket configuration #2296 was filed from.
+    /// </summary>
+    internal enum UserRowSeedOutcome
+    {
+        /// <summary>Already settled earlier in this bundle; this call did nothing.</summary>
+        AlreadySeededThisBundle,
+        /// <summary>This bundle's closure has no User metatable, so there is nothing to seed.</summary>
+        NoUserTable,
+        /// <summary>The skeleton session exposes no user identity to seed the row FROM.</summary>
+        NoSessionIdentity,
+        /// <summary>This call wrote the row.</summary>
+        Inserted,
+        /// <summary>A row for the session user's own security id was already in the table.</summary>
+        AlreadyPresent,
+        /// <summary>The insert was refused AND no row for the session user's security id exists.</summary>
+        Refused,
+    }
+
     private static bool _userRowSeededForThisBundle;
+    private static bool _userRowSeedInProgress;
 
     internal static void ResetUserSystemTableForNewBundle() => _userRowSeededForThisBundle = false;
+
+    /// <summary>
+    /// True only when the User table actually holds a row for the session user's security id.
+    /// Deliberately NOT set by a refusal: a flag that reads "seeded" over an empty table is the
+    /// silent-wrong-answer this file's own loud-failures obligation forbids.
+    /// </summary>
+    internal static bool UserRowSeededForThisBundle => _userRowSeededForThisBundle;
 
     /// <summary>
     /// Insert the runner's own session user into the User system table (2000000120), once per
     /// bundle. Call AFTER install triggers and BEFORE <c>CaptureInstallBaseline()</c>, so the
     /// row is part of the restored baseline.
     /// </summary>
-    internal static void EnsureUserSystemTableRowSeeded()
+    /// <returns>
+    /// Which of the outcomes in <see cref="UserRowSeedOutcome"/> this call reached. The
+    /// production call site ignores it; the point of returning it is that the three insert
+    /// outcomes are separable at all — see the enum's own remarks.
+    /// </returns>
+    internal static UserRowSeedOutcome EnsureUserSystemTableRowSeeded()
     {
-        if (_userRowSeededForThisBundle) return;
-        _userRowSeededForThisBundle = true;
+        if (_userRowSeededForThisBundle) return UserRowSeedOutcome.AlreadySeededThisBundle;
+        // The flag is no longer set before the work, so the insert below — which re-enters
+        // NavRecord and, through UserTableTriggerPatches, a second table — is now inside the
+        // window where re-entry would recurse. This guard closes it explicitly rather than
+        // relying on there being no such call path today.
+        if (_userRowSeedInProgress) return UserRowSeedOutcome.AlreadySeededThisBundle;
+        _userRowSeedInProgress = true;
+        try
+        {
+            return SeedUserRowCore();
+        }
+        finally
+        {
+            _userRowSeedInProgress = false;
+        }
+    }
 
+    private static UserRowSeedOutcome SeedUserRowCore()
+    {
         var meta = EnsureTableInMetadataCache(UserSystemTableId);
         if (meta == null)
             // A bundle whose closure has no User metatable has no user concept to seed, and
             // nothing in it can carry a relation to one either. Same shape as the Company
             // seed's "no Company metatable in this bundle" early return.
-            return;
+            return UserRowSeedOutcome.NoUserTable;
 
         var session = AlRunner.BcRuntime.SkeletonSession;
         if (session == null)
@@ -118,7 +191,7 @@ public static partial class RecordPatches
                 "[UserSystemTable] there is no skeleton session, so the User row (2000000120) was "
                 + "not seeded — every TableRelation to User.\"User Security ID\" will refuse "
                 + "UserSecurityId(). See AlRunner#2296.");
-            return;
+            return UserRowSeedOutcome.NoSessionIdentity;
         }
 
         var (userName, fullName, userSid) = ReadSkeletonUserIdentity(session);
@@ -129,24 +202,72 @@ public static partial class RecordPatches
                 + $"(name={userName ?? "<null>"}, sid={(userSid == null ? "<null>" : "set")}), so the "
                 + "User row (2000000120) was not seeded — every TableRelation to "
                 + "User.\"User Security ID\" will refuse UserSecurityId(). See AlRunner#2296.");
-            return;
+            return UserRowSeedOutcome.NoSessionIdentity;
         }
 
+        UserRowSeedOutcome outcome;
+        string refusalDetail;
         try
         {
-            InsertSessionUserRow(session, meta, userName, fullName, userSid);
-            PerfTrace.Log($"UserSystemTable: seeded User row '{userName}'");
+            outcome = InsertSessionUserRow(session, meta, userName, fullName, userSid, out refusalDetail);
         }
         catch (Exception ex)
         {
             var inner = ex is TargetInvocationException tie && tie.InnerException != null ? tie.InnerException : ex;
+            // DataError.TrapError converts the ordinary refusals into a false return, so an
+            // exception reaching here is something else entirely — including the
+            // NavRecordAlreadyExistsException a non-trapping path would raise.
             if (inner.GetType().Name == "NavRecordAlreadyExistsException")
-                return; // already present — nothing to do, and not a failure.
-            Console.Error.WriteLine(
-                $"[UserSystemTable] could not seed the User row (2000000120): "
-                + $"{inner.GetType().Name}: {inner.Message} — every TableRelation to "
-                + "User.\"User Security ID\" will refuse UserSecurityId(). See AlRunner#2296.");
+            {
+                _userRowSeededForThisBundle = true;
+                PerfTrace.Log($"UserSystemTable: User row '{userName}' was already present");
+                return UserRowSeedOutcome.AlreadyPresent;
+            }
+            outcome = UserRowSeedOutcome.Refused;
+            refusalDetail = $"{inner.GetType().Name}: {inner.Message}";
         }
+
+        switch (outcome)
+        {
+            case UserRowSeedOutcome.Inserted:
+                _userRowSeededForThisBundle = true;
+                PerfTrace.Log($"UserSystemTable: seeded User row '{userName}'");
+                break;
+            case UserRowSeedOutcome.AlreadyPresent:
+                _userRowSeededForThisBundle = true;
+                PerfTrace.Log($"UserSystemTable: User row '{userName}' was already present");
+                break;
+            default:
+                // REFUSED, and the row is genuinely absent. Loud on stderr rather than thrown,
+                // and the choice is deliberate:
+                //
+                //   * Throwing here aborts the whole app group. This runs once per bundle at
+                //     install-seed time, before CaptureInstallBaseline and outside any test, so
+                //     an exception takes down every test in the bundle — including the large
+                //     majority that never touch a relation to User. On the --test-data bucket
+                //     run this issue came from, a backup holding its own TESTUSER would turn a
+                //     partial problem into a total outage.
+                //   * Silence is what cost #2296 a bisect to diagnose, and is what this review
+                //     finding is about.
+                //   * Logging loudly loses nothing, because the tests that DO need the row
+                //     still fail on their own, with BC's own
+                //     NavCSideValidateTableRelationException. Nothing here can turn a failing
+                //     test green — so loud-failures.md's "a green test would lie" hazard is not
+                //     in play — and this line is what tells the reader why that exception is
+                //     about to appear.
+                //
+                // _userRowSeededForThisBundle is deliberately NOT set: no row was seeded, and a
+                // flag claiming otherwise is the defect this branch exists to remove.
+                Console.Error.WriteLine(
+                    $"[UserSystemTable] the User row (2000000120) for the session user "
+                    + $"'{userName}' ({userSid}) was REFUSED and is NOT present — {refusalDetail}. "
+                    + "Every TableRelation to User.\"User Security ID\" will refuse the id "
+                    + "UserSecurityId() itself returns, and Microsoft AL guarded by "
+                    + "User.IsEmpty() will take its non-empty branch against a table that does "
+                    + "not contain this session's user. See AlRunner#2296.");
+                break;
+        }
+        return outcome;
     }
 
     /// <summary>
@@ -170,9 +291,12 @@ public static partial class RecordPatches
         return (name, fullName, sid);
     }
 
-    private static void InsertSessionUserRow(
-        object session, NCLMetaTable meta, string userName, string? fullName, NavGuid userSid)
+    private static UserRowSeedOutcome InsertSessionUserRow(
+        object session, NCLMetaTable meta, string userName, string? fullName, NavGuid userSid,
+        out string refusalDetail)
     {
+        refusalDetail = string.Empty;
+
         using var user = new NavRecord((NavSession)session, UserSystemTableId, SecurityFiltering.Ignored);
         var userMeta = user.MetaTable ?? meta;
 
@@ -186,16 +310,78 @@ public static partial class RecordPatches
                 NavValue.CreateNavValueFromObject(FieldByNameOnUser(userMeta, UserFullNameFieldName), fullName));
 
         // TrapError so a run that already has this user (a resumed app group, a bundle whose
-        // install code created it) leaves the existing row alone rather than turning the seed
-        // into a duplicate-key failure. runApplicationTrigger: false matches BC's own
-        // platform-level user creation, which does not run AL triggers.
+        // install code created it, a --test-data backup carrying it) leaves the existing row
+        // alone rather than turning the seed into a duplicate-key failure.
+        // runApplicationTrigger: false matches BC's own platform-level user creation, which
+        // does not run AL triggers.
+        //
+        // The RESULT IS NOT DISCARDED (#2941 review). TrapError's contract is "report the
+        // refusal as false instead of raising", so throwing the bool away is throwing away the
+        // only signal there is.
         //
         // CS0618: BC marks the synchronous ALInsert obsolete in favour of the async form. This
         // runs on the runner's single AL thread with no await point available, the same trade
         // UserTableTriggerPatches next door already makes.
 #pragma warning disable CS0618
-        user.ALInsert(DataError.TrapError, runApplicationTrigger: false, insertWithSystemId: false);
+        var inserted = user.ALInsert(DataError.TrapError, runApplicationTrigger: false, insertWithSystemId: false);
 #pragma warning restore CS0618
+        if (inserted) return UserRowSeedOutcome.Inserted;
+
+        // Refused. Ask the TABLE which refusal this was, rather than assuming the benign one:
+        // the primary key is "User Security ID", so a Get on the session user's own sid answers
+        // exactly the question that matters — is the row this seed exists to guarantee there?
+        if (SessionUserRowExists(session, userSid)) return UserRowSeedOutcome.AlreadyPresent;
+
+        refusalDetail = DescribeUserRowRefusal(session, userMeta, userName);
+        return UserRowSeedOutcome.Refused;
+    }
+
+    /// <summary>
+    /// Is there a User row whose primary key is <paramref name="userSid"/>? This is the whole
+    /// difference between "already present" and "refused": the seed's promise is a row for THIS
+    /// security id, not merely that the table is non-empty.
+    /// </summary>
+    private static bool SessionUserRowExists(object session, NavGuid userSid)
+    {
+        using var probe = new NavRecord((NavSession)session, UserSystemTableId, SecurityFiltering.Ignored);
+        // CS0618: same sync-over-async trade as the ALInsert above — one AL thread, no await
+        // point available in this call chain.
+#pragma warning disable CS0618
+        return probe.ALGet(DataError.TrapError, userSid);
+#pragma warning restore CS0618
+    }
+
+    /// <summary>
+    /// Name the reason the insert was refused, for the stderr line. The overwhelmingly likely
+    /// one is the unique key on "User Name" — a --test-data backup carrying its own user of the
+    /// same name — so that case is identified explicitly instead of being described as an
+    /// unexplained refusal.
+    /// </summary>
+    private static string DescribeUserRowRefusal(object session, NCLMetaTable userMeta, string userName)
+    {
+        try
+        {
+            using var probe = new NavRecord((NavSession)session, UserSystemTableId, SecurityFiltering.Ignored);
+            var nameField = FieldByNameOnUser(userMeta, UserNameFieldName);
+            probe.ALSetRange(nameField.FieldNo, NavValue.CreateNavValueFromObject(nameField, userName));
+            if (probe.ALFindFirstAsync(DataError.TrapError).GetAwaiter().GetResult())
+            {
+                var otherSid = probe.GetFieldValue(FieldNoByNameOnUser(userMeta, UserSecurityIdFieldName));
+                return $"the table already holds a DIFFERENT user named \"{userName}\" whose "
+                    + $"User Security ID is {otherSid}, and BC's User table has a unique key on "
+                    + "\"User Name\" — so the session user's own row cannot be added alongside it "
+                    + "(a --test-data backup containing this user name does exactly this)";
+            }
+            return "no row holds the session user's security id and no other row holds its user "
+                + "name either, so the refusal came from neither key";
+        }
+        catch (Exception ex)
+        {
+            // Diagnosis only — the refusal itself is already being reported by the caller, so a
+            // failure to explain it must not replace that report with a second exception.
+            var inner = ex is TargetInvocationException tie && tie.InnerException != null ? tie.InnerException : ex;
+            return $"the reason could not be determined ({inner.GetType().Name}: {inner.Message})";
+        }
     }
 
     /// <summary>
