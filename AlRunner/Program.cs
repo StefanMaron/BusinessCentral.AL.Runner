@@ -1813,6 +1813,35 @@ var watchFullRebuildReasons = new List<(string Module, string Reason)>();
 // call site for the full reasoning.
 int watchCycleIndex = 0;
 
+// #2815: execute bundles in DEPENDENCY order under --watch, for the reason #2614 established
+// for --server and #2814 fixed there.
+//
+// A resident process reloads a bundle's runtime assembly only during that bundle's own
+// iteration, so a dependency listed LAST leaves its consumer dispatching freshly baked member
+// ids into the PREVIOUS cycle's assembly. --watch's per-bundle
+// BcRuntime.ResetForNewBundleReload() does not cover this: it clears bundle-derived caches
+// (record/codeunit types, parsed schemas, in-memory rows, enum registry), which is a different
+// thing from the resident assembly a cross-app call dispatches into.
+//
+// That was measured rather than assumed, because the two paths' reset disciplines differ and
+// the --server conclusion does not transfer on its own. WatchCrossAppOverloadRebindTests drives
+// the ServerCrossAppOverloadRebindTests fixture through a real --watch process: with the
+// dependency listed last, cycle 2 died with "The object with ID ... does not have a member with
+// that ID" — the LOUD half of #2614 — while the same fixture with the dependency listed first
+// passed. So the defect is real here and it is specifically about order.
+//
+// Sorted ONCE, here, ahead of the layered pre-pass rather than inside the cycle loop, so the
+// pre-pass, the incremental peek and the execution loop all agree on one order — the same
+// discipline #2814 applies on the server side. Only --watch is reordered: a cold CLI run has
+// nothing resident from a previous cycle, so its execution order cannot produce this and
+// reordering it would change reported bundle order for every existing caller to no purpose.
+if (watchMode && bundles.Count > 1)
+{
+    var watchOrdered = SortBundlesInDependencyOrder(bundles.ToArray());
+    if (!ReferenceEquals(watchOrdered, bundles))
+        bundles = watchOrdered.ToList();
+}
+
 // ── Layered source build pre-pass ─────────────────────────────────────────
 // When multiple bundles are passed and one depends on another (by AppId or
 // Name+Publisher), emit each "impl" bundle (one that another depends on) as
