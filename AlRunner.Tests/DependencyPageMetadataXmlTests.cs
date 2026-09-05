@@ -789,7 +789,7 @@ public class DependencyPageMetadataXmlTests
     [Fact]
     public void TryBuildDependencyPageMetadata_SourceTableView_EmitsTableFiltersInFilterGroup2()
     {
-        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.Dir("al-runner-dep-pagemeta-xml-tests");
         Directory.CreateDirectory(dir);
         try
         {
@@ -836,7 +836,7 @@ public class DependencyPageMetadataXmlTests
     [Fact]
     public void TryBuildDependencyPageMetadata_SourceTableViewSortingAndOrder_EmitsKeyFieldIdsAndDescending()
     {
-        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.Dir("al-runner-dep-pagemeta-xml-tests");
         Directory.CreateDirectory(dir);
         try
         {
@@ -869,7 +869,7 @@ public class DependencyPageMetadataXmlTests
     [Fact]
     public void TryBuildDependencyPageMetadata_PageWithoutSourceTableView_EmitsNone()
     {
-        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.Dir("al-runner-dep-pagemeta-xml-tests");
         Directory.CreateDirectory(dir);
         try
         {
@@ -896,7 +896,7 @@ public class DependencyPageMetadataXmlTests
     [Fact]
     public void TryBuildDependencyPageMetadata_SourceTableViewWithoutSorting_EmitsFiltersButNoSortingElement()
     {
-        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.Dir("al-runner-dep-pagemeta-xml-tests");
         Directory.CreateDirectory(dir);
         try
         {
@@ -929,7 +929,7 @@ public class DependencyPageMetadataXmlTests
     [Fact]
     public void TryBuildDependencyPageMetadata_UnresolvableViewField_KeepsTheFilterWithFieldIdZero()
     {
-        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.Dir("al-runner-dep-pagemeta-xml-tests");
         Directory.CreateDirectory(dir);
         try
         {
