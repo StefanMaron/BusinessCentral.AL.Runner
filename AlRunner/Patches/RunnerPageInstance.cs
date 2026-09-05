@@ -1180,14 +1180,13 @@ internal sealed class RunnerPageInstance
     /// name rather than doing nothing — doing nothing let a test invoke a lookup, observe no
     /// change, and compare two empty strings successfully.
     /// </summary>
-    internal NavText? RaiseOnLookup(int controlId, NavText current)
+    internal NavText? RaiseOnLookup(int controlId, NavText current,
+        NavRecord? sourceRecord = null, int sourceFieldNo = 0)
     {
-        var trigger = FindTrigger(controlId, "_OnLookup", "OnLookup", arity: 1)
-            ?? throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
-                $"TestPage lookup on control {controlId} (page {_pageId})",
-                "testpage-lookup — the control declares no OnLookup trigger, so its lookup comes "
-                + "from a TableRelation and would open the related table's list page, which the "
-                + "runner cannot stand up. See docs/scope.md");
+        var found = FindTrigger(controlId, "_OnLookup", "OnLookup", arity: 1);
+        if (found == null)
+            return RaiseSourceFieldOnLookup(controlId, sourceRecord, sourceFieldNo);
+        var trigger = found.Value;
 
         var value = current;
         var byRef = new ByRef<NavText>(() => value, v => value = v);
@@ -1204,6 +1203,69 @@ internal sealed class RunnerPageInstance
         }
 
         return result is true ? value : null;
+    }
+
+    /// <summary>
+    /// The second of the three places AL can put a lookup, tried when the page control has no
+    /// OnLookup trigger of its own: the SOURCE TABLE FIELD's <c>trigger OnLookup()</c>.
+    ///
+    /// <para>#2549. These are two unrelated triggers that share a name. The control's takes
+    /// <c>var Text: Text</c> and returns Boolean — the return value is how "the user cancelled"
+    /// is expressed, and the text it wrote back is what replaces the field's value. The table
+    /// field's is parameterless and writes into <c>Rec</c> itself, so there is nothing to hand
+    /// back and nothing to gate on: this returns null, and the caller reads the field's value
+    /// off the record, where the trigger already put it. Returning null is not "cancelled" here,
+    /// it is "no client-side write-back applies" — which produces the same caller behaviour.</para>
+    ///
+    /// <para>Run through BC's own public <c>NavRecord.LookupAsync(int)</c>, not by invoking the
+    /// handler this probe found. That method re-resolves the handler through
+    /// <c>GetFieldTriggerHandler</c>, which refuses to fire a trigger on an untyped NavRecord and
+    /// calls <c>EnsureGlobalVariablesInitialized()</c> first; its
+    /// <c>InvokeFieldTriggerHandlerAsync</c> also dispatches to the right tableextension instance
+    /// when the trigger came from one. Invoking the handler directly skips all three.</para>
+    ///
+    /// <para>A field with NEITHER trigger keeps refusing: its lookup comes from a TableRelation,
+    /// which on real BC opens the related table's list page, and the runner cannot stand that up.
+    /// Doing nothing there is what let a test invoke a lookup, observe no change, and compare two
+    /// empty strings successfully. A control not bound to a source-table field at all — a page
+    /// global — has no table field to fall back to and lands in the same refusal.</para>
+    /// </summary>
+    private NavText? RaiseSourceFieldOnLookup(int controlId, NavRecord? sourceRecord, int sourceFieldNo)
+    {
+        // A control bound to a page GLOBAL rather than to a source-table field has no table
+        // field to fall back to, and saying "nor its source table field declares one" about a
+        // field that does not exist points the reader at the wrong thing.
+        if (sourceRecord == null || sourceFieldNo <= 0)
+            throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+                $"TestPage lookup on control {controlId} (page {_pageId})",
+                "testpage-lookup — the control declares no OnLookup trigger and is not bound to a "
+                + "source-table field, so there is no table-field OnLookup to fall back to and its "
+                + "lookup would come from a TableRelation, which the runner cannot stand up. "
+                + "See docs/scope.md");
+
+        var has = AlRunner.Patches.RecordPatches.TryHasFieldLookupTrigger(sourceRecord, sourceFieldNo);
+
+        // Undeterminable is its own outcome, with its own message. Saying "neither declares an
+        // OnLookup trigger" when the real reason is that BC's metafield shape moved under our
+        // reflection would send the reader to look at their AL, where there is nothing to find.
+        if (has == null)
+            throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+                $"TestPage lookup on control {controlId} (page {_pageId})",
+                $"testpage-lookup — the control declares no OnLookup trigger, and whether field "
+                + $"{sourceFieldNo} of its source table declares one could not be determined on this "
+                + "BC build (RecordPatches.TryHasFieldLookupTrigger could not read BC's field-trigger "
+                + "metadata). This is a runner/BC-shape problem, not a problem with the AL under test. "
+                + "See docs/scope.md");
+
+        if (has != true)
+            throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+                $"TestPage lookup on control {controlId} (page {_pageId})",
+                "testpage-lookup — neither the control nor its source table field declares an "
+                + "OnLookup trigger, so the lookup comes from a TableRelation and would open the "
+                + "related table's list page, which the runner cannot stand up. See docs/scope.md");
+
+        sourceRecord.LookupAsync(sourceFieldNo).GetAwaiter().GetResult();
+        return null;
     }
 
     /// <summary>
