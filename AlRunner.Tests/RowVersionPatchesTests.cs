@@ -322,6 +322,53 @@ public sealed class RowVersionPatchesTests
         Assert.Contains("primaryTree", ex.Message);
     }
 
+    // #2786's sibling half. "primaryTree resolved, but its value is not something we can
+    // walk" is the SAME moved-layout case as "the field is gone", and it used to collapse
+    // into the null branch below the resolution — i.e. into "no rows stored yet", silently
+    // skipping the duplicate-SystemId check on every insert. A null primaryTree is BC's own
+    // "EnsureTreeCreated has not run yet" and stays a quiet no-op (the test right below);
+    // a non-null value the runner cannot enumerate is a runner bug and now says so.
+    [Fact]
+    public void OnBeforeInsert_PrimaryTreeNotEnumerable_ExplicitSystemId_ThrowsNamingTheMember()
+    {
+        ResetReflectionCache();
+        var provider = MarkDatabaseBackedProvider(new ProviderWithNonEnumerablePrimaryTree());
+        var metaTable = new FakeMetaTable(timestampField: null, systemIdField: new FakeMetaField(0));
+        var buffer = new FakeBuffer(metaTable, slotCount: 1) { [0] = NavGuid.NewGuid() };
+
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => RowVersionPatches.OnBeforeInsert(provider, CompanyToken, buffer));
+
+        Assert.Contains("primaryTree", ex.Message);
+        Assert.Contains(nameof(ProviderWithNonEnumerablePrimaryTree), ex.Message);
+    }
+
+    // The positive arm that keeps the throw above from swallowing BC's genuine "no rows
+    // yet": a NULL primaryTree is what a provider looks like before the real Insert body
+    // runs EnsureTreeCreated, and it must stay a silent, exception-free no-op.
+    [Fact]
+    public void OnBeforeInsert_NullPrimaryTree_ExplicitSystemId_IsAQuietNoOp()
+    {
+        ResetReflectionCache();
+        var provider = MarkDatabaseBackedProvider(new FakeProvider(null));
+        var metaTable = new FakeMetaTable(timestampField: null, systemIdField: new FakeMetaField(0));
+        var buffer = new FakeBuffer(metaTable, slotCount: 1) { [0] = NavGuid.NewGuid() };
+
+        var record = Record.Exception(
+            () => RowVersionPatches.OnBeforeInsert(provider, CompanyToken, buffer));
+
+        Assert.Null(record);
+    }
+
+    // Same member name as BC's TempTableDataProvider.primaryTree, holding something that
+    // cannot be walked — the shape a future BC layout change would produce.
+#pragma warning disable CS0414   // assigned and read only by the reflection under test
+    private sealed class ProviderWithNonEnumerablePrimaryTree
+    {
+        private readonly object primaryTree = new();
+    }
+#pragma warning restore CS0414
+
     // ── #2573: Modify never lets an existing row's SystemId change ────────────────
 
     [Fact]

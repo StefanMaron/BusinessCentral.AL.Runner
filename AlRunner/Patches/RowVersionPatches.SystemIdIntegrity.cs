@@ -293,10 +293,20 @@ public static partial class RowVersionPatches
                 ?? throw new InvalidOperationException(
                     $"[RowVersionPatches] {provider.GetType().Name}.primaryTree field not found — " +
                     "SystemId integrity check cannot resolve its reflection target");
-        // No rows stored yet for this table instance (EnsureTreeCreated has not run,
-        // which happens INSIDE the real Insert body this prepend runs ahead of) —
-        // nothing to collide with.
-        if (_fPrimaryTree.GetValue(provider) is not System.Collections.IEnumerable storedRows) return;
+        // A NULL primaryTree means no rows are stored yet for this table instance
+        // (EnsureTreeCreated has not run, which happens INSIDE the real Insert body this
+        // prepend runs ahead of) — nothing to collide with, so a quiet return is right.
+        //
+        // A NON-NULL value the runner cannot enumerate is the same "BC's private layout
+        // moved" case the resolution above already refuses, and folding it into the null
+        // branch silently skipped the duplicate-SystemId check on every insert (#2786).
+        var storedTree = _fPrimaryTree.GetValue(provider);
+        if (storedTree == null) return;
+        if (storedTree is not System.Collections.IEnumerable storedRows)
+            throw new InvalidOperationException(
+                $"[RowVersionPatches] {provider.GetType().Name}.primaryTree holds a " +
+                $"{storedTree.GetType().Name}, which cannot be enumerated — " +
+                "SystemId integrity check cannot read the stored rows");
 
         // #2667: answer from a per-store index instead of walking every stored row. The walk
         // ran on EVERY insert into a database-backed table — note that the zero-SystemId early
