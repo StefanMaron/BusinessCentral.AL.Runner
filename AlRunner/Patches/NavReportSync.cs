@@ -672,8 +672,15 @@ public static partial class NavReportSync
             // to a data item the loop re-seeds, both went missing.
             StoreCallerTableViewBeforeLoop(navReport);
 
-            RunLifecycleTrigger(navReport, navReportBase, "OnPreReport");
-            bool datasetWritten = InvokeDataItems(navReport);
+            // BC's RunReportInternalCoreAsync installs the result-set processor HERE — after
+            // the request page has run (which is what parks the SaveAsXml file names on
+            // TestExecution) and BEFORE the pre-report step. The order is load-bearing rather
+            // than cosmetic: OnPreTriggerAsync's third step, AddDefaultParameters, reads
+            // ResultSetProcessor.RequireDataColumnEval and NREs on a null one. Installing it
+            // inside InvokeDataItems, as this used to, put it one step too late.
+            var datasetProcessor = EnsureResultSetProcessor(navReport, FindDataItemIteratorType(navReport));
+            RunOnPreTrigger(navReport, navReportBase);
+            bool datasetWritten = InvokeDataItems(navReport, datasetProcessor);
             RunLifecycleTrigger(navReport, navReportBase, "OnPostReport");
 
             // Strict AL semantics: when the report declares `ProcessingOnly =
@@ -897,6 +904,68 @@ public static partial class NavReportSync
     /// <c>__IsAsync</c> rule for the one that does not (Init). Either way the AL trigger runs
     /// exactly once, in the flavour the compiler emitted it in.
     /// </summary>
+    /// <summary>
+    /// BC's own pre-report step, whole. Issue #2526.
+    ///
+    /// <c>NavReport.OnPreTriggerAsync</c> does THREE things, in this order (verbatim from BC
+    /// 28.1's Ncl.dll):
+    ///
+    /// <code>
+    ///   await DataItemIterator.ExecuteTriggerAsync(Session, null, OnPreReportInternalAsync, "OnPreReport", this);
+    ///   await InitializeReportLabelsAsync();
+    ///   AddDefaultParameters();
+    /// </code>
+    ///
+    /// The runner called only the first of them — <see cref="RunLifecycleTrigger"/> with
+    /// "OnPreReport", which resolves to that same <c>OnPreReportInternalAsync</c>. So the AL
+    /// trigger ran and the other two steps silently did not:
+    ///
+    /// <list type="bullet">
+    /// <item><c>InitializeReportLabelsAsync</c> walks <c>Metadata.Labels</c> and adds every
+    /// NON-PerRow label to <c>reportDatasetParameters</c> — which is exactly what
+    /// <c>NavReport.GetParameters()</c> returns and what
+    /// <c>ReportSaveAsXmlRenderer.SerializeReportParameters</c> writes into the parameters
+    /// file. A column declaring <c>IncludeCaption = true</c> contributes a label named
+    /// <c>{ColumnName}Caption</c>, and a report's <c>labels</c> section contributes one per
+    /// entry. With the step skipped the parameters document came out as a bare
+    /// <c>&lt;ArrayOfReportParameter /&gt;</c>, so Microsoft's
+    /// <c>LibraryReportDataset.AssertParameterValueExists</c> found no row at all.</item>
+    /// <item><c>AddDefaultParameters</c> appends BC's own default parameters (user id, the
+    /// client-local timestamp) when the result-set processor requires data-column
+    /// evaluation.</item>
+    /// </list>
+    ///
+    /// Calling BC's method rather than re-deriving its three steps is the same choice
+    /// <see cref="RunLifecycleTrigger"/> already makes for the trigger itself: the ordering,
+    /// the error context <c>ExecuteTriggerAsync</c> establishes, and whatever a future BC
+    /// build adds here all come from BC. The fallback to the bare trigger keeps a Ncl without
+    /// that method working exactly as it did.
+    ///
+    /// Placement is unchanged and matches BC: after the request page has run and the
+    /// result-set processor is installed (<c>AddDefaultParameters</c> reads it), before the
+    /// data-item loop.
+    /// </summary>
+    internal static void RunOnPreTrigger(object navReport, Type navReportBase)
+    {
+        var onPreTrigger = SelectPreTriggerMethod(navReportBase);
+        if (onPreTrigger == null)
+        {
+            RunLifecycleTrigger(navReport, navReportBase, "OnPreReport");
+            return;
+        }
+        BcRuntime.AwaitIfTask(Invoke(onPreTrigger, navReport, Array.Empty<object?>()));
+    }
+
+    /// <summary>
+    /// BC's whole-pre-report method when this Ncl build has one, else null so
+    /// <see cref="RunOnPreTrigger"/> falls back to the bare trigger. Split out as a pure
+    /// function of the base type so it can be pinned without a BC runtime — see
+    /// AlRunner.Tests/ReportPreTriggerStepTests.cs.
+    /// </summary>
+    internal static MethodInfo? SelectPreTriggerMethod(Type navReportBase)
+        => navReportBase.GetMethod("OnPreTriggerAsync", LifecycleTriggerFlags,
+            null, Type.EmptyTypes, null);
+
     internal static void RunLifecycleTrigger(object navReport, Type navReportBase, string trigger)
     {
         var bcDispatcher = navReportBase.GetMethod(trigger + "InternalAsync", LifecycleTriggerFlags,
@@ -962,13 +1031,10 @@ public static partial class NavReportSync
     /// BC's own <c>ReportSaveAsXmlRenderer</c> produced the file. The caller uses this to
     /// decide whether a layout still has to be resolved — a dataset run resolves none.
     /// </returns>
-    private static bool InvokeDataItems(object navReport)
+    private static bool InvokeDataItems(object navReport, object? datasetProcessor)
     {
-        Type? iter = navReport.GetType();
-        while (iter != null && iter.Name != "DataItemIterator") iter = iter.BaseType;
+        var iter = FindDataItemIteratorType(navReport);
         if (iter == null) return false;
-
-        var datasetProcessor = EnsureResultSetProcessor(navReport, iter);
 
         _applyDataItemTableView ??= iter.GetMethod("ApplyDataItemTableViewAndRequestFormFilters",
             BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
@@ -1005,8 +1071,21 @@ public static partial class NavReportSync
     /// what its factory returns for a report with no layout, so neither is a runner stand-in.
     /// </summary>
     /// <returns>The dataset renderer when one was installed, else null.</returns>
-    private static object? EnsureResultSetProcessor(object navReport, Type dataItemIteratorType)
+    /// <summary>
+    /// The <c>DataItemIterator</c> base of a compiled report, or null when the object is not
+    /// one. Both the processor install and the data-item loop need it, and since #2526 they
+    /// happen at two different points in the lifecycle rather than one.
+    /// </summary>
+    private static Type? FindDataItemIteratorType(object navReport)
     {
+        Type? iter = navReport.GetType();
+        while (iter != null && iter.Name != "DataItemIterator") iter = iter.BaseType;
+        return iter;
+    }
+
+    private static object? EnsureResultSetProcessor(object navReport, Type? dataItemIteratorType)
+    {
+        if (dataItemIteratorType == null) return null;
         _resultSetProcessorProp ??= dataItemIteratorType.GetProperty("ResultSetProcessor",
             BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
         if (_resultSetProcessorProp == null) return null;
