@@ -1,0 +1,19 @@
+{
+  "id": "6f929f6a-e2cb-4f7a-a02c-1dec3e07eba0",
+  "name": "Runner Extras - NavApp GetModuleInfo By Id",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Issue #2961: NavApp.GetModuleInfo(appId, info) must answer for every app the runner has loaded, and must raise BC's own error for an id it has not.",
+  "description": "Runner-mechanism claim. Which apps are loaded is a fact about the runner, so 'GetModuleInfo answers for the System Application' is only meaningful here. BC resolves the id against NavCurrentThread.TryResolveAppGroup().OrderedAppMetadata, which is empty on the skeleton, so every id missed: a precompiled app asking about itself got 'No installed extension was found with ID', and source-compiled AL got a silent false from a runner polyfill that ignored the DataError argument. Both now go through one implementation that answers from the runner's own module registry and reproduces BC's trap-versus-raise split.",
+  "dependencies": [],
+  "idRanges": [
+    {
+      "from": 65560,
+      "to": 65569
+    }
+  ],
+  "platform": "27.0.0.0",
+  "application": "27.0.0.0",
+  "runtime": "17.0",
+  "target": "Cloud"
+}

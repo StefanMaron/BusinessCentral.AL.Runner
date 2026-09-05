@@ -614,6 +614,22 @@ public static partial class NclCecilRewrite
                     ReplaceBodyWithHelper(asm.MainModule, mCurrent, h);
                 }
 
+                // ALGetModuleInfo(DataError, Guid, ByRef<NavModuleInfo>) — same reason, third
+                // sibling. Its real body resolves the id against the app group's
+                // OrderedAppMetadata, empty on the skeleton, so every id missed and a
+                // non-trapping caller got "No installed extension was found with ID '<id>'" for
+                // apps the runner has loaded (#2961). Source-compiled AL was already covered by
+                // BcAssembler's polyfill redirect; precompiled apps call this method directly.
+                var mById = alNavAppModuleType.Methods.FirstOrDefault(x =>
+                    x.Name == "ALGetModuleInfo" && x.Parameters.Count == 3 && x.IsStatic);
+                if (mById != null)
+                {
+                    var h = typeof(AlRunner.Patches.NavAppModuleInfoPatches).GetMethod(
+                        nameof(AlRunner.Patches.NavAppModuleInfoPatches.ALNavApp_GetModuleInfo),
+                        BindingFlags.Public | BindingFlags.Static)!;
+                    ReplaceBodyWithHelper(asm.MainModule, mById, h);
+                }
+
                 var mCaller = alNavAppModuleType.Methods.FirstOrDefault(x =>
                     x.Name == "ALGetCallerModuleInfo" && x.Parameters.Count == 2 && x.IsStatic);
                 if (mCaller != null)

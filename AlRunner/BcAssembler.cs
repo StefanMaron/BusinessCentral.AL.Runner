@@ -753,23 +753,20 @@ namespace AlRunnerShim
         }
 
         // NavApp.GetModuleInfo(errorLevel, moduleId, info) — resolves any REGISTERED
-        // module (bundle + every loaded dependency assembly) by AppId; unknown ids
-        // return false (callers that pass errorLevel.Throw and want a strict miss can
-        // still distinguish by checking the bool return).
+        // module (bundle + every loaded dependency assembly) by AppId.
+        //
+        // Delegates to the Cecil helper so source-compiled and precompiled AL get ONE
+        // implementation. They had drifted: this shim used to `return false` on an unknown id
+        // whatever the errorLevel, so a plain `NavApp.GetModuleInfo(id, info)` statement — which
+        // AL emits with DataError.ThrowError — silently succeeded where BC raises. That is the
+        // silent-default shape .claude/rules/loud-failures.md rules out, and keeping two copies
+        // is what let one of them diverge (#2961).
         public static bool ALNavApp_GetModuleInfo(
             Microsoft.Dynamics.Nav.Types.DataError errorLevel,
             global::System.Guid moduleId,
             Microsoft.Dynamics.Nav.Runtime.ByRef<Microsoft.Dynamics.Nav.Runtime.NavModuleInfo> info)
-        {
-            var found = global::AlRunner.BcRuntime.TryGetModuleInfoByAppId(moduleId);
-            if (found == null) return false;
-            var (appId, name, publisher, version) = found.Value;
-            var navVersion = new Microsoft.Dynamics.Nav.Runtime.NavVersion(version);
-            var emptyDeps = Microsoft.Dynamics.Nav.Runtime.NavList<Microsoft.Dynamics.Nav.Runtime.NavModuleDependencyInfo>.Default;
-            info.Value = new Microsoft.Dynamics.Nav.Runtime.NavModuleInfo(
-                appId, name, publisher, navVersion, navVersion, emptyDeps, appId);
-            return true;
-        }
+            => global::AlRunner.Patches.NavAppModuleInfoPatches.ALNavApp_GetModuleInfo(
+                errorLevel, moduleId, info);
 
         // NavApp.GetCallerModuleInfo — the module that CALLED into the executing app
         // (nearest stack frame from a different registered AL assembly); falls back to
