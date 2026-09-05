@@ -28,25 +28,25 @@ something, spawning an agent to re-measure it wastes a full context. Write the P
 
 - **Filing issues** on `StefanMaron/BusinessCentral.AL.Runner`, and **correcting the body of
   an issue you filed** when a measurement contradicts it.
-- **Closing an issue whose work has already landed.** The owner's standing position: closing
-  is cheap and reversible — "we can always reopen if it returns". Verify against the code at
+- **Closing an issue whose work has already landed.** Closing is cheap and reversible — an
+  issue that turns out to be live again can simply be reopened. Verify against the code at
   `main`, not against issue text, and prefer re-running the reporter's repro where one exists.
-- **Merging any PR authored under the owner's account**, in this repo and the corpus repo,
-  on your own high-level review plus a green pipeline. That covers every PR your agents open,
-  since they push with the owner's token. Judge whether the change is right, whether the
-  proving test is there, and whether CI is green on the **current head** — then merge.
+- **Merging any PR authored under the repo owner's account**, in this repo and the corpus
+  repo, on your own high-level review plus a green pipeline. That covers every PR your agents
+  open, since they push with that account's token. Judge whether the change is right, whether
+  the proving test is there, and whether CI is green on the **current head** — then merge.
 - **Arming auto-merge** instead of waiting. Review the PR when it arrives; if it passes, arm
   it (`gh pr merge <N> --squash --delete-branch --auto`) and move on. Do not sit watching a
   run you cannot influence.
 - **Claiming an issue assigned to another contributor when it overlaps work already in
-  flight.** `branch-and-pr.md`'s assignee boundary still holds as the default, but the owner
-  has released the `SShadowS`-assigned backlog specifically: when one of those issues is the
-  same defect an agent is already fixing, reassign it
-  (`gh issue edit <N> --remove-assignee SShadowS --add-assignee @me`) and fold it in. Do not
-  bulk-claim issues nobody is working on.
+  flight**, once the repo owner has released that contributor's backlog. `branch-and-pr.md`'s
+  assignee boundary still holds as the default. When a released issue is the same defect an
+  agent is already fixing, reassign it
+  (`gh issue edit <N> --remove-assignee <login> --add-assignee @me`) and fold it in. Do not
+  bulk-claim issues nobody is working on, and do not assume a release — confirm it.
 
-**A PR from a contributor who is NOT the owner** — FBakkensen and others — is reviewed, never
-merged. You may review it and, with approval, comment. Merging it stays the owner's call.
+**A PR from anyone other than the repo owner** is reviewed, never merged. You may review it
+and, with approval, comment on it. Merging someone else's contribution stays the owner's call.
 
 **Still gated, ask first:** comments on issues or PRs (including the corpus repo), PR review
 comments, anything posted to another repo. That is editorial content, not a workflow step.
@@ -135,10 +135,15 @@ at `statusCheckRollup` for `conclusion == "CANCELLED"`. Re-running just that can
 clears it in under a minute — and that is NOT the forbidden `gh run rerun`, because a
 cancelled run has no failure log to destroy. Do not reach for `--admin`. Tracked as #2726.
 
-**Auto-merge does not drain a queue.** Protection requires up-to-date branches, so arming
-three PRs that touch one file merges one and leaves the rest `DIRTY`. Arm freely for
-independent PRs; drive contended ones one at a time, rebasing and **re-running the affected
-tests** after each merge rather than carrying a stale verdict forward.
+**Auto-merge drains the queue — but a drained queue is not a verified one.** The
+"branches must be up to date" protection rule was removed, so arming several PRs lets them
+merge in sequence without each waiting for a rebase. Use that: review on arrival, arm, move on.
+
+The cost of dropping that rule is that a PR can merge on a green verdict measured against an
+older `main`. A clean textual merge says nothing about semantic conflict — two PRs can each be
+green alone and wrong together. So arm freely when PRs touch **different** files, and when two
+touch the same file, still land one and rebase the other with its affected tests **re-run**
+rather than trusting the earlier verdict. `git merge-tree` only answers the textual question.
 
 **Order matters when PRs carry submodule pins.** Two PRs both bumping the pin and the
 count-baseline will conflict; merge one, then tell the other to rebase and *re-measure*
@@ -194,8 +199,8 @@ Otherwise the next agent starts from the wrong premise — which has happened he
   nothing for that session or its subagents.
 - **When 1Password is locked, commits and pushes both fail.** Signing goes through
   `op-ssh-sign` and `origin` is SSH via the same agent, so `git commit` hangs waiting for a
-  signature and `git ls-remote` fails. The owner has authorized unsigned commits when he is
-  away from the machine: set `commit.gpgsign=false` / `tag.gpgsign=false` in the repo config
+  signature and `git ls-remote` fails. With the repo owner's authorization, fall back to
+  unsigned commits: set `commit.gpgsign=false` / `tag.gpgsign=false` in the repo config
   (every worktree shares it), and switch pushes to HTTPS with `gh auth setup-git` plus
   `git remote set-url origin https://github.com/StefanMaron/BusinessCentral.AL.Runner.git`.
   Verify with `git ls-remote origin HEAD` before telling anyone it works. Never read a secret
