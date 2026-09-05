@@ -1699,7 +1699,76 @@ public static partial class NclCecilRewrite
             //    single-mechanism. No rewrite here — the body replace is upstream.
         }
 
+        RewriteExecutionSchedulerThreadToBackground(asm.MainModule);
+    }
 
+    /// <summary>
+    /// #2704 — ExecutionScheduler..ctor starts a FOREGROUND OS thread ("BC Execution
+    /// Scheduler", SchedulerLoop) that only ever stops when <c>Dispose()</c> is called, and
+    /// nothing in Ncl or the runner calls it. <c>NavEnvironment.Instance.ExecutionScheduler</c>
+    /// is a process-lifetime lazy that roughly ten Ncl call sites realize as a side effect
+    /// (the captured #2704 trigger was Base App's Feature Telemetry disposing a helper
+    /// NavSession — <c>NavSession.InnerDispose</c> reads the lazy). On a service tier the
+    /// process never exits anyway; in a one-shot CLI process the thread keeps the CLR alive
+    /// after Main returns — the summary prints and the process hangs (#2650 was the same
+    /// defect through the PBT-enqueue trigger; #2628 removed that trigger, not the defect).
+    ///
+    /// Fix at the constructor, so every trigger — enumerated or not — is covered: insert
+    /// <c>dup; ldc.i4.1; callvirt Thread::set_IsBackground</c> before the single
+    /// <c>callvirt Thread::Start()</c>. The thread is parked in <c>Monitor.Wait</c>, so
+    /// tearing it down at process exit is harmless; during a run nothing changes, and
+    /// --server/--watch keep the process alive via the main thread regardless.
+    ///
+    /// Token-safe: <c>Thread::set_IsBackground(bool)</c> is ALREADY a memberRef in Ncl
+    /// (NavEnvironment's CollectAndCompactHeap thread sets it), and that existing
+    /// <see cref="MethodReference"/> is reused verbatim — no new typeRef/memberRef, so R2R
+    /// callers' token offsets are untouched. If either shape is missing this throws rather
+    /// than importing a fresh reference, per the token-shift rule.
+    /// </summary>
+    private static void RewriteExecutionSchedulerThreadToBackground(ModuleDefinition nclMod)
+    {
+        const string ThreadFullName = "System.Threading.Thread";
+
+        var navEnvT = nclMod.GetType("Microsoft.Dynamics.Nav.Runtime.NavEnvironment")
+            ?? throw new InvalidOperationException(
+                "[Cecil] NavEnvironment not found — Ncl shape changed; do not commit");
+        var setIsBackground = navEnvT.Methods
+            .Where(m => m.HasBody)
+            .SelectMany(m => m.Body.Instructions)
+            .Where(i => i.OpCode == OpCodes.Callvirt
+                && i.Operand is MethodReference mr
+                && mr.DeclaringType.FullName == ThreadFullName
+                && mr.Name == "set_IsBackground"
+                && mr.Parameters.Count == 1)
+            .Select(i => (MethodReference)i.Operand)
+            .FirstOrDefault()
+            ?? throw new InvalidOperationException(
+                "[Cecil] no existing Thread::set_IsBackground memberRef in NavEnvironment — " +
+                "cannot make ExecutionScheduler's thread background without adding a memberRef " +
+                "(R2R token-shift rule); Ncl shape changed; do not commit");
+
+        var ctor = FindNclMethod(nclMod,
+            "Microsoft.Dynamics.Nav.Runtime.ExecutionScheduler", ".ctor", 6);
+        var starts = ctor.Body.Instructions
+            .Where(i => i.OpCode == OpCodes.Callvirt
+                && i.Operand is MethodReference mr
+                && mr.DeclaringType.FullName == ThreadFullName
+                && mr.Name == "Start"
+                && mr.Parameters.Count == 0)
+            .ToList();
+        if (starts.Count != 1)
+            throw new InvalidOperationException(
+                $"[Cecil] expected exactly 1 Thread::Start() in ExecutionScheduler..ctor, found {starts.Count} — Ncl shape changed; do not commit");
+
+        // Stack at Start(): [thread]. dup → [thread, thread]; ldc.i4.1 → [thread, thread, 1];
+        // callvirt set_IsBackground → [thread]; then the original Start() consumes it.
+        var il = ctor.Body.GetILProcessor();
+        var start = starts[0];
+        il.InsertBefore(start, il.Create(OpCodes.Dup));
+        il.InsertBefore(start, il.Create(OpCodes.Ldc_I4_1));
+        il.InsertBefore(start, il.Create(OpCodes.Callvirt, setIsBackground));
+        ctor.Body.MaxStackSize += 2;
+        Console.Error.WriteLine("[Cecil] ExecutionScheduler..ctor: SchedulerLoop thread → IsBackground=true before Start() (#2704: foreground thread outlived Main)");
     }
 
     private static void AddRuntimeOwned(HashSet<string> set)
