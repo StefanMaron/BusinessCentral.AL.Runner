@@ -394,8 +394,18 @@ public static partial class RecordPatches
             // (#1903) — see ParseSourceFileIntoAllExtractors.
             if (_registered)
             {
+                var _diagBefore = ParseObjectTextCallCount;
+                var _diagHitsBefore = ParseTreeCacheHitCount;
+                var _diagFiles = 0;
                 foreach (var file in AlRunner.Infrastructure.SafeDirectoryScan.Files(dir, "*.al"))
+                {
+                    _diagFiles++;
                     ParseSourceFileIntoAllExtractors(File.ReadAllText(file), file);
+                }
+                if (Environment.GetEnvironmentVariable("AL_RUNNER_TRACE_PARSE_COUNTS") == "1")
+                    Console.Error.WriteLine(
+                        $"[parse-counts] dir files={_diagFiles} realParses={ParseObjectTextCallCount - _diagBefore} " +
+                        $"treeCacheHits={ParseTreeCacheHitCount - _diagHitsBefore}");
                 parsedAny = true;
             }
         }
