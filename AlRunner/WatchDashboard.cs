@@ -127,7 +127,15 @@ public static class WatchDashboard
                 any = true;
                 var bucketLabel = Markup.Escape(Path.GetFileName(b.BucketPath));
                 var node = tree.AddNode($"[blue]{bucketLabel}[/]  [red]EXEC FAILED[/]");
-                node.AddNode($"[red]{Markup.Escape(b.ProcessError ?? "execution failed")}[/]");
+                // #2779: same sibling gap as Reporter.PrintPerTest's EXEC FAIL branch — an
+                // in-process bundle that failed at run time has no ProcessError, and its
+                // diagnosis is in the suite-error list. Without this the dashboard printed the
+                // placeholder "execution failed" and nothing else.
+                if (b.ProcessError != null) node.AddNode($"[red]{Markup.Escape(b.ProcessError)}[/]");
+                foreach (var err in b.CompileErrors)
+                    node.AddNode($"[red]{Markup.Escape(err)}[/]");
+                if (b.ProcessError == null && b.CompileErrors.Count == 0)
+                    node.AddNode("[red]execution failed[/]");
                 continue;
             }
 

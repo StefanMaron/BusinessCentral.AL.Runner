@@ -71,8 +71,13 @@ class ScanLogTests(unittest.TestCase):
         self.assertIn("  total:       4321.5s", scan["summary_block"])
 
     def test_lost_bundles_resumes_and_not_run_lines_are_caveats(self):
+        # The per-bundle header is written the way Reporter.PrintPerTest actually writes it —
+        # "=== <bundle> \u2014 COMPILE FAIL ===". This test used to feed "COMPILE FAIL  /tmp/..."
+        # instead, a shape the runner never emits, so it passed while the pattern it covered
+        # matched nothing in a real log (#2779).
         log = (
-            "COMPILE FAIL  /tmp/ms-buckets/Tests-ERM: AL0185 ...\n"
+            "\n=== Tests-ERM \u2014 COMPILE FAIL ===\n"
+            "  Tests-ERM: COMPILE-FAIL (3): CS0246 The type or namespace 'X' could not be found\n"
             "resume: a watchdog abort ended this attempt early. Continuing in a fresh process, "
             "skipping 3 codeunit(s) already attempted or hung; 4 resume attempt(s) left after this one.\n"
             "NOT RUN: 1 bundle(s)\n"
@@ -81,7 +86,8 @@ class ScanLogTests(unittest.TestCase):
             + CLEAN_LOG
         )
         caveats = mbs.scan_log(log)["caveats"]
-        self.assertTrue(any(c.startswith("COMPILE FAIL") for c in caveats), caveats)
+        self.assertTrue(any("COMPILE FAIL ===" in c for c in caveats), caveats)
+        self.assertTrue(any("Tests-ERM" in c for c in caveats), caveats)
         self.assertTrue(any(c.startswith("resume:") for c in caveats), caveats)
         self.assertTrue(any(c.startswith("NOT RUN:") for c in caveats), caveats)
         self.assertTrue(any("carried from earlier attempt" in c for c in caveats), caveats)
@@ -89,6 +95,34 @@ class ScanLogTests(unittest.TestCase):
         # The zero-count summary lines are NOT caveats.
         self.assertFalse(any("compile-fail:0" in c for c in caveats), caveats)
         self.assertFalse(any("exec-fail:   0" in c for c in caveats), caveats)
+
+    def test_the_reason_a_bundle_failed_reaches_the_caveats(self):
+        """Actions run 33967273260, verbatim. The summary named a failure and never its cause:
+        the reader's own sentence is the one thing that diagnoses it, and it has to survive."""
+        log = (
+            "[1/1] ms-buckets/Tests-ERM \u2014 1 suites\n"
+            "  \u2192 0P/0F/0E across 0 tests, 1 suite errors (59.9s)\n"
+            "\n=== Tests-ERM \u2014 EXEC FAIL ===\n"
+            "  Tests-ERM: EXEC-FAIL: the backup reader failed (exit 1): block 116504 of MSDA "
+            "region is neither mapped by the derived extent list nor padding filler\n"
+            "  exec-fail:   1\n"
+            + CLEAN_LOG
+        )
+        caveats = mbs.scan_log(log)["caveats"]
+        self.assertTrue(any("EXEC FAIL ===" in c for c in caveats), caveats)
+        self.assertTrue(any("block 116504 of MSDA region" in c for c in caveats), caveats)
+        self.assertTrue(any(c.strip() == "exec-fail:   1" for c in caveats), caveats)
+
+    def test_ordinary_test_output_is_not_mistaken_for_a_bundle_error(self):
+        """The negative: per-test FAIL lines and passing output must not become caveats, or
+        every Microsoft bucket run drowns the real ones in thousands of lines."""
+        log = (
+            "  FAIL  Codeunit 134000.\"Sales Invoice\" (12ms)\n"
+            "        Assert.AreEqual failed: expected 3, got 4\n"
+            "  compile-fail:0\n"
+            + CLEAN_LOG
+        )
+        self.assertEqual(mbs.scan_log(log)["caveats"], [])
 
 
 class ComposeTests(unittest.TestCase):
@@ -145,10 +179,12 @@ class MainTests(unittest.TestCase):
         self.assertIn("| 9496 |", md)
 
     def test_missing_junit_exits_nonzero_but_still_writes_a_summary(self):
-        code, md = self._run(None, "COMPILE FAIL x\n", rc=3)
+        # The header shape Reporter.PrintPerTest really writes (#2779) — the previous
+        # "COMPILE FAIL x" is not a line the runner emits.
+        code, md = self._run(None, "=== Tests-ERM \u2014 COMPILE FAIL ===\n", rc=3)
         self.assertEqual(code, 1)
         self.assertIn("no JUnit", md)
-        self.assertIn("COMPILE FAIL x", md)
+        self.assertIn("COMPILE FAIL ===", md)
 
     def test_explicit_step_summary_path_is_appended_to(self):
         with tempfile.TemporaryDirectory() as d:

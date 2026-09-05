@@ -169,8 +169,13 @@ internal static class BackupReaderServe
             if (!root.TryGetProperty("ok", out var ok) || ok.ValueKind != JsonValueKind.True)
             {
                 var error = root.TryGetProperty("error", out var e) ? e.GetString() : null;
+                // #2779: the reader's own text on line 1, not line 2. Same defect as the
+                // spawning transport's non-zero-exit message had — every bundle-level reporter
+                // keeps only line 1 of an EXEC-FAIL message, so a refusal reason placed under
+                // the request description was discarded before anyone read it.
                 throw new BackupReaderException(
-                    $"the backup reader refused: {describeRequest}\n  {error ?? responseLine}");
+                    $"the backup reader refused: {BackupReaderTool.Condense(error ?? responseLine)} "
+                    + $"— request: {describeRequest}");
             }
             if (!root.TryGetProperty("headers", out var headers) || headers.ValueKind != JsonValueKind.Array)
                 throw new BackupReaderException(

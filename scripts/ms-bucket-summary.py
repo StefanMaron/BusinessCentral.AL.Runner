@@ -34,9 +34,24 @@ import xml.etree.ElementTree as ET
 # Every line matching one of these is a caveat, copied verbatim. Anchored where the runner's
 # own text is stable (Reporter.cs summary block, AbortResume.cs messages, the per-bundle
 # status lines), tolerant of leading whitespace.
+# The markers Program.cs puts on a bundle-level suite-error line; kept in step with
+# AlRunner/Infrastructure/BundleFailureStage.cs, which classifies the same set.
+BUNDLE_ERROR_MARKERS = (
+    "EMIT-TIMEOUT", "EMIT-FAIL", "EMIT-EXCLUDED", "EMIT-ZERO", "PARTIAL-EMIT-DROP",
+    "AL-DIAGNOSTIC-FAIL", "COMPILE-FAIL", "EXEC-FAIL", "TEST-TIMEOUT-ABORT",
+)
+
 CAVEAT_PATTERNS = (
-    re.compile(r"^\s*COMPILE FAIL\b"),
-    re.compile(r"^\s*EXEC FAIL\b"),
+    # Reporter.PrintPerTest's per-bundle header: "=== <bundle> — COMPILE FAIL ===" (em dash).
+    # This used to be anchored as r"^\s*COMPILE FAIL\b", which matches nothing the runner
+    # actually prints — the bundle's NAME never reached the summary (#2779). The test that
+    # covered it fed a hand-written line in a shape the runner does not emit.
+    re.compile(r"^\s*=== .* (?:COMPILE|EXEC) FAIL ==="),
+    # The suite-error lines under that header — the actual diagnosis, e.g.
+    # "Tests-ERM: EXEC-FAIL: the backup reader failed (exit 1): block 116504 …". Without
+    # these the summary said a bundle failed and never said why, which is what made the
+    # first ms-bucket run take several steps to diagnose.
+    re.compile(r"^\s*\S.*?: (?:" + "|".join(BUNDLE_ERROR_MARKERS) + r")\b"),
     re.compile(r"^\s*NOT RUN:"),
     re.compile(r"^\s*resume:"),
     re.compile(r"carried from earlier attempt"),

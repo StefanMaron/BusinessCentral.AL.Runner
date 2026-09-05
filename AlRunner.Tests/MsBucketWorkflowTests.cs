@@ -141,6 +141,26 @@ public sealed class MsBucketWorkflowTests
         Assert.Contains("--output-junit", code, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// #2779: the backup reader is PINNED to a tag, not resolved to whatever is newest at run
+    /// time. `gh release view … --jq .tagName` made this workflow's result depend on when a
+    /// different repository last published — the measurement could change with no change here,
+    /// and the reader's identity keys the install-baseline cache, so a reader upgrade changes
+    /// decoded values. Both halves are asserted: the pin is present, and the run-time
+    /// resolution is gone.
+    /// </summary>
+    [Fact]
+    public void MsBucketWorkflow_PinsTheBackupReaderRelease_RatherThanResolvingLatest()
+    {
+        var code = CodeOnly(Read(Path.Combine("workflows", Workflow)));
+
+        Assert.Contains("READER_TAG: v", code, StringComparison.Ordinal);
+        Assert.Contains("tag=\"$READER_TAG\"", code, StringComparison.Ordinal);
+        Assert.DoesNotContain("gh release view", code, StringComparison.Ordinal);
+        // The download still uses the tag, so pinning cannot silently stop pinning.
+        Assert.Contains("gh release download \"$tag\"", code, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void ProvisioningAction_CarriesTheBuildAndBothAppDownloads()
     {

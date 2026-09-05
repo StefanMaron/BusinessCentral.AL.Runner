@@ -181,6 +181,14 @@ public static class Reporter
                 w.WriteLine();
                 w.WriteLine($"=== {Path.GetFileName(b.BucketPath)} — EXEC FAIL ===");
                 if (b.ProcessError != null) w.WriteLine($"  {b.ProcessError}");
+                // #2779: an in-process bundle that failed at RUN time has no ProcessError — its
+                // diagnosis is in the suite-error list, the same list the COMPILE FAIL branch
+                // above prints. Without this the header was the ONLY thing printed and the
+                // reason vanished entirely, which is the defect this stage split would
+                // otherwise have introduced while fixing the wrong header.
+                foreach (var e in b.CompileErrors.Take(20)) w.WriteLine($"  {e}");
+                if (b.CompileErrors.Count > 20)
+                    w.WriteLine($"  ... and {b.CompileErrors.Count - 20} more errors");
                 continue;
             }
             // Skip silent buckets — only emit a per-bucket header if there's anything to show.
@@ -310,6 +318,21 @@ public static class Reporter
             .Select(b => new { file = b.BucketPath, errors = b.CompileErrors.ToList() })
             .ToList();
 
+        // #2779: an ExecuteFailed bucket used to appear NOWHERE in this document — not in
+        // `tests` (it has none), not in `compilationErrors` (it is not compile-failed). A
+        // consumer reading `--json` saw a run that silently lost a whole bundle. Additive and
+        // null-omitted, so a run with no execution failure serialises byte-identically.
+        var executionErrors = buckets
+            .Where(b => b.Stage == BucketStage.ExecuteFailed)
+            .Select(b => new
+            {
+                file = b.BucketPath,
+                errors = b.ProcessError is { } pe
+                    ? b.CompileErrors.Prepend(pe).ToList()
+                    : b.CompileErrors.ToList(),
+            })
+            .ToList();
+
         var output = new
         {
             tests = tests.Select(t => new
@@ -343,6 +366,7 @@ public static class Reporter
             total = tests.Count,
             exitCode,
             compilationErrors = compileErrors.Count > 0 ? compileErrors : null,
+            executionErrors = executionErrors.Count > 0 ? executionErrors : null,
             // #1936: same "real wall clock, not just the measured phases" gap as the
             // `wall:` line in PrintSummary — see that comment. Additive field, so
             // existing consumers reading this JSON are unaffected.
@@ -373,12 +397,19 @@ public static class Reporter
             }
             else if (b.Stage == BucketStage.ExecuteFailed)
             {
+                // #2779: `ProcessError` is set only by the out-of-process fan-out path. An
+                // in-process bundle that failed at RUN time carries its diagnosis in the same
+                // suite-error list a compile failure uses, so emitting only `error` here would
+                // have written `"error": null` — a failure record naming nothing. Both fields
+                // are emitted, and the classification comes from the errors' own markers rather
+                // than asserting a child process died when none did.
                 failures.Add(new
                 {
                     bucket = b.BucketPath,
                     kind = "execute",
                     error = b.ProcessError,
-                    classification = "process-error",
+                    errors = b.CompileErrors.Take(10).ToList(),
+                    classification = ClassifyExecute(b),
                 });
             }
             else
@@ -425,6 +456,20 @@ public static class Reporter
             .Take(15)  // more frames for diagnosis
             .Select(l => l.Trim())
             .ToArray();
+    }
+
+    /// <summary>
+    /// The classification for a bucket that failed at RUN time (#2779). `process-error` is kept
+    /// for the out-of-process fan-out path, where a child process really did fail; an in-process
+    /// bundle is named by its own error marker instead, so a reader can tell a thrown exception
+    /// from codeunits abandoned by the per-test watchdog without parsing the message.
+    /// </summary>
+    private static string ClassifyExecute(BucketResult b)
+    {
+        if (b.ProcessError != null) return "process-error";
+        var first = b.CompileErrors.FirstOrDefault();
+        var marker = first == null ? null : Infrastructure.BundleFailureStage.MarkerOf(first);
+        return marker == null ? "execute/other" : $"execute/{marker.ToLowerInvariant()}";
     }
 
     // Hand-tuned classification heuristics — purely descriptive, not authoritative.

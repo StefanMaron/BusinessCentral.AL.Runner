@@ -3464,12 +3464,20 @@ foreach (var bundle in bundles)
         else
             Console.WriteLine($"  → {sP}P/{sF}F/{sE}E across {bundleTests.Count} tests, {bundleErrors.Count} suite errors ({(bundleEmit + bundleComp + bundleRun).TotalSeconds:F1}s)");
     }
-    // Deliberately still gated on an EMPTY bundle. CompileFailed suppresses the bucket's
+    // Deliberately still gated on an EMPTY bundle. A non-Ran stage suppresses the bucket's
     // per-test reporting (Reporter treats it as "nothing ran"), so widening it to any suite
     // error would hide the tests that DID pass — trading one silent inaccuracy for another.
     // Partial suite loss reaches the exit code via computedExitCode's CompileErrors check
     // instead, which keeps the surviving results in the report and the JSON.
-    if (bundleTests.Count == 0 && bundleErrors.Count > 0) bundleStage = BucketStage.CompileFailed;
+    //
+    // #2779: WHICH non-Ran stage is decided by the errors' own markers, not assumed. This used
+    // to hardcode CompileFailed, so a bundle whose AL compiled cleanly and then failed at RUN
+    // time — the BC backup reader refusing the backup, on the ms-bucket workflow's first run —
+    // was reported as `compile-fail: 1` under a "COMPILE FAIL" header and classified
+    // `compile/other` in --out's JSON, sending the reader hunting for AL errors that never
+    // existed.
+    if (bundleTests.Count == 0 && bundleErrors.Count > 0)
+        bundleStage = AlRunner.Infrastructure.BundleFailureStage.Classify(bundleErrors);
     results.Add(new BucketResult(bundleAbs, bundleStage,
         bundleErrors, null, bundleTests,
         bundleEmit, bundleComp, bundleRun, ranGroupCount, bundleProvisionGaps));
