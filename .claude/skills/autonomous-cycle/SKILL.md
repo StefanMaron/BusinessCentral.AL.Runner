@@ -374,6 +374,38 @@ would need to answer it, and move on — do not block, and do not guess:
 - Anything where the loop has failed the same way several cycles running. That is not a hard
   problem, it is a wrong assumption, and it needs a person to see it.
 
+## The status page
+
+Publish one public artifact and republish it at the end of every cycle. It answers two
+questions at a glance, from any device, without being signed in as the account running the loop
+— which matters, because a person watching an unattended box usually has a different account
+open on their phone.
+
+**Is it alive, and does it need me?**
+
+The page carries, in roughly this order of prominence:
+
+- **When it last updated.** The most important line on the page.
+- What it is working on now, and what it finished in the last few cycles.
+- What is queued for a human decision, with links.
+- The last known-good baseline result and when it ran.
+- A short box summary from the profile — memory, disk, the slot in use.
+
+**The timestamp is a dead-man's switch, and that is the point.** Notifications only cover
+failures the loop can recognise and report. A crashed process, a power cut, a hung agent, a
+wedged network — none of those can send anything. A timestamp that has stopped advancing is the
+only signal that catches them, and it needs no infrastructure to work. Treat the two as
+complementary: notifications for known problems, a stale page for everything else.
+
+Two practical points:
+
+- **Republish to the same artifact every cycle**, so the link never changes. Record its URL in
+  the box profile; publishing a fresh one each cycle gives a link nobody can bookmark and
+  destroys the timestamp's meaning.
+- **It is public, so put nothing on it that should not be.** No tokens, no notification
+  endpoints, no absolute paths from the machine, no personal detail. Counts, states, timestamps
+  and links to public issues only.
+
 ## Telling a person something is wrong
 
 Labels and issues are passive — someone has to go and look. An unattended loop that stops at
