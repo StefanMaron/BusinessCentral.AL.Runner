@@ -6,6 +6,21 @@ the canonical AL-language test corpus, validated against a real BC service tier.
 any file under `tests/al-language/`.** The corpus does not know about AL Runner and must stay
 that way.
 
+## The corpus default branch is `master`, not `main`
+
+This repository's default branch is `main`; the corpus repository's is `master`. Target `master`
+when opening a corpus PR. `gh pr create` without an explicit `--base` picks the default correctly,
+but a hand-written `--base main`, or an API call that assumes `main`, fails with a 422 that does not
+say why — two agents lost time to it on 2026-09-05, one of them concluding the API was broken.
+
+```bash
+gh repo view StefanMaron/BusinessCentral.AL.Language.Tests --json defaultBranchRef \
+  --jq '.defaultBranchRef.name'      # master
+```
+
+The same asymmetry applies to every command naming a branch: `git merge-tree --write-tree
+origin/master origin/<branch>` for a conflict check in the corpus, `origin/main` for one here.
+
 ## What this means in practice
 
 - **Test failures in the corpus are runner gaps**, not corpus bugs. `no-assumption-fixes`
