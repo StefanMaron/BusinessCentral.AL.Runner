@@ -16,6 +16,37 @@ Newest last, within each section.
 
 ## al-language
 
+### 2554 -> 2599 (pin aa49fb4f -> ab6fbefa, PR #2941)
+
+The pin advanced to consume StefanMaron/BusinessCentral.AL.Language.Tests#174, the upstream
+half of #2296 (the session user must be a row in the User table). Corpus history is linear, so
+five other merged corpus PRs came with it and all of them contribute tests:
+
+| corpus PR | what it pins |
+|---|---|
+| #168 | opening a TestPage is not a Commit |
+| #169 | running a page modally inside a test is not a Commit |
+| #170 | how `TestPage.Previous()` walks a page's rowset backwards |
+| #171 | `min()`, `max()` and `average()` CalcFormula aggregates |
+| #173 | the Table Metadata, AllObj and AllObjWithCaption virtual tables |
+| #174 | the session user is a row in the User table (this PR's own upstream test) |
+
+**2599 is the number the guard itself reported**, not one computed from the old total plus a
+count of added tests (#2803). Measured on BC 28.1.49838.53910 by running the corpus with
+`--strict --count-baseline`; the run failed with
+`GROWTH: suite 'al-language' tests count: expected 2554, actual 2599 (BC 28.1)` and 2599 is that
+`actual`. Re-run after the bump: 2599/2599, exit 0.
+
+The guard was also confirmed ARMED rather than silently skipping, since it prints nothing on a
+match: re-running against a copy of this file carrying 2600 exits 4 with
+`DROP: ... expected 2600, actual 2599`.
+
+Of the 2599, 10 are new `expect-fail-known-gap` entries covering pre-existing runner gaps the
+bump made visible — 5 under #2901 (SourceTableView not applied, reaching these tests through
+`Previous()`), 4 under #2938 (Table Metadata constants), 1 under #2970 (FlowField CalcFormula
+type validation). All three issues stay open after this PR merges. The 4 tests from #174 pass,
+because this PR is the fix for them; no entry was written for those.
+
 ## runner-extras
 
 ## Migrated log (everything above 2026-09-05, verbatim)

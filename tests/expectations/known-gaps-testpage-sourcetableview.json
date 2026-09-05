@@ -30,5 +30,45 @@
     "Mode": "expect-fail-known-gap",
     "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2901",
     "Note": "Base Application page 1710 'Deferral Lines - G/L' declares SourceTableView = where(\"Deferral Doc. Type\" = const(\"G/L\")) and its rows are not filtered either, so the gap is not specific to a view declared by the app under test. Kept as its own entry because a fix reading the view only from the compiling app's own metadata would pass the three arms above and fail this one."
+  },
+  {
+    "codeunitId": 60756,
+    "CodeunitName": "Test Page Previous",
+    "Method": "TestPage_Previous_WalksThePageOrderBackwards",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2901",
+    "Note": "Pulled in by this PR's submodule pin bump, NOT caused by it. The pin advanced to ab6fbefa to consume StefanMaron/BusinessCentral.AL.Language.Tests#174 (the upstream half of #2296); corpus history is linear, so #170's TestPage.Previous() tests come with it. These five are the SAME gap as the four codeunit 60822 entries in this file, surfacing through Previous() instead of through the view directly: the page declares SourceTableView = sorting(Amount) order(descending) where(\"Entry No.\" = filter(1|2|3), Status = const(Active)), and the runner applies none of it, so the rows arrive in primary-key order and the where(...) clause excludes nothing. Every failure message is about the ORDER or the filter, not about the backwards walk -- measured on BC 28.1.49838.53910: Expected:<1> Actual:<4>, 'order(descending) on sorting(Amount) must put the lowest Amount last'. Previous() itself is not implicated. Tracked as #2901, which stays open after this PR merges; the fix for it removes these entries."
+  },
+  {
+    "codeunitId": 60756,
+    "CodeunitName": "Test Page Previous",
+    "Method": "TestPage_Previous_OnTheFirstRow_ReturnsFalseAndKeepsTheCursorThere",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2901",
+    "Note": "Pulled in by this PR's submodule pin bump, NOT caused by it. The pin advanced to ab6fbefa to consume StefanMaron/BusinessCentral.AL.Language.Tests#174 (the upstream half of #2296); corpus history is linear, so #170's TestPage.Previous() tests come with it. These five are the SAME gap as the four codeunit 60822 entries in this file, surfacing through Previous() instead of through the view directly: the page declares SourceTableView = sorting(Amount) order(descending) where(\"Entry No.\" = filter(1|2|3), Status = const(Active)), and the runner applies none of it, so the rows arrive in primary-key order and the where(...) clause excludes nothing. Every failure message is about the ORDER or the filter, not about the backwards walk -- measured on BC 28.1.49838.53910: Expected:<2> Actual:<1>, 'the highest Amount is first under order(descending)'. Previous() itself is not implicated. Tracked as #2901, which stays open after this PR merges; the fix for it removes these entries."
+  },
+  {
+    "codeunitId": 60756,
+    "CodeunitName": "Test Page Previous",
+    "Method": "TestPage_Previous_AfterNext_ReturnsToTheSameRow",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2901",
+    "Note": "Pulled in by this PR's submodule pin bump, NOT caused by it. The pin advanced to ab6fbefa to consume StefanMaron/BusinessCentral.AL.Language.Tests#174 (the upstream half of #2296); corpus history is linear, so #170's TestPage.Previous() tests come with it. These five are the SAME gap as the four codeunit 60822 entries in this file, surfacing through Previous() instead of through the view directly: the page declares SourceTableView = sorting(Amount) order(descending) where(\"Entry No.\" = filter(1|2|3), Status = const(Active)), and the runner applies none of it, so the rows arrive in primary-key order and the where(...) clause excludes nothing. Every failure message is about the ORDER or the filter, not about the backwards walk -- measured on BC 28.1.49838.53910: Expected:<2> Actual:<1>, 'the walk starts on the highest Amount'. Previous() itself is not implicated. Tracked as #2901, which stays open after this PR merges; the fix for it removes these entries."
+  },
+  {
+    "codeunitId": 60756,
+    "CodeunitName": "Test Page Previous",
+    "Method": "TestPage_Previous_DoesNotReachARowOutsideThePageFilter",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2901",
+    "Note": "Pulled in by this PR's submodule pin bump, NOT caused by it. The pin advanced to ab6fbefa to consume StefanMaron/BusinessCentral.AL.Language.Tests#174 (the upstream half of #2296); corpus history is linear, so #170's TestPage.Previous() tests come with it. These five are the SAME gap as the four codeunit 60822 entries in this file, surfacing through Previous() instead of through the view directly: the page declares SourceTableView = sorting(Amount) order(descending) where(\"Entry No.\" = filter(1|2|3), Status = const(Active)), and the runner applies none of it, so the rows arrive in primary-key order and the where(...) clause excludes nothing. Every failure message is about the ORDER or the filter, not about the backwards walk -- measured on BC 28.1.49838.53910: Expected:<1> Actual:<2>, 'the lowest Amount of the filtered rows is last under order(descending)'. Previous() itself is not implicated. Tracked as #2901, which stays open after this PR merges; the fix for it removes these entries."
+  },
+  {
+    "codeunitId": 60756,
+    "CodeunitName": "Test Page Previous",
+    "Method": "TestPage_Previous_OnAnEmptyRowset_ReturnsFalse",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2901",
+    "Note": "Pulled in by this PR's submodule pin bump, NOT caused by it. The pin advanced to ab6fbefa to consume StefanMaron/BusinessCentral.AL.Language.Tests#174 (the upstream half of #2296); corpus history is linear, so #170's TestPage.Previous() tests come with it. These five are the SAME gap as the four codeunit 60822 entries in this file, surfacing through Previous() instead of through the view directly: the page declares SourceTableView = sorting(Amount) order(descending) where(\"Entry No.\" = filter(1|2|3), Status = const(Active)), and the runner applies none of it, so the rows arrive in primary-key order and the where(...) clause excludes nothing. Every failure message is about the ORDER or the filter, not about the backwards walk -- measured on BC 28.1.49838.53910: Assert.IsFalse failed, 'no row passes the view, so there is no first row' -- the where(...) clause admitted rows it must exclude. Previous() itself is not implicated. Tracked as #2901, which stays open after this PR merges; the fix for it removes these entries."
   }
 ]
