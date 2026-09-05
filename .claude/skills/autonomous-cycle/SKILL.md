@@ -274,24 +274,37 @@ path or push to the same branch. Derive the namespace from the account running t
 
 ## How the loop is driven
 
-**One process per cycle, driven by a plain loop.** Not an OS scheduler: contributors run
-Windows as well as Linux and macOS, and a `while` loop in bash or PowerShell needs no scheduler
-at all and behaves identically on all three. A systemd unit or a Task Scheduler entry is
-optional hardening on top — restart on boot — never the mechanism itself.
+Two shapes work, and both need a supervising timer — a `/loop` session dies with its session
+exactly as a shell loop dies with its process, so something outside has to notice and restart
+either way. That is not the difference between them.
 
-This works because the design deliberately keeps state in the **repository** and the **box
-profile**, never in agent context. A cycle can therefore start cold and lose nothing:
+**A `/loop` session** keeps one session alive and re-entering the cycle. It is the more
+comfortable shape to watch and to tune. It is viable here for a specific reason: this design
+keeps state in the **repository** and the **box profile**, never in agent context, so a
+compaction cannot lose anything the loop depends on. In a design that carried state in context,
+running for days would be reckless.
 
-- **It survives its own crashes.** A dead cycle costs one unit of work; the next starts clean.
-- **Context cannot grow unboundedly.** A session running for days gets slower and more expensive
-  every cycle for no benefit.
-- **The five-hour window boundary stops mattering.** A cycle either fits or the next one starts
-  after the reset, so nothing is left stranded mid-task — which is otherwise the likeliest way
-  to lose work.
+**A fresh process per cycle** — a plain `while` loop in bash or PowerShell — starts cold every
+time. Deliberately not an OS scheduler as the mechanism: contributors run Windows as well as
+Linux and macOS, and a shell loop behaves identically on all three, with a systemd unit or Task
+Scheduler entry as optional restart-on-boot hardening.
 
-`/loop` is the right tool for a **supervised** run — self-pacing, keeps context, good while
-tuning with someone watching. It is the wrong tool for unattended running, because it ties the
-loop's life to one session's.
+**Bound the session's lifetime either way.** Even with compaction, a session running for days
+accumulates state that is not context — tool handles, temp files, harness state. Have the loop
+end itself after a set period or number of cycles and let the timer restart it. That keeps the
+`/loop` experience while capping accumulation, and it is better than either pure option.
+
+**Where compaction lands matters more than when it fires.** A compaction inside a unit of work
+discards that unit's working context; one between units costs nothing, because everything
+durable is already in git and the profile. So end every cycle at a durable checkpoint, and
+prefer a threshold that compacts often and cheaply at those boundaries over one that compacts
+rarely and expensively in the middle of something. A high threshold is not safer — it makes each
+compaction larger and likelier to interrupt work.
+
+Whichever shape is used, the properties that matter are the same: a dead cycle costs one unit of
+work, context does not grow without bound, and the five-hour window boundary is harmless because
+a cycle either fits or the next starts after the reset. Nothing should ever be stranded
+mid-task; that is the likeliest way to lose work.
 
 The cost of starting cold is that preflight repeats. Most of it is cheap; the known-good
 baseline is not, at a couple of minutes. Record in the box profile when the baseline last
