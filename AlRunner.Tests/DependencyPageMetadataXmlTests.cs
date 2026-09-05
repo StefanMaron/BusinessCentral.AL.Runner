@@ -692,6 +692,263 @@ public class DependencyPageMetadataXmlTests
         }
     }
 
+    // Issue #2820 — SourceTableView reconstruction. Its own app/fixture for the same reason
+    // the parts one above has one: resolving a view's field NAMES to ids needs real Tables
+    // with named Fields.
+    private const int ViewPageId = 88123601;
+    private const int NoViewPageId = 88123602;
+    private const int UnresolvableViewPageId = 88123603;
+    private const int WhereOnlyViewPageId = 88123604;
+
+    private const string ViewSymbolReference = """
+        {
+          "RuntimeVersion": "15.1",
+          "Tables": [
+            {
+              "Id": 88123620,
+              "Name": "DPX View Table",
+              "Fields": [
+                { "Id": 1, "Name": "No." },
+                { "Id": 2, "Name": "Bucket" },
+                { "Id": 3, "Name": "Price Type" }
+              ]
+            }
+          ],
+          "Pages": [
+            {
+              "Id": 88123601,
+              "Name": "DPX View Page",
+              "Properties": [
+                { "Name": "PageType", "Value": "List" },
+                { "Name": "SourceTable", "Value": "88123620" },
+                { "Name": "SourceTableView", "Value": "sorting(Bucket, \"No.\")\r\n                      order(descending)\r\n                      where(\"Price Type\" = const(Sale),\r\n                            Bucket = filter(1|2))" }
+              ]
+            },
+            {
+              "Id": 88123602,
+              "Name": "DPX No View Page",
+              "Properties": [
+                { "Name": "PageType", "Value": "List" },
+                { "Name": "SourceTable", "Value": "88123620" }
+              ]
+            },
+            {
+              "Id": 88123603,
+              "Name": "DPX Unresolvable View Page",
+              "Properties": [
+                { "Name": "PageType", "Value": "List" },
+                { "Name": "SourceTable", "Value": "88123620" },
+                { "Name": "SourceTableView", "Value": "where(\"No Such Field\" = const(Sale))" }
+              ]
+            },
+            {
+              "Id": 88123604,
+              "Name": "DPX Where Only View Page",
+              "Properties": [
+                { "Name": "PageType", "Value": "List" },
+                { "Name": "SourceTable", "Value": "88123620" },
+                { "Name": "SourceTableView", "Value": "where(Bucket = const(7))" }
+              ]
+            }
+          ]
+        }
+        """;
+
+    private static XmlElement ReadSourceObjectFor(int pageId)
+    {
+        var xml = RecordPatches.TryBuildDependencyPageMetadata(pageId);
+        Assert.NotNull(xml);
+        var doc = new XmlDocument();
+        doc.LoadXml(xml!);
+        var ns = new XmlNamespaceManager(doc.NameTable);
+        ns.AddNamespace("m", "urn:schemas-microsoft-com:dynamics:NAV:MetaObjects");
+        return (XmlElement)doc.DocumentElement!.SelectSingleNode("m:Properties/m:SourceObject", ns)!;
+    }
+
+    private static XmlNamespaceManager MetaNs(XmlDocument doc)
+    {
+        var ns = new XmlNamespaceManager(doc.NameTable);
+        ns.AddNamespace("m", "urn:schemas-microsoft-com:dynamics:NAV:MetaObjects");
+        return ns;
+    }
+
+    /// <summary>
+    /// #2820: a page declared only by a precompiled dependency .app got no
+    /// <c>&lt;SourceTableView&gt;</c> at all, so BC's own <c>NavForm.ApplySourceTableView</c>
+    /// found nothing to apply and the page opened unfiltered. The where(...) entries must
+    /// reconstruct as the <c>&lt;TableFilters&gt;</c> shape ApplySourceTableView consumes:
+    /// resolved numeric FieldID, CONST/FILTER, and FilterGroup 2 — the group BC sets the
+    /// record to while applying them, and the group Base Application page 7016's OnOpenPage
+    /// reads back out.
+    ///
+    /// <para>An enum <c>const(Member)</c> is written as the member NAME where the compiler
+    /// writes its ordinal; that equivalence (BC's filter grammar resolves an option member by
+    /// either) is the one NormalizeConstLinkValue already documents for SubPageLinks, and the
+    /// runner has no ordinal table for a dependency's fields at this point.</para>
+    /// </summary>
+    [Fact]
+    public void TryBuildDependencyPageMetadata_SourceTableView_EmitsTableFiltersInFilterGroup2()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            RecordPatches.AddBcAppPath(WriteApp(dir, ViewSymbolReference));
+
+            var sourceObject = ReadSourceObjectFor(ViewPageId);
+            var ns = MetaNs(sourceObject.OwnerDocument!);
+            var view = (XmlElement?)sourceObject.SelectSingleNode("m:SourceTableView", ns);
+            Assert.NotNull(view);
+
+            var filters = view!.SelectNodes("m:TableFilters", ns)!.Cast<XmlElement>().ToList();
+            Assert.Equal(2, filters.Count);
+
+            // "Price Type" = const(Sale) — field 3 of the fixture's table.
+            Assert.Equal("2", filters[0].GetAttribute("FilterGroup"));
+            Assert.Equal("3", filters[0].GetAttribute("FieldID"));
+            Assert.Equal("CONST", filters[0].GetAttribute("FilterType"));
+            Assert.Equal("Sale", filters[0].GetAttribute("FilterValue"));
+
+            // Bucket = filter(1|2) — field 2, and a FILTER expression carried through.
+            Assert.Equal("2", filters[1].GetAttribute("FilterGroup"));
+            Assert.Equal("2", filters[1].GetAttribute("FieldID"));
+            Assert.Equal("FILTER", filters[1].GetAttribute("FilterType"));
+            Assert.Equal("1|2", filters[1].GetAttribute("FilterValue"));
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// The sorting half. <c>sorting(Bucket, "No.") order(descending)</c> must reconstruct as
+    /// BC's own <c>&lt;Sorting&gt;</c> shape, whose <c>KeyFields</c> is the
+    /// <c>Field&lt;id&gt;</c> spelling <c>MetaTable.GetKeyFieldIds</c> parses, in the order the
+    /// view declares — measured by compiling exactly that view on BC 28.1 and reading back
+    /// the metadata the compiler captured: <c>KeyFields="Field2,Field1"
+    /// KeyFieldsSetByView="1" AscendingSetByView="1" Ascending="0"</c>.
+    ///
+    /// <para>The two <c>*SetByView</c> flags are what ApplySourceTableView gates on, so
+    /// getting them wrong is silent: the page keeps its default key and ascending order and
+    /// nothing reports that the view was ignored.</para>
+    /// </summary>
+    [Fact]
+    public void TryBuildDependencyPageMetadata_SourceTableViewSortingAndOrder_EmitsKeyFieldIdsAndDescending()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            RecordPatches.AddBcAppPath(WriteApp(dir, ViewSymbolReference));
+
+            var sourceObject = ReadSourceObjectFor(ViewPageId);
+            var ns = MetaNs(sourceObject.OwnerDocument!);
+            var sorting = (XmlElement?)sourceObject.SelectSingleNode("m:SourceTableView/m:Sorting", ns);
+            Assert.NotNull(sorting);
+
+            Assert.Equal("Field2,Field1", sorting!.GetAttribute("KeyFields"));
+            Assert.Equal("1", sorting.GetAttribute("KeyFieldsSetByView"));
+            Assert.Equal("1", sorting.GetAttribute("AscendingSetByView"));
+            Assert.Equal("0", sorting.GetAttribute("Ascending"));
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// The direction that makes the two above mean something: a page stating no
+    /// SourceTableView must carry no <c>&lt;SourceTableView&gt;</c> element. Writing an empty
+    /// one unconditionally would give every dependency page a ViewDefinition whose empty
+    /// TableFilters list ApplySourceTableView walks — harmless today, but it would also make
+    /// the positive tests above pass for a synthesizer that emits the element and nothing in
+    /// it.
+    /// </summary>
+    [Fact]
+    public void TryBuildDependencyPageMetadata_PageWithoutSourceTableView_EmitsNone()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            RecordPatches.AddBcAppPath(WriteApp(dir, ViewSymbolReference));
+
+            var sourceObject = ReadSourceObjectFor(NoViewPageId);
+            var ns = MetaNs(sourceObject.OwnerDocument!);
+            Assert.Null(sourceObject.SelectSingleNode("m:SourceTableView", ns));
+            // …and the element it does carry is untouched.
+            Assert.Equal("88123620", sourceObject.GetAttribute("SourceTable"));
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// A view with a <c>where(...)</c> and no <c>sorting(...)</c>/<c>order(...)</c> gets no
+    /// <c>&lt;Sorting&gt;</c> element: ApplySourceTableView reads that element only through
+    /// its two <c>*SetByView</c> flags, so one with neither set can do nothing, and 178 of
+    /// Base Application 28.1's 386 SourceTableView pages declare sorting at all.
+    /// </summary>
+    [Fact]
+    public void TryBuildDependencyPageMetadata_SourceTableViewWithoutSorting_EmitsFiltersButNoSortingElement()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            RecordPatches.AddBcAppPath(WriteApp(dir, ViewSymbolReference));
+
+            var sourceObject = ReadSourceObjectFor(WhereOnlyViewPageId);
+            var ns = MetaNs(sourceObject.OwnerDocument!);
+            var view = (XmlElement?)sourceObject.SelectSingleNode("m:SourceTableView", ns);
+            Assert.NotNull(view);
+
+            Assert.Null(view!.SelectSingleNode("m:Sorting", ns));
+            var filter = (XmlElement)view.SelectSingleNode("m:TableFilters", ns)!;
+            Assert.Equal("2", filter.GetAttribute("FieldID"));
+            Assert.Equal("CONST", filter.GetAttribute("FilterType"));
+            Assert.Equal("7", filter.GetAttribute("FilterValue"));
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// A view field name this run cannot resolve is written as <c>FieldID="0"</c>, so BC's own
+    /// <c>MetaTable.GetFieldByNo(0)</c> refuses with NavNCLFieldNotFoundException when the page
+    /// opens. Dropping the entry instead would show every row of the table — the exact defect
+    /// #2820 is about — and do it silently; the same "fail loudly rather than show unfiltered
+    /// rows" choice EmitSubFormLinkXml already makes for an unresolvable part link.
+    /// </summary>
+    [Fact]
+    public void TryBuildDependencyPageMetadata_UnresolvableViewField_KeepsTheFilterWithFieldIdZero()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            RecordPatches.AddBcAppPath(WriteApp(dir, ViewSymbolReference));
+
+            var sourceObject = ReadSourceObjectFor(UnresolvableViewPageId);
+            var ns = MetaNs(sourceObject.OwnerDocument!);
+            var filters = sourceObject.SelectNodes("m:SourceTableView/m:TableFilters", ns)!
+                .Cast<XmlElement>().ToList();
+
+            Assert.Single(filters);
+            Assert.Equal("0", filters[0].GetAttribute("FieldID"));
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
     private static XmlElement ReadSourceObject(int pageId)
     {
         var xml = RecordPatches.TryBuildDependencyPageMetadata(pageId);

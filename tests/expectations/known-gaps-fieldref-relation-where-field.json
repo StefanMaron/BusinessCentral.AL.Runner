@@ -1,0 +1,42 @@
+[
+  {
+    "codeunitId": 60482,
+    "CodeunitName": "Test FieldRef Relation",
+    "Method": "FieldRef_Relation_RelationWithWhereFieldLink_ReturnsRelatedTableId",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2518",
+    "Note": "A TableRelation narrowed by where(\"Group Code\" = field(\"Group Code\")) is dropped whole by the precompiled-table relation parser, so FieldRef.Relation answers 0 where BC answers 60480. Arrived with the corpus pin bump in this PR (StefanMaron/BusinessCentral.AL.Language.Tests#165, green on all 8 real-BC legs); nothing in this PR touches relation parsing. Tracked as #2518, whose fix (PR #2853) removes this entry."
+  },
+  {
+    "codeunitId": 60482,
+    "CodeunitName": "Test FieldRef Relation",
+    "Method": "FieldRef_Relation_ConditionalWithWhereFieldLink_SelectsTheIfArm",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2518",
+    "Note": "Same root cause as the sibling entry: the if() arm of a conditional relation carrying a where(... = field(...)) link is dropped, so Relation answers 0 where BC answers 60480. Tracked as #2518, whose fix (PR #2853) removes this entry."
+  },
+  {
+    "codeunitId": 60482,
+    "CodeunitName": "Test FieldRef Relation",
+    "Method": "FieldRef_Relation_ConditionalWithWhereFieldLink_SelectsTheElseArm",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2518",
+    "Note": "The else arm of the same conditional relation: Relation answers 0 where BC answers 60030. Tracked as #2518, whose fix (PR #2853) removes this entry."
+  },
+  {
+    "codeunitId": 60482,
+    "CodeunitName": "Test FieldRef Relation",
+    "Method": "FieldRef_Relation_BaseApplicationFieldWithWhereFieldLink_ReturnsRelatedTableId",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2518",
+    "Note": "The Base Application instance of the same shape: Customer.City declares TableRelation = \"Post Code\".City in both arms, and Relation answers 0 where BC answers 225. Tracked as #2518, whose fix (PR #2853) removes this entry."
+  },
+  {
+    "codeunitId": 60482,
+    "CodeunitName": "Test FieldRef Relation",
+    "Method": "Validate_RelationWithWhereFieldLink_RefusesARowOutsideTheFilter",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2518",
+    "Note": "The consequence of the dropped relation rather than the reading of it: with no relation to check, Validate accepts a value with no matching related row, so the test's asserterror finds no error to trap. Its positive twin (AcceptsARowInsideTheFilter) passes, which is why only this arm is listed. Tracked as #2518, whose fix (PR #2853) removes this entry."
+  }
+]

@@ -1,0 +1,10 @@
+[
+  {
+    "codeunitId": 60403,
+    "CodeunitName": "Test Modal Row Load",
+    "Method": "ModalPageOnACallerPositionedRow_RaisesOnAfterGetRecordForThatRow",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2797",
+    "Note": "A modal page opened on a row the caller positioned must raise OnAfterGetRecord for that row before the handler sees it; the runner does not, so the flag the page sets there stays false. Arrived with the corpus pin bump in this PR, from a corpus commit predating StefanMaron/BusinessCentral.AL.Language.Tests#166 and green on real BC. Nothing in this PR touches modal dispatch. Tracked as #2797, whose fix (PR #2812) removes this entry."
+  }
+]

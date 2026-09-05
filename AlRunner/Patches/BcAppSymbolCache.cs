@@ -131,7 +131,25 @@ internal static partial class BcAppSymbolCache
     // deserialises them as null/true, which reads as "this field has no relation": FieldRef.Relation
     // answers 0 and Validate() accepts a value with no matching related row. That is a wrong ANSWER
     // replayed from cache rather than a cache miss, so it needs the bump.
-    private const int CacheVersion = 26;
+    // v27: reserved for PR #2853 (issue #2518), which widens ParsedField's relation arms to
+    // carry a where(... = field(...)) link instead of dropping the whole relation. That PR was
+    // opened first and its own _comment block already describes v27, so this one takes 28 —
+    // the number below is the ONLY thing separating two incompatible payload meanings (see
+    // Get()'s key: fullPath|hash|vN carries no other schema discriminator), and two open
+    // branches claiming the same number cross-poison the SHARED ~/.cache/al-runner/bc-symbols
+    // in both directions: each build reads the other's same-keyed payload and deserialises the
+    // field IT added as null, which reads as "this page/field declares none" rather than as a
+    // cache miss. Measured here, not theorised: the corpus arm driving Base Application page
+    // 1710 failed locally against a v27 entry another branch's build had already written, and
+    // passed unchanged the moment the run used an isolated --cache. CI is unaffected (ephemeral
+    // runners, nothing restores that directory), and git conflicts on this line at merge time,
+    // so the hazard is local and while-both-are-open only.
+    // v28: PageSymbol gained TableView (#2820) — a precompiled page's SourceTableView, parsed
+    // from the SymbolReference.json property text. A v27 payload deserialises it as null, which
+    // reads as "this page declares no view": the page then opens with none of the view's
+    // filters applied and shows rows the view excludes. A wrong ANSWER replayed from cache
+    // rather than a cache miss, so it needs the bump.
+    private const int CacheVersion = 28;
     private static readonly ConcurrentDictionary<string, AppSymbols> ProcessCache = new(StringComparer.OrdinalIgnoreCase);
     // Issue #1820 — path -> content-hash memo. ComputeAppContentHash needs to read the
     // WHOLE .app to hash it (unlike the FileInfo.Length/LastWriteTimeUtc stat it replaced,
@@ -272,7 +290,10 @@ internal static partial class BcAppSymbolCache
         Dictionary<int, string>? MemberIdToName = null,
         // Member id of every Kind-4 actionref -> the NAME of the action it points at (the
         // file's own TargetName), mirroring ParsedPage.MemberIdToActionRefTarget (#2113).
-        Dictionary<int, string>? MemberIdToActionRefTarget = null);
+        Dictionary<int, string>? MemberIdToActionRefTarget = null,
+        // The page's SourceTableView, parsed out of the symbol file's own AL text (#2820).
+        // Null when the page declares none. See ParseSourceTableView.
+        PageTableViewSymbol? TableView = null);
 
     /// <summary>
     /// A precompiled dependency's <c>pageextension</c>, as far as SymbolReference.json states
@@ -321,6 +342,27 @@ internal static partial class BcAppSymbolCache
     /// EmitSubFormLinkXml, then applied by MockTestPage.SubPageLinks — #2469).
     /// </summary>
     internal sealed record PageSubFormLinkSymbol(string PartFieldName, string Kind, string Value);
+
+    /// <summary>
+    /// A precompiled dependency page's <c>SourceTableView</c>, parsed from the AL text
+    /// SymbolReference.json records for it — <c>sorting(...) order(...) where(...)</c>, each
+    /// clause optional. Field NAMES are still names here for the same reason
+    /// <see cref="PageSubFormLinkSymbol"/> keeps them: resolving one to a field id needs the
+    /// page's SourceTable, which DependencyPageMetadataXml has in scope and this parse does not.
+    /// <para><c>Ascending</c> is null when the view states no <c>order(...)</c> — distinct from
+    /// <c>true</c>, because BC's ApplySourceTableView only touches the record's ALAscending when
+    /// the view SET it (<c>AscendingSetByView</c>).</para>
+    /// </summary>
+    internal sealed record PageTableViewSymbol(
+        List<string> SortingFieldNames, bool? Ascending, List<PageViewFilterSymbol> Filters);
+
+    /// <summary>
+    /// One <c>where(...)</c> entry of a <c>SourceTableView</c>: the page's OWN source-table
+    /// field, the AL keyword (<c>const</c> or <c>filter</c> — a view cannot use
+    /// <c>field(...)</c>, which references a host record a page-level view has none of), and
+    /// the value text verbatim.
+    /// </summary>
+    internal sealed record PageViewFilterSymbol(string FieldName, string Kind, string Value);
 
     /// <summary>
     /// One field control of a precompiled dependency page, as SymbolReference.json states
@@ -893,12 +935,15 @@ internal static partial class BcAppSymbolCache
             foreach (var a in actionsArr.EnumerateArray())
                 CollectMemberNames(a, "Actions", memberNames, actionRefTargets);
 
+        props.TryGetValue("SourceTableView", out var sourceTableView);
+
         return new PageSymbol(pageId, name!, sourceTableId, sourceTableTemporary,
             string.IsNullOrWhiteSpace(pageType) ? "Card" : pageType!, caption,
             editable, insertAllowed, modifyAllowed, deleteAllowed, controls,
             string.IsNullOrWhiteSpace(cardPageName) ? null : cardPageName,
             autoSplitKey, multipleNewLines, delayedInsert, parts,
-            memberNames, actionRefTargets);
+            memberNames, actionRefTargets,
+            ParseSourceTableView(pageId, sourceTableView));
     }
 
     /// <summary>
@@ -1074,6 +1119,109 @@ internal static partial class BcAppSymbolCache
             result.Add(new PageSubFormLinkSymbol(partField, kind, value));
         }
         return result;
+    }
+
+    private static readonly System.Text.RegularExpressions.Regex ViewClauseRegex = new(
+        @"\b(?<clause>sorting|order|where)\s*\(",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    /// <summary>
+    /// Parse a page's <c>SourceTableView</c> property text — <c>sorting(f1, f2)
+    /// order(descending) where("A" = const(X), B = filter(&lt;&gt; ''))</c>, every clause
+    /// optional — into the typed shape <c>DependencyPageMetadataXml</c> re-emits as BC's own
+    /// <c>&lt;SourceTableView&gt;</c> metadata element (issue #2820).
+    ///
+    /// <para>Measured across Base Application 28.1's SymbolReference.json: 386 pages declare a
+    /// SourceTableView — 220 carry <c>where(...)</c>, 178 <c>sorting(...)</c> and 99
+    /// <c>order(...)</c>; of the 235 filter entries 171 are <c>const(...)</c> and 64
+    /// <c>filter(...)</c>, and not one is <c>field(...)</c>, which AL does not allow here.</para>
+    ///
+    /// <para>Returns null for a page declaring no view, and for text no clause could be read
+    /// out of (reported on stderr) — the caller then emits no <c>&lt;SourceTableView&gt;</c>
+    /// element at all, which is the same state as before this parse existed.</para>
+    /// </summary>
+    private static PageTableViewSymbol? ParseSourceTableView(int pageId, string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return null;
+
+        var sorting = new List<string>();
+        bool? ascending = null;
+        var filters = new List<PageViewFilterSymbol>();
+        var sawClause = false;
+
+        foreach (System.Text.RegularExpressions.Match m in ViewClauseRegex.Matches(text!))
+        {
+            var open = m.Index + m.Length - 1;           // the '(' itself
+            var close = MatchingCloseParen(text!, open);
+            if (close < 0) continue;                     // unbalanced — reported below
+            var inner = text!.Substring(open + 1, close - open - 1);
+            sawClause = true;
+
+            switch (m.Groups["clause"].Value.ToLowerInvariant())
+            {
+                case "sorting":
+                    foreach (var f in SplitTopLevelCommas(inner))
+                    {
+                        var fieldName = f.Trim().Trim('"');
+                        if (fieldName.Length > 0) sorting.Add(fieldName);
+                    }
+                    break;
+                case "order":
+                    // AL allows exactly `ascending` / `descending` here.
+                    var dir = inner.Trim();
+                    if (string.Equals(dir, "descending", StringComparison.OrdinalIgnoreCase)) ascending = false;
+                    else if (string.Equals(dir, "ascending", StringComparison.OrdinalIgnoreCase)) ascending = true;
+                    else Console.Error.WriteLine(
+                        $"[BcAppSymbolCache] page {pageId} SourceTableView order() not understood, ignored: '{dir}'");
+                    break;
+                default:
+                    foreach (var rawEntry in SplitTopLevelCommas(inner))
+                    {
+                        var entry = rawEntry.Trim();
+                        if (entry.Length == 0) continue;
+                        var em = SubPageLinkEntryRegex.Match(entry);
+                        if (!em.Success)
+                        {
+                            Console.Error.WriteLine(
+                                $"[BcAppSymbolCache] page {pageId} SourceTableView where() entry not understood, dropped: '{entry}'");
+                            continue;
+                        }
+                        filters.Add(new PageViewFilterSymbol(
+                            em.Groups["left"].Value.Trim('"'),
+                            em.Groups["kind"].Value.ToLowerInvariant(),
+                            em.Groups["val"].Value.Trim()));
+                    }
+                    break;
+            }
+        }
+
+        if (!sawClause)
+        {
+            Console.Error.WriteLine(
+                $"[BcAppSymbolCache] page {pageId} SourceTableView not understood, ignored: '{text!.Trim()}'");
+            return null;
+        }
+        if (sorting.Count == 0 && ascending == null && filters.Count == 0) return null;
+        return new PageTableViewSymbol(sorting, ascending, filters);
+    }
+
+    /// <summary>Index of the ')' closing the '(' at <paramref name="open"/>, ignoring
+    /// parentheses inside an AL quoted identifier or a single-quoted literal, or -1.</summary>
+    private static int MatchingCloseParen(string s, int open)
+    {
+        var depth = 0;
+        var inDouble = false;
+        var inSingle = false;
+        for (int i = open; i < s.Length; i++)
+        {
+            var c = s[i];
+            if (c == '"' && !inSingle) { inDouble = !inDouble; continue; }
+            if (c == '\'' && !inDouble) { inSingle = !inSingle; continue; }
+            if (inDouble || inSingle) continue;
+            if (c == '(') depth++;
+            else if (c == ')' && --depth == 0) return i;
+        }
+        return -1;
     }
 
     /// <summary>

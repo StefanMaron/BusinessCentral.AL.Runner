@@ -165,6 +165,9 @@ public static partial class RecordPatches
                 if (page.AutoSplitKey) w.WriteAttributeString("AutoSplitKey", "1");
                 if (page.MultipleNewLines) w.WriteAttributeString("MultipleNewLines", "1");
                 if (page.DelayedInsert) w.WriteAttributeString("DelayedInsert", "1");
+                // The page's SourceTableView, which BC's own NavForm.ApplySourceTableView
+                // reads from exactly here (issue #2820) — see EmitSourceTableViewXml.
+                if (page.TableView is { } view) EmitSourceTableViewXml(w, page, view);
             }
             // The attributes above only mean anything alongside a SourceTable, so a page
             // without one gets the bare element the compiler itself emits — not
@@ -299,6 +302,119 @@ public static partial class RecordPatches
             w.WriteAttributeString("FilterValue", FilterValueText(link.Value));
         }
         w.WriteEndElement(); // SubFormLink
+    }
+
+    /// <summary>
+    /// The page's <c>SourceTableView</c>, in the shape BC's own metadata carries it —
+    /// <c>&lt;SourceTableView&gt;</c> under <c>&lt;SourceObject&gt;</c>, holding an optional
+    /// <c>&lt;Sorting&gt;</c> and one <c>&lt;TableFilters&gt;</c> element per
+    /// <c>where(...)</c> entry. That is what <c>NavForm.ApplySourceTableView</c> reads, and
+    /// <c>RunnerPageInstance.ApplySourceTableViewFilters</c> now calls it on every page open,
+    /// so a precompiled page's view finally filters (issue #2820: Base Application page 7016
+    /// "Sales Price List" declares <c>where("Price Type" = const(Sale))</c>, and its OnOpenPage
+    /// evaluates that filter's value into an enum with no blank member).
+    ///
+    /// <para>Shape measured, not guessed — a page declaring
+    /// <c>SourceTableView = sorting(Bucket, "No.") order(descending) where(Bucket = filter(1|2),
+    /// Kind = const(Purchase))</c> compiled on BC 28.1 produces:</para>
+    /// <code>
+    /// &lt;SourceTableView&gt;
+    ///   &lt;Sorting KeyFields="Field2,Field1" KeyFieldsSetByView="1" AscendingSetByView="1" Ascending="0" /&gt;
+    ///   &lt;TableFilters FilterGroup="2" FieldID="2" FilterType="FILTER" FilterValue="1|2" /&gt;
+    ///   &lt;TableFilters FilterGroup="2" FieldID="3" FilterType="CONST" FilterValue="2" /&gt;
+    /// &lt;/SourceTableView&gt;
+    /// </code>
+    ///
+    /// <para>Two deliberate differences from that compiler output, both observably
+    /// equivalent:</para>
+    /// <list type="bullet">
+    /// <item>The compiler ALWAYS writes <c>&lt;Sorting&gt;</c>, with all-zero
+    /// <c>*SetByView</c> flags when the view declares no sorting. ApplySourceTableView acts on
+    /// the element only through those two flags, so a view with neither omits it here rather
+    /// than writing an element that can do nothing.</item>
+    /// <item>An enum/option <c>const(Member)</c> is written as the member NAME, where the
+    /// compiler writes its ordinal — the same equivalence
+    /// <see cref="NormalizeConstLinkValue"/> already documents and relies on for SubPageLinks:
+    /// the value goes through <c>Record.SetFilter</c>, whose grammar resolves an option member
+    /// by name as readily as by ordinal, and the runner has no ordinal table for a
+    /// dependency's fields here.</item>
+    /// </list>
+    ///
+    /// <para>A field name this run cannot resolve to an id is written as <c>FieldID="0"</c>,
+    /// which BC's own <c>MetaTable.GetFieldByNo(0)</c> refuses with
+    /// <c>NavNCLFieldNotFoundException</c> naming the table when the page opens — the same
+    /// "fail loudly rather than show unfiltered rows" choice EmitSubFormLinkXml makes for a
+    /// part link, and the reason this cannot degrade into a silently ignored filter.</para>
+    /// </summary>
+    private static void EmitSourceTableViewXml(
+        XmlWriter w, BcAppSymbolCache.PageSymbol page, BcAppSymbolCache.PageTableViewSymbol view)
+    {
+        w.WriteStartElement("SourceTableView");
+
+        if (view.SortingFieldNames.Count > 0 || view.Ascending.HasValue)
+        {
+            var keyFieldIds = new List<string>(view.SortingFieldNames.Count);
+            var unresolved = false;
+            foreach (var fieldName in view.SortingFieldNames)
+            {
+                var id = RecordPatches.TryResolveDependencyFieldId(page.SourceTableId, fieldName);
+                if (id is null) { unresolved = true; break; }
+                // BC's own spelling for MetaTable.GetKeyFieldIds: "Field<id>", in view order.
+                keyFieldIds.Add("Field" + id.Value.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            }
+
+            w.WriteStartElement("Sorting");
+            if (keyFieldIds.Count > 0 && !unresolved)
+            {
+                w.WriteAttributeString("KeyFields", string.Join(",", keyFieldIds));
+                w.WriteAttributeString("KeyFieldsSetByView", "1");
+            }
+            else if (unresolved)
+            {
+                // A sorting field the run cannot resolve would otherwise silently reorder the
+                // page. Say so, and leave the key alone rather than set a wrong one — unlike a
+                // filter, a key CANNOT be made to fail loudly through the metadata (BC reads
+                // KeyFields only when KeyFieldsSetByView says to).
+                Console.Error.WriteLine(
+                    $"[RecordPatches] page {page.Id} \"{page.Name}\": SourceTableView sorting("
+                    + string.Join(", ", view.SortingFieldNames)
+                    + $") not applied — a field name did not resolve against table {page.SourceTableId}");
+            }
+            if (view.Ascending.HasValue)
+            {
+                w.WriteAttributeString("AscendingSetByView", "1");
+                w.WriteAttributeString("Ascending", view.Ascending.Value ? "1" : "0");
+            }
+            w.WriteEndElement(); // Sorting
+        }
+
+        foreach (var filter in view.Filters)
+        {
+            var fieldId = RecordPatches.TryResolveDependencyFieldId(page.SourceTableId, filter.FieldName);
+            if (fieldId is null)
+                Console.Error.WriteLine(
+                    $"[RecordPatches] page {page.Id} \"{page.Name}\": SourceTableView field "
+                    + $"\"{filter.FieldName}\" did not resolve against table {page.SourceTableId} — "
+                    + "the page will refuse to open rather than show unfiltered rows");
+
+            w.WriteStartElement("TableFilters");
+            w.WriteAttributeString("FilterGroup", "2");
+            w.WriteAttributeString("FieldID",
+                (fieldId ?? 0).ToString(System.Globalization.CultureInfo.InvariantCulture));
+            if (string.Equals(filter.Kind, "const", StringComparison.OrdinalIgnoreCase))
+            {
+                w.WriteAttributeString("FilterType", "CONST");
+                w.WriteAttributeString("FilterValue", NormalizeConstLinkValue(filter.Value));
+            }
+            else
+            {
+                w.WriteAttributeString("FilterType", "FILTER");
+                w.WriteAttributeString("FilterValue", FilterValueText(filter.Value));
+            }
+            w.WriteEndElement(); // TableFilters
+        }
+
+        w.WriteEndElement(); // SourceTableView
     }
 
     /// <summary>
