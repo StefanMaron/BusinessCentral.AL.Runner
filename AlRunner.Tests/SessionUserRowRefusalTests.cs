@@ -93,8 +93,11 @@ public sealed class SessionUserRowRefusalTests
         return (proc.ExitCode, outSb.ToString(), errSb.ToString());
     }
 
-    private static string TempCache(string tag) =>
-        Path.Combine(Path.GetTempPath(), "al-runner-sur-tests", $"{tag}-" + Guid.NewGuid().ToString("N"));
+    // TestScratch.Dir, not a hand-rolled Path.GetTempPath() combine: a --cache root is the
+    // expensive kind (the runner builds a ~273 MB BC cache into it), and an OWNED directory is
+    // reclaimable by a later runner start if this host is killed before its finally block runs
+    // (#2706/#2743, enforced by ScratchDirOwnershipGuardTests).
+    private static string TempCache(string tag) => TestScratch.Dir($"al-runner-sur-{tag}");
 
     [Fact]
     public void SeedOnAnAlreadyPresentRow_SaysAlreadyPresent_NotSeeded()

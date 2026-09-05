@@ -199,7 +199,13 @@ public class NamespaceQualifiedRelationTargetTests
 
     private static string NewDir()
     {
-        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        // TestScratch.FlatDir rather than a bare Path.Combine(Path.GetTempPath(), Guid): the
+        // directory needs a recorded owner so a killed test host's leftovers are reclaimable by
+        // a later runner start, and the "al-runner-" prefix is what ScratchDirs.SweepStale
+        // scans for -- it skips any depth-0 name without one, so the original bare-GUID name
+        // could not be reached even in principle (#2706/#2743, enforced by
+        // ScratchDirOwnershipGuardTests).
+        var dir = TestScratch.FlatDir("al-runner-nqr-");
         Directory.CreateDirectory(dir);
         return dir;
     }
