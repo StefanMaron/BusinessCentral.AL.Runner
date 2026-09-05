@@ -101,30 +101,50 @@ public static partial class RecordPatches
         if (string.IsNullOrEmpty(appPath) || !File.Exists(appPath)) return;
         lock (_bcTableIndexLock)
         {
-            if (!_bcAppPaths.Contains(appPath, StringComparer.OrdinalIgnoreCase))
+            if (_bcAppPaths.Contains(appPath, StringComparer.OrdinalIgnoreCase)) return;
+
+            // #2712: read BOTH symbol surfaces to completion BEFORE the path is registered.
+            // Registration happens in Program.cs before any test runs, so a failure here is
+            // fatal to the run (Program.cs catches BcAppSymbolReadException and exits 1)
+            // instead of surfacing later as "this table has no extensions" — which is how an
+            // OutOfMemoryException parsing Base Application's SymbolReference.json under a
+            // 1 GB heap limit turned into 47 plausible-looking test failures and exit 0.
+            // Reading first also means a failed .app is never left in _bcAppPaths, so a warm
+            // --server process is not poisoned for every later request. The table-extension
+            // read doubles as a cache warm-up: EnsureBcSymbolExtensionIndex's later call is a
+            // process-cache hit, so this costs nothing the first index build would not have.
+            BcAppSymbolCache.AppSymbols symbols;
+            try
             {
-                _bcAppPaths.Add(appPath);
-                // This is the ONLY live path by which a precompiled dependency's enums reach
-                // AlEnumMetadataRegistry (AlEnumMetadataRegistry.RegisterFromAppPath, which
-                // looks like it does the same job, has no callers). Every field the symbol
-                // carries has to be passed here or it is simply absent at runtime: the
-                // per-value Captions (#1775) and the enum-level DefaultImplementation /
-                // UnknownValueImplementation fallbacks (#2306) were both being dropped,
-                // which is why Base App enum 205 "Alt. Cust VAT Reg. Doc." could not be cast
-                // to its interface.
-                foreach (var enumSymbol in BcAppSymbolCache.Get(appPath).Enums)
-                    AlRunner.AlEnumMetadataRegistry.Register(
-                        enumSymbol.Id,
-                        enumSymbol.Name,
-                        enumSymbol.Options.ToArray(),
-                        enumSymbol.Indexes.ToArray(),
-                        enumSymbol.Implementations.Select(i => i.ToArray()).ToArray(),
-                        enumSymbol.Captions?.ToArray(),
-                        enumSymbol.DefaultImplementations?.ToArray(),
-                        enumSymbol.UnknownImplementations?.ToArray());
-                // Invalidate the indexes so newly-added .app gets picked up on next miss.
-                InvalidateBcAppIndexes();
+                symbols = BcAppSymbolCache.Get(appPath);
+                BcAppSymbolCache.GetTableExtensions(appPath);
             }
+            catch (Exception ex) when (ex is not AlRunner.Infrastructure.BcAppSymbolReadException)
+            {
+                throw new AlRunner.Infrastructure.BcAppSymbolReadException(appPath, "table symbols", ex);
+            }
+
+            _bcAppPaths.Add(appPath);
+            // This is the ONLY live path by which a precompiled dependency's enums reach
+            // AlEnumMetadataRegistry (AlEnumMetadataRegistry.RegisterFromAppPath, which
+            // looks like it does the same job, has no callers). Every field the symbol
+            // carries has to be passed here or it is simply absent at runtime: the
+            // per-value Captions (#1775) and the enum-level DefaultImplementation /
+            // UnknownValueImplementation fallbacks (#2306) were both being dropped,
+            // which is why Base App enum 205 "Alt. Cust VAT Reg. Doc." could not be cast
+            // to its interface.
+            foreach (var enumSymbol in symbols.Enums)
+                AlRunner.AlEnumMetadataRegistry.Register(
+                    enumSymbol.Id,
+                    enumSymbol.Name,
+                    enumSymbol.Options.ToArray(),
+                    enumSymbol.Indexes.ToArray(),
+                    enumSymbol.Implementations.Select(i => i.ToArray()).ToArray(),
+                    enumSymbol.Captions?.ToArray(),
+                    enumSymbol.DefaultImplementations?.ToArray(),
+                    enumSymbol.UnknownImplementations?.ToArray());
+            // Invalidate the indexes so newly-added .app gets picked up on next miss.
+            InvalidateBcAppIndexes();
         }
     }
 
@@ -145,7 +165,17 @@ public static partial class RecordPatches
             foreach (var app in Directory.EnumerateFiles(bundleRoot, "*.app", SearchOption.TopDirectoryOnly))
             {
                 try { if (AlRunner.AppLoader.HasSymbolReference(app)) AddBcAppPath(app); }
-                catch { /* unreadable .app — skip */ }
+                catch (Exception ex)
+                {
+                    // A bundle-root .app is optional (a source-only bundle has none), so an
+                    // unreadable one is skipped as a WHOLE — AddBcAppPath reads to completion
+                    // or throws, so there is no partial to skip with (#2712). `[warn]` is
+                    // exempt from Log's default-verbosity filter; the previous bare catch
+                    // said nothing at all.
+                    Console.Error.WriteLine(
+                        $"[warn] BcAppFallback: skipping bundle-root .app {Path.GetFileName(app)} — " +
+                        $"its symbols could not be read: {ex.Message}");
+                }
             }
         }
         catch (Exception ex)
@@ -493,32 +523,59 @@ public static partial class RecordPatches
         var captions = new Dictionary<int, string?>();
         foreach (var appPath in _bcAppPaths)
         {
-            try
+            // #2712: every path here passed AddBcAppPath's eager read, so the only way this
+            // read can fail is the file having changed or vanished on disk since (a --watch
+            // dependency rebuilt or removed between iterations; a test fixture's temp dir
+            // deleted). Vanished: skip the .app as a WHOLE and say so on a channel that is on
+            // by default. Present but unreadable: a typed failure that propagates — the
+            // previous catch wrote a `[RecordPatches]`-tagged line that Log's default filter
+            // dropped, and published a table index missing that .app's tables.
+            if (!File.Exists(appPath))
             {
-                var symbols = BcAppSymbolCache.Get(appPath);
-                foreach (var table in symbols.Tables)
-                    if (!idx.ContainsKey(table.TableId))
-                        idx[table.TableId] = (appPath, table);
-                // Same first-app-wins rule as the table index above, so the two dictionaries
-                // cannot disagree about which .app a given table id came from. TryAdd rather
-                // than an indexer assignment: the value may legitimately be null (the table
-                // declares no Caption), and null must still claim the id so a later .app's
-                // same-id caption does not overwrite it.
-                foreach (var obj in symbols.Objects)
-                    if (string.Equals(obj.Kind, "Table", StringComparison.OrdinalIgnoreCase))
-                        captions.TryAdd(obj.Id, obj.Caption);
+                Console.Error.WriteLine(
+                    $"[warn] BcAppFallback: registered dependency .app is no longer on disk; its tables " +
+                    $"and table extensions are not available to this run: {appPath}");
+                continue;
             }
-            catch (Exception ex)
+            BcAppSymbolCache.AppSymbols symbols;
+            try { symbols = BcAppSymbolCache.Get(appPath); }
+            catch (Exception ex) when (ex is not AlRunner.Infrastructure.BcAppSymbolReadException)
             {
-                Console.Error.WriteLine($"[RecordPatches] BcAppFallback: SymbolReference read failed for {Path.GetFileName(appPath)}: {ex.Message}");
+                throw new AlRunner.Infrastructure.BcAppSymbolReadException(appPath, "table symbols", ex);
             }
+            foreach (var table in symbols.Tables)
+                if (!idx.ContainsKey(table.TableId))
+                    idx[table.TableId] = (appPath, table);
+            // Same first-app-wins rule as the table index above, so the two dictionaries
+            // cannot disagree about which .app a given table id came from. TryAdd rather
+            // than an indexer assignment: the value may legitimately be null (the table
+            // declares no Caption), and null must still claim the id so a later .app's
+            // same-id caption does not overwrite it.
+            foreach (var obj in symbols.Objects)
+                if (string.Equals(obj.Kind, "Table", StringComparison.OrdinalIgnoreCase))
+                    captions.TryAdd(obj.Id, obj.Caption);
         }
         _bcSymbolTableIndex = idx;
         _bcSymbolTableCaptions = captions;
         if (idx.Count > 0)
             Console.Error.WriteLine($"[RecordPatches] BcAppFallback: indexed {idx.Count} symbol table id(s) across {_bcAppPaths.Count} BC .app file(s)");
-        // Co-build the extension index whenever the table index is (re)built.
-        EnsureBcSymbolExtensionIndex();
+        // Co-build the extension index whenever the table index is (re)built. If that fails,
+        // unpublish the table index again: EnsureBcSymbolExtensionIndex's only call site is
+        // this one, gated by `_bcSymbolTableIndex != null`, so a published table index with
+        // the extension flag still false would short-circuit every later call and serve
+        // tables with no extensions for the rest of the process — the #2478 shape, reached
+        // through a failure instead of a reset. Unpublished, the next lookup retries and
+        // fails the same loud way.
+        try
+        {
+            EnsureBcSymbolExtensionIndex();
+        }
+        catch
+        {
+            _bcSymbolTableIndex = null;
+            _bcSymbolTableCaptions = null;
+            throw;
+        }
     }
 
     /// <summary>
@@ -543,26 +600,34 @@ public static partial class RecordPatches
     private static void EnsureBcSymbolExtensionIndex()
     {
         if (_bcSymbolExtensionIndexBuilt) return;
-        _bcSymbolExtensionIndexBuilt = true;
 
         int merged = 0;
         foreach (var appPath in _bcAppPaths)
         {
-            try
-            {
-                foreach (var ext in BcAppSymbolCache.GetTableExtensions(appPath))
-                {
-                    if (string.IsNullOrEmpty(ext.TargetTableName)) continue;
+            // Vanished from disk since registration: EnsureBcSymbolTableIndex (the only
+            // caller, same pass) already warned and skipped this .app's tables; skip its
+            // extensions the same way so the two indexes agree.
+            if (!File.Exists(appPath)) continue;
 
-                    MergeExtensionFields(ext.TargetTableName, ext.ExtensionId, ext.Fields);
-                    merged++;
-                }
-            }
-            catch (Exception ex)
+            // No catch here (#2712). This used to swallow any failure into a
+            // `[RecordPatches]`-tagged stderr line — dropped by Log's default-verbosity
+            // filter — AFTER having already flagged the index as built, so a partial merge
+            // was presented as the complete answer for the rest of the process.
+            // GetTableExtensions either returns the complete list or throws
+            // BcAppSymbolReadException; MergeExtensionFields de-duplicates by field id, so
+            // a retried merge after a failure is safe.
+            foreach (var ext in BcAppSymbolCache.GetTableExtensions(appPath))
             {
-                Console.Error.WriteLine($"[RecordPatches] BcAppFallback: extension index failed for {Path.GetFileName(appPath)}: {ex.Message}");
+                if (string.IsNullOrEmpty(ext.TargetTableName)) continue;
+
+                MergeExtensionFields(ext.TargetTableName, ext.ExtensionId, ext.Fields);
+                merged++;
             }
         }
+
+        // Only once every registered .app merged to completion. Setting this FIRST was half of
+        // the bug: a failure part-way through left the flag true and the merge never re-ran.
+        _bcSymbolExtensionIndexBuilt = true;
 
         if (merged > 0)
             Console.Error.WriteLine($"[RecordPatches] BcAppFallback: merged {merged} precompiled tableextension(s) into _parsedExtensionFields across {_bcAppPaths.Count} BC .app file(s)");
