@@ -629,6 +629,19 @@ well, which is the bug (#2519) this table's support closed.
 move quietly. It deliberately uses only ids that are live table objects, so it does not encode
 the open `ObsoleteState = Removed` question as settled in either direction.
 
+**When the runner cannot answer at all, it refuses and says so as a gap, not as a scope
+boundary.** Twelve preconditions guard this table — BC's `SystemTables` type and its
+`ApplicationDatabaseTables` list, `NavEnvironment.Instance.EmitVersion`, the `"Object Type"`
+option string, the in-memory data provider, and `TempTableDataProvider.primaryTree`. If one of
+them is not the shape the runner expects, it raises `RunnerOutOfScopeException` with reason
+anchor `not-yet-implemented` and a link back to this section. None of them means the surface is
+out of scope: this table is implemented, and a refusal here is a bug report about the runner
+(#2894). The anchor matters at runtime as well as on the page — an AL `[TryFunction]` traps a
+*permanent* refusal into `false` and lets a `not-yet-implemented` one tear through, so a shape
+gap can never read as a clean `if not TryX()`. `AlRunner.Tests/ObjectMetadataSystemTableRefusalTests.cs`
+pins the contract; `AlRunner.Tests/ObjectMetadataProviderRowProbeTests.cs` drives the two
+`primaryTree` cases end to end.
+
 **Synthesis never overwrites restored rows, and never guesses whether there are any.** Because
 2000000071 is a real SQL table, a `--test-data` backup can genuinely carry rows for it, so the
 on-demand loader runs first and the populator does nothing when the store already holds a row.
