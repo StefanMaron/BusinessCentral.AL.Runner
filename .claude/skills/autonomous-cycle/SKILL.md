@@ -272,6 +272,32 @@ a dead box from a contributor who is asleep. Surface it to the human queue and m
 branches, scratch directories, cache directories. Two contributors must never write to the same
 path or push to the same branch. Derive the namespace from the account running the loop.
 
+## How the loop is driven
+
+**One process per cycle, driven by a plain loop.** Not an OS scheduler: contributors run
+Windows as well as Linux and macOS, and a `while` loop in bash or PowerShell needs no scheduler
+at all and behaves identically on all three. A systemd unit or a Task Scheduler entry is
+optional hardening on top — restart on boot — never the mechanism itself.
+
+This works because the design deliberately keeps state in the **repository** and the **box
+profile**, never in agent context. A cycle can therefore start cold and lose nothing:
+
+- **It survives its own crashes.** A dead cycle costs one unit of work; the next starts clean.
+- **Context cannot grow unboundedly.** A session running for days gets slower and more expensive
+  every cycle for no benefit.
+- **The five-hour window boundary stops mattering.** A cycle either fits or the next one starts
+  after the reset, so nothing is left stranded mid-task — which is otherwise the likeliest way
+  to lose work.
+
+`/loop` is the right tool for a **supervised** run — self-pacing, keeps context, good while
+tuning with someone watching. It is the wrong tool for unattended running, because it ties the
+loop's life to one session's.
+
+The cost of starting cold is that preflight repeats. Most of it is cheap; the known-good
+baseline is not, at a couple of minutes. Record in the box profile when the baseline last
+passed and re-run it on an interval rather than every cycle — often enough to catch a box that
+has drifted, rarely enough that it is not most of the work.
+
 ## Pacing
 
 The five-hour windows are real, but **exhausting every window burns the weekly limit in a
