@@ -10,10 +10,18 @@
 ///   - ExtensionActionrefToExtensionActionRunsTargetsTrigger   same
 ///   - ExtensionActionrefToBasePageActionRunsTargetsTrigger    same
 ///   - PrecompiledBasePageExtensionActionrefRunsTargetsTrigger  same, on page 7500
-///   - the two triggerless arms                 already pass, and must keep passing
+///   - the effect-less arms                     already pass, and must keep passing
 ///
-/// GREEN: every arm logs its own tag and only its own tag, and the two triggerless arms still
+/// GREEN: every arm logs its own tag and only its own tag, and the effect-less arms still
 /// refuse loudly.
+///
+/// #2931 changed what "triggerless" means here. An action carries EITHER an OnAction trigger or
+/// a RunObject, and the runner now PERFORMS a RunObject that names a page, so the two arms that
+/// used to assert a runner refusal for `RunObject = page ...` would have kept a fixed defect
+/// pinned as correct. They now assert the opposite -- that no runner refusal is raised and BC's
+/// own unhandled-UI error comes through instead -- and the refusal claim moved onto the three
+/// shapes the runner genuinely still declines: a RunObject naming a REPORT, one carrying a
+/// RunPageLink, and an action declaring no effect at all.
 ///
 /// The plain-BC half of the first eight arms is covered upstream in the al-language corpus:
 /// StefanMaron/BusinessCentral.AL.Language.Tests#79, commit c98be548, green on real BC 27.5
@@ -168,14 +176,15 @@ codeunit 64545 "Par Tests"
             'a promoted actionref added to a PRECOMPILED base page must run its extension target''s OnAction trigger');
     end;
 
-    // Runner-specific negative, and the one claim that could not go upstream at all: on real BC
-    // a RunObject action's Invoke() opens the page, so no service tier can adjudicate this
-    // refusal. An action whose whole effect is RunObject genuinely declares no OnAction, and
-    // opening another page is a surface the runner refuses. That refusal must survive the fix — a
-    // resolution that answered "nothing to run, so run nothing" would make every arm above
-    // green while removing the loud failure loud-failures.md requires.
+    // Runner-specific, #2931: a RunObject naming a PAGE is now PERFORMED, so the runner must
+    // stop raising a refusal of its own here. The BC-behaviour half — which handler answers the
+    // opened page, and that an unattended open is refused — is adjudicated upstream
+    // (handlers/TestPageActionRunObject_Tests.al); what is runner-specific and belongs here is
+    // that the failure the test sees is BC's, not ours. Asserting the ABSENCE of the
+    // out-of-scope prefix is the whole point: a regression that reinstated the refusal would
+    // still fail loudly and would still be an asserterror, so only this distinguishes them.
     [Test]
-    procedure TriggerlessActionStillRefusesLoudly()
+    procedure RunObjectPageActionIsPerformedAndNoLongerRefusedByTheRunner()
     var
         HostPage: TestPage "Par Host Page";
     begin
@@ -184,15 +193,16 @@ codeunit 64545 "Par Tests"
         HostPage.OpenEdit();
         asserterror HostPage.TriggerlessAction.Invoke();
 
-        Assert.Contains(GetLastErrorText(), 'testpage-action',
-            'a RunObject action with no OnAction must still raise the named testpage-action refusal');
+        Assert.Contains(GetLastErrorText(), 'Unhandled UI',
+            'a RunObject page action must be performed, and with no handler declared BC''s own unhandled-UI error is what surfaces');
+        Assert.NotContains(GetLastErrorText(), 'out-of-scope',
+            'the runner must no longer raise a refusal of its own for a RunObject that names a page');
     end;
 
-    // Same claim through the reference, plus the message contract: the refusal must now name
-    // the TARGET action. The pre-fix message blamed the actionref for "declaring no OnAction
-    // trigger", which is true of every actionref by construction and told the reader nothing.
+    // Same, through the reference: an actionref delegates, so it must reach the same RunObject
+    // as its target and not fall back to the refusal.
     [Test]
-    procedure ActionrefToTriggerlessActionRefusesNamingItsTarget()
+    procedure ActionrefToARunObjectPageActionIsPerformedToo()
     var
         HostPage: TestPage "Par Host Page";
     begin
@@ -201,9 +211,115 @@ codeunit 64545 "Par Tests"
         HostPage.OpenEdit();
         asserterror HostPage.TriggerlessRef.Invoke();
 
-        Assert.Contains(GetLastErrorText(), 'testpage-action',
-            'an actionref pointing at a triggerless action must still raise the testpage-action refusal');
-        Assert.Contains(GetLastErrorText(), 'TriggerlessAction',
+        Assert.Contains(GetLastErrorText(), 'Unhandled UI',
+            'an actionref must reach its target''s RunObject, not be refused as declaring no effect');
+        Assert.NotContains(GetLastErrorText(), 'out-of-scope',
+            'the runner must no longer raise a refusal of its own for an actionref to a RunObject page action');
+    end;
+
+    // Runner-specific, #2931: RunPageLink is not applied yet. Opening the page WITHOUT its link
+    // filters would show a different rowset than real BC — a silent wrong answer — so it is
+    // refused instead, and the reason anchor says "not-yet-implemented" so an expectations entry
+    // can track it as a gap against an open issue rather than as a permanent boundary.
+    [Test]
+    procedure RunObjectWithRunPageLinkRefusesAsANotYetImplementedGap()
+    var
+        HostPage: TestPage "Par Host Page";
+    begin
+        Initialize();
+
+        HostPage.OpenEdit();
+        asserterror HostPage.LinkedPageAction.Invoke();
+
+        Assert.Contains(GetLastErrorText(), 'not-yet-implemented',
+            'an unapplied RunPageLink must be refused with a gap anchor, not a permanent-boundary one');
+        Assert.Contains(GetLastErrorText(), 'RunPageLink',
+            'the refusal must name RunPageLink as the reason, so the reader knows what is missing');
+    end;
+
+    // Runner-specific, #2931: only a RunObject naming a PAGE is performed so far. A report
+    // target must refuse with the same gap anchor rather than open nothing quietly.
+    [Test]
+    procedure RunObjectNamingAReportRefusesAsANotYetImplementedGap()
+    var
+        HostPage: TestPage "Par Host Page";
+    begin
+        Initialize();
+
+        HostPage.OpenEdit();
+        asserterror HostPage.ReportRunObjectAction.Invoke();
+
+        Assert.Contains(GetLastErrorText(), 'not-yet-implemented',
+            'a RunObject naming a report must be refused with a gap anchor');
+        Assert.Contains(GetLastErrorText(), 'Report',
+            'the refusal must name the object KIND it declined, so the reader knows which gap this is');
+    end;
+
+    // Runner-specific: an action with neither a trigger nor a RunObject genuinely has nothing to
+    // run. Invoking it must refuse loudly rather than do nothing — doing nothing is what made an
+    // unrun action surface one step later as an assertion about its missing effect.
+    [Test]
+    procedure ActionWithNoEffectAtAllStillRefusesLoudly()
+    var
+        HostPage: TestPage "Par Host Page";
+    begin
+        Initialize();
+
+        HostPage.OpenEdit();
+        asserterror HostPage.NoEffectAction.Invoke();
+
+        Assert.Contains(GetLastErrorText(), 'not-yet-implemented',
+            'an action with neither a trigger nor a RunObject must still raise the loud refusal');
+    end;
+
+    // Same claim through the reference, plus the message contract: the refusal must name the
+    // TARGET action. The pre-#2113 message blamed the actionref for "declaring no OnAction
+    // trigger", which is true of every actionref by construction and told the reader nothing.
+    [Test]
+    procedure ActionrefToAnEffectlessActionRefusesNamingItsTarget()
+    var
+        HostPage: TestPage "Par Host Page";
+    begin
+        Initialize();
+
+        HostPage.OpenEdit();
+        asserterror HostPage.NoEffectRef.Invoke();
+
+        Assert.Contains(GetLastErrorText(), 'not-yet-implemented',
+            'an actionref pointing at an effect-less action must still raise the loud refusal');
+        Assert.Contains(GetLastErrorText(), 'NoEffectAction',
             'the refusal must name the actionref''s TARGET, not blame the actionref for carrying no trigger');
+    end;
+
+    // Runner-specific message contract, #2931: RunnerOutOfScopeException always appends its own
+    // " — see docs/scope.md" link, so a throw site that also wrote "See docs/scope.md" into its
+    // reason rendered "… See docs/scope.md — see docs/scope.md". 47 throw sites did that. The
+    // fix normalises it in the exception itself, so any refusal is a witness for all of them.
+    [Test]
+    procedure ARefusalNamesDocsScopeExactlyOnce()
+    var
+        HostPage: TestPage "Par Host Page";
+    begin
+        Initialize();
+
+        HostPage.OpenEdit();
+        asserterror HostPage.NoEffectAction.Invoke();
+
+        Assert.AreEqual(1, CountOccurrences(GetLastErrorText(), 'docs/scope.md'),
+            'a refusal must point at docs/scope.md exactly once');
+    end;
+
+    local procedure CountOccurrences(Haystack: Text; Needle: Text) Count: Integer
+    var
+        Position: Integer;
+    begin
+        if Needle = '' then
+            exit(0);
+        Position := StrPos(Haystack, Needle);
+        while Position > 0 do begin
+            Count += 1;
+            Haystack := CopyStr(Haystack, Position + StrLen(Needle));
+            Position := StrPos(Haystack, Needle);
+        end;
     end;
 }

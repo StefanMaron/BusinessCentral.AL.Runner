@@ -19,4 +19,16 @@ codeunit 64544 "Par Assert"
         if StrPos(Actual, Fragment) = 0 then
             Error('Assert.Contains failed: %1 (expected a fragment ''%2'' in ''%3'')', Msg, Fragment, Actual);
     end;
+
+    procedure NotContains(Actual: Text; Fragment: Text; Msg: Text)
+    begin
+        if StrPos(Actual, Fragment) > 0 then
+            Error('Assert.NotContains failed: %1 (did not expect the fragment ''%2'' in ''%3'')', Msg, Fragment, Actual);
+    end;
+
+    procedure AreEqual(Expected: Integer; Actual: Integer; Msg: Text)
+    begin
+        if Expected <> Actual then
+            Error('Assert.AreEqual failed: %1 (expected %2, got %3)', Msg, Expected, Actual);
+    end;
 }

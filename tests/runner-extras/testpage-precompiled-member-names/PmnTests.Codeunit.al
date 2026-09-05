@@ -47,7 +47,7 @@ codeunit 64571 "PMN Precompiled Member Tests"
         // hash it, and never meet the id BC asks for.
         asserterror CertificateList."Change User".Invoke();
 
-        // [THEN] The trigger's OWN error - not the runner's testpage-action refusal.
+        // [THEN] The trigger's OWN error - not the runner's no-effect refusal.
         Assert.ExpectedError('This certificate is available to everyone in the company');
     end;
 
@@ -151,23 +151,39 @@ codeunit 64571 "PMN Precompiled Member Tests"
             'the pageextension''s OnAction must run and show NoRelatedRecordMsg');
     end;
 
+    // #2931 changed what this arm proves. The runner now RESOLVES a precompiled page action's
+    // RunObject out of the dependency .app's SymbolReference.json — which states it as a bare
+    // NAME, with no object type — so the refusal is no longer "this page declares no OnAction
+    // trigger" but a precise statement about the ONE property still missing. That the runner
+    // gets as far as naming the target page and its numeric id IS the fix working on a page it
+    // never compiled.
     [Test]
-    procedure RunObjectOnlyAction_OnPrecompiledBasePage_StaysALoudRefusal()
+    procedure RunObjectOnlyAction_OnPrecompiledBasePage_ResolvesItsTargetAndRefusesOnlyTheLink()
     var
         TaskCard: TestPage "Task Card";
     begin
         // [GIVEN] "Co&mment" on the Task Card has RunObject and no OnAction at all. Its name
-        // needs mangling too, so it exercises the SAME lookup the arms above fixed.
+        // needs mangling too, so it exercises the SAME lookup the arms above fixed. It also
+        // carries RunPageLink, which the runner does not apply yet.
         TaskCard.OpenEdit();
 
         // [WHEN] It is invoked.
         asserterror TaskCard."Co&mment".Invoke();
 
-        // [THEN] The runner still refuses by name (loud-failures.md) - the fix must not turn
-        // an unperformable RunObject action into a silent no-op.
+        // [THEN] The refusal is loud (loud-failures.md — the fix must not turn an unperformable
+        // action into a silent no-op) and it is a GAP, not a boundary: the anchor is
+        // "not-yet-implemented", which docs/expectations.md lets a manifest track against an
+        // open issue, unlike the old "testpage-action" anchor.
         Assert.ExpectedError('out-of-scope: TestPage action');
-        Assert.ExpectedError('testpage-action');
-        Assert.ExpectedError('declares no OnAction trigger');
+        Assert.ExpectedError('not-yet-implemented');
+        Assert.ExpectedError('RunPageLink');
+
+        // [AND] The target itself WAS resolved, by name, out of the precompiled page's symbol
+        // file — which is the half of the work that had no source to read. Asserting the
+        // resolved name and id is what separates "the runner read the declaration" from "the
+        // runner gave up earlier and happened to refuse".
+        Assert.ExpectedError('Rlshp. Mgt. Comment Sheet');
+        Assert.ExpectedError('5072');
     end;
 
     [MessageHandler]
