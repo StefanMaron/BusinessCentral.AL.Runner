@@ -171,6 +171,31 @@ These exist because each was violated at real cost.
   at startup, and filtering by it once hid the single largest cluster in the bucket — 102
   tests, worth +93 when fixed.
 
+## The corpus must grow with the fixes
+
+The corpus is the only place a claim about BC gets adjudicated by a real service tier, so it
+should gain a test roughly as often as a fix makes such a claim. If a session merges several
+fixes and opens no corpus PR, that is a signal to check rather than a sign the work was all
+infrastructure.
+
+**Ask of every PR: does this assert something about what BC does?** Runner infrastructure —
+process configuration, CI plumbing, error handling, caching, parallelism — genuinely asserts
+nothing about BC and owes nothing upstream. A change to what the runner *makes AL code
+observe* almost always does.
+
+**"The corpus cannot express this" is a claim, and it needs its evidence like any other.** It
+is sometimes true and the reason is usually structural: corpus tests are compiled from AL
+source *by the runner*, so a defect that only affects **precompiled** dependency artifacts
+cannot be reproduced by a corpus test, which would take the source-compiled path and pass. That
+is a legitimate answer. What is not legitimate is reaching for it because writing the upstream
+test is slower. When an agent gives that answer, make it name the structural reason — and if
+the reason is real, the proving test belongs in `tests/runner-extras/` and the PR should say
+so explicitly.
+
+Watch for the shape where a fix closes a BC-behaviour issue with only a runner-local test.
+That is the case `bc-behavior-tests-go-upstream.md` exists to prevent, and it is easiest to
+miss on a busy day, because a runner-local test is green and nothing complains.
+
 ## Settling a claim about BC
 
 Order of evidence, highest first: a corpus test green on a real service tier; BC's own
