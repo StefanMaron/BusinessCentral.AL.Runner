@@ -55,8 +55,7 @@ public sealed class CorruptSidecarLoaderCallSiteTests : IDisposable
     private static readonly byte[] BogusPeBytes = { 0x4D, 0x5A, 0x90, 0x00, 0x03 };
 
     private readonly string _root =
-        Path.Combine(Path.GetTempPath(), "al-runner-corrupt-sidecar-callsite",
-                     Guid.NewGuid().ToString("N"));
+        TestScratch.Dir("al-runner-corrupt-sidecar-callsite");
 
     public void Dispose()
     {

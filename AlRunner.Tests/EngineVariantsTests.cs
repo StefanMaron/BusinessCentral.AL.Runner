@@ -16,7 +16,7 @@ public sealed class EngineVariantsTests
 {
     private static string NewTempDir(string label)
     {
-        var dir = Path.Combine(Path.GetTempPath(), $"engine-variants-tests-{label}-" + Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.FlatDir($"engine-variants-tests-{label}-");
         Directory.CreateDirectory(dir);
         return dir;
     }

@@ -62,7 +62,7 @@ public sealed class PhaseLogServerKillTests : IDisposable
     private static string MakeFixtureBundle(out string dirName)
     {
         var nonce = Guid.NewGuid().ToString("N");
-        var dir = Path.Combine(Path.GetTempPath(), "al-runner-phaselog-kill-fixture", nonce);
+        var dir = TestScratch.Dir("al-runner-phaselog-kill-fixture");
         Directory.CreateDirectory(dir);
         dirName = Path.GetFileName(dir.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
         File.WriteAllText(Path.Combine(dir, "app.json"), $$"""

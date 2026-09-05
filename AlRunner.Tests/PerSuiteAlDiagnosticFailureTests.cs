@@ -52,7 +52,7 @@ public class PerSuiteAlDiagnosticFailureTests
     // test needs to isolate the per-suite gate from the bundled one.
     private static string WriteBundle(string suffix, string queryBody)
     {
-        var root = Path.Combine(Path.GetTempPath(), "al-runner-persuite-al0353-" + suffix, Guid.NewGuid().ToString("N"));
+        var root = TestScratch.Dir("al-runner-persuite-al0353-" + suffix);
         Directory.CreateDirectory(root);
         File.WriteAllText(Path.Combine(root, "app.json"), """
         {

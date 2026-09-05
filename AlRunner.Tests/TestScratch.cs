@@ -27,4 +27,19 @@ internal static class TestScratch
     /// <summary><c>&lt;temp&gt;/&lt;prefix&gt;&lt;guid&gt;</c> — the flat shape (prefix usually ends in '-').</summary>
     public static string FlatDir(string prefix)
         => ScratchDirs.Reserve(Path.Combine(Path.GetTempPath(), prefix + Guid.NewGuid().ToString("N")));
+
+    /// <summary>
+    /// <c>&lt;temp&gt;/&lt;prefix&gt;/&lt;guid&gt;/&lt;fileName&gt;</c> — a scratch FILE with an owner.
+    ///
+    /// ScratchDirs owns DIRECTORIES: its sidecar sits beside the entry it names and its cleanup
+    /// calls Directory.Delete, so reserving a file path would write a marker that never deletes
+    /// anything. An owned scratch file therefore has to live inside an owned directory. That
+    /// directory IS created here — unlike <see cref="Dir"/>, where some callers rely on observing
+    /// whether the runner created the leaf — because a caller about to File.WriteAllText into it
+    /// has no way to create it that this helper has not already had to do.
+    /// </summary>
+    public static string FilePath(string prefix, string fileName)
+        => Path.Combine(
+            ScratchDirs.Create(Path.Combine(Path.GetTempPath(), prefix, Guid.NewGuid().ToString("N"))),
+            fileName);
 }

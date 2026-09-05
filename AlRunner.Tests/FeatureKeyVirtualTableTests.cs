@@ -77,7 +77,7 @@ public sealed class FeatureKeyVirtualTableTests
     [Fact]
     public void FeatureKey_RoutedToBcsOwnProvider_AllFixtureTestsPass()
     {
-        var cacheDir = Path.Combine(Path.GetTempPath(), "al-runner-fkv-tests", "cache-" + Guid.NewGuid().ToString("N"));
+        var cacheDir = TestScratch.Dir("al-runner-fkv-tests");
         try
         {
             var (exit, stdout, stderr) = Run(cacheDir);

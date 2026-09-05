@@ -58,7 +58,7 @@ public sealed class InstallBaselineKeySymbolStateTests : IDisposable
 
     public InstallBaselineKeySymbolStateTests()
     {
-        _root = Path.Combine(Path.GetTempPath(), "al-runner-2710-tests", Guid.NewGuid().ToString("N"));
+        _root = TestScratch.Dir("al-runner-2710-tests");
         Directory.CreateDirectory(_root);
     }
 
