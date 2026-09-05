@@ -1851,11 +1851,82 @@ var layeredWorkspaceDirs = new List<string>();
 // ladder) matches the ProvisioningCheck gap report a few hundred lines up (Program.cs,
 // the "Completeness gate" block) — same shape (bare ToDetailedMessage, no compile even
 // attempted yet) and the same exit code.
-if (bundles.Count > 1)
+// The package caches AS THE USER GAVE THEM, before either pre-pass prepends its synthetic
+// workspace dirs. RunLayeredPrePass is re-run once per --watch cycle (see the call inside
+// the watch loop), and it must be fed this list every time rather than its own previous
+// output: feeding the extended list back in would leave the PREVIOUS cycle's workspace dir
+// still at the front of the search order, where it wins resolution over the one this cycle
+// just wrote — the same stale-dependency answer the re-run exists to prevent, only harder
+// to see.
+var basePackageCacheDirs = packageCacheDirs.ToList();
+
+// The workspace package each depended-upon bundle resolved to, as of the most recent
+// RunDependencyPrePasses call, and the AppIds whose package CHANGED between the previous call
+// and that one. Under --watch this is what tells a dependent bundle that the ground moved
+// underneath it even though its own files did not (#2683).
+//
+// A path comparison rather than a "did the pre-pass rewrite it" flag, because each impl's
+// workspace directory is keyed on its source content: reverting an edit resolves straight back
+// to a package written cycles ago, writes nothing, and still has to invalidate everything the
+// EDITED module was serving in between.
+var previousImplAppPaths = new Dictionary<Guid, string>();
+var changedImplAppIds = new HashSet<Guid>();
+
+// Dirs the COMPILE-time .app scanner may safely enumerate: everything except the
+// synthetic workspace dirs (whose source-only .apps would trip AL1023).
+var compilerPackageDirs = new List<string>();
+
+// Both dependency pre-passes, from the untouched base list, with compilerPackageDirs
+// recomputed to match. Returns null on success, or the exit code the caller should return.
+//
+// #2683: this used to be straight-line code that ran ONCE, before the `while (true)` watch
+// loop below. Every later cycle therefore reused the workspace dirs synthesised from the
+// FIRST cycle's dependency sources, and a dependent bundle went on compiling against the
+// frozen *.symbols.json and EXECUTING the frozen .app's source — reporting a confident green
+// for a dependency whose code had changed underneath it. Its AL-output cache could not catch
+// that either: GetOrderedDepIds stamps each resolved .app with mtime:length precisely so a
+// sibling source app's content invalidates the dependent, but nothing rewrote that .app after
+// cycle 1, so the stamp never moved and the key HIT.
+//
+// Re-running is cheap when nothing changed. Each impl's workspace dir is keyed on its own
+// source content (ComputeSourceWorkspaceKey), so an unchanged dependency finds its .app and
+// sidecar already on disk and short-circuits both compiles, printing "[layered] cache HIT".
+int? RunDependencyPrePasses()
 {
+    packageCacheDirs = basePackageCacheDirs.ToList();
+    layeredWorkspaceDirs.Clear();
+    changedImplAppIds.Clear();
+    var implAppPaths = new Dictionary<Guid, string>();
+
+    if (bundles.Count > 1)
+    {
+        try
+        {
+            packageCacheDirs = RunLayeredPrePass(bundles, packageCacheDirs, layeredWorkspaceDirs, implAppPaths);
+        }
+        catch (Exception ex) when (ex is AlRunner.Infrastructure.IDependencyProvisioningDiagnostic diag)
+        {
+            var bcVer = AlRunner.Infrastructure.BcArtifacts.SelectedVersion.ToString();
+            Console.Error.WriteLine();
+            Console.Error.WriteLine(diag.ToDetailedMessage(bcVer));
+            Console.Error.WriteLine();
+            return 2;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"<layered-deps>: COMPILE-FAIL — {ex.Message}");
+            return 3;
+        }
+    }
+    // Discover + compile sibling source-only dependency apps. Some apps declare a
+    // dependency that ships ONLY as AL source in a sibling directory (not a compiled
+    // .app in any cache) — e.g. the corpus internalsVisibleTo fixture next to the
+    // main test app. Inert when no declared dep matches a sibling source app.
+    // Same unhandled-exception exposure as RunLayeredPrePass above (#1898) — same fix.
+    // Same #2095 provisioning/version-gap special-case as RunLayeredPrePass above.
     try
     {
-        packageCacheDirs = RunLayeredPrePass(bundles, packageCacheDirs, layeredWorkspaceDirs);
+        packageCacheDirs = BuildSiblingSourceDeps(bundles, packageCacheDirs, layeredWorkspaceDirs);
     }
     catch (Exception ex) when (ex is AlRunner.Infrastructure.IDependencyProvisioningDiagnostic diag)
     {
@@ -1867,39 +1938,37 @@ if (bundles.Count > 1)
     }
     catch (Exception ex)
     {
-        Console.Error.WriteLine($"<layered-deps>: COMPILE-FAIL — {ex.Message}");
+        Console.Error.WriteLine($"<sibling-source-deps>: COMPILE-FAIL — {ex.Message}");
         return 3;
     }
-}
-// Discover + compile sibling source-only dependency apps. Some apps declare a
-// dependency that ships ONLY as AL source in a sibling directory (not a compiled
-// .app in any cache) — e.g. the corpus internalsVisibleTo fixture next to the
-// main test app. Inert when no declared dep matches a sibling source app.
-// Same unhandled-exception exposure as RunLayeredPrePass above (#1898) — same fix.
-// Same #2095 provisioning/version-gap special-case as RunLayeredPrePass above.
-try
-{
-    packageCacheDirs = BuildSiblingSourceDeps(bundles, packageCacheDirs, layeredWorkspaceDirs);
-}
-catch (Exception ex) when (ex is AlRunner.Infrastructure.IDependencyProvisioningDiagnostic diag)
-{
-    var bcVer = AlRunner.Infrastructure.BcArtifacts.SelectedVersion.ToString();
-    Console.Error.WriteLine();
-    Console.Error.WriteLine(diag.ToDetailedMessage(bcVer));
-    Console.Error.WriteLine();
-    return 2;
-}
-catch (Exception ex)
-{
-    Console.Error.WriteLine($"<sibling-source-deps>: COMPILE-FAIL — {ex.Message}");
-    return 3;
+
+    compilerPackageDirs.Clear();
+    compilerPackageDirs.AddRange(packageCacheDirs
+        .Where(d => !layeredWorkspaceDirs.Contains(d, StringComparer.OrdinalIgnoreCase)));
+
+    // An impl counts as changed only if it was ALSO present last time: on the very first call
+    // nothing has been compiled or loaded against it yet, so there is nothing to invalidate and
+    // reporting every impl as "changed" would force a pointless full rebuild of cycle 1.
+    foreach (var (appId, appPath) in implAppPaths)
+        if (previousImplAppPaths.TryGetValue(appId, out var before)
+            && !string.Equals(before, appPath, StringComparison.OrdinalIgnoreCase))
+            changedImplAppIds.Add(appId);
+    previousImplAppPaths = implAppPaths;
+
+    // #2683, the runtime half. A dependency that was re-synthesised has new CODE, and
+    // DependencyLoader caches the compiled module per AppId with a reuse gate that compares
+    // Name/Publisher/Version — none of which move during development. Recompiling the dependent
+    // against fresh symbols is not enough on its own: without this, the fresh compile still
+    // EXECUTES the module built in the first cycle, and the only symptom is a test that keeps
+    // passing.
+    DependencyLoader.InvalidateApps(changedImplAppIds);
+    return null;
 }
 
-// Dirs the COMPILE-time .app scanner may safely enumerate: everything except the
-// synthetic workspace dirs (whose source-only .apps would trip AL1023).
-var compilerPackageDirs = packageCacheDirs
-    .Where(d => !layeredWorkspaceDirs.Contains(d, StringComparer.OrdinalIgnoreCase))
-    .ToList();
+{
+    var prePassExit = RunDependencyPrePasses();
+    if (prePassExit != null) return prePassExit.Value;
+}
 
 // ── --server: stay resident. Warm state (BC patches + the dep symbol loader) is
 // now established; each request re-emits the requested bundle (warm) and runs it
@@ -2024,6 +2093,33 @@ while (true)
 AlRunner.Patches.NumberSequencePatches.ResetForNewExecution();
 results.Clear();
 watchFullRebuildReasons.Clear();
+
+// #2683: re-synthesise the dependency workspace before re-running. The pre-passes above
+// ran against the sources as they were when the process started; a --watch edit to a
+// bundle that another bundle DEPENDS ON changes both halves of that handoff — the
+// *.symbols.json the dependent compiles against, and the .app whose source
+// DependencyLoader executes — and without this, both stay frozen at cycle 1. The
+// dependent then re-emits from its AL-output cache in 0.0s and reports the previous
+// compile's results as this cycle's, which is worse than a wrong answer because a
+// developer in a tight edit loop trusts --watch more than a CI run.
+//
+// Skipped on the first cycle: the call above already did it, and repeating it would pay
+// the pre-pass twice before the first test runs.
+//
+// A pre-pass failure does NOT exit the process here the way it does at startup. Watch mode
+// exists to survive a broken intermediate edit, and the next keystroke may well fix it. The
+// failure is printed and the cycle continues with the base caches and NO workspace dirs, so
+// the dependent bundle fails its own compile naming the dependency it cannot resolve —
+// loud and true — rather than quietly resolving the previous cycle's copy.
+if (watchMode && watchCycleIndex > 0)
+{
+    var prePassExit = RunDependencyPrePasses();
+    if (prePassExit != null)
+        Console.Error.WriteLine(
+            "[watch] dependency pre-pass FAILED this cycle (see the diagnostic above). Bundles that " +
+            "depend on another bundle will fail to resolve it until the next edit fixes the build; " +
+            "no result below is carried over from the previous cycle.");
+}
 // Clean loading (#5): the interactive dashboard owns the whole screen, but the
 // run-cycle body emits diagnostic Console.WriteLine noise ("[bundle] resolved N
 // dep(s)", "loaded N assembl(ies)", "[i/N] … suites", …) that would scroll over
@@ -2667,7 +2763,32 @@ foreach (var bundle in bundles)
             // other mode (one-shot, --server) is untouched — normal-mode Emit() never tracks a
             // baseline and never calls TryEmitIncremental, so its cost profile is unchanged.
             BcEmitOutput? incrementalOutput = null;
-            if (watchMode)
+            // #2683: the incremental path decides from THIS bundle's own AL files alone. A bundle
+            // whose files are byte-identical replays its previous generated C# verbatim — which
+            // was compiled against, and baked member ids resolved from, its dependencies'
+            // PREVIOUS surfaces. So when a bundle this one depends on was re-synthesised by the
+            // pre-pass this cycle, "nothing of mine changed" is not a safe answer and the
+            // incremental path is skipped outright. This is the --watch counterpart of the
+            // forward fallback propagation #2603 added to RunAllBundlesForServer; --server got
+            // that fix and --watch never did.
+            //
+            // The signal comes from the pre-pass rather than from the sibling bundle's own emit,
+            // and that is deliberate: the pre-pass runs before ANY bundle compiles, so it answers
+            // correctly whether the dependency is listed before or after this bundle in the
+            // command line — the ordering hole ChangedLaterDependencyBundles exists to plug on
+            // the server side.
+            var changedDependency = changedImplAppIds.Count == 0
+                ? null
+                : DeclaredDependencyOn(appGroup.SuiteDir, changedImplAppIds);
+            if (watchMode && changedDependency != null && watchCycleIndex > 0)
+            {
+                watchFullRebuildReasons.Add((moduleName, $"dependency '{changedDependency}' changed this cycle"));
+                Console.Error.WriteLine(
+                    $"[watch] {moduleName}: FULL REBUILD this cycle — the bundle it depends on " +
+                    $"('{changedDependency}') changed, so replaying this bundle's previous output " +
+                    "would test it against the previous compile of that dependency.");
+            }
+            if (watchMode && changedDependency == null)
             {
                 incrementalOutput = emitter.TryEmitIncremental(
                     allPaths, moduleName, appGroup.SuiteDir,
