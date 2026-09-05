@@ -330,7 +330,7 @@ public static partial class BcRuntime
     /// If the trigger returned a Task / ValueTask (the async `OnRunAsync` emit), block on it so
     /// the synchronous <c>Codeunit.Run</c> contract holds and any AL error propagates here.
     /// </summary>
-    private static void AwaitIfTask(object? result)
+    internal static void AwaitIfTask(object? result)
     {
         switch (result)
         {

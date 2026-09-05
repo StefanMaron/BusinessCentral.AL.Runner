@@ -50,10 +50,7 @@ public static partial class NavReportSync
 
     // Reflection handles cached after first use.
     private static FieldInfo? _dataItemsField;     // DataItemIterator.dataItems : List<DataItem>
-    private static MethodInfo? _onPreReport;       // NavReport.OnPreReport()  (protected virtual)
-    private static MethodInfo? _onPostReport;      // NavReport.OnPostReport() (protected virtual)
     private static MethodInfo? _applySetTableViewForAllDataItems; // DataItemIterator.ApplySetTableViewForAllDataItems()
-    private static MethodInfo? _onInitReport;      // NavReport.OnInitReport() (protected virtual)
     private static PropertyInfo? _objectIdProp;    // NavApplicationObjectBase.ObjectId : ApplicationObjectId
     private static PropertyInfo? _objectNumberProp;// ApplicationObjectId.ObjectNumber : int
     private static FieldInfo? _objectIdField;      // NavApplicationObjectBase.objectId (private readonly ApplicationObjectId)
@@ -633,18 +630,6 @@ public static partial class NavReportSync
                 BindingFlags.Instance | BindingFlags.NonPublic);
         }
 
-        if (_onInitReport == null)
-            _onInitReport = navReportBase.GetMethod("OnInitReport",
-                BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public,
-                null, Type.EmptyTypes, null);
-        if (_onPreReport == null)
-            _onPreReport = navReportBase.GetMethod("OnPreReport",
-                BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public,
-                null, Type.EmptyTypes, null);
-        if (_onPostReport == null)
-            _onPostReport = navReportBase.GetMethod("OnPostReport",
-                BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public,
-                null, Type.EmptyTypes, null);
         if (dataItemIteratorBase != null && _applySetTableViewForAllDataItems == null)
         {
             _applySetTableViewForAllDataItems = dataItemIteratorBase.GetMethod("ApplySetTableViewForAllDataItems",
@@ -662,7 +647,7 @@ public static partial class NavReportSync
     {
         try
         {
-            InvokeVirtual(_onInitReport, navReport);
+            RunLifecycleTrigger(navReport, navReportBase, "OnInitReport");
             ApplyCallerTableViewBeforePreReport(navReport);
 
             // The request page, and what the test's [RequestPageHandler] does with it —
@@ -687,9 +672,9 @@ public static partial class NavReportSync
             // to a data item the loop re-seeds, both went missing.
             StoreCallerTableViewBeforeLoop(navReport);
 
-            InvokeVirtual(_onPreReport, navReport);
+            RunLifecycleTrigger(navReport, navReportBase, "OnPreReport");
             bool datasetWritten = InvokeDataItems(navReport);
-            InvokeVirtual(_onPostReport, navReport);
+            RunLifecycleTrigger(navReport, navReportBase, "OnPostReport");
 
             // Strict AL semantics: when the report declares `ProcessingOnly =
             // false` (the AL default) — in its own AL source, or in the symbol
@@ -881,16 +866,67 @@ public static partial class NavReportSync
             "— rendering requires a service tier — see docs/scope.md#report-rendering");
     }
 
-    private static void InvokeVirtual(MethodInfo? m, object instance)
+    private const BindingFlags LifecycleTriggerFlags =
+        BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+
+    /// <summary>
+    /// Run one report-level lifecycle trigger (<c>OnInitReport</c> / <c>OnPreReport</c> /
+    /// <c>OnPostReport</c>) the way BC's own report lifecycle does.
+    ///
+    /// BC's compiler emits each AL trigger in one of TWO flavours, and the two are
+    /// independent virtuals on <c>NavReport</c> whose base bodies are both empty and do NOT
+    /// forward to each other: a synchronous <c>OnPostReport()</c> override, or an
+    /// asynchronous <c>OnPostReportAsync()</c> override with
+    /// <c>NavApplicationObjectBase.__IsAsync</c> overridden to <c>true</c>. The Ready2Run
+    /// Base Application (and every other precompiled dependency) ships the ASYNC flavour;
+    /// the runner's own emit path produces the SYNC flavour. BC's lifecycle
+    /// (<c>RunReportInternalCoreAsync</c>) never calls either virtual directly — it goes
+    /// through <c>NavReport.On{Pre,Post}ReportInternalAsync</c>, which reads
+    /// <c>__IsAsync</c>, awaits the matching flavour, and then does the same for every
+    /// bound report extension.
+    ///
+    /// This used to invoke only the sync virtual, resolved once against the base type. For
+    /// every runner-compiled report that was the right method; for every precompiled one it
+    /// was the empty base body, so report 34 "Change Payment Tolerance" (and every other
+    /// Base Application report driven from a test) ran with EMPTY report-level triggers —
+    /// no Confirm/Message reached the test's handlers, no setup was written, no validation
+    /// error was raised — and BC's end-of-test check then reported the declared
+    /// [ConfirmHandler] as never executed (Tests-ERM, ~50 tests in codeunits 134022/134024).
+    ///
+    /// So: prefer BC's own dispatcher when the trigger has one (Pre/Post), and mirror its
+    /// <c>__IsAsync</c> rule for the one that does not (Init). Either way the AL trigger runs
+    /// exactly once, in the flavour the compiler emitted it in.
+    /// </summary>
+    internal static void RunLifecycleTrigger(object navReport, Type navReportBase, string trigger)
     {
-        if (m == null) return;
-        try { m.Invoke(instance, null); }
-        catch (TargetInvocationException tie) when (tie.InnerException != null)
+        var bcDispatcher = navReportBase.GetMethod(trigger + "InternalAsync", LifecycleTriggerFlags,
+            null, Type.EmptyTypes, null);
+        if (bcDispatcher != null)
         {
-            // Surface the AL trigger's exception (e.g. Assert.AreEqual failure)
-            // as the original, not wrapped in TargetInvocationException.
-            throw tie.InnerException;
+            BcRuntime.AwaitIfTask(Invoke(bcDispatcher, navReport, Array.Empty<object?>()));
+            return;
         }
+        var m = SelectLifecycleTrigger(navReport, navReportBase, trigger);
+        if (m == null) return;
+        BcRuntime.AwaitIfTask(Invoke(m, navReport, Array.Empty<object?>()));
+    }
+
+    /// <summary>
+    /// The flavour of <paramref name="trigger"/> BC's compiler emitted for this object:
+    /// <c>{trigger}Async</c> when the object reports <c>__IsAsync</c> and the base declares
+    /// the async virtual, else the synchronous <c>{trigger}</c>. Mirrors the branch at the
+    /// top of BC's <c>On{Pre,Post}ReportInternalAsync</c>. Exposed for the mechanism test in
+    /// <c>AlRunner.Tests/ReportLifecycleTriggerDispatchTests.cs</c>.
+    /// </summary>
+    internal static MethodInfo? SelectLifecycleTrigger(object navReport, Type navReportBase, string trigger)
+    {
+        bool isAsync = navReport.GetType().GetProperty("__IsAsync", LifecycleTriggerFlags)
+            ?.GetValue(navReport) is true;
+        var asyncMethod = navReportBase.GetMethod(trigger + "Async", LifecycleTriggerFlags,
+            null, Type.EmptyTypes, null);
+        var syncMethod = navReportBase.GetMethod(trigger, LifecycleTriggerFlags,
+            null, Type.EmptyTypes, null);
+        return isAsync && asyncMethod != null ? asyncMethod : syncMethod;
     }
 
     private static MethodInfo? _applyDataItemTableView;   // DataItemIterator.ApplyDataItemTableViewAndRequestFormFilters()

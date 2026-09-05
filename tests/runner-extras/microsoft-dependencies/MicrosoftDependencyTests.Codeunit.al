@@ -4,6 +4,7 @@ codeunit 61001 "Microsoft Dependency Tests"
 
     var
         Assert: Codeunit "MD Assert";
+        LastConfirmQuestion: Text;
 
     [Test]
     procedure BaseAppTable_PaymentMethod_CanInsertAndRead()
@@ -361,5 +362,120 @@ codeunit 61001 "Microsoft Dependency Tests"
         ConfPersonalizationMgt.GetCurrentProfileNoError(AllProfile);
         Assert.IsTrue(true,
             'GetCurrentProfileNoError must not throw a NullReferenceException while resolving the default profile via the precompiled Query 777.');
+    end;
+
+    // ── Lifecycle triggers of a PRECOMPILED dependency's report ──────────────
+    //
+    // BC's compiler emits a report's OnPreReport / OnPostReport as ASYNC overrides
+    // (`OnPostReportAsync`, with `__IsAsync => true`) in the Ready2Run Base Application;
+    // the runner's own emit path produces the synchronous `OnPostReport` override. BC's
+    // lifecycle dispatches through `On{Pre,Post}ReportInternalAsync`, which picks the flavour
+    // from `__IsAsync`. The runner's `Report.Run()` used to invoke only the sync virtual, so
+    // every report the Base Application ships ran with EMPTY report-level triggers: no
+    // Confirm/Message reached the test's handlers, no setup was written, no validation error
+    // was raised. Report 34 "Change Payment Tolerance" is the smallest Base Application
+    // report with an observable OnPostReport: it writes GL Setup's "Payment Tolerance %"
+    // and then raises a Confirm through Confirm Management.
+    //
+    // RED (before the fix): the handler below is never invoked (BC's own end-of-test check
+    // reports it unexecuted), "Payment Tolerance %" stays 0, and no error propagates.
+    [Test]
+    [HandlerFunctions('ChangePaymentToleranceConfirmHandler')]
+    procedure PrecompiledReport_Run_OnPostReport_WritesSetupAndRaisesConfirm()
+    var
+        GeneralLedgerSetup: Record "General Ledger Setup";
+        ChangePaymentTolerance: Report "Change Payment Tolerance";
+    begin
+        EnsureGeneralLedgerSetupExists();
+        LastConfirmQuestion := '';
+
+        ChangePaymentTolerance.InitializeRequest(false, '', 7.5, 12.5);
+        ChangePaymentTolerance.UseRequestPage(false);
+        ChangePaymentTolerance.Run();
+
+        // The trigger body ran: it modified GL Setup BEFORE asking the question. 7.5 is a
+        // value nothing else writes, so an implementation that skipped the trigger (0) or
+        // ran a stubbed one cannot satisfy this.
+        GeneralLedgerSetup.Get();
+        Assert.IsTrue(GeneralLedgerSetup."Payment Tolerance %" = 7.5,
+            StrSubstNo('Report 34''s OnPostReport must have written "Payment Tolerance %" = 7.5; got %1.', GeneralLedgerSetup."Payment Tolerance %"));
+        // ...and the Confirm it raises reached the declared [ConfirmHandler].
+        Assert.Contains(LastConfirmQuestion, 'change all open entries for every customer and vendor',
+            'The Confirm raised inside the precompiled report''s OnPostReport must be dispatched to the test''s [ConfirmHandler].');
+    end;
+
+    // Same trigger through the instance RunModal() path, which BC's NavReportHandle routes
+    // differently from Run() (it keeps the target instance alive); both must execute it.
+    [Test]
+    [HandlerFunctions('ChangePaymentToleranceConfirmHandler')]
+    procedure PrecompiledReport_RunModal_OnPostReport_WritesSetupAndRaisesConfirm()
+    var
+        GeneralLedgerSetup: Record "General Ledger Setup";
+        ChangePaymentTolerance: Report "Change Payment Tolerance";
+    begin
+        EnsureGeneralLedgerSetupExists();
+        LastConfirmQuestion := '';
+
+        ChangePaymentTolerance.InitializeRequest(false, '', 3.25, 1);
+        ChangePaymentTolerance.UseRequestPage(false);
+        ChangePaymentTolerance.RunModal();
+
+        GeneralLedgerSetup.Get();
+        Assert.IsTrue(GeneralLedgerSetup."Payment Tolerance %" = 3.25,
+            StrSubstNo('Report 34''s OnPostReport (via RunModal) must have written "Payment Tolerance %" = 3.25; got %1.', GeneralLedgerSetup."Payment Tolerance %"));
+        Assert.Contains(LastConfirmQuestion, 'change all open entries for every customer and vendor',
+            'The Confirm raised inside the precompiled report''s OnPostReport must be dispatched to the test''s [ConfirmHandler] on the RunModal path too.');
+    end;
+
+    // Negative, OnPostReport: the trigger's own errors must propagate. Report 34's
+    // OnPostReport starts with GLSetup.Get(), which fails when the row is missing. A run
+    // that skips the trigger completes silently — exactly the old behaviour.
+    [Test]
+    procedure PrecompiledReport_OnPostReport_ErrorPropagates()
+    var
+        GeneralLedgerSetup: Record "General Ledger Setup";
+        ChangePaymentTolerance: Report "Change Payment Tolerance";
+    begin
+        if GeneralLedgerSetup.Get() then
+            GeneralLedgerSetup.Delete();
+
+        ChangePaymentTolerance.InitializeRequest(false, '', 1, 1);
+        ChangePaymentTolerance.UseRequestPage(false);
+        asserterror ChangePaymentTolerance.Run();
+        Assert.Contains(GetLastErrorText(), 'General Ledger Setup',
+            'GLSetup.Get() inside the precompiled report''s OnPostReport must raise its "does not exist" error through Report.Run().');
+    end;
+
+    // Negative, OnPreReport: report 94 "Close Income Statement" opens its OnPreReport with
+    // `if EndDateReq = 0D then Error(Text000)`. With no request page the date is blank, so
+    // the very first statement of the trigger must surface as the run's error.
+    [Test]
+    procedure PrecompiledReport_OnPreReport_ErrorPropagates()
+    var
+        CloseIncomeStatement: Report "Close Income Statement";
+    begin
+        CloseIncomeStatement.UseRequestPage(false);
+        asserterror CloseIncomeStatement.Run();
+        Assert.Contains(GetLastErrorText(), 'Enter the ending date for the fiscal year.',
+            'The Error() in the precompiled report''s OnPreReport must propagate through Report.Run().');
+    end;
+
+    local procedure EnsureGeneralLedgerSetupExists()
+    var
+        GeneralLedgerSetup: Record "General Ledger Setup";
+    begin
+        if GeneralLedgerSetup.Get() then
+            exit;
+        GeneralLedgerSetup.Init();
+        GeneralLedgerSetup."Amount Rounding Precision" := 0.01;
+        GeneralLedgerSetup.Insert();
+    end;
+
+    [ConfirmHandler]
+    procedure ChangePaymentToleranceConfirmHandler(Question: Text[1024]; var Reply: Boolean)
+    begin
+        LastConfirmQuestion := Question;
+        // Decline, so the report does not go on to touch customer / vendor ledger entries.
+        Reply := false;
     end;
 }
