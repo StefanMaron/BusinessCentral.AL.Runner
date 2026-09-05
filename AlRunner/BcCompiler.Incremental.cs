@@ -778,12 +778,13 @@ public sealed partial class BcCompiler
         if (FoldedOrdinalMoved(baseline.ModuleDef, deltaModuleDef, allChangedIdentities) is { } moved)
         {
             fallbackReason =
-                $"{moved} changed the ordinal it had last cycle. A caller folds an enum value's — or an "
-                + "Option member's — ordinal into its OWN generated C# as a literal, with no member id "
-                + "and no dispatch involved, so reusing an UNMODIFIED caller's cached C# would leave it "
-                + "using the PREVIOUS ordinal. Nothing would throw: the enum emits no dispatch surface "
-                + "at all, and an Option field keeps its id, name and type across the edit. Falling back "
-                + "to a full compile for this cycle";
+                $"{moved} no longer has the ordinal (or field id) it had last cycle. A caller folds an "
+                + "enum value's ordinal, an Option member's position and a field's id into its OWN "
+                + "generated C# as literals, with no member id and no dispatch involved, so reusing an "
+                + "UNMODIFIED caller's cached C# would leave it using the PREVIOUS value. That is not "
+                + "reliably loud: an enum emits no dispatch surface at all, an Option field keeps its "
+                + "id, name and type across the edit, and two swapped same-typed fields both still "
+                + "resolve. Falling back to a full compile for this cycle";
             return null;
         }
 
@@ -1558,9 +1559,9 @@ public sealed partial class BcCompiler
     };
 
     /// <summary>
-    /// Names the first changed object where a value/member an UNMODIFIED caller may already have
-    /// folded has changed its ordinal (or disappeared), or null when none has. Issue #2571 — the
-    /// second hole in this file's header argument, and like #2548's it is silent.
+    /// Names the first changed object where a value, member or field an UNMODIFIED caller may
+    /// already have folded has changed its ordinal/id (or disappeared), or null when none has.
+    /// Issue #2571 — the second hole in this file's header argument, and like #2548's it is silent.
     ///
     /// <para><b>Why the header's argument does not reach this.</b> That argument is entirely about
     /// METHOD DISPATCH: a cross-object call compiles to
@@ -1572,17 +1573,18 @@ public sealed partial class BcCompiler
     /// CALLER's own C#. Renumbering that value re-emits the enum (whose C# is empty) and leaves the
     /// caller writing the previous ordinal. No member id is involved, so nothing can throw.</para>
     ///
-    /// <para><b>Two shapes, one rule.</b> A table field's Option members fold identically —
+    /// <para><b>Three shapes, one rule.</b> A table field's Option members fold identically —
     /// <c>R.Status := R.Status::Closed</c> becomes <c>NavOption.Create(..., 2)</c>, where 2 is
     /// Closed's POSITION in <c>OptionMembers = Open,Released,Closed</c>. Reducing both to the same
     /// name-to-ordinal map means inserting a member ahead of an existing one and renumbering an
-    /// enum value are the same defect with one guard.</para>
+    /// enum value are the same defect with one guard. A field's own ID is folded the same way
+    /// (<c>SetFieldValueSafe(5, ...)</c>) and joins the same map.</para>
     ///
     /// <para><b>Deliberately narrow: only a MOVE triggers.</b> Every name present before must still
-    /// be present with the SAME ordinal. An enum value added under a new name, or an Option member
-    /// APPENDED after every existing one, moves nothing an existing caller folded and cannot be
-    /// referenced by code compiled before it existed — so both stay on the fast path, as do caption
-    /// and property edits, which touch no ordinal at all. Without that the guard would degenerate
+    /// be present with the SAME ordinal/id. An enum value or field added under a new name, or an
+    /// Option member APPENDED after every existing one, moves nothing an existing caller folded and
+    /// cannot be referenced by code compiled before it existed — so all three stay on the fast path,
+    /// as do caption and property edits, which touch no ordinal at all. Without that the guard would degenerate
     /// into "any edit to an enum or a table falls back", which is most of the fast path.</para>
     ///
     /// <para><b>Why the comparison is skew-immune.</b> Both sides are names and integers, present
@@ -1695,6 +1697,16 @@ public sealed partial class BcCompiler
                 if (field == null) continue;
                 if (field.GetType().GetProperty("Name")?.GetValue(field) is not string fieldName || fieldName.Length == 0)
                     return null;
+
+                // The field's own ID is folded too: `R.Amount := 42` compiles to
+                // `SetFieldValueSafe(5, ...)` in the CALLER. Renumbering one field is loud at
+                // runtime (id 5 is simply gone), but SWAPPING two same-typed fields is not —
+                // every folded id still resolves, to the other field. Keyed by name for the same
+                // reason as everything else here: the caller wrote the name, and the id is what
+                // the compiler substituted for it.
+                if (field.GetType().GetProperty("Id")?.GetValue(field) is int fieldId
+                    && !map.TryAdd("field:" + fieldName, fieldId)) return null;
+
                 if (RadDefinitionProperty(field, "OptionMembers") is not { } members) continue;
                 var parts = members.Split(',');
                 for (var i = 0; i < parts.Length; i++)

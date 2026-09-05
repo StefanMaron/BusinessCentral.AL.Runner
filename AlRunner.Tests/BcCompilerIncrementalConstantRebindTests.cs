@@ -350,4 +350,135 @@ public sealed class BcCompilerIncrementalConstantRebindTests : IDisposable
         var incrementalByName = ByName(incremental!);
         Assert.Equal(fresh["Incr Const Tbl Caller"], incrementalByName["Incr Const Tbl Caller"]);
     }
+
+    // ---------------------------------------------------------------------------------------
+    // The third folded constant on the same element: a field's ID. `R.Status := ...` compiles to
+    // `this.r.Target.SetFieldValueSafe(5, NavType.Option, ...)` — measured with --dump-csharp —
+    // so the caller folds the field id too, by name, at compile time.
+    //
+    // Renumbering one field is loud at runtime (the id is simply absent). SWAPPING two fields of
+    // the same type is not: every folded id still resolves, to the other field. Either way the
+    // invariant the fast path has to hold is the same one the tests above assert — what it ships
+    // must equal what a cold build produces — so the guard covers the id alongside the ordinals
+    // rather than reasoning per-edit about which renumbers happen to be loud.
+    // ---------------------------------------------------------------------------------------
+
+    private const string IdTableBefore = """
+        table 90304 "Incr Const Id Tbl"
+        {
+            fields
+            {
+                field(1; "Entry No."; Integer) { }
+                field(5; Amount; Integer) { }
+            }
+            keys { key(PK; "Entry No.") { Clustered = true; } }
+        }
+        """;
+
+    /// <summary>The hazardous edit: `Amount` keeps its name and its type, and changes its id.</summary>
+    private const string IdTableRenumbered = """
+        table 90304 "Incr Const Id Tbl"
+        {
+            fields
+            {
+                field(1; "Entry No."; Integer) { }
+                field(9; Amount; Integer) { }
+            }
+            keys { key(PK; "Entry No.") { Clustered = true; } }
+        }
+        """;
+
+    /// <summary>The control edit: a field ADDED under a new name and an unused id. Nothing an
+    /// existing caller folded moves.</summary>
+    private const string IdTableFieldAdded = """
+        table 90304 "Incr Const Id Tbl"
+        {
+            fields
+            {
+                field(1; "Entry No."; Integer) { }
+                field(5; Amount; Integer) { }
+                field(7; Quantity; Integer) { }
+            }
+            keys { key(PK; "Entry No.") { Clustered = true; } }
+        }
+        """;
+
+    private const string IdTableCallerSrc = """
+        codeunit 90305 "Incr Const Id Caller"
+        {
+            procedure Call(): Integer
+            var
+                R: Record "Incr Const Id Tbl";
+            begin
+                R.Amount := 42;
+                exit(R.Amount);
+            end;
+        }
+        """;
+
+    private (BcEmitOutput? Incremental, string FallbackReason, Dictionary<string, string> Baseline, Dictionary<string, string> Fresh)
+        RunIdTableEdit(string editedTable)
+    {
+        WriteAl("ConstIdTbl.al", IdTableBefore);
+        WriteAl("ConstIdCaller.al", IdTableCallerSrc);
+
+        var compiler = new BcCompiler();
+        var baselineOut = compiler.Emit(new[] { _root }, "ConstIdModule", trackIncrementalBaseline: true);
+        Assert.Empty(baselineOut.Diagnostics);
+        var baselineByName = ByName(baselineOut);
+
+        WriteAl("ConstIdTbl.al", editedTable);
+
+        var incrOut = compiler.TryEmitIncremental(
+            new[] { _root }, "ConstIdModule", appRootDir: null, out var fallbackReason);
+
+        var freshOut = new BcCompiler().Emit(new[] { _root }, "ConstIdModuleFresh");
+        Assert.Empty(freshOut.Diagnostics);
+        return (incrOut, fallbackReason, baselineByName, ByName(freshOut));
+    }
+
+    /// <summary>
+    /// The hazard, reached through a field's id. Renumbering a field an unmodified caller
+    /// references must not leave the fast path shipping that caller's previous folded id.
+    /// </summary>
+    [SkippableFact]
+    public void TryEmitIncremental_RenumberingAField_FallsBackInsteadOfShippingAStaleCaller()
+    {
+        TestArtifacts.SkipIf(!_engine.Ready, _engine.SkipReason ?? "the in-process BC engine is not ready (see BcEngineCollection).");
+
+        var (incremental, fallbackReason, baseline, fresh) = RunIdTableEdit(IdTableRenumbered);
+
+        // Fixture guard: the edit really did move what the caller folded.
+        Assert.NotEqual(baseline["Incr Const Id Caller"], fresh["Incr Const Id Caller"]);
+
+        Assert.True(incremental == null,
+            "the incremental path took the fast path after a field was renumbered. The caller was "
+            + "not re-emitted, so it still folds Amount's PREVIOUS id (5) even though Amount is now "
+            + "field 9. Shipped caller C# "
+            + (incremental != null && ByName(incremental)["Incr Const Id Caller"] == fresh["Incr Const Id Caller"]
+                ? "matched a cold build, so something else changed — re-derive this test."
+                : "did NOT match a cold build."));
+
+        Assert.Contains("Incr Const Id Tbl", fallbackReason, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The control: adding a field under a new name and an unused id moves nothing, so the fast
+    /// path must still apply and what it ships must equal a cold build.
+    /// </summary>
+    [SkippableFact]
+    public void TryEmitIncremental_AddingAFieldUnderANewName_StaysOnTheFastPathAndMatchesAColdBuild()
+    {
+        TestArtifacts.SkipIf(!_engine.Ready, _engine.SkipReason ?? "the in-process BC engine is not ready (see BcEngineCollection).");
+
+        var (incremental, fallbackReason, _, fresh) = RunIdTableEdit(IdTableFieldAdded);
+
+        Assert.True(incremental != null,
+            "adding a field under a name the table did not already have fell back to a full compile. "
+            + "No existing field's id moved, so every folded id in cached C# is still correct — the "
+            + $"guard is over-triggering. fallbackReason: {fallbackReason}");
+
+        var incrementalByName = ByName(incremental!);
+        Assert.Equal(fresh["Incr Const Id Caller"], incrementalByName["Incr Const Id Caller"]);
+    }
 }
