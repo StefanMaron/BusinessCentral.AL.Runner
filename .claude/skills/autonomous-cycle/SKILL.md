@@ -299,10 +299,19 @@ declaring a surface out of scope, filing from a measured cluster: each gets a sh
 saying why, with the evidence. Someone reading the repository months later should be able to
 question any decision from the repository alone, without a transcript that no longer exists.
 
-**Say who is writing.** Comments post under the account the loop runs as, so a reader cannot
-otherwise tell an agent from a person — which matters on a public repository with outside
-contributors. Every agent-authored comment carries a consistent marker naming the agent tag and
-the cycle. It is honest, and it makes the audit trail searchable.
+**Say who is writing — on everything, not just comments.** Issues, comments, PR bodies and PR
+reviews all post under the account the loop runs as, so a reader cannot otherwise tell an agent
+from a person. On a public repository with outside contributors that is actively misleading:
+someone who asks the maintainer for a decision and receives an agent's answer in the
+maintainer's name has been misled, even with good intent.
+
+Every agent-authored issue, comment and PR body carries a footer saying it was written by an
+agent acting on the account holder's behalf, naming the agent tag and cycle. Where the thread is
+asking the account holder for a judgement, say explicitly that the decision remains theirs.
+
+This is not optional and it is easy to forget: in the session this skill was written from, 14
+issues and a comment were filed under the owner's name with no such marker, including a reply in
+a thread where a contributor had specifically asked the owner to decide.
 
 **Comment on state changes and findings, never on progress.** A loop that narrates itself
 drowns the signal it exists to produce. No "starting work on this". Never repeat a conclusion
@@ -325,6 +334,34 @@ would need to answer it, and move on — do not block, and do not guess:
   something that should work.
 - Anything where the loop has failed the same way several cycles running. That is not a hard
   problem, it is a wrong assumption, and it needs a person to see it.
+
+## Telling a person something is wrong
+
+Labels and issues are passive — someone has to go and look. An unattended loop that stops at
+03:00 tells nobody, and the machine sits idle until it is noticed. So the loop pushes a
+notification for the few things that genuinely need a person, and for nothing else.
+
+Notify on:
+
+- **It stopped.** Preflight failed, the baseline did not match, or it cannot complete any unit
+  of work at all. The machine is now idle and will stay idle.
+- **It is repeating itself.** The same failure several cycles running is a wrong assumption
+  rather than a hard problem, and only a person will see that.
+- **A decision has gone unanswered.** The human queue is untouched after several cycles and work
+  is piling up behind it.
+
+Never notify on ordinary progress. A channel that pings for every merged PR gets muted, and then
+it does not work when it matters — the same reasoning as commenting only on state changes.
+
+The transport is the contributor's own choice — a push service such as ntfy.sh, an email, a
+webhook. **Its configuration belongs in the gitignored box profile, never in the repository**: a
+notification endpoint is personal, and committing one exposes it to everyone who can read the
+repo. The skill specifies what is worth interrupting someone for; the contributor decides how it
+reaches them.
+
+Expect to also want a way in — SSH or equivalent — to inspect a box that has stopped. The
+notification says something is wrong; reading the box profile and the last cycle's report says
+what.
 
 ## Blast radius
 
