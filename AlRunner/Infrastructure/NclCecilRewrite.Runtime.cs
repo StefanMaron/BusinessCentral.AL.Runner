@@ -910,6 +910,18 @@ public static partial class NclCecilRewrite
                 H(recordPatches, "DataAccess_AggregatePermissionSetGuardForGet"),
                 argSlots: 2); // `this` — the DataAccess — and the primary-key request
 
+            // ── DataAccess.InternalTryGetByPrimaryKeyAsync — Date window guard (issue #2648) ──
+            // The Date table shares the primary-key path described above and was left behind
+            // when #2504 fixed it for Aggregate Permission Set: a keyed Date.Get() reached
+            // neither the InnerFindAsync guard nor the CountAsync one, so the materialised
+            // window was never extended for it. Measured on main, in separate processes:
+            // Date.Get(Date, 18500101D) answered FALSE while a FindFirst over the same day
+            // answered TRUE. Same table, same period, opposite answers.
+            PrependStaticCall(nclMod,
+                ByParams(Rt + "DataAccess", "InternalTryGetByPrimaryKeyAsync", "PrimaryKeyCacheRequest"),
+                H(recordPatches, "DataAccess_DateWindowGuardForGet"),
+                argSlots: 2); // `this` — the DataAccess — and the primary-key request
+
             // ── NavDatabase / NavRecordId collation comparers ───────────────────
             ReplaceBodyWithHelper(nclMod,
                 FindNclMethod(nclMod, Rt + "NavDatabase", "get_CollationAwareStringComparer", 0),
