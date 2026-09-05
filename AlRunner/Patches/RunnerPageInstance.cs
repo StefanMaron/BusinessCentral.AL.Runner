@@ -1073,7 +1073,7 @@ internal sealed partial class RunnerPageInstance
                   + $"'{refTarget.Value.TargetName}', and neither the page nor any pageextension "
                   + "of it declares an OnAction trigger or a resolvable RunObject for that action")
             + ". Invoking it therefore ran nothing, which would surface one step later as a "
-            + "missing effect, so it is refused here instead; see issue #2931");
+            + "missing effect, so it is refused here instead");
     }
 
     /// <summary>

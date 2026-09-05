@@ -235,6 +235,8 @@ codeunit 64545 "Par Tests"
             'an unapplied RunPageLink must be refused with a gap anchor, not a permanent-boundary one');
         Assert.Contains(GetLastErrorText(), 'RunPageLink',
             'the refusal must name RunPageLink as the reason, so the reader knows what is missing');
+        Assert.Contains(GetLastErrorText(), '2942',
+            'the refusal must cite the OPEN issue tracking the gap, not the one whose fix closed');
     end;
 
     // Runner-specific, #2931: only a RunObject naming a PAGE is performed so far. A report
@@ -253,6 +255,8 @@ codeunit 64545 "Par Tests"
             'a RunObject naming a report must be refused with a gap anchor');
         Assert.Contains(GetLastErrorText(), 'Report',
             'the refusal must name the object KIND it declined, so the reader knows which gap this is');
+        Assert.Contains(GetLastErrorText(), '2943',
+            'the refusal must cite the OPEN issue tracking the gap, not the one whose fix closed');
     end;
 
     // Runner-specific: an action with neither a trigger nor a RunObject genuinely has nothing to
