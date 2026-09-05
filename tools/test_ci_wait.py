@@ -582,7 +582,9 @@ check("an OLDER run of the same workflow still in flight does not hold the verdi
 
 # A real failure is still a verdict: it is reported even while a newer run of the
 # same workflow is queued. Delaying it costs real time, and the caveat already
-# says the list can grow.
+# says the list can grow. This assertion pins a deliberate tradeoff, not an
+# ideal: the stale-FAILED residual it allows is tracked in #2922, and flipping
+# this expectation is the RED baseline for whoever takes that on.
 runs = present_but_stale_rollup()
 runs[0] = cr(LEGS[0], "failure", TM_RUN, 101303055000)
 v = cw.classify(runs, workflow_runs=SUPERSEDING)

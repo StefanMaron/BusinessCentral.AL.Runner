@@ -488,7 +488,10 @@ def classify(runs: list[dict],
         # ("re-run the cancelled run") when the re-run is already on its way.
         # A FAILURE is deliberately still reported above: a failure is a verdict,
         # and delaying it costs real time, while the risk of the newer run
-        # overturning it is bounded and visible in the caveat.
+        # overturning it is bounded and visible in the caveat. That residual --
+        # a stale FAILED where a newer run of the same workflow is queued, the
+        # mirror of the false green this guard fixes -- is tracked in #2922
+        # rather than widened into this change.
         return Verdict(None, progress=progress)
 
     blocking = sorted(
