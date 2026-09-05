@@ -4,11 +4,17 @@ on:
   pull_request:
     branches: [main]
     # 'labeled'/'unlabeled' are not in the default event set (opened, synchronize,
-    # reopened), so without them applying the bypass label below triggers no new
-    # run and the stale red X stays -- re-running the failed job just replays the
-    # pre-label payload. 'unlabeled' re-asserts the guard when the label is
-    # removed, so the bypass cannot be applied and then silently withdrawn while
-    # the check still reads green.
+    # reopened). They were added for the require-tests job's docs-only /
+    # no-tests-needed bypass, which #2726 moved to require-tests.yml -- the
+    # reasoning now lives there, along with the guard that keeps them.
+    #
+    # Nothing left in THIS file reads labels, so these two are no longer
+    # load-bearing here. They are kept rather than trimmed because trimming them
+    # is cosmetic: since require-tests moved out, this workflow produces no
+    # REQUIRED status-check context, so a same-SHA re-trigger cancelling a run
+    # here can no longer block a merge (see check_required_contexts.py). What it
+    # can still do is leave grey 'cancelled' entries in the checks list, which is
+    # noise, not a block -- tools/ci-wait.py now names them for what they are.
     #
     # 'edited' is also required (#2159), and for the same underlying reason:
     # reject-ci-skip-directives and reject-bad-closing-references both read
@@ -47,58 +53,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  require-tests:
-    name: Tests updated
-    runs-on: ubuntu-latest
-    # Skip this check when the PR carries the 'docs-only' or 'no-tests-needed' label
-    if: |
-      !contains(github.event.pull_request.labels.*.name, 'docs-only') &&
-      !contains(github.event.pull_request.labels.*.name, 'no-tests-needed')
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-
-      - name: Check that tests/ or AlRunner.Tests/ was updated when AlRunner/ changed
-        run: |
-          BASE=${{ github.event.pull_request.base.sha }}
-          HEAD=${{ github.event.pull_request.head.sha }}
-
-          # Files changed in this PR
-          CHANGED=$(git diff --name-only "$BASE"..."$HEAD")
-
-          # Did any runtime or rewriter source change?
-          SOURCE_CHANGED=$(echo "$CHANGED" | grep -E '^AlRunner/' | grep -vE '\.(md)$' || true)
-
-          if [ -z "$SOURCE_CHANGED" ]; then
-            echo "No AlRunner/ source changes — test check skipped."
-            exit 0
-          fi
-
-          echo "AlRunner/ changes detected:"
-          echo "$SOURCE_CHANGED"
-
-          # Did any test file also change?
-          TESTS_CHANGED=$(echo "$CHANGED" | grep -E '^(tests/|AlRunner\.Tests/)' || true)
-
-          if [ -z "$TESTS_CHANGED" ]; then
-            echo ""
-            echo "ERROR: AlRunner/ was modified but no files under tests/ or AlRunner.Tests/ were updated."
-            echo ""
-            echo "Every change that affects behavior, mocks, or rewriter rules must include"
-            echo "a test. See CONTRIBUTING.md for the requirements."
-            echo ""
-            echo "If this PR genuinely needs no tests (e.g. docs-only or CI infra change),"
-            echo "add the 'docs-only' or 'no-tests-needed' label to bypass this check."
-            exit 1
-          fi
-
-          echo ""
-          echo "Test files updated:"
-          echo "$TESTS_CHANGED"
-          echo ""
-          echo "Test presence check passed. Copilot review will assess test quality."
-
   release-workflow-script-tests:
     name: Release workflow script tests
     runs-on: ubuntu-latest
@@ -263,7 +217,7 @@ jobs:
         run: bash .github/scripts/check_closing_reference.sh
 
   verify-trigger-list:
-    name: pr-check.yml's own pull_request trigger must include 'edited'
+    name: pull_request trigger lists must keep their load-bearing event types
     runs-on: ubuntu-latest
     # #2159: reject-ci-skip-directives and reject-bad-closing-references
     # above both read PR_TITLE/PR_BODY, but this workflow's `pull_request`
@@ -288,6 +242,73 @@ jobs:
 
       - name: Check this workflow's own pull_request trigger list
         run: bash .github/scripts/check_pr_check_triggers.sh
+
+      # #2726: require-tests.yml is where the 'Tests updated' REQUIRED context
+      # lives now, and 'labeled'/'unlabeled' are load-bearing THERE -- dropping
+      # them would silently break the docs-only / no-tests-needed bypass. It
+      # must NOT gain 'edited': that is the trigger that produced #2726, and
+      # nothing in that file reads the PR title or body.
+      - name: Check require-tests.yml keeps the trigger types its bypass needs
+        run: |
+          bash .github/scripts/check_pr_check_triggers.sh \
+            .github/workflows/require-tests.yml \
+            opened,synchronize,reopened,labeled,unlabeled
+          if grep -qE '(\[|,)[[:space:]]*edited[[:space:]]*(,|\])' \
+              <(grep -E '^[[:space:]]*types:[[:space:]]*\[' .github/workflows/require-tests.yml | head -n1); then
+            echo "::error::require-tests.yml must not trigger on 'edited' -- it produces the"
+            echo "::error::required 'Tests updated' context, and a same-SHA re-trigger there"
+            echo "::error::is exactly what blocked the merge in #2726."
+            exit 1
+          fi
+          echo "require-tests.yml does not trigger on 'edited'."
+
+  required-context-cancellation:
+    name: Required contexts must not be cancellable on the same commit
+    runs-on: ubuntu-latest
+    # #2726: a branch ruleset satisfies a required status check from the newest
+    # check run carrying that context name on the PR's head commit, and a
+    # `cancelled` conclusion does not satisfy it. Unlike a failure, nothing
+    # surfaces it: on PR #2722 at head d5c334c1 `gh pr checks` reported every
+    # context SUCCESS, tools/ci-wait.py correctly reported GREEN, all 8 BC legs
+    # passed, and the merge was still refused, because a superseded PR Check run
+    # had left the required "Tests updated" context cancelled on that same SHA.
+    #
+    # cancel-in-progress produces that conclusion whenever a second run enters
+    # the group. For a new PUSH that is correct -- the superseded run's checks
+    # hang off an older SHA nothing reads. The damage is from the pull_request
+    # types that fire WITHOUT moving the head SHA ('edited', 'labeled',
+    # 'unlabeled'), which agents trigger on nearly every PR.
+    #
+    # The guard is narrow: a workflow producing a REQUIRED context may not
+    # combine cancel-in-progress with one of those trigger types. It also fails
+    # when a required context is produced by no workflow at all -- the
+    # mirror-image outage the comment above test-matrix.yml's `all-tests` job
+    # warns about and nothing enforced.
+    #
+    # Logic in check_required_contexts.py, extracted so it is unit-tested
+    # against synthetic fixture workflows rather than provable only by opening a
+    # real PR, editing its body at the wrong moment and watching a merge get
+    # refused for no stated reason.
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Run check_required_contexts.py's own unit tests
+        run: python3 .github/scripts/test_check_required_contexts.py
+
+      - name: Check no required context can be left cancelled
+        run: python3 .github/scripts/check_required_contexts.py
+
+  ci-wait-tests:
+    name: ci-wait.py unit tests
+    runs-on: ubuntu-latest
+    # tools/ci-wait.py is the tool every agent uses to decide a PR is ready, so
+    # its verdict logic gets unit tests rather than being provable only by
+    # pointing it at a live PR. Ungated -- it is plain Python and takes seconds.
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Run tools/test_ci_wait.py
+        run: python3 tools/test_ci_wait.py
 
   agent-mcp-tools:
     name: Agent definitions must allowlist the MCP tools they document

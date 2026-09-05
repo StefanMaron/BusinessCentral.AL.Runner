@@ -1,0 +1,110 @@
+name: Require Tests
+
+# This job used to live in pr-check.yml. It was moved out for #2726, and the move
+# is the whole fix -- the job body below is unchanged.
+#
+# "Tests updated" is one of the two contexts the `main` branch ruleset requires
+# (the other is "All BC versions passed", from test-matrix.yml). pr-check.yml
+# triggers on 'edited', 'labeled' and 'unlabeled' -- event types that fire
+# WITHOUT changing the head SHA -- while also declaring cancel-in-progress: true.
+# Editing a PR body, or labelling a PR right after opening it (both routine, both
+# things agents do on nearly every PR), therefore started a second PR Check run
+# against the SAME commit and cancelled the first. The loser left a `cancelled`
+# conclusion on "Tests updated", attached to the exact SHA the ruleset reads, and
+# a cancelled required context blocks the merge.
+#
+# Nothing reported that. Observed on PR #2722 at head d5c334c1: `gh pr checks`
+# showed every context SUCCESS, tools/ci-wait.py correctly reported GREEN, all 8
+# BC legs passed, and the merge was refused anyway. The natural next step from
+# there is to assume branch protection is broken and reach for --admin, which
+# bypasses the ruleset to work around a phantom.
+#
+# There is deliberately NO `concurrency` block here.
+#
+#   - Cancelling is pointless for this job. It is a checkout plus a `git diff`;
+#     letting a superseded one run to the end costs seconds of a free runner,
+#     which is not remotely worth risking a `cancelled` conclusion on a required
+#     context.
+#   - Cancelling is not what makes the label bypass work. The 'labeled' trigger
+#     was added so that applying 'docs-only'/'no-tests-needed' starts a NEW run
+#     whose skipped-and-green conclusion supersedes the stale red one. That is
+#     supersession by a newer check run; it never depended on the older run being
+#     cancelled, and it still works with the older run allowed to finish.
+#
+# pr-check.yml keeps its own concurrency group and its cancel-in-progress: true,
+# which is correct and well argued in the comment block at the top of that file:
+# for a new PUSH the superseded run is testing a commit nobody has any more, and
+# its check runs hang off that older SHA where no ruleset will ever read them.
+# Now that no required context is produced there, a same-SHA cancellation in
+# pr-check.yml is cosmetic rather than merge-blocking.
+#
+# check_required_contexts.py (run by pr-check.yml) fails CI if any required
+# context ever ends up in a workflow that can cancel it on the same commit again,
+# including this one.
+on:
+  pull_request:
+    branches: [main]
+    # 'labeled'/'unlabeled' are not in the default event set (opened,
+    # synchronize, reopened), so without them applying the bypass label below
+    # triggers no new run and the stale red X stays -- re-running the failed job
+    # just replays the pre-label payload. 'unlabeled' re-asserts the guard when
+    # the label is removed, so the bypass cannot be applied and then silently
+    # withdrawn while the check still reads green.
+    #
+    # 'edited' is deliberately absent: nothing in this job reads the PR title or
+    # body, so a body edit has no reason to re-run it -- and including it is
+    # precisely what caused #2726.
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+jobs:
+  require-tests:
+    name: Tests updated
+    runs-on: ubuntu-latest
+    # Skip this check when the PR carries the 'docs-only' or 'no-tests-needed' label
+    if: |
+      !contains(github.event.pull_request.labels.*.name, 'docs-only') &&
+      !contains(github.event.pull_request.labels.*.name, 'no-tests-needed')
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Check that tests/ or AlRunner.Tests/ was updated when AlRunner/ changed
+        run: |
+          BASE=${{ github.event.pull_request.base.sha }}
+          HEAD=${{ github.event.pull_request.head.sha }}
+
+          # Files changed in this PR
+          CHANGED=$(git diff --name-only "$BASE"..."$HEAD")
+
+          # Did any runtime or rewriter source change?
+          SOURCE_CHANGED=$(echo "$CHANGED" | grep -E '^AlRunner/' | grep -vE '\.(md)$' || true)
+
+          if [ -z "$SOURCE_CHANGED" ]; then
+            echo "No AlRunner/ source changes — test check skipped."
+            exit 0
+          fi
+
+          echo "AlRunner/ changes detected:"
+          echo "$SOURCE_CHANGED"
+
+          # Did any test file also change?
+          TESTS_CHANGED=$(echo "$CHANGED" | grep -E '^(tests/|AlRunner\.Tests/)' || true)
+
+          if [ -z "$TESTS_CHANGED" ]; then
+            echo ""
+            echo "ERROR: AlRunner/ was modified but no files under tests/ or AlRunner.Tests/ were updated."
+            echo ""
+            echo "Every change that affects behavior, mocks, or rewriter rules must include"
+            echo "a test. See CONTRIBUTING.md for the requirements."
+            echo ""
+            echo "If this PR genuinely needs no tests (e.g. docs-only or CI infra change),"
+            echo "add the 'docs-only' or 'no-tests-needed' label to bypass this check."
+            exit 1
+          fi
+
+          echo ""
+          echo "Test files updated:"
+          echo "$TESTS_CHANGED"
+          echo ""
+          echo "Test presence check passed. Copilot review will assess test quality."

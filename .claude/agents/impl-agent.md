@@ -158,7 +158,7 @@ Full decision tree: `.claude/rules/bc-behavior-tests-go-upstream.md` plus the `a
 
 ### The "Tests updated" CI gate
 
-`.github/workflows/pr-check.yml`'s `require-tests` job triggers only when your diff touches `AlRunner/` (excluding `.md` files); when it does, it requires the diff to also touch something under `tests/` or `AlRunner.Tests/`. Two things agents got wrong:
+`.github/workflows/require-tests.yml`'s `require-tests` job triggers only when your diff touches `AlRunner/` (excluding `.md` files); when it does, it requires the diff to also touch something under `tests/` or `AlRunner.Tests/`. Two things agents got wrong:
 
 - The gate's grep (`^(tests/|AlRunner\.Tests/)`) accepts the gitlink line a pin bump produces in `git diff --name-only` — legitimate *only* when this PR is the fix PR the bump is folded into (above). You may still never edit a file *inside* the read-only submodule. If your proving test lives upstream and the pin isn't being bumped here (its corpus PR hasn't merged yet), add a **runner-side mechanism test** under `AlRunner.Tests/` instead — see `AlRunner.Tests/EnumCaptionCaptureTests.cs` or `AlRunner.Tests/MediaSetPatchesTests.cs` for the shape — pinning the runner's own C# behavior, not duplicating the BC-behaviour claim.
 - The `no-tests-needed` label bypasses the gate but is **not** a substitute for a real test when runtime behavior changed — use it only when the diff genuinely needs none (pure comment/doc changes inside `AlRunner/`). The `docs-only` label is for PRs that don't touch `AlRunner/` at all; those never trip the gate.

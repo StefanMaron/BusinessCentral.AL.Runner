@@ -24,8 +24,15 @@
 # the workflow keeps that trigger on one line; a workflow that reformats it
 # across multiple lines needs a corresponding update here.
 #
-# Usage: check_pr_check_triggers.sh [path-to-workflow-yaml]
-# Defaults to .github/workflows/pr-check.yml relative to this script.
+# Usage: check_pr_check_triggers.sh [path-to-workflow-yaml] [required,types]
+# Defaults to .github/workflows/pr-check.yml relative to this script, and to
+# the historical six-type list below.
+#
+# The second argument exists because #2726 moved the require-tests job ("Tests
+# updated", a REQUIRED status-check context) out of pr-check.yml and into
+# require-tests.yml. 'labeled'/'unlabeled' are load-bearing in the file that job
+# now lives in, and 'edited' is deliberately absent there -- so the two files
+# need different required-type lists, guarded separately.
 # Exits 0 and prints a confirmation when all required types are present.
 # Exits 1 with an ::error:: line naming what's missing otherwise.
 # Exits 2 if the file or the types line can't be found at all (a distinct
@@ -54,7 +61,15 @@ fi
 # reasons documented inline in pr-check.yml itself; this check also catches
 # one of them being dropped by accident while editing the trigger line for
 # something unrelated.
-REQUIRED_TYPES=(opened synchronize reopened labeled unlabeled edited)
+DEFAULT_REQUIRED_TYPES="opened,synchronize,reopened,labeled,unlabeled,edited"
+# IFS of ", " so "a, b,c" and "a,b,c" both split cleanly -- a stray space would
+# otherwise end up inside a type name and never match.
+IFS=', ' read -r -a REQUIRED_TYPES <<< "${2:-$DEFAULT_REQUIRED_TYPES}"
+
+if [ "${#REQUIRED_TYPES[@]}" -eq 0 ]; then
+  echo "::error::no required types given" >&2
+  exit 2
+fi
 
 MISSING=()
 for t in "${REQUIRED_TYPES[@]}"; do

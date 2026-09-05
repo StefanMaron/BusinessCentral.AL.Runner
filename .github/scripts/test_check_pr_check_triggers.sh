@@ -48,6 +48,20 @@ assert_exit() {
   fi
 }
 
+assert_exit_types() {
+  local desc="$1" expected_rc="$2" fixture_path="$3" types="$4"
+  local rc
+  "$SCRIPT" "$fixture_path" "$types" >/dev/null 2>&1
+  rc=$?
+  if [ "$rc" = "$expected_rc" ]; then
+    echo "ok   - $desc"
+    pass=$((pass + 1))
+  else
+    echo "FAIL - $desc: expected exit $expected_rc, got $rc"
+    fail=$((fail + 1))
+  fi
+}
+
 write_fixture() {
   local name="$1" types="$2"
   local path="$TMPDIR_FIXTURES/$name"
@@ -120,6 +134,31 @@ assert_exit "'label' does not satisfy the requirement for 'labeled'" 1 "$label_n
 
 assert_exit "the actual .github/workflows/pr-check.yml satisfies the check" 0 \
   "$REPO_ROOT/.github/workflows/pr-check.yml"
+
+# --- #2726: an explicit required-type list, so pr-check.yml and ------------
+# --- require-tests.yml can be guarded with the different lists each needs ---
+
+# require-tests.yml deliberately has NO 'edited' (nothing in it reads the PR
+# title or body, and including it is what caused #2726), so the default
+# six-type list must NOT be what guards it.
+rt_shape=$(write_fixture "require-tests-shape.yml" "opened, synchronize, reopened, labeled, unlabeled")
+assert_exit "the require-tests trigger shape fails the DEFAULT list" 1 "$rt_shape"
+assert_exit_types "...and passes its own explicit list" 0 "$rt_shape" \
+  "opened,synchronize,reopened,labeled,unlabeled"
+
+# The explicit list still has to actually check: drop a type it names.
+assert_exit_types "an explicit list still fails on a missing type" 1 "$rt_shape" \
+  "opened,synchronize,reopened,labeled,unlabeled,ready_for_review"
+
+# Spaces around the commas must not smuggle a space into a type name.
+assert_exit_types "an explicit list tolerates spaces after commas" 0 "$rt_shape" \
+  "opened, synchronize, reopened, labeled, unlabeled"
+
+# --- The real require-tests.yml, guarded with the list it actually needs -----
+
+assert_exit_types "the actual .github/workflows/require-tests.yml keeps labeled/unlabeled" 0 \
+  "$REPO_ROOT/.github/workflows/require-tests.yml" \
+  "opened,synchronize,reopened,labeled,unlabeled"
 
 echo ""
 echo "$pass passed, $fail failed"

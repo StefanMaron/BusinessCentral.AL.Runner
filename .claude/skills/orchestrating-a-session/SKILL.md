@@ -121,19 +121,29 @@ Merge when **all of**:
 
 **Use `tools/ci-wait.py <PR>`** rather than a poll loop. It polls internally and returns one
 verdict: 0 green on current head, 1 failed with the log already fetched, 2 still running
-(*not* a verdict), 3 undetermined.
+(*not* a verdict), 3 undetermined, 4 blocked by a cancelled required context (below).
 
 **Never `gh run rerun` a failed job** — it destroys the log permanently. Read
 `--log-failed` first, then push a new commit.
 
 **A CANCELLED check blocks the merge, with everything green and nothing saying why.**
-`pr-check.yml` triggers on `edited`, so editing a PR body starts a fresh run and
-`cancel-in-progress` cancels the old one — leaving a `CANCELLED` conclusion on required
-contexts that protection then treats as unsatisfied. `gh pr checks` shows all green,
-`ci-wait.py` reports GREEN on the head SHA, and the merge is still refused as `BLOCKED`. Look
-at `statusCheckRollup` for `conclusion == "CANCELLED"`. Re-running just that cancelled run
-clears it in under a minute — and that is NOT the forbidden `gh run rerun`, because a
-cancelled run has no failure log to destroy. Do not reach for `--admin`. Tracked as #2726.
+A ruleset satisfies a required check from the *newest* check run carrying that context name on
+the head commit, and `cancelled` does not satisfy it. `cancel-in-progress` produces that
+conclusion whenever a `pull_request` event fires *without* moving the head SHA — `edited`,
+`labeled`, `unlabeled` — because the cancelled run's checks then land on the very commit the
+ruleset is reading. `gh pr checks` still shows all green and the merge is still refused as
+`BLOCKED`.
+
+#2726 fixed both halves. The required `Tests updated` job moved out of `pr-check.yml` into
+`require-tests.yml`, which has no `concurrency` block and does not trigger on `edited`, so no
+required context is cancellable on its own commit any more; `check_required_contexts.py` fails
+CI if one becomes so again. And `ci-wait.py` now returns **exit 4** naming the cancelled
+context instead of reporting GREEN.
+
+If you still land in this state, re-run just the cancelled run — it clears in under a minute,
+and that is NOT the forbidden `gh run rerun`, because a cancelled run has no failure log to
+destroy. Do not reach for `--admin`: protection is working, the context genuinely is not
+satisfied.
 
 **Auto-merge drains the queue — but a drained queue is not a verified one.** The
 "branches must be up to date" protection rule was removed, so arming several PRs lets them
