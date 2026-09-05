@@ -720,6 +720,16 @@ public sealed class DependencyResolverTests : IDisposable
     /// prefers that DLL over every other tier. Reporting it as "NO IMPLEMENTATION … no other
     /// copy was found" fired on every green CI leg and, on 2026-09-05, produced a wrong
     /// diagnosis of a red PR whose actual cause was several lines further down.
+    ///
+    /// The 2-byte {0x4D,0x5A} stub below is deliberately NOT a loadable assembly, and this
+    /// test is still right to expect silence HERE: the resolver's probe is File.Exists and
+    /// nothing more, so "a sidecar is present" is all it can honestly claim. #2750 noted that
+    /// this encodes a gap — a sidecar that exists but cannot be loaded — and closed it one
+    /// layer down instead: DependencyLoader.LoadOne now reports that as a provisioning gap,
+    /// loud at default verbosity and repeated in the run summary. See
+    /// CorruptSidecarLoudnessTests. Making the RESOLVER load-test every sidecar would move a
+    /// full Assembly.Load into dependency resolution for every bundle, to answer a question
+    /// the loader answers anyway a moment later.
     /// </summary>
     [Fact]
     public void SymbolsOnlyButHasPrecompiledSidecarDll_IsNotReported()
