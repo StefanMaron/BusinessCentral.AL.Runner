@@ -1,0 +1,18 @@
+{
+  "id": "3f8c1a67-95d2-4e10-8b44-6c2ad9be7051",
+  "name": "Runner Extras - Object System Table",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Issue #2774: Object (2000000001) is the legacy application-database object registry, not a virtual table. The runner has no application database, so it projects its own object inventory - the one AllObj is answered from - into Object's column shape, and leaves the columns it has no source for at BC's own default. This suite pins the projection and the blanks so neither can change silently.",
+  "description": "What Object CONTAINS is plain BC behaviour and BELONGS upstream, but cannot go there and is NOT service-tier-adjudicated. The corpus app targets Cloud and Microsoft declares this table Scope = OnPrem, so `Record \"Object\"` does not compile there (AL0296), and the RecordRef route is refused at runtime by NavRecordRef.CheckIsOpenAllowed because 2000000001 is in SystemTables.InternalTables. That refusal was measured on the sibling id 2000000071: corpus PR StefanMaron/BusinessCentral.AL.Language.Tests#153 was withdrawn after all 8 BC legs of run 33968379281 refused it, and the mechanism is membership in the same FrozenSet. This suite therefore pins what the RUNNER does, which is what a runner suite is for: that rows appear at all with no application database behind them, that Type is a real part of the key rather than one ordinal for everything, that Object and AllObj cannot disagree about which objects exist because both are projected from the one inventory, that an object kind Object's own Type option cannot name gets no row rather than an invented ordinal, and that the columns with no runner source read blank rather than carrying a fabricated payload. The blanks are a DECLARED divergence, recorded in docs/limitations.md; issue #2771 tracks making such columns refuse by name instead. Target is OnPrem, not Cloud, for the AL0296 reason above.",
+  "dependencies": [],
+  "idRanges": [
+    {
+      "from": 65550,
+      "to": 65559
+    }
+  ],
+  "platform": "27.0.0.0",
+  "runtime": "15.0",
+  "target": "OnPrem"
+}
