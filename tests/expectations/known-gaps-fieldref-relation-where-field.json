@@ -1,0 +1,42 @@
+[
+  {
+    "codeunitId": 60482,
+    "CodeunitName": "Test FieldRef Relation",
+    "Method": "FieldRef_Relation_RelationWithWhereFieldLink_ReturnsRelatedTableId",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2518",
+    "Note": "FieldRef.Relation answers 0 for a TableRelation narrowed by where(\"Group Code\" = field(\"Group Code\")) where real BC answers the related table id 60480. Green on real BC 27.0 through 28.4 -- StefanMaron/BusinessCentral.AL.Language.Tests#165. #2518 is the open issue for FieldRef.Relation returning 0; these entries are its corpus coverage arriving with the pin bump folded into #2474's fix, not a new gap."
+  },
+  {
+    "codeunitId": 60482,
+    "CodeunitName": "Test FieldRef Relation",
+    "Method": "FieldRef_Relation_ConditionalWithWhereFieldLink_SelectsTheIfArm",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2518",
+    "Note": "With Kind = A the if() arm of a conditional TableRelation applies and Relation must answer 60480; the runner answers 0. Separate from the plain-relation arm above because a fix that read only an unconditional TableRelation would still fail here."
+  },
+  {
+    "codeunitId": 60482,
+    "CodeunitName": "Test FieldRef Relation",
+    "Method": "FieldRef_Relation_ConditionalWithWhereFieldLink_SelectsTheElseArm",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2518",
+    "Note": "The else arm of the same conditional relation, answering 60030. Paired with the if() arm deliberately: an implementation that always picked the first arm passes that test and fails this one."
+  },
+  {
+    "codeunitId": 60482,
+    "CodeunitName": "Test FieldRef Relation",
+    "Method": "FieldRef_Relation_BaseApplicationFieldWithWhereFieldLink_ReturnsRelatedTableId",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2518",
+    "Note": "Customer.City declares TableRelation = \"Post Code\".City in both arms, so Relation must answer table 225. The runner answers 0 for a PRECOMPILED table's field too, which is the shape #2518 is titled for."
+  },
+  {
+    "codeunitId": 60482,
+    "CodeunitName": "Test FieldRef Relation",
+    "Method": "Validate_RelationWithWhereFieldLink_RefusesARowOutsideTheFilter",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2518",
+    "Note": "Validate against a relation narrowed by where(... = field(...)) must REFUSE a row outside the filter; the runner accepts it, so the test fails with 'An error was expected inside an ASSERTERROR statement'. The only arm here that is about enforcement rather than about what Relation reports, and the one a fix to the metadata read alone would not satisfy."
+  }
+]

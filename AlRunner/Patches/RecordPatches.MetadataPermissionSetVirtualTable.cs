@@ -255,22 +255,34 @@ public static partial class RecordPatches
                 // Basic") — and AL's own Code[N] assignment semantics truncate silently, the
                 // same way `SomeCode20Var := SomeLongerText;` does anywhere else in AL. Match
                 // that here rather than passing the untruncated symbol name through.
-                return _mpsNavCodeCtor!.Invoke(new object?[]
-                {
-                    field.FieldDefinedLength,
-                    permissionSet.Name.Length > field.FieldDefinedLength
-                        ? permissionSet.Name.Substring(0, field.FieldDefinedLength)
-                        : permissionSet.Name
-                });
+                return RoleIdNavCode(permissionSet, field.FieldDefinedLength);
             case "name":
                 // Measured against real BC 27.0-28.4 (StefanMaron/BusinessCentral.AL.Language.Tests#102,
                 // StefanMaron/BusinessCentral.AL.Runner#2388): a permission set declaring no Caption is
                 // listed with its Role ID substituted for Name, not a blank string. Base Application's
                 // "LOCAL" (object id 1001) is one such set and lists Name = 'LOCAL' on every version.
+                //
+                // #2474: the fallback is the ROLE ID, not the permissionset object's declared name,
+                // and those differ in case. A Code field is upper-case, so the Role ID of
+                // `permissionset 60022 ALTPermissionSet` is ALTPERMISSIONSET — which is what real BC
+                // listed as its Name on all 8 legs (the measurement in #2474, from the corpus test
+                // that had asserted a blank and reported Actual:<ALTPERMISSIONSET>). Returning
+                // permissionSet.Name here gave the object name verbatim, mixed case, so the runner
+                // answered ALTPermissionSet where BC answers ALTPERMISSIONSET. Measured before this
+                // change on a caption-less `permissionset 64981 PspMixedCase`: the Role ID column
+                // already read PSPMIXEDCASE while Name read PspMixedCase, from the same object.
+                //
+                // The upper-casing is BC's own — this builds the SAME NavCode the "roleid" case
+                // returns and reads its text back, rather than re-deriving the rule with a
+                // ToUpper() here. That also carries the Code[20] truncation across for free, so a
+                // 22-character permissionset name falls back to the same 20 characters the Role ID
+                // column shows rather than to a longer string the two columns would disagree on.
                 return _aovNavTextCreateTruncated!.Invoke(null, new object?[]
                 {
                     field.FieldDefinedLength,
-                    string.IsNullOrEmpty(permissionSet.Caption) ? permissionSet.Name : permissionSet.Caption
+                    string.IsNullOrEmpty(permissionSet.Caption)
+                        ? RoleIdText(permissionSet)
+                        : permissionSet.Caption
                 });
             case "assignable":
                 return _mpsNavBooleanCreate!.Invoke(null, new object?[] { permissionSet.Assignable });
@@ -278,6 +290,39 @@ public static partial class RecordPatches
                 return _aovGetDefaultNavValue!.Invoke(null, new object?[] { field, false });
         }
     }
+
+
+    /// <summary>Role ID of a permission set: BC's own NavCode over the object's declared name,
+    /// truncated to the Code field's length first (see the "roleid" case for why the ctor cannot
+    /// truncate itself). Shared with the Name fallback so the two columns can never disagree
+    /// about case or length (#2474).</summary>
+    private static object RoleIdNavCode(BcAppSymbolCache.PermissionSetSymbol permissionSet, int codeLength)
+        => _mpsNavCodeCtor!.Invoke(new object?[]
+        {
+            codeLength,
+            permissionSet.Name.Length > codeLength
+                ? permissionSet.Name.Substring(0, codeLength)
+                : permissionSet.Name
+        });
+
+    /// <summary>The Role ID as text, read back off BC's own NavCode so whatever that type does to
+    /// a Code value — upper-casing above all — is BC's answer and not one re-derived here.</summary>
+    private static string RoleIdText(BcAppSymbolCache.PermissionSetSymbol permissionSet)
+    {
+        var code = RoleIdNavCode(permissionSet, MetadataPermissionSetRoleIdLength);
+        _mpsNavStringValueValue ??= code.GetType().GetProperty("Value",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+            ?? throw new InvalidOperationException(
+                $"[MetadataPermissionSet] {code.GetType().Name}.Value not found — the Name "
+                + "fallback cannot read the Role ID back off BC's own NavCode");
+        return _mpsNavStringValueValue.GetValue(code) as string ?? string.Empty;
+    }
+
+    /// <summary>"Role ID" is Code[20] on table 2000000250. Named rather than re-read per call
+    /// because the Name column is a different length and must not be used for the Role ID.</summary>
+    private const int MetadataPermissionSetRoleIdLength = 20;
+
+    private static PropertyInfo? _mpsNavStringValueValue;   // NavStringValue.Value (string)
 
     private static void EnsureMetadataPermissionSetReflection(NCLMetaTable metaTable)
     {

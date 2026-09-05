@@ -87,7 +87,19 @@ public sealed class RunnerTestClientSession : ITestClientSession
         // silently overwrote the caller's chosen row with whatever sorts first, which is
         // exactly what that corpus test exists to catch (measured: it did, on first push of
         // this fix). Only reposition a record nothing has touched yet.
-        if (record != null && IsUnpositioned(record)) live.MoveFirstDuringOpen();
+        //
+        // The guard is about the CURSOR, not the TRIGGERS. A caller-positioned record must keep
+        // its row, but it still has to get that row's load triggers — OnAfterGetRecord /
+        // OnAfterGetCurrRecord — which are where a page derives per-row state. Base Application
+        // page 403 "Purchase Order Statistics" computes every total it shows in
+        // RefreshOnAfterGetRecord() off OnAfterGetRecord, and nothing in OnOpenPage; opened
+        // modally on a caller-positioned Purchase Header it showed zeros, because this line
+        // skipped the only path that fires them (issue #2797).
+        if (record != null)
+        {
+            if (IsUnpositioned(record)) live.MoveFirstDuringOpen();
+            else live.MarkRowLoadedDuringOpen();
+        }
 
         return live;
     }
