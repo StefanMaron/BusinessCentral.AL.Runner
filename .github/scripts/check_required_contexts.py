@@ -422,7 +422,20 @@ def main(argv: list[str], fetch=None) -> int:
     # The REQUIRED_CONTEXTS override exists so the unit tests can drive synthetic
     # fixtures; a synthetic list has nothing to compare against, so the live
     # check stands down rather than fighting it (#2785).
+    #
+    # It is a REAL bypass, not just a test seam: this branch skips BOTH the live
+    # ruleset comparison AND the ci-wait.py cross-check, and it used to do so in
+    # total silence -- unlike SKIP_RULESET_DRIFT_CHECK, which at least prints.
+    # A future agent unbreaking CI during a GitHub API outage by setting it in
+    # pr-check.yml would get a green job with the guard switched off and nothing
+    # in the log saying so. Hence the ::warning::, and hence
+    # test_check_required_contexts.py asserting that pr-check.yml's step sets
+    # neither variable.
     if os.environ.get("REQUIRED_CONTEXTS"):
+        print("::warning::REQUIRED_CONTEXTS is set, so the live ruleset comparison "
+              "and the tools/ci-wait.py cross-check are BOTH skipped. This guard is "
+              "running against an overridden context list and cannot detect ruleset "
+              "drift (#2785). Expected only in this script's own unit tests.")
         contexts = required_contexts()
     else:
         contexts, drift = resolve_contexts(fetch=fetch)

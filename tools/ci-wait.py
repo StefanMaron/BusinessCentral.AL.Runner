@@ -322,6 +322,73 @@ def rollup_is_final(workflow_runs: list[dict] | None) -> bool | None:
     return all(w.get("status") == "completed" for w in workflow_runs)
 
 
+def superseding_runs(newest: dict[str, dict],
+                     contexts: tuple[str, ...],
+                     workflow_runs: list[dict] | None) -> list[tuple[str, int]]:
+    """Ruleset contexts whose newest check run may already be out of date.
+
+    Returns (context name, in-flight workflow run id) pairs.
+
+    `rollup_is_final` answers "has EVERYTHING for this commit finished", which is
+    the right question only while a context is ABSENT from the rollup. It is the
+    wrong question once the context is present, and that gap was a fourth way to
+    report a false GREEN (#2807 follow-up): a required context sitting in the
+    rollup with a conclusion from workflow run N, while run N+1 of the SAME
+    workflow is queued on the same SHA and has not created its check run yet.
+    `missing` is empty, so `final` was never consulted, and the stale conclusion
+    was returned as the verdict.
+
+    Designed-in, not hypothetical: require-tests.yml produces the required
+    "Tests updated" context, carries NO `concurrency` block (deliberately, #2726)
+    and triggers on 'labeled'/'unlabeled'. Applying a label mid-wait starts a
+    second run on the same commit, and until its job starts the rollup still
+    shows the first run's conclusion.
+
+    Deliberately NOT "any workflow run for this commit is unfinished". Five
+    workflows here can attach to a branch head without producing any required
+    context -- bc-leg-rerun.yml, ms-bucket.yml, ms-bucket-nightly.yml,
+    coverage-demo.yml and publish.yml, all reachable by `workflow_dispatch`.
+    .claude/rules/ci-verdicts.md actively tells agents to dispatch
+    bc-leg-rerun.yml against the branch to get a second opinion on a leg, and the
+    ms-bucket runs are 9,500 tests apiece. Blocking green on those would trade one
+    false GREEN for a class of false "still pending" on the exact diagnostic path
+    the rules recommend. So the in-flight run must be a newer run of the SAME
+    workflow that produced the evidence being read.
+    """
+    if not workflow_runs:
+        return []
+    pending = [w for w in workflow_runs if w.get("status") != "completed"]
+    if not pending:
+        return []
+    by_id = {w.get("id"): w for w in workflow_runs}
+    out: list[tuple[str, int]] = []
+    for c in contexts:
+        r = newest.get(c)
+        if r is None:
+            continue  # absent entirely -- that is `missing`, judged by finality
+        backing = run_id_from(r.get("details_url"))
+        if backing is None:
+            # No run id to compare against, so we cannot rule out that one of the
+            # in-flight runs will re-report this context. Unknown never resolves
+            # toward green (#2807).
+            wid = pending[0].get("id")
+            out.append((c, wid if isinstance(wid, int) else 0))
+            continue
+        owner = by_id.get(backing)
+        wf_name = owner.get("name") if owner else None
+        for w in pending:
+            wid = w.get("id")
+            if not isinstance(wid, int) or wid <= backing:
+                continue
+            # Same workflow => this run re-reports `c` and outranks what we read.
+            # Owner unknown (run list truncated or the id absent) => cannot rule
+            # it out, so assume it does.
+            if wf_name is None or w.get("name") == wf_name:
+                out.append((c, wid))
+                break
+    return out
+
+
 def classify(runs: list[dict],
              contexts: tuple[str, ...] = RULESET_CONTEXTS,
              workflow_runs: list[dict] | None = None) -> Verdict:
@@ -358,21 +425,31 @@ def classify(runs: list[dict],
            and r.get("conclusion") != "cancelled"]
     missing = [c for c in contexts if c not in newest]
     final = rollup_is_final(workflow_runs)
+    inflight = superseding_runs(newest, contexts, workflow_runs)
 
     progress = f"{len(done)}/{len(pool)} complete, {len(bad)} failing"
     if missing:
         progress += (f", {len(missing)} ruleset context(s) not in the rollup yet: "
                      + ", ".join(missing))
+    if inflight:
+        progress += (", superseding run in flight for: "
+                     + ", ".join(f"{c} (run {w})" for c, w in inflight))
 
     if bad:
         # This list is what is known SO FAR. Returning it while other required
         # checks are still running is correct -- a failure is a verdict -- but
         # reading it as the complete failing set is not, and someone did exactly
         # that with a single-leg failure that turned out to be eight.
+        # A LOWER BOUND, and it has to say so. `pool` is built from ruleset
+        # contexts plus the rollup entries already present, so a required leg
+        # that has not created its check run yet is counted by neither term. The
+        # #2837 shape printed "1 required check(s) have not reported yet" while
+        # seven bc-tests legs were missing from the rollup entirely.
         unreported = (len(pool) - len(done)) + len(missing)
         head = f"{len(bad)} of {len(pool)} required checks failed"
         if unreported:
-            head += f" SO FAR ({unreported} required check(s) have not reported yet)"
+            head += (f" SO FAR (at least {unreported} required check(s) have not "
+                     f"reported yet)")
         lines = [head + ":"]
         for r in bad:
             rid = run_id_from(r.get("details_url"))
@@ -382,9 +459,10 @@ def classify(runs: list[dict],
             lines += [
                 "",
                 "This failing list can still GROW -- it names only the required checks",
-                "that have already reported. Do not scope a diagnosis to these names",
-                "until every check has reported; re-run this tool, or read",
-                f"`gh pr checks` once the run finishes.",
+                "that have already reported. The count above is a LOWER BOUND: a leg",
+                "whose check run does not exist yet is not in it at all. Do not scope",
+                "a diagnosis to these names until every check has reported; re-run",
+                "this tool, or read `gh pr checks` once the run finishes.",
             ]
         return Verdict(1, lines, log_target=bad[0], progress=progress)
 
@@ -399,6 +477,18 @@ def classify(runs: list[dict],
         # the rollup, and the tie used to be broken toward GREEN -- the one
         # direction .claude/rules/ci-verdicts.md says a verdict may never go.
         # Unknown (final is None, the API could not be read) lands here too.
+        return Verdict(None, progress=progress)
+
+    if inflight:
+        # A required context IS in the rollup, but a newer run of the workflow
+        # that produced it is still in flight on this commit, so what we just
+        # read is not necessarily the conclusion a ruleset will read. Applies to
+        # every verdict below: GREEN, and both BLOCKED paths -- a `cancelled`
+        # required context whose replacement run is queued reads as exit 4 here
+        # ("re-run the cancelled run") when the re-run is already on its way.
+        # A FAILURE is deliberately still reported above: a failure is a verdict,
+        # and delaying it costs real time, while the risk of the newer run
+        # overturning it is bounded and visible in the caveat.
         return Verdict(None, progress=progress)
 
     blocking = sorted(
@@ -514,15 +604,32 @@ def main() -> int:
     deadline = time.time() + args.timeout
     last = ""
     while time.time() < deadline:
+        # ORDER MATTERS: the workflow-run list is read FIRST, the check-run
+        # rollup second. Read the other way round, a run completing between the
+        # two calls gives a STALE rollup (context still missing) next to a FRESH
+        # run list (final=True), which classify() reads as "every workflow
+        # finished and this context never reported" -- a false exit 4 sending an
+        # agent after a trigger filter that is fine. Run-list-first makes the
+        # skew harmless in both directions: the rollup is then the newer of the
+        # two, so a context it shows as reported really is reported, and a run
+        # the list still calls in-flight has at worst already finished, which
+        # only costs one more poll.
+        #
+        # Fetched unconditionally. It used to be fetched only while a ruleset
+        # context was missing from the rollup, on the reasoning that this was the
+        # only question the run list answered. It was not: a context PRESENT in
+        # the rollup can be carrying a conclusion from a superseded run (see
+        # superseding_runs), and that question has to be asked on every poll.
+        wf_runs = workflow_runs_for(sha)
+        if wf_runs is None:
+            # The run list is load-bearing for the verdict now, so failing to read
+            # it is "no verdict yet", never "green" (#2807).
+            time.sleep(args.interval)
+            continue
         runs = required_checks(sha)
         if runs is None:
             time.sleep(args.interval)
             continue
-        # Only worth an extra round trip while a ruleset context is missing from
-        # the rollup -- that is the only question the workflow-run list answers.
-        present = {r.get("name") for r in runs}
-        wf_runs = (workflow_runs_for(sha)
-                   if any(c not in present for c in contexts) else None)
         v = classify(runs, contexts, wf_runs)
         if v.progress:
             last = v.progress  # only reported at the end; keeps the transcript to one block

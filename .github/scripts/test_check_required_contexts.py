@@ -392,6 +392,64 @@ with tempfile.TemporaryDirectory() as _d:
 check("a drifted tools/ci-wait.py list is reported as a problem",
       any("ci-wait" in p for p in problems), str(problems))
 
+
+# ===========================================================================
+# Neither bypass may be switched on in pr-check.yml itself
+# ===========================================================================
+# SKIP_RULESET_DRIFT_CHECK=1 at least prints when it stands the live comparison
+# down. REQUIRED_CONTEXTS is worse: main() branches on it, never calls
+# resolve_contexts() at all, and so skips BOTH the live comparison and the
+# ci-wait.py cross-check -- silently, until the ::warning:: added alongside this
+# test. Either one set in the workflow turns the guard into a green no-op, which
+# is exactly what an agent unbreaking CI during a GitHub API outage would reach
+# for. The `check_required_contexts.py` job would still report success and
+# nothing would say the guard was off.
+#
+# So: assert the real workflow does not set them, at the workflow, job or step
+# level. This reads pr-check.yml on disk -- it is a claim about the shipped
+# workflow, not about a fixture.
+import re  # noqa: E402
+import yaml as _yaml  # noqa: E402  (same dependency the guard itself uses)
+
+_REPO = os.path.dirname(os.path.dirname(HERE))
+_PR_CHECK = os.path.join(_REPO, ".github", "workflows", "pr-check.yml")
+BYPASSES = ("REQUIRED_CONTEXTS", "SKIP_RULESET_DRIFT_CHECK")
+
+with open(_PR_CHECK, encoding="utf-8") as fh:
+    _wf = _yaml.safe_load(fh)
+
+# Matches the GUARD invocation only. A bare "check_required_contexts.py" substring
+# also matches the step that runs test_check_required_contexts.py, which would
+# make the offender list double-count and the vacuity check pass on the test step
+# alone.
+_GUARD_RUN = re.compile(r"(?<!test_)check_required_contexts\.py")
+
+_offenders: list[str] = []
+_seen_step = False
+for _var in BYPASSES:
+    if _var in (_wf.get("env") or {}):
+        _offenders.append(f"workflow env sets {_var}")
+for _job_name, _job in (_wf.get("jobs") or {}).items():
+    _job_env = _job.get("env") or {}
+    _runs_guard = False
+    for _step in _job.get("steps") or []:
+        if not _GUARD_RUN.search(_step.get("run") or ""):
+            continue
+        _seen_step = _runs_guard = True
+        for _var in BYPASSES:
+            if _var in (_step.get("env") or {}):
+                _offenders.append(f"{_job_name} step env sets {_var}")
+    if _runs_guard:
+        for _var in BYPASSES:
+            if _var in _job_env:
+                _offenders.append(f"{_job_name} job env sets {_var}")
+
+check("pr-check.yml actually runs check_required_contexts.py "
+      "(or the assertion below is vacuous)", _seen_step)
+check("...and neither REQUIRED_CONTEXTS nor SKIP_RULESET_DRIFT_CHECK is set for it",
+      not _offenders, "; ".join(_offenders))
+
+
 print()
 if FAILURES:
     print(f"FAILED: {len(FAILURES)} check(s): {', '.join(FAILURES)}")
