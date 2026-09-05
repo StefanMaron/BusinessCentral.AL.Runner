@@ -1861,6 +1861,32 @@ public static partial class RecordPatches
                 return codeunitMetaDa;
             }
 
+            // ── Object Metadata (2000000071) ─────────────────────────────────────────────
+            // NOT a virtual table: a real application-database system table, read with plain
+            // SQL by Ncl's own ObjectMetadataStorage. The runner has no application database,
+            // so its store was empty and a FindLast raised "There is no Object Metadata
+            // within the filter" — which is how it takes out Microsoft's own
+            // Codeunit136608.VerifyValidatePackageCodeunitFailed (#2519).
+            //
+            // Because the table IS real, a --test-data backup can genuinely carry rows for it.
+            // So the on-demand loader runs FIRST on a freshly created store, and the populator
+            // below does nothing when the store already holds a row: real rows win, synthesis
+            // is the fallback. Every other branch in this method serves a table no backup can
+            // ever have rows for, which is why only this one loads before populating.
+            // See RecordPatches.ObjectMetadataSystemTable.cs.
+            if (IsObjectMetadataSystemTable(table))
+            {
+                if (!perTable.TryGetValue(tableId, out var objectMetadataDa))
+                {
+                    var createdObjectMetadata = _mCreateTempDataAccess!.Invoke(self, new object[] { table })!;
+                    objectMetadataDa = perTable.GetOrAdd(tableId, createdObjectMetadata);
+                    if (TestDataOnDemandLoader != null && ReferenceEquals(objectMetadataDa, createdObjectMetadata))
+                        InvokeTestDataOnDemandLoader(self, tableId);
+                }
+                PopulateObjectMetadataSystemTable(objectMetadataDa, table);
+                return objectMetadataDa;
+            }
+
             // ── Page Control Field (2000000192) ──────────────────────────────────────────
             // Virtual on the service tier too: one row per field control declared on a
             // page, INCLUDING controls declared Visible = false. An empty store made every

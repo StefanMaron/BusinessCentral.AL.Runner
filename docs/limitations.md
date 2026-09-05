@@ -498,6 +498,46 @@ do have a source. This section is the record.
 
 ---
 
+### `Record "Object Metadata"` — the rows are synthesised and the payload columns read blank
+
+<a id="object-metadata-system-table"></a>
+
+`Object Metadata` (2000000071) is not a virtual table. It is one of the 43 ids in BC's own
+`SystemTables.ApplicationDatabaseTables`, a real SQL table in the *application* database that
+publishing writes into, and Ncl's `ObjectMetadataStorage` reads back with plain SQL. Its
+content is the compiled metadata of the application-database system tables — not an object
+inventory; the table's own AL summary in `System.app` says the inventory role "is now taken by
+[Application Object Metadata]", and Microsoft's `CleanupObjectMetadataFromNonApplicationDatabaseTables`
+migration deletes every row that is not `Object Type = Table` over that same id list.
+
+The runner has no application database and publishes nothing into one, so:
+
+| Column | Real BC | al-runner |
+|---|---|---|
+| `Object Type`, `Object ID` | One row per application-database system table | The same — the row set is read out of BC's own `SystemTables.ApplicationDatabaseTables` |
+| `Emit Version` | The tier's compiler emit version | The same — read from BC's own `NavEnvironment.Instance.EmitVersion` |
+| `Metadata`, `User Code`, `User AL Code`, `Symbol Reference` (BLOB) | The published metadata payload | Always **empty** |
+| `Metadata Version`, `Hash`, `Object Subtype`, `Has Subscribers`, `Schema Hash` | Derived from that payload | Always **`0` / empty / `false`** |
+
+The row set is faithful: it comes from the same collection Microsoft's own migration
+interpolates into its `DELETE`, so the runner and a real tier cannot disagree about which ids
+belong. The payload is a **declared divergence** — there is nothing to reproduce, because
+nothing was ever published.
+
+Per `.claude/rules/loud-failures.md` those nine columns should refuse by name rather than read
+blank. Doing that needs a per-(table, field) blob-read seam on the shared
+`TempTableDataProvider` path, which does not exist yet; **issue #2771** tracks it. Throwing at
+row-build time instead is not an option — it would take out `FindSet` / `FindLast` / `Count`
+as well, which is the bug (#2519) this table's support closed.
+
+`tests/runner-extras/object-metadata-system-table` asserts both halves so neither can move
+quietly, and the plain-BC half — that every row is a `Table` row over a system table id, and
+that an application table or a virtual system table has none — is pinned upstream in the
+al-language corpus (`record/TestObjectMetadataSystemTable.al`), reached through `RecordRef`
+because the table is `Scope = OnPrem` and the corpus app targets Cloud.
+
+---
+
 ## Per-BC-minor engine variants: granularity is per MINOR, not per exact build
 
 Every released `al-runner` binary used to be compiled against exactly one BC minor's

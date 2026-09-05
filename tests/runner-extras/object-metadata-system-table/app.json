@@ -1,0 +1,18 @@
+{
+  "id": "7b41c0d9-2e58-4a37-9d6b-0c5f83ae1d24",
+  "name": "Runner Extras - Object Metadata System Table",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Issue #2519: Object Metadata (2000000071) is a real application-database table, not a virtual one. The runner has no application database, so it synthesises the row set from BC's own SystemTables.ApplicationDatabaseTables and leaves the compiled-metadata payload columns blank. This suite pins the synthesis and the blank payload so neither can change silently.",
+  "description": "What Object Metadata CONTAINS - one row per application-database system table, Object Type = Table, nothing else - is plain BC behaviour, adjudicated upstream by the al-language corpus (record/TestObjectMetadataSystemTable.al). This suite deliberately asserts none of that twice. It asserts only what exists because this is the runner: that the rows appear at all without any application database behind them, and that the compiled-metadata payload columns (Metadata, User Code, User AL Code, Symbol Reference, Metadata Version, Hash, Object Subtype, Has Subscribers, Schema Hash) read blank rather than carrying a fabricated payload. The blank is a DECLARED divergence, recorded in docs/limitations.md; issue #2771 tracks making those columns refuse by name instead, which needs a per-field blob-read seam the shared TempTableDataProvider path does not have. Target is OnPrem, not Cloud: Microsoft declares Object Metadata Scope = OnPrem, so an AL object naming the record type cannot compile for Cloud (AL0296) - which is also why the upstream corpus test has to reach the table through RecordRef.",
+  "dependencies": [],
+  "idRanges": [
+    {
+      "from": 65540,
+      "to": 65549
+    }
+  ],
+  "platform": "27.0.0.0",
+  "runtime": "15.0",
+  "target": "OnPrem"
+}
