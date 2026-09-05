@@ -1014,6 +1014,48 @@ public static partial class BcRuntime
             if (clientTzField != null)
                 FieldPoke.SetInstance(clientTzField, _skeletonSession!, TimeZoneInfo.Local);
 
+            // ── UserPageMetadataCache seed (issue #2811) ─────────────────────────────────────
+            // The session-side half of the tenant-side seed in
+            // MetadataPatches.InjectSkeletonSystemTenant. BC reads BOTH while applying page
+            // customizations — MetadataProvider.TryApplyPageCustomizations does
+            //
+            //     configurationDeltas   = GetProfilePageMetadataDeltas(session, pageDefinition.ID, session.ProfileKey);
+            //     personalizationDeltas = session.UserPageMetadataCache.Get(pageDefinition.ID);
+            //
+            // inside a bare `catch (Exception)` that converts whatever it catches into a
+            // NavAppObjectMetadataException reading "An error occurred while applying changes
+            // from the '<app>' app …". Seeding only the tenant half left this one null and one
+            // NRE — and therefore that misleading message — still in place.
+            //
+            // Unlike its profile-side sibling, BC's own CachingDatabaseUserPageMetadataRetriever
+            // has no null-guard to fall back on: GetNoLock does
+            // `pageCustomizationRepository.GetPersonalizationDelta(pageId)` unconditionally, so a
+            // null repository just moves the NRE a frame deeper. It gets a real one —
+            // SkeletonPageCustomizationRepository, whose reads answer "nothing customized" (the
+            // truth for a headless session) and whose writes refuse by name rather than pretend
+            // to persist. See that file for the reasoning and for the measured evidence that no
+            // path the runner drives calls a write.
+            try
+            {
+                var userCacheField = sessType.GetField("<UserPageMetadataCache>k__BackingField",
+                    BindingFlags.NonPublic | BindingFlags.Instance);
+                var userRetrieverType = navNcl.GetType(
+                    "Microsoft.Dynamics.Nav.Runtime.CachingDatabaseUserPageMetadataRetriever");
+                var repoCtor = userRetrieverType?.GetConstructors(
+                        BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+                    .FirstOrDefault(c => c.GetParameters().Length == 1);
+                if (userCacheField != null && repoCtor != null)
+                    FieldPoke.SetInstance(userCacheField, _skeletonSession!,
+                        repoCtor.Invoke(new object?[] { new AlRunner.Patches.SkeletonPageCustomizationRepository() }));
+            }
+            catch (Exception ex)
+            {
+                // Best-effort, like every seed around it: a session whose cache could not be
+                // built behaves exactly as it did before this existed.
+                Console.Error.WriteLine(
+                    $"[BcRuntime] UserPageMetadataCache seed skipped: {ex.GetType().Name}: {ex.Message}");
+            }
+
             // ── Identity seed: UserId / UserSecurityId / TenantId ────────────────────────────
             // Same R2R-inline trap as CompanyName: ALDatabase.get_ALUserID /
             // ALDatabase.ALUserSecurityId / ALDatabase.ALTenantID are static getters in
