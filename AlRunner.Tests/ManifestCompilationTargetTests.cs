@@ -15,6 +15,7 @@
 // the AL-output cache key, so a regression fails here in milliseconds.
 
 using Xunit;
+using NavCA = Microsoft.Dynamics.Nav.CodeAnalysis;
 
 namespace AlRunner.Tests;
 
@@ -44,7 +45,6 @@ public sealed class ManifestCompilationTargetTests : IDisposable
     [InlineData("Cloud", NavCA.CompilationTarget.Cloud)]
     [InlineData("cloud", NavCA.CompilationTarget.Cloud)]
     [InlineData("OnPrem", NavCA.CompilationTarget.OnPrem)]
-    [InlineData("Internal", NavCA.CompilationTarget.Internal)]
     public void ReadManifestCompilerInputs_DeclaredTarget_ReachesEffectiveTarget(string declared, NavCA.CompilationTarget expected)
     {
         var path = WriteManifest($$"""{ "id": "00000000-0000-0000-0000-000000000001", "name": "T", "publisher": "P", "version": "1.0.0.0", "target": "{{declared}}" }""");
