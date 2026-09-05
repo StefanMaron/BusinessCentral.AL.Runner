@@ -37,7 +37,7 @@ using Microsoft.Dynamics.Nav.Runtime;
 
 namespace AlRunner.Patches;
 
-internal sealed class RunnerPageInstance
+internal sealed partial class RunnerPageInstance
 {
     private readonly object _form;
     private readonly object _owner;
@@ -1010,10 +1010,14 @@ internal sealed class RunnerPageInstance
     /// Run the action's OnAction trigger.
     ///
     /// Unlike OnValidate, a missing trigger is NOT benign here: the AL test asked for the
-    /// action to happen. An action with no OnAction is one whose effect is RunObject (open
-    /// another page/report), which the runner cannot perform, so it refuses by name rather
-    /// than doing nothing — silently doing nothing is what made an unrun action surface one
-    /// step later as an assertion about its missing effect.
+    /// action to happen. An AL action carries EITHER an OnAction trigger or a RunObject, so a
+    /// missing trigger means the effect is RunObject — performed by
+    /// <see cref="TryRunActionRunObject"/> (issue #2931; see
+    /// RunnerPageInstance.ActionRunObject.cs for what real BC does with one and how that was
+    /// established). Only when the action declares NEITHER, or declares a RunObject shape the
+    /// runner cannot yet perform faithfully, does this refuse by name rather than do nothing —
+    /// silently doing nothing is what made an unrun action surface one step later as an
+    /// assertion about its missing effect.
     ///
     /// Issue #1923: an action a PAGEEXTENSION contributes is compiled onto the extension's
     /// OWN type (<c>PageExtension{extId}</c>), not the base page's, and its member id hashes
@@ -1021,8 +1025,8 @@ internal sealed class RunnerPageInstance
     /// every pageextension that extends this page (own-bundle-source-compiled or a real
     /// PRECOMPILED dependency page, e.g. Base App "Item Attributes") before giving up. Before
     /// this fix a source-compiled base page's extension action was misclassified as this very
-    /// RunnerOutOfScopeException (a real, dispatchable action reported as unsupported
-    /// RunObject); a precompiled base page's extension action reached nowhere to throw
+    /// RunnerOutOfScopeException (a real, dispatchable action reported as declaring no effect);
+    /// a precompiled base page's extension action reached nowhere to throw
     /// against at all — Invoke() silently did nothing, in violation of loud-failures.md.
     /// (That second half no longer describes a Base App page: measured 2026-08-30, "Item
     /// Attributes" (7500) DOES resolve a live RunnerPageInstance and therefore arrives here and
@@ -1042,23 +1046,32 @@ internal sealed class RunnerPageInstance
         // actionref never does, so the ordinary case never pays for the actionref lookup.
         var trigger = FindTrigger(actionId, "_OnAction", "OnAction")
             ?? FindTriggerThroughActionRef(actionId);
-        if (trigger == null)
+        if (trigger != null)
         {
-            // Naming the actionref's TARGET matters: without it the message blames the
-            // actionref for "declaring no trigger", which is true of every actionref by
-            // construction and tells the reader nothing about why nothing ran.
-            var target = TryResolveActionRef(actionId);
-            throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
-                $"TestPage action {actionId} on page {_pageId}",
-                (target == null
-                    ? "testpage-action — the page declares no OnAction trigger for this action. "
-                    : $"testpage-action — this action is an actionref delegating to '{target.Value.TargetName}', "
-                      + "and neither the page nor any pageextension of it declares an OnAction "
-                      + "trigger for that action. ")
-                + "An action whose effect is RunObject (opening another page or report) cannot be "
-                + "performed here. See docs/scope.md");
+            Invoke(trigger.Value);
+            return;
         }
-        Invoke(trigger.Value);
+
+        // No trigger. An AL action carries EITHER an OnAction trigger or a RunObject, never
+        // both, so this is where the RunObject half belongs — see
+        // RunnerPageInstance.ActionRunObject.cs for what real BC does with it and how that was
+        // established. It returns false only when the action declares no RunObject either.
+        if (TryRunActionRunObject(actionId)) return;
+
+        // Neither a trigger nor a RunObject. Naming the actionref's TARGET matters: without it
+        // the message blames the actionref for "declaring no trigger", which is true of every
+        // actionref by construction and tells the reader nothing about why nothing ran.
+        var refTarget = TryResolveActionRef(actionId);
+        throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+            $"TestPage action {actionId} on page {_pageId}",
+            (refTarget == null
+                ? "not-yet-implemented — the action declares neither an OnAction trigger nor a "
+                  + "RunObject that the runner could resolve"
+                : $"not-yet-implemented — this action is an actionref delegating to "
+                  + $"'{refTarget.Value.TargetName}', and neither the page nor any pageextension "
+                  + "of it declares an OnAction trigger or a resolvable RunObject for that action")
+            + ". Invoking it therefore ran nothing, which would surface one step later as a "
+            + "missing effect, so it is refused here instead; see issue #2931");
     }
 
     /// <summary>

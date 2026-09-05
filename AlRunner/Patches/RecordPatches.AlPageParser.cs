@@ -243,6 +243,58 @@ public static partial class RecordPatches
     }
 
     /// <summary>
+    /// <paramref name="pageId"/>'s declared <c>PageType</c> — the runner's own AL-source-parsed
+    /// pages first, then a loaded dependency .app's SymbolReference.json. Null when neither
+    /// knows the page, which callers must NOT read as "Card": AL's absent-property default is
+    /// applied where the page IS known (both sources already do it), so null here means the
+    /// page is unknown and a caller that has to branch on the type should say so rather than
+    /// pick one.
+    /// <para>Issue #2931's consumer is RunnerPageInstance.TargetPageOpensModally: whether an
+    /// action's RunObject target opens as a dialog is decided by the TARGET's PageType, so this
+    /// is asked about a page other than the one being driven.</para>
+    /// </summary>
+    internal static string? TryGetAnyPageType(int pageId)
+    {
+        if (_parsedPages.TryGetValue(pageId, out var page)) return page.PageType;
+        return TryGetDependencyPageSymbol(pageId)?.PageType;
+    }
+
+    /// <summary>
+    /// The page id a page NAME resolves to in this run's object inventory, or 0 when no page of
+    /// that name is loaded. Same index — and therefore the same answers — as the by-name
+    /// resolution Table Metadata's LookupPageId/DrillDownPageId and Page Metadata's CardPageId
+    /// already use, so a name resolvable there is resolvable here.
+    /// </summary>
+    internal static int TryResolvePageIdByName(string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return 0;
+        var (pageIdsByName, _) = BuildObjectIndexes();
+        return pageIdsByName.TryGetValue(name!, out var id) ? id : 0;
+    }
+
+    /// <summary>
+    /// The <c>RunObject</c> that member <paramref name="memberId"/> of the page or pageextension
+    /// <paramref name="declaringObjectId"/> declares, as a loaded dependency .app's
+    /// SymbolReference.json states it — or null when it declares none (or the object ships no
+    /// symbol file here).
+    ///
+    /// <para>Deliberately symbol-file only. A page the runner COMPILED itself has BC's own
+    /// compiled <c>ActionDefinition</c>, which carries the target already resolved to an object
+    /// KIND and a numeric id; re-deriving that from AL text would be a second, weaker answer to
+    /// a question the compiler has already answered exactly. This exists for the other case —
+    /// a page shipped precompiled in a dependency .app, for which the runner has no compiled
+    /// action metadata at all (#2460).</para>
+    /// </summary>
+    internal static BcAppSymbolCache.ActionRunObjectSymbol? TryGetActionRunObject(
+        int declaringObjectId, int memberId, bool isExtension)
+    {
+        var map = isExtension
+            ? TryGetDependencyPageExtensionSymbol(declaringObjectId)?.MemberIdToRunObject
+            : TryGetDependencyPageSymbol(declaringObjectId)?.MemberIdToRunObject;
+        return map != null && map.TryGetValue(memberId, out var spec) ? spec : null;
+    }
+
+    /// <summary>
     /// Whether the AL source parser has seen this PAGE at all. Lets callers tell
     /// "the page genuinely declares no SourceTable" (BC's SourceTable==0 case, a legal
     /// AL page) apart from "we never parsed this page", which is a runner gap and must
