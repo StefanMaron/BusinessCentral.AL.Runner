@@ -290,6 +290,12 @@ everyone, survives a crashed box, and needs no shared state between contributors
 label is useful for telling afterwards which work the loop produced — but the label is
 bookkeeping; the assignee is what prevents two agents doing the same issue.
 
+**Between two loops on the same account, neither signal decides ownership**, and the check that
+does is one call: an **open PR carrying `Closes #N`** means the issue is in progress no matter
+what the assignee and labels say. Resolve it before claiming, and — as a coordinator — build the
+whole map once per cycle before dispatching. Three collisions in four hours came from skipping
+it. `.claude/rules/check-open-prs-before-claiming.md` has the command and the incidents.
+
 **Look in this order, and it works for any account:**
 
 1. **Issues assigned to your account AND carrying your own `agent: <tag>-N` label.** Both, not
@@ -316,14 +322,17 @@ pick the same top issue. Use compare-and-swap rather than trusting the write: as
 candidate. Losing a race costs one API call; two agents silently doing the same issue costs
 both.
 
-**Release when you stop.** Finished without a fix, blocked, or shutting down for budget: remove
-your assignment so the issue returns to the pool. An issue you cannot finish should not stay
-parked under your name.
+**Release when you stop.** Finished without a fix, blocked, or shutting down for budget: release
+the issue so it returns to the pool. An issue you cannot finish should not stay parked under your
+name. Release by removing **your own** `agent:` label — on a shared account the assignee you would
+remove may be another loop's lock, and a foreign `agent:` label is never yours to clear.
 
 **Your own stale claims are yours to reclaim** — a claim of yours with no linked PR and no
 activity for hours is from a run that died, and rule 1 above picks it up automatically.
 **Someone else's stale claim is not yours to take**, even if it looks abandoned. You cannot tell
-a dead box from a contributor who is asleep. Surface it to the human queue and move on.
+a dead box from a contributor who is asleep — and that refusal covers a foreign `agent:` label
+too, which looks identical whether the loop that wrote it is live or gone. Surface it to the
+human queue and move on.
 
 **Namespace anything per-contributor** that lives on disk or in a branch name — worktrees,
 branches, scratch directories, cache directories. Two contributors must never write to the same
