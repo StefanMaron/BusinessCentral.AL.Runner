@@ -3660,6 +3660,16 @@ if (Environment.GetEnvironmentVariable("AL_RUNNER_DUMP_INSTRUMENTATION_COUNTERS"
         $"dap.WorkPerformedCount={AlRunner.Infrastructure.AlDapSession.WorkPerformedCount}");
 }
 
+// #2704 second layer: if a BC-internal path realized NavEnvironment's lazy ExecutionScheduler
+// during this run (captured trigger: Feature Telemetry disposing a helper NavSession), dispose
+// it so its SchedulerLoop thread leaves on its own. The Cecil rewrite that marks that thread
+// background (NclCecilRewrite.Runtime.cs) is what guarantees exit; this is the tidy shutdown.
+// One-shot runs only — --server/--watch/--dap keep the process, and the scheduler, alive.
+if (!serverMode && !watchMode && !dapMode
+    && AlRunner.Infrastructure.ExecutionSchedulerShutdown.DisposeIfRealized()
+        == AlRunner.Infrastructure.ExecutionSchedulerShutdown.Outcome.Disposed)
+    Console.Error.WriteLine("[shutdown] disposed BC ExecutionScheduler that a BC-internal path realized during the run (#2704)");
+
 // Exit non-zero if anything failed — the default since the v2 cut, matching main/v1.
 // --no-strict-exit restores the old always-0 behaviour for JSON-only consumers.
 return strictExitCode ? computedExitCode : 0;

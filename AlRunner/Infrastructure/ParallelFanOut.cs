@@ -240,18 +240,20 @@ internal static class ParallelFanOut
         for (var i = 0; i < procs.Count; i++)
         {
             var (p, junit, so, se) = procs[i];
-            p.WaitForExit();
+            var killed = WaitForWorkerExit(p, junit, i);
             var stdout = so.GetAwaiter().GetResult();
             var stderr = se.GetAwaiter().GetResult();
-            if (p.ExitCode > worst) worst = p.ExitCode;
 
             Console.WriteLine();
-            Console.WriteLine($"───── shard {i} (exit {p.ExitCode}) ─────");
+            Console.WriteLine($"───── shard {i} (exit {(killed ? "killed" : p.ExitCode.ToString())}) ─────");
             if (!string.IsNullOrWhiteSpace(stdout)) Console.WriteLine(stdout.TrimEnd());
             if (!string.IsNullOrWhiteSpace(stderr)) Console.Error.WriteLine(stderr.TrimEnd());
 
             var c = JUnitCounts.Read(junit);
             tests += c.Tests; failures += c.Failures; errors += c.Errors; skipped += c.Skipped;
+
+            var exit = killed ? ExitCodeForKilledWorker(c) : p.ExitCode;
+            if (exit > worst) worst = exit;
         }
 
         Console.WriteLine();
@@ -267,6 +269,61 @@ internal static class ParallelFanOut
 
         try { Directory.Delete(tempDir, recursive: true); } catch { }
         return worst;
+    }
+
+    /// <summary>
+    /// How long a worker may stay alive AFTER it has written its JUnit file before the parent
+    /// kills it (#2704). The file is written after the summary, so once it exists the worker's
+    /// work is done and all that remains is process exit — well under a second when healthy.
+    /// Before the file exists the wait is unbounded: a long shard is --test-timeout's business.
+    /// Not a CLI flag on purpose; nothing legitimate takes this long to exit.
+    /// </summary>
+    public static readonly TimeSpan WorkerExitGrace = TimeSpan.FromSeconds(60);
+
+    /// <summary>Pure kill policy — see <see cref="WorkerExitGrace"/>.</summary>
+    public static bool ShouldKillWorker(bool junitWritten, TimeSpan sinceJunitWritten, TimeSpan grace)
+        => junitWritten && sinceJunitWritten >= grace;
+
+    /// <summary>
+    /// A killed worker's Process.ExitCode is the kill signal, not its verdict. It had already
+    /// written its results, so derive the verdict the way Program.cs does: any failure or
+    /// error → 1, otherwise 0.
+    /// </summary>
+    public static int ExitCodeForKilledWorker(JUnitTotals counts)
+        => counts.Failures + counts.Errors > 0 ? 1 : 0;
+
+    /// <summary>
+    /// Wait for a worker, bounded once its JUnit file has appeared. Returns true when the
+    /// worker had to be killed. #2704: a worker whose BC-internal foreground thread outlived
+    /// Main printed its summary and never exited; a bare WaitForExit() here then hung the
+    /// whole --jobs run with no diagnostic and no partial results, even though every other
+    /// worker's output was already in hand. Stdout EOF cannot be the "done" signal — a hung
+    /// child never closes its pipes — the JUnit file is.
+    /// </summary>
+    private static bool WaitForWorkerExit(System.Diagnostics.Process p, string junitPath, int shard)
+    {
+        var junitSeen = System.Diagnostics.Stopwatch.StartNew();
+        var junitWritten = false;
+        while (!p.WaitForExit(500))
+        {
+            if (!junitWritten && File.Exists(junitPath))
+            {
+                junitWritten = true;
+                junitSeen.Restart();
+            }
+            if (!ShouldKillWorker(junitWritten, junitSeen.Elapsed, WorkerExitGrace)) continue;
+
+            // Not "[jobs]"-tagged: FilteredWriter would drop it, and this is the one line that
+            // tells the reader why the exit column says "killed".
+            Console.Error.WriteLine(
+                $"jobs: shard {shard} (pid {p.Id}) wrote its results but did not exit within " +
+                $"{WorkerExitGrace.TotalSeconds:F0}s — killing its process tree and reporting the " +
+                "results it wrote (a foreground thread outliving Main; see issue #2704)");
+            try { p.Kill(entireProcessTree: true); } catch { }
+            p.WaitForExit(10_000);
+            return true;
+        }
+        return false;
     }
 
     private static string Normalize(string p)
