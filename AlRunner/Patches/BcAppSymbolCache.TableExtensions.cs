@@ -37,7 +37,12 @@ internal static partial class BcAppSymbolCache
     /// Returns the parsed TableExtension objects for the given .app file.
     /// Uses a separate cache (TableExtensionCache) so that AppSymbols is never modified —
     /// changing AppSymbols also causes SIGSEGV via the same token-shift mechanism.
-    /// Called from <c>RecordPatches.BcAppFallback.EnsureBcSymbolExtensionIndex</c>.
+    /// Called eagerly from <c>RecordPatches.AddBcAppPath</c> at registration and again from
+    /// <c>RecordPatches.BcAppFallback.EnsureBcSymbolExtensionIndex</c> (a cache hit by then,
+    /// unless the file changed on disk).
+    /// <para>Either the parse completes and its result is cached, or it throws
+    /// <see cref="AlRunner.Infrastructure.BcAppSymbolReadException"/> and nothing is stored —
+    /// the store below is only reached on a complete parse (#2712).</para>
     /// </summary>
     internal static IReadOnlyList<TableExtensionSymbol> GetTableExtensions(string appPath)
     {
@@ -50,6 +55,16 @@ internal static partial class BcAppSymbolCache
         return parsed;
     }
 
+    /// <summary>
+    /// Parse every tableextension the .app's SymbolReference.json declares — all of them or
+    /// none. This used to catch every exception, log it only to PerfTrace (off unless
+    /// AL_RUNNER_PERF=1) and return the PARTIAL dictionary collected so far, which
+    /// <see cref="GetTableExtensions"/> then cached for the life of the process. Reported as
+    /// #2712: an OutOfMemoryException part-way through Base Application's symbols dropped
+    /// 90 of 96 extensions, and the run reported 47 extra ordinary-looking test failures
+    /// ("field 5912 cannot be found in the 'Customer' table") with an unchanged exit code.
+    /// Mirrors <see cref="Parse"/>, which has never caught here either.
+    /// </summary>
     private static IReadOnlyList<TableExtensionSymbol> ParseTableExtensions(string appPath)
     {
         var result = new Dictionary<int, TableExtensionSymbol>();
@@ -63,7 +78,11 @@ internal static partial class BcAppSymbolCache
         }
         catch (Exception ex)
         {
-            PerfTrace.Log($"bc-tableext parse failed {System.IO.Path.GetFileName(appPath)}: {ex.Message}");
+            // Typed and loud: the caller (RecordPatches.AddBcAppPath at registration, or the
+            // lazy index rebuild) lets this propagate, and Program.cs turns it into a FATAL
+            // exit — a run that cannot see a dependency's table extensions cannot produce
+            // meaningful results (.claude/rules/loud-failures.md).
+            throw new AlRunner.Infrastructure.BcAppSymbolReadException(appPath, "table extensions", ex);
         }
         return result.Values.ToList();
     }

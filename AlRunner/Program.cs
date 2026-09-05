@@ -2226,6 +2226,20 @@ foreach (var bundle in bundles)
                     $"FATAL: dependency compile failed — cannot continue. {ex.Message}");
                 return 1;
             }
+            catch (AlRunner.Infrastructure.BcAppSymbolReadException ex)
+            {
+                // #2712: a resolved dependency .app's SymbolReference.json could not be read
+                // to completion (reported: OutOfMemoryException parsing Base Application's
+                // under a 1 GB heap limit). Before this handler that failure fell through to
+                // the generic DEP-RESOLVE-FAIL catch below, which prints one line and keeps
+                // going — and the run then reported 212 instead of 259 passing with exit 0.
+                // Same posture as DependencyLoadException above: abort with exit 1 rather
+                // than produce plausible-looking wrong results.
+                if (stdoutSilenced) { Console.SetOut(savedOut); Console.SetError(savedErr); }
+                Console.Error.WriteLine(
+                    $"FATAL: dependency symbols unreadable — cannot continue. {ex.Message}");
+                return 1;
+            }
             catch (AlRunner.Infrastructure.MissingDependencyException ex)
             {
                 // A declared dependency is completely absent from every package-cache directory.
@@ -2590,10 +2604,14 @@ foreach (var bundle in bundles)
             // above with a synthetic FAILED test each), so the guard must subtract this
             // count before deciding there is an unexplained gap left.
             int tddExcludedCount = 0;
-            // Emit-phase timeout: default 120 s, override via AL_RUNNER_EMIT_TIMEOUT_SEC.
+            // Emit-phase timeout: default 120 s, override via AL_RUNNER_EMIT_TIMEOUT_SEC. Under
+            // --jobs, ParallelFanOut.WorkerEnvironment sets AL_RUNNER_EMIT_TIMEOUT_SEC on each
+            // worker's environment to DefaultEmitTimeoutSec scaled by the shard count (#2715),
+            // so this single-process default and that scaled one share the same source of truth.
             // Note: Task.Run thread continues in background after timeout — acceptable for a CLI tool.
             int emitTimeoutSec = int.TryParse(
-                Environment.GetEnvironmentVariable("AL_RUNNER_EMIT_TIMEOUT_SEC"), out var ts) ? ts : 120;
+                Environment.GetEnvironmentVariable("AL_RUNNER_EMIT_TIMEOUT_SEC"), out var ts)
+                    ? ts : AlRunner.Infrastructure.ParallelFanOut.DefaultEmitTimeoutSec;
             // Containment: keep a symbol-less .app in ONE suite's .alpackages from failing
             // every OTHER suite in the bundle. BC's native .app scanner reports AL1023
             // ("package file is not valid") for a package with no SymbolReference.json and
