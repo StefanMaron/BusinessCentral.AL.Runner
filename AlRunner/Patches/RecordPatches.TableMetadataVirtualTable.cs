@@ -61,6 +61,17 @@ namespace AlRunner.Patches;
 
 public static partial class RecordPatches
 {
+    /// <summary>
+    /// Every refusal in this file, built in one place. See
+    /// RecordPatches.VirtualTableShapeGap.cs for the three-bucket classification and for
+    /// why the anchor is "not-yet-implemented" rather than a docs/scope.md section (#2945).
+    /// </summary>
+    /// <remarks>
+    /// Category (2): one store-wiring refusal, on a table this file populates.
+    /// </remarks>
+    internal static RunnerOutOfScopeException TableMetadataShapeGap(string detail)
+        => VirtualTableShapeGap("Table Metadata (virtual table 2000000136)", "table-metadata-virtual-table", detail);
+
     internal const int TableMetadataVirtualTableId = 2000000136;
 
     private static readonly ConditionalWeakTable<object, ConcurrentDictionary<int, byte>> _tmvPopulatedByProvider = new();
@@ -99,9 +110,7 @@ public static partial class RecordPatches
         EnsureDataAccessProviderReflection(dataAccess);
 
         var provider = _pDataAccessDataProvider!.GetValue(dataAccess)
-            ?? throw new RunnerOutOfScopeException(
-                "Table Metadata (virtual table 2000000136)",
-                "table-metadata-virtual-table — data access has no in-memory provider; see docs/scope.md");
+            ?? throw TableMetadataShapeGap("data access has no in-memory provider");
 
         var done = _tmvPopulatedByProvider.GetValue(provider, static _ => new ConcurrentDictionary<int, byte>());
 

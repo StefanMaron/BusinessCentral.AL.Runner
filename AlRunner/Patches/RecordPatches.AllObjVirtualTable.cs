@@ -58,6 +58,20 @@ namespace AlRunner.Patches;
 
 public static partial class RecordPatches
 {
+    /// <summary>
+    /// Every refusal in this file, built in one place. See
+    /// RecordPatches.VirtualTableShapeGap.cs for the three-bucket classification and for
+    /// why the anchor is "not-yet-implemented" rather than a docs/scope.md section (#2945).
+    /// </summary>
+    /// <remarks>
+    /// Category (2) for all four. One is a store-wiring gap; the other three are BC metadata
+    /// shapes this file reads rather than owns. Refusing beats guessing an option ordinal: the
+    /// ordinal is a stored column value, so a wrong guess mis-keys every row it writes and no
+    /// test can see it.
+    /// </remarks>
+    internal static RunnerOutOfScopeException AllObjShapeGap(string detail)
+        => VirtualTableShapeGap("AllObj (virtual table 2000000038)", "allobj-virtual-table", detail);
+
     internal const int AllObjVirtualTableId = 2000000038;
 
     private const int AllObjFieldObjectType = 1;
@@ -99,9 +113,7 @@ public static partial class RecordPatches
         EnsureDataAccessProviderReflection(dataAccess);
 
         var provider = _pDataAccessDataProvider!.GetValue(dataAccess)
-            ?? throw new RunnerOutOfScopeException(
-                "AllObj (virtual table 2000000038)",
-                "allobj-virtual-table — AllObj data access has no in-memory provider; see docs/scope.md");
+            ?? throw AllObjShapeGap("AllObj data access has no in-memory provider");
 
         var ordinals = EnsureAllObjObjectTypeOrdinals(allObjMetaTable);
         var done = _aovPopulatedByProvider.GetValue(provider, static _ => new ConcurrentDictionary<(int, int), byte>());
@@ -244,18 +256,14 @@ public static partial class RecordPatches
         var allFields = GetAllFields(allObjMetaTable);
         var typeField = (allFields ?? Enumerable.Empty<NCLMetaField>())
             .FirstOrDefault(f => f.FieldNo == AllObjFieldObjectType)
-            ?? throw new RunnerOutOfScopeException(
-                "AllObj (virtual table 2000000038)",
-                "allobj-virtual-table — AllObj metatable has no field 1 (\"Object Type\") "
+            ?? throw AllObjShapeGap(
+                "AllObj metatable has no field 1 (\"Object Type\") "
                 + $"[tableId={allObjMetaTable.TableId} name='{allObjMetaTable.TableName}' "
-                + $"allFields={(allFields == null ? "null" : string.Join("/", allFields.Select(f => f.FieldNo)))}]; "
-                + "see docs/scope.md");
+                + $"allFields={(allFields == null ? "null" : string.Join("/", allFields.Select(f => f.FieldNo)))}]");
 
         var optionMetadata = typeField.FieldOptionMetadata
-            ?? throw new RunnerOutOfScopeException(
-                "AllObj (virtual table 2000000038)",
-                "allobj-virtual-table — AllObj \"Object Type\" carries no option metadata, so its ordinals "
-                + "cannot be resolved; see docs/scope.md");
+            ?? throw AllObjShapeGap(
+                "AllObj \"Object Type\" carries no option metadata, so its ordinals cannot be resolved");
 
         var optionString = optionMetadata.OptionString ?? string.Empty;
         var map = new Dictionary<string, int>(StringComparer.Ordinal);
@@ -267,10 +275,7 @@ public static partial class RecordPatches
             map.TryAdd(key, i);
         }
         if (map.Count == 0)
-            throw new RunnerOutOfScopeException(
-                "AllObj (virtual table 2000000038)",
-                $"allobj-virtual-table — AllObj \"Object Type\" option string is empty ('{optionString}'); "
-                + "see docs/scope.md");
+            throw AllObjShapeGap($"AllObj \"Object Type\" option string is empty ('{optionString}')");
 
         if (Environment.GetEnvironmentVariable("ALRUNNER_ALLOBJ_TRACE") == "1")
             Console.Error.WriteLine("[RecordPatches] AllObj Object Type OptionString = '" + optionString + "' → "
