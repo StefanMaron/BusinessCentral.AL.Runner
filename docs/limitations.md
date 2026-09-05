@@ -725,6 +725,25 @@ there, so everything behind it is unmeasured.
 These are not architectural limits. They can be fixed; report them at
 https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
 
+<a id="virtual-table-shape-gaps"></a>
+
+- **System virtual tables — the runner refuses rather than answering a shape it cannot read.**
+  AllObj, AllObjWithCaption, All Profile, Integer, Field, Table/Page/CodeUnit/Report Metadata,
+  Report Data Items, Report Layout List, Page Control Field, Metadata and Aggregate Permission
+  Set, Feature Key, Time Zone and Windows Language are all populated in-memory by
+  `AlRunner/Patches/RecordPatches.*VirtualTable.cs`. Each populator reads something it does not
+  own — the runner's in-memory store, the artifact's own metatable and option strings, or
+  Microsoft's own data provider — and when what it finds is not the shape it drives, it raises
+  `RunnerOutOfScopeException` naming the member that moved instead of answering with rows it
+  guessed at. An option ordinal is a stored column value, so a guess there mis-keys every row
+  it writes and no test can see it.
+
+  These refusals are gaps, not scope boundaries: every one of these tables answers on a real
+  service tier. They carry the reason anchor `not-yet-implemented`, which is what stops an AL
+  `[TryFunction]` from trapping one into `false`
+  ([#2945](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2945)). Time Zone
+  and Windows Language have documented *divergences* as well — see their own sections above —
+  and those are answers the runner gives on purpose, not refusals.
 - **FilterGroup** — `Rec.FilterGroup(n)` has no effect; filters always apply to group 0.
 - **Query aggregation** — a query column with `Method = Sum`/`Count`/`Average`/`Min`/`Max`
   does not aggregate or group rows; it silently returns each row's own unaggregated value.

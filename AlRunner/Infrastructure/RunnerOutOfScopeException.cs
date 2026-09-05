@@ -65,9 +65,25 @@ public sealed class RunnerOutOfScopeException : Exception
     // or just 'out-of-scope:' for any-OOS. Keep the prefix + " — " separators stable.
     private static string BuildMessage(string api, string reason, string? docAnchor)
     {
-        var link = docAnchor != null
-            ? $"docs/scope.md{(docAnchor.StartsWith("#") ? docAnchor : "#" + docAnchor)}"
-            : "docs/scope.md";
+        // A docAnchor that names its own doc file is used verbatim (#2894). scope.md is the
+        // manifest of what is permanently out of scope, and it is the right target for most
+        // refusals — but not for every one. An IN-SCOPE surface the runner cannot answer for
+        // yet is written up in docs/limitations.md, and pointing that case at scope.md sends
+        // the reader to a file with no matching section AND asserts a permanence that is not
+        // true. The twelve Object Metadata (2000000071) refusals in
+        // RecordPatches.ObjectMetadataSystemTable.cs are the case that showed it.
+        //
+        // OutOfScopeMessage.TryParse strips everything from " — see " onward, so the file name
+        // here is invisible to the expectations manifest and to the reporter's bucketing —
+        // this is a reader-facing pointer only, and widening it changes no classification.
+        const string DefaultDoc = "docs/scope.md";
+        var link = docAnchor switch
+        {
+            null => DefaultDoc,
+            var a when a.StartsWith("docs/", StringComparison.Ordinal) => a,
+            var a when a.StartsWith("#", StringComparison.Ordinal) => DefaultDoc + a,
+            var a => DefaultDoc + "#" + a,
+        };
         return $"{OutOfScopeMessage.Prefix}{api} — {reason} — see {link}";
     }
 }
@@ -77,7 +93,8 @@ public sealed class RunnerOutOfScopeException : Exception
 /// </summary>
 /// <param name="Api">BC API that was touched, e.g. <c>HttpClient.Get</c>.</param>
 /// <param name="Reason">
-/// Reason as written by the throw site: a <c>docs/scope.md</c> anchor,
+/// Reason as written by the throw site: an anchor (a <c>docs/scope.md</c> section
+/// for a permanent refusal, or <c>not-yet-implemented</c> for an in-scope one),
 /// optionally followed by free-text detail after an em-dash separator.
 /// Empty when the throw site did not carry one.
 /// </param>
@@ -180,6 +197,8 @@ public static class RunnerScope
     /// <summary>
     /// Permanently-out-of-scope API. <paramref name="docAnchor"/> is the
     /// section anchor under <c>docs/scope.md</c> (e.g. "email", "external-http").
+    /// A caller documenting an in-scope refusal elsewhere may pass a full
+    /// <c>docs/&lt;file&gt;.md#anchor</c> instead — see <c>BuildMessage</c>.
     /// </summary>
     public static void ThrowOutOfScope(string api, string reason, string docAnchor)
         => throw new RunnerOutOfScopeException(api, reason, docAnchor);

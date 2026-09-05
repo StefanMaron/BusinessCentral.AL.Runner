@@ -85,6 +85,22 @@ namespace AlRunner.Patches;
 
 public static partial class RecordPatches
 {
+    /// <summary>
+    /// Every refusal in this file, built in one place. See
+    /// RecordPatches.VirtualTableShapeGap.cs for the three-bucket classification and for
+    /// why the anchor is "not-yet-implemented" rather than a docs/scope.md section (#2945).
+    /// </summary>
+    /// <remarks>
+    /// Category (2) for all three, and none of them is the documented Windows Language
+    /// DIVERGENCE. The chosen license and installed-resource column values are answers this
+    /// provider gives on purpose and never throws for. These three fire when the runner cannot
+    /// answer at all: no in-memory provider, or BC's own WindowsLanguageHelper missing or not
+    /// the shape its provider uses. All three point at the table's limitations.md section.
+    /// </remarks>
+    internal static RunnerOutOfScopeException WindowsLanguageShapeGap(string detail)
+        => VirtualTableShapeGap("Windows Language (virtual table 2000000045)", "windows-language-virtual-table", detail,
+            "docs/limitations.md#windows-language-virtual-table");
+
     internal const int WindowsLanguageVirtualTableId = 2000000045;
 
     // One-shot per provider: BC's culture list cannot change during a run.
@@ -118,9 +134,7 @@ public static partial class RecordPatches
         EnsureWindowsLanguageHelperReflection();
 
         var provider = _pDataAccessDataProvider!.GetValue(dataAccess)
-            ?? throw new RunnerOutOfScopeException(
-                "Windows Language (virtual table 2000000045)",
-                "windows-language-virtual-table — data access has no in-memory provider; see docs/scope.md");
+            ?? throw WindowsLanguageShapeGap("data access has no in-memory provider");
 
         if (_wlPopulatedProviders.TryGetValue(provider, out _)) return;
 
@@ -206,12 +220,10 @@ public static partial class RecordPatches
         var navTypes = AppDomain.CurrentDomain.GetAssemblies()
             .FirstOrDefault(a => a.GetName().Name == "Microsoft.Dynamics.Nav.Types");
         var helper = navTypes?.GetType("Microsoft.Dynamics.Nav.Types.WindowsLanguageHelper")
-            ?? throw new RunnerOutOfScopeException(
-                "Windows Language (virtual table 2000000045)",
-                "windows-language-virtual-table — Microsoft.Dynamics.Nav.Types.WindowsLanguageHelper "
-                + "was not found, so BC's own culture list cannot be read. Reimplementing it from "
-                + "CultureInfo would answer a different row set than the service tier. "
-                + "See docs/scope.md");
+            ?? throw WindowsLanguageShapeGap(
+                "Microsoft.Dynamics.Nav.Types.WindowsLanguageHelper was not found, so BC's own "
+                + "culture list cannot be read. Reimplementing it from CultureInfo would answer a "
+                + "different row set than the service tier");
 
         const BindingFlags Statics = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static;
 
@@ -229,13 +241,12 @@ public static partial class RecordPatches
         var abbreviatedName = One("AbbreviatedName");
 
         if (cultures == null || languageId == null || primaryLanguageId == null || abbreviatedName == null)
-            throw new RunnerOutOfScopeException(
-                "Windows Language (virtual table 2000000045)",
-                "windows-language-virtual-table — WindowsLanguageHelper does not expose the shape "
+            throw WindowsLanguageShapeGap(
+                "WindowsLanguageHelper does not expose the shape "
                 + $"BC's own provider uses (AllCultures={cultures != null}, "
                 + $"LanguageId={languageId != null}, PrimaryLanguageId={primaryLanguageId != null}, "
                 + $"AbbreviatedName={abbreviatedName != null}). A BC shape change says so here "
-                + "rather than being papered over. See docs/scope.md");
+                + "rather than being papered over");
 
         _wlLanguageId = languageId;
         _wlPrimaryLanguageId = primaryLanguageId;
