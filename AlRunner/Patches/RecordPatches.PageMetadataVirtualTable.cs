@@ -70,6 +70,20 @@ namespace AlRunner.Patches;
 
 public static partial class RecordPatches
 {
+    /// <summary>
+    /// Every refusal in this file, built in one place. See
+    /// RecordPatches.VirtualTableShapeGap.cs for the three-bucket classification and for
+    /// why the anchor is "not-yet-implemented" rather than a docs/scope.md section (#2945).
+    /// </summary>
+    /// <remarks>
+    /// Category (2) for all four. One is a store-wiring gap; the other three are BC metadata
+    /// shapes this file reads rather than owns. Refusing beats guessing an option ordinal: the
+    /// ordinal is a stored column value, so a wrong guess mis-keys every row it writes and no
+    /// test can see it.
+    /// </remarks>
+    internal static RunnerOutOfScopeException PageMetadataShapeGap(string detail)
+        => VirtualTableShapeGap("Page Metadata (virtual table 2000000138)", "page-metadata-virtual-table", detail);
+
     internal const int PageMetadataVirtualTableId = 2000000138;
 
     private static readonly ConditionalWeakTable<object, ConcurrentDictionary<int, byte>> _pmvPopulatedByProvider = new();
@@ -107,9 +121,7 @@ public static partial class RecordPatches
         var pageTypeOrdinals = EnsurePageTypeOrdinals(metaTable);
 
         var provider = _pDataAccessDataProvider!.GetValue(dataAccess)
-            ?? throw new RunnerOutOfScopeException(
-                "Page Metadata (virtual table 2000000138)",
-                "page-metadata-virtual-table — data access has no in-memory provider; see docs/scope.md");
+            ?? throw PageMetadataShapeGap("data access has no in-memory provider");
 
         var done = _pmvPopulatedByProvider.GetValue(provider, static _ => new ConcurrentDictionary<int, byte>());
 
@@ -258,14 +270,10 @@ public static partial class RecordPatches
 
         var field = (GetAllFields(metaTable) ?? Enumerable.Empty<NCLMetaField>())
             .FirstOrDefault(f => NormalizeObjectTypeName(f.FieldName ?? string.Empty) == "pagetype")
-            ?? throw new RunnerOutOfScopeException(
-                "Page Metadata (virtual table 2000000138)",
-                "page-metadata-virtual-table — metatable has no \"PageType\" field; see docs/scope.md");
+            ?? throw PageMetadataShapeGap("metatable has no \"PageType\" field");
 
         var optionMetadata = field.FieldOptionMetadata
-            ?? throw new RunnerOutOfScopeException(
-                "Page Metadata (virtual table 2000000138)",
-                "page-metadata-virtual-table — \"PageType\" carries no option metadata; see docs/scope.md");
+            ?? throw PageMetadataShapeGap("\"PageType\" carries no option metadata");
 
         var map = new Dictionary<string, int>(StringComparer.Ordinal);
         var parts = (optionMetadata.OptionString ?? string.Empty).Split(',');
@@ -276,9 +284,7 @@ public static partial class RecordPatches
             map.TryAdd(key, i);
         }
         if (map.Count == 0)
-            throw new RunnerOutOfScopeException(
-                "Page Metadata (virtual table 2000000138)",
-                "page-metadata-virtual-table — \"PageType\" option string is empty; see docs/scope.md");
+            throw PageMetadataShapeGap("\"PageType\" option string is empty");
 
         _pmvPageTypeOrdinals = map;
         return map;

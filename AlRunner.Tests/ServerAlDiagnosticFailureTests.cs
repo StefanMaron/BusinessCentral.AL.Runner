@@ -19,7 +19,7 @@ public sealed class ServerAlDiagnosticFailureTests
 {
     private static string WriteBundle(string suffix, string queryBody)
     {
-        var root = Path.Combine(Path.GetTempPath(), "al-runner-server-al0353-" + suffix, Guid.NewGuid().ToString("N"));
+        var root = TestScratch.Dir("al-runner-server-al0353-" + suffix);
         Directory.CreateDirectory(root);
         File.WriteAllText(Path.Combine(root, "app.json"), """
         {

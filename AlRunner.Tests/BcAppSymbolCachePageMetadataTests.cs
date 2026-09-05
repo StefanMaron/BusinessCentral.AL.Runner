@@ -116,7 +116,7 @@ public class BcAppSymbolCachePageMetadataTests
     [Fact]
     public void Pages_CardPage_HasPageTypeCaptionSourceTableAndOrderedControls()
     {
-        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.Dir("al-runner-bcsym-pagemeta-tests");
         Directory.CreateDirectory(dir);
         try
         {
@@ -169,7 +169,7 @@ public class BcAppSymbolCachePageMetadataTests
     [Fact]
     public void Pages_ListPage_CardPageIdIsStatedByName_NotById()
     {
-        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.Dir("al-runner-bcsym-pagemeta-tests");
         Directory.CreateDirectory(dir);
         try
         {
@@ -197,7 +197,7 @@ public class BcAppSymbolCachePageMetadataTests
     [Fact]
     public void Pages_NoPropertiesDeclared_AllDefaultsApply()
     {
-        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.Dir("al-runner-bcsym-pagemeta-tests");
         Directory.CreateDirectory(dir);
         try
         {
@@ -226,7 +226,7 @@ public class BcAppSymbolCachePageMetadataTests
     [Fact]
     public void Pages_AreEmpty_WhenTheSymbolFileDeclaresNone()
     {
-        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.Dir("al-runner-bcsym-pagemeta-tests");
         Directory.CreateDirectory(dir);
         try
         {

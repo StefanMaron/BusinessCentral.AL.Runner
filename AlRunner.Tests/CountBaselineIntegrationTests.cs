@@ -48,8 +48,7 @@ public sealed class CountBaselineIntegrationTests : IDisposable
         _root = TestScratch.Dir("al-runner-count-baseline");
         Directory.CreateDirectory(_root);
         _suiteKey = Path.GetFileName(_root);
-        _baselinePath = Path.Combine(Path.GetTempPath(), "al-runner-count-baseline",
-            "baseline-" + Guid.NewGuid().ToString("N") + ".json");
+        _baselinePath = TestScratch.FilePath("al-runner-count-baseline", "baseline.json");
         WriteFixture(_root);
     }
 

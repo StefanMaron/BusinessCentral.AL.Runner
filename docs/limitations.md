@@ -256,8 +256,9 @@ BC's own exception. Measured on BC 28.1:
 |---|---|
 | `CanCreateTask()` | `false` |
 | `CreateTask()` | throws `You do not have permission to create or run scheduled tasks.` The target codeunit's `OnRun` does **not** run. |
-| `TaskExists()` | throws a `NullReferenceException` — the real body reaches for a SQL connection that does not exist here. Tracked separately; it should refuse loudly rather than NRE. |
-| `CancelTask()`, `SetTaskReady()` | complete without error, having done nothing (there is no task to act on). |
+| `TaskExists()` | refuses by name: `out-of-scope: TaskScheduler.TaskExists — task-scheduler — … — see docs/scope.md#jobs`. There is no scheduled-task store to query, and BC's real body has no answer it reaches without one. (#2866; before that it threw a `NullReferenceException` out of `NavSqlConnectionScope`.) |
+| `CancelTask()` | refuses by name the same way — **except** for an empty task id, where BC's own body answers `false` before it touches the scheduler, so the runner answers `false` too. (#2866; before that it threw a `NullReferenceException` out of `ALCancelTaskAsync`.) |
+| `SetTaskReady()` | throws the same `You do not have permission to create or run scheduled tasks.` as `CreateTask()` — its real body runs the same `CanCreateTask` guard. An empty task id answers `false` before that guard, as on BC. |
 
 So: guarded AL (`if TaskScheduler.CanCreateTask() then …`) skips task creation cleanly and is
 the pattern that works here. Unguarded AL that calls `CreateTask()` directly gets BC's loud
@@ -272,7 +273,10 @@ runs. AL that needs the target codeunit's logic to actually execute should call 
 
 > This section previously described `CreateTask()` as dispatching the codeunit
 > "synchronously, inline". That described a design that was reverted, and it was wrong in both
-> directions: no codeunit runs, and `TaskExists()` does not return `false`. See #2565.
+> directions: no codeunit runs, and `TaskExists()` does not return `false`. See #2565. It then
+> described `CancelTask()` and `SetTaskReady()` as completing quietly, which measurement (#2866)
+> showed neither did. The table above is now pinned by `tests/runner-extras/task-scheduler-oos`,
+> so it fails a CI leg rather than drifting again.
 
 ### No DotNet interop
 
@@ -629,6 +633,19 @@ well, which is the bug (#2519) this table's support closed.
 move quietly. It deliberately uses only ids that are live table objects, so it does not encode
 the open `ObsoleteState = Removed` question as settled in either direction.
 
+**When the runner cannot answer at all, it refuses and says so as a gap, not as a scope
+boundary.** Twelve preconditions guard this table — BC's `SystemTables` type and its
+`ApplicationDatabaseTables` list, `NavEnvironment.Instance.EmitVersion`, the `"Object Type"`
+option string, the in-memory data provider, and `TempTableDataProvider.primaryTree`. If one of
+them is not the shape the runner expects, it raises `RunnerOutOfScopeException` with reason
+anchor `not-yet-implemented` and a link back to this section. None of them means the surface is
+out of scope: this table is implemented, and a refusal here is a bug report about the runner
+(#2894). The anchor matters at runtime as well as on the page — an AL `[TryFunction]` traps a
+*permanent* refusal into `false` and lets a `not-yet-implemented` one tear through, so a shape
+gap can never read as a clean `if not TryX()`. `AlRunner.Tests/ObjectMetadataSystemTableRefusalTests.cs`
+pins the contract; `AlRunner.Tests/ObjectMetadataProviderRowProbeTests.cs` drives the two
+`primaryTree` cases end to end.
+
 **Synthesis never overwrites restored rows, and never guesses whether there are any.** Because
 2000000071 is a real SQL table, a `--test-data` backup can genuinely carry rows for it, so the
 on-demand loader runs first and the populator does nothing when the store already holds a row.
@@ -639,6 +656,18 @@ the runner cannot tell the two apart — so it refuses with an `out-of-scope:` f
 member rather than synthesising over rows it cannot see (#2786). That refusal is unreachable on
 every BC version the runner supports; it exists so a future one cannot silently disable the
 precedence rule.
+
+**Synthesis is also held off while a load is still owed.** Hydrating some other table runs BC's
+own metadata and NavValue construction, which can reach a `Record` of 2000000071 and materialise
+its storage from *inside* that hydration — where a load of its own would recurse and so is
+refused. The populator used to run against the empty store it had just been handed, claim the
+once-per-provider flag and synthesise; the backup's real rows then had nowhere to go. It now
+leaves such a store alone until the next touch outside a hydration loads it, so the precedence
+rule holds on that path too (#2877). The nested caller sees an **empty** Object Metadata store
+for that moment — deliberately, because the alternative is synthesising rows that would have to
+be withdrawn, and rows a caller has already read cannot be withdrawn. Nothing is lost when the
+backup does not offer the table: the load comes back with no rows, and the populate that follows
+synthesises exactly as it always did.
 
 ---
 
@@ -725,6 +754,25 @@ there, so everything behind it is unmeasured.
 These are not architectural limits. They can be fixed; report them at
 https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
 
+<a id="virtual-table-shape-gaps"></a>
+
+- **System virtual tables — the runner refuses rather than answering a shape it cannot read.**
+  AllObj, AllObjWithCaption, All Profile, Integer, Field, Table/Page/CodeUnit/Report Metadata,
+  Report Data Items, Report Layout List, Page Control Field, Metadata and Aggregate Permission
+  Set, Feature Key, Time Zone and Windows Language are all populated in-memory by
+  `AlRunner/Patches/RecordPatches.*VirtualTable.cs`. Each populator reads something it does not
+  own — the runner's in-memory store, the artifact's own metatable and option strings, or
+  Microsoft's own data provider — and when what it finds is not the shape it drives, it raises
+  `RunnerOutOfScopeException` naming the member that moved instead of answering with rows it
+  guessed at. An option ordinal is a stored column value, so a guess there mis-keys every row
+  it writes and no test can see it.
+
+  These refusals are gaps, not scope boundaries: every one of these tables answers on a real
+  service tier. They carry the reason anchor `not-yet-implemented`, which is what stops an AL
+  `[TryFunction]` from trapping one into `false`
+  ([#2945](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2945)). Time Zone
+  and Windows Language have documented *divergences* as well — see their own sections above —
+  and those are answers the runner gives on purpose, not refusals.
 - **FilterGroup** — `Rec.FilterGroup(n)` has no effect; filters always apply to group 0.
 - **Query aggregation** — a query column with `Method = Sum`/`Count`/`Average`/`Min`/`Max`
   does not aggregate or group rows; it silently returns each row's own unaggregated value.
@@ -773,6 +821,15 @@ https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
   - A table whose AL name is declared by two installed apps in the same company is refused
     rather than guessed at —
     [#2264](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2264).
+  - A table whose storage is first created from **inside another table's hydration** cannot be
+    loaded there — a nested load would recurse — so the load is deferred to the next touch
+    outside a hydration and runs into that same storage
+    ([#2877](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2877)). It used to
+    be dropped instead, silently and for the rest of the run, because storage being present is
+    what the on-demand policy reads as "already loaded". If something wrote into that storage in
+    the meantime, the deferred load is **written off** rather than stacked on top of those rows,
+    and the table is named on stderr with the reason; `--test-data`'s per-table outcome
+    distinguishes "created during another table's hydration" from "never touched".
 
   Measured on BC 28.1's W1 CRONUS backup with the Base Application / System Application /
   Business Foundation closure: **39,231 rows across 344 tables** hydrated; 12 refused,

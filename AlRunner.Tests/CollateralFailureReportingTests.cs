@@ -301,7 +301,7 @@ public sealed class CollateralFailureReportingTests
     [Fact]
     public void Classification_FailureRecordsInAPartialBucket_AreMarkedSuspect()
     {
-        var path = Path.Combine(Path.GetTempPath(), $"al-runner-cls-{Guid.NewGuid():N}.json");
+        var path = TestScratch.FilePath("al-runner-cls", "classification.json");
         try
         {
             Reporter.WriteClassification(new[] { PartialBucketWithFailures() }, path);
@@ -333,7 +333,7 @@ public sealed class CollateralFailureReportingTests
     [Fact]
     public void Classification_CleanBucket_MarksNothingSuspect()
     {
-        var path = Path.Combine(Path.GetTempPath(), $"al-runner-cls-{Guid.NewGuid():N}.json");
+        var path = TestScratch.FilePath("al-runner-cls", "classification.json");
         try
         {
             Reporter.WriteClassification(new[] { CleanBucketWithFailures() }, path);

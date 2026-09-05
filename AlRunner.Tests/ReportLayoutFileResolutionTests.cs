@@ -65,7 +65,7 @@ public class ReportLayoutFileResolutionTests
 
     private static string WriteApp(string suffix, string appId, int baseId)
     {
-        var root = Path.Combine(Path.GetTempPath(), "al-runner-report-layout-resolution-" + suffix, Guid.NewGuid().ToString("N"));
+        var root = TestScratch.Dir("al-runner-report-layout-resolution-" + suffix);
         Directory.CreateDirectory(root);
         File.WriteAllText(Path.Combine(root, "app.json"), $$"""
         {

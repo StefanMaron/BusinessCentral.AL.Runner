@@ -62,16 +62,47 @@
 //   code below is the original lock-free TryGetValue / create / GetOrAdd, with no gate object
 //   allocated and no lock taken.
 //
-// KNOWN, TRACKED, AND DELIBERATELY NOT CHANGED HERE
-//   A table whose storage was first created by a NESTED call is published without ever being
-//   hydrated, and "storage presence IS the have-we-loaded-this answer" then means no later
-//   touch loads it either — so that table silently keeps none of its backup rows for the whole
-//   run. That is a second defect of the same family, with a different fix and a different risk
-//   (hydrating into a store AL may already have written to, and, for 2000000071, into one the
-//   populator may already have synthesised into). It is filed separately rather than folded in;
-//   the behaviour below is byte-for-byte what it was.
+// THE NESTED PUBLICATION, AND THE DEBT IT LEAVES (#2877)
+//   A table whose storage is first created by a NESTED call is published without ever being
+//   hydrated, and "storage presence IS the have-we-loaded-this answer" then meant no later touch
+//   loaded it either — so that table silently kept none of its backup rows for the whole run,
+//   and TestDataProvisioner recorded no outcome for it, so the run could not report it either.
+//   The store afterwards looked exactly like a table nothing had ever touched.
+//
+//   The nested publication itself cannot be avoided: hydrating there would recurse. So it is
+//   recorded instead. _awaitingTestDataHydration names the storage INSTANCE that was published
+//   without a load, and the next touch that is NOT inside a materialisation pays the debt into
+//   that same instance, inside the gate, before handing it out. Same instance-naming discipline
+//   as the settled latch above, and for the same reason: a reset that drops or replaces the
+//   entry produces a different instance, so a stale debt can never be paid into the wrong store.
+//
+//   TWO THINGS THE DEBT MUST NOT DO, AND HOW EACH IS STOPPED
+//   * MIX ROWS. If anything wrote into the store between the nested publication and the payment
+//     — the nested caller inserting through the handle it was given is the realistic route — a
+//     load landing on top would produce a store holding the backup's rows AND somebody else's.
+//     That is the wrong-rows outcome the #2788 hand-out ordering exists to prevent. So the debt
+//     is only paid into a store that is provably EMPTY, and written off otherwise. "Cannot tell"
+//     is written off as well: unknown is not empty, the same discipline
+//     RecordPatches.StoredTableCensus keeps. A write-off is never silent — it is reported per
+//     table through TestDataDeferredLoadWriteOffNotifier, which is what makes the outcome
+//     readable rather than a store that looks untouched (.claude/rules/loud-failures.md).
+//   * LET A POPULATE SYNTHESISE FIRST. Object Metadata (2000000071) is the one table with a
+//     populate after its materialisation, and PopulateObjectMetadataSystemTable's contract is
+//     "synthesise only if nobody else put rows here". A nested first touch used to run that
+//     populate against the empty store it had just published, claim the once-per-provider flag
+//     and synthesise 43 rows — which would then be exactly the mixing case above, so the debt
+//     would be written off and the backup's real rows lost for the run. MaterialiseObjectMetadata-
+//     StoreCore holds the populate off while a load is owed instead. The nested caller sees an
+//     EMPTY Object Metadata store for that moment; that is the deliberate choice, because the
+//     alternative is synthesising rows that would have to be withdrawn, and nothing can withdraw
+//     rows a caller has already read. Nothing is lost when the backup does not offer the table:
+//     the debt is paid with zero rows, the store is still empty at the next touch, and the
+//     populate then synthesises exactly as it always did.
+using System.Collections;
 using System.Collections.Concurrent;
+using System.Reflection;
 using System.Runtime.CompilerServices;
+using AlRunner.Infrastructure;
 using Microsoft.Dynamics.Nav.Runtime;
 
 namespace AlRunner.Patches;
@@ -129,15 +160,143 @@ public static partial class RecordPatches
     private static object GetOrCreateHydratedDataAccess(
         object self, ConcurrentDictionary<int, object> perTable, NCLMetaTable table, int tableId)
         => GetOrCreateHydratedDataAccessCore(self, perTable, tableId,
-            () => _mCreateTempDataAccess!.Invoke(self, new object[] { table })!);
+            () => _mCreateTempDataAccess!.Invoke(self, new object[] { table })!,
+            // The production emptiness probe. Every real caller passes it: a deferred load
+            // settled without one would be paid BLIND, which is the row-mixing the debt exists
+            // to avoid (#2877).
+            StoredHasAnyRow);
+
+    /// <summary>
+    /// The storage for Object Metadata (2000000071): materialised like any other table, then
+    /// populated with its synthesised fallback row set — except while a --test-data load is
+    /// still owed for it, when the populate is held off so the backup's real rows still win.
+    /// See the #2877 note in this file's header for why "hold off" and not "synthesise now".
+    /// </summary>
+    private static object MaterialiseObjectMetadataStore(
+        object self, ConcurrentDictionary<int, object> perTable, NCLMetaTable table, int tableId)
+        => MaterialiseObjectMetadataStoreCore(self, perTable, tableId,
+            () => _mCreateTempDataAccess!.Invoke(self, new object[] { table })!,
+            StoredHasAnyRow,
+            store => PopulateObjectMetadataSystemTable(store, table));
+
+    /// <summary>
+    /// The ordering itself, with the two BC-specific steps behind delegates so it can be driven
+    /// without a booted engine. See AlRunner.Tests/NestedTableMaterialisationHydrationTests.cs.
+    /// </summary>
+    internal static object MaterialiseObjectMetadataStoreCore(
+        object self, ConcurrentDictionary<int, object> perTable, int tableId,
+        Func<object> createStorage, Func<object, bool?>? storeHasAnyRow, Action<object> populate)
+    {
+        var store = GetOrCreateHydratedDataAccessCore(self, perTable, tableId, createStorage, storeHasAnyRow);
+
+        // A store that still owes a --test-data load is left ALONE, empty, until the touch that
+        // pays it. Synthesising into it now would make the payment a mix of real and synthesised
+        // rows — and the payment refuses to mix, so it would be written off and the backup's real
+        // rows lost for the run instead. Only reachable under --test-data: with no loader
+        // installed nothing is ever owed and this is the pre-#2877 shape exactly.
+        if (IsAwaitingTestDataHydration(store)) return store;
+
+        populate(store);
+        return store;
+    }
+
+    /// <summary>Storage instances published by a nested materialisation and therefore never
+    /// --test-data-loaded. Keyed on the INSTANCE, so it dies with the store and no reset path
+    /// has to know it exists — the same reason the settled latch names an instance.</summary>
+    private static readonly ConditionalWeakTable<object, object> _awaitingTestDataHydration = new();
+
+    private static readonly object _awaitingTestDataHydrationSentinel = new();
+
+    /// <summary>
+    /// True while <paramref name="store"/> owes a --test-data load it could not run when it was
+    /// created, because it was created from inside another table's hydration (#2877). False for
+    /// every store on a run without --test-data, and false again the moment the debt is settled
+    /// — either paid or written off.
+    /// </summary>
+    internal static bool IsAwaitingTestDataHydration(object store)
+        => _awaitingTestDataHydration.TryGetValue(store, out _);
+
+    /// <summary>
+    /// Does <paramref name="dataAccess"/>'s in-memory store hold a row right now?
+    /// <c>true</c> / <c>false</c> / <c>null</c> = cannot tell, and cannot-tell is NOT empty:
+    /// every caller here treats it as "do not load", because loading blind is what would mix
+    /// rows. Same read, and the same three-way discipline, as
+    /// RecordPatches.StoredTableCensus.CollectCensus.
+    ///
+    /// <para>Resolution goes through <see cref="PrivateMemberLookup"/> rather than
+    /// <c>GetField</c>: <c>primaryTree</c> is private on <c>TempTableDataProvider</c> and BC's
+    /// own <c>CrmTableConnection.CrmTestDataProvider</c> derives from it, where
+    /// <c>GetField(NonPublic)</c> does not return a base class's private field (#2725).</para>
+    /// </summary>
+    private static bool? StoredHasAnyRow(object dataAccess)
+    {
+        object? primaryTree;
+        try
+        {
+            var provider = GetDataProvider(dataAccess);
+            if (provider == null) return null;
+            var field = PrivateMemberLookup.Field(provider.GetType(), "primaryTree");
+            if (field == null) return null;                  // BC's private layout moved — unknown
+            primaryTree = field.GetValue(provider);
+        }
+        catch (TargetInvocationException) { return null; }
+        catch (InvalidOperationException) { return null; }
+
+        // A null tree is BC's own "no row was ever inserted".
+        if (primaryTree == null) return false;
+        if (primaryTree is not IEnumerable rows) return null;
+        foreach (var _ in rows) return true;                 // one row is the whole answer
+        return false;
+    }
+
+    /// <summary>
+    /// Settle the debt a nested publication left against <paramref name="store"/>, from inside
+    /// the gate and before the store is handed out. Pays it — runs the load that was refused —
+    /// only when the store is provably empty; otherwise writes it off and reports why. Either
+    /// way the debt is gone afterwards, so no later touch re-tries and no table is reported
+    /// twice.
+    /// </summary>
+    private static void SettleDeferredTestDataLoad(
+        object self, int tableId, object store, Func<object, bool?>? storeHasAnyRow)
+    {
+        // No probe at all means the caller staged this storage itself and knows nothing else
+        // wrote to it — the ordering tests. Production always passes StoredHasAnyRow.
+        var occupied = storeHasAnyRow == null ? false : storeHasAnyRow(store);
+
+        if (occupied == false)
+        {
+            InvokeTestDataOnDemandLoader(self, tableId);
+            return;
+        }
+
+        TestDataDeferredLoadWriteOffNotifier?.Invoke(tableId, occupied == true
+            ? "its storage already held rows by the time a load could run, and loading on top "
+              + "of them would mix the backup's rows with those"
+            : "the runner could not read whether its storage already held rows, and loading "
+              + "blind could mix the backup's rows with rows that are already there");
+    }
 
     /// <summary>
     /// The ordering itself, with the one BC-specific step (constructing the temp DataAccess)
     /// behind <paramref name="createStorage"/> so the ordering can be driven — and raced —
     /// without a booted engine. See AlRunner.Tests/TableMaterialisationOrderingTests.cs.
     /// </summary>
+    /// <summary>
+    /// Test-only overload: no emptiness probe, because the caller stages the storage itself and
+    /// nothing else writes to it. Production never takes this route — see
+    /// <see cref="GetOrCreateHydratedDataAccess"/>, which always passes
+    /// <see cref="StoredHasAnyRow"/>.
+    /// </summary>
     internal static object GetOrCreateHydratedDataAccessCore(
         object self, ConcurrentDictionary<int, object> perTable, int tableId, Func<object> createStorage)
+        => GetOrCreateHydratedDataAccessCore(self, perTable, tableId, createStorage, storeHasAnyRow: null);
+
+    /// <param name="storeHasAnyRow">Answers "does this storage already hold a row" — true /
+    /// false / null for cannot-tell — and is consulted only when a deferred load (#2877) is
+    /// owed, to decide whether paying it would mix rows.</param>
+    internal static object GetOrCreateHydratedDataAccessCore(
+        object self, ConcurrentDictionary<int, object> perTable, int tableId, Func<object> createStorage,
+        Func<object, bool?>? storeHasAnyRow)
     {
         // No --test-data loader installed: nothing can hydrate, so there is no create → hydrate
         // window for anyone to observe. Original shape, original cost.
@@ -159,12 +318,26 @@ public static partial class RecordPatches
         // into the loader. That combination is the #2788 hand-out itself.
         if (perTable.TryGetValue(tableId, out var ready) && gate.IsSettled(ready)) return ready;
 
-        // Already inside a materialisation on this thread — must not wait on anyone. This is
-        // the pre-gate code path verbatim, and it is what a nested call did before.
+        // Already inside a materialisation on this thread — must not wait on anyone (see the
+        // wait-graph note in this file's header), and must not load either, because a nested
+        // load would recurse. So it creates and publishes lock-free, exactly as the pre-gate
+        // code did, and RECORDS that the instance it published owes a load (#2877). Without
+        // that record, "storage presence IS the have-we-loaded-this answer" made the omission
+        // permanent for the rest of the run.
         if (_materialisationDepth > 0)
         {
             if (perTable.TryGetValue(tableId, out var nested)) return nested;
-            return perTable.GetOrAdd(tableId, createStorage());
+            var createdNested = createStorage();
+            var publishedNested = perTable.GetOrAdd(tableId, createdNested);
+            if (ReferenceEquals(publishedNested, createdNested))
+            {
+                _awaitingTestDataHydration.AddOrUpdate(publishedNested, _awaitingTestDataHydrationSentinel);
+                // Recorded for the run's own reporting too, so TableOutcome can say "created
+                // during another table's hydration" instead of the null that means "nothing ever
+                // touched it" (#2240's argument, applied to this case).
+                TestDataDeferredLoadNotifier?.Invoke(tableId);
+            }
+            return publishedNested;
         }
 
         lock (gate)
@@ -176,16 +349,18 @@ public static partial class RecordPatches
             {
                 object instance;
                 var thisCallCreatedIt = false;
+                var owesADeferredLoad = false;
                 if (perTable.TryGetValue(tableId, out var existing))
                 {
                     // Published by a nested call (this thread's or another's) or by a restore.
                     // Storage presence IS the "have we loaded this" answer — see the on-demand
-                    // note in GetDataAccessForTableCore — so nothing is loaded for it here, and
-                    // nothing ever will be. It is settled below all the same: settled means "no
-                    // load is or will be running against this instance", which is true of it,
-                    // and is the only thing the fast path needs. That it holds no backup rows
-                    // is #2877, a different defect with a different fix.
+                    // note in GetDataAccessForTableCore — so a restore's instance is loaded by
+                    // construction and nothing runs for it here. A NESTED publication is the one
+                    // case where presence and loadedness came apart, and it says so: the debt
+                    // below is recorded against that exact instance, and this is the first touch
+                    // that can settle it (#2877).
                     instance = existing;
+                    owesADeferredLoad = _awaitingTestDataHydration.TryGetValue(existing, out _);
                 }
                 else
                 {
@@ -198,7 +373,13 @@ public static partial class RecordPatches
                 // throw away, and the winner's rows are already in the returned instance.
                 if (thisCallCreatedIt)
                     InvokeTestDataOnDemandLoader(self, tableId);
+                else if (owesADeferredLoad)
+                    SettleDeferredTestDataLoad(self, tableId, instance, storeHasAnyRow);
 
+                // Settled either way — paid, written off, or never owed — so no later touch
+                // re-tries and no table is reported twice. Removing before MarkSettled keeps the
+                // two facts in the right order for anything reading them from the fast path.
+                _awaitingTestDataHydration.Remove(instance);
                 gate.MarkSettled(instance);
                 return instance;
             }

@@ -35,8 +35,7 @@ public class LayeredDepSymbolsIncrementalServerTests : IClassFixture<SharedCliSe
 {
     private readonly SharedCliServer _shared;
 
-    private static readonly string CacheDir = Path.Combine(
-        Path.GetTempPath(), "al-runner-layered-rad", Guid.NewGuid().ToString("N"), "al-out");
+    private static readonly string CacheDir = Path.Combine(TestScratch.Dir("al-runner-layered-rad"), "al-out");
 
     /// <summary>Same synchronisation anchor <see cref="LayeredCacheTests"/> uses — emitted by the
     /// pre-pass AFTER every per-impl line, so it is sound to slice on for both a positive

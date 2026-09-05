@@ -86,9 +86,13 @@ public sealed class ObjectMetadataProviderRowProbeTests
         // Names the member that moved, so a BC layout change points at its own fix.
         Assert.Contains("primaryTree", ex.Message);
         Assert.Contains(nameof(ProviderWithoutPrimaryTree), ex.Message);
-        // Names the surface and carries the docs/scope.md reason anchor the manifest matches on.
+        // Names the surface, and claims a gap rather than a scope boundary (#2894): this table
+        // IS in scope, so the anchor is "not-yet-implemented" and the doc link points at
+        // docs/limitations.md, which is where the table is written up.
         Assert.Equal("Object Metadata (system table 2000000071)", ex.Api);
-        Assert.StartsWith("object-metadata-system-table", ex.Reason);
+        Assert.StartsWith("not-yet-implemented", ex.Reason);
+        Assert.Contains("object-metadata-system-table", ex.Reason);
+        Assert.EndsWith(" — see docs/limitations.md#object-metadata-system-table", ex.Message);
         // Says WHY it refuses rather than guessing, so the message is actionable.
         Assert.Contains("--test-data", ex.Message);
     }
@@ -103,7 +107,8 @@ public sealed class ObjectMetadataProviderRowProbeTests
 
         Assert.Contains("primaryTree", ex.Message);
         Assert.Equal("Object Metadata (system table 2000000071)", ex.Api);
-        Assert.StartsWith("object-metadata-system-table", ex.Reason);
+        Assert.StartsWith("not-yet-implemented", ex.Reason);
+        Assert.Contains("object-metadata-system-table", ex.Reason);
     }
 
     // ── The positive arms: BC's genuine answers still come back, unchanged ───────────

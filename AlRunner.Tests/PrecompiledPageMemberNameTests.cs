@@ -174,7 +174,7 @@ public class PrecompiledPageMemberNameTests
 
     private static void WithApp(Action<string> body)
     {
-        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.Dir("al-runner-precompiled-pagemember-tests");
         Directory.CreateDirectory(dir);
         try { body(WriteApp(dir, SymbolReference)); }
         finally { Directory.Delete(dir, recursive: true); }

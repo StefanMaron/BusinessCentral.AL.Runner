@@ -78,7 +78,7 @@ public sealed class CodeunitMetadataVirtualTableTests
     [Fact]
     public void CodeunitMetadata_SourceCompiledCodeunits_AllFixtureTestsPass()
     {
-        var cacheDir = Path.Combine(Path.GetTempPath(), "al-runner-cmv-tests", "cache-" + Guid.NewGuid().ToString("N"));
+        var cacheDir = TestScratch.Dir("al-runner-cmv-tests");
         try
         {
             var (exit, stdout, stderr) = Run(cacheDir);

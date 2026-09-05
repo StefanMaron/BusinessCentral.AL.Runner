@@ -159,7 +159,7 @@ public class TableRelationWhereFieldLinkTests
     [Fact]
     public void WhereClauseFieldLink_IsCarried_AsAFieldFilterNamingTheReferencingField()
     {
-        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.Dir("al-runner-table-relation-where-tests");
         Directory.CreateDirectory(dir);
         try
         {
@@ -214,7 +214,7 @@ public class TableRelationWhereFieldLinkTests
     [Fact]
     public void RelationsWithoutAFieldLink_AreUnchanged()
     {
-        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.Dir("al-runner-table-relation-where-tests");
         Directory.CreateDirectory(dir);
         try
         {
@@ -249,7 +249,7 @@ public class TableRelationWhereFieldLinkTests
     [Fact]
     public void FieldLinkModeSpellings_SetTheMatchingMetaFilterFlag()
     {
-        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.Dir("al-runner-table-relation-where-tests");
         Directory.CreateDirectory(dir);
         try
         {
@@ -284,7 +284,7 @@ public class TableRelationWhereFieldLinkTests
     [Fact]
     public void ConditionalRelation_KeepsBothArms_WhenOnlyTheSecondCarriesAFieldLink()
     {
-        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.Dir("al-runner-table-relation-where-tests");
         Directory.CreateDirectory(dir);
         try
         {
@@ -321,7 +321,7 @@ public class TableRelationWhereFieldLinkTests
     [Fact]
     public void ParentTableRelationsAreUnaffected_AndTheAppReallyLoaded()
     {
-        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.Dir("al-runner-table-relation-where-tests");
         Directory.CreateDirectory(dir);
         try
         {

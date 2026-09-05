@@ -99,7 +99,7 @@ public class DependencyPageMetadataXmlTests
     [Fact]
     public void TryBuildDependencyPageMetadata_KnownPage_ProducesPageDefinitionWithRealPageTypeAndSourceTable()
     {
-        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.Dir("al-runner-dep-pagemeta-xml-tests");
         Directory.CreateDirectory(dir);
         try
         {
@@ -171,7 +171,7 @@ public class DependencyPageMetadataXmlTests
     [Fact]
     public void TryBuildDependencyPageMetadata_PageWithoutSourceTable_StillEmitsEmptySourceObjectAndExpressions()
     {
-        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.Dir("al-runner-dep-pagemeta-xml-tests");
         Directory.CreateDirectory(dir);
         try
         {
@@ -217,7 +217,7 @@ public class DependencyPageMetadataXmlTests
     [Fact]
     public void TryBuildDependencyPageMetadata_PageWithSourceTable_KeepsSourceTableOnTheSameElement()
     {
-        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.Dir("al-runner-dep-pagemeta-xml-tests");
         Directory.CreateDirectory(dir);
         try
         {
@@ -247,7 +247,7 @@ public class DependencyPageMetadataXmlTests
     [Fact]
     public void TryBuildDependencyPageMetadata_UnknownPage_ReturnsNullAndIsNotFlaggedAsHavingMetadata()
     {
-        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.Dir("al-runner-dep-pagemeta-xml-tests");
         Directory.CreateDirectory(dir);
         try
         {
@@ -403,7 +403,7 @@ public class DependencyPageMetadataXmlTests
     [Fact]
     public void TryBuildDependencyPageMetadata_PartWithResolvableFieldLink_EmitsNumericSubFormLink()
     {
-        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.Dir("al-runner-dep-pagemeta-xml-tests");
         Directory.CreateDirectory(dir);
         try
         {
@@ -453,7 +453,7 @@ public class DependencyPageMetadataXmlTests
     [Fact]
     public void TryBuildDependencyPageMetadata_PartWithUnresolvableFieldLink_EmitsNonNumericFilterValue()
     {
-        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.Dir("al-runner-dep-pagemeta-xml-tests");
         Directory.CreateDirectory(dir);
         try
         {
@@ -488,7 +488,7 @@ public class DependencyPageMetadataXmlTests
     [Fact]
     public void TryBuildDependencyPageMetadata_PartWithConstLink_PreservesConstFilterType()
     {
-        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.Dir("al-runner-dep-pagemeta-xml-tests");
         Directory.CreateDirectory(dir);
         try
         {
@@ -527,7 +527,7 @@ public class DependencyPageMetadataXmlTests
     [InlineData(88123594, "SPECIAL", "5")]       // "Part Link Field" = const('SPECIAL')                 -> the bare text
     public void TryBuildDependencyPageMetadata_ConstLink_NormalisesToCompilerRepresentation(int controlId, string expected, string partFieldId)
     {
-        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.Dir("al-runner-dep-pagemeta-xml-tests");
         Directory.CreateDirectory(dir);
         try
         {
@@ -567,7 +567,7 @@ public class DependencyPageMetadataXmlTests
     [Fact]
     public void TryBuildDependencyPageMetadata_FilterLink_RequotesIdentifiersForFilterGrammar()
     {
-        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.Dir("al-runner-dep-pagemeta-xml-tests");
         Directory.CreateDirectory(dir);
         try
         {
@@ -600,7 +600,7 @@ public class DependencyPageMetadataXmlTests
     [Fact]
     public void TryBuildDependencyPageMetadata_PageWithoutParts_ContentHasNoContainers()
     {
-        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.Dir("al-runner-dep-pagemeta-xml-tests");
         Directory.CreateDirectory(dir);
         try
         {
@@ -643,7 +643,7 @@ public class DependencyPageMetadataXmlTests
     [Fact]
     public void TryBuildDependencyPageMetadata_CarriesTheSourceObjectFlagsTheSymbolFileStates()
     {
-        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.Dir("al-runner-dep-pagemeta-xml-tests");
         Directory.CreateDirectory(dir);
         try
         {
@@ -673,7 +673,7 @@ public class DependencyPageMetadataXmlTests
     [Fact]
     public void TryBuildDependencyPageMetadata_OmitsTheSourceObjectFlagsAPageDoesNotDeclare()
     {
-        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.Dir("al-runner-dep-pagemeta-xml-tests");
         Directory.CreateDirectory(dir);
         try
         {

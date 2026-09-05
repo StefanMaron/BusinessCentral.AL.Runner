@@ -161,7 +161,7 @@ public sealed class AssemblyTypeIndexTests
     private static (Assembly Definer, Assembly Consumer) LoadPairFromDisk()
     {
         var tag = Guid.NewGuid().ToString("N");
-        var dir = Path.Combine(Path.GetTempPath(), "al-runner-type-index", tag);
+        var dir = TestScratch.Dir("al-runner-type-index");
         Directory.CreateDirectory(dir);
         var definerBytes = Compile($"al-runner-ti-def-{tag}", DefinerSource);
         var consumerBytes = Compile($"al-runner-ti-use-{tag}", ConsumerSource, definerBytes);
