@@ -126,7 +126,12 @@ internal static partial class BcAppSymbolCache
     // Account") would then be served from a plain temp store instead of BC's own
     // CrmTestDataProvider through the registered test connection. A wrong answer replayed
     // from cache rather than a cache miss, so this needs the bump.
-    private const int CacheVersion = 25;
+    // v26: ParsedField gained RelationArms / RelationValidate (#2528) — a precompiled table's
+    // TableRelation, re-parsed from the SymbolReference.json property text. A v25 payload
+    // deserialises them as null/true, which reads as "this field has no relation": FieldRef.Relation
+    // answers 0 and Validate() accepts a value with no matching related row. That is a wrong ANSWER
+    // replayed from cache rather than a cache miss, so it needs the bump.
+    private const int CacheVersion = 26;
     private static readonly ConcurrentDictionary<string, AppSymbols> ProcessCache = new(StringComparer.OrdinalIgnoreCase);
     // Issue #1820 — path -> content-hash memo. ComputeAppContentHash needs to read the
     // WHOLE .app to hash it (unlike the FileInfo.Length/LastWriteTimeUtc stat it replaced,
@@ -1337,8 +1342,37 @@ internal static partial class BcAppSymbolCache
                     && (autoIncrement == "1" || autoIncrement.Equals("true", StringComparison.OrdinalIgnoreCase));
                 props.TryGetValue("MinValue", out var minValue); // #2495
                 props.TryGetValue("MaxValue", out var maxValue);
+                // #2528 — TableRelation, re-parsed from the property TEXT the same way
+                // CalcFormula above is. Without this every field of every PRECOMPILED table
+                // reported FieldRef.Relation = 0 and Validate() skipped the relation check, so
+                // `Customer.Validate("Currency Code", 'NOSUCHCUR')` silently ACCEPTED a value
+                // real BC refuses. 7,787 Base Application fields carry one.
+                // ValidateTableRelation = "0" turns the check off while leaving the relation
+                // itself readable (Customer.City is exactly that shape), so the two properties
+                // are read independently — matching the AL-source path's own two lines.
+                props.TryGetValue("TableRelation", out var tableRelation);
+                // Gated on field class exactly as the AL-source path is
+                // (RecordPatches.AlSourceParser.cs's `if (!isFlowField && !isFlowFilter && ...)`).
+                // A FlowFilter's TableRelation is a LOOKUP hint for the filter's own UI, not a
+                // stored value's referential constraint, and in Base Application 28.1 that is 204
+                // fields (196 FlowFilter, 8 FlowField), ~144 of them with a relation this parser
+                // accepts — "Item Statistics Buffer"."Item Filter" -> Item, "Analysis
+                // Line"."Location Filter" -> Location, "Config. Line"."Company Filter" -> Company.
+                // ParsedField.RelationArms feeds BOTH the Validate check AND the reverse index
+                // NCLMetaTable_ComputeReferencingRelations builds for rename propagation, and that
+                // index filters only on TableId >= 2000000000, not on field class — so without
+                // this gate renaming an Item, Location or Company would pull FlowFilter
+                // pseudo-columns into the cascade. The invariant this whole change is for is that
+                // the source-parsed and symbol-read paths agree; ungated, they would disagree for
+                // exactly these 204 fields, and the source path is the one the corpus validates.
+                var relationArms = (!isFlowField && !isFlowFilter)
+                    ? RecordPatches.TryParseRelationArmsText(tableRelation, fieldName)
+                    : null;
+                var relationValidate = !(props.TryGetValue("ValidateTableRelation", out var vtr)
+                    && (vtr == "0" || vtr.Equals("false", StringComparison.OrdinalIgnoreCase)));
                 fields.Add(new ParsedField(fieldId, fieldName, typeName, SymbolTypeLength(typeName), isFlowField, calcFormula,
                     optionMembers, initValue, isAutoIncrement, IsFlowFilter: isFlowFilter,
+                    RelationArms: relationArms, RelationValidate: relationValidate,
                     MinValue: minValue, MaxValue: maxValue));
             }
         }

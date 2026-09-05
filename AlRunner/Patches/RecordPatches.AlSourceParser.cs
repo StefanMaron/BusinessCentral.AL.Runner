@@ -936,6 +936,42 @@ public static partial class RecordPatches
     }
 
     /// <summary>
+    /// Text overload of <see cref="ParseRelationArms"/>, for <c>BcAppSymbolCache</c> — a
+    /// precompiled dependency table's fields arrive from <c>SymbolReference.json</c>, where
+    /// <c>TableRelation</c> is a raw property STRING rather than a syntax node. Wrapped in a
+    /// minimal table and run through the same parser, exactly as
+    /// <see cref="TryParseCalcFormula"/> does, so both callers share one implementation and one
+    /// set of refusal rules.
+    ///
+    /// <para>Issue #2528: without this, every field of every precompiled table reported
+    /// <c>FieldRef.Relation = 0</c> and <c>Validate</c> skipped the relation check entirely —
+    /// 7,787 Base Application fields carry a <c>TableRelation</c> and the runner read none of
+    /// them. A bogus value assigned through <c>Validate</c> was accepted silently, which is a
+    /// wrong ANSWER rather than a missing feature.</para>
+    ///
+    /// <para>Returns null when the property is absent or its shape is refused, which the caller
+    /// must treat as "no relation" — the same discipline the node overload applies, and the
+    /// reason a refusal is logged there rather than swallowed.</para>
+    /// </summary>
+    internal static List<ParsedRelationArm>? TryParseRelationArmsText(string? relationText, string fieldName)
+    {
+        if (string.IsNullOrWhiteSpace(relationText)) return null;
+        // The wrapper id and field type are irrelevant — nothing is registered, and a
+        // TableRelation's grammar does not depend on the type of the field carrying it. The
+        // tree is read and dropped.
+        var wrapped = "table 50001 __TableRelationProbe { fields { field(1; __F; Code[20]) { "
+                    + "TableRelation = " + relationText + "; } } }";
+        foreach (var obj in ParseAlObjects(wrapped))
+        {
+            if (obj is not NavSyntax.TableSyntax table || table.Fields == null) continue;
+            foreach (var f in table.Fields.Fields)
+                if (PropValue(f.PropertyList, "TableRelation") is NavSyntax.TableRelationPropertyValueSyntax tr)
+                    return ParseRelationArms(tr, fieldName);
+        }
+        return null;
+    }
+
+    /// <summary>
     /// Parses a query column's <c>ColumnFilter</c> property text (#2418) — a comma-separated
     /// list of <c>&lt;QueryColumnName&gt; = const(&lt;value&gt;) / filter(&lt;expr&gt;)</c>
     /// conditions, exactly BC's <c>MetaQueryColumnFilter.TypeOfFilter/Value</c> shape (verified
