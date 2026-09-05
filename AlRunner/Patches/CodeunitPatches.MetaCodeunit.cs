@@ -29,6 +29,58 @@ namespace AlRunner;
 
 public static partial class BcRuntime
 {
+    /// <summary>
+    /// Give the skeleton meta the codeunit's AL-declared <c>TestHttpRequestPolicy</c> (#2547).
+    ///
+    /// <para><c>NavTestExecution.TestHandleHttpClientRequest</c> reads
+    /// <c>executingTestCodeUnit.MetaCodeunit.TestCodeunitHttpRequestPolicy</c> to decide what to
+    /// do when a request is not served by an <c>[HttpClientHandler]</c>: throw its own
+    /// unhandled-request error, or return false and let the caller send it for real. Nothing
+    /// populated it here, so it read the CLR default — and <c>BlockOutboundRequests</c> is enum
+    /// value 0. Every test codeunit therefore reported Block whatever its AL said, which made
+    /// the property inert and the runner's own egress refusal unreachable from AL.</para>
+    ///
+    /// <para><b>Absent means ALLOW, not Block.</b> That is a measured service-tier verdict, not
+    /// a choice: al-language corpus codeunit 60874 "Test HttpClient" declares no
+    /// <c>TestHttpRequestPolicy</c>, performs a real outbound GET, and is green on real BC. If
+    /// the platform default were Block it would raise
+    /// <c>NavNCLTestCodeunitUnhandledHttpRequestException</c> there and could not pass. So an
+    /// unset property leaves the enum at <c>AllowAllOutboundRequests</c> here, and the request
+    /// travels on to the runner's own egress boundary
+    /// (<c>NavHttpClient.SendAsync(DataError, HttpRequestMessage, ByRef)</c>), which refuses it
+    /// as <c>external-http</c> — the same answer that codeunit has always got.</para>
+    ///
+    /// <para>Silent on failure by design, and it is the one place in this change where that is
+    /// right: the field is a policy INPUT to BC's own decision, not a guard of ours. If the
+    /// property cannot be found on some BC build, the value stays at Block, which is the
+    /// conservative direction — BC refuses the request rather than passing it on. The thing
+    /// that must never fail quietly is the egress rewrite itself, and that one throws.</para>
+    /// </summary>
+    private static void ApplyTestHttpRequestPolicy(object meta, int codeunitId)
+    {
+        try
+        {
+            var f = meta.GetType().GetField("<TestCodeunitHttpRequestPolicy>k__BackingField",
+                BindingFlags.NonPublic | BindingFlags.Instance);
+            if (f == null) return;
+
+            var declared = AlRunner.Patches.RecordPatches.TryGetParsedTestHttpRequestPolicy(codeunitId);
+            // The enum's own member names are the AL spellings, so Enum.Parse IS the mapping —
+            // a hand-written switch would be a second spelling of BC's enum, free to drift from
+            // it. An unparseable value (a property this runner has not seen, a typo the AL
+            // compiler would have rejected) falls back to the same default as absent.
+            object? value = null;
+            if (declared != null)
+            {
+                try { value = Enum.Parse(f.FieldType, declared, ignoreCase: true); }
+                catch (ArgumentException) { value = null; }
+            }
+            value ??= Enum.Parse(f.FieldType, "AllowAllOutboundRequests", ignoreCase: true);
+            FieldPoke.SetInstance(f, meta, value);
+        }
+        catch { /* see the doc comment: Block is the conservative fallback */ }
+    }
+
     // Cache: codeunit ID -> built NCLMetaCodeunit (one per ID across the test run).
     private static readonly ConcurrentDictionary<int, object?> _navCodeunitMetaCache = new();
 
@@ -240,6 +292,8 @@ public static partial class BcRuntime
             // Mark metadataLoaded so any LoadMetadata path is skipped.
             if (_fNCLMetaAOMetadataLoaded != null)
                 FieldPoke.SetInstance(_fNCLMetaAOMetadataLoaded, meta, true);
+
+            ApplyTestHttpRequestPolicy(meta, id);
 
             return meta;
         }

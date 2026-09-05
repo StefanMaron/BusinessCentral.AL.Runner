@@ -183,6 +183,41 @@ public static partial class BcRuntime
         return new System.InvalidOperationException(msg);
     }
 
+    /// <summary>
+    /// The HTTP egress refusal, as a BC-native AL error (#2547).
+    ///
+    /// <para>Thrown from the Cecil-rewritten body of the private
+    /// <c>NavHttpClient.SendAsync(DataError, HttpRequestMessage, ByRef)</c> — the one method
+    /// every real send funnels through, reached only after BC's own mock dispatcher declined.</para>
+    ///
+    /// <para><b>Why a NavNCLDialogException and not the plain InvalidOperationException the verb
+    /// rewrite used.</b> Measured: from this deeper frame BC's error machinery REPLACES an
+    /// unrecognised CLR exception with <c>NavNCLInvalidOperationException: The requested
+    /// operation cannot be performed in this context.</c> and discards the original — not even as
+    /// an InnerException, so nothing survives for the expectation classifier to find. It reported
+    /// exactly that: "runner threw NavNCLInvalidOperationException with no out-of-scope signal".
+    /// The verb rewrite never hit this because it threw at the AL call boundary, outside the
+    /// translation. A BC-native AL error passes through unchanged, which keeps the documented
+    /// <c>out-of-scope: &lt;api&gt; — &lt;reason&gt;</c> message intact for both the classifier
+    /// and an AL <c>asserterror</c> reading GetLastErrorText().</para>
+    ///
+    /// <para>Same mechanism as <see cref="MakeNavDrilldownActionNotSupportedException"/>, and the
+    /// same fallback if the type cannot be resolved: an InvalidOperationException carrying the
+    /// identical message, which is strictly better than throwing nothing.</para>
+    /// </summary>
+    public static System.Exception MakeHttpEgressOutOfScopeException()
+    {
+        const string msg = "out-of-scope: HttpClient request — external-http — see docs/scope.md#external-http";
+        var t = System.Type.GetType(
+            "Microsoft.Dynamics.Nav.Types.Exceptions.NavNCLDialogException, Microsoft.Dynamics.Nav.Types");
+        if (t != null)
+        {
+            var ctor = t.GetConstructor(new[] { typeof(string) });
+            if (ctor != null) return (System.Exception)ctor.Invoke(new object[] { msg });
+        }
+        return new System.InvalidOperationException(msg);
+    }
+
     // Replacement for NavFile.GetTenantIds(NavSession session). The real body reads
     // session.Tenant.TenantSettings.AadTenantId / session.Tenant.Id — both null on the
     // headless runner skeleton. Faithful sentinel: empty AAD GUID + the same
