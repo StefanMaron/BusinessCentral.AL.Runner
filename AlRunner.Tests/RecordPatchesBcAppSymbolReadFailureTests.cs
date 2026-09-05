@@ -61,7 +61,7 @@ public sealed class RecordPatchesBcAppSymbolReadFailureTests : IDisposable
     // Object ids process-wide unique among AlRunner.Tests statics (shared _parsedTables):
     // 939xx is used by RecordPatchesPrecompiledTableExtEvictionTests (93900-93902),
     // RecordPatchesWarmReloadExtensionIndexTests (93910-93912) and
-    // RecordPatchesWarmReloadInstallBaselineTests (93920-93921); this file uses 93930-93935.
+    // RecordPatchesWarmReloadInstallBaselineTests (93920-93921); this file uses 93930-93941.
     private static string SymbolReference(int tableId, string tableName, int extId, bool poison)
     {
         var extensions = poison
@@ -132,17 +132,33 @@ public sealed class RecordPatchesBcAppSymbolReadFailureTests : IDisposable
         var appPath = Path.Combine(_root, "rebuilt.app");
         WriteApp(appPath, SymbolReference(tableId, tableName, extId, poison: false));
 
-        // [GIVEN] a healthy registration whose indexes have been built once
+        // [GIVEN] a healthy registration whose indexes have been built once. The probe asks
+        // for a name the .app does NOT declare on purpose: a successful lookup faults the
+        // table into _parsedTables (ResolveTableIdByName's TryAdd), and ResolveTableIdByName
+        // answers from there before it ever reaches the symbol index — so resolving the
+        // subject table here would short-circuit the rebuild this fact is about. Until #2755
+        // that did not matter, because the ResetForReload() below cleared _parsedTables as
+        // well; the reload now unregisters instead, so the setup has to be explicit about it.
         RecordPatches.AddBcAppPath(appPath);
-        Assert.Equal(tableId, RecordPatches.ResolveTableIdByName(tableName));
+        Assert.Equal(-1, RecordPatches.ResolveTableIdByName("Bug2712 Rebuilt Absent"));
 
         // [WHEN] the .app is rebuilt on disk into a shape whose extension parse fails part-way,
-        // and the per-request reset drops the indexes (exactly what --server/--watch do).
-        // A different length + a bumped mtime give both BcAppSymbolCache caches a new key,
-        // so the next index build re-parses rather than serving the earlier good result.
+        // and the derived indexes are dropped so the next lookup rebuilds over it. A different
+        // length + a bumped mtime give both BcAppSymbolCache caches a new key, so that rebuild
+        // re-parses rather than serving the earlier good result.
+        //
+        // The trigger is registering a SECOND, unrelated .app — AddBcAppPath calls
+        // InvalidateBcAppIndexes. That is the shape a multi-dependency bundle (or a --watch
+        // cycle registering the next dependency) produces after an already-registered package
+        // was overwritten on disk. It used to be spelled ResetForReload() here; since #2755 a
+        // reload UNREGISTERS the .app rather than leaving it to be lazily re-read, so that
+        // spelling no longer reaches this path at all. The path itself is unchanged and still
+        // live, and the reload direction now has its own fact below.
         WriteApp(appPath, SymbolReference(tableId, tableName, extId, poison: true));
         File.SetLastWriteTimeUtc(appPath, File.GetLastWriteTimeUtc(appPath).AddSeconds(5));
-        RecordPatches.ResetForReload();
+        var unrelated = Path.Combine(_root, "unrelated.app");
+        WriteApp(unrelated, SymbolReference(93936, "Bug2712 Unrelated", extId: 93937, poison: false));
+        RecordPatches.AddBcAppPath(unrelated);
 
         // [THEN] the rebuild throws — before the fix it merged the one good extension, flagged
         // the index as built, printed a filtered-out stderr line and returned the id.
@@ -155,10 +171,58 @@ public sealed class RecordPatchesBcAppSymbolReadFailureTests : IDisposable
         Assert.Throws<BcAppSymbolReadException>(() => RecordPatches.ResolveTableIdByName(tableName));
 
         // Cleanup for later tests in this collection: restore a parseable file so the still-
-        // registered path does not fail every subsequent index rebuild in this process.
+        // registered path does not fail every subsequent index rebuild in this process, and
+        // confirm the recovery is real rather than assumed.
         WriteApp(appPath, SymbolReference(tableId, tableName, extId, poison: false));
         File.SetLastWriteTimeUtc(appPath, File.GetLastWriteTimeUtc(appPath).AddSeconds(10));
-        RecordPatches.ResetForReload();
+        var unrelated2 = Path.Combine(_root, "unrelated2.app");
+        WriteApp(unrelated2, SymbolReference(93938, "Bug2712 Unrelated Two", extId: 93939, poison: false));
+        RecordPatches.AddBcAppPath(unrelated2);
         Assert.Equal(tableId, RecordPatches.ResolveTableIdByName(tableName));
+    }
+
+    /// <summary>
+    /// The reload direction after #2755: a bundle reload UNREGISTERS every .app the previous
+    /// bundle registered, so the same "rebuilt into an unparseable shape between cycles"
+    /// scenario is caught one step EARLIER — at re-registration, by AddBcAppPath's own eager
+    /// read — instead of at a lazy index rebuild. Loudness moved, it did not go away, and the
+    /// registration point is the better one: Program.cs turns BcAppSymbolReadException into
+    /// `FATAL: ... exit 1` before any test runs.
+    /// </summary>
+    [Fact]
+    public void AfterAReload_ReRegisteringAnAppThatBecameUnparseable_ThrowsAtRegistration()
+    {
+        const int tableId = 93940;
+        const string tableName = "Bug2712 Reregistered";
+        const int extId = 93941;
+        var appPath = Path.Combine(_root, "reregistered.app");
+        WriteApp(appPath, SymbolReference(tableId, tableName, extId, poison: false));
+
+        RecordPatches.AddBcAppPath(appPath);
+        Assert.Equal(tableId, RecordPatches.ResolveTableIdByName(tableName));
+
+        // The reload boundary drops the registration with the parsed state.
+        RecordPatches.ResetForReload();
+        Assert.DoesNotContain(RecordPatches.RegisteredBcAppPathsForTests(),
+            p => string.Equals(p, appPath, StringComparison.OrdinalIgnoreCase));
+
+        // The package was rebuilt between cycles into a shape whose extension parse fails
+        // part-way through.
+        WriteApp(appPath, SymbolReference(tableId, tableName, extId, poison: true));
+        File.SetLastWriteTimeUtc(appPath, File.GetLastWriteTimeUtc(appPath).AddSeconds(5));
+
+        // [THEN] the re-registration Program.cs performs on every request throws, naming the
+        // package and the surface — never a shorter extension list, and never a silent
+        // "this table has no extensions".
+        var ex = Assert.Throws<BcAppSymbolReadException>(() => RecordPatches.AddBcAppPath(appPath));
+        Assert.Equal(appPath, ex.AppPath);
+        Assert.Contains("reregistered.app", ex.Message);
+        Assert.Contains("table extensions", ex.Message);
+
+        // [AND] the failed package is not left registered, so a warm process is not poisoned
+        // for every later request.
+        Assert.DoesNotContain(RecordPatches.RegisteredBcAppPathsForTests(),
+            p => string.Equals(p, appPath, StringComparison.OrdinalIgnoreCase));
+        Assert.Equal(-1, RecordPatches.ResolveTableIdByName(tableName));
     }
 }
