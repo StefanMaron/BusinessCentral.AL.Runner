@@ -86,9 +86,16 @@ Every check below exists because its absence has silently corrupted a result.
      slot; if another loop's work appeared under yours, take the next and re-check. Same
      compare-and-swap as issue claiming, and for the same reason.
 
-   Hold the slot visibly. A loop between tasks owns no work, so its slot looks free to a loop
-   starting up — keep your label on whatever you are working, and release it when you finish, so
-   the repository always shows which slots are live.
+   Keep your label on whatever you are working, so a loop starting up can see the slot is live.
+   Between units you hold nothing, so a concurrent startup may pick the same slot — that is what
+   the re-read above is for, and it is why the assignee, not the slot, is the real lock. Do not
+   try to judge whether someone else's open work is "still being worked": you cannot tell a dead
+   box from a contributor who is asleep, and the design refuses that judgement elsewhere for the
+   same reason.
+
+   Note the slot is bookkeeping, not safety. The incident it is often credited with preventing —
+   `impl-69`, 82 worktrees, 10 GB — was caused by nothing ever *deleting* a worktree. Preflight's
+   stale-worktree check is the actual fix for that.
 
    Use that one identity everywhere: labels, branch names, worktree directories, scratch and
    cache paths. Several loops can then run under one account, and several accounts against one
@@ -149,17 +156,34 @@ What belongs in it:
 - **Pacing observations** — how much budget a cycle actually consumed, so the gap between cycles
   can be tuned from evidence rather than guessed.
 
-Rewrite it at every startup rather than trusting yesterday's. A box changes: disks fill, other
-work starts, an artifact set goes stale. A stale profile is worse than none, because it looks
-authoritative.
+Keep two files, because they have opposite lifetimes:
+
+- **The measured profile is rewritten at every startup.** A box changes — disks fill, other work
+  starts, an artifact set goes stale — and a stale measurement is worse than none because it
+  looks authoritative.
+- **The cycle log is append-only and survives restarts.** Without it, three things the design
+  depends on are impossible: knowing when the baseline last passed (so it can run on an interval
+  instead of every cycle), comparing an odd cycle against a known-good starting state, and
+  detecting "the same failure several cycles running" — which is one of the three conditions
+  that is supposed to notify a human, and is undetectable if each startup erases the evidence.
+
+Record per cycle: what it worked, the outcome, the failure signature if any, and what it
+consumed.
 
 ## Priority order
 
 Work the first item that applies. Re-evaluate from the top after every completed unit of work —
 a merge can turn `main` red, which outranks everything you were about to do.
 
-1. **`main` is red.** Nothing else matters. Read the failing log (never re-run a failed job —
-   it destroys the log), diagnose, fix.
+1. **`main` is red.** Nothing else matters. Read the failing log (never re-run a failed job — it
+   destroys the log), diagnose, fix.
+
+   **Cap this.** A load-dependent flake — a red `main` whose *failing-leg set moves between
+   runs* — cannot be fixed and will otherwise re-enter priority 1 every cycle until the weekend
+   is gone. Apply `ci-verdicts.md`'s evidence bar before treating red as real, and after a few
+   consecutive cycles on the same red, notify a human and demote it so other work continues.
+   Never ship a speculative fix to get past it: unattended and self-reviewed, that is how a wrong
+   change reaches `main`.
 2. **One of our PRs is red.** Drive it green, or close it with the reason. A red PR left open is
    worse than no PR: it looks like progress.
 3. **A PR is waiting on review.** Dispatch a review agent, or review it directly. Ours can be
@@ -242,9 +266,16 @@ bookkeeping; the assignee is what prevents two agents doing the same issue.
 
 **Look in this order, and it works for any account:**
 
-1. **Issues already assigned to the account you are logged in as.** Finish your own work before
-   starting more. This is also how a restarted loop resumes: a box that died mid-issue comes
-   back, sees its own claim, and picks up where it left off instead of stranding it.
+1. **Issues assigned to your account AND carrying your own `agent: <tag>-N` label.** Both, not
+   either. This is how a restarted loop resumes — a box that died mid-issue comes back, sees its
+   own claim and continues instead of stranding it.
+
+   **The assignment alone is not enough.** A maintainer assigns issues to themselves to mean "I
+   am thinking about this", and `branch-and-pr.md` uses a non-self assignee to mean "a human is
+   handling it" — the field is overloaded. On this repository the owner currently holds 22 open
+   issues that way. A loop running as that account and resuming on assignment alone would adopt
+   all of them on its first cycle. The label is what distinguishes "my loop took this" from "I
+   took this".
 2. **Unassigned issues.** Take the highest-value one and assign it to yourself.
 3. **Issues assigned to anyone else — leave them alone.** Someone is on it, whether that is a
    human maintainer or another contributor's loop. Do not take it, do not work it in parallel,
@@ -317,9 +348,13 @@ The five-hour windows are real, but **exhausting every window burns the weekly l
 couple of days.** The budget that matters is weekly, so run continuously *below* per-window
 capacity rather than sprinting and then idling.
 
-One agent at a time is most of the pacing. Beyond that, keep a deliberate gap between cycles and
-tune it from observed consumption rather than from a guess — start conservative and measure how
-usage actually grows over a full day before increasing it.
+One agent at a time is most of the pacing. Beyond that, use numbers the loop can actually count,
+because **it has no way to read its own token consumption or remaining budget** — an instruction
+to "tune from observed consumption" cannot be followed and will be guessed at.
+
+Put concrete values in the box profile and obey them: a fixed wall-clock gap between cycles, and
+a hard cap on cycles per rolling 24 hours. Count cycles, subagents spawned and elapsed time —
+all observable. Tuning those numbers is a human's job between runs, not the loop's during one.
 
 Never leave an agent mid-task when a budget boundary is near. Have it commit and push what it
 has, even incomplete, and report where it got to. A work-in-progress commit on a pushed branch
@@ -439,6 +474,8 @@ what.
 Hard limits, whatever the loop concludes:
 
 - Never push to `main`; always a PR.
+- **Never merge while a release run is in progress.** `publish.yml` pushes the release as a
+  fast-forward, so any merge during its ~40-minute run kills it.
 - Never force-push a branch you do not own, and never `--admin` past a failing check.
 - Never merge a PR authored by someone else.
 - Never re-run a **failed** CI job — it destroys the log permanently. Re-running a **cancelled**

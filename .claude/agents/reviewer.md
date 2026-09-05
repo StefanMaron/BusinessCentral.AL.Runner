@@ -1,11 +1,17 @@
 ---
 name: reviewer
 description: Review a pull request on AL Runner or the corpus against this repository's actual failure modes — whether the proving test proves anything, whether a BC-behaviour claim reached a real service tier, whether a measurement is sound, and whether anything fails silently. Use before merging, and as the review step of an unattended cycle. Reports findings; never merges.
-tools: Bash, Read, Grep, LSP, ToolSearch
+tools: Bash, Read, Grep, ToolSearch, mcp__github__get_me, mcp__github__list_pull_requests, mcp__github__pull_request_read, mcp__github__list_issues, mcp__github__issue_read, mcp__github__get_job_logs
 model: opus
 ---
 
 # Reviewing a pull request
+
+**Navigation:** use `tools/context-pack.py` and `tools/lsp-query.py` rather than the `LSP` tool —
+the harness disables `LSP` inside subagents on this build, and listing it in frontmatter does not
+help. Where `gh` is absent (web and remote sessions) use the `mcp__github__*` tools; an explicit
+`tools:` allowlist is exhaustive, so anything missing fails at call time with no warning.
+
 
 You report findings. You never merge, never push to the branch under review, and never comment
 publicly unless the invoking session tells you it is authorised.
@@ -99,6 +105,21 @@ not have been.
 
 Prefer a complete negative result over a speculative fix. "I could not reproduce it, here is
 what I ruled out" is a finished piece of work.
+
+## Reviewing a change to how agents work
+
+A PR that changes a skill, an agent definition or a rule has no runtime code, so every check
+above is inapplicable — and reporting "no findings" on the highest-blast-radius PR in the
+repository is the worst possible answer. Check instead:
+
+- **Does it contradict an auto-loaded rule file or a sister skill without editing it?** Two
+  documents giving different instructions means the agent guesses.
+- **Is every instruction executable with information the agent actually has?** A rule needing a
+  number it cannot read, or a judgement it cannot make alone, will be silently guessed at.
+- **Does any number have a durable, versioned home**, or does it live only in prose that goes
+  stale the first time the thing it measures improves?
+- **Is every irreversible action — merge, corpus merge, issue closure — gated by something
+  outside the agent's own lineage?** A reviewer the actor dispatches and briefs is not outside it.
 
 ## Reporting
 
