@@ -771,6 +771,22 @@ public sealed partial class BcCompiler
             return null;
         }
 
+        // #2571: the SECOND hole in the same argument, and also silent. Checked here for the same
+        // two reasons as #2548's guard directly above — both serialized surfaces exist by now, and
+        // nothing below has been committed yet. See FoldedOrdinalMoved for the mechanism and for
+        // why an enum's own C# being empty is exactly what makes this one impossible to notice.
+        if (FoldedOrdinalMoved(baseline.ModuleDef, deltaModuleDef, allChangedIdentities) is { } moved)
+        {
+            fallbackReason =
+                $"{moved} changed the ordinal it had last cycle. A caller folds an enum value's — or an "
+                + "Option member's — ordinal into its OWN generated C# as a literal, with no member id "
+                + "and no dispatch involved, so reusing an UNMODIFIED caller's cached C# would leave it "
+                + "using the PREVIOUS ordinal. Nothing would throw: the enum emits no dispatch surface "
+                + "at all, and an Option field keeps its id, name and type across the edit. Falling back "
+                + "to a full compile for this cycle";
+            return null;
+        }
+
         var mergedModuleDef = MergeModuleDefinition(baseline.ModuleDef, allChangedIdentities, deltaModuleDef);
 
         var newFileHashByPath = new Dictionary<string, string>(baseline.FileHashByPath, StringComparer.Ordinal);
@@ -1524,6 +1540,190 @@ public sealed partial class BcCompiler
             counts[name] = counts.TryGetValue(name, out var n) ? n + 1 : 1;
         }
         return counts;
+    }
+
+    /// <summary>
+    /// The object kinds whose declaration contributes a compile-time ORDINAL that callers fold
+    /// into their own generated C#. Enum and Table declare them directly; EnumExtension and
+    /// TableExtension declare them for a base object in another module, and a caller folds those
+    /// exactly the same way — the same reflected <c>Values</c>/<c>Fields</c> arrays, so
+    /// <see cref="RadFoldedOrdinalsOf"/> reads all four without special-casing.
+    /// </summary>
+    private static readonly NavCA.SymbolKind[] FoldedOrdinalKinds =
+    {
+        NavCA.SymbolKind.Enum,
+        NavCA.SymbolKind.EnumExtension,
+        NavCA.SymbolKind.Table,
+        NavCA.SymbolKind.TableExtension,
+    };
+
+    /// <summary>
+    /// Names the first changed object where a value/member an UNMODIFIED caller may already have
+    /// folded has changed its ordinal (or disappeared), or null when none has. Issue #2571 — the
+    /// second hole in this file's header argument, and like #2548's it is silent.
+    ///
+    /// <para><b>Why the header's argument does not reach this.</b> That argument is entirely about
+    /// METHOD DISPATCH: a cross-object call compiles to
+    /// <c>NavCodeunitHandle(this, id).Target.Invoke(memberId, args)</c>, so a breaking edit retires
+    /// a member id and the call throws <c>NavNCLMissingMethodException</c> — loud. An enum has no
+    /// dispatch surface at all. Measured with <c>--dump-csharp</c> on BC 28.x: a two-value enum
+    /// emits a ZERO-BYTE C# file, and its caller compiles to
+    /// <c>NavOption.Create(NCLEnumMetadata.Create(90280), 1)</c> — the ordinal is a LITERAL in the
+    /// CALLER's own C#. Renumbering that value re-emits the enum (whose C# is empty) and leaves the
+    /// caller writing the previous ordinal. No member id is involved, so nothing can throw.</para>
+    ///
+    /// <para><b>Two shapes, one rule.</b> A table field's Option members fold identically —
+    /// <c>R.Status := R.Status::Closed</c> becomes <c>NavOption.Create(..., 2)</c>, where 2 is
+    /// Closed's POSITION in <c>OptionMembers = Open,Released,Closed</c>. Reducing both to the same
+    /// name-to-ordinal map means inserting a member ahead of an existing one and renumbering an
+    /// enum value are the same defect with one guard.</para>
+    ///
+    /// <para><b>Deliberately narrow: only a MOVE triggers.</b> Every name present before must still
+    /// be present with the SAME ordinal. An enum value added under a new name, or an Option member
+    /// APPENDED after every existing one, moves nothing an existing caller folded and cannot be
+    /// referenced by code compiled before it existed — so both stay on the fast path, as do caption
+    /// and property edits, which touch no ordinal at all. Without that the guard would degenerate
+    /// into "any edit to an enum or a table falls back", which is most of the fast path.</para>
+    ///
+    /// <para><b>Why the comparison is skew-immune.</b> Both sides are names and integers, present
+    /// on both producers — the same reason #2548's guard compares method NAMES only. It does not
+    /// compare the serialized surfaces wholesale, which would inherit the null-versus-empty and
+    /// <c>ReferenceSourceFileName</c> producer differences #2571 warns a canonicaliser would be
+    /// needed for.</para>
+    /// </summary>
+    private static string? FoldedOrdinalMoved(
+        NavSymRef.ModuleDefinition before, NavSymRef.ModuleDefinition after, IReadOnlySet<RadObjectIdentity> changed)
+    {
+        if (changed.Count == 0) return null;
+        var previousByObject = RadFoldedOrdinals(before, changed);
+        if (previousByObject.Count == 0) return null;
+        var currentByObject = RadFoldedOrdinals(after, changed);
+
+        foreach (var (id, previous) in previousByObject)
+        {
+            if (previous == null || previous.Count == 0) continue;
+            if (!currentByObject.TryGetValue(id, out var current) || current == null) continue;
+            foreach (var (name, ordinal) in previous)
+                if (!current.TryGetValue(name, out var now) || now != ordinal)
+                    return $"{id.Kind} '{id.Name}' ({name})";
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// The name-to-ordinal map of every foldable constant each object in <paramref name="wanted"/>
+    /// declares, in one pass over <paramref name="module"/> — every namespace depth included, and
+    /// one pass rather than one per identity, for the same reason
+    /// <see cref="RadMethodNameCounts"/> documents.
+    ///
+    /// <para>An object missing from the result was not found. A null VALUE is "found, but cannot be
+    /// answered for" — present more than once (ambiguous), or declaring the same name twice, so
+    /// which one a caller folded would be decided by array order rather than by the edit. Both are
+    /// non-answers, exactly as in <see cref="RadMethodNameCounts"/>, and neither is "declares no
+    /// ordinals", which is an empty dictionary.</para>
+    /// </summary>
+    private static Dictionary<RadObjectIdentity, Dictionary<string, int>?> RadFoldedOrdinals(
+        NavSymRef.ModuleDefinition module, IReadOnlySet<RadObjectIdentity> wanted)
+    {
+        var byKindAndKey = new Dictionary<(NavCA.SymbolKind Kind, string Key), RadObjectIdentity>();
+        foreach (var id in wanted)
+            if (FoldedOrdinalKinds.Contains(id.Kind))
+                byKindAndKey[(id.Kind, IdentityElementKeyOf(id))] = id;
+
+        var result = new Dictionary<RadObjectIdentity, Dictionary<string, int>?>();
+        if (byKindAndKey.Count == 0) return result;
+
+        var kindsWanted = byKindAndKey.Keys.Select(k => k.Kind).ToHashSet();
+        foreach (var container in EnumerateContainers(module))
+        {
+            foreach (var (propName, kind) in RadMergeablePropertiesByKind)
+            {
+                if (!kindsWanted.Contains(kind)) continue;
+                if (RadContainerProperty(propName).GetValue(container) is not Array arr) continue;
+                foreach (var item in arr)
+                {
+                    if (item == null) continue;
+                    if (!byKindAndKey.TryGetValue((kind, ElementKey(item, kind)), out var id)) continue;
+                    result[id] = result.ContainsKey(id) ? null : RadFoldedOrdinalsOf(item);
+                }
+            }
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// One serialized object's foldable-constant map, or null when a name cannot be read or is
+    /// declared twice — see <see cref="RadFoldedOrdinals"/> for how null is read.
+    ///
+    /// <para>Both sources are read from the SAME element, because a table can carry both (a table
+    /// may declare its own enums; the <c>Values</c> read is simply absent on one that does not).
+    /// Keys are prefixed by source so an Option member can never collide with an enum value of the
+    /// same name, and Option members are additionally scoped by their field's name so two fields
+    /// offering the same member stay distinct.</para>
+    ///
+    /// <para>A BLANK Option member (<c>OptionMembers = ,Open,Closed</c> — routine in BC) is skipped
+    /// rather than keyed: it contributes no name a key could be built from. Skipping it loses
+    /// nothing, because inserting or removing a blank shifts every member after it, and those
+    /// members are keyed — so the shift is still caught, by them.</para>
+    /// </summary>
+    private static Dictionary<string, int>? RadFoldedOrdinalsOf(object element)
+    {
+        var type = element.GetType();
+        var map = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+        // Enum / EnumExtension: BC resolves each value's Ordinal in the serialized model, so this
+        // never has to replay AL's "no explicit ordinal means the previous one plus 1" rule.
+        if (type.GetProperty("Values")?.GetValue(element) is Array values)
+            foreach (var value in values)
+            {
+                if (value == null) continue;
+                var vt = value.GetType();
+                if (vt.GetProperty("Name")?.GetValue(value) is not string valueName || valueName.Length == 0)
+                    return null;
+                if (vt.GetProperty("Ordinal")?.GetValue(value) is not int ordinal) return null;
+                if (!map.TryAdd("value:" + valueName, ordinal)) return null;
+            }
+
+        // Table / TableExtension: an Option field's members, by position. The member list is NOT
+        // FieldDefinition.OptionMembers — measured on BC 28.x, that property is present but EMPTY;
+        // the value BC actually serializes lives in the field's Properties collection under the
+        // name "OptionMembers". Reading the direct property instead yields an empty map, which is
+        // a silent non-answer rather than an error, so this must not be "simplified" to it.
+        if (type.GetProperty("Fields")?.GetValue(element) is Array fields)
+            foreach (var field in fields)
+            {
+                if (field == null) continue;
+                if (field.GetType().GetProperty("Name")?.GetValue(field) is not string fieldName || fieldName.Length == 0)
+                    return null;
+                if (RadDefinitionProperty(field, "OptionMembers") is not { } members) continue;
+                var parts = members.Split(',');
+                for (var i = 0; i < parts.Length; i++)
+                {
+                    var member = parts[i].Trim();
+                    if (member.Length == 0) continue;
+                    if (!map.TryAdd($"option:{fieldName}:{member}", i)) return null;
+                }
+            }
+
+        return map;
+    }
+
+    /// <summary>
+    /// The value of a serialized definition's <c>Properties</c> entry named
+    /// <paramref name="propertyName"/>, or null when the element carries no such entry.
+    /// </summary>
+    private static string? RadDefinitionProperty(object element, string propertyName)
+    {
+        if (element.GetType().GetProperty("Properties")?.GetValue(element) is not Array properties) return null;
+        foreach (var property in properties)
+        {
+            if (property == null) continue;
+            var pt = property.GetType();
+            if (pt.GetProperty("Name")?.GetValue(property) is not string name) continue;
+            if (!string.Equals(name, propertyName, StringComparison.OrdinalIgnoreCase)) continue;
+            return pt.GetProperty("Value")?.GetValue(property) as string;
+        }
+        return null;
     }
 
     private static NavSymRef.ModuleDefinition CloneModuleDefinition(NavSymRef.ModuleDefinition module)
