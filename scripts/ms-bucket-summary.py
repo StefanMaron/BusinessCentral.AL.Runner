@@ -62,16 +62,21 @@ CAVEAT_PATTERNS = (
 # KNOWN BLOCKERS — a failure whose cause is already understood and tracked. Recognising one
 # turns a generic non-zero exit into a sentence naming the reason and the issue, which is the
 # difference between a red run people read and a red run people learn to ignore. That matters
-# most for the nightly (ms-bucket-nightly.yml), which is EXPECTED to be red until #2780 lands.
+# most for the nightly (ms-bucket-nightly.yml), which is EXPECTED to be red — it runs a
+# Microsoft bucket whose tests genuinely fail here. A known blocker is a different kind of
+# red: it means the run produced no number at all, so there is no measurement to read.
 #
 # Matched against the whole log, not line-anchored: the reader's own stderr reaches the log
 # verbatim (#2782) but its wrapping and prefix vary with where it surfaced.
 KNOWN_BLOCKERS = (
     (re.compile(r"neither mapped by the derived extent list nor padding filler", re.I),
      "the backup reader cannot open this backup",
-     "#2780 — BusinessCentral.BakReader has never read a 28.2+ W1 backup (v0.1.0, v0.1.1 and a "
-     "source build all refuse it identically). --test-data therefore cannot produce a number on "
-     "BC 28.2, 28.3 or 28.4. The fix is in StefanMaron/BusinessCentral.BakReader, not here."),
+     "The pinned backup reader refused this backup. Reader v0.1.1 and earlier could not open a "
+     "W1 demo backup for BC 28.2 or newer at all (#2780, now closed); v0.1.2 reads 28.2, 28.3 "
+     "and 28.4, and is what READER_TAG pins in ms-bucket.yml. So this message now means the "
+     "pinned reader has met a backup it still cannot open — check READER_TAG against the "
+     "latest release, and if the newest reader refuses it too, the fix is in "
+     "StefanMaron/BusinessCentral.DbReader, not here."),
 )
 
 

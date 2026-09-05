@@ -274,6 +274,27 @@ class KnownBlockerTests(unittest.TestCase):
         self.assertIn("Known blocker", md)
         self.assertIn("#2780", md)
 
+    def test_blocked_run_names_the_repository_that_actually_exists(self):
+        """The BLOCKED path's own name check. The clean-path test above
+        (test_the_reader_line_names_the_repository_that_actually_exists) covers the summary's
+        reader line, and it passes whatever the blocker detail says, because that detail only
+        appears when a refusal is in the log. That is exactly how "BusinessCentral.BakReader"
+        survived here after #2863 removed it everywhere else: no test rendered this path's text.
+        Both directions, so a revert to the redirect name cannot pass in silence."""
+        _, md, stdout = self._run_blocked()
+        self.assertIn("StefanMaron/BusinessCentral.DbReader", md)
+        self.assertNotIn("BakReader", md)
+        self.assertNotIn("BakReader", stdout)
+
+    def test_blocked_run_does_not_claim_the_fixed_limitation_is_current(self):
+        """v0.1.2 reads BC 28.2, 28.3 and 28.4 (#2863 moved READER_TAG to it), so the detail
+        must not still assert that --test-data cannot produce a number on those versions. It
+        said so until this test existed, which would have printed three wrong facts into CI the
+        first time the blocker fired."""
+        _, md, _ = self._run_blocked()
+        self.assertNotIn("cannot produce a number on", md)
+        self.assertIn("v0.1.2", md)
+
     def test_blocked_run_emits_a_named_annotation(self):
         _, _, stdout = self._run_blocked()
         self.assertIn("::error title=Known blocker", stdout)
