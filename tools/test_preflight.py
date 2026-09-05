@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import datetime as dt
 import importlib.util
+import json
 import os
 import shutil
 import subprocess
@@ -46,6 +47,38 @@ def check(name: str, cond: bool, detail: str = "") -> None:
 
 
 GIB = 1024 ** 3
+
+# -------------------------------------------------- shim banner on stdout
+# mise prints an activation banner on STDOUT for every command it shims. It does
+# not change the exit code, so a capture that keeps it fails later, somewhere
+# else, as a wrong answer. This is the real payload that made the github check
+# report a healthy account as unable to push.
+BANNER = "mise ~/.config/mise/config.toml tools: gh@2.100.0\n"
+
+check("the banner is stripped from a one-line capture",
+      pf.strip_shim_banner(BANNER + "StefanMaron\n") == "StefanMaron\n",
+      repr(pf.strip_shim_banner(BANNER + "StefanMaron\n")))
+
+perms = '{"admin":true,"push":true,"pull":true}'
+check("a JSON body behind the banner parses after stripping",
+      json.loads(pf.strip_shim_banner(BANNER + perms))["push"] is True)
+
+check("two banner lines are both dropped",
+      pf.strip_shim_banner(BANNER + BANNER + "x\n") == "x\n",
+      repr(pf.strip_shim_banner(BANNER + BANNER + "x\n")))
+
+check("output with no banner is returned byte-for-byte",
+      pf.strip_shim_banner(perms) == perms)
+
+check("a real line that merely starts with 'mise' is NOT eaten",
+      pf.strip_shim_banner("mise is the tool we use\n") == "mise is the tool we use\n",
+      repr(pf.strip_shim_banner("mise is the tool we use\n")))
+
+check("a banner appearing after real output is left alone -- only the leader is a banner",
+      pf.strip_shim_banner("StefanMaron\n" + BANNER) == "StefanMaron\n" + BANNER)
+
+check("an empty capture stays empty rather than becoming a false answer",
+      pf.strip_shim_banner("") == "")
 
 # ---------------------------------------------------------------- df parsing
 # Captured verbatim from the box the incident happened on:
