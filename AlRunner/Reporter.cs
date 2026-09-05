@@ -34,6 +34,63 @@ public sealed record BucketResult(string BucketPath, BucketStage Stage,
 public static class Reporter
 {
     /// <summary>
+    /// A bucket that RAN but lost one or more suites on the way (#2762). Every surface that
+    /// reports a result asks this same question, so it is asked in one place — a marker that
+    /// meant different things in the summary and in --output-json would be worse than none.
+    /// </summary>
+    internal static bool IsPartialLoss(BucketResult b)
+        => b.Stage == BucketStage.Ran && b.CompileErrors.Count > 0;
+
+    /// <summary>
+    /// Whether one result is COLLATERAL-SUSPECT: a fail/error that shares a bucket with a suite
+    /// error (#2880).
+    ///
+    /// <para>The incident: a runner-extras run lost 23 suites to one module that did not compile
+    /// and reported <c>187 total, pass: 180, fail: 7</c>. All 7 FAILs were in suites that
+    /// survived, and all 7 were caused by objects the lost module declared — query joins, a role
+    /// centre, an out-of-scope classification. Re-run on the identical tree and build the same
+    /// suite was 265/265 green. Nothing distinguished those 7 from a real regression, and seven
+    /// substantive-looking failures in unrelated areas is seven issues nobody should file.</para>
+    ///
+    /// <para>Passes are deliberately NOT marked. A missing object manufactures failures; it does
+    /// not manufacture passes, and marking a green result unverified would spread the doubt to
+    /// results nothing threatens. Nor is the marker applied run-wide: only the bucket that
+    /// actually lost a suite is implicated, so an intact bundle in the same run keeps reporting
+    /// exactly what it measured.</para>
+    /// </summary>
+    internal static bool IsSuspect(BucketResult b, TestResult t)
+        => IsPartialLoss(b)
+           && t.Outcome is TestOutcome.Fail or TestOutcome.Error
+           && !IsNamedCauseOfASuiteError(b, t);
+
+    /// <summary>
+    /// Whether this result is the CAUSE of one of the bucket's suite errors rather than one of
+    /// its casualties (#2880 review). In general the runner cannot tell the two apart — a module
+    /// that did not compile names no test. The watchdog case is the exception: the abort reason
+    /// names the codeunit and method that hung, and that result is the one thing in the run that
+    /// is definitely real. Marking it unverified would point the reader away from the only
+    /// genuine problem, which is the same argument that already keeps the <c>"kind": "suite"</c>
+    /// record in --out unmarked.
+    ///
+    /// <para>Both sides of the string go through
+    /// <see cref="Infrastructure.BundleFailureStage.AbortReasonHead"/>, so a reworded abort
+    /// reason cannot silently stop the exclusion applying without failing its round-trip test.
+    /// If it ever did, the failure mode is over-marking — the pre-review behaviour — not a real
+    /// failure hidden.</para>
+    /// </summary>
+    internal static bool IsNamedCauseOfASuiteError(BucketResult b, TestResult t)
+        => b.CompileErrors.Any(e =>
+            Infrastructure.BundleFailureStage.AbortReasonNamesTest(e, t.Codeunit, t.Method));
+
+    /// <summary>Whether anything in this bucket is marked — i.e. whether the notes that
+    /// introduce the marker have anything below them to introduce.</summary>
+    internal static bool HasSuspects(BucketResult b) => b.Tests.Any(t => IsSuspect(b, t));
+
+    /// <summary>The inline marker, e.g. <c>[suspect — bucket lost 23 suite(s)]</c>.</summary>
+    internal static string SuspectMarker(BucketResult b)
+        => $"[suspect — bucket lost {b.CompileErrors.Count} suite(s)]";
+
+    /// <summary>
     /// Totals carried in from earlier attempts of the same run (#2280). A watchdog resume runs
     /// only the codeunits no attempt has reached, so its own results are a PARTIAL view — without
     /// these the final summary would report the last attempt's slice as if it were the whole run,
@@ -61,6 +118,14 @@ public static class Reporter
         // summary contradicted it in silence.
         var partialBuckets = new List<BucketResult>();
         int lostSuites = 0;
+        // #2880: how many of the fail/error results below share a bucket with a suite error.
+        int suspect = 0;
+        // …and how many suites those buckets lost. NOT `lostSuites`: with one bucket losing 23
+        // suites but passing everything and another losing 1 and failing twice, the run-wide
+        // total would make this line say "lost 24 suite(s)" while every per-result marker below
+        // said "bucket lost 1 suite(s)" — one marker quoting two different numbers, which is
+        // the defect the single IsSuspect predicate exists to prevent, one level up.
+        int suspectLostSuites = 0;
         TimeSpan emit = TimeSpan.Zero, comp = TimeSpan.Zero, run = TimeSpan.Zero;
         foreach (var b in buckets)
         {
@@ -72,8 +137,10 @@ public static class Reporter
                 partialBuckets.Add(b);
                 lostSuites += b.CompileErrors.Count;
             }
+            if (HasSuspects(b)) suspectLostSuites += b.CompileErrors.Count;
             foreach (var t in b.Tests)
             {
+                if (IsSuspect(b, t)) suspect++;
                 totalTests++;
                 if (t.Outcome == TestOutcome.Pass)
                 {
@@ -126,6 +193,20 @@ public static class Reporter
         w.WriteLine($"  error:       {err}");
         if (skipped > 0)
             w.WriteLine($"  skipped:     {skipped}");
+        // #2880: the single number the incident log did not have. `fail: 7` sitting next to
+        // `partial: 1` leaves the reader to work out whether the 7 have anything to do with the
+        // 1 — and the answer, that time, was "all of them". Printed only when there is something
+        // to say: `suspect: 0` on every clean run trains the reader to skip the line on exactly
+        // the runs where it matters.
+        if (suspect > 0)
+        {
+            w.WriteLine($"  suspect:     {suspect}  — these fail/error results are in bucket(s) "
+                + $"that also lost {suspectLostSuites} suite(s).");
+            w.WriteLine("               A missing object, or state an aborted suite left "
+                + "behind, makes unrelated tests");
+            w.WriteLine("               fail — so treat them as UNVERIFIED: fix the suite "
+                + "errors below and re-run first.");
+        }
         w.WriteLine($"Time:");
         w.WriteLine($"  AL emit:     {emit.TotalSeconds:F1}s");
         w.WriteLine($"  C# compile:  {comp.TotalSeconds:F1}s");
@@ -298,6 +379,19 @@ public static class Reporter
                 if (b.CompileErrors.Count > 20)
                     w.WriteLine($"  ... and {b.CompileErrors.Count - 20} more suite errors");
                 w.WriteLine("  → the tests these suites declare are MISSING from this run, not passing.");
+                // #2880: and the half that is easy to miss — the tests that DID run in this
+                // bucket can fail because of what the lost suites took with them. Said here, on
+                // the way in to the results, so the reader meets the caveat before the failures.
+                //
+                // Only when there is something below to mark. A partial bucket whose survivors
+                // all passed has no marked result, and `visible.Count == 0` two lines down then
+                // skips the section entirely — so an ungated note announced a convention for
+                // results that were never printed.
+                if (HasSuspects(b))
+                    w.WriteLine("  → FAIL/ERROR results below are marked "
+                        + $"{SuspectMarker(b)}: a missing object, or state an aborted suite left "
+                        + "behind, makes unrelated tests fail — so they are UNVERIFIED until the "
+                        + "suite error above is fixed and the run repeats.");
             }
             // Skip silent buckets — only emit a per-bucket header if there's anything to show.
             var visible = b.Tests.Where(t => showPass || t.Outcome != TestOutcome.Pass).ToList();
@@ -318,7 +412,11 @@ public static class Reporter
                     _ => "?    "
                 };
                 long ms = (long)t.Duration.TotalMilliseconds;
-                w.WriteLine($"{label} {t.Codeunit}.{t.Method} ({ms}ms)");
+                // Appended, never substituted into the prefix: ParallelFanOut and every other
+                // consumer matches on the leading label and the `=== <bundle> ===` header, so a
+                // suffix is additive where a reformat would silently change what they count.
+                var suspectSuffix = IsSuspect(b, t) ? "  " + SuspectMarker(b) : "";
+                w.WriteLine($"{label} {t.Codeunit}.{t.Method} ({ms}ms){suspectSuffix}");
                 if (t.Outcome != TestOutcome.Pass)
                 {
                     if (!string.IsNullOrEmpty(t.Message))
@@ -351,9 +449,18 @@ public static class Reporter
     public static void PrintFailureClassification(IReadOnlyList<BucketResult> buckets,
         TextWriter w, int topN = 25)
     {
-        var groups = buckets
+        var failing = buckets
             .Where(b => b.Stage == BucketStage.Ran)
-            .SelectMany(b => b.Tests.Where(t => t.Outcome is TestOutcome.Fail or TestOutcome.Error))
+            .SelectMany(b => b.Tests
+                .Where(t => t.Outcome is TestOutcome.Fail or TestOutcome.Error)
+                .Select(t => (Bucket: b, Test: t)))
+            .ToList();
+        // #2880: this view ranks failure clusters and reads as a work list — it is the surface
+        // most likely to turn collateral damage into filed issues. Stated BEFORE the ranking,
+        // because the ranking is what the reader acts on.
+        int suspect = failing.Count(x => IsSuspect(x.Bucket, x.Test));
+        var groups = failing
+            .Select(x => x.Test)
             .GroupBy(t => ClassifyTest(t.Message ?? "", t.FullException ?? ""))
             .Select(g => (Classification: g.Key, Count: g.Count(),
                           Sample: g.First()))
@@ -363,6 +470,10 @@ public static class Reporter
         w.WriteLine();
         w.WriteLine($"=== Failures by classification (top {Math.Min(topN, groups.Count)} of {groups.Count}) ===");
         int totalFail = groups.Sum(g => g.Count);
+        if (suspect > 0)
+            w.WriteLine($"  NOTE: {suspect} of {totalFail} are suspect — in bucket(s) that lost "
+                + "suites. A cluster made entirely of those is not a bug to attack; it is the "
+                + "suite error, seen from downstream.");
         foreach (var g in groups.Take(topN))
         {
             double pct = 100.0 * g.Count / totalFail;
@@ -406,9 +517,12 @@ public static class Reporter
     // Cecil-instrumentation prerequisite that doesn't exist yet, tracked separately.
     public static string SerializeJsonOutput(IReadOnlyList<BucketResult> buckets, int exitCode)
     {
+        // Paired with its bucket rather than flattened: `suspect` is a property of the
+        // (bucket, test) pair, and this document flattens `tests` across buckets so a consumer
+        // cannot recover the pairing from `suiteErrors` afterwards (#2880).
         var tests = buckets
             .Where(b => b.Stage == BucketStage.Ran)
-            .SelectMany(b => b.Tests)
+            .SelectMany(b => b.Tests.Select(t => (Bucket: b, Test: t)))
             .ToList();
 
         // One entry per compile-failed bucket, identified by its FULL path. This used to
@@ -453,21 +567,27 @@ public static class Reporter
 
         var output = new
         {
-            tests = tests.Select(t => new
+            tests = tests.Select(x => new
             {
-                name = $"{t.Codeunit}.{t.Method}",
-                status = t.Outcome.ToString().ToLowerInvariant(),
-                durationMs = (long)t.Duration.TotalMilliseconds,
-                message = t.Message,
+                name = $"{x.Test.Codeunit}.{x.Test.Method}",
+                status = x.Test.Outcome.ToString().ToLowerInvariant(),
+                durationMs = (long)x.Test.Duration.TotalMilliseconds,
+                message = x.Test.Message,
                 // #2240: additive and null-omitted (DefaultIgnoreCondition below), so a run that
                 // produced no diagnosis emits byte-identical JSON to before.
-                diagnosis = t.Diagnosis,
-                stackTrace = (t.AlCallStack ?? t.FullException)?.TrimEnd(),
+                diagnosis = x.Test.Diagnosis,
+                stackTrace = (x.Test.AlCallStack ?? x.Test.FullException)?.TrimEnd(),
+                // #2880: `true` on a fail/error that shares a bucket with a suite error — the
+                // result may be collateral damage from objects the lost suite took with it.
+                // Nullable and null-omitted, so a clean run's document is byte-identical and a
+                // consumer reading this field gets `true` or nothing, never a misleading
+                // `false` on a green result.
+                suspect = IsSuspect(x.Bucket, x.Test) ? true : (bool?)null,
                 // Manifest reclassification (docs/expectations.md): "pass-oos",
                 // "pass-known-gap", "pass-divergence", "skipped" or
                 // "fail-manifest-drift". Omitted (null) for results the manifest
                 // did not touch.
-                expectation = t.Expectation switch
+                expectation = x.Test.Expectation switch
                 {
                     Infrastructure.ExpectationResult.PassOos => "pass-oos",
                     Infrastructure.ExpectationResult.PassKnownGap => "pass-known-gap",
@@ -477,10 +597,10 @@ public static class Reporter
                     _ => null,
                 },
             }),
-            passed = tests.Count(t => t.Outcome == TestOutcome.Pass),
-            failed = tests.Count(t => t.Outcome == TestOutcome.Fail),
-            errors = tests.Count(t => t.Outcome == TestOutcome.Error),
-            skipped = tests.Count(t => t.Outcome == TestOutcome.Skipped),
+            passed = tests.Count(x => x.Test.Outcome == TestOutcome.Pass),
+            failed = tests.Count(x => x.Test.Outcome == TestOutcome.Fail),
+            errors = tests.Count(x => x.Test.Outcome == TestOutcome.Error),
+            skipped = tests.Count(x => x.Test.Outcome == TestOutcome.Skipped),
             total = tests.Count,
             exitCode,
             compilationErrors = compileErrors.Count > 0 ? compileErrors : null,
@@ -556,6 +676,14 @@ public static class Reporter
                         codeunit = t.Codeunit,
                         method = t.Method,
                         message = t.Message,
+                        // #2880: this file is the triage worklist a follow-up pass reads. A
+                        // collateral failure in it is a work item nobody should start. Always
+                        // emitted, unlike --output-json's null-omitted field: this document does
+                        // not suppress nulls, and a consumer filtering `suspect == false` needs
+                        // the field present on the records it keeps. The `"kind": "suite"` record
+                        // above is deliberately NOT marked — it is the cause, and calling it
+                        // unverified would point the reader away from the only real problem here.
+                        suspect = IsSuspect(b, t),
                         diagnosis = t.Diagnosis,
                         // First few stack frames (after the test method) — enough to identify
                         // which BC API the failure hit, but not so many that the JSON explodes.

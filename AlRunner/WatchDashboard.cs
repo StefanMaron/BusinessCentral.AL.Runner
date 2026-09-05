@@ -153,6 +153,19 @@ public static class WatchDashboard
                     lostNode.AddNode($"[red]{Markup.Escape(err)}[/]");
                 lostNode.AddNode(
                     "[red]the tests these suites declare are MISSING from this cycle, not passing[/]");
+                // #2880: and the results that DID run in this bucket are not trustworthy either
+                // — an object the lost suite declared makes an unrelated test fail. --watch has
+                // no exit code and no summary to scroll to, so a red FAIL node beside a red
+                // SUITE ERRORS node otherwise reads as two independent problems.
+                //
+                // Gated on there actually being a marked node, for the same reason as
+                // Reporter.PrintPerTest's copy: a partial bucket whose survivors all passed has
+                // nothing marked, and a node announcing a convention nothing below it uses is
+                // noise on the one surface that has no summary to correct it.
+                if (Reporter.HasSuspects(b))
+                    lostNode.AddNode(
+                        "[red]FAIL/ERROR nodes in this bucket are marked suspect: they may be "
+                        + "collateral, not real failures[/]");
             }
 
             // Group this bucket's tests by codeunit so each codeunit is one parent node.
@@ -183,8 +196,14 @@ public static class WatchDashboard
                         _ => ("?", "grey"),
                     };
                     long ms = (long)t.Duration.TotalMilliseconds;
+                    // #2880: only fail/error, only in a bucket that lost suites. A missing
+                    // object manufactures failures, not passes, and an intact bucket in the same
+                    // cycle keeps reporting exactly what it measured.
+                    var suspectSuffix = Reporter.IsSuspect(b, t)
+                        ? $"  ·  [red]{Markup.Escape(Reporter.SuspectMarker(b))}[/]"
+                        : "";
                     var methodNode = cuNode.AddNode(
-                        $"[{color}]{Markup.Escape(t.Method)}[/]  ·  [{color}]{label}[/]  ·  [grey]{ms}ms[/]");
+                        $"[{color}]{Markup.Escape(t.Method)}[/]  ·  [{color}]{label}[/]  ·  [grey]{ms}ms[/]{suspectSuffix}");
 
                     if (t.Outcome != TestOutcome.Pass)
                     {
