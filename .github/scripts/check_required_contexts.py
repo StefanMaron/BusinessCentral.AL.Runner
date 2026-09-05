@@ -38,6 +38,34 @@ is the mirror-image outage: every PR blocks forever on a check that can never
 report. That is the failure mode the comment above test-matrix.yml's `all-tests`
 job warns about, and nothing enforced it until now.
 
+The second gap this guards (#2785)
+----------------------------------
+The list of required contexts used to be hardcoded here and in tools/ci-wait.py,
+and nothing compared either list against what the branch ruleset ACTUALLY
+requires. A required status check added in the GitHub UI would therefore be
+ignored by both: this guard would not check whether it is cancellable, and
+ci-wait.py would keep certifying PRs green without waiting for it -- a merge gate
+reporting green having not checked something required.
+
+So the guard now reads the live rules and fails on drift in EITHER direction: a
+context the ruleset requires that this list does not carry, or a context this
+list carries that the ruleset no longer requires. It also fails when the two
+hardcoded lists (here and in tools/ci-wait.py) disagree with each other.
+
+It reads GET /repos/{owner}/{repo}/rules/branches/{branch}, the EFFECTIVE rules
+for the branch, which reports only rulesets whose enforcement is active. That
+choice removes a trap rather than documenting it: there is no ruleset id to get
+wrong. Querying /rulesets/15039643 ("Copilot review for default branch") returns
+an empty list -- it is disabled and carries no required_status_checks rule -- and
+an agent following a comment that named it would conclude the list should be
+emptied. Measured 2026-09-05, the branch-rules endpoint answers 200 even
+unauthenticated on this public repo, so no token is needed in CI.
+
+A lookup that FAILS is a failure, never "no differences". An unauthenticated 404
+and an empty result are indistinguishable, and reading an error as agreement is
+the failure mode this check exists to prevent. Set SKIP_RULESET_DRIFT_CHECK=1 to
+run the rest of the guard offline on purpose; CI does not set it.
+
 Usage
 -----
     check_required_contexts.py [workflows-dir]
@@ -45,29 +73,44 @@ Usage
 `workflows-dir` defaults to .github/workflows next to this script. The required
 context list can be overridden with the REQUIRED_CONTEXTS environment variable
 (newline- or comma-separated) — that exists so the unit tests can drive synthetic
-fixtures, not as a production knob.
+fixtures, not as a production knob. Setting it also skips the live-ruleset
+comparison, because a synthetic context list has nothing to compare against.
 
 Exit codes
 ----------
     0  every required context is safe
-    1  at least one required context is cancellable, or is produced by nothing
+    1  at least one required context is cancellable, is produced by nothing, or
+       the hardcoded list has drifted from the live ruleset
     2  the check could not run at all (no workflows dir, unparseable YAML)
 """
 from __future__ import annotations
 
+import importlib.util
+import json
 import os
 import sys
+import time
+import urllib.error
+import urllib.request
 
 import yaml
 
-# The contexts the `main` branch ruleset requires. Re-derive with:
-#   gh api repos/StefanMaron/BusinessCentral.AL.Runner/rulesets/15001420 \
-#     --jq '.rules[] | select(.type=="required_status_checks")
-#           | .parameters.required_status_checks[].context'
+# The contexts the `main` branch ruleset requires. This list is no longer trusted
+# on its own — resolve_contexts() below compares it against the live ruleset on
+# every run and fails on drift in either direction (#2785). Re-derive by hand:
+#   gh api repos/StefanMaron/BusinessCentral.AL.Runner/rules/branches/main \
+#     --jq '[.[] | select(.type=="required_status_checks")
+#            | .parameters.required_status_checks[].context]'
+# That endpoint, not /rulesets/<id>: it reports the EFFECTIVE rules, so only
+# ACTIVE rulesets appear and there is no id to get wrong.
 # Measured 2026-09-05: exactly these two, matched by context NAME only (the
 # ruleset entries carry no integration_id), which is why a required job may move
 # between workflow files as long as its `name:` is unchanged.
 DEFAULT_REQUIRED_CONTEXTS = ["All BC versions passed", "Tests updated"]
+
+REPO = "StefanMaron/BusinessCentral.AL.Runner"
+DEFAULT_BRANCH = "main"
+BRANCH_RULES_URL = "https://api.github.com/repos/{repo}/rules/branches/{branch}"
 
 # `pull_request` types that fire while the head SHA stays put, so a run they
 # start collides with runs already reporting on that same SHA.
@@ -111,6 +154,154 @@ def required_contexts() -> list[str]:
         return list(DEFAULT_REQUIRED_CONTEXTS)
     parts = [p.strip() for chunk in raw.split("\n") for p in chunk.split(",")]
     return [p for p in parts if p]
+
+
+def repo_root() -> str:
+    here = os.path.dirname(os.path.abspath(__file__))
+    return os.path.abspath(os.path.join(here, "..", ".."))
+
+
+def load_ci_wait(path: str | None = None):
+    """Import tools/ci-wait.py as a module.
+
+    Its RULESET_CONTEXTS is the other copy of the same list, and its
+    contexts_from_branch_rules() is the single parser for the branch-rules
+    payload — sharing it means the "an empty answer is UNKNOWN, not 'nothing
+    required'" rule cannot be implemented one way here and another way there.
+    """
+    path = path or os.path.join(repo_root(), "tools", "ci-wait.py")
+    spec = importlib.util.spec_from_file_location("ci_wait_for_required_contexts", path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot load {path}")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def fetch_branch_rules(repo: str = REPO, branch: str = DEFAULT_BRANCH,
+                       timeout: int = 20, attempts: int = 3):
+    """GET /repos/{repo}/rules/branches/{branch}. Raises after the last attempt.
+
+    Retried, because a single network hiccup must not be reported as ruleset
+    drift — and must not be swallowed either. `GITHUB_TOKEN` is used when
+    present only to buy the higher rate limit; the endpoint answers 200
+    unauthenticated on a public repo.
+    """
+    req = urllib.request.Request(
+        BRANCH_RULES_URL.format(repo=repo, branch=branch),
+        headers={
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "User-Agent": "check_required_contexts.py",
+        },
+    )
+    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+    if token:
+        req.add_header("Authorization", f"Bearer {token}")
+    last: Exception | None = None
+    for i in range(attempts):
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except Exception as exc:  # noqa: BLE001 - re-raised below if it never succeeds
+            last = exc
+            if i + 1 < attempts:
+                time.sleep(2 * (i + 1))
+    raise last  # type: ignore[misc]
+
+
+def resolve_contexts(fetch=None, ci_wait_path: str | None = None
+                     ) -> tuple[list[str], list[str]]:
+    """(the contexts to analyse, the drift problems found).
+
+    The contexts returned are the LIVE ones when the lookup succeeded, so a
+    context added to the ruleset is checked for cancellability on the very run
+    that reports the drift — not only after somebody edits this file.
+    """
+    problems: list[str] = []
+    fallback = list(DEFAULT_REQUIRED_CONTEXTS)
+
+    try:
+        cw = load_ci_wait(ci_wait_path)
+    except Exception as exc:  # noqa: BLE001 - any failure here is a real problem
+        return fallback, [
+            f"could not load tools/ci-wait.py to cross-check its RULESET_CONTEXTS: "
+            f"{exc!r} — that file is the merge gate agents actually run, so its copy "
+            f"of this list cannot go unchecked (#2785)"
+        ]
+
+    cw_contexts = sorted(getattr(cw, "RULESET_CONTEXTS", ()) or ())
+    if cw_contexts != sorted(DEFAULT_REQUIRED_CONTEXTS):
+        problems.append(
+            f"tools/ci-wait.py's RULESET_CONTEXTS {cw_contexts} disagrees with "
+            f"DEFAULT_REQUIRED_CONTEXTS {sorted(DEFAULT_REQUIRED_CONTEXTS)} here — "
+            f"two copies of one list that can drift apart means fixing one still "
+            f"leaves the merge gate reading the other"
+        )
+
+    # One parser for the branch-rules payload, so the rule that an empty answer
+    # is UNKNOWN rather than "nothing is required" cannot be implemented one way
+    # here and another way in the tool that gates the merge.
+    parse = getattr(cw, "contexts_from_branch_rules", None)
+    if parse is None:
+        problems.append(
+            "tools/ci-wait.py has no contexts_from_branch_rules(): the live ruleset "
+            "cannot be parsed, and the merge gate that shares this parser is not the "
+            "file this guard just loaded (#2785)"
+        )
+        return fallback, problems
+
+    if os.environ.get("SKIP_RULESET_DRIFT_CHECK") == "1":
+        print("live ruleset comparison skipped (SKIP_RULESET_DRIFT_CHECK=1)")
+        return fallback, problems
+
+    try:
+        payload = (fetch or fetch_branch_rules)()
+    except Exception as exc:  # noqa: BLE001 - a failed lookup must be loud
+        problems.append(
+            f"could not read the live branch rules for {DEFAULT_BRANCH!r}: {exc!r} — "
+            f"treating a failed lookup as 'no drift' is exactly the failure mode this "
+            f"check exists to prevent, since an unauthenticated 404 and an empty result "
+            f"look the same (#2785). Set SKIP_RULESET_DRIFT_CHECK=1 to run this guard "
+            f"offline on purpose"
+        )
+        return fallback, problems
+
+    live = parse(payload)
+    if live is None:
+        problems.append(
+            f"the live branch rules for {DEFAULT_BRANCH!r} carry no non-empty "
+            f"required_status_checks rule. That is UNKNOWN, not 'nothing is required': "
+            f"the disabled ruleset 15039643 answers exactly this way, and believing it "
+            f"would empty the list that gates every merge (#2785)"
+        )
+        return fallback, problems
+
+    live = list(live)
+    added = sorted(set(live) - set(DEFAULT_REQUIRED_CONTEXTS))
+    removed = sorted(set(DEFAULT_REQUIRED_CONTEXTS) - set(live))
+    if added:
+        problems.append(
+            f"the branch ruleset requires context(s) this repo's lists do not carry: "
+            f"{', '.join(repr(a) for a in added)} — add them to "
+            f"DEFAULT_REQUIRED_CONTEXTS in this file and to RULESET_CONTEXTS in "
+            f"tools/ci-wait.py, or ci-wait.py will keep reporting PRs green without "
+            f"waiting for them (#2785)"
+        )
+    if removed:
+        problems.append(
+            f"this repo's lists carry context(s) the branch ruleset no longer requires: "
+            f"{', '.join(repr(r) for r in removed)} — remove them from "
+            f"DEFAULT_REQUIRED_CONTEXTS in this file and from RULESET_CONTEXTS in "
+            f"tools/ci-wait.py, or ci-wait.py waits for a gate that no longer exists "
+            f"(#2785)"
+        )
+    return live, problems
+
+
+def ruleset_drift_problems(fetch=None, ci_wait_path: str | None = None) -> list[str]:
+    """Just the drift problems — the shape the unit tests assert on."""
+    return resolve_contexts(fetch=fetch, ci_wait_path=ci_wait_path)[1]
 
 
 def load(path: str) -> dict:
@@ -196,7 +387,7 @@ def contexts_of(wf: dict, wf_dir: str) -> dict[str, dict]:
     return out
 
 
-def main(argv: list[str]) -> int:
+def main(argv: list[str], fetch=None) -> int:
     here = os.path.dirname(os.path.abspath(__file__))
     wf_dir = argv[1] if len(argv) > 1 else os.path.join(here, "..", "workflows")
     wf_dir = os.path.abspath(wf_dir)
@@ -227,7 +418,30 @@ def main(argv: list[str]) -> int:
             produced.setdefault(ctx, []).append((path, wf, job))
 
     problems: list[str] = []
-    for ctx in required_contexts():
+
+    # The REQUIRED_CONTEXTS override exists so the unit tests can drive synthetic
+    # fixtures; a synthetic list has nothing to compare against, so the live
+    # check stands down rather than fighting it (#2785).
+    #
+    # It is a REAL bypass, not just a test seam: this branch skips BOTH the live
+    # ruleset comparison AND the ci-wait.py cross-check, and it used to do so in
+    # total silence -- unlike SKIP_RULESET_DRIFT_CHECK, which at least prints.
+    # A future agent unbreaking CI during a GitHub API outage by setting it in
+    # pr-check.yml would get a green job with the guard switched off and nothing
+    # in the log saying so. Hence the ::warning::, and hence
+    # test_check_required_contexts.py asserting that pr-check.yml's step sets
+    # neither variable.
+    if os.environ.get("REQUIRED_CONTEXTS"):
+        print("::warning::REQUIRED_CONTEXTS is set, so the live ruleset comparison "
+              "and the tools/ci-wait.py cross-check are BOTH skipped. This guard is "
+              "running against an overridden context list and cannot detect ruleset "
+              "drift (#2785). Expected only in this script's own unit tests.")
+        contexts = required_contexts()
+    else:
+        contexts, drift = resolve_contexts(fetch=fetch)
+        problems.extend(drift)
+
+    for ctx in contexts:
         sources = produced.get(ctx)
         if not sources:
             problems.append(
@@ -251,15 +465,16 @@ def main(argv: list[str]) -> int:
     if problems:
         for p in problems:
             print(f"::error::{p}", file=sys.stderr)
-        print(
-            "\nFix: move the jobs that need the same-SHA trigger types into a workflow "
-            "that produces no required context, or drop cancel-in-progress from the "
-            "workflow that produces this one.",
-            file=sys.stderr,
-        )
+        if any("cancel-in-progress" in p for p in problems):
+            print(
+                "\nFix: move the jobs that need the same-SHA trigger types into a "
+                "workflow that produces no required context, or drop "
+                "cancel-in-progress from the workflow that produces this one.",
+                file=sys.stderr,
+            )
         return 1
 
-    names = ", ".join(required_contexts())
+    names = ", ".join(contexts)
     print(f"required contexts cannot be left cancelled on the head commit: {names}")
     return 0
 

@@ -255,7 +255,8 @@ public sealed class ReleaseTestParityTests
     [Fact]
     public void RequiredStatusCheck_StaysAJobInTestMatrixYml()
     {
-        // "All BC versions passed" is the one required check in main's branch ruleset. A
+        // "All BC versions passed" is one of the two required checks in main's branch
+        // ruleset (the other is "Tests updated", produced by require-tests.yml). A
         // check's context is the job name qualified by the CALLING job, so moving this job
         // into bc-tests.yml would rename it to "bc-tests / All BC versions passed" and leave
         // the ruleset requiring a context that never reports again — a permanently pending
