@@ -1887,6 +1887,38 @@ public sealed partial class BcCompiler
             var originalDeclErrors = compilation.GetDeclarationDiagnostics()
                 .Where(d => d.Severity == NavDiag.DiagnosticSeverity.Error && d.Location.IsInSource)
                 .ToList();
+            // Issue #2949: the SYNTAX diagnostics of the full, pre-exclusion tree set. These
+            // are a different collection from GetDeclarationDiagnostics() above — a file that
+            // does not parse (e.g. `key(PK; "A"; "B")`, ';' where AL wants ',') carries four
+            // Error-severity AL0104/AL0124 diagnostics on its own SyntaxTree and NO
+            // declaration diagnostic at all, because there is no well-formed declaration to
+            // diagnose. Without this list the crash branch below fell through to the raw
+            // emitter-crash text ("Object reference not set to an instance of an object"),
+            // which names neither the file nor the line, while the only located diagnostic in
+            // the whole run was an AL0185 raised against a DIFFERENT, blameless file that
+            // merely referenced the dropped object.
+            //
+            // Captured up front, before the loop, for the same reason as originalDeclErrors
+            // and one more: the loop reassigns `trees` to the surviving retry trees, so the
+            // post-loop `allParseErrs` collection below can no longer see an excluded file's
+            // syntax errors either. Between the two, every file with parse errors is now
+            // accounted for exactly once — excluded files here, surviving files there.
+            var originalParseErrors = originalTrees
+                .SelectMany(t => t.GetDiagnostics())
+                .Where(d => d.Severity == NavDiag.DiagnosticSeverity.Error && d.Location.IsInSource)
+                .ToList();
+            // Formats the diagnostics that explain why file `i` was dropped, most upstream
+            // cause first: a syntax error is what CAUSES the declaration error, and the
+            // declaration error is what causes the emitter crash. Reporting the effect while
+            // discarding the cause is the whole of #2949.
+            List<string> DiagnosticsForFile(int i) =>
+                Format(originalParseErrors, i) is { Count: > 0 } parse ? parse
+                : Format(originalDeclErrors, i) is { Count: > 0 } decl ? decl
+                : new List<string>();
+            List<string> Format(List<NavDiag.Diagnostic> diags, int i) => diags
+                .Where(d => d.Location.SourceTree == originalTrees[i])
+                .Select(d => $"{d.Location}: error {d.Id}: {d.GetMessage().Split('\n', 2)[0]}")
+                .ToList();
             var keepIdx = Enumerable.Range(0, alFiles.Count).ToList();
             var allExcluded = excludedObjects;
             int round = 0;
@@ -1921,18 +1953,16 @@ public sealed partial class BcCompiler
                         {
                             var label = $"{hit.Type} {hit.Namespace}.\"{hit.Name}\"";
                             roundExcluded.Add(label);
-                            // Prefer the original compilation's OWN declaration diagnostics for
-                            // this file (e.g. AL0185 "Codeunit 'X' is missing") — a real,
+                            // Prefer this file's OWN located AL diagnostics — its syntax errors
+                            // (#2949) first, then the original compilation's declaration
+                            // diagnostics (e.g. AL0185 "Codeunit 'X' is missing") — a real,
                             // path@line:col-anchored AL error a developer can act on. Only fall
                             // back to the emitter-crash exception text (an internal detail, e.g.
                             // "Unexpected value 'None' of type 'NavTypeKind'") when the crash
-                            // left no corresponding declaration diagnostic behind at all.
-                            var declDiagsForFile = originalDeclErrors
-                                .Where(d => d.Location.SourceTree == originalTrees[i])
-                                .Select(d => $"{d.Location}: error {d.Id}: {d.GetMessage().Split('\n', 2)[0]}")
-                                .ToList();
-                            var diagsForThisObject = declDiagsForFile.Count > 0
-                                ? declDiagsForFile
+                            // left no located AL diagnostic behind at all.
+                            var locatedDiagsForFile = DiagnosticsForFile(i);
+                            var diagsForThisObject = locatedDiagsForFile.Count > 0
+                                ? locatedDiagsForFile
                                 : new List<string> { $"emit-crash: {label} — {caught.Message.Split('\n', 2)[0]}" };
                             excludedObjectDiagnosticsList.AddRange(diagsForThisObject);
                             tddDetails?.Add(new TddExcludedObjectDetail(alFiles[i], label, diagsForThisObject));
@@ -1969,6 +1999,15 @@ public sealed partial class BcCompiler
                                     && d.Location.SourceTree == originalTrees[i])
                                 .Select(d => $"{d.Location}: error {d.Id}: {d.GetMessage().Split('\n', 2)[0]}")
                                 .ToList();
+                            // #2949, sibling of the crash branch above: this branch reaches an
+                            // object through emitResult.Diagnostics, so objDiags is normally
+                            // non-empty by construction. `normally` is not `always` — a round
+                            // whose diagnostics are all attributed to another tree would record
+                            // the exclusion with NO explanation at all, which is the defect this
+                            // issue is about, one branch over. Fall back to the file's own
+                            // located AL diagnostics rather than dropping it silently.
+                            if (objDiags.Count == 0)
+                                objDiags = DiagnosticsForFile(i);
                             excludedObjectDiagnosticsList.AddRange(objDiags);
                             tddDetails?.Add(new TddExcludedObjectDetail(alFiles[i], label, objDiags));
                         }

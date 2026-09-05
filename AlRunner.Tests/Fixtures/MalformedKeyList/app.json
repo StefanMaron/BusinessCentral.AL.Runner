@@ -1,0 +1,23 @@
+{
+  "id": "3f6c81aa-5b0e-4d27-9a13-6e2f4c7b8d90",
+  "name": "Runner Tests Fixture - Malformed Key List",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "A keys block whose key fields are separated by ';' instead of ','.",
+  "description": "Issue #2949. BC's AL parser reports four Error-severity syntax diagnostics for this table (AL0104 at the offending column), but the runner used to discard them: the emit-retry loop reassigns its tree array to the surviving trees before the diagnostics are collected, so the only thing left to report was BC's internal metadata-emit NullReferenceException plus an AL0185 in the OTHER file, which is correct only because the table it references was dropped. The developer learned nothing about the line that is actually wrong.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "idRanges": [
+    {
+      "from": 60940,
+      "to": 60949
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}
