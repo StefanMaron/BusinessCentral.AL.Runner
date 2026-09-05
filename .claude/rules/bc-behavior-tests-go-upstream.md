@@ -38,7 +38,7 @@ Step 3 is the one that is never optional. Full detail, including escape hatches:
    corpus repo's own CI adjudicate on a PR; both are real service tiers.
 3. **Open a pull request into
    [`StefanMaron/BusinessCentral.AL.Language.Tests`](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests).**
-   Mandatory — a test only becomes part of the corpus by merging into that repo's `main`. The
+   Mandatory — a test only becomes part of the corpus by merging into that repo's `master`. The
    orchestrator merges it, not the authoring agent, once both BC legs are green.
 4. **After that PR merges, bump the submodule pin** in this repo, folded into the fix PR
    (`al-language-submodule.md` — a pin bump cannot be its own PR, it is red by construction).
