@@ -1,0 +1,10 @@
+[
+  {
+    "codeunitId": 60653,
+    "CodeunitName": "NRB Tests",
+    "Method": "BooleanFieldControl_ReadsAsYesOrNo",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2795",
+    "Note": "Reading a Boolean field control through a TestPage answers 'Yes' / 'No' on real BC. The runner answers 'True' / 'False'. The corpus pins both directions in one test, so the pair forces the spelling rather than one word. Separate from the two #2551 entries on this same codeunit: this test does not call New() at all, it inserts a row with \"No. Validated\" = true and \"Never Validated\" = false and reads both back. Green on real BC 27.0 through 28.4 -- StefanMaron/BusinessCentral.AL.Language.Tests#150. Tracked as #2795; the fix removes this entry."
+  }
+]
