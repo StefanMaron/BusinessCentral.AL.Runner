@@ -125,7 +125,7 @@ public class DependencyReportProcessingOnlyTests
     [Fact]
     public void DependencyReportDeclaringProcessingOnly_IsReportedProcessingOnly()
     {
-        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.Dir("al-runner-dep-report-proconly-tests");
         Directory.CreateDirectory(dir);
         try
         {
@@ -154,7 +154,7 @@ public class DependencyReportProcessingOnlyTests
     [Fact]
     public void ReportNoSourceAndNoDependencyDeclares_IsNotProcessingOnly()
     {
-        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.Dir("al-runner-dep-report-proconly-tests");
         Directory.CreateDirectory(dir);
         try
         {
@@ -177,7 +177,7 @@ public class DependencyReportProcessingOnlyTests
     [Fact]
     public void SourceParsedReport_KeepsItsOwnAnswer_EvenWhenADependencyDeclaresTheSameId()
     {
-        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.Dir("al-runner-dep-report-proconly-tests");
         Directory.CreateDirectory(dir);
         try
         {

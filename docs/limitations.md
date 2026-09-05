@@ -648,6 +648,18 @@ member rather than synthesising over rows it cannot see (#2786). That refusal is
 every BC version the runner supports; it exists so a future one cannot silently disable the
 precedence rule.
 
+**Synthesis is also held off while a load is still owed.** Hydrating some other table runs BC's
+own metadata and NavValue construction, which can reach a `Record` of 2000000071 and materialise
+its storage from *inside* that hydration — where a load of its own would recurse and so is
+refused. The populator used to run against the empty store it had just been handed, claim the
+once-per-provider flag and synthesise; the backup's real rows then had nowhere to go. It now
+leaves such a store alone until the next touch outside a hydration loads it, so the precedence
+rule holds on that path too (#2877). The nested caller sees an **empty** Object Metadata store
+for that moment — deliberately, because the alternative is synthesising rows that would have to
+be withdrawn, and rows a caller has already read cannot be withdrawn. Nothing is lost when the
+backup does not offer the table: the load comes back with no rows, and the populate that follows
+synthesises exactly as it always did.
+
 ---
 
 ## Per-BC-minor engine variants: granularity is per MINOR, not per exact build
@@ -781,6 +793,15 @@ https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
   - A table whose AL name is declared by two installed apps in the same company is refused
     rather than guessed at —
     [#2264](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2264).
+  - A table whose storage is first created from **inside another table's hydration** cannot be
+    loaded there — a nested load would recurse — so the load is deferred to the next touch
+    outside a hydration and runs into that same storage
+    ([#2877](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2877)). It used to
+    be dropped instead, silently and for the rest of the run, because storage being present is
+    what the on-demand policy reads as "already loaded". If something wrote into that storage in
+    the meantime, the deferred load is **written off** rather than stacked on top of those rows,
+    and the table is named on stderr with the reason; `--test-data`'s per-table outcome
+    distinguishes "created during another table's hydration" from "never touched".
 
   Measured on BC 28.1's W1 CRONUS backup with the Base Application / System Application /
   Business Foundation closure: **39,231 rows across 344 tables** hydrated; 12 refused,

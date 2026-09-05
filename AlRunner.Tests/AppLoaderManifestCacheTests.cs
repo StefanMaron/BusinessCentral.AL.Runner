@@ -28,7 +28,7 @@ public sealed class AppLoaderManifestCacheTests
 {
     private static string NewTempDir(string suffix)
     {
-        var dir = Path.Combine(Path.GetTempPath(), "app-loader-manifest-cache-tests-" + suffix + "-" + Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.FlatDir("app-loader-manifest-cache-tests-" + suffix + "-");
         Directory.CreateDirectory(dir);
         return dir;
     }

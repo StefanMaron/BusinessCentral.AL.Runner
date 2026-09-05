@@ -63,6 +63,40 @@ public static partial class RecordPatches
     private static readonly HashSet<int> _bcMissCache = new();
 
     /// <summary>
+    /// Drop the PER-BUNDLE .app registrations and every index derived from them, so the next
+    /// lookup rebuilds against what the incoming bundle registers and nothing else (#2755).
+    /// Called only from <c>ResetForReload</c> (RecordPatches.cs); see the comment at that call
+    /// site for why clearing the registered set is safe there and what it fixes.
+    ///
+    /// <para>The process-lifetime SystemApp registration is deliberately kept — see the inline
+    /// comment. It is the one entry in <see cref="_bcAppPaths"/> that nothing re-adds.</para>
+    /// Must be called while holding <see cref="_bcTableIndexLock"/>.
+    /// </summary>
+    private static void ClearPerBundleBcAppPaths()
+    {
+        // The SystemApp package is registered ONCE per process, by RegisterSystemAppPackage()
+        // from RecordPatches.Register() (the engine bootstrap) — never by Program.cs's per-bundle
+        // dep-register stage, and never again after a reload. Dropping it here would unregister
+        // the AL source for every NCL-internal system table (RecordLink 2000000068, Field
+        // 2000000041, Object 2000000038, ...) for the whole remaining life of a --server /
+        // --watch process: ResetForReload also clears _parsedTables and _metaTableCache, so the
+        // registered .app IS the only thing those tables can be rebuilt from on request 2.
+        //
+        // Everything else in the list is a per-bundle registration that Program.cs re-adds
+        // immediately after the reset, so it goes.
+        _bcAppPaths.RemoveAll(p =>
+            !string.Equals(p, _systemAppTempPath, StringComparison.OrdinalIgnoreCase));
+        InvalidateBcAppIndexes();
+    }
+
+    /// <summary>The process-lifetime SystemApp .app <see cref="ClearPerBundleBcAppPaths"/> keeps,
+    /// or null when <see cref="RegisterSystemAppPackage"/> has not run or could not extract it.</summary>
+    internal static string? SystemAppPackagePathForTests
+    {
+        get { lock (_bcTableIndexLock) return _systemAppTempPath; }
+    }
+
+    /// <summary>
     /// Drop every lazily-built BC .app index so the next lookup rebuilds them from
     /// <see cref="_bcAppPaths"/> from scratch — including <see cref="_bcSymbolExtensionIndexBuilt"/>,
     /// which is what actually re-triggers <see cref="EnsureBcSymbolExtensionIndex"/> (its only
@@ -70,7 +104,8 @@ public static partial class RecordPatches
     /// <c>_bcSymbolTableIndex != null</c> — so nulling the table index without ALSO resetting
     /// the extension-built flag would still short-circuit the merge).
     ///
-    /// Two callers, and #2478 was exactly this pair being out of sync: <see cref="AddBcAppPath"/>
+    /// Two callers (<see cref="AddBcAppPath"/> and <see cref="ClearPerBundleBcAppPaths"/>), and
+    /// #2478 was exactly this pair being out of sync: <see cref="AddBcAppPath"/>
     /// already invalidated all four fields inline when a NEW .app was registered; <c>ResetForReload</c>
     /// (RecordPatches.cs) independently reset only <c>_bcSymbolExtensionIndexBuilt</c>, leaving
     /// <c>_bcSymbolTableIndex</c> populated — so on a warm --server/--watch reload,
@@ -110,15 +145,19 @@ public static partial class RecordPatches
     /// <para>The set genuinely varies between two runs whose (dependency assemblies, runner
     /// build, BC version) are identical — the three terms the key did name:</para>
     /// <list type="bullet">
-    /// <item><description><b>--server / --watch accumulate it.</b> <see cref="_bcAppPaths"/>
-    /// is process-global and nothing ever clears it: <see cref="InvalidateBcAppIndexes"/>
-    /// drops the DERIVED indexes so they rebuild FROM this list, and <c>ResetForReload</c>
-    /// (the per-bundle reload path) calls exactly that. Meanwhile the key's only per-bundle
-    /// term is reset per bundle — <c>InstallTriggerRunner.ResetForNewBundle</c> clears
-    /// <c>_depAssemblies</c>. Two writers of the same per-bundle state, one keeping the
-    /// invariant and one not: the second bundle in a server process computes its snapshot
-    /// against its own apps UNION every earlier bundle's, then persists it under the key a
-    /// fresh single-bundle process will look up.</description></item>
+    /// <item><description><b>--server / --watch USED to accumulate it, and no longer do
+    /// (#2755).</b> <see cref="_bcAppPaths"/> is process-global and nothing cleared it:
+    /// <see cref="InvalidateBcAppIndexes"/> drops the DERIVED indexes so they rebuild FROM
+    /// this list, and <c>ResetForReload</c> (the per-bundle reload path) called exactly that
+    /// and nothing more. Meanwhile the key's only per-bundle term IS reset per bundle —
+    /// <c>InstallTriggerRunner.ResetForNewBundle</c> clears <c>_depAssemblies</c>. Two writers
+    /// of the same per-bundle state, one keeping the invariant and one not: the second bundle
+    /// in a server process computed its snapshot against its own apps UNION every earlier
+    /// bundle's, then persisted it under the key a fresh single-bundle process would look up.
+    /// <c>ResetForReload</c> now calls <see cref="ClearPerBundleBcAppPaths"/>, so the two
+    /// writers agree. This term stays load-bearing regardless: it is what made the divergence
+    /// observable rather than silent, it still separates a bundle whose deps differ from
+    /// another's, and it still catches the second bullet below.</description></item>
     /// <item><description><b><see cref="RegisterBundleSymbolApps"/> skips what it cannot
     /// read.</b> An unreadable bundle-root .app is skipped as a whole with a <c>[warn]</c>
     /// line and the run continues — which is the right call for an optional input, but it

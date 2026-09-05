@@ -19,6 +19,11 @@ using Xunit;
 
 namespace AlRunner.Tests;
 
+// Serial: RegisterBundleSymbolApps below mutates RecordPatches' process-global _bcAppPaths, and
+// AlRunner.Tests runs collections in parallel (xunit.runner.json, maxParallelThreads 4). A stray
+// registration made beside a test that reads the registered set corrupts THAT test, which is the
+// hard direction to trace. Added by impl-2 while building on this fixture for #2755.
+[Collection(RecordPatchesSerialCollection.Name)]
 public sealed class SymbolAppFixtureTests
 {
     private static readonly Guid WithSymbolsId = new("f6a7b8c9-2755-4a11-9111-111111111111");

@@ -74,7 +74,7 @@ public sealed class WindowsLanguageVirtualTableTests
     [Fact]
     public void WindowsLanguage_TruthfulColumns_AllFixtureTestsPass()
     {
-        var cacheDir = Path.Combine(Path.GetTempPath(), "al-runner-wlv-tests", "cache-" + Guid.NewGuid().ToString("N"));
+        var cacheDir = TestScratch.Dir("al-runner-wlv-tests");
         try
         {
             var (exit, stdout, stderr) = Run(cacheDir);

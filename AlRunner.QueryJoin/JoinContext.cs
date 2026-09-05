@@ -58,7 +58,11 @@ public sealed class JoinContext
     /// unrelated TableSlot on the FlowField's source table (which this join never reads a row
     /// buffer for at all).
     /// </summary>
-    public required Func<object /*rowBuffer*/, object /*flowFieldMeta*/, object?> CalcFlowFieldForRow;
+    /// #2925 adds the third argument: the QUERY's own flow filters (a FiltersAndMarks boxed as
+    /// object, or null when the query sets none), which BC's FlowFieldsHelper.
+    /// GetFilterFromMetaFilterCollection dereferences unguarded for any CalcFormula carrying a
+    /// FlowFilter-class where-condition.
+    public required Func<object /*rowBuffer*/, object /*flowFieldMeta*/, object? /*flowFiltersAndMarks*/, object?> CalcFlowFieldForRow;
 
     /// <summary>Diagnostic log sink (al-runner's QLog).</summary>
     public required Action<string> Log;

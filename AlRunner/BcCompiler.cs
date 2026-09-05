@@ -140,12 +140,33 @@ public sealed partial class BcCompiler
     // the dep list's two real jobs are both redone per call anyway: the requested SPEC array
     // is rebuilt at the bottom of GetSharedReferences (so it really does shrink), and
     // WarmReferenceLoader is a read-only cache prefill (so a superset warm subsumes a subset
-    // one). Anything that ADDS or CHANGES a key still rebuilds, exactly as before — which
-    // matters: a source dependency recompiled from edited AL is republished under a NEW
-    // content-addressed path (`~/.cache/al-runner/workspace-deps/<hash>/…`), and that new
-    // key is what makes the next compile see the new symbols instead of the cached loader's
-    // stale ones (scripts/tests/server-mode-test.sh assertions 2+3).
+    // one). Anything that ADDS or CHANGES a key still rebuilds, exactly as before.
+    //
+    // #2678: the keys are those of the deps THIS loader can actually serve — the ones that
+    // survived the .app scan (see PackageServedDepKeys). A symbol-less synthetic package is
+    // filtered out of that scan entirely and reaches the compile through the JSON symbol
+    // loaders instead, so its path can never make this loader's answers stale, and it must
+    // not be allowed to invalidate it: the layered pre-pass republishes exactly such a
+    // package under a NEW content-addressed path (`<cache>/workspace-deps/<hash>/…`) on
+    // every warm edit cycle. Keying on it re-warmed the whole Microsoft dep set once per
+    // cycle — 36.1 s / 39.4 s / 43.0 s on three consecutive Pageworks `--server` cycles.
+    // Seeing the republished symbols is still mandatory; that is _jsonLoaderSignature's job
+    // below (scripts/tests/server-mode-test.sh assertions 2+3), and re-indexing the JSON
+    // chain costs 16-38 ms against the package loader's tens of seconds.
     private static HashSet<string>? _loaderDepUniverse;
+    // Content signature of the dirs the JSON symbol loaders index (#2678). Separate from
+    // _loaderSignature because the two halves have wildly different rebuild costs and
+    // genuinely different invalidation triggers: JSON sidecars are republished under a new
+    // path on every layered edit cycle, .app scan dirs almost never move. _extraSymbolDirs
+    // belongs HERE and only here — those dirs hold *.symbols.json only and are deliberately
+    // never handed to CreateReferenceLoader, so they cannot affect the package loader.
+    private static string? _jsonLoaderSignature;
+    // How many times the CHEAP half (JsonSymbolReferenceLoader construction, which indexes
+    // its directory eagerly) has been rebuilt. The companion to _loaderBuildCount: after
+    // #2678 a layered republish moves this counter and not that one, and a test asserting
+    // the split is what stops the fix degenerating into a chain that never re-indexes.
+    private static int _jsonLoaderBuildCount;
+    internal static int JsonSymbolLoaderBuildCount { get { lock (_refSync) return _jsonLoaderBuildCount; } }
     // How many times the expensive loader (filesystem scan + CreateReferenceLoader +
     // WarmReferenceLoader) has actually been built in this process, counting both the
     // shared superset loader and any physically-excluded fallback. The whole point of
@@ -813,8 +834,10 @@ public sealed partial class BcCompiler
             _refLoader = null;
             _refPackageLoader = null;
             _loaderSignature = null;
+            _jsonLoaderSignature = null;
             _loaderDepUniverse = null;
             _warmSpecCount = 0;
+            _jsonLoaderBuildCount = 0;
             _exclPackageLoader = null;
             _exclSignature = null;
             _exclDepUniverse = null;
@@ -1144,10 +1167,46 @@ public sealed partial class BcCompiler
             var loaderScanDirs = DeduplicateAppPackageDirs(packageDirs, null, out var scanInventory);
             Mark($"dedup-scan ({scanInventory.Count} pkgs)");
 
-            var loaderSig = ComputeLoaderSignature(loaderScanDirs, _extraSymbolDirs, null);
-            var depKeys = DepUniverseKeys(_resolvedDeps);
-            if (_refLoader == null || loaderSig != _loaderSignature
-                || !depKeys.IsSubsetOf(_loaderDepUniverse ?? new HashSet<string>(StringComparer.Ordinal)))
+            // ── Two memo halves, because they cost three orders of magnitude apart (#2678) ──
+            // PACKAGE half: CreateReferenceLoader over the .app scan set plus
+            // WarmReferenceLoader — measured at 36.1 s / 39.4 s / 43.0 s on the Pageworks dep
+            // set. JSON half: one JsonSymbolReferenceLoader per dir holding *.symbols.json,
+            // each indexing its directory in its constructor — 16-38 ms for the whole chain.
+            //
+            // They were one memo slot, keyed on a signature that mixed the .app scan dirs with
+            // the *.symbols.json dirs, and on a dep universe keyed by FILE PATH. The layered
+            // pre-pass republishes its synthetic dependency package under a new
+            // content-addressed path every warm edit cycle, so that one path grew the dep
+            // universe every cycle and dragged the package loader's full re-warm with it —
+            // paid by whichever GetSharedReferences call ran first afterwards, including the
+            // one inside TryEmitIncremental, which is what made a ~130 ms RAD delta read as a
+            // tens-of-seconds "fast path" in #2678's original measurement.
+            //
+            // Splitting them is sound rather than merely cheaper: the package loader is
+            // constructed from loaderScanDirs and nothing else, and a symbol-less package is
+            // dropped from that scan (see DeduplicateAppPackageDirs) — so a republish that
+            // leaves the scan set byte-identical provably cannot change a single answer it
+            // gives. Freshness of the republished symbols is preserved by rebuilding the JSON
+            // chain, which is the half that actually serves them.
+            var loaderSig = ComputeLoaderSignature(loaderScanDirs, null, null);
+            var depKeys = PackageServedDepKeys(_resolvedDeps, scanInventory);
+
+            // _extraSymbolDirs hold *.symbols.json ONLY and must NOT reach
+            // CreateReferenceLoader: they may contain synthetic .app files with no
+            // SymbolReference.json (written by RunLayeredPrePass), and BC reports AL1023
+            // "package not valid" for every compilation that scans one.
+            var jsonScanDirs = packageDirs.ToList();
+            if (_extraSymbolDirs != null)
+                foreach (var d in _extraSymbolDirs)
+                    if (Directory.Exists(d) && !jsonScanDirs.Contains(d, StringComparer.OrdinalIgnoreCase))
+                        jsonScanDirs.Add(d);
+            var jsonSig = string.Join("\n", jsonScanDirs.OrderBy(x => x, StringComparer.Ordinal));
+
+            var rebuildPackage = _refLoader == null || loaderSig != _loaderSignature
+                || !depKeys.IsSubsetOf(_loaderDepUniverse ?? new HashSet<string>(StringComparer.Ordinal));
+            var rebuildJson = rebuildPackage || _cachedJsonLoaders == null || jsonSig != _jsonLoaderSignature;
+
+            if (rebuildPackage || rebuildJson)
             {
                 // Chain JSON-symbols loaders for any `*.symbols.json` in the package dirs
                 // (written by EmitDepSymbols for source dependencies we compiled ourselves).
@@ -1156,12 +1215,6 @@ public sealed partial class BcCompiler
                 // runtime-loadable but compile-invisible (AL0185). JSON loaders go FIRST
                 // so they answer for those deps; they return null for everything else,
                 // falling through to the package scanner.
-                //
-                // IMPORTANT: _extraSymbolDirs are scanned for *.symbols.json ONLY — they
-                // must NOT be included in packageDirs above (passed to CreateReferenceLoader)
-                // because they may contain synthetic .app files with no SymbolReference.json
-                // (written by RunLayeredPrePass). If such an .app ends up in the .app scanner,
-                // BC reports AL1023 "package not valid" for every compilation.
                 //
                 // This block is built BEFORE the .app scanner and independently of it: with
                 // no package-cache dir at all (a bundle whose only dependency is a SIBLING
@@ -1173,17 +1226,13 @@ public sealed partial class BcCompiler
                 // "Codeunit 'X' is missing", after which BC's emitter crashes on the
                 // now-unresolved local variable type ("Unexpected value 'None' of type
                 // NavTypeKind") and the whole bundle emits zero sources.
-                var jsonScanDirs = packageDirs.ToList();
-                if (_extraSymbolDirs != null)
-                    foreach (var d in _extraSymbolDirs)
-                        if (Directory.Exists(d) && !jsonScanDirs.Contains(d, StringComparer.OrdinalIgnoreCase))
-                            jsonScanDirs.Add(d);
-
-                var jsonLoaders = jsonScanDirs
-                    .Select(d => new JsonSymbolReferenceLoader(d))
-                    .Where(l => l.HasAny)
-                    .ToList();
-                Mark("json-loaders");
+                var jsonLoaders = rebuildJson
+                    ? jsonScanDirs
+                        .Select(d => new JsonSymbolReferenceLoader(d))
+                        .Where(l => l.HasAny)
+                        .ToList()
+                    : _cachedJsonLoaders!;
+                if (rebuildJson) Mark("json-loaders");
 
                 // Nothing to serve references from at all — same no-op result as before.
                 // (Deliberately leaves _refLoader / _loaderSignature untouched, as the
@@ -1191,39 +1240,56 @@ public sealed partial class BcCompiler
                 if (loaderScanDirs.Count == 0 && jsonLoaders.Count == 0)
                     return (null, Array.Empty<NavCA.SymbolReferenceSpecification>());
 
-                _cachedJsonLoaders = jsonLoaders;
-                NavCA.ISymbolReferenceLoader? packageLoader = loaderScanDirs.Count > 0
-                    ? NavSymRef.ReferenceLoaderFactory.CreateReferenceLoader(loaderScanDirs)
-                    : null;
-                _refPackageLoader = packageLoader;
+                if (rebuildJson)
+                {
+                    _cachedJsonLoaders = jsonLoaders;
+                    _jsonLoaderSignature = jsonSig;
+                    _jsonLoaderBuildCount++;
+                }
+
+                if (rebuildPackage)
+                {
+                    _refPackageLoader = loaderScanDirs.Count > 0
+                        ? NavSymRef.ReferenceLoaderFactory.CreateReferenceLoader(loaderScanDirs)
+                        : null;
+                    _loaderBuildCount++;
+                    Mark("create-loader");
+                }
+
+                var packageLoader = _refPackageLoader;
                 if (jsonLoaders.Count > 0)
                 {
                     var chain = jsonLoaders.Cast<NavCA.ISymbolReferenceLoader>().ToList();
                     if (packageLoader != null) chain.Add(packageLoader);
-                    _refLoader = new CompositeSymbolReferenceLoader(chain);
+                    _refLoader = chain.Count == 1 ? chain[0] : new CompositeSymbolReferenceLoader(chain);
                 }
                 else
                 {
                     _refLoader = packageLoader!;
                 }
-                _loaderBuildCount++;
 
-                // Pre-warm the loader's internal package caches SEQUENTIALLY before the
-                // compiler's parallel reference-loading runs. BC's ReferenceManager fans
-                // GetDependencies out across ThreadPool workers; concurrent first-reads of
-                // the same R2R .app race inside NavAppPackageReader.CreateEmbeddedReader and
-                // wedge in an unbounded Stream.CopyTo (intermittent compile hang on bundles
-                // that pull MS test-library deps — proven gone when the process is pinned to
-                // one CPU). Warming every reachable spec here makes that later parallel phase
-                // hit warm caches instead of racing on cold file reads. Best-effort: any
-                // failure just leaves the cold-read path to the compiler as before.
-                Mark("create-loader");
-                WarmReferenceLoader(_refLoader, _resolvedDeps);
-                Mark("warm");
-                _loaderSignature = loaderSig;
-                // This instance is warm for exactly these dep keys; a later call whose deps
-                // are a subset of them reuses it (#1832).
-                _loaderDepUniverse = depKeys;
+                if (rebuildPackage)
+                {
+                    // Pre-warm the loader's internal package caches SEQUENTIALLY before the
+                    // compiler's parallel reference-loading runs. BC's ReferenceManager fans
+                    // GetDependencies out across ThreadPool workers; concurrent first-reads of
+                    // the same R2R .app race inside NavAppPackageReader.CreateEmbeddedReader and
+                    // wedge in an unbounded Stream.CopyTo (intermittent compile hang on bundles
+                    // that pull MS test-library deps — proven gone when the process is pinned to
+                    // one CPU). Warming every reachable spec here makes that later parallel phase
+                    // hit warm caches instead of racing on cold file reads. Best-effort: any
+                    // failure just leaves the cold-read path to the compiler as before.
+                    //
+                    // Only on a PACKAGE rebuild: BC's MemoryCachedSymbolReferenceLoader caches in
+                    // instance fields, so a reused package-loader instance is already warm, and a
+                    // re-indexed JSON chain has nothing to warm (it indexes in its constructor).
+                    WarmReferenceLoader(_refLoader, _resolvedDeps);
+                    Mark("warm");
+                    _loaderSignature = loaderSig;
+                    // This instance is warm for exactly these dep keys; a later call whose deps
+                    // are a subset of them reuses it (#1832).
+                    _loaderDepUniverse = depKeys;
+                }
             }
 
             // ── Specs (cheap) — recompute each call with _currentAppId exclusion ──
@@ -1412,11 +1478,19 @@ public sealed partial class BcCompiler
     private static NavCA.ISymbolReferenceLoader GetPhysicallyExcludedPackageLoader(
         List<string> packageDirs, Guid excludeAppId)
     {
-        var reducedDirs = DeduplicateAppPackageDirs(packageDirs, excludeAppId);
+        var reducedDirs = DeduplicateAppPackageDirs(packageDirs, excludeAppId, out var reducedInventory);
         // Same #1832 rule as the shared loader: reducedDirs (which already encode the
         // exclusion) are compared for equality, the dep set for subset.
-        var sig = ComputeLoaderSignature(reducedDirs, _extraSymbolDirs, excludeAppId);
-        var depKeys = DepUniverseKeys(_resolvedDeps);
+        //
+        // #2678: and the same two narrowings, for the same reasons — this loader is a package
+        // loader too, built from reducedDirs alone. _extraSymbolDirs hold *.symbols.json only
+        // and never reach CreateReferenceLoader, so they cannot change its answers; and a dep
+        // the .app scan dropped is not one it can serve, so a symbol-less package republished
+        // at a new path must not throw this instance's warm away either. Without this the
+        // saving disappears on exactly the runs that reach the fallback (an app name shared
+        // with the self-excluded package).
+        var sig = ComputeLoaderSignature(reducedDirs, null, excludeAppId);
+        var depKeys = PackageServedDepKeys(_resolvedDeps, reducedInventory);
         if (_exclPackageLoader != null && sig == _exclSignature
             && depKeys.IsSubsetOf(_exclDepUniverse ?? new HashSet<string>(StringComparer.Ordinal)))
             return _exclPackageLoader;
@@ -1441,6 +1515,44 @@ public sealed partial class BcCompiler
         var keys = new HashSet<string>(StringComparer.Ordinal);
         if (deps == null) return keys;
         foreach (var d in deps) keys.Add(d.AppPath + "@" + d.Manifest.Version);
+        return keys;
+    }
+
+    /// <summary>
+    /// <see cref="DepUniverseKeys"/> restricted to the deps a PACKAGE reference loader built
+    /// over <paramref name="scanInventory"/> can actually answer for — issue #2678.
+    ///
+    /// A resolved dep absent from the inventory is one the .app scan dropped: almost always a
+    /// synthetic source-only package with no <c>SymbolReference.json</c> (the layered pre-pass
+    /// and <c>BuildSiblingSourceDeps</c> write these), whose symbols reach the compile through
+    /// the JSON symbol loaders instead. Such a dep is invisible to the package loader by
+    /// construction, so its arrival, departure or republication cannot change one answer the
+    /// package loader gives — and keying the package memo on it is not conservatism, it is a
+    /// guaranteed miss on a path that is republished under a fresh content-addressed directory
+    /// on EVERY warm edit cycle. The freshness those republications genuinely require is
+    /// served by rebuilding the JSON chain (see <c>_jsonLoaderSignature</c>), which is the half
+    /// that reads them.
+    ///
+    /// Everything the package loader does serve keeps the pre-#2678 rule exactly: added or
+    /// changed key → rebuild and re-warm; removed key → reuse (subset).
+    /// </summary>
+    private static HashSet<string> PackageServedDepKeys(
+        IReadOnlyList<(AppManifest Manifest, string AppPath)>? deps,
+        List<PackageScanEntry> scanInventory)
+    {
+        var keys = new HashSet<string>(StringComparer.Ordinal);
+        if (deps == null) return keys;
+        var served = new HashSet<string>(
+            scanInventory.Select(e => e.Path), StringComparer.OrdinalIgnoreCase);
+        foreach (var d in deps)
+        {
+            string full;
+            // A dep path that cannot be normalised is not one the scan could have matched
+            // either; fall back to the raw string so it is compared consistently rather than
+            // silently dropped from every subsequent comparison.
+            try { full = Path.GetFullPath(d.AppPath); } catch { full = d.AppPath; }
+            if (served.Contains(full)) keys.Add(full + "@" + d.Manifest.Version);
+        }
         return keys;
     }
 

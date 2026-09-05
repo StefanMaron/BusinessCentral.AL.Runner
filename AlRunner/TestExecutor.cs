@@ -1413,7 +1413,10 @@ public sealed class TestExecutor
         }
 
         var total = remainingInCodeunit + remainingInOtherCodeunits;
-        var reason = $"{hungDisplayName} ({hungType.Name}).{hungMethod.Name}: watchdog timeout aborted the run — " +
+        // The head is built by BundleFailureStage so Reporter can read back WHICH test hung and
+        // exclude it from the collateral marker (#2880) — it is the cause, not a casualty.
+        var reason = AlRunner.Infrastructure.BundleFailureStage.AbortReasonHead(
+                hungDisplayName, hungType.Name, hungMethod.Name) + " — " +
             $"{remainingInCodeunit} further [Test] method(s) in this codeunit" +
             (remainingCodeunits > 0
                 ? $" and {remainingInOtherCodeunits} in {remainingCodeunits} subsequent codeunit(s)"

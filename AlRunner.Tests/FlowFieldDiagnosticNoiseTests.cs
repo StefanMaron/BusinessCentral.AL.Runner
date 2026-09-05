@@ -87,7 +87,7 @@ public sealed class FlowFieldDiagnosticNoiseTests
     }
 
     private static string NewCacheDir([System.Runtime.CompilerServices.CallerMemberName] string name = "") =>
-        Path.Combine(Path.GetTempPath(), "al-runner-flowfield-noise", name, Guid.NewGuid().ToString("N"));
+        TestScratch.Dir(Path.Combine("al-runner-flowfield-noise", name));
 
     private static void AssertFixturePassed(string stdout, string stderr, int exit)
     {
