@@ -103,6 +103,63 @@ public static partial class RecordPatches
     }
 
     /// <summary>
+    /// The precompiled dependency <c>pageextension</c> with object id
+    /// <paramref name="extensionId"/>, or null when no loaded dependency .app declares one
+    /// (issue #2723's pageextension arm). Same walk as <see cref="TryGetDependencyPageSymbol"/>,
+    /// same failure handling — a .app whose SymbolReference cannot be read is skipped loudly,
+    /// never treated as "declares none".
+    /// </summary>
+    private static BcAppSymbolCache.PageExtensionSymbol? TryGetDependencyPageExtensionSymbol(int extensionId)
+    {
+        foreach (var symbols in DependencyAppSymbols())
+            foreach (var ext in symbols.PageExtensions ?? (IReadOnlyList<BcAppSymbolCache.PageExtensionSymbol>)Array.Empty<BcAppSymbolCache.PageExtensionSymbol>())
+                if (ext.Id == extensionId)
+                    return ext;
+        return null;
+    }
+
+    /// <summary>
+    /// Object ids of every precompiled dependency <c>pageextension</c> whose target page NAME
+    /// matches <paramref name="basePageName"/> (space-insensitive, case-insensitive — the same
+    /// <c>NamesEqual</c> rule the AL-source-parsed extensions are matched with). Feeds
+    /// <see cref="GetPageExtensionIdsForPage"/>; the caller dedupes against the source-parsed
+    /// set, where a same-numbered source-parsed extension wins.
+    /// </summary>
+    private static IEnumerable<int> DependencyPageExtensionIdsForPage(string basePageName)
+    {
+        foreach (var symbols in DependencyAppSymbols())
+            foreach (var ext in symbols.PageExtensions ?? (IReadOnlyList<BcAppSymbolCache.PageExtensionSymbol>)Array.Empty<BcAppSymbolCache.PageExtensionSymbol>())
+                if (NamesEqual(ext.TargetObjectName, basePageName))
+                    yield return ext.Id;
+    }
+
+    /// <summary>
+    /// Every loaded dependency .app's parsed symbols, in registration order, skipping (and
+    /// reporting) any whose SymbolReference.json cannot be read — factored out of
+    /// <see cref="TryGetDependencyPageSymbol"/> so the page and pageextension lookups share
+    /// one walk and one failure policy.
+    /// </summary>
+    private static IEnumerable<BcAppSymbolCache.AppSymbols> DependencyAppSymbols()
+    {
+        foreach (var appPath in _bcAppPaths.ToArray())
+        {
+            BcAppSymbolCache.AppSymbols symbols;
+            try
+            {
+                symbols = BcAppSymbolCache.Get(appPath);
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine(
+                    $"[RecordPatches] dependency page metadata: SymbolReference read failed for "
+                    + $"{Path.GetFileName(appPath)}: {ex.Message}");
+                continue;
+            }
+            yield return symbols;
+        }
+    }
+
+    /// <summary>
     /// Numeric field id for <paramref name="fieldName"/> on <paramref name="tableId"/>
     /// (issue #2467 — resolving a dependency part's SubPageLink field names to the numbers
     /// BC's own compiled metadata carries). Reuses the SAME table-symbol machinery

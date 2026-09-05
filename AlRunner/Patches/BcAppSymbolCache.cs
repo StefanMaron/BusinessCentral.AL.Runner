@@ -113,7 +113,15 @@ internal static partial class BcAppSymbolCache
     // client half of AutoSplitKey then silently does not run, so the first new row on such a
     // page lands at line no. 0 and the second fails on a duplicate primary key. A wrong
     // answer replayed from cache rather than a cache miss, which is why this needs the bump.
-    private const int CacheVersion = 23;
+    // v24: PageSymbol gained MemberIdToName / MemberIdToActionRefTarget and AppSymbols gained
+    // PageExtensions (issues #2723 / #2517) — the declared AL name of every action and control
+    // of a precompiled page (and pageextension), keyed by BC's own member id, which is what
+    // lets RunnerPageInstance.FindTrigger run its FORWARD (mangle-and-compare) match on a page
+    // the runner never AL-source-parsed. A v23 payload deserialises with both maps null,
+    // which RecordPatches.TryGetPageMemberName reads as "the dependency knows no members" —
+    // every spaced-name trigger on every Base Application page silently back on the lossy
+    // backward scan, the exact pre-fix behaviour replayed from cache rather than a cache miss.
+    private const int CacheVersion = 24;
     private static readonly ConcurrentDictionary<string, AppSymbols> ProcessCache = new(StringComparer.OrdinalIgnoreCase);
     // Issue #1820 — path -> content-hash memo. ComputeAppContentHash needs to read the
     // WHOLE .app to hash it (unlike the FileInfo.Length/LastWriteTimeUtc stat it replaced,
@@ -166,7 +174,11 @@ internal static partial class BcAppSymbolCache
         // Trailing + optional on purpose: every existing construction site keeps compiling
         // unchanged, and an older cache payload deserialises as null (read as "not stated",
         // never as "declares none" — see PermissionSetSymbol).
-        List<PermissionSetSymbol>? PermissionSets = null);
+        List<PermissionSetSymbol>? PermissionSets = null,
+        // Precompiled pageextensions with their member-name maps (#2723) — see
+        // PageExtensionSymbol. Guarded by the v24 CacheVersion bump, so null only ever means
+        // "this .app declares none", never "an older payload".
+        List<PageExtensionSymbol>? PageExtensions = null);
 
     /// <summary>
     /// One profile as SymbolReference.json states it. <c>ProfileId</c> is the profile object's
@@ -236,7 +248,42 @@ internal static partial class BcAppSymbolCache
         // entirely from THIS XML (RunnerPageInstance.TryGetPartDefinition reads
         // form.MetadataHelper.InfoPartDefinitions, built by BC's own metadata loader from
         // Content), not from IL — see TryParsePageSymbol / CollectPagePartSymbols.
-        List<PagePartSymbol>? Parts = null);
+        List<PagePartSymbol>? Parts = null,
+        // Member id -> declared AL NAME of every action (any Kind: group, action, separator,
+        // actionref, customaction, systemaction, fileuploadaction) and every control the
+        // symbol file lists, in this page's own id space (issues #2723 / #2517). The id is
+        // the file's own "Id" — BC's IdSpace.GetMemberId(pageId, name), the same number the
+        // compiled test code hands LiveNavTestPage.GetAction/GetField — so nothing is
+        // re-derived here. This is the declared-name source RunnerPageInstance.FindTrigger's
+        // forward (mangle-and-compare) match needs; without it a precompiled page's members
+        // only had the lossy backward un-mangle, which can never recover "Assign Serial No."
+        // from Assign_Serial_Noa46_a45_OnAction. Mirrors ParsedPage.MemberIdToName for the
+        // AL-source-parsed path (RecordPatches.ParseMemberNames, #1968).
+        Dictionary<int, string>? MemberIdToName = null,
+        // Member id of every Kind-4 actionref -> the NAME of the action it points at (the
+        // file's own TargetName), mirroring ParsedPage.MemberIdToActionRefTarget (#2113).
+        Dictionary<int, string>? MemberIdToActionRefTarget = null);
+
+    /// <summary>
+    /// A precompiled dependency's <c>pageextension</c>, as far as SymbolReference.json states
+    /// it (issue #2723's pageextension arm): its own object id, the NAME of the page it
+    /// extends, and the same two member maps <see cref="PageSymbol"/> carries, in the
+    /// EXTENSION's own id space — BC hashes a member an extension declares from the
+    /// extension's object id, never the base page's (see RecordPatches.GetPageControlFieldMap).
+    /// <para><c>TargetObjectName</c> is the file's <c>TargetObject</c> with any leading
+    /// <c>#&lt;appid&gt;#</c> module qualifier stripped: Base Application 28.1 writes
+    /// <c>"#63ca2fa4…#Accessible Companies"</c> for a System Application page and a bare
+    /// <c>"Job Queue Entries"</c> for one of its own, and the runner resolves pages by NAME
+    /// (RecordPatches.GetPageExtensionIdsForPage), never by app.</para>
+    /// <para>Members come from <c>ActionChanges[].Actions</c> and <c>ControlChanges[].Controls</c>
+    /// (recursively — an added group nests its actions), the two containers the compiler
+    /// writes for <c>addfirst/addlast/addafter/addbefore</c>; a <c>modify(...)</c> change
+    /// carries Properties only and contributes no member.</para>
+    /// </summary>
+    internal sealed record PageExtensionSymbol(
+        int Id, string Name, string TargetObjectName,
+        Dictionary<int, string> MemberIdToName,
+        Dictionary<int, string> MemberIdToActionRefTarget);
 
     /// <summary>
     /// One subpage PART control of a precompiled dependency page, as SymbolReference.json
@@ -402,7 +449,8 @@ internal static partial class BcAppSymbolCache
         List<ParsedTable> Tables, List<EnumSymbol> Enums, List<QuerySymbol> Queries,
         List<ObjectSymbol>? Objects, List<ReportSymbol>? Reports, List<PageSymbol>? Pages,
         List<ProfileSymbol>? Profiles = null, string? AppId = null, string? AppName = null,
-        List<PermissionSetSymbol>? PermissionSets = null);
+        List<PermissionSetSymbol>? PermissionSets = null,
+        List<PageExtensionSymbol>? PageExtensions = null);
 
     /// <summary>
     /// Parse a loose <c>SymbolReference.json</c> file (the raw module JSON, NOT a .app
@@ -419,15 +467,17 @@ internal static partial class BcAppSymbolCache
         var objects = new Dictionary<(string, int), ObjectSymbol>();
         var reports = new Dictionary<int, ReportSymbol>();
         var pages = new Dictionary<int, PageSymbol>();
+        var pageExtensions = new Dictionary<int, PageExtensionSymbol>();
         var profiles = new Dictionary<string, ProfileSymbol>(StringComparer.OrdinalIgnoreCase);
         var permissionSets = new Dictionary<int, PermissionSetSymbol>();
         using var doc = JsonDocument.Parse(File.ReadAllText(jsonPath));
-        VisitSymbolContainer(doc.RootElement, tables, enums, queries, objects, reports, pages, profiles);
+        VisitSymbolContainer(doc.RootElement, tables, enums, queries, objects, reports, pages, profiles, pageExtensions);
         CollectPermissionSets(doc.RootElement, permissionSets);
         var (appId, appName) = ReadAppIdentity(doc.RootElement);
         return new AppSymbols(tables.Values.ToList(), enums.Values.ToList(), queries.Values.ToList(),
             objects.Values.ToList(), reports.Values.ToList(), pages.Values.ToList(),
-            profiles.Values.ToList(), appId, appName, permissionSets.Values.ToList());
+            profiles.Values.ToList(), appId, appName, permissionSets.Values.ToList(),
+            pageExtensions.Values.ToList());
     }
 
     internal static AppSymbols Get(string appPath)
@@ -506,7 +556,8 @@ internal static partial class BcAppSymbolCache
                 payload.Objects ?? new List<ObjectSymbol>(), payload.Reports ?? new List<ReportSymbol>(),
                 payload.Pages ?? new List<PageSymbol>(),
                 payload.Profiles ?? new List<ProfileSymbol>(), payload.AppId, payload.AppName,
-                payload.PermissionSets ?? new List<PermissionSetSymbol>());
+                payload.PermissionSets ?? new List<PermissionSetSymbol>(),
+                payload.PageExtensions ?? new List<PageExtensionSymbol>());
         }
         catch (Exception ex)
         {
@@ -523,7 +574,7 @@ internal static partial class BcAppSymbolCache
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(cachePath)!);
-            var payload = new CachePayload(contentHash, symbols.Tables, symbols.Enums, symbols.Queries, symbols.Objects, symbols.Reports, symbols.Pages, symbols.Profiles, symbols.AppId, symbols.AppName, symbols.PermissionSets);
+            var payload = new CachePayload(contentHash, symbols.Tables, symbols.Enums, symbols.Queries, symbols.Objects, symbols.Reports, symbols.Pages, symbols.Profiles, symbols.AppId, symbols.AppName, symbols.PermissionSets, symbols.PageExtensions);
             // #1809 follow-up: cachePath is content-keyed (hash of the .app file),
             // so two subprocesses parsing the same app concurrently used to race a
             // plain File.WriteAllText into the same path. TryRead already treats any
@@ -553,13 +604,14 @@ internal static partial class BcAppSymbolCache
         var objects = new Dictionary<(string, int), ObjectSymbol>();
         var reports = new Dictionary<int, ReportSymbol>();
         var pages = new Dictionary<int, PageSymbol>();
+        var pageExtensions = new Dictionary<int, PageExtensionSymbol>();
         var profiles = new Dictionary<string, ProfileSymbol>(StringComparer.OrdinalIgnoreCase);
         var permissionSets = new Dictionary<int, PermissionSetSymbol>();
         string? appId = null, appName = null;
         foreach (var json in ReadSymbolReferences(appPath))
         {
             using var doc = JsonDocument.Parse(json);
-            VisitSymbolContainer(doc.RootElement, tables, enums, queries, objects, reports, pages, profiles);
+            VisitSymbolContainer(doc.RootElement, tables, enums, queries, objects, reports, pages, profiles, pageExtensions);
             CollectPermissionSets(doc.RootElement, permissionSets);
             // The .app's own identity, stated once at the root of its SymbolReference.json.
             // First one wins: ReadSymbolReferences can yield more than one module for a
@@ -569,7 +621,8 @@ internal static partial class BcAppSymbolCache
         }
         return new AppSymbols(tables.Values.ToList(), enums.Values.ToList(), queries.Values.ToList(),
             objects.Values.ToList(), reports.Values.ToList(), pages.Values.ToList(),
-            profiles.Values.ToList(), appId, appName, permissionSets.Values.ToList());
+            profiles.Values.ToList(), appId, appName, permissionSets.Values.ToList(),
+            pageExtensions.Values.ToList());
     }
 
     /// <summary>
@@ -628,7 +681,7 @@ internal static partial class BcAppSymbolCache
         return (string.IsNullOrWhiteSpace(id) ? null : id, string.IsNullOrWhiteSpace(name) ? null : name);
     }
 
-    private static void VisitSymbolContainer(JsonElement container, Dictionary<int, ParsedTable> tables, Dictionary<int, EnumSymbol> enums, Dictionary<int, QuerySymbol> queries, Dictionary<(string, int), ObjectSymbol> objects, Dictionary<int, ReportSymbol> reports, Dictionary<int, PageSymbol> pages, Dictionary<string, ProfileSymbol> profiles)
+    private static void VisitSymbolContainer(JsonElement container, Dictionary<int, ParsedTable> tables, Dictionary<int, EnumSymbol> enums, Dictionary<int, QuerySymbol> queries, Dictionary<(string, int), ObjectSymbol> objects, Dictionary<int, ReportSymbol> reports, Dictionary<int, PageSymbol> pages, Dictionary<string, ProfileSymbol> profiles, Dictionary<int, PageExtensionSymbol> pageExtensions)
     {
         // Flat (kind, id, name) sweep for AllObj. Independent of the typed parsing below
         // so a kind we do not model in depth still shows up as an existing object.
@@ -715,6 +768,16 @@ internal static partial class BcAppSymbolCache
             }
         }
 
+        if (container.TryGetProperty("PageExtensions", out var pageExtArray) && pageExtArray.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var pe in pageExtArray.EnumerateArray())
+            {
+                var parsed = TryParsePageExtensionSymbol(pe);
+                if (parsed != null && !pageExtensions.ContainsKey(parsed.Id))
+                    pageExtensions[parsed.Id] = parsed;
+            }
+        }
+
         // Profiles are NOT in ObjectContainers above: a profile has no object id, so it can
         // never appear in AllObj. Its identity is its NAME, which is also its "Profile ID".
         if (container.TryGetProperty("Profiles", out var profileArray) && profileArray.ValueKind == JsonValueKind.Array)
@@ -730,7 +793,7 @@ internal static partial class BcAppSymbolCache
         if (container.TryGetProperty("Namespaces", out var namespaces) && namespaces.ValueKind == JsonValueKind.Array)
         {
             foreach (var ns in namespaces.EnumerateArray())
-                VisitSymbolContainer(ns, tables, enums, queries, objects, reports, pages, profiles);
+                VisitSymbolContainer(ns, tables, enums, queries, objects, reports, pages, profiles, pageExtensions);
         }
     }
 
@@ -805,19 +868,95 @@ internal static partial class BcAppSymbolCache
 
         var controls = new List<PageControlSymbol>();
         var parts = new List<PagePartSymbol>();
+        var memberNames = new Dictionary<int, string>();
+        var actionRefTargets = new Dictionary<int, string>();
         int seq = 0;
         if (page.TryGetProperty("Controls", out var controlsArr) && controlsArr.ValueKind == JsonValueKind.Array)
             foreach (var c in controlsArr.EnumerateArray())
             {
                 CollectPageControlSymbols(c, controls, ref seq);
                 CollectPagePartSymbols(c, parts);
+                CollectMemberNames(c, "Controls", memberNames, actionRefTargets);
             }
+        if (page.TryGetProperty("Actions", out var actionsArr) && actionsArr.ValueKind == JsonValueKind.Array)
+            foreach (var a in actionsArr.EnumerateArray())
+                CollectMemberNames(a, "Actions", memberNames, actionRefTargets);
 
         return new PageSymbol(pageId, name!, sourceTableId, sourceTableTemporary,
             string.IsNullOrWhiteSpace(pageType) ? "Card" : pageType!, caption,
             editable, insertAllowed, modifyAllowed, deleteAllowed, controls,
             string.IsNullOrWhiteSpace(cardPageName) ? null : cardPageName,
-            autoSplitKey, multipleNewLines, delayedInsert, parts);
+            autoSplitKey, multipleNewLines, delayedInsert, parts,
+            memberNames, actionRefTargets);
+    }
+
+    /// <summary>
+    /// Parse one entry of a SymbolReference.json <c>PageExtensions</c> array into a
+    /// <see cref="PageExtensionSymbol"/> — id, name, the extended page's name, and the
+    /// member-name maps of every action/control the extension ADDS. Null for an entry with
+    /// no usable id, name or target.
+    /// </summary>
+    private static PageExtensionSymbol? TryParsePageExtensionSymbol(JsonElement ext)
+    {
+        if (!ext.TryGetProperty("Id", out var idProp) || !idProp.TryGetInt32(out var extId) || extId <= 0)
+            return null;
+        var name = ext.TryGetProperty("Name", out var nameProp) ? nameProp.GetString() : null;
+        var target = ext.TryGetProperty("TargetObject", out var targetProp) ? targetProp.GetString() : null;
+        if (string.IsNullOrEmpty(name) || string.IsNullOrEmpty(target)) return null;
+
+        var memberNames = new Dictionary<int, string>();
+        var actionRefTargets = new Dictionary<int, string>();
+        if (ext.TryGetProperty("ActionChanges", out var actionChanges) && actionChanges.ValueKind == JsonValueKind.Array)
+            foreach (var change in actionChanges.EnumerateArray())
+                if (change.TryGetProperty("Actions", out var added) && added.ValueKind == JsonValueKind.Array)
+                    foreach (var a in added.EnumerateArray())
+                        CollectMemberNames(a, "Actions", memberNames, actionRefTargets);
+        if (ext.TryGetProperty("ControlChanges", out var controlChanges) && controlChanges.ValueKind == JsonValueKind.Array)
+            foreach (var change in controlChanges.EnumerateArray())
+                if (change.TryGetProperty("Controls", out var added) && added.ValueKind == JsonValueKind.Array)
+                    foreach (var c in added.EnumerateArray())
+                        CollectMemberNames(c, "Controls", memberNames, actionRefTargets);
+
+        return new PageExtensionSymbol(extId, name!, StripModuleQualifierPrefix(target!), memberNames, actionRefTargets);
+    }
+
+    /// <summary>
+    /// <c>"#63ca2fa44f034f2ba480172fef340d3f#Accessible Companies"</c> → <c>"Accessible
+    /// Companies"</c>; a name with no leading <c>#…#</c> qualifier passes through unchanged.
+    /// </summary>
+    private static string StripModuleQualifierPrefix(string target)
+    {
+        if (target.Length > 1 && target[0] == '#')
+        {
+            var close = target.IndexOf('#', 1);
+            if (close > 0) return target.Substring(close + 1);
+        }
+        return target;
+    }
+
+    /// <summary>
+    /// Record one action/control node's (Id → Name), plus (Id → TargetName) when the node is
+    /// an actionref, then recurse into its children under <paramref name="childKey"/>
+    /// ("Actions" for the action tree, "Controls" for the layout tree). No Kind filter on
+    /// purpose: a group, separator, systemaction, fileuploadaction or customaction is as much
+    /// a named member with a member id as a plain action, and a name that has no emitted
+    /// trigger method simply never matches — FindTriggerOnTarget compares against the methods
+    /// that exist. TryAdd, not the indexer: a field and an action of the same name carry the
+    /// same id and the same name, so first-writer-wins loses nothing.
+    /// </summary>
+    private static void CollectMemberNames(JsonElement node, string childKey,
+        Dictionary<int, string> names, Dictionary<int, string> actionRefTargets)
+    {
+        if (node.TryGetProperty("Id", out var idProp) && idProp.TryGetInt32(out var id) && id != 0
+            && node.TryGetProperty("Name", out var nameProp) && nameProp.GetString() is { Length: > 0 } name)
+        {
+            names.TryAdd(id, name);
+            if (node.TryGetProperty("TargetName", out var targetProp) && targetProp.GetString() is { Length: > 0 } target)
+                actionRefTargets.TryAdd(id, target);
+        }
+        if (node.TryGetProperty(childKey, out var children) && children.ValueKind == JsonValueKind.Array)
+            foreach (var child in children.EnumerateArray())
+                CollectMemberNames(child, childKey, names, actionRefTargets);
     }
 
     /// <summary>

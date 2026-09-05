@@ -1,0 +1,19 @@
+{
+  "id": "5b7d2f13-9e4a-4c68-8d1f-3a2e6c9b0f47",
+  "name": "Runner Extras - TestPage Precompiled Member Names",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Regression for issues #2723 and #2517: a TestPage action or control on a page that ships PRECOMPILED (Base Application) could not reach its trigger whenever the member's AL name needed mangling to become a C# identifier - a space, '.', '&', or a name that is a C# reserved keyword.",
+  "description": "Every test here drives a real Base Application page, never a page compiled from this bundle - that is the point. RunnerPageInstance.FindTrigger matches an emitted trigger method ({Member}_a{n}_OnAction / _OnValidate) either FORWARD (mangle the member's declared AL name the way BC's emitter does and compare) or BACKWARD (un-mangle the method name and re-hash it). The forward arm needs the declared name, which RecordPatches.TryGetPageMemberName only knew for pages this bundle AL-source-parsed (_parsedPages), so a precompiled page always fell to the backward scan, and that scan is lossy by construction: 'Assign Serial No.' emits as Assign_Serial_Noa46_a45_OnAction, un-mangles to Assign_Serial_Noa46, and hashes to a different member id than the one BC's compiled test code asks for. Every such member read as 'the page declares no OnAction trigger' (actions, 955 failures in Microsoft's BaseApp surface) or was silently skipped (OnValidate, #2517). The fix falls back to the dependency .app's own SymbolReference.json - the same source #2088 already reads for control bindings - which carries every action and control with its Id and declared Name, actionrefs with their TargetName, and pageextensions with their TargetObject, so the forward arm now applies to precompiled pages and precompiled pageextensions too. The keyword arm is pinned against BC's own emitter, decompiled: Microsoft.Dynamics.Nav.CodeAnalysis.Utilities.StringExtensions.GetSafeCSharpIdentifierName prefixes '_' when the upper-invariant name is a C# reserved keyword (Roslyn SyntaxFacts.GetReservedKeywordKinds) or FINALIZE - which is why New and Delegate are prefixed and Delete, Record and Setup are not. The last test is the one claim that is genuinely runner-specific: an action whose only effect is RunObject must STILL raise the loud testpage-action refusal after the fix (loud-failures.md) - real BC would open the page, so the corpus cannot adjudicate it. This bundle carries the Base Application floor deliberately: a source-compiled page cannot reproduce any of this, because source-parsed pages already take the forward path.",
+  "dependencies": [],
+  "idRanges": [
+    {
+      "from": 64570,
+      "to": 64579
+    }
+  ],
+  "platform": "27.0.0.0",
+  "application": "27.0.0.0",
+  "runtime": "15.0",
+  "target": "Cloud"
+}

@@ -1905,28 +1905,59 @@ internal sealed class RunnerPageInstance
 
     /// <summary>
     /// The identifier BC's C# emitter gives an AL member name — the FORWARD half of the
-    /// trigger-method naming scheme, empirically pinned against BC's own emit (probe page with
-    /// one action per character class, decompiled): a space becomes <c>_</c>
-    /// (<c>"Spaced Stamp"</c> → <c>Spaced_Stamp</c>, each space separately: <c>"A  C"</c> →
-    /// <c>A__C</c>); letters (Unicode included: <c>"Ærø Løb"</c> → <c>Ærø_Løb</c>), digits and
-    /// <c>_</c> pass through; any other character becomes <c>a</c> + its decimal code point
-    /// (<c>-</c>→<c>a45</c>, <c>.</c>→<c>a46</c>, <c>&amp;</c>→<c>a38</c>, <c>%</c>→<c>a37</c>,
-    /// <c>/</c>→<c>a47</c>); a leading digit gets a <c>_</c> prefix (<c>"2Start"</c> →
-    /// <c>_2Start</c>). This is deliberately NOT invertible — that irreversibility is exactly
-    /// why FindTriggerOnTarget mangles forward instead of un-mangling (#1968).
+    /// trigger-method naming scheme. Ported from BC's own emitter, decompiled from
+    /// <c>Microsoft.Dynamics.Nav.CodeAnalysis.dll</c> (28.1),
+    /// <c>Utilities.StringExtensions.MangleIdentifierName</c> →
+    /// <c>MangleUnquotedIdentifierName</c> + <c>GetSafeCSharpIdentifierName</c>:
+    /// <list type="bullet">
+    /// <item>a space (or a <c>"</c>) becomes <c>_</c> — <c>"Spaced Stamp"</c> →
+    /// <c>Spaced_Stamp</c>, each space separately (<c>"A  C"</c> → <c>A__C</c>);</item>
+    /// <item>a C# identifier-part character passes through (Unicode letters included:
+    /// <c>"Ærø Løb"</c> → <c>Ærø_Løb</c>), with a <c>_</c> inserted before a FIRST character
+    /// that cannot start an identifier (<c>"2Start"</c> → <c>_2Start</c>);</item>
+    /// <item>any other character becomes <c>a</c> + its decimal code point (<c>-</c>→<c>a45</c>,
+    /// <c>.</c>→<c>a46</c>, <c>&amp;</c>→<c>a38</c>, <c>%</c>→<c>a37</c>, <c>/</c>→<c>a47</c>);</item>
+    /// <item>finally, a result whose upper-invariant form is a C# RESERVED keyword — Roslyn's
+    /// <c>SyntaxFacts.GetReservedKeywordKinds()</c>, the very list BC's emitter consults — or
+    /// <c>FINALIZE</c> (BC's one extra entry, <c>OtherReservedWords</c>) gets a <c>_</c>
+    /// prefix: <c>New</c> → <c>_New</c>, <c>Delegate</c> → <c>_Delegate</c>. Measured over the
+    /// whole Base Application 28.1 DLL: of 4,911 members with an emitted trigger, exactly
+    /// seven distinct names carry the prefix — <c>Default, Delegate, Event, Finalize, Internal,
+    /// New, Override</c> — and <c>Delete</c>, <c>Record</c>, <c>Setup</c> do not, which is what
+    /// rules out "any keyword-looking word" (issue #2723's 16 <c>_</c>-prefix failures).</item>
+    /// </list>
+    /// This is deliberately NOT invertible — that irreversibility is exactly why
+    /// FindTriggerOnTarget mangles forward instead of un-mangling (#1968).
     /// </summary>
     internal static string EmittedIdentifier(string name)
     {
         var sb = new System.Text.StringBuilder(name.Length);
-        foreach (var c in name)
+        for (var i = 0; i < name.Length; i++)
         {
-            if (char.IsLetterOrDigit(c) || c == '_') sb.Append(c);
-            else if (c == ' ') sb.Append('_');
+            var c = name[i];
+            if (c == ' ' || c == '"') sb.Append('_');
+            else if (Microsoft.CodeAnalysis.CSharp.SyntaxFacts.IsIdentifierPartCharacter(c))
+            {
+                if (i == 0 && !Microsoft.CodeAnalysis.CSharp.SyntaxFacts.IsIdentifierStartCharacter(c)) sb.Append('_');
+                sb.Append(c);
+            }
             else sb.Append('a').Append(((int)c).ToString(System.Globalization.CultureInfo.InvariantCulture));
         }
-        if (sb.Length > 0 && char.IsDigit(sb[0])) sb.Insert(0, '_');
-        return sb.ToString();
+        var mangled = sb.ToString();
+        return EmitterReservedIdentifiers.Contains(mangled.ToUpperInvariant()) ? "_" + mangled : mangled;
     }
+
+    /// <summary>
+    /// BC's <c>StringExtensions.ReservedKeywords</c>, built the same way BC builds it: every
+    /// Roslyn reserved-keyword text, upper-invariant, plus <c>FINALIZE</c>. Contextual keywords
+    /// (<c>record</c>, <c>var</c>, <c>async</c>, …) are NOT in GetReservedKeywordKinds and are
+    /// therefore not prefixed — matching the measured <c>Record</c> → <c>Record_a45_OnAction</c>.
+    /// </summary>
+    private static readonly HashSet<string> EmitterReservedIdentifiers = new(
+        Microsoft.CodeAnalysis.CSharp.SyntaxFacts.GetReservedKeywordKinds()
+            .Select(k => Microsoft.CodeAnalysis.CSharp.SyntaxFacts.GetText(k).ToUpperInvariant())
+            .Append("FINALIZE"),
+        StringComparer.Ordinal);
 
     /// <summary>
     /// "Mode_a45_OnValidate" -> "Mode". Returns null when the name does not carry the
