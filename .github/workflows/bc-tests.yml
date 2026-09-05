@@ -178,69 +178,15 @@ jobs:
           ref: ${{ inputs.ref }}
           submodules: true
 
-      # BC 28.1 is a .NET 8 product (Server.runtimeconfig.json tfm=net8.0); the runner
-      # targets net8.0 and runs it on its real runtime. (BC's Types.dll binds
-      # System.Text.Json 10, which the runner deploys app-local via deps.json — see
-      # AlRunner.csproj.) net8 SDK builds the runner and tools/DownloadArtifacts.
-      - uses: actions/setup-dotnet@v5
+      # setup-dotnet, the Release build against this BC version, the R2R platform apps
+      # and the Microsoft test toolkit — moved, comments and all, into ONE composite
+      # action (#2724) because ms-bucket.yml needs the identical provisioning and this
+      # file's own header is the record of what a second hand-maintained copy of these
+      # steps costs (#1976). MsBucketWorkflowTests keeps both consumers on the action;
+      # ReleaseTestParityTests still keeps publish.yml/test-matrix.yml delegating here.
+      - uses: ./.github/actions/provision-bc
         with:
-          dotnet-version: '8.0.x'
-
-      - name: Build (auto-downloads BC ${{ matrix.target.bc-version }} DLLs)
-        run: |
-          # AllowBcArtifactDownload=true is what actually permits the in-build fetch
-          # (AlRunner.csproj target EnsureBCServiceTierDlls). Without it the sibling
-          # FailIfBCServiceTierDllsMissing target hard-errors, and this step failed
-          # before a single test ran — despite its name promising the download.
-          dotnet build AlRunner.slnx \
-            -p:_BCVersion=${{ matrix.target.bc-version }} \
-            -p:AllowBcArtifactDownload=true \
-            -c Release
-
-      - name: Download R2R platform apps (Base/System Application, …)
-        run: |
-          # The corpus ships a SYMBOL-ONLY Base Application in its .alpackages, which is
-          # enough to COMPILE but carries no runtime DLL — so cross-app tableextension tests
-          # that instantiate a Base App record (e.g. Item Journal Batch / Record233) fail at
-          # runtime ("no loaded type Record233"). Fetch the R2R platform apps (with DLLs) at
-          # this BC version into a package cache so DependencyLoader can load the real types.
-          # They're a higher version than the .alpackages symbols, so the resolver prefers them.
-          dotnet run --project tools/DownloadArtifacts -- \
-            platform-apps ${{ matrix.target.bc-version }} "$HOME/.al-runner/platform-apps"
-
-          # Issue #2205: the same apps, also at the location the runner scans BY DEFAULT
-          # (ProvisioningCheck.PlatformAppsDirFor — <artifacts-root>/<version>/platform-apps),
-          # which is where `provision`/--auto-provision put them on a real machine.
-          #
-          # Every AlRunner.Tests case that spawns the runner as a subprocess runs without
-          # --package-cache, so it only ever sees the default caches. Now that an ordinary
-          # app.json's `application`/`platform` fields are recognised as a real Microsoft
-          # dependency, each of those subprocesses would otherwise decide it needs the
-          # platform set and fetch 116 MB from the CDN — dozens of times, four in parallel,
-          # into the same directory. Hardlinking the already-downloaded set is instant and
-          # makes CI match a developer machine that has provisioned once.
-          DEFAULT_PLATFORM_APPS="$HOME/.local/share/al-runner/artifacts/${{ matrix.target.bc-version }}/platform-apps"
-          mkdir -p "$DEFAULT_PLATFORM_APPS"
-          cp -al "$HOME/.al-runner/platform-apps/." "$DEFAULT_PLATFORM_APPS/" \
-            || cp -a "$HOME/.al-runner/platform-apps/." "$DEFAULT_PLATFORM_APPS/"
-          ls -la "$DEFAULT_PLATFORM_APPS"
-
-      - name: Download the Microsoft test toolkit (Any, Library Assert, Test Runner, …)
-        run: |
-          # tests/runner-extras/microsoft-dependencies depends on Application Test Library
-          # (w1/Extensions, fetched above), which in turn needs the toolkit apps that ship
-          # in the PLATFORM artifact — two different artifacts, two commands. Without these
-          # the leg aborted on a provisioning gap before running a test; it only passed
-          # locally because a full multi-GB BC sandbox artifact happened to be cached.
-          #
-          # Deliberately a SEPARATE directory, not merged into platform-apps: the toolkit is
-          # 107 apps, and CacheKeyDependencyClosureTests builds a "different closure" by
-          # dropping the ordinally-first .app from that directory. Merged, that drops an
-          # unrelated toolkit app the fixture never resolves, both closures come out
-          # identical, and the test fails for a reason that has nothing to do with the
-          # cache key. --package-cache is repeatable; pass both.
-          dotnet run --project tools/DownloadArtifacts -- \
-            test-apps ${{ matrix.target.bc-version }} "$HOME/.al-runner/test-apps"
+          bc-version: ${{ matrix.target.bc-version }}
 
       - name: Warm the Ncl Cecil rewrite cache
         run: |

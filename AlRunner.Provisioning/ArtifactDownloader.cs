@@ -222,6 +222,346 @@ public static class ArtifactDownloader
     }
 
     // -----------------------------------------------------------------------
+    // Test Sources (issue #2724): ONE Microsoft BaseApp test bucket's AL source. The
+    // 33 `Tests-*.Source.zip` files ship in the SAME platform artifact TestApps reads,
+    // under Applications/BaseApp/Test/ beside the compiled .app files — TestApps' filter
+    // simply excluded them by extension. Each zip is flat (app.json at the root beside
+    // the .al files, measured on 28.4.53241.54318: Tests-ERM = 297 files, 2.4 MB
+    // deflated) and needs no edits, so it is unpacked straight into <outputDir>/<bucket>/
+    // and that directory is a runnable bundle.
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// Whether a ZIP central-directory entry is <paramref name="bucket"/>'s Source.zip.
+    /// Pure over the entry name so the rule — the BaseApp Test/ folder AND an exact
+    /// basename match — is unit-testable without a central directory or a network round
+    /// trip. Exact, not prefix: <c>Tests-ERM</c> must not match a hypothetical
+    /// <c>Tests-ERM-Extra</c>, and the compiled <c>Microsoft_Tests-ERM_….app</c> beside it
+    /// is a different file for a different mode.
+    /// </summary>
+    internal static bool IsBaseAppTestSourceEntry(string entryName, string bucket)
+    {
+        if (string.IsNullOrWhiteSpace(entryName) || string.IsNullOrWhiteSpace(bucket)) return false;
+        const string folder = "applications/baseapp/test/";
+        var lower = entryName.Replace('\\', '/').ToLowerInvariant();
+        if (!lower.StartsWith(folder, StringComparison.Ordinal)) return false;
+        // Equality on the remainder also rejects anything nested deeper than the folder.
+        return lower[folder.Length..] == bucket.Trim().ToLowerInvariant() + ".source.zip";
+    }
+
+    public static int TestSources(string version, string outputDir, string bucket, Action<string>? log = null)
+    {
+        var logf = L(log);
+        if (string.IsNullOrWhiteSpace(bucket))
+        {
+            logf("Error: test-sources needs a bucket name, e.g. Tests-ERM");
+            return 1;
+        }
+        bucket = bucket.Trim();
+        var artifactUrl = BuildArtifactUrl(version, "platform");
+        Directory.CreateDirectory(outputDir);
+
+        using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
+
+        logf($"Resolving artifact size for BC {version} (platform)...");
+        if (!TryHeadContentLength(http, artifactUrl, version, "platform", logf, out long totalSize)) return 1;
+        if (totalSize == 0) { logf("Error: unknown size"); return 1; }
+
+        logf("Downloading ZIP directory...");
+        if (!TryReadCentralDirectory(http, artifactUrl, totalSize, logf, out var cdData, out var cdStart, out var entryCount))
+            return 1;
+
+        (string Name, int Method, long CompSize, long Offset)? found = null;
+        var shipped = new List<string>();
+        int pos = cdStart;
+        for (int i = 0; i < entryCount && pos + 46 <= cdData.Length; i++)
+        {
+            if (!IsCentralHeader(cdData, pos)) break;
+            var (cm, cs, nl, el, cl, lo, name) = ReadCentralEntry(cdData, pos);
+            pos += 46 + nl + el + cl;
+            if (cs == 0) continue;
+            if (IsBaseAppTestSourceEntry(name, bucket)) { found = (name, cm, cs, lo); break; }
+            var lower = name.ToLowerInvariant();
+            if (lower.StartsWith("applications/baseapp/test/", StringComparison.Ordinal)
+                && lower.EndsWith(".source.zip", StringComparison.Ordinal))
+                shipped.Add(Path.GetFileName(name)[..^".Source.zip".Length]);
+        }
+
+        if (found == null)
+        {
+            // Name what IS there: a typo'd bucket ("Tests-Erm", "Tests-CashFlow") is the
+            // likely cause, and the list is the only way to fix it without a second run.
+            logf($"Error: no Applications/BaseApp/Test/{bucket}.Source.zip in the BC {version} platform artifact.");
+            shipped.Sort(StringComparer.OrdinalIgnoreCase);
+            logf($"       Buckets that artifact ships ({shipped.Count}): {string.Join(", ", shipped)}");
+            return 1;
+        }
+
+        var (entryName, method, compSize, offset) = found.Value;
+        logf($"  Downloading {Path.GetFileName(entryName)} ({compSize / 1024} KB compressed)...");
+        var zipBytes = ExtractEntry(http, artifactUrl, totalSize, entryName, method, compSize, offset, logf);
+        if (zipBytes == null) return 1;
+
+        // A fresh directory every time: a previous partial or older-version unpack must not
+        // merge with this one and leave stray .al files the compiler then picks up.
+        var bundleDir = Path.Combine(outputDir, bucket);
+        if (Directory.Exists(bundleDir)) Directory.Delete(bundleDir, recursive: true);
+        Directory.CreateDirectory(bundleDir);
+
+        int files;
+        try
+        {
+            using var ms = new MemoryStream(zipBytes);
+            files = UnpackSourceZip(ms, bundleDir);
+        }
+        catch (InvalidDataException ex)
+        {
+            logf($"Error: {Path.GetFileName(entryName)}: {ex.Message}");
+            return 1;
+        }
+
+        logf($"Unpacked {files} file(s) from {Path.GetFileName(entryName)} to {bundleDir}");
+        return 0;
+    }
+
+    /// <summary>
+    /// Unpacks a bucket Source.zip into <paramref name="destDir"/>. Validates EVERY entry
+    /// before writing ANY: an entry that would land outside the destination
+    /// (<c>../</c>, an absolute path) or a zip with no root <c>app.json</c> throws
+    /// <see cref="InvalidDataException"/> with nothing on disk — a half-unpacked bundle
+    /// would otherwise compile and run a subset while looking complete. Returns the number
+    /// of files written.
+    /// </summary>
+    internal static int UnpackSourceZip(Stream sourceZip, string destDir)
+    {
+        using var zip = new ZipArchive(sourceZip, ZipArchiveMode.Read, leaveOpen: true);
+        var destRoot = Path.GetFullPath(destDir);
+        var destRootWithSep = destRoot.EndsWith(Path.DirectorySeparatorChar) ? destRoot : destRoot + Path.DirectorySeparatorChar;
+
+        var plan = new List<(ZipArchiveEntry Entry, string Target)>();
+        var hasRootAppJson = false;
+        foreach (var entry in zip.Entries)
+        {
+            var name = entry.FullName.Replace('\\', '/');
+            if (name.Length == 0 || name.EndsWith('/')) continue; // directory entry
+            var target = Path.GetFullPath(Path.Combine(destRoot, name));
+            if (!target.StartsWith(destRootWithSep, StringComparison.Ordinal))
+                throw new InvalidDataException(
+                    $"entry '{entry.FullName}' escapes the destination directory '{destRoot}' — refusing to unpack any of it");
+            if (string.Equals(name, "app.json", StringComparison.OrdinalIgnoreCase)) hasRootAppJson = true;
+            plan.Add((entry, target));
+        }
+
+        if (!hasRootAppJson)
+            throw new InvalidDataException(
+                "no app.json at the root of the zip, so the runner would see no bundle at all (first entries: "
+                + string.Join(", ", zip.Entries.Take(5).Select(e => e.FullName)) + ")");
+
+        foreach (var (entry, target) in plan)
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+            using var input = entry.Open();
+            using var output = File.Create(target);
+            input.CopyTo(output);
+        }
+        return plan.Count;
+    }
+
+    // -----------------------------------------------------------------------
+    // Test Data (issue #2724): the sandbox demo-database backup `--test-data` hydrates
+    // from. It sits at the ROOT of the country artifact (w1: BusinessCentral-W1.bak,
+    // measured 610 MB deflated / 977 MB uncompressed on 28.4.53241.54318 — the whole
+    // artifact is 955 MB, so this one entry is most of it). ExtractEntry buffers an entry
+    // in memory twice over and cannot hold this one; the .bak is streamed to disk instead
+    // (ExtractEntryToFile / CopyZipEntryData) and landed atomically, so a partial download
+    // never sits at the path TestDataOptions would open and trust.
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// Whether a ZIP central-directory entry is the demo backup for <paramref name="country"/>.
+    /// Root-level only: the artifact ships exactly one, at the root, and anchoring there is the
+    /// same defence <see cref="IsWantedPlatformAppEntry"/> uses against a same-basename file in
+    /// another folder. Pure over the entry name so it is testable without a network round trip.
+    /// </summary>
+    internal static bool IsTestDataBackupEntry(string entryName, string country)
+    {
+        if (string.IsNullOrWhiteSpace(entryName)) return false;
+        var lower = entryName.Replace('\\', '/').ToLowerInvariant();
+        return lower == $"businesscentral-{NormalizeCountry(country)}.bak";
+    }
+
+    public static int TestData(string version, string outputDir, string country = "w1", Action<string>? log = null)
+    {
+        var logf = L(log);
+        var countryLower = NormalizeCountry(country);
+        var artifactUrl = BuildArtifactUrl(version, countryLower);
+        Directory.CreateDirectory(outputDir);
+
+        // Generous: this client streams the whole ~600 MB entry through one response.
+        using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(30) };
+
+        logf($"Resolving artifact size for BC {version} ({countryLower})...");
+        if (!TryHeadContentLength(http, artifactUrl, version, countryLower, logf, out long totalSize)) return 1;
+        if (totalSize == 0) { logf("Error: unknown size"); return 1; }
+        logf($"{countryLower} artifact: {totalSize / 1048576} MB");
+
+        logf("Downloading ZIP directory...");
+        if (!TryReadCentralDirectory(http, artifactUrl, totalSize, logf, out var cdData, out var cdStart, out var entryCount))
+            return 1;
+
+        (string Name, int Method, long CompSize, long UncompSize, long Offset)? found = null;
+        int pos = cdStart;
+        for (int i = 0; i < entryCount && pos + 46 <= cdData.Length; i++)
+        {
+            if (!IsCentralHeader(cdData, pos)) break;
+            var (cm, cs, nl, el, cl, lo, name) = ReadCentralEntry(cdData, pos);
+            if (cs > 0 && IsTestDataBackupEntry(name, countryLower))
+            {
+                found = (name, cm, cs, ReadCentralUncompressedSize(cdData, pos), lo);
+                break;
+            }
+            pos += 46 + nl + el + cl;
+        }
+
+        var expectedName = $"BusinessCentral-{countryLower.ToUpperInvariant()}.bak";
+        if (found == null)
+        {
+            logf($"Error: no {expectedName} at the root of the BC {version} ({countryLower}) artifact.");
+            return 1;
+        }
+
+        var (entryName, method, compSize, uncompSize, offset) = found.Value;
+        if (uncompSize == uint.MaxValue)
+        {
+            // ZIP64 sizes live in the extra field; nothing here reads them, and guessing the
+            // length would defeat the truncation check that makes the download trustworthy.
+            logf($"Error: {entryName} is a ZIP64 entry (uncompressed size not in the central directory); not supported.");
+            return 1;
+        }
+
+        var destPath = Path.Combine(outputDir, Path.GetFileName(entryName));
+        logf($"  Downloading {entryName} ({compSize / 1048576} MB compressed, {uncompSize / 1048576} MB uncompressed), streaming to disk...");
+        if (!ExtractEntryToFile(http, artifactUrl, totalSize, entryName, method, compSize, uncompSize, offset, destPath, logf))
+            return 1;
+
+        logf($"Written {destPath} ({new FileInfo(destPath).Length / 1048576} MB)");
+        return 0;
+    }
+
+    /// <summary>
+    /// Copies one ZIP entry's data from <paramref name="compressedSource"/> to
+    /// <paramref name="destination"/>, inflating deflate (method 8) or copying stored
+    /// (method 0) bytes, and returns the byte count written. Throws
+    /// <see cref="NotSupportedException"/> for any other method and
+    /// <see cref="InvalidDataException"/> when the count differs from
+    /// <paramref name="expectedUncompressedLength"/> — a stream that stopped short must
+    /// surface as an error, never as a shorter file. Pure over streams so it is testable
+    /// against an in-memory deflate buffer.
+    /// </summary>
+    internal static long CopyZipEntryData(Stream compressedSource, int method, long expectedUncompressedLength, Stream destination)
+    {
+        Stream data = method switch
+        {
+            0 => compressedSource,
+            8 => new DeflateStream(compressedSource, CompressionMode.Decompress, leaveOpen: true),
+            _ => throw new NotSupportedException(
+                $"unsupported ZIP compression method {method} (only stored = 0 and deflate = 8 are handled)"),
+        };
+
+        long copied = 0;
+        try
+        {
+            var buffer = new byte[1 << 20];
+            int n;
+            while ((n = data.Read(buffer, 0, buffer.Length)) > 0)
+            {
+                destination.Write(buffer, 0, n);
+                copied += n;
+            }
+        }
+        catch (InvalidDataException ex)
+        {
+            throw new InvalidDataException(
+                $"corrupt deflate stream after {copied} of the expected {expectedUncompressedLength} bytes: {ex.Message}", ex);
+        }
+        finally
+        {
+            if (method == 8) data.Dispose();
+        }
+
+        if (copied != expectedUncompressedLength)
+            throw new InvalidDataException(
+                $"truncated entry: expected {expectedUncompressedLength} bytes, got {copied}");
+        return copied;
+    }
+
+    // Streamed sibling of ExtractEntry for entries too large to buffer (the .bak). Reads the
+    // local header with a small ranged request exactly as ExtractEntry does, then streams the
+    // compressed data range through CopyZipEntryData into <dest>.partial and moves it into
+    // place only after the length check passed. One retry from scratch, like DownloadRange.
+    private static bool ExtractEntryToFile(
+        HttpClient http, string url, long totalSize,
+        string name, int method, long compSize, long uncompSize, long offset,
+        string destPath, Action<string> logf)
+    {
+        long headerEnd = Math.Min(offset + 30 + name.Length + 4096, totalSize - 1);
+        var header = DownloadRange(http, url, offset, headerEnd);
+        if (header.Length < 30 || header[0] != 0x50 || header[1] != 0x4b || header[2] != 0x03 || header[3] != 0x04)
+        {
+            logf($"  WARNING: bad local header for {Path.GetFileName(name)} — skipping");
+            return false;
+        }
+        int nl2 = BitConverter.ToUInt16(header, 26);
+        int el2 = BitConverter.ToUInt16(header, 28);
+        long dataStart = offset + 30 + nl2 + el2;
+        long dataEnd = dataStart + compSize - 1;
+        if (dataEnd > totalSize - 1)
+        {
+            logf($"  WARNING: truncated data for {Path.GetFileName(name)} — skipping");
+            return false;
+        }
+
+        var partial = destPath + ".partial";
+        for (int attempt = 0; attempt < 2; attempt++)
+        {
+            try
+            {
+                var req = new HttpRequestMessage(HttpMethod.Get, url);
+                req.Headers.Range = new RangeHeaderValue(dataStart, dataEnd);
+                using var resp = http.Send(req, HttpCompletionOption.ResponseHeadersRead);
+                resp.EnsureSuccessStatusCode();
+                using (var body = resp.Content.ReadAsStream())
+                using (var file = new FileStream(partial, FileMode.Create, FileAccess.Write, FileShare.None, 1 << 20))
+                    CopyZipEntryData(body, method, uncompSize, file);
+                File.Move(partial, destPath, overwrite: true);
+                return true;
+            }
+            catch (NotSupportedException ex)
+            {
+                logf($"  WARNING: {Path.GetFileName(name)}: {ex.Message} — skipping");
+                TryDelete(partial);
+                return false;
+            }
+            catch (Exception ex) when (attempt == 0)
+            {
+                logf($"  Retrying download of {Path.GetFileName(name)} ({ex.Message})...");
+            }
+            catch (Exception ex)
+            {
+                logf($"  WARNING: {Path.GetFileName(name)}: {ex.Message} — skipping");
+                TryDelete(partial);
+                return false;
+            }
+        }
+        return false;
+    }
+
+    private static void TryDelete(string path)
+    {
+        try { if (File.Exists(path)) File.Delete(path); } catch { /* best effort */ }
+    }
+
+    // -----------------------------------------------------------------------
     // Platform Apps: Microsoft Base/System/BusinessFoundation/Application .app files
     // from the w1 (or, since #2236, a country-localized) artifact's Extensions/ folder.
     // -----------------------------------------------------------------------
@@ -569,6 +909,11 @@ public static class ArtifactDownloader
 
     private static bool IsCentralHeader(byte[] cd, int pos)
         => cd[pos] == 0x50 && cd[pos + 1] == 0x4b && cd[pos + 2] == 0x01 && cd[pos + 3] == 0x02;
+
+    // Central-directory uncompressed size (offset 24). Kept out of ReadCentralEntry's tuple so
+    // its five existing deconstruction sites stay untouched; only the streamed path needs it.
+    private static long ReadCentralUncompressedSize(byte[] cd, int pos)
+        => BitConverter.ToUInt32(cd, pos + 24);
 
     private static (int Method, uint CompSize, int NameLen, int ExtraLen, int CommentLen, uint LocalOffset, string Name)
         ReadCentralEntry(byte[] cd, int pos)
