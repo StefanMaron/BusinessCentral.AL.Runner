@@ -762,7 +762,13 @@ public static class FlowFieldPatches
                 Console.Error.WriteLine(
                     $"[FlowFieldPatches] source-table filter failed for table {tableId}: "
                     + $"{inner.GetType().Name}: {inner.Message}");
-                throw inner;
+                // Not `throw inner` (#2948): a bare rethrow resets the trace to this line,
+                // erasing BC's own filter-machinery frames — the very frames that say WHICH
+                // condition it rejected. The sibling catch forty lines above already used
+                // ExceptionDispatchInfo; this one did not, and that asymmetry is what made
+                // #2925's four-test cluster look unrelated to its own root cause.
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(inner).Throw();
+                throw; // unreachable
             }
             if (rows == null)
             {

@@ -165,7 +165,11 @@ public static partial class BcRuntime
         }
         catch (TargetInvocationException tie) when (tie.InnerException != null)
         {
-            throw tie.InnerException;
+            // Not `throw tie.InnerException` (#2948): this is the codeunit-invocation seam,
+            // so a bare rethrow would reset the trace of EVERY exception an AL codeunit
+            // method raises to this one line, discarding the AL/BC frames that identify it.
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw();
+            throw; // unreachable
         }
     }
 

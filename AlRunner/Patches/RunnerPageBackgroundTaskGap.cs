@@ -97,7 +97,10 @@ public static class RunnerPageBackgroundTaskGap
         var session = NavCurrentThread.Session;
         RunChildSessionTaskInline(session, task);
         if (throwChildSessionError && task.Error != null)
-            throw task.Error.Exception;
+            // Not `throw task.Error.Exception` (#2948): the exception was already thrown
+            // inside the child-session task, so a bare rethrow would erase the task's own
+            // frames and report the failure as originating here, in the runner's gap shim.
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(task.Error.Exception).Throw();
         return task.Results;
     }
 
