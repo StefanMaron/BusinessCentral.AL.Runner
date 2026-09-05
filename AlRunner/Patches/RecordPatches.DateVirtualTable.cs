@@ -260,13 +260,24 @@ public static partial class RecordPatches
     // ── Per-provider populated span ──────────────────────────────────────────────────────
     private sealed class DatePopulatedSpan
     {
-        internal DateTime Min = DateTime.MaxValue;
-        internal DateTime Max = DateTime.MinValue;
-        internal bool Any;
+        /// <summary>
+        /// The periods this provider holds, as DISJOINT, SORTED, gap-separated intervals rather
+        /// than one min..max envelope. The envelope is what made per-request materialisation
+        /// (#2648) only half a fix: materialise one week of 1850, then Get a day in 2100, and an
+        /// envelope has to fill everything between — 250 years, ~109,000 rows, which is the exact
+        /// number the issue is about, just moved to a later call. The runner-extras Date suite
+        /// does precisely that in its first two tests. With a set, the second request costs the
+        /// ~440 rows of the year it names.
+        /// </summary>
+        internal readonly List<(DateTime Start, DateTime End)> Covered = new();
+
+        /// <summary>Running row estimate of <see cref="Covered"/>, so the cap is checked against
+        /// what is actually materialised rather than against the envelope's span.</summary>
+        internal long CoveredEstimate;
 
         /// <summary>True once the whole configured window has been materialised into this
-        /// provider. Distinct from <see cref="Any"/>, which is true after ANY span — including a
-        /// single day materialised for one keyed Get.</summary>
+        /// provider. Distinct from "Covered is non-empty", which is true after ANY span —
+        /// including a single day materialised for one keyed Get.</summary>
         internal bool WholeWindow;
 
         /// <summary>The metatable and skeleton session captured when this provider was handed
@@ -424,26 +435,31 @@ public static partial class RecordPatches
 
         lock (span)
         {
-            // Nothing new to do.
-            if (span.Any && wantStart >= span.Min && wantEnd <= span.Max) return;
+            var missing = DateMissingSpans(span.Covered, wantStart, wantEnd);
+            if (missing.Count == 0) return;   // nothing new to do
 
-            var newMin = span.Any ? (wantStart < span.Min ? wantStart : span.Min) : wantStart;
-            var newMax = span.Any ? (wantEnd > span.Max ? wantEnd : span.Max) : wantEnd;
-
-            var estimate = EstimateDateRowCount(newMin, newMax);
-            if (estimate > DateWindowMaxRows)
+            // The cap is about how many rows are materialised, so it is checked against what is
+            // already there PLUS what this request would add — not against the envelope, which
+            // would refuse a narrow request purely because an earlier one sat far away.
+            long adding = 0;
+            foreach (var (s0, e0) in missing) adding += EstimateDateRowCount(s0, e0);
+            var total = span.CoveredEstimate + adding;
+            if (total > DateWindowMaxRows)
                 throw DateShapeGap(
                     "a Date filter asks for periods in "
                     // #2968: `:N0` picks up the ambient group separator, so this diagnostic
                     // read differently per operator locale. Invariant, like the rest of the
                     // runner's own output.
                     + System.FormattableString.Invariant(
-                        $"[{newMin:yyyy-MM-dd}..{newMax:yyyy-MM-dd}], which is about {estimate:N0} rows, past the ")
+                        $"[{wantStart:yyyy-MM-dd}..{wantEnd:yyyy-MM-dd}], which would add about {adding:N0} rows ")
                     + System.FormattableString.Invariant(
-                        $"{DateWindowMaxRows:N0}-row cap for the materialised window ")
-                    + (span.Any
+                        $"for {total:N0} in all, past the {DateWindowMaxRows:N0}-row cap for the materialised ")
+                    + "window "
+                    + (span.Covered.Count > 0
                         ? System.FormattableString.Invariant(
-                            $"(currently [{span.Min:yyyy-MM-dd}..{span.Max:yyyy-MM-dd}]). ")
+                              $"(currently {span.CoveredEstimate:N0} rows in {span.Covered.Count} span(s), ")
+                          + System.FormattableString.Invariant(
+                              $"[{span.Covered[0].Start:yyyy-MM-dd}..{span.Covered[^1].End:yyyy-MM-dd}]). ")
                         : "(nothing is materialised yet — Date rows are materialised per request). ")
                     + "Raise AL_RUNNER_DATE_WINDOW_MAX_ROWS, or narrow the filter");
 
@@ -455,37 +471,75 @@ public static partial class RecordPatches
             EnsureDateFieldLayout(dateMetaTable);
             var periodTypes = EnsureDatePeriodTypes(dateMetaTable);
 
-            // Insert only the parts of [newMin..newMax] not already covered, so an extension
-            // does not re-walk (and re-throw duplicate keys over) the whole existing window.
-            foreach (var (start, end) in MissingSpans(span, newMin, newMax))
+            // Insert only the parts this provider does not already hold, so a second request
+            // does not re-walk (and re-throw duplicate keys over) what a first one materialised.
+            foreach (var (start, end) in missing)
                 foreach (var (ordinal, periodType) in periodTypes)
                     InsertDatePeriods(provider, dateMetaTable, session, ordinal, periodType, start, end);
 
-            span.Min = newMin;
-            span.Max = newMax;
-            span.Any = true;
+            DateAddCovered(span.Covered, wantStart, wantEnd);
+            span.CoveredEstimate = total;
             span.Meta ??= dateMetaTable;
             span.Session ??= session;
             // "The whole configured window is in" — the flag the provider-level net reads. It is
-            // deliberately about the WINDOW, not about the span being non-empty: a single day
+            // deliberately about the WINDOW, not about anything being materialised: a single day
             // materialised for a keyed Get must not convince the net that a FlowField can be
-            // answered.
-            if (newMin <= new DateTime(DateWindowMinYear, 1, 1) && newMax >= new DateTime(DateWindowMaxYear, 12, 31))
+            // answered. DateMissingSpans is the authority, so a window that was covered by two
+            // adjacent requests counts, and one with a hole in it does not.
+            if (DateMissingSpans(span.Covered,
+                    new DateTime(DateWindowMinYear, 1, 1), new DateTime(DateWindowMaxYear, 12, 31)).Count == 0)
                 span.WholeWindow = true;
         }
     }
 
-    /// <summary>The sub-spans of [newMin..newMax] the provider does not hold yet.</summary>
-    private static IEnumerable<(DateTime Start, DateTime End)> MissingSpans(
-        DatePopulatedSpan span, DateTime newMin, DateTime newMax)
+    /// <summary>
+    /// The sub-spans of [<paramref name="wantStart"/>..<paramref name="wantEnd"/>] that
+    /// <paramref name="covered"/> does not already hold, in order. <paramref name="covered"/>
+    /// must be disjoint and sorted by Start, which <see cref="DateAddCovered"/> maintains.
+    /// Returns an empty list when the request is entirely covered, or inverted.
+    /// </summary>
+    internal static List<(DateTime Start, DateTime End)> DateMissingSpans(
+        IReadOnlyList<(DateTime Start, DateTime End)> covered, DateTime wantStart, DateTime wantEnd)
     {
-        if (!span.Any)
+        var gaps = new List<(DateTime Start, DateTime End)>();
+        if (wantEnd < wantStart) return gaps;
+
+        var cursor = wantStart;
+        foreach (var (start, end) in covered)
         {
-            yield return (newMin, newMax);
-            yield break;
+            if (end < cursor) continue;             // entirely before what is still wanted
+            if (start > wantEnd) break;             // sorted, so nothing later can overlap either
+            if (start > cursor) gaps.Add((cursor, start.AddDays(-1)));
+            if (end >= cursor) cursor = end.AddDays(1);
+            if (cursor > wantEnd) return gaps;
         }
-        if (newMin < span.Min) yield return (newMin, span.Min.AddDays(-1));
-        if (newMax > span.Max) yield return (span.Max.AddDays(1), newMax);
+        if (cursor <= wantEnd) gaps.Add((cursor, wantEnd));
+        return gaps;
+    }
+
+    /// <summary>
+    /// Record [<paramref name="start"/>..<paramref name="end"/>] as covered, keeping
+    /// <paramref name="covered"/> disjoint, sorted by Start, and merged across intervals that
+    /// touch or overlap — so a window materialised as two adjacent halves reads as one span and
+    /// not as two with a zero-day gap between them.
+    /// </summary>
+    internal static void DateAddCovered(
+        List<(DateTime Start, DateTime End)> covered, DateTime start, DateTime end)
+    {
+        if (end < start) return;
+
+        var i = 0;
+        while (i < covered.Count && covered[i].End.AddDays(1) < start) i++;   // strictly before, no touch
+
+        var newStart = start;
+        var newEnd = end;
+        while (i < covered.Count && covered[i].Start.AddDays(-1) <= newEnd)
+        {
+            if (covered[i].Start < newStart) newStart = covered[i].Start;
+            if (covered[i].End > newEnd) newEnd = covered[i].End;
+            covered.RemoveAt(i);
+        }
+        covered.Insert(i, (newStart, newEnd));
     }
 
     /// <summary>
