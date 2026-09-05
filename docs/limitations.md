@@ -560,6 +560,79 @@ the open `ObsoleteState = Removed` question as settled in either direction.
 
 ---
 
+### `Record "Object"` — the rows are the runner's own object inventory, and most columns read blank
+
+<a id="object-system-table"></a>
+
+`Object` (2000000001) is the other half of the table relation `Object Metadata`."Object ID"
+declares (`TableRelation = Object.ID WHERE(Type = FIELD("Object Type"))`). It is not a virtual
+table either: it is the legacy object registry, one of the same 43 ids in
+`SystemTables.ApplicationDatabaseTables`, and `System.app`'s own declaration calls it the
+"legacy object metadata storage system superseded by Application Object Metadata table"
+(`Scope = OnPrem`, `ObsoleteState = Pending`, keyed on `Type` + `"Company Name"` + `ID`).
+
+Its rows are an object *inventory* rather than a fixed id list, so the runner projects the one
+inventory it already has — `EnumerateKnownAlObjects`, the source `AllObj` (2000000038) and
+`AllObjWithCaption` (2000000058) are answered from — into this table's column shape. That is
+deliberate: two registries could disagree about which objects exist, one cannot.
+
+| Column | Real BC | al-runner |
+|---|---|---|
+| `Type`, `ID`, `Name` | One row per application object | Projected from the runner's own object inventory |
+| `"Company Name"` | The per-company object registry's company | Always **blank** — every object the runner knows is company-independent |
+| `Modified`, `Compiled`, `"BLOB Reference"`, `"BLOB Size"`, `"DBM Table No."`, `Date`, `Time`, `"Version List"`, `Caption`, `Locked`, `"Locked By"` | What the classic registry stored | Always **`false` / `0` / empty** |
+
+An object kind this table's own `Type` option string cannot name — `Enum`, `Interface`,
+`PermissionSet`, every `*extension` kind — gets **no row** rather than an invented ordinal. The
+option is `TableData,Table,,Report,,Codeunit,XMLport,MenuSuite,Page,Query,System,FieldNumber`,
+a strict subset of `AllObj`'s, so `Object` legitimately lists fewer kinds than `AllObj` does.
+
+**Four of its columns are `OemText`, not the `Text[n]` they are declared as, and that is BC's
+decision rather than the runner's.**
+`Microsoft.Dynamics.Nav.CodeAnalysis.Emit.CodeGenerator.IsOemTextFieldOnObjectTable` is a
+table-id check against 2000000001 and a switch over field numbers 2, 4, 12 and 50; `GetFieldType`
+calls it and substitutes `NavTypeKind.OemText`, so the emitted IL calls
+`ValidateExpectedType(fieldNo, NavType.OemText)` while `SymbolReference.json` and the shipped
+`.al` both say `Text[n]`. Read off the shipped compiler on BC 27.5.46862.48827 and BC
+28.1.49838.53910 — identical bodies. `RecordPatches.NclMetaTableBuilder.MapNavType` mirrors the
+carve-out; without it every AL read of `"Company Name"` / `Name` / `"Version List"` /
+`"Locked By"` throws `NavObjectDefinitionChangedException` ("old type: OemText, new type: Text")
+instead of returning anything.
+
+**No service tier has adjudicated the row set, and none can through the corpus.** Both routes a
+Cloud-target app has are closed: `Record "Object"` fails `AL0296` because the table is
+`Scope = OnPrem`, and the `RecordRef` route is refused at runtime by
+`NavRecordRef.CheckIsOpenAllowed`, because 2000000001 is in `SystemTables.InternalTables` (100
+ids on BC 28.1) and the escape hatch `SystemTables.OnPremSystemTableRecordRefAllowed` is only
+`{ 2000000187, 2000000188 }`. That refusal was measured on the sibling id: corpus PR
+[#153](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests/pull/153) was withdrawn
+after all 8 BC legs of
+[run 33968379281](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests/actions/runs/33968379281)
+refused 2000000071 on that message, and the mechanism is membership in the same set. What the
+runner-extras suite therefore asserts is the *projection* — a claim about the runner — not what
+a tier's `Object` table holds. **issue #2834** tracks the missing upstream coverage for this
+whole area; settling it needs an OnPrem-target app in the corpus.
+
+The blank columns are a **declared divergence** for the same reason Object Metadata's payload
+columns are: there is no registry behind them to reproduce. Per
+`.claude/rules/loud-failures.md` they should refuse by name rather than read blank, which needs
+the per-(table, field) read seam **issue #2771** tracks — this table is its second consumer.
+`Caption` is in the blank list even though the shared inventory does carry a caption, because
+whether this legacy table's field 20 holds the object's AL caption is a BC claim no tier here
+can adjudicate; **issue #2839** tracks it rather than guessing.
+
+A `--test-data` backup's real rows take precedence over the projection, and that precedence is
+conditioned on such a loader existing in the run at all — an install-baseline restore replays
+rows the projection itself wrote into a fresh provider, which a bare "does the store have rows"
+test cannot tell apart from a backup's. **issue #2875** records what that leaves open
+(`--test-data` and an install baseline together) and why the obvious fix — excluding 2000000001
+from install-baseline capture — is not a drop-in.
+
+`tests/runner-extras/object-system-table` asserts the runner-side behaviour so it cannot move
+quietly.
+
+---
+
 ## Per-BC-minor engine variants: granularity is per MINOR, not per exact build
 
 Every released `al-runner` binary used to be compiled against exactly one BC minor's
