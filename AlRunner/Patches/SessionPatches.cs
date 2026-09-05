@@ -345,11 +345,15 @@ public static partial class BcRuntime
     /// <c>Error()</c> carrier, so AL <c>asserterror</c> traps it and <c>GetLastErrorText</c>
     /// returns the message, which is what the corpus test does.
     ///
-    /// <para>Deliberately NOT <c>RunnerOutOfScopeException</c>: that type is a plain
-    /// <c>System.Exception</c> specifically so <c>asserterror</c> CANNOT swallow it
-    /// (loud-failures.md), and it announces a runner limitation. This is the opposite on both
-    /// counts — it is real BC behaviour faithfully reproduced, and AL is entitled to trap it.
-    /// Same shape and reasoning as <c>MakeDataTransferException</c>.</para>
+    /// <para>Deliberately NOT <c>RunnerOutOfScopeException</c>: that type announces a runner
+    /// limitation and is what <c>tests/expectations/</c> classifies as an out-of-scope signal.
+    /// This refusal is the opposite — real BC behaviour faithfully reproduced, which no
+    /// expectation entry should ever mark out of scope. Same shape and reasoning as
+    /// <c>MakeDataTransferException</c>. (Trappability is NOT the distinction, and an earlier
+    /// version of this comment said it was: <c>RunnerOutOfScopeException</c> is a plain
+    /// <c>System.Exception</c>, and <c>asserterror</c> catches it too — the runner's asserterror
+    /// replacement is an unfiltered <c>catch (Exception)</c>. See
+    /// <c>RunnerOutOfScopeException.cs</c>'s header and issue #2871.)</para>
     ///
     /// <para>The text is BC's own, measured byte-identical on all eight corpus legs (27.0, 27.3,
     /// 27.5, 28.0, 28.1, 28.2, 28.3, 28.4). <c>Assert.ExpectedError</c> is a substring match and

@@ -458,10 +458,14 @@ public static class FlowFieldPatches
             return new System.Threading.Tasks.ValueTask<bool>(true);
         }
         // A runner out-of-scope signal is NOT a BC data error, so DataError.TrapError must not
-        // turn it into `false`. RunnerOutOfScopeException deliberately derives from plain
-        // Exception "so AL `asserterror` cannot swallow it"; letting the TrapError branches
-        // below swallow it instead would leave the FlowField at its previous value with only a
-        // stderr line — the silent default .claude/rules/loud-failures.md forbids.
+        // turn it into `false`: letting the TrapError branches below swallow it would leave the
+        // FlowField at its previous value with only a stderr line — the silent default
+        // .claude/rules/loud-failures.md forbids. That is the whole reason for this rethrow;
+        // the exception's own type buys nothing here. (An earlier version of this comment said
+        // RunnerOutOfScopeException derives from plain Exception "so AL `asserterror` cannot
+        // swallow it". It is a plain Exception, but asserterror catches it like any other error
+        // — the runner's asserterror replacement is an unfiltered `catch (Exception)`. See
+        // RunnerOutOfScopeException.cs's header and issue #2871.)
         catch (RunnerOutOfScopeException)
         {
             throw;

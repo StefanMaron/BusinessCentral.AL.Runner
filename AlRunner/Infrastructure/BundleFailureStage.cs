@@ -39,6 +39,26 @@ internal static class BundleFailureStage
     /// Execution-stage for the same reason: the module ran.</summary>
     internal const string TestTimeoutAbort = "TEST-TIMEOUT-ABORT";
 
+    /// <summary>
+    /// The head of a watchdog abort reason: the test that hung, named. TestExecutor builds the
+    /// reason with this and Reporter reads it back with <see cref="AbortReasonNamesTest"/>, so
+    /// the wording lives in one place — a change on one side only would silently stop the
+    /// reporter recognising the cause, and CollateralFailureReportingTests pins the round trip.
+    /// </summary>
+    internal static string AbortReasonHead(string displayName, string codeunit, string method)
+        => $"{displayName} ({codeunit}).{method}: watchdog timeout aborted the run";
+
+    /// <summary>
+    /// Whether this bundle-error line is a watchdog abort naming exactly this test — i.e. the
+    /// test that CAUSED the suite error rather than one abandoned by it (#2880 review). Marker-
+    /// gated so an unrelated line that merely quotes the phrase cannot match.
+    /// </summary>
+    internal static bool AbortReasonNamesTest(string error, string codeunit, string method)
+        => !string.IsNullOrEmpty(error)
+           && string.Equals(MarkerOf(error), TestTimeoutAbort, StringComparison.Ordinal)
+           && error.Contains($" ({codeunit}).{method}: watchdog timeout aborted the run",
+                             StringComparison.Ordinal);
+
     /// <summary>Markers for a failure BEFORE anything could run — AL emit, BC's own AL
     /// diagnostics, or the C# compile of the emitted sources.</summary>
     internal static readonly IReadOnlyList<string> PreExecutionMarkers = new[]
