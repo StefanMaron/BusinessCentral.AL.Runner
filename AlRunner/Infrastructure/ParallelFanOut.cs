@@ -219,8 +219,10 @@ internal static class ParallelFanOut
         var weighted = bundles.Select(b => (Name: b, Weight: WeighBundle(b))).ToList();
         var shards = ShardPlanner.Plan(weighted, jobs);
 
-        var tempDir = Path.Combine(Path.GetTempPath(), "al-runner-jobs-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(tempDir);
+        // ScratchDirs (#2706): the delete at the end of this method only runs on a clean exit,
+        // and a --jobs run is exactly the kind that gets killed; the sidecar lets the next
+        // runner start reclaim it.
+        var tempDir = ScratchDirs.Create(Path.Combine(Path.GetTempPath(), "al-runner-jobs-" + Guid.NewGuid().ToString("N")));
 
         var exe = Environment.ProcessPath ?? "dotnet";
         var asm = System.Reflection.Assembly.GetEntryAssembly()?.Location;
@@ -307,7 +309,7 @@ internal static class ParallelFanOut
                                "excluded from the totals; see that shard's output for which one");
         Console.WriteLine("=================================================================");
 
-        try { Directory.Delete(tempDir, recursive: true); } catch { }
+        ScratchDirs.Release(tempDir);
         return worst;
     }
 

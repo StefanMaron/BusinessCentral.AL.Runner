@@ -33,8 +33,7 @@ public sealed class NumberSequenceServerResetTests
 
     private static string CreateProbeBundle()
     {
-        var directory = Path.Combine(
-            Path.GetTempPath(), "al-runner-number-sequence-server", Guid.NewGuid().ToString("N"));
+        var directory = TestScratch.Dir("al-runner-number-sequence-server");
         Directory.CreateDirectory(directory);
         File.WriteAllText(Path.Combine(directory, "app.json"), """
         {

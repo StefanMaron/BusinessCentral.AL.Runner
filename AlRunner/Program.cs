@@ -220,6 +220,28 @@ if (args[0] == "--emit-app")
     return RunEmitApp(args.Skip(1).ToArray());
 }
 
+// #2706: reclaim the scratch directories of runner / test-host processes that no longer exist
+// (killed, OOM'd, watchdog-aborted — they cannot clean up after themselves). Runs before
+// argument parsing so it does not depend on which mode this invocation is in, and before any
+// BC type loads so it costs one directory enumeration on a clean machine. Only directories
+// whose recorded owner is provably dead are removed; see ScratchDirs for the rules.
+try
+{
+    var swept = AlRunner.Infrastructure.ScratchDirs.SweepStale();
+    // Deleting other processes' directories is the only destructive thing the runner does on
+    // its own initiative, so say so UNCONDITIONALLY — not behind AL_RUNNER_PERF. On a clean
+    // machine this never prints; if the liveness test ever misjudges a live owner, this line is
+    // the only evidence that would exist. Detail stays behind PerfTrace.
+    if (swept.Removed.Count > 0)
+        Console.Error.WriteLine($"scratch sweep: reclaimed {swept.Removed.Count} stale dir(s) from dead runners under {Path.GetTempPath()}");
+    if (swept.Removed.Count > 0 || swept.Failed > 0)
+        PerfTrace.Log($"scratch sweep: removed {swept.Removed.Count} stale dir(s), kept {swept.Kept}, failed {swept.Failed} under {Path.GetTempPath()}");
+}
+catch (Exception ex)
+{
+    PerfTrace.Log($"scratch sweep skipped: {ex.GetType().Name}: {ex.Message}");
+}
+
 // Failure classification (the FAILURE CLASSIFICATION block + v2-classification.json)
 // is a runner-development diagnostic, not something end users care about. Default off.
 // Enable by passing --out PATH (which sets the JSON output path) or --classify (which
@@ -3597,8 +3619,10 @@ if (resumeAborts > 0
 
     // This attempt's results are a partial view; carry them forward so the final summary is the
     // whole run rather than the last slice of it.
-    var carryDir = Path.Combine(Path.GetTempPath(), "al-runner-resume-" + Guid.NewGuid().ToString("N"));
-    Directory.CreateDirectory(carryDir);
+    // Owned by THIS generation (ScratchDirs, #2706): the re-exec'd child reads it while we
+    // wait on it, and it is deleted when we exit — or, if we are killed, by the next start.
+    var carryDir = AlRunner.Infrastructure.ScratchDirs.Create(
+        Path.Combine(Path.GetTempPath(), "al-runner-resume-" + Guid.NewGuid().ToString("N")));
     var carryPath = Path.Combine(carryDir, "attempt.xml");
     // THIS attempt's results only — deliberately not the carried-files overload. Each carry file
     // must hold exactly one attempt, because the final attempt folds the whole list into its
@@ -5714,8 +5738,11 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
             ? code
             : $"codeunit 50100 \"AL Runner Inline Execute\" {{ trigger OnRun() begin {code} end; }}";
 
-        var dir = Path.Combine(Path.GetTempPath(), "al-runner-server-inline", Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(dir);
+        // One scratch bundle per request, owned by this server process (ScratchDirs, #2706)
+        // so a long --server session's inline requests are all removed when it exits and a
+        // killed session's are reclaimed by the next runner start.
+        var dir = AlRunner.Infrastructure.ScratchDirs.Create(
+            Path.Combine(Path.GetTempPath(), "al-runner-server-inline", Guid.NewGuid().ToString("N")));
         File.WriteAllText(Path.Combine(dir, "Scratch.al"), source);
         return dir;
     }

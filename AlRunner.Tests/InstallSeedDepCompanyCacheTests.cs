@@ -128,7 +128,7 @@ public class InstallSeedDepCompanyCacheTests
     {
         TestArtifacts.SkipIfMissing();
 
-        var root = Path.Combine(Path.GetTempPath(), "al-runner-depcompany-cache", Guid.NewGuid().ToString("N"));
+        var root = TestScratch.Dir("al-runner-depcompany-cache");
         try
         {
             var appA = Path.Combine(root, "app-a");
@@ -181,7 +181,7 @@ public class InstallSeedDepCompanyCacheTests
     {
         TestArtifacts.SkipIfMissing();
 
-        var root = Path.Combine(Path.GetTempPath(), "al-runner-depcompany-cache-killswitch", Guid.NewGuid().ToString("N"));
+        var root = TestScratch.Dir("al-runner-depcompany-cache-killswitch");
         try
         {
             var appA = Path.Combine(root, "app-a");
@@ -224,7 +224,7 @@ public class InstallSeedDepCompanyCacheTests
     {
         TestArtifacts.SkipIfMissing();
 
-        var root = Path.Combine(Path.GetTempPath(), "al-runner-depcompany-cache-neg", Guid.NewGuid().ToString("N"));
+        var root = TestScratch.Dir("al-runner-depcompany-cache-neg");
         try
         {
         var appA = Path.Combine(root, "app-a");

@@ -64,7 +64,7 @@ public class QueryWildcardFilterProjectionTests
 
     private static string WriteBundle()
     {
-        var root = Path.Combine(Path.GetTempPath(), "al-runner-query-wildcard-2299", Guid.NewGuid().ToString("N"));
+        var root = TestScratch.Dir("al-runner-query-wildcard-2299");
         Directory.CreateDirectory(root);
 
         File.WriteAllText(Path.Combine(root, "app.json"), """

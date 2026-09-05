@@ -58,7 +58,7 @@ public sealed class VirtualTableBitClearingTests : IDisposable
     public VirtualTableBitClearingTests(BcEngineFixture engine)
     {
         _engine = engine;
-        _root = Path.Combine(Path.GetTempPath(), "al-runner-2543-tests", Guid.NewGuid().ToString("N"));
+        _root = TestScratch.Dir("al-runner-2543-tests");
         Directory.CreateDirectory(_root);
     }
 

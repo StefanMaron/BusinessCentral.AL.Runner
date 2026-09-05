@@ -165,8 +165,7 @@ public sealed class PlaceholderFloorProvisioningTests
     public void PlaceholderFloorWithGenuineMicrosoftUsage_ColdCache_NoAutoProvision_StillRefuses()
     {
         TestArtifacts.SkipIfMissing();
-        var scratchRoot = Path.Combine(
-            Path.GetTempPath(), "al-runner-placeholder-floor-msuse", Guid.NewGuid().ToString("N"));
+        var scratchRoot = TestScratch.Dir("al-runner-placeholder-floor-msuse");
         var bundleDir = WritePlaceholderFloorWithMicrosoftUsageFixture(Path.Combine(scratchRoot, "bundle"));
         var isolatedHome = Path.Combine(scratchRoot, "home");
         Directory.CreateDirectory(isolatedHome);
@@ -203,8 +202,7 @@ public sealed class PlaceholderFloorProvisioningTests
         var bundleDir = Path.Combine(RepoRoot, "tests", "runner-extras", "microsoft-dependencies");
         TestArtifacts.SkipIf(!Directory.Exists(bundleDir), $"fixture not found: '{bundleDir}'.");
 
-        var scratchRoot = Path.Combine(
-            Path.GetTempPath(), "al-runner-genuine-msdep", Guid.NewGuid().ToString("N"));
+        var scratchRoot = TestScratch.Dir("al-runner-genuine-msdep");
         var isolatedHome = Path.Combine(scratchRoot, "home");
         Directory.CreateDirectory(isolatedHome);
         var alCacheDir = Path.Combine(scratchRoot, "al-out");

@@ -216,7 +216,7 @@ public class SiblingSourceDepProvisioningReportingTests
     {
         TestArtifacts.SkipIfMissing();
 
-        var root = Path.Combine(Path.GetTempPath(), "al-runner-ssd-missing", Guid.NewGuid().ToString("N"));
+        var root = TestScratch.Dir("al-runner-ssd-missing");
         var mainDir = Path.Combine(root, "main");
         var sidekickDir = Path.Combine(root, "sidekick");
         var emptyCacheDir = Path.Combine(root, "empty-cache");
@@ -245,7 +245,7 @@ public class SiblingSourceDepProvisioningReportingTests
     {
         TestArtifacts.SkipIfMissing();
 
-        var root = Path.Combine(Path.GetTempPath(), "al-runner-ssd-oldver", Guid.NewGuid().ToString("N"));
+        var root = TestScratch.Dir("al-runner-ssd-oldver");
         var mainDir = Path.Combine(root, "main");
         var sidekickDir = Path.Combine(root, "sidekick");
         var cacheDir = Path.Combine(root, "cache");
@@ -274,7 +274,7 @@ public class SiblingSourceDepProvisioningReportingTests
     {
         TestArtifacts.SkipIfMissing();
 
-        var root = Path.Combine(Path.GetTempPath(), "al-runner-ssd-badmanifest", Guid.NewGuid().ToString("N"));
+        var root = TestScratch.Dir("al-runner-ssd-badmanifest");
         var mainDir = Path.Combine(root, "main");
         var sidekickDir = Path.Combine(root, "sidekick");
         var mainId = "5cd30000-0000-4000-8000-0000000000e1";

@@ -43,7 +43,7 @@ public sealed class PlainRunInstrumentationGateTests : IDisposable
 
     public PlainRunInstrumentationGateTests()
     {
-        _scratch = Path.Combine(Path.GetTempPath(), "al-runner-plainrun-gate-tests", Guid.NewGuid().ToString("N"));
+        _scratch = TestScratch.Dir("al-runner-plainrun-gate-tests");
         Directory.CreateDirectory(_scratch);
     }
 

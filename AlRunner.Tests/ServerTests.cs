@@ -54,7 +54,7 @@ public class ServerTests : IClassFixture<SharedCliServer>
 
     private static string MakeTempBundle()
     {
-        var dir = Path.Combine(Path.GetTempPath(), "al-runner-server-tests", Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.Dir("al-runner-server-tests");
         Directory.CreateDirectory(dir);
         foreach (var f in Directory.GetFiles(FixtureSrc))
             File.Copy(f, Path.Combine(dir, Path.GetFileName(f)));
@@ -138,7 +138,7 @@ public class ServerTests : IClassFixture<SharedCliServer>
     // execute must actually invoke OnRun, so the AL Error text surfaces as a Fail.
     private static string MakeExecuteBundle()
     {
-        var dir = Path.Combine(Path.GetTempPath(), "al-runner-server-exec", Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.Dir("al-runner-server-exec");
         Directory.CreateDirectory(dir);
         File.WriteAllText(Path.Combine(dir, "app.json"), """
         {
@@ -535,7 +535,7 @@ public class ServerTests : IClassFixture<SharedCliServer>
     // idRange in this file (60100-60199, 60120-60129, 60160-60169).
     private static string MakeAppTestPair(out string appDir, out string testDir)
     {
-        var root = Path.Combine(Path.GetTempPath(), "al-runner-server-multi", Guid.NewGuid().ToString("N"));
+        var root = TestScratch.Dir("al-runner-server-multi");
         appDir = Path.Combine(root, "App");
         testDir = Path.Combine(root, "Test");
         Directory.CreateDirectory(appDir);

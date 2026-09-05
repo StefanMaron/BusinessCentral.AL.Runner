@@ -54,7 +54,7 @@ public sealed class RecordPatchesPrecompiledTableExtEvictionTests : IDisposable
     public RecordPatchesPrecompiledTableExtEvictionTests(BcEngineFixture engine)
     {
         _engine = engine;
-        _root = Path.Combine(Path.GetTempPath(), "al-runner-2126-tests", Guid.NewGuid().ToString("N"));
+        _root = TestScratch.Dir("al-runner-2126-tests");
         Directory.CreateDirectory(_root);
     }
 

@@ -67,7 +67,7 @@ public sealed class RecordPatchesWarmReloadInstallBaselineTests : IDisposable
 
     public RecordPatchesWarmReloadInstallBaselineTests()
     {
-        _root = Path.Combine(Path.GetTempPath(), "al-runner-2480-tests", Guid.NewGuid().ToString("N"));
+        _root = TestScratch.Dir("al-runner-2480-tests");
         Directory.CreateDirectory(_root);
     }
 

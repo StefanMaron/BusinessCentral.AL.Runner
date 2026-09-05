@@ -30,7 +30,7 @@ public sealed class EnumCaptionCaptureTests : IDisposable
     public EnumCaptionCaptureTests(BcEngineFixture engine)
     {
         _engine = engine;
-        _root = Path.Combine(Path.GetTempPath(), "al-runner-enum-caption-tests", Guid.NewGuid().ToString("N"));
+        _root = TestScratch.Dir("al-runner-enum-caption-tests");
         Directory.CreateDirectory(_root);
         AlEnumMetadataRegistry.Clear();
     }

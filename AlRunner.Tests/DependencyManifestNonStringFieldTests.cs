@@ -56,7 +56,7 @@ public class DependencyManifestNonStringFieldTests
     {
         TestArtifacts.SkipIfMissing();
 
-        var scratchRoot = Path.Combine(Path.GetTempPath(), "al-runner-nonstring-dep", Guid.NewGuid().ToString("N"));
+        var scratchRoot = TestScratch.Dir("al-runner-nonstring-dep");
         var depDir = Path.Combine(scratchRoot, "dep-app");
         var testsDir = Path.Combine(scratchRoot, "tests-app");
         var absentPackageCache = Path.Combine(scratchRoot, "no-such-package-cache");

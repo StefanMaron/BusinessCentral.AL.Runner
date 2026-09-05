@@ -19,7 +19,7 @@ public sealed class BcArtifactSelectionTests : IDisposable
 
     public BcArtifactSelectionTests()
     {
-        _root = Path.Combine(Path.GetTempPath(), "al-runner-artifact-sel", Guid.NewGuid().ToString("N"));
+        _root = TestScratch.Dir("al-runner-artifact-sel");
         Directory.CreateDirectory(_root);
     }
 

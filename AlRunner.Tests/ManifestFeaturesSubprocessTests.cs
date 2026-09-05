@@ -41,14 +41,13 @@ public sealed class ManifestFeaturesSubprocessTests : IClassFixture<SharedCliSer
     public ManifestFeaturesSubprocessTests(SharedCliServer shared)
     {
         _shared = shared;
-        _root = Path.Combine(Path.GetTempPath(), "al-runner-manifest-features-subprocess", Guid.NewGuid().ToString("N"));
+        _root = TestScratch.Dir("al-runner-manifest-features-subprocess");
         Directory.CreateDirectory(_root);
     }
 
     /// <summary>#2377: the one `--cache` dir this class's shared server is started with,
     /// fresh per test run so nothing an earlier invocation cached can answer here.</summary>
-    private static readonly string CacheDir = Path.Combine(
-        Path.GetTempPath(), "al-runner-manifest-features-cache", Guid.NewGuid().ToString("N"));
+    private static readonly string CacheDir = TestScratch.Dir("al-runner-manifest-features-cache");
 
     private static IEnumerable<string> ServerArgs()
     {

@@ -165,7 +165,7 @@ public class LayeredDepManifestTests
     {
         TestArtifacts.SkipIfMissing();
 
-        var root = Path.Combine(Path.GetTempPath(), "al-runner-layered-ctxhelp-pos", Guid.NewGuid().ToString("N"));
+        var root = TestScratch.Dir("al-runner-layered-ctxhelp-pos");
         var depDir = Path.Combine(root, "dep");
         var mainDir = Path.Combine(root, "main");
         var depId = "c1a20000-0000-4000-8000-0000000000a1";
@@ -191,7 +191,7 @@ public class LayeredDepManifestTests
     {
         TestArtifacts.SkipIfMissing();
 
-        var root = Path.Combine(Path.GetTempPath(), "al-runner-layered-ctxhelp-neg", Guid.NewGuid().ToString("N"));
+        var root = TestScratch.Dir("al-runner-layered-ctxhelp-neg");
         var depDir = Path.Combine(root, "dep");
         var mainDir = Path.Combine(root, "main");
         var depId = "c1a20000-0000-4000-8000-0000000000b1";

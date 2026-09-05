@@ -20,7 +20,7 @@ public sealed class RunnerFingerprintTests
 {
     private static string NewTempDir()
     {
-        var dir = Path.Combine(Path.GetTempPath(), "runner-fingerprint-tests-" + Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.FlatDir("runner-fingerprint-tests-");
         Directory.CreateDirectory(dir);
         return dir;
     }

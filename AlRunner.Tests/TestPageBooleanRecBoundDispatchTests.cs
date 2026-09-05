@@ -39,7 +39,7 @@ public sealed class TestPageBooleanRecBoundDispatchTests : IDisposable
 
     public TestPageBooleanRecBoundDispatchTests()
     {
-        _root = Path.Combine(Path.GetTempPath(), "al-runner-bool-recbound-dispatch", Guid.NewGuid().ToString("N"));
+        _root = TestScratch.Dir("al-runner-bool-recbound-dispatch");
         Directory.CreateDirectory(_root);
     }
 

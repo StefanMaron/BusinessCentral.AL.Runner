@@ -69,7 +69,7 @@ public class CodeunitRunGuardRollbackTests
     {
         TestArtifacts.SkipIfMissing();
 
-        var root = Path.Combine(Path.GetTempPath(), "al-runner-codeunit-run-guard-2334", Guid.NewGuid().ToString("N"));
+        var root = TestScratch.Dir("al-runner-codeunit-run-guard-2334");
         Directory.CreateDirectory(root);
 
         File.WriteAllText(Path.Combine(root, "app.json"), """

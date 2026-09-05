@@ -52,7 +52,7 @@ public sealed class TestPagePartAdoptedFromHostTests : IDisposable
 
     public TestPagePartAdoptedFromHostTests()
     {
-        _root = Path.Combine(Path.GetTempPath(), "al-runner-testpage-part-adopted-from-host", Guid.NewGuid().ToString("N"));
+        _root = TestScratch.Dir("al-runner-testpage-part-adopted-from-host");
         Directory.CreateDirectory(_root);
     }
 

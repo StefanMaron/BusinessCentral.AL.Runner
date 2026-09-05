@@ -40,7 +40,7 @@ public sealed class RecordPatchesBcAppSymbolReadFailureTests : IDisposable
 
     public RecordPatchesBcAppSymbolReadFailureTests()
     {
-        _root = Path.Combine(Path.GetTempPath(), "al-runner-2712-tests", Guid.NewGuid().ToString("N"));
+        _root = TestScratch.Dir("al-runner-2712-tests");
         Directory.CreateDirectory(_root);
     }
 

@@ -74,7 +74,7 @@ public class QueryColumnFilterProjectionTests
 
     private static string WriteBundle()
     {
-        var root = Path.Combine(Path.GetTempPath(), "al-runner-query-columnfilter-2418", Guid.NewGuid().ToString("N"));
+        var root = TestScratch.Dir("al-runner-query-columnfilter-2418");
         Directory.CreateDirectory(root);
 
         File.WriteAllText(Path.Combine(root, "app.json"), """

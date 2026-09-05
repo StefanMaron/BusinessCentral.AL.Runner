@@ -37,7 +37,7 @@ public sealed class TestPageCurrFieldNoDispatchTests : IDisposable
 
     public TestPageCurrFieldNoDispatchTests()
     {
-        _root = Path.Combine(Path.GetTempPath(), "al-runner-currfieldno-dispatch", Guid.NewGuid().ToString("N"));
+        _root = TestScratch.Dir("al-runner-currfieldno-dispatch");
         Directory.CreateDirectory(_root);
     }
 

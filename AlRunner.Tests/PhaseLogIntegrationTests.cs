@@ -34,7 +34,7 @@ public sealed class PhaseLogIntegrationTests : IDisposable
 
     public PhaseLogIntegrationTests()
     {
-        _root = Path.Combine(Path.GetTempPath(), "al-runner-phaselog-e2e", Guid.NewGuid().ToString("N"));
+        _root = TestScratch.Dir("al-runner-phaselog-e2e");
         _noDeps = Path.Combine(_root, "nodeps");
         _withDeps = Path.Combine(_root, "withdeps");
         _logPath = Path.Combine(_root, "logs", "phases.jsonl");

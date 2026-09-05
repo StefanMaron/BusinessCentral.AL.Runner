@@ -371,7 +371,7 @@ public class InstallBaselineVirtualTableExclusionTests
     {
         TestArtifacts.SkipIfMissing();
 
-        var root = Path.Combine(Path.GetTempPath(), "al-runner-2272-codeunit", Guid.NewGuid().ToString("N"));
+        var root = TestScratch.Dir("al-runner-2272-codeunit");
         try
         {
             var app = Path.Combine(root, "app");
@@ -394,7 +394,7 @@ public class InstallBaselineVirtualTableExclusionTests
     {
         TestArtifacts.SkipIfMissing();
 
-        var root = Path.Combine(Path.GetTempPath(), "al-runner-2272-test", Guid.NewGuid().ToString("N"));
+        var root = TestScratch.Dir("al-runner-2272-test");
         try
         {
             var app = Path.Combine(root, "app");
@@ -437,7 +437,7 @@ public class InstallBaselineVirtualTableExclusionTests
     {
         TestArtifacts.SkipIfMissing();
 
-        var root = Path.Combine(Path.GetTempPath(), "al-runner-2272-appgroup", Guid.NewGuid().ToString("N"));
+        var root = TestScratch.Dir("al-runner-2272-appgroup");
         try
         {
             var appA = Path.Combine(root, "app-a");

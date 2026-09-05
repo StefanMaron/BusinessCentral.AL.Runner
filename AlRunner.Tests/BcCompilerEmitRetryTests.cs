@@ -55,7 +55,7 @@ public sealed class BcCompilerEmitRetryTests : IDisposable
     public BcCompilerEmitRetryTests(BcEngineFixture engine)
     {
         _engine = engine;
-        _root = Path.Combine(Path.GetTempPath(), "al-runner-emit-retry-tests", Guid.NewGuid().ToString("N"));
+        _root = TestScratch.Dir("al-runner-emit-retry-tests");
         Directory.CreateDirectory(_root);
     }
 

@@ -86,7 +86,7 @@ public class LayeredCacheTests : IClassFixture<SharedCliServer>
 
         var server = await _shared.GetAsync(new[] { "--cache", CacheDir });
 
-        var root = Path.Combine(Path.GetTempPath(), "al-runner-layered-cache", Guid.NewGuid().ToString("N"));
+        var root = TestScratch.Dir("al-runner-layered-cache");
         var aDir = Path.Combine(root, "A");
         var bDir = Path.Combine(root, "B");
         var cDir = Path.Combine(root, "C");

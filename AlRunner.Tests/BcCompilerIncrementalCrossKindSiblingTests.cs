@@ -43,7 +43,7 @@ public sealed class BcCompilerIncrementalCrossKindSiblingTests : IDisposable
     public BcCompilerIncrementalCrossKindSiblingTests(BcEngineFixture engine)
     {
         _engine = engine;
-        _root = Path.Combine(Path.GetTempPath(), "al-runner-incremental-crosskind-tests", Guid.NewGuid().ToString("N"));
+        _root = TestScratch.Dir("al-runner-incremental-crosskind-tests");
         Directory.CreateDirectory(_root);
     }
 

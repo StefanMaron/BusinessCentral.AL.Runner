@@ -41,7 +41,7 @@ public sealed class CacheRootsTests
     [Fact]
     public void Resolve_WithOverride_NestsEachCacheUnderTheGivenDir()
     {
-        var overrideDir = Path.Combine(Path.GetTempPath(), "al-runner-cacheroots-unit", Guid.NewGuid().ToString("N"));
+        var overrideDir = TestScratch.Dir("al-runner-cacheroots-unit");
         CacheRoots.SetOverride(overrideDir);
         try
         {
@@ -56,8 +56,8 @@ public sealed class CacheRootsTests
     [Fact]
     public void Resolve_TwoDifferentOverrides_NeverCollide()
     {
-        var dirA = Path.Combine(Path.GetTempPath(), "al-runner-cacheroots-unit", Guid.NewGuid().ToString("N"));
-        var dirB = Path.Combine(Path.GetTempPath(), "al-runner-cacheroots-unit", Guid.NewGuid().ToString("N"));
+        var dirA = TestScratch.Dir("al-runner-cacheroots-unit");
+        var dirB = TestScratch.Dir("al-runner-cacheroots-unit");
         try
         {
             CacheRoots.SetOverride(dirA);
@@ -76,7 +76,7 @@ public sealed class CacheRootsTests
     [Fact]
     public void Resolve_SetOverrideNull_RevertsToDefault()
     {
-        var overrideDir = Path.Combine(Path.GetTempPath(), "al-runner-cacheroots-unit", Guid.NewGuid().ToString("N"));
+        var overrideDir = TestScratch.Dir("al-runner-cacheroots-unit");
         try
         {
             CacheRoots.SetOverride(overrideDir);

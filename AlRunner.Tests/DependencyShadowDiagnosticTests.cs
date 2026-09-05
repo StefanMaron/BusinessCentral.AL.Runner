@@ -37,8 +37,7 @@ namespace AlRunner.Tests;
 
 public sealed class DependencyShadowDiagnosticTests : IDisposable
 {
-    private readonly string _dir = Path.Combine(Path.GetTempPath(),
-        "al-runner-shadow-" + Guid.NewGuid().ToString("N"));
+    private readonly string _dir = TestScratch.FlatDir("al-runner-shadow-");
 
     public DependencyShadowDiagnosticTests() => Directory.CreateDirectory(_dir);
 

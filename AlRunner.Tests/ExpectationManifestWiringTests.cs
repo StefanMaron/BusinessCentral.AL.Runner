@@ -55,8 +55,7 @@ public sealed class ExpectationManifestWiringTests : IDisposable
     // #1984: scratch root for tests that need fixture copies living OUTSIDE this
     // repo's working tree, so no ancestor of the copy accidentally carries this
     // repo's own tests/expectations/. Torn down in Dispose.
-    private readonly string _scratchRoot = Path.Combine(
-        Path.GetTempPath(), "al-runner-expectations-wiring", Guid.NewGuid().ToString("N"));
+    private readonly string _scratchRoot = TestScratch.Dir("al-runner-expectations-wiring");
 
     public void Dispose()
     {

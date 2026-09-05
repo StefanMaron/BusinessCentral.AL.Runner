@@ -64,7 +64,7 @@ public class QueryReverseSignProjectionTests
 
     private static string WriteBundle()
     {
-        var root = Path.Combine(Path.GetTempPath(), "al-runner-query-reversesign-2575", Guid.NewGuid().ToString("N"));
+        var root = TestScratch.Dir("al-runner-query-reversesign-2575");
         Directory.CreateDirectory(root);
 
         File.WriteAllText(Path.Combine(root, "app.json"), """

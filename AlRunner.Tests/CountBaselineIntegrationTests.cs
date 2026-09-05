@@ -45,7 +45,7 @@ public sealed class CountBaselineIntegrationTests : IDisposable
 
     public CountBaselineIntegrationTests()
     {
-        _root = Path.Combine(Path.GetTempPath(), "al-runner-count-baseline", Guid.NewGuid().ToString("N"));
+        _root = TestScratch.Dir("al-runner-count-baseline");
         Directory.CreateDirectory(_root);
         _suiteKey = Path.GetFileName(_root);
         _baselinePath = Path.Combine(Path.GetTempPath(), "al-runner-count-baseline",

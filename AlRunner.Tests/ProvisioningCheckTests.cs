@@ -16,7 +16,7 @@ public sealed class ProvisioningCheckTests : IDisposable
 
     public ProvisioningCheckTests()
     {
-        _dir = Path.Combine(Path.GetTempPath(), "al-runner-prov", Guid.NewGuid().ToString("N"));
+        _dir = TestScratch.Dir("al-runner-prov");
         Directory.CreateDirectory(_dir);
     }
 

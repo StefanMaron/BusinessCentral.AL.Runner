@@ -32,7 +32,7 @@ public sealed class TestPageSourceTableTemporaryIntegerTests : IDisposable
 
     public TestPageSourceTableTemporaryIntegerTests()
     {
-        _root = Path.Combine(Path.GetTempPath(), "al-runner-temp-integer-testpage", Guid.NewGuid().ToString("N"));
+        _root = TestScratch.Dir("al-runner-temp-integer-testpage");
         Directory.CreateDirectory(_root);
     }
 

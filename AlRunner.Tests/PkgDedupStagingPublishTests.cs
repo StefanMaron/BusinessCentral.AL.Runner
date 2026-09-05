@@ -26,8 +26,7 @@ public class PkgDedupStagingPublishTests : IDisposable
 
     public PkgDedupStagingPublishTests()
     {
-        _root = Path.Combine(Path.GetTempPath(), "al-runner-pkgdedup-tests",
-                             Guid.NewGuid().ToString("N"));
+        _root = TestScratch.Dir("al-runner-pkgdedup-tests");
         Directory.CreateDirectory(_root);
     }
 

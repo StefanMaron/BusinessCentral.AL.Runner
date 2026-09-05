@@ -48,7 +48,7 @@ public sealed class MissingTestDataDiagnosisTests : IDisposable
 
     public MissingTestDataDiagnosisTests()
     {
-        _root = Path.Combine(Path.GetTempPath(), "al-runner-missing-test-data", Guid.NewGuid().ToString("N"));
+        _root = TestScratch.Dir("al-runner-missing-test-data");
         Directory.CreateDirectory(_root);
         WriteFixture(_root);
     }

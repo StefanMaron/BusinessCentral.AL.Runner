@@ -57,7 +57,7 @@ public class QueryJoinFlowFieldColumnOosTests
 
     private static string WriteBundle(string appJsonName, string idRangeFrom, string idRangeTo, string extraFiles)
     {
-        var root = Path.Combine(Path.GetTempPath(), "al-runner-query-join-flowfield-2423", Guid.NewGuid().ToString("N"));
+        var root = TestScratch.Dir("al-runner-query-join-flowfield-2423");
         Directory.CreateDirectory(root);
 
         File.WriteAllText(Path.Combine(root, "app.json"), $$"""

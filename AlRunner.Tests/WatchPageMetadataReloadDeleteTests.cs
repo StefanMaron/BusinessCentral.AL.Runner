@@ -77,7 +77,7 @@ public class WatchPageMetadataReloadDeleteTests
     {
         TestArtifacts.SkipIfMissing();
 
-        var bundle = Path.Combine(Path.GetTempPath(), "al-runner-watch-pagemeta-delete", Guid.NewGuid().ToString("N"));
+        var bundle = TestScratch.Dir("al-runner-watch-pagemeta-delete");
         CopyDir(FixtureRoot, bundle);
         var gonePagePath = Path.Combine(bundle, "RPRGone.Page.al");
         Assert.True(File.Exists(gonePagePath));

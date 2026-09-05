@@ -52,7 +52,7 @@ public sealed class TestPageExtensionActionWithPartDispatchTests : IDisposable
 
     public TestPageExtensionActionWithPartDispatchTests()
     {
-        _root = Path.Combine(Path.GetTempPath(), "al-runner-pageext-part-action-dispatch", Guid.NewGuid().ToString("N"));
+        _root = TestScratch.Dir("al-runner-pageext-part-action-dispatch");
         Directory.CreateDirectory(_root);
     }
 

@@ -45,7 +45,7 @@ public sealed class BcAppSymbolCacheAtomicWriteTests
 {
     private static string NewTempDir()
     {
-        var dir = Path.Combine(Path.GetTempPath(), "bc-symbol-cache-atomic-tests-" + Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.FlatDir("bc-symbol-cache-atomic-tests-");
         Directory.CreateDirectory(dir);
         return dir;
     }

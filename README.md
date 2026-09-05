@@ -107,6 +107,18 @@ single-fixture run). `--cache <dir>` relocates it with the other caches; set
 `AL_RUNNER_NO_DEP_COMPANY_CACHE=1` to bypass it entirely (no read, no write) and force the
 full computation.
 
+The runner also writes short-lived scratch directories under the OS temp directory
+(`Path.GetTempPath()` — `$TMPDIR`, or `/tmp`, which is a tmpfs, i.e. RAM, on most Linux
+desktops): `al-runner-deps/p<pid>` (dependency source extraction), `al-runner-navserver/`
+(the report engine's per-session temp files), `al-runner-jobs-*`, `al-runner-no-cache-*`,
+`al-runner-resume-*`, `al-runner-server-inline/`. Each carries a `<dir>.owner` sidecar naming
+the process that created it; the owner deletes its directories at exit, and every runner
+start sweeps the ones whose owner no longer exists (killed, OOM'd, watchdog-aborted). The
+sweep never deletes a live process's directory and never guesses by age, so any number of
+runners can share one `TMPDIR`; directories from builds before this mechanism (no sidecar,
+no pid in the name) are left alone and can be removed by hand. See
+`AlRunner/Infrastructure/ScratchDirs.cs`.
+
 ### Watch mode (live dashboard)
 
 ```bash

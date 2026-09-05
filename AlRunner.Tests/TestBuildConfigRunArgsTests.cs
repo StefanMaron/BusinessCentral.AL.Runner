@@ -44,8 +44,7 @@ public sealed class TestBuildConfigRunArgsTests
     [Fact]
     public void RunArgs_MissingBuildOutput_ThrowsNamingSearchedPath()
     {
-        var missingProjectDir = Path.Combine(
-            Path.GetTempPath(), "al-runner-issue-1808-" + Guid.NewGuid().ToString("N"));
+        var missingProjectDir = TestScratch.FlatDir("al-runner-issue-1808-");
 
         var ex = Assert.Throws<FileNotFoundException>(
             () => TestBuildConfig.RunArgs(missingProjectDir));

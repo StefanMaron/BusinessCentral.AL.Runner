@@ -38,7 +38,7 @@ public sealed class BcAppSymbolCacheQueryModuleQualifierTests
 {
     private static string NewTempDir()
     {
-        var dir = Path.Combine(Path.GetTempPath(), "bc-symbol-cache-query-module-qualifier-tests-" + Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.FlatDir("bc-symbol-cache-query-module-qualifier-tests-");
         Directory.CreateDirectory(dir);
         return dir;
     }

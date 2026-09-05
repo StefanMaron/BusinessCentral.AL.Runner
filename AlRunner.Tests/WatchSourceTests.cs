@@ -16,7 +16,7 @@ public sealed class WatchSourceTests
 {
     private static string NewTempDir()
     {
-        var dir = Path.Combine(Path.GetTempPath(), "al-runner-watchsource-tests", Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.Dir("al-runner-watchsource-tests");
         Directory.CreateDirectory(dir);
         return dir;
     }

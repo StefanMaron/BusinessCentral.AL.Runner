@@ -84,7 +84,7 @@ public class WatchPageMetadataReloadTests
     {
         TestArtifacts.SkipIfMissing();
 
-        var bundle = Path.Combine(Path.GetTempPath(), "al-runner-watch-pagemeta", Guid.NewGuid().ToString("N"));
+        var bundle = TestScratch.Dir("al-runner-watch-pagemeta");
         CopyDir(Path.Combine(FixtureRoot, "R3Pages"), Path.Combine(bundle, "R3Pages"));
         CopyDir(Path.Combine(FixtureRoot, "R3Driver"), Path.Combine(bundle, "R3Driver"));
         var driverTestsPath = Path.Combine(bundle, "R3Driver", "WPMRTests.Codeunit.al");

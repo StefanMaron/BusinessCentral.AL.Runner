@@ -159,7 +159,7 @@ public class ServerExecuteMessagesTests : IClassFixture<SharedCliServer>
     public async Task RunTests_MessageWithoutHandler_StillRaisesUnhandledUI()
     {
         TestArtifacts.SkipIfMissing();
-        var dir = Path.Combine(Path.GetTempPath(), "al-runner-msg-unhandled-ui-tests", Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.Dir("al-runner-msg-unhandled-ui-tests");
         Directory.CreateDirectory(dir);
         File.WriteAllText(Path.Combine(dir, "app.json"), """
         {

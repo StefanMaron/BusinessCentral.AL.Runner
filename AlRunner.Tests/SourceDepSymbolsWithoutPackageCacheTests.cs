@@ -72,8 +72,7 @@ public class SourceDepSymbolsWithoutPackageCacheTests
     {
         TestArtifacts.SkipIfMissing();
 
-        var scratchRoot = Path.Combine(
-            Path.GetTempPath(), "al-runner-srcdep-nopkgcache", Guid.NewGuid().ToString("N"));
+        var scratchRoot = TestScratch.Dir("al-runner-srcdep-nopkgcache");
         var depDir = Path.Combine(scratchRoot, "dep-app");
         var testsDir = Path.Combine(scratchRoot, "tests-app");
         var alCacheDir = Path.Combine(scratchRoot, "al-out");

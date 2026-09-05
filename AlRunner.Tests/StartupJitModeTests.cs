@@ -39,7 +39,7 @@ public sealed class StartupJitModeTests : IDisposable
 
     public StartupJitModeTests()
     {
-        _scratch = Path.Combine(Path.GetTempPath(), "al-runner-jitmode", Guid.NewGuid().ToString("N"));
+        _scratch = TestScratch.Dir("al-runner-jitmode");
         Directory.CreateDirectory(_scratch);
     }
 

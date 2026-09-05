@@ -103,7 +103,7 @@ public class ServerAffectedSelectionMultiSourcePathsTests
     {
         TestArtifacts.SkipIfMissing();
 
-        var root = Path.Combine(Path.GetTempPath(), "al-runner-server-affected-multi", Guid.NewGuid().ToString("N"));
+        var root = TestScratch.Dir("al-runner-server-affected-multi");
         Directory.CreateDirectory(root);
         var appDir = MakeAppBundle(root, """
         codeunit 60360 "Multi Affected Helper SX"
@@ -279,7 +279,7 @@ public class ServerAffectedSelectionMultiSourcePathsTests
     {
         TestArtifacts.SkipIfMissing();
 
-        var root = Path.Combine(Path.GetTempPath(), "al-runner-server-affected-crossbundle", Guid.NewGuid().ToString("N"));
+        var root = TestScratch.Dir("al-runner-server-affected-crossbundle");
         Directory.CreateDirectory(root);
         var appDir = MakeAppBundleTwoHelpers(root);
         var testAppDir = MakeTestApp2Bundle(root);

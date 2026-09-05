@@ -39,7 +39,7 @@ public sealed class TestIsolationCodeunitVariableSharingTests : IDisposable
 
     public TestIsolationCodeunitVariableSharingTests()
     {
-        _root = Path.Combine(Path.GetTempPath(), "al-runner-isolation-variable-sharing", Guid.NewGuid().ToString("N"));
+        _root = TestScratch.Dir("al-runner-isolation-variable-sharing");
         Directory.CreateDirectory(_root);
         WriteFixture(_root);
     }

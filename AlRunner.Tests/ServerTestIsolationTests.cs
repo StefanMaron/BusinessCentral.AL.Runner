@@ -52,7 +52,7 @@ public class ServerTestIsolationTests : IClassFixture<SharedCliServer>
     // share a server process.
     private static string MakeIsolationBundle(int variant)
     {
-        var dir = Path.Combine(Path.GetTempPath(), "al-runner-server-isolation", Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.Dir("al-runner-server-isolation");
         Directory.CreateDirectory(dir);
         var baseId = 60170 + variant * 10;
         File.WriteAllText(Path.Combine(dir, "app.json"), $$"""

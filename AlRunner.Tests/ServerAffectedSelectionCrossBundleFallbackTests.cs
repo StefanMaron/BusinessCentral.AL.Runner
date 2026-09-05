@@ -125,7 +125,7 @@ public class ServerAffectedSelectionCrossBundleFallbackTests
     {
         TestArtifacts.SkipIfMissing();
 
-        var root = Path.Combine(Path.GetTempPath(), "al-runner-server-affected-crossfallback", Guid.NewGuid().ToString("N"));
+        var root = TestScratch.Dir("al-runner-server-affected-crossfallback");
         Directory.CreateDirectory(root);
         var appDir = MakeAppBundle(root, "1.0.0.0");
         var testAppDir = MakeTestAppBundle(root);

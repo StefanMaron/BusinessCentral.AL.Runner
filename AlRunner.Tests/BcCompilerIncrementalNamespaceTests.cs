@@ -42,7 +42,7 @@ public sealed class BcCompilerIncrementalNamespaceTests : IDisposable
     public BcCompilerIncrementalNamespaceTests(BcEngineFixture engine)
     {
         _engine = engine;
-        _root = Path.Combine(Path.GetTempPath(), "al-runner-incremental-ns-tests", Guid.NewGuid().ToString("N"));
+        _root = TestScratch.Dir("al-runner-incremental-ns-tests");
         Directory.CreateDirectory(_root);
     }
 

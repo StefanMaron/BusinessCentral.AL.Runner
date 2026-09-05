@@ -20,7 +20,7 @@ public sealed class ServerEmitExclusionDiagnosticTests
 {
     private static string WriteBundle()
     {
-        var root = Path.Combine(Path.GetTempPath(), "al-runner-server-emitexcl-2207", Guid.NewGuid().ToString("N"));
+        var root = TestScratch.Dir("al-runner-server-emitexcl-2207");
         Directory.CreateDirectory(root);
         File.WriteAllText(Path.Combine(root, "app.json"), """
         {

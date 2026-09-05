@@ -38,7 +38,7 @@ public sealed class BatchAppIdentityTests : IDisposable
 
     public BatchAppIdentityTests()
     {
-        _root = Path.Combine(Path.GetTempPath(), "al-runner-batch-ident", Guid.NewGuid().ToString("N"));
+        _root = TestScratch.Dir("al-runner-batch-ident");
         Directory.CreateDirectory(_root);
     }
 

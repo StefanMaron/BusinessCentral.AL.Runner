@@ -624,9 +624,12 @@ public static partial class BcRuntime
                 BindingFlags.NonPublic | BindingFlags.Instance);
             if (userFolderBacking != null && string.IsNullOrEmpty(userFolderBacking.GetValue(_skeletonSession) as string))
             {
-                var userFolder = System.IO.Path.Combine(
-                    System.IO.Path.GetTempPath(), "al-runner-navserver", "user", Environment.ProcessId.ToString());
-                System.IO.Directory.CreateDirectory(userFolder);
+                // Owned via ScratchDirs (#2706): the report processors buffer whole datasets
+                // here (measured: up to 2 GB per process), and this folder was never deleted —
+                // 212 dead-pid copies on one machine. Removed at exit; reclaimed by the next
+                // runner start when this process is killed.
+                var userFolder = ScratchDirs.Create(System.IO.Path.Combine(
+                    System.IO.Path.GetTempPath(), "al-runner-navserver", "user", Environment.ProcessId.ToString()));
                 FieldPoke.SetInstance(userFolderBacking, _skeletonSession, userFolder);
                 Console.Error.WriteLine($"[BcRuntime] InjectSkeletonSystemTenant: session.UserFolder wired to {userFolder}");
             }

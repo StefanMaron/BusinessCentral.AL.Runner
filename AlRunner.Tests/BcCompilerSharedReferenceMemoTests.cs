@@ -53,7 +53,7 @@ public sealed class BcCompilerSharedReferenceMemoTests : IDisposable
 
     public BcCompilerSharedReferenceMemoTests()
     {
-        _root = Path.Combine(Path.GetTempPath(), "al-runner-sharedref-memo-tests", Guid.NewGuid().ToString("N"));
+        _root = TestScratch.Dir("al-runner-sharedref-memo-tests");
         Directory.CreateDirectory(_root);
         BcCompiler.ResetSharedReferencesForTests();
     }

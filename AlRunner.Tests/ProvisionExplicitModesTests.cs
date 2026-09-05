@@ -88,7 +88,7 @@ public sealed class ProvisionExplicitModesTests
 
     private static string NewIsolatedHome()
     {
-        var dir = Path.Combine(Path.GetTempPath(), "al-runner-provision-explicit", Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.Dir("al-runner-provision-explicit");
         Directory.CreateDirectory(dir);
         return dir;
     }
@@ -361,7 +361,7 @@ public sealed class ProvisionExplicitModesTests
         var engineMajor = Version.Parse(ThisBuildsEngineVersion).Major;
         var bundleMajor = engineMajor - 1;
         var home = NewIsolatedHome();
-        var bundleDir = Path.Combine(Path.GetTempPath(), "al-runner-provision-explicit-bundle", Guid.NewGuid().ToString("N"));
+        var bundleDir = TestScratch.Dir("al-runner-provision-explicit-bundle");
         Directory.CreateDirectory(bundleDir);
         File.WriteAllText(Path.Combine(bundleDir, "app.json"),
             "{ \"id\": \"11111111-1111-1111-1111-111111111111\", \"name\": \"Fixture\", " +

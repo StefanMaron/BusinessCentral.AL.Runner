@@ -115,7 +115,7 @@ public sealed class PrecompileAlDiagnosticFailureTests
     {
         TestArtifacts.SkipIfMissing();
 
-        var dir = Path.Combine(Path.GetTempPath(), "al-runner-precompile-al0353-bad", Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.Dir("al-runner-precompile-al0353-bad");
         var appPath = WriteAppPackage(dir, "f6666666-6666-6666-6666-666666666666",
             "PrecompileAl0353Bad", "Repro2152",
             ("Order.Table.al", """
@@ -167,7 +167,7 @@ public sealed class PrecompileAlDiagnosticFailureTests
         // The corrected form real BC accepts — proves the precompile gate does not
         // also reject valid AL. Required alongside the negative test above: a guard
         // that always failed would pass that test too.
-        var dir = Path.Combine(Path.GetTempPath(), "al-runner-precompile-al0353-good", Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.Dir("al-runner-precompile-al0353-good");
         var appPath = WriteAppPackage(dir, "f7777777-7777-7777-7777-777777777777",
             "PrecompileAl0353Good", "Repro2152",
             ("Order.Table.al", """

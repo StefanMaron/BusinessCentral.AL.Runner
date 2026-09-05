@@ -73,7 +73,7 @@ public class CacheRootsIsolationTests
     {
         TestArtifacts.SkipIfMissing();
 
-        var scratchRoot = Path.Combine(Path.GetTempPath(), "al-runner-cacheroots-isolation", Guid.NewGuid().ToString("N"));
+        var scratchRoot = TestScratch.Dir("al-runner-cacheroots-isolation");
         var depDir = Path.Combine(scratchRoot, "dep-app");
         var testsDir = Path.Combine(scratchRoot, "tests-app");
         var cacheDirA = Path.Combine(scratchRoot, "cache-a");

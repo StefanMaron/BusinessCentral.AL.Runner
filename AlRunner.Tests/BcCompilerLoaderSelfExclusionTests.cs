@@ -62,7 +62,7 @@ public sealed class BcCompilerLoaderSelfExclusionTests : IDisposable
 
     public BcCompilerLoaderSelfExclusionTests()
     {
-        _root = Path.Combine(Path.GetTempPath(), "al-runner-loader-selfexclusion-tests", Guid.NewGuid().ToString("N"));
+        _root = TestScratch.Dir("al-runner-loader-selfexclusion-tests");
         Directory.CreateDirectory(_root);
     }
 

@@ -82,7 +82,7 @@ public sealed class CacheRootsDisableForRunTests
         // invisible to the child and get redone, the exact cost the re-exec exists to
         // avoid paying twice.
         CacheRoots.ResetForTests();
-        var preExisting = Path.Combine(Path.GetTempPath(), "al-runner-no-cache-test-" + Guid.NewGuid().ToString("N"));
+        var preExisting = TestScratch.FlatDir("al-runner-no-cache-test-");
         Environment.SetEnvironmentVariable(CacheRoots.NoCacheRootEnvVar, preExisting);
         try
         {
@@ -122,10 +122,16 @@ public sealed class CacheRootsDisableForRunTests
             Directory.CreateDirectory(target);
             File.WriteAllText(Path.Combine(target, "app.bin"), "not a real app");
             Assert.True(Directory.Exists(root));
+            // #2706: the minted root is owned through ScratchDirs, so a --no-cache run that is
+            // killed before this cleanup runs is reclaimed by the next runner start.
+            Assert.True(File.Exists(AlRunner.Infrastructure.ScratchDirs.MarkerPathFor(root)),
+                "the --no-cache throwaway root has no .owner sidecar");
 
             CacheRoots.CleanupThrowawayRoot();
 
             Assert.False(Directory.Exists(root), $"expected {root} to be gone after cleanup");
+            Assert.False(File.Exists(AlRunner.Infrastructure.ScratchDirs.MarkerPathFor(root)),
+                "cleanup left the .owner sidecar behind");
         }
         finally { CacheRoots.ResetForTests(); ClearEnvVar(); }
     }
@@ -171,7 +177,7 @@ public sealed class CacheRootsDisableForRunTests
         try
         {
             var throwaway = CacheRoots.DisableForRun();
-            var explicitDir = Path.Combine(Path.GetTempPath(), "al-runner-cacheroots-explicit", Guid.NewGuid().ToString("N"));
+            var explicitDir = TestScratch.Dir("al-runner-cacheroots-explicit");
 
             CacheRoots.SetOverride(explicitDir);
 

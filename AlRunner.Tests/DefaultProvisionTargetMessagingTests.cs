@@ -62,7 +62,7 @@ public sealed class DefaultProvisionTargetMessagingTests
 
     private static string NewIsolatedHome()
     {
-        var dir = Path.Combine(Path.GetTempPath(), "al-runner-provision-target-msg", Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.Dir("al-runner-provision-target-msg");
         Directory.CreateDirectory(dir);
         return dir;
     }

@@ -40,7 +40,7 @@ public sealed class FindBucketRootDedupeTests
 {
     private static string NewTempDir()
     {
-        var dir = Path.Combine(Path.GetTempPath(), "al-runner-findbucketroot-dedupe-tests", Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.Dir("al-runner-findbucketroot-dedupe-tests");
         Directory.CreateDirectory(dir);
         return dir;
     }

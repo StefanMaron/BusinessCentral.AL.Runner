@@ -60,7 +60,7 @@ public sealed class BcCompilerPkgDedupRelativePathTests : IDisposable
 
     public BcCompilerPkgDedupRelativePathTests()
     {
-        _root = Path.Combine(Path.GetTempPath(), "al-runner-pkgdedup-relpath-tests", Guid.NewGuid().ToString("N"));
+        _root = TestScratch.Dir("al-runner-pkgdedup-relpath-tests");
         Directory.CreateDirectory(_root);
         _savedCwd = Directory.GetCurrentDirectory();
     }

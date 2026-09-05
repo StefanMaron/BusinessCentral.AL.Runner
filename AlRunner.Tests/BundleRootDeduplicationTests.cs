@@ -40,7 +40,7 @@ public sealed class BundleRootDeduplicationTests : IDisposable
 
     public BundleRootDeduplicationTests()
     {
-        _root = Path.Combine(Path.GetTempPath(), "al-runner-bundle-dedup", Guid.NewGuid().ToString("N"));
+        _root = TestScratch.Dir("al-runner-bundle-dedup");
         Directory.CreateDirectory(_root);
     }
 

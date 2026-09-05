@@ -39,7 +39,7 @@ public sealed class SuiteEnumerationTests : IDisposable
 
     public SuiteEnumerationTests()
     {
-        _root = Path.Combine(Path.GetTempPath(), "al-runner-suite-enum", Guid.NewGuid().ToString("N"));
+        _root = TestScratch.Dir("al-runner-suite-enum");
         Directory.CreateDirectory(_root);
     }
 

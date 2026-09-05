@@ -91,7 +91,7 @@ public sealed class HomeDirectoryMissingLoudFailureTests
     [Fact]
     public void MissingHomeDirectory_FailsLoud_NamingHomeValue_NeverCrashesWithRawStack()
     {
-        var missingHome = Path.Combine(Path.GetTempPath(), "al-runner-2114-missing-home", Guid.NewGuid().ToString("N"));
+        var missingHome = TestScratch.Dir("al-runner-2114-missing-home");
         Assert.False(Directory.Exists(missingHome)); // never created — the exact trigger
 
         var (exit, stderr) = RunWithHome(missingHome);
@@ -126,7 +126,7 @@ public sealed class HomeDirectoryMissingLoudFailureTests
     [Fact]
     public void ExistingEmptyHomeDirectory_BehaviourUnchanged_GenericArtifactRootMessage()
     {
-        var existingHome = Path.Combine(Path.GetTempPath(), "al-runner-2114-existing-home", Guid.NewGuid().ToString("N"));
+        var existingHome = TestScratch.Dir("al-runner-2114-existing-home");
         Directory.CreateDirectory(existingHome);
         try
         {

@@ -38,7 +38,7 @@ public sealed class EnumExtensionSidecarRoundTripTests : IDisposable
 
     public EnumExtensionSidecarRoundTripTests()
     {
-        _root = Path.Combine(Path.GetTempPath(), "al-runner-enum-ext-sidecar-tests", Guid.NewGuid().ToString("N"));
+        _root = TestScratch.Dir("al-runner-enum-ext-sidecar-tests");
         Directory.CreateDirectory(_root);
         AlEnumMetadataRegistry.Clear();
     }

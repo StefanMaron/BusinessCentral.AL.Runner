@@ -53,7 +53,7 @@ public sealed class CacheKeyDependencyClosureTests : IDisposable
 
     public CacheKeyDependencyClosureTests()
     {
-        _scratch = Path.Combine(Path.GetTempPath(), "al-runner-cachekey", Guid.NewGuid().ToString("N"));
+        _scratch = TestScratch.Dir("al-runner-cachekey");
         Directory.CreateDirectory(_scratch);
     }
 

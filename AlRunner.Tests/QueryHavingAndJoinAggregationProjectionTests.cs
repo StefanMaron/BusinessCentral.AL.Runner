@@ -78,7 +78,7 @@ public class QueryHavingAndJoinAggregationProjectionTests
 
     private static string WriteBundle()
     {
-        var root = Path.Combine(Path.GetTempPath(), "al-runner-query-having-join-2146", Guid.NewGuid().ToString("N"));
+        var root = TestScratch.Dir("al-runner-query-having-join-2146");
         Directory.CreateDirectory(root);
 
         File.WriteAllText(Path.Combine(root, "app.json"), """

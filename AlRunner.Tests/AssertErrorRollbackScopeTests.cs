@@ -61,7 +61,7 @@ public class AssertErrorRollbackScopeTests
     {
         TestArtifacts.SkipIfMissing();
 
-        var root = Path.Combine(Path.GetTempPath(), "al-runner-assert-error-rollback-2191", Guid.NewGuid().ToString("N"));
+        var root = TestScratch.Dir("al-runner-assert-error-rollback-2191");
         Directory.CreateDirectory(root);
 
         File.WriteAllText(Path.Combine(root, "app.json"), """
@@ -251,7 +251,7 @@ public class AssertErrorRollbackScopeTests
     {
         TestArtifacts.SkipIfMissing();
 
-        var root = Path.Combine(Path.GetTempPath(), "al-runner-assert-error-rollback-2431", Guid.NewGuid().ToString("N"));
+        var root = TestScratch.Dir("al-runner-assert-error-rollback-2431");
         Directory.CreateDirectory(root);
 
         File.WriteAllText(Path.Combine(root, "app.json"), """

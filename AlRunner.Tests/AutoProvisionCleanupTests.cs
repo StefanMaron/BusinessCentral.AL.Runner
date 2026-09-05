@@ -30,7 +30,7 @@ public sealed class AutoProvisionCleanupTests : IDisposable
 
     public AutoProvisionCleanupTests()
     {
-        _artifactsRoot = Path.Combine(Path.GetTempPath(), "al-runner-autoprov", Guid.NewGuid().ToString("N"));
+        _artifactsRoot = TestScratch.Dir("al-runner-autoprov");
         Directory.CreateDirectory(_artifactsRoot);
     }
 

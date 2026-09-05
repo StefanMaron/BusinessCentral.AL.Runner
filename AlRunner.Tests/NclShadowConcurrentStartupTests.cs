@@ -186,7 +186,7 @@ public sealed class NclShadowConcurrentStartupTests
     [Fact]
     public void IsShadowDirComplete_DirDoesNotExist_ReturnsFalse()
     {
-        var dir = Path.Combine(Path.GetTempPath(), "ncl-shadow-race-does-not-exist-" + Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.FlatDir("ncl-shadow-race-does-not-exist-");
         Assert.False(NclShadowRuntime.IsShadowDirComplete(dir, @"C:\install\any"));
     }
 

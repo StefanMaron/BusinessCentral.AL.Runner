@@ -42,7 +42,7 @@ public class ServerCrossBundleModuleIdentityDedupTests
 {
     private static (string appDir, string testDir) MakeAppTestPair()
     {
-        var root = Path.Combine(Path.GetTempPath(), "al-runner-server-xbundle-dedup", Guid.NewGuid().ToString("N"));
+        var root = TestScratch.Dir("al-runner-server-xbundle-dedup");
         var appDir = Path.Combine(root, "app");
         var testDir = Path.Combine(root, "tests");
         Directory.CreateDirectory(appDir);
@@ -160,7 +160,7 @@ public class ServerCrossBundleModuleIdentityDedupTests
         TestArtifacts.SkipIfMissing();
 
         var (appDir, testDir) = MakeAppTestPair();
-        var cacheDir = Path.Combine(Path.GetTempPath(), "al-runner-server-xbundle-dedup-cache", Guid.NewGuid().ToString("N"));
+        var cacheDir = TestScratch.Dir("al-runner-server-xbundle-dedup-cache");
         await using var server = await CliServer.StartAsync(new[] { "--cache", cacheDir });
 
         // Same order as the issue's Leg 2 (`sourcePaths [app, tests]`) — the exact
