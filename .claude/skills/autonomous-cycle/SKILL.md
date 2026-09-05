@@ -72,6 +72,28 @@ a merge can turn `main` red, which outranks everything you were about to do.
 3. **A PR is waiting on review.** Dispatch a review agent, or review it directly. Ours can be
    merged on a green pipeline; someone else's is reviewed and its findings go to the human queue
    — never merged, never commented on unattended.
+
+   **Every review must answer one question before the merge bar: does this PR assert something
+   about what BC does?** If it does, the proving test belongs upstream in the corpus, and this PR
+   must either link a corpus PR or explain why the corpus cannot express it. Runner
+   infrastructure — process configuration, CI plumbing, error handling, caching, parallelism —
+   asserts nothing about BC and owes nothing upstream. A change to what the runner makes AL code
+   *observe* almost always does.
+
+   "The corpus cannot express this" is a claim needing evidence like any other. It is sometimes
+   true, and the reason is structural: corpus tests are compiled from AL source *by the runner*,
+   so a defect that only affects **precompiled** dependency artifacts cannot be reproduced there
+   — the test would take the source-compiled path and pass. That answer is acceptable when the
+   PR names that structural reason and puts its proving test in `tests/runner-extras/`. It is not
+   acceptable as a way to avoid writing the upstream test.
+
+   **Do not merge a PR that closes a BC-behaviour issue on the strength of a runner-local test
+   alone.** That is the exact failure `bc-behavior-tests-go-upstream.md` exists to prevent, and it
+   is invisible: the runner-local test is green and nothing complains. Unattended, nobody will
+   notice — so the review step is the only place it can be caught.
+
+   Corollary for the loop's own output: if it merges several fixes and opens no corpus PR, treat
+   that as a signal to check rather than as evidence the work was all infrastructure.
 4. **A corpus PR has all legs green.** Merge it, then fold the submodule pin bump and the
    count-baseline update into the runner PR that needs it. A pin bump is never its own PR.
 5. **An issue is ready to work.** Take the highest-value one — prefer a measured failure count
