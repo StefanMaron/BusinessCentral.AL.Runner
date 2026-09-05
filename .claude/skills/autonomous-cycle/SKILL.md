@@ -110,6 +110,33 @@ not as a log line. A FAIL should say what to do about it.
 Record the result. If a later cycle behaves oddly, the first question is whether the box
 drifted since.
 
+## The box profile
+
+The preflight measures the machine and records what it found. Everything downstream reads that
+instead of re-measuring or guessing, and it is what makes the same skill work on someone else's
+hardware without being told anything about it.
+
+Write it to a **gitignored** file — it describes this box and this loop, not the repository, and
+it must never be committed or shared. Suggested `.claude/autonomous-state.json`, already ignored.
+
+What belongs in it:
+
+- **The machine** — total and available RAM, free disk, core count.
+- **What those imply** — the worker and job counts derived from them, so later cycles do not
+  re-derive numbers inconsistently. Roughly 1.1 GB per worker without test data and ~2.3 GB with
+  it, but derive from what you measured, not from those figures.
+- **The identity** — the account, the label namespace and the slot claimed at startup.
+- **The baseline** — which bucket was run, the expected count and the count observed, with a
+  timestamp. That is the record that says this box was healthy at a known moment.
+- **The preflight verdict** — every check with PASS or FAIL, so a later cycle behaving oddly can
+  be compared against a known-good starting state.
+- **Pacing observations** — how much budget a cycle actually consumed, so the gap between cycles
+  can be tuned from evidence rather than guessed.
+
+Rewrite it at every startup rather than trusting yesterday's. A box changes: disks fill, other
+work starts, an artifact set goes stale. A stale profile is worse than none, because it looks
+authoritative.
+
 ## Priority order
 
 Work the first item that applies. Re-evaluate from the top after every completed unit of work —
