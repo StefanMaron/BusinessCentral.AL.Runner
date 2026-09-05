@@ -1134,6 +1134,51 @@ public static partial class RecordPatches
     private static PropertyInfo? _pOnAfterValidateHandlers;
     private static Type? _tFieldTriggerHandlerListClosed;
 
+    /// <summary>
+    /// Whether the table field <paramref name="fieldNo"/> declares an <c>OnLookup</c> trigger:
+    /// true when one is wired onto its metafield, false when none is, and <b>null when this
+    /// cannot be determined</b> against the BC build in use.
+    ///
+    /// <para>#2549. The three-valued answer is the point. A caller that refuses when this says
+    /// false is telling the developer "neither your control nor your table declares an OnLookup",
+    /// which is a statement about their AL — and it would be a lie if the real reason were that
+    /// reflection could not find BC's backing field on a build whose shape moved. Those two
+    /// outcomes need different messages, so they get different values rather than a bool that
+    /// collapses them.</para>
+    ///
+    /// <para>Existence only. Running the trigger goes through BC's own public
+    /// <c>NavRecord.LookupAsync(int)</c>, which resolves the handler again via
+    /// <c>GetFieldTriggerHandler</c> — and that method returns null for an untyped
+    /// <c>NavRecord</c> (BC will not fire a field trigger on one) and calls
+    /// <c>EnsureGlobalVariablesInitialized()</c> before handing a handler back. Invoking the
+    /// handler read here directly would skip both, so a table <c>OnLookup</c> that touches a
+    /// global would run against uninitialized ones. Decompiled from BC 28.1; the method body is
+    /// byte-identical on 27.0 through 28.4 (compare_symbols, bodyChanged=false).</para>
+    ///
+    /// <para>Reads the backing fields rather than the internal <c>NCLMetaField.LookupHandler</c>
+    /// property so the probe cannot itself construct an <c>EventTriggerData</c> as a side effect
+    /// of asking whether one exists — a null backing field means no handler was ever set, which
+    /// is exactly the question.</para>
+    /// </summary>
+    internal static bool? TryHasFieldLookupTrigger(NavRecord record, int fieldNo)
+    {
+        try
+        {
+            EnsureFieldTriggerReflection();
+            if (_fEventTriggerDataValueBacking == null || _fLookupHandlerBacking == null) return null;
+            if (!record.MetaTable.TryGetFieldByNo(fieldNo, out var metaField)) return false;
+            var etd = _fEventTriggerDataValueBacking.GetValue(metaField);
+            if (etd == null) return false;
+            return _fLookupHandlerBacking.GetValue(etd) != null;
+        }
+        catch (Exception)
+        {
+            // Any reflection failure is "cannot determine", never "no trigger" — see the
+            // three-valued note above.
+            return null;
+        }
+    }
+
     private static void EnsureFieldTriggerReflection()
     {
         if (_tFieldTriggerHandlerAttr != null) return;
