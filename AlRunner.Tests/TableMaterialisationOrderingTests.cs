@@ -121,6 +121,122 @@ public sealed class TableMaterialisationOrderingTests : IDisposable
     }
 
     /// <summary>
+    /// The same claim, but on the SECOND materialisation of the same (source, table) — which is
+    /// the one that actually repeats in a run. ResetPerTestState() drains every source's perTable
+    /// (RecordPatches.cs) at bundle start (TestExecutor) and at every install-baseline boundary
+    /// restore (RestoreInstallBaseline), so a table is materialised again and again, not once.
+    ///
+    /// This models that reset exactly: materialise normally, drop the entry the way the reset
+    /// does, then re-run the race. With a latch that only remembers "this (source, table) has
+    /// been materialised at some point", the second race is unguarded — the fast path sees a
+    /// stale-true latch and an entry the winner published before entering the loader, and hands
+    /// the loser a store that is present-and-empty. The latch has to name the store instance it
+    /// was set for, so that a re-created store invalidates it.
+    /// </summary>
+    [Fact]
+    public void AfterAPerTestReset_TheLoserOfTheRaceStillWaitsForHydration()
+    {
+        var source = new object();
+        var perTable = new ConcurrentDictionary<int, object>();
+
+        // ── First materialisation, uncontended: this is what sets the latch. ──
+        RecordPatches.TestDataOnDemandLoader =
+            (_, id) => ((FakeStore)perTable[id]).Rows.Enqueue(BackupRow);
+        var beforeReset = RecordPatches.GetOrCreateHydratedDataAccessCore(
+            source, perTable, TableId, static () => new FakeStore());
+        Assert.Equal(new[] { BackupRow }, ((FakeStore)beforeReset).Rows.ToArray());
+
+        // ── ResetPerTestState(): drains the per-source dictionary, touches nothing else. ──
+        perTable.Clear();
+
+        // ── Second materialisation, raced exactly as the first test races the first one. ──
+        var creations = 0;
+        Func<object> create = () => { Interlocked.Increment(ref creations); return new FakeStore(); };
+
+        using var winnerIsHydrating = new ManualResetEventSlim(false);
+        using var loserHasReadTheStore = new ManualResetEventSlim(false);
+
+        RecordPatches.TestDataOnDemandLoader = (_, id) =>
+        {
+            winnerIsHydrating.Set();
+            loserHasReadTheStore.Wait(TimeSpan.FromSeconds(2));
+            ((FakeStore)perTable[id]).Rows.Enqueue(BackupRow);
+        };
+
+        object? winnerGot = null;
+        object? loserGot = null;
+        var rowsTheLoserSaw = -1;
+
+        var winner = Task.Run(() =>
+            winnerGot = RecordPatches.GetOrCreateHydratedDataAccessCore(source, perTable, TableId, create));
+
+        Assert.True(winnerIsHydrating.Wait(TimeSpan.FromSeconds(30)),
+            "the winner never reached the second hydration, so no race was staged");
+
+        var loser = Task.Run(() =>
+        {
+            loserGot = RecordPatches.GetOrCreateHydratedDataAccessCore(source, perTable, TableId, create);
+            rowsTheLoserSaw = ((FakeStore)loserGot).Rows.Count;
+            loserHasReadTheStore.Set();
+        });
+
+        Assert.True(Task.WaitAll(new[] { winner, loser }, TimeSpan.FromSeconds(60)),
+            "a materialisation never completed after the reset");
+
+        Assert.Equal(1, rowsTheLoserSaw);
+        Assert.Equal(new[] { BackupRow }, ((FakeStore)loserGot!).Rows.ToArray());
+
+        // The post-reset store, freshly built and hydrated once — not the pre-reset one, and
+        // not a second private copy handed to the loser.
+        Assert.Same(winnerGot, loserGot);
+        Assert.Same(perTable[TableId], loserGot);
+        Assert.NotSame(beforeReset, loserGot);
+        Assert.Equal(1, creations);
+    }
+
+    /// <summary>
+    /// The reset seam without a race. This one does NOT fail on the pre-fix ordering — the
+    /// single-threaded path already rebuilds and reloads, because a dropped entry fails the fast
+    /// path's perTable probe. It is here to pin the two ways the fix could overshoot: an
+    /// instance-scoped latch that never matches again turns every touch after a reset into a
+    /// reload (loads would keep climbing), and one that matches too eagerly hands back the
+    /// pre-reset instance. So it asserts both directions — reload once across the reset, then a
+    /// fast-path hit on the rebuilt store with no further load.
+    /// </summary>
+    [Fact]
+    public void AfterAPerTestReset_TheRebuiltStoreIsHydratedAgain()
+    {
+        var source = new object();
+        var perTable = new ConcurrentDictionary<int, object>();
+        var loads = 0;
+        RecordPatches.TestDataOnDemandLoader = (_, id) =>
+        {
+            Interlocked.Increment(ref loads);
+            ((FakeStore)perTable[id]).Rows.Enqueue(BackupRow);
+        };
+
+        var first = RecordPatches.GetOrCreateHydratedDataAccessCore(
+            source, perTable, TableId, static () => new FakeStore());
+        Assert.Equal(1, loads);
+
+        perTable.Clear();                                   // ResetPerTestState()
+
+        var second = RecordPatches.GetOrCreateHydratedDataAccessCore(
+            source, perTable, TableId, static () => new FakeStore());
+
+        Assert.NotSame(first, second);
+        Assert.Equal(2, loads);
+        Assert.Equal(new[] { BackupRow }, ((FakeStore)second).Rows.ToArray());
+
+        // …and the rebuilt store is now the materialised one: a third touch is a fast-path hit,
+        // same instance, no third load.
+        var third = RecordPatches.GetOrCreateHydratedDataAccessCore(
+            source, perTable, TableId, static () => new FakeStore());
+        Assert.Same(second, third);
+        Assert.Equal(2, loads);
+    }
+
+    /// <summary>
     /// The hand-out order must hold for a REPEAT touch too, not only for the racing pair: once
     /// hydration has finished, every later caller gets that same hydrated store back and no
     /// second load runs. Guards the lock-free fast path the fix adds.

@@ -18,9 +18,28 @@
 //   backup carries for the same table, so the result looks entirely plausible.
 //
 // THE INVARIANT
-//   Nobody leaves this method for a given (DataAccessSource, table id) while a --test-data load
-//   for it is still running. Every caller therefore sees storage that is either fully hydrated
-//   or will never be hydrated — never a snapshot taken mid-flight.
+//   A thread that holds no gate never leaves this method with storage whose --test-data load is
+//   still running. What it is handed is either fully hydrated or will never be hydrated — never
+//   a snapshot taken mid-flight. (A thread that already holds a gate is the one carve-out, and
+//   it is deliberate: see the wait-graph note below. That is the pre-gate behaviour, unchanged,
+//   and the defect it leaves open is #2877, tracked separately.)
+//
+// WHY THE LATCH NAMES A STORAGE INSTANCE AND NOT A (SOURCE, TABLE) PAIR
+//   A table is materialised many times in a run, not once. ResetPerTestState() drains every
+//   source's perTable at bundle start (TestExecutor) and at every install-baseline boundary
+//   restore (RestoreInstallBaseline), and RestoreInstallBaselineSnapshot then REPLACES entries
+//   with freshly built storage. A latch meaning "this (source, table) has been materialised at
+//   some point" survives all of that and is stale from the second materialisation onward — and
+//   a stale-true latch reopens the exact window this file exists to close, because the winner
+//   publishes into perTable BEFORE entering the loader (see below), so the fast path's perTable
+//   probe succeeds against a store that is present-and-EMPTY. Pairing a stale latch with a
+//   present entry is therefore not a safe combination, and an earlier version of this fix
+//   assumed it was.
+//
+//   So the latch records WHICH storage instance it was set for. Reset paths do not have to know
+//   the gate exists: dropping or replacing perTable's entry produces a different instance, the
+//   instance check fails, and the next toucher goes through the lock. There is one mechanism,
+//   not a mechanism plus a list of resets that must remember to call it.
 //
 // WHY PUBLICATION STILL HAPPENS BEFORE HYDRATION
 //   The obvious alternative — hold the instance back until it is hydrated — is wrong here.
@@ -60,18 +79,38 @@ namespace AlRunner.Patches;
 public static partial class RecordPatches
 {
     /// <summary>
-    /// One gate per (DataAccessSource, table id). Its monitor is what a second thread waits on;
-    /// <see cref="Materialised"/> is what lets every later touch skip the monitor entirely.
+    /// One gate per (DataAccessSource, table id), for the lifetime of that source. Its monitor
+    /// is what a second thread waits on; <see cref="IsSettled"/> is what lets a later touch skip
+    /// the monitor entirely.
     /// </summary>
     private sealed class TableMaterialisationGate
     {
-        private volatile bool _materialised;
+        /// <summary>The storage instance that last left the materialisation below, held WEAKLY.
+        /// A strong reference would keep one generation of every table's rows alive past each
+        /// ResetPerTestState(), which exists to drop exactly those rows. Weak costs nothing in
+        /// correctness: a true answer is only ever returned to a caller that is holding the same
+        /// instance (it just read it out of perTable), so the target cannot have been collected
+        /// out from under a true answer, and a collected target answers false, which is the
+        /// conservative direction — take the lock.</summary>
+        private WeakReference<object>? _settled;
 
-        /// <summary>Set only inside the gate, after the loader has returned. Reading it true
-        /// therefore means no hydration for this (source, table) is in flight.</summary>
-        internal bool Materialised => _materialised;
+        /// <summary>True only for the exact storage instance this gate last saw out of the
+        /// materialisation. It says "no --test-data load is running against THIS instance, and
+        /// none ever will be" — deliberately not "this instance has rows", because the
+        /// already-published branch settles an instance nothing loads (see there). Storage that
+        /// a reset dropped and a later touch rebuilt is a different instance and fails here, so
+        /// the rebuild is ordered by the lock like the first materialisation was.</summary>
+        internal bool IsSettled(object store) =>
+            Volatile.Read(ref _settled) is { } settled
+            && settled.TryGetTarget(out var target)
+            && ReferenceEquals(target, store);
 
-        internal void MarkMaterialised() => _materialised = true;
+        /// <summary>Called only inside the gate, after any load for <paramref name="store"/> has
+        /// returned. A fresh WeakReference each time rather than SetTarget on a shared one:
+        /// WeakReference&lt;T&gt; is not documented as safe for concurrent SetTarget/TryGetTarget,
+        /// and publishing an immutable one through a volatile write is.</summary>
+        internal void MarkSettled(object store) =>
+            Volatile.Write(ref _settled, new WeakReference<object>(store));
     }
 
     private static readonly ConditionalWeakTable<object, ConcurrentDictionary<int, TableMaterialisationGate>>
@@ -112,10 +151,13 @@ public static partial class RecordPatches
             static _ => new ConcurrentDictionary<int, TableMaterialisationGate>());
         var gate = gates.GetOrAdd(tableId, static _ => new TableMaterialisationGate());
 
-        // Fast path for every touch after the first. The perTable probe stays part of the
-        // condition: a store reset (ResetPerTestState / RestoreInstallBaselineSnapshot) drops
-        // the entry without touching the gate, and a dropped entry has to be built again.
-        if (gate.Materialised && perTable.TryGetValue(tableId, out var ready)) return ready;
+        // Fast path for every touch after the first. Read the entry, then ask the gate about
+        // THAT INSTANCE — never about the (source, table) pair. A store reset (ResetPerTestState
+        // / RestoreInstallBaselineSnapshot) drops or replaces the entry without touching the
+        // gate, so "an entry exists" and "the gate has settled" can both be true of two
+        // different stores, one of them the empty one a winner has just published on its way
+        // into the loader. That combination is the #2788 hand-out itself.
+        if (perTable.TryGetValue(tableId, out var ready) && gate.IsSettled(ready)) return ready;
 
         // Already inside a materialisation on this thread — must not wait on anyone. This is
         // the pre-gate code path verbatim, and it is what a nested call did before.
@@ -127,7 +169,7 @@ public static partial class RecordPatches
 
         lock (gate)
         {
-            if (gate.Materialised && perTable.TryGetValue(tableId, out var late)) return late;
+            if (perTable.TryGetValue(tableId, out var late) && gate.IsSettled(late)) return late;
 
             _materialisationDepth++;
             try
@@ -138,7 +180,11 @@ public static partial class RecordPatches
                 {
                     // Published by a nested call (this thread's or another's) or by a restore.
                     // Storage presence IS the "have we loaded this" answer — see the on-demand
-                    // note in GetDataAccessForTableCore — so nothing is loaded for it here.
+                    // note in GetDataAccessForTableCore — so nothing is loaded for it here, and
+                    // nothing ever will be. It is settled below all the same: settled means "no
+                    // load is or will be running against this instance", which is true of it,
+                    // and is the only thing the fast path needs. That it holds no backup rows
+                    // is #2877, a different defect with a different fix.
                     instance = existing;
                 }
                 else
@@ -153,7 +199,7 @@ public static partial class RecordPatches
                 if (thisCallCreatedIt)
                     InvokeTestDataOnDemandLoader(self, tableId);
 
-                gate.MarkMaterialised();
+                gate.MarkSettled(instance);
                 return instance;
             }
             finally { _materialisationDepth--; }

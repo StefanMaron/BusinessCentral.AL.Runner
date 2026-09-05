@@ -281,6 +281,15 @@ public static partial class RecordPatches
         // Drop the in-memory table rows so an edited re-run starts clean instead of
         // seeing Inserts from the previous run (which would e.g. throw "already exists").
         _dataAccessByTable.Clear();
+        // _materialisationGates is deliberately NOT cleared here, and no reset path clears it.
+        // A gate's latch names the storage INSTANCE it was set for, so clearing the map above
+        // invalidates it on its own — see RecordPatches.TableMaterialisation.cs. Clearing the
+        // gates as well would be a second mechanism for one fact, which is what let the fast
+        // path trust a latch that no longer described anything (the reset paths that drop
+        // storage are not all in one place, and only one of them knew to do it); worse, it
+        // hands out fresh gate objects, so a reset racing a materialisation would put two
+        // threads inside the create -> hydrate step under two different monitors. The gates are
+        // a handful of empty objects keyed weakly by DataAccessSource, and they die with it.
         // Registered table connections cache one CrmTestDataProvider per table id, bound to
         // the previous run's NCLMetaTable — they go with the rows (#2725).
         TableConnectionPatches.ResetForReload();

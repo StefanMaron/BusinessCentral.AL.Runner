@@ -149,6 +149,11 @@ public static partial class RecordPatches
             AppendInto(_activeDepCompanyBaseline.Sources, source, tableId, metaTable, rows);
     }
 
+    // #2914: this walks and appends to plain List<>s with no synchronisation, and the two
+    // callers above run inside a --test-data hydration — which is serialised per (source,
+    // table) by a TableMaterialisationGate, not globally, so two threads hydrating two
+    // different tables can be in here at once. Left as-is deliberately; the fix is a lock of
+    // its own and the concurrency has not been measured on a real --test-data run.
     private static void AppendInto(
         List<BaselineSource> sources, object source, int tableId, object metaTable, NavValue[][] rows)
     {
