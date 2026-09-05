@@ -1558,12 +1558,20 @@ internal sealed class RunnerPageInstance
     /// only one of them working either way.
     /// </summary>
     private MethodInfo? ResolveRecordTrigger(string name, Type[] parameterTypes)
+        => ResolveRecordTriggerOn(_form.GetType(), IsAsyncCompiled, name, parameterTypes);
+
+    /// <summary>
+    /// <see cref="ResolveRecordTrigger"/>'s rule, as a pure function of the page's compiled
+    /// TYPE and its <c>__IsAsync</c>, so it can be pinned without a BC runtime — see
+    /// AlRunner.Tests/RunnerPageInstanceAsyncTriggerResolutionTests.cs.
+    /// </summary>
+    internal static MethodInfo? ResolveRecordTriggerOn(
+        Type type, bool isAsyncCompiled, string name, Type[] parameterTypes)
     {
         const BindingFlags flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
-        var type = _form.GetType();
         var sync = type.GetMethod(name, flags, binder: null, types: parameterTypes, modifiers: null);
-        if (!IsAsyncCompiled) return sync ?? type.GetMethod(name + "Async", flags, binder: null, types: parameterTypes, modifiers: null);
-        return type.GetMethod(name + "Async", flags, binder: null, types: parameterTypes, modifiers: null) ?? sync;
+        var async = type.GetMethod(name + "Async", flags, binder: null, types: parameterTypes, modifiers: null);
+        return isAsyncCompiled ? (async ?? sync) : (sync ?? async);
     }
 
     /// <summary>
