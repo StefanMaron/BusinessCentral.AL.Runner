@@ -572,7 +572,7 @@ internal static class TestDataProvisioner
         // before hydrating anything. Only symbol-bearing packages go to the reader; the rest
         // are named here, because a table that only that package declares cannot be mapped
         // from the backup and a reader of the run should know why.
-        var (keep, skipped) = PartitionSymbolPackages(apps, AppLoader.HasSymbolReference);
+        var (keep, skipped) = PartitionSymbolPackages(apps, IsReaderConsumable);
         foreach (var s in skipped)
             Console.Error.WriteLine(
                 $"[test-data] not handing '{s}' to the backup reader: source-only package (no "
@@ -584,6 +584,19 @@ internal static class TestDataProvisioner
                 + "SymbolReference.json, so the backup reader has no symbols to map SQL columns onto "
                 + "AL fields with. Point --package-cache at the platform apps for the selected BC version.");
         return keep;
+    }
+
+    /// <summary>
+    /// True unless the package is POSITIVELY a source-only NAVX — manifest readable, no
+    /// SymbolReference.json. A file the runner cannot read as a package at all is kept and
+    /// handed to the reader as before: the reader names what is wrong with it loudly, whereas
+    /// dropping it here would turn an unreadable dependency into a silent absence (and the
+    /// lazy-hydration tests drive this path with a placeholder .app the fake reader never opens).
+    /// </summary>
+    internal static bool IsReaderConsumable(string appPath)
+    {
+        var (manifest, hasSymbolReference) = AppLoader.ReadPackageMeta(appPath);
+        return manifest == null || hasSymbolReference;
     }
 
     /// <summary>
