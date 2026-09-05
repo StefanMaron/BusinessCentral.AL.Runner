@@ -393,8 +393,15 @@ public static partial class RecordPatches
                     $"[TableRelation] REFUSED {fieldName}: {parts.Count}-part related-table name '{node.RelatedTableField}'");
                 return null;
             }
-            var conditions = RelationConditionList(node.IfExpression?.IfTableRelationCondition, fieldName);
-            var filters = RelationConditionList(node.TableFilter?.Filter, fieldName);
+            // The two lists differ in ONE way, and it is not cosmetic (#2518): a where(...)
+            // filter may carry a `field(...)` link, an if(...) condition may not. BC models
+            // the first as MetaFilter/FilterType.FIELD → NCLMetaFilterField and the second as
+            // MetaCondition, whose NCLMetaFilter.CreateFromMetaCondition has CONST and FILTER
+            // cases only and throws NotSupportedException on FIELD.
+            var conditions = RelationConditionList(node.IfExpression?.IfTableRelationCondition,
+                fieldName, allowFieldLinks: false);
+            var filters = RelationConditionList(node.TableFilter?.Filter,
+                fieldName, allowFieldLinks: true);
             if (conditions == null || filters == null) return null;
             arms.Add(new ParsedRelationArm(parts[0], parts.Count == 2 ? parts[1] : null,
                 conditions, filters));
@@ -405,16 +412,28 @@ public static partial class RecordPatches
     /// <summary>
     /// The conditions of an <c>if (...)</c> arm, or the entries of a <c>where(...)</c>
     /// filter — the same <c>TableFilterExpressionSyntax</c> node, and the same shapes as a
-    /// CalcFormula's where, so they reuse <see cref="ParsedCalcFilter"/>. Only
-    /// <c>const(...)</c> and <c>filter(...)</c> are carried: they are what
-    /// <c>MetaCondition</c>/<c>MetaFilter</c> hold as evaluable text. A <c>field(...)</c>
-    /// link (and the FlowFilter forms) reads ANOTHER field of the referencing row at
-    /// evaluation time; emitting it as const/filter text would apply a comparison BC never
-    /// wrote, so it refuses the whole relation instead (null) — those shapes remain a
-    /// tracked gap, dropped as loudly as they were silently before #1737.
+    /// CalcFormula's where, so they reuse <see cref="ParsedCalcFilter"/>.
+    /// <para><c>const(...)</c> and <c>filter(...)</c> are carried in both positions: they are
+    /// what <c>MetaCondition</c> / <c>MetaFilter</c> hold as evaluable text.</para>
+    /// <para><paramref name="allowFieldLinks"/> is the asymmetry, and it mirrors BC's own
+    /// metadata rather than a runner preference (#2518). A <c>where(...)</c> entry becomes a
+    /// <c>MetaFilter</c>, and <c>NCLMetaFilter.CreateFromMetaFilter</c> has a
+    /// <c>FilterType.FIELD</c> case building an <c>NCLMetaFilterField</c> whose value is read
+    /// from the referencing row at evaluation time — so <c>field(...)</c> and the three
+    /// flow-filter spellings around it are representable there. An <c>if (...)</c> condition
+    /// becomes a <c>MetaCondition</c>, and <c>NCLMetaFilter.CreateFromMetaCondition</c> has
+    /// CONST and FILTER cases only, throwing <c>NotSupportedException</c> on FIELD; carrying
+    /// one there would build metadata BC cannot load, so it still refuses the whole relation.
+    /// </para>
+    /// <para>Refusing returns null — the WHOLE relation is dropped, never half-captured. That
+    /// is deliberate for an unrepresentable shape, but it is also why this list matters: a
+    /// dropped relation leaves <c>FieldRef.Relation</c> answering 0, which is
+    /// indistinguishable from "no TableRelation declared". Before #2518 every
+    /// <c>where(... = field(...))</c> relation was dropped for exactly that reason — 826 of
+    /// them in Base Application 28.1, including <c>Customer.City</c>.</para>
     /// </summary>
     private static List<ParsedCalcFilter>? RelationConditionList(
-        NavSyntax.TableFilterExpressionSyntax? filter, string fieldName)
+        NavSyntax.TableFilterExpressionSyntax? filter, string fieldName, bool allowFieldLinks)
     {
         var list = new List<ParsedCalcFilter>();
         if (filter == null) return list;
@@ -438,9 +457,44 @@ public static partial class RecordPatches
                         Value: FilterValueText(fe.Filter?.ToString())));
                     break;
 
+                // "Country/Region Code" = field("Country/Region Code") — and the three
+                // flow-filter spellings, which BC models as the SAME FIELD link plus
+                // MetaFilter's two mode flags (#1716), not as separate kinds.
+                case NavSyntax.SimpleFieldExpressionSyntax sfe when allowFieldLinks:
+                    list.Add(new ParsedCalcFilter(
+                        Unquote(sfe.LeftHandSide?.ToString()?.Trim() ?? ""),
+                        ParsedCalcFilterKind.Field,
+                        ParentFieldName: Unquote(sfe.Identifier?.ToString()?.Trim() ?? "")));
+                    break;
+
+                case NavSyntax.FieldFilterExpressionSyntax ffe when allowFieldLinks:
+                    list.Add(new ParsedCalcFilter(
+                        Unquote(ffe.LeftHandSide?.ToString()?.Trim() ?? ""),
+                        ParsedCalcFilterKind.Field,
+                        ParentFieldName: Unquote(ffe.Identifier?.ToString()?.Trim() ?? ""),
+                        ValueIsFilter: true));
+                    break;
+
+                case NavSyntax.FieldUpperLimitExpressionSyntax ule when allowFieldLinks:
+                    list.Add(new ParsedCalcFilter(
+                        Unquote(ule.LeftHandSide?.ToString()?.Trim() ?? ""),
+                        ParsedCalcFilterKind.Field,
+                        ParentFieldName: Unquote(ule.Identifier?.ToString()?.Trim() ?? ""),
+                        OnlyMaxLimit: true));
+                    break;
+
+                case NavSyntax.FieldUpperLimitFilterExpressionSyntax ulf when allowFieldLinks:
+                    list.Add(new ParsedCalcFilter(
+                        Unquote(ulf.LeftHandSide?.ToString()?.Trim() ?? ""),
+                        ParsedCalcFilterKind.Field,
+                        ParentFieldName: Unquote(ulf.Identifier?.ToString()?.Trim() ?? ""),
+                        ValueIsFilter: true, OnlyMaxLimit: true));
+                    break;
+
                 default:
                     Console.Error.WriteLine(
-                        $"[TableRelation] REFUSED {fieldName}: unsupported condition " +
+                        $"[TableRelation] REFUSED {fieldName}: unsupported " +
+                        (allowFieldLinks ? "where() entry " : "if() condition ") +
                         $"{cond?.GetType().Name} ({cond})");
                     return null;
             }

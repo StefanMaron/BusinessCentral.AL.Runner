@@ -131,7 +131,18 @@ internal static partial class BcAppSymbolCache
     // deserialises them as null/true, which reads as "this field has no relation": FieldRef.Relation
     // answers 0 and Validate() accepts a value with no matching related row. That is a wrong ANSWER
     // replayed from cache rather than a cache miss, so it needs the bump.
-    private const int CacheVersion = 27;   // v27: PermissionSetSymbol gained Permissions / IncludedPermissionSets / Access (#2910)
+    // v27: PermissionSetSymbol gained Permissions / IncludedPermissionSets / Access (#2910) —
+    // a v26 payload deserialises them as null, which reads as "this permission set grants
+    // nothing and includes nothing", so BC composes an empty set instead of the real one.
+    // v28: the SAME RelationArms field now carries MORE of what the SAME SymbolReference.json
+    // already said (#2518). Until this bump the parser refused any arm whose where(...) named
+    // a `field(...)` link and dropped the WHOLE relation, so 826 Base Application 28.1
+    // relations — Customer.City among them — were cached as RelationArms = null. That
+    // deserialises as "this field declares no TableRelation": FieldRef.Relation answers 0,
+    // RapidStart's Relation Table ID stays 0, and Validate() skips the relation check. The
+    // schema did not change, so a v27 payload loads without error and replays the pre-fix
+    // wrong answer instead of missing — which is precisely what the bump is for.
+    private const int CacheVersion = 28;
     private static readonly ConcurrentDictionary<string, AppSymbols> ProcessCache = new(StringComparer.OrdinalIgnoreCase);
     // Issue #1820 — path -> content-hash memo. ComputeAppContentHash needs to read the
     // WHOLE .app to hash it (unlike the FileInfo.Length/LastWriteTimeUtc stat it replaced,
