@@ -214,6 +214,28 @@ public sealed class InstallBaselineKeySymbolStateTests : IDisposable
     }
 
     [Fact]
+    public void SymbolStateKey_ChangesWhenTheSameBytesParseToADifferentShape()
+    {
+        // #2756 — the property #2753 MISSED, and the one #2710's field incident most likely ran
+        // through. #2753 keyed on (path, content hash), reasoning that identical bytes mean
+        // identical symbols. #2712 is a measured counter-example: the same Base Application
+        // SymbolReference.json parsed to 90 of 96 table extensions after an allocation failure
+        // was swallowed mid-parse, and the process carried on. The install triggers wrote through
+        // that degraded metadata and the snapshot was persisted complete, valid, and WRONG under a
+        // key byte-identical to a healthy run's.
+        //
+        // So the per-app term now carries the parse SHAPE alongside the content hash. Same bytes,
+        // different parse result, different key — which is the difference between a cross-process
+        // silent wrong answer and a cache miss.
+        var healthy = RecordPatches.ComputeBcAppSymbolStateKey(
+            new[] { ("/pkg/Base Application.app", "same-bytes|t2100|x96") }, Array.Empty<string>());
+        var degraded = RecordPatches.ComputeBcAppSymbolStateKey(
+            new[] { ("/pkg/Base Application.app", "same-bytes|t2100|x6") }, Array.Empty<string>());
+
+        Assert.NotEqual(healthy, degraded);
+    }
+
+    [Fact]
     public void SymbolStateKey_ChangesWhenAnAppsContentChangesUnderTheSamePath()
     {
         // The #2710 field scenario in one line: same path, different bytes. Keying on the
