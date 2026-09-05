@@ -619,6 +619,39 @@ internal class LiveNavTestPage : MockITestPage
         finally { _suppressTeardownOnLoad = false; }
     }
 
+    /// <summary>
+    /// Run the "a row became the page's current row" sequence for the row the page is ALREADY
+    /// on, without moving the cursor — <see cref="Loaded"/>'s OnAfterGetRecord /
+    /// OnAfterGetCurrRecord, the xRec before-image, and the linked-part refresh.
+    ///
+    /// Needed because a page handed to a [ModalPageHandler] / [PageHandler] is constructed
+    /// already-open by BC's ShowDialog, so RunnerTestPageState.MarkOpened — the code that runs
+    /// the open sequence for a page the AL test opened itself — never runs on that path.
+    /// RunnerTestClientSession.GetPage compensated with MoveFirstDuringOpen, but only for a
+    /// record nothing had positioned yet: a caller that opened the page ON a specific row
+    /// (<c>PAGE.RunModal(id, Rec)</c>) must not have that row silently re-queried away (corpus
+    /// CU60848 RunModal_OpensOnTheRecordSetByTheCaller). That guard is right about the CURSOR
+    /// and wrong about the TRIGGERS: the row-load triggers belong to every row a page shows,
+    /// however it came to be on it.
+    ///
+    /// Measured on Base Application page 403 "Purchase Order Statistics", whose totals are
+    /// computed in RefreshOnAfterGetRecord() off OnAfterGetRecord and NOT in OnOpenPage: opened
+    /// modally on a caller-positioned Purchase Header, it received OnOpenPage (raised by BC's
+    /// own OpenForm inside RunnerModalDispatch.FormRunModal) but never OnAfterGetRecord, so
+    /// every total it showed was its type default. See issue #2797.
+    ///
+    /// Shares MoveFirstDuringOpen's teardown suppression for the same reason: this is the
+    /// page-construction-time row load, not a navigation call the AL test made, so an AL error
+    /// raised in the trigger must propagate as itself rather than being converted into BC's
+    /// "The TestPage is not open."
+    /// </summary>
+    internal bool MarkRowLoadedDuringOpen()
+    {
+        _suppressTeardownOnLoad = true;
+        try { return Loaded(found: true); }
+        finally { _suppressTeardownOnLoad = false; }
+    }
+
     // Real BC's own exception for this ("The TestPage is not open.") is not part of the
     // runner's own type surface — construct BC's own NavNCLDialogException (the same
     // AL-catchable-by-asserterror mechanism every other faithful platform error in this file
