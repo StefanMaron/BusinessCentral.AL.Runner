@@ -278,6 +278,13 @@ public static partial class RecordPatches
     /// </summary>
     private static void EnsureFilteredFieldTablePopulated(object dataAccess, object cacheRequest, object session)
     {
+        // A `Record "Field" temporary` holds exactly the rows AL inserted; the service tier's
+        // virtual Field provider never serves a temporary instance, which merely borrows the
+        // table's SHAPE. Populating it here injected real metadata rows into AL's private
+        // store -- issue #2524. GetDataAccessForTableCore's isTemporary branch already skips
+        // every creation-time populate; this is the same invariant, at find time.
+        if (IsTemporaryRecordDataAccess(dataAccess)) return;
+
         try
         {
             var fieldMetaTable = (NCLMetaTable)_pReqMetaAppObj_Find!.GetValue(cacheRequest)!;

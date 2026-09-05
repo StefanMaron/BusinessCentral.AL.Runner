@@ -411,6 +411,12 @@ public static partial class RecordPatches
     /// </summary>
     private static void RedriveAggregatePermissionSetForRequest(object dataAccess, object request)
     {
+        // A `Record "Aggregate Permission Set" temporary` holds exactly the rows AL inserted.
+        // Redriving the aggregate into its private store overwrote them with the real system
+        // permission sets (measured: Count went 1 -> 123 across one FindSet, which then
+        // returned SECURITY instead of AL's row). Issue #2524.
+        if (IsTemporaryRecordDataAccess(dataAccess)) return;
+
         EnsureAggregatePermissionSetLiveGuardReflection(dataAccess);
         if (FindRequestMetaApplicationObject(request) is not NCLMetaTable metaTable) return;
         var session = _apsDataAccessSession!.GetValue(dataAccess);
