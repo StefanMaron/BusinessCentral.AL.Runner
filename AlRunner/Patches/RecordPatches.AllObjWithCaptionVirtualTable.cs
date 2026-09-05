@@ -104,10 +104,21 @@ public static partial class RecordPatches
     /// <summary>
     /// One column of an AllObjWithCaption row, matched by the metatable's own FIELD NAME so
     /// the mapping tracks whatever the System package in the resolved artifact declares
-    /// rather than a hardcoded field-number table. Every other column (App Package ID, App
-    /// Runtime Package ID, Object Subtype, Object Namespace, …) gets BC's own default,
-    /// which is exactly what AllObjWithCaptionDataProvider emits for a base object with no
-    /// app package and no namespace.
+    /// rather than a hardcoded field-number table. Every remaining column (App Package ID,
+    /// App Runtime Package ID, Object Namespace, …) gets BC's own default, which is exactly
+    /// what AllObjWithCaptionDataProvider emits for a base object with no app package and no
+    /// namespace.
+    ///
+    /// <para><c>Object Subtype</c> is answered for PAGES, from the same PageType the "Page
+    /// Metadata" (2000000138) virtual table reports — one source, so a page's subtype here
+    /// and its PageType there cannot disagree. Base Application page 9170 "Profile Card"
+    /// reads exactly this column: its <c>ValidateRoleCenterIdExists</c> does
+    /// <c>AllObjWithCaption.TestField("Object Subtype", 'RoleCenter')</c> on the profile's
+    /// Role Center ID, so a blank column made every profile insert refuse a legitimate role
+    /// center. Other object kinds carry a subtype on a real tier too (a codeunit's
+    /// Normal/Test/Install/Upgrade, a table's Normal/Temporary, …); those are NOT answered
+    /// here and keep BC's default, because the runner has no equally-single source for them
+    /// yet — see the issue linked from the PR that added this.</para>
     /// </summary>
     private static object? BuildAllObjWithCaptionValue(
         NCLMetaField field, int typeOrdinal, int objectId, string objectName, string objectCaption)
@@ -122,9 +133,33 @@ public static partial class RecordPatches
                 return _aovNavTextCreateTruncated!.Invoke(null, new object?[] { field.FieldDefinedLength, objectName ?? string.Empty });
             case "objectcaption":
                 return _aovNavTextCreateTruncated!.Invoke(null, new object?[] { field.FieldDefinedLength, objectCaption ?? string.Empty });
+            case "objectsubtype":
+            {
+                var subtype = SubtypeForObject(typeOrdinal, objectId);
+                if (subtype == null) break;
+                return _aovNavTextCreateTruncated!.Invoke(null, new object?[] { field.FieldDefinedLength, subtype });
+            }
             default:
-                return _aovGetDefaultNavValue!.Invoke(null, new object?[] { field, false });
+                break;
         }
+        return _aovGetDefaultNavValue!.Invoke(null, new object?[] { field, false });
+    }
+
+    /// <summary>
+    /// The AL subtype of one object in the shared inventory, or null when the runner has no
+    /// single authoritative source for that kind's subtype and BC's own default must stand.
+    ///
+    /// Pages only, deliberately — see <see cref="BuildAllObjWithCaptionValue"/>. The page's
+    /// type ordinal is compared against the ordinal AllObjWithCaption's OWN "Object Type"
+    /// option set gives "Page" in this artifact, never a hardcoded number.
+    /// </summary>
+    private static string? SubtypeForObject(int typeOrdinal, int objectId)
+    {
+        if (_awcObjectTypeOrdinals == null) return null;
+        if (!_awcObjectTypeOrdinals.TryGetValue("page", out var pageOrdinal) || typeOrdinal != pageOrdinal)
+            return null;
+        var pageType = TryGetPageMetadataPageType(objectId);
+        return string.IsNullOrEmpty(pageType) ? null : pageType;
     }
 
     private static Dictionary<string, int>? _awcObjectTypeOrdinals;

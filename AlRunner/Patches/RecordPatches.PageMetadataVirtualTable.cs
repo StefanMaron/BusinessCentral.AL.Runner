@@ -165,6 +165,19 @@ public static partial class RecordPatches
     /// test and of any source-compiled dependency first, then pages declared by the
     /// SymbolReference.json of every registered precompiled dependency .app.
     /// </summary>
+    /// <summary>
+    /// The declared <c>PageType</c> of one page, from the SAME inventory the "Page Metadata"
+    /// (2000000138) virtual table reports — so AllObjWithCaption's "Object Subtype" and Page
+    /// Metadata's "PageType" cannot disagree for the same page. Null when this run knows of
+    /// no such page.
+    /// </summary>
+    internal static string? TryGetPageMetadataPageType(int pageId)
+    {
+        foreach (var row in EnumerateKnownPageMetadata())
+            if (row.Id == pageId) return row.PageType;
+        return null;
+    }
+
     private static List<PageMetaRow> EnumerateKnownPageMetadata()
     {
         var generation = (_bcAppPaths.Count, _parsedPages.Count);
