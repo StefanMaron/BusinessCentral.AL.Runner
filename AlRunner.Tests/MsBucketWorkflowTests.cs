@@ -55,10 +55,13 @@ internal static class WorkflowTriggers
 
 public sealed class MsBucketWorkflowTests
 {
-    private static readonly string GithubDir = Path.GetFullPath(
-        Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".github"));
+    private static readonly string RepoRoot = Path.GetFullPath(
+        Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
+
+    private static readonly string GithubDir = Path.Combine(RepoRoot, ".github");
 
     private const string Workflow = "ms-bucket.yml";
+    private const string Nightly = "ms-bucket-nightly.yml";
     private const string SharedMatrix = "bc-tests.yml";
     private const string ProvisionAction = "actions/provision-bc/action.yml";
     private const string ProvisionMarker = "uses: ./.github/actions/provision-bc";
@@ -107,12 +110,88 @@ public sealed class MsBucketWorkflowTests
 
     // ---- wired to the real files ------------------------------------------------------
 
+    /// <summary>
+    /// The bucket workflow never runs itself on a code change. `workflow_call` was added so the
+    /// nightly can REUSE these steps instead of re-spelling them, and it is safe here for the
+    /// same reason `workflow_dispatch` is: neither fires on a push or a pull request, so a
+    /// multi-hour 9,500-test job still cannot land on a PR. The forbidden set is asserted by
+    /// name rather than by pinning an exact allowed list, so adding another deliberate manual
+    /// trigger does not fail this, while push/pull_request/schedule always do.
+    ///
+    /// `schedule` is forbidden HERE specifically: a scheduled run of this file would arrive
+    /// with no inputs, so `bucket` would be empty. The schedule belongs to the nightly, which
+    /// supplies one.
+    /// </summary>
     [Fact]
-    public void MsBucketWorkflow_IsManualDispatchOnly()
+    public void MsBucketWorkflow_NeverRunsItselfOnACodeChange()
     {
         var triggers = WorkflowTriggers.TriggersOf(Read(Path.Combine("workflows", Workflow)));
 
-        Assert.Equal(new[] { "workflow_dispatch" }, triggers);
+        Assert.Contains("workflow_dispatch", triggers);
+        Assert.Contains("workflow_call", triggers);
+        foreach (var forbidden in new[] { "push", "pull_request", "pull_request_target", "schedule" })
+            Assert.DoesNotContain(forbidden, triggers);
+    }
+
+    /// <summary>
+    /// The nightly is a SCHEDULE ON TOP of the bucket workflow, not a second copy of it. It must
+    /// call the shared file — a hand-copied run step is how bc-tests.yml's provisioning drifted
+    /// four times and failed two releases (#1976) — and it must not gate anything, which means
+    /// no push/pull_request trigger.
+    /// </summary>
+    [Fact]
+    public void NightlyWorkflow_IsScheduledOnly_AndReusesTheBucketWorkflow()
+    {
+        var text = Read(Path.Combine("workflows", Nightly));
+        var triggers = WorkflowTriggers.TriggersOf(text);
+        var code = CodeOnly(text);
+
+        Assert.Contains("schedule", triggers);
+        Assert.Contains("workflow_dispatch", triggers);
+        foreach (var forbidden in new[] { "push", "pull_request", "pull_request_target" })
+            Assert.DoesNotContain(forbidden, triggers);
+
+        // Reuse, not re-spell: the mechanics come from the shared workflow.
+        Assert.Contains("uses: ./.github/workflows/ms-bucket.yml", code, StringComparison.Ordinal);
+        // And therefore NOT a second copy of the configuration the shared file owns.
+        Assert.DoesNotContain("--package-cache", code, StringComparison.Ordinal);
+        Assert.DoesNotContain("READER_TAG", code, StringComparison.Ordinal);
+        Assert.DoesNotContain("al-runner", code, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The nightly must run on the NEWEST BC version, which ms-bucket.yml resolves when
+    /// `bc-version` is absent. Stefan asked for this explicitly and it is the whole point: a
+    /// nightly pinned to an older BC to make it green would measure a version nobody ships.
+    /// #2780 means it is red today, deliberately.
+    /// </summary>
+    [Fact]
+    public void NightlyWorkflow_DoesNotPinABcVersion_SoItTracksTheNewest()
+    {
+        var code = CodeOnly(Read(Path.Combine("workflows", Nightly)));
+
+        Assert.DoesNotContain("bc-version:", code, StringComparison.Ordinal);
+        // --test-data is mandatory for a number that means anything (running-ms-test-buckets).
+        Assert.Contains("test-data: true", code, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A knowingly-red nightly that says nothing trains everyone to ignore it. The summary
+    /// script must recognise the reader refusal (#2780) by its signature and name the issue, and
+    /// must emit a workflow annotation so the reason reaches the run list and the
+    /// scheduled-failure notification rather than only the log.
+    /// </summary>
+    [Fact]
+    public void SummaryScript_NamesTheKnownBlocker_AndAnnotatesAnyRunThatProducedNoNumber()
+    {
+        var script = File.ReadAllText(Path.Combine(RepoRoot, "scripts", "ms-bucket-summary.py"));
+
+        Assert.Contains("neither mapped by the derived extent list nor padding filler", script, StringComparison.Ordinal);
+        Assert.Contains("#2780", script, StringComparison.Ordinal);
+        Assert.Contains("::error title=Known blocker", script, StringComparison.Ordinal);
+        // The other half: a failure that is NOT the known blocker must say so, or an unexplained
+        // red would read like the expected one.
+        Assert.Contains("::error title=No measurement", script, StringComparison.Ordinal);
     }
 
     [Fact]

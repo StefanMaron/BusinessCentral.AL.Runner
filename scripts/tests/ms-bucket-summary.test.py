@@ -12,6 +12,8 @@ the verdict or the summary in a way the reader cannot miss (negative).
 Run: python3 scripts/tests/ms-bucket-summary.test.py
 """
 import importlib.util
+import contextlib
+import io
 import os
 import tempfile
 import unittest
@@ -215,6 +217,77 @@ class MainTests(unittest.TestCase):
             text = step.read_text()
             self.assertTrue(text.startswith("existing\n"))
             self.assertIn("| 9496 |", text)
+
+
+class KnownBlockerTests(unittest.TestCase):
+    """#2780 recognition — what makes the knowingly-red nightly readable instead of noise."""
+
+    # The reader's own words, as they reach the log through the runner's EXEC-FAIL line (#2782).
+    READER_REFUSAL = (
+        "=== Tests-SMB \u2014 EXEC FAIL ===\n"
+        "  Tests-SMB: EXEC-FAIL: the backup reader failed (exit 1): block 116504 of MSDA region is "
+        "neither mapped by the derived extent list nor padding filler \u2014 backup layout differs "
+        "from the derived model, refusing to guess\n")
+
+    def test_reader_refusal_is_recognised_and_names_the_issue(self):
+        blocker = mbs.known_blocker(self.READER_REFUSAL)
+        self.assertIsNotNone(blocker)
+        self.assertIn("#2780", blocker["detail"])
+
+    def test_an_unrelated_failure_is_not_a_known_blocker(self):
+        # The negative direction: without this, ANY red run would claim to be the known one,
+        # which is exactly the "says nothing" failure the recognition exists to avoid.
+        self.assertIsNone(mbs.known_blocker("=== Tests-SMB \u2014 COMPILE FAIL ===\n"))
+
+    def _run_blocked(self):
+        with tempfile.TemporaryDirectory() as d:
+            log = Path(d, "run.log"); log.write_text(self.READER_REFUSAL)
+            summary = Path(d, "summary.md")
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                code = mbs.main(["--log", str(log), "--rc", "2", "--elapsed", "60",
+                                 "--bucket", "Tests-SMB", "--bc-version", "28.4.53241.54318",
+                                 "--test-data", "true", "--reader", "v0.1.1", "--out", str(summary)])
+            return code, summary.read_text(), buf.getvalue()
+
+    def test_blocked_run_still_reports_no_measurement_and_leads_with_the_blocker(self):
+        code, md, _ = self._run_blocked()
+        # The exit contract does not change: no number is still no number.
+        self.assertEqual(code, 1)
+        self.assertIn("Known blocker", md)
+        self.assertIn("#2780", md)
+
+    def test_blocked_run_emits_a_named_annotation(self):
+        _, _, stdout = self._run_blocked()
+        self.assertIn("::error title=Known blocker", stdout)
+        self.assertIn("#2780", stdout)
+
+    def test_unexplained_failure_emits_a_DIFFERENT_annotation(self):
+        # A red run whose cause is not understood must not look like the expected one.
+        with tempfile.TemporaryDirectory() as d:
+            log = Path(d, "run.log"); log.write_text("=== Tests-SMB \u2014 COMPILE FAIL ===\n")
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                code = mbs.main(["--log", str(log), "--rc", "3", "--elapsed", "9",
+                                 "--bucket", "Tests-SMB", "--bc-version", "28.4.53241.54318",
+                                 "--test-data", "true"])
+            out = buf.getvalue()
+        self.assertEqual(code, 1)
+        self.assertIn("::error title=No measurement", out)
+        self.assertNotIn("Known blocker", out)
+
+    def test_a_measured_run_emits_no_annotation_at_all(self):
+        with tempfile.TemporaryDirectory() as d:
+            log = Path(d, "run.log"); log.write_text(CLEAN_LOG)
+            junit = Path(d, "junit.xml"); junit.write_text(JUNIT)
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                code = mbs.main(["--log", str(log), "--junit", str(junit), "--rc", "1",
+                                 "--elapsed", "9", "--bucket", "Tests-SMB",
+                                 "--bc-version", "28.1.1.1", "--test-data", "true"])
+            out = buf.getvalue()
+        self.assertEqual(code, 0)
+        self.assertNotIn("::error", out)
 
 
 if __name__ == "__main__":
