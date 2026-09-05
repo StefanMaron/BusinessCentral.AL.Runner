@@ -13,8 +13,12 @@
 // seam, and every trappable runtime error inside it becomes `false`.
 //
 // The runner's replacement matched that catch clause literally, so a
-// RunnerOutOfScopeException — a plain System.Exception by design, so `asserterror`
-// cannot swallow it — tore straight through the TryFunction and failed the test.
+// RunnerOutOfScopeException — a plain System.Exception, not a NavBaseException — tore
+// straight through the TryFunction and failed the test. (An earlier version of this comment
+// added "so `asserterror` cannot swallow it". That is false and issue #2871 records why: the
+// runner's asserterror replacement is an unfiltered `catch (Exception)`, so asserterror
+// catches a refusal. TryInvoke is the deliberate exception, and the scoping below is what
+// makes it one.)
 //
 // That is unfaithful for a PERMANENTLY out-of-scope surface. "Permanently out of
 // scope" means the surface does not exist in the runner's world at all (SMTP, an
