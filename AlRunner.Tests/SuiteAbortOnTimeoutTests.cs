@@ -28,6 +28,7 @@
 // BaseApp surface at --jobs 12, the aggregate was missing 26% of the tests the shards had run.
 using System.Diagnostics;
 using System.Text;
+using System.Text.Json;
 using System.Xml.Linq;
 using AlRunner.Infrastructure;
 using Xunit;
@@ -197,6 +198,37 @@ public sealed class SuiteAbortOnTimeoutTests : IDisposable
     }
 
     /// <summary>
+    /// Same spawn, but keeping stdout and stderr APART. Every other test here reads them merged,
+    /// which is fine when it is looking for a message — but --output-json's whole contract is
+    /// about what lands on stdout ALONE, and a merged capture cannot tell a second JSON document
+    /// from an ordinary stderr line following the first (#2719).
+    /// </summary>
+    private (string stdout, string stderr, int exit) RunRunnerSplit(
+        string bundle, int waitMs, params string[] extraArgs)
+    {
+        var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
+        args.Append(TestBuildConfig.BcVersionArg);
+        args.Append($" \"{bundle}\"");
+        foreach (var a in extraArgs) args.Append($" {a}");
+        var psi = new ProcessStartInfo
+        {
+            FileName = "dotnet", Arguments = args.ToString(),
+            RedirectStandardOutput = true, RedirectStandardError = true,
+            UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
+        };
+        var so = new StringBuilder();
+        var se = new StringBuilder();
+        var p = Process.Start(psi)!;
+        p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (so) so.AppendLine(e.Data); };
+        p.ErrorDataReceived  += (_, e) => { if (e.Data != null) lock (se) se.AppendLine(e.Data); };
+        p.BeginOutputReadLine();
+        p.BeginErrorReadLine();
+        if (!p.WaitForExit(waitMs)) { try { p.Kill(true); } catch { } throw new TimeoutException("runner hung"); }
+        p.WaitForExit();
+        lock (so) lock (se) return (so.ToString(), se.ToString(), p.ExitCode);
+    }
+
+    /// <summary>
     /// Positive: a hang must be reported loudly. The codeunit name and the exact
     /// count of [Test] methods it never got to (2 — NeverRuns1 and NeverRuns2) must
     /// both appear in the output, alongside a non-zero "suite errors" tally.
@@ -282,6 +314,89 @@ public sealed class SuiteAbortOnTimeoutTests : IDisposable
         Assert.Equal(1, totals.Errors);
         Assert.Equal(0, totals.Failures);
         Assert.Equal(0, totals.Skipped);
+    }
+
+    /// <summary>
+    /// #2719: --output-json, --out and --count-baseline must describe the RUN after a resume,
+    /// not the final attempt's slice. Before this the same command produced, all at once:
+    /// TWO JSON documents concatenated on stdout (so json.loads failed outright); a final
+    /// document reading total=2 passed=2 errors=0 exitCode=0 — a completely clean run — while
+    /// the process exited non-zero; a classification file claiming total_failures=0; and a
+    /// count-baseline DROP reported in the same log as "4 total".
+    ///
+    /// One spawn, all four outputs, because they have to AGREE — that is the actual claim.
+    /// </summary>
+    [SkippableFact]
+    public void ResumedRun_JsonClassificationAndBaseline_DescribeTheWholeRun()
+    {
+        TestArtifacts.SkipIfMissing();
+        var dir = Path.Combine(_resumeRoot, "out2");
+        Directory.CreateDirectory(dir);
+        var jsonPath = Path.Combine(dir, "stdout.json");
+        var clsPath = Path.Combine(dir, "cls.json");
+        var junitPath = Path.Combine(dir, "r.xml");
+        var baselinePath = Path.Combine(dir, "baseline.json");
+        // The whole run is 4 tests; a baseline of 4 must be MET, not reported as a drop.
+        File.WriteAllText(baselinePath,
+            $$"""{ "suites": { "{{Path.GetFileName(_resumeRoot)}}": { "tests": { "default": 4 } } } }""");
+
+        var (stdout, stderr, exit) = RunRunnerSplit(_resumeRoot, 300_000,
+            "--test-timeout 2", "--resume-aborts 1", "--output-json",
+            $"--out \"{clsPath}\"", $"--output-junit \"{junitPath}\"",
+            $"--count-baseline \"{baselinePath}\"");
+
+        Assert.NotEqual(0, exit);
+        Assert.Contains("resume: a watchdog abort ended this attempt early", stderr);
+
+        // stdout is ONE json document. A second one is not "the wrong half" — it is unparseable.
+        var stdoutJson = StdoutJson(stdout);
+        using var doc = JsonDocument.Parse(stdoutJson);
+        var root = doc.RootElement;
+
+        Assert.Equal(4, root.GetProperty("total").GetInt32());
+        Assert.Equal(3, root.GetProperty("passed").GetInt32());
+        Assert.Equal(1, root.GetProperty("errors").GetInt32());
+        // The field a consumer trusts INSTEAD of the exit code. It said 0 for a failed run.
+        Assert.Equal(exit, root.GetProperty("exitCode").GetInt32());
+
+        var names = root.GetProperty("tests").EnumerateArray()
+            .Select(t => t.GetProperty("name").GetString()!.Split('.').Last())
+            .OrderBy(n => n).ToArray();
+        Assert.Equal(new[] { "Hangs", "RanBeforeHang", "SecondA", "SecondB" }, names);
+
+        // The carried error reaches the classification file, which reported zero failures.
+        var cls = JsonDocument.Parse(File.ReadAllText(clsPath)).RootElement;
+        Assert.True(cls.GetProperty("total_failures").GetInt32() > 0,
+            "the classification file must not report a resumed run with an error as having no failures");
+
+        // The baseline the whole run meets is met, and the phantom DROP is gone.
+        Assert.DoesNotContain("[count-baseline] DROP", stderr);
+        Assert.Contains("[count-baseline] skipped: this attempt is resuming", stderr);
+
+        // And --output-junit is untouched by all of this: still 4 cases, not 8. The carried
+        // attempt must not be counted once per output shape.
+        Assert.Equal(4, TestCases(junitPath).Count);
+    }
+
+    /// <summary>The single JSON document the runner prints on stdout. Fails loudly, naming what
+    /// it saw, rather than letting a test read the first of two concatenated documents.</summary>
+    private static string StdoutJson(string stdout)
+    {
+        var start = stdout.IndexOf('{');
+        Assert.True(start >= 0, "no JSON found on stdout:\n" + stdout);
+        var text = stdout.Substring(start).Trim();
+        var reader = new Utf8JsonReader(System.Text.Encoding.UTF8.GetBytes(text), isFinalBlock: true,
+            state: default);
+        Assert.True(JsonDocument.TryParseValue(ref reader, out _),
+            "stdout did not hold ONE parseable JSON document:\n" + text);
+        var consumed = (int)reader.BytesConsumed;
+        var trailing = System.Text.Encoding.UTF8.GetString(
+            System.Text.Encoding.UTF8.GetBytes(text), consumed,
+            System.Text.Encoding.UTF8.GetByteCount(text) - consumed).Trim();
+        Assert.True(trailing.Length == 0,
+            "stdout held MORE than one JSON document — a consumer's json.loads fails outright. "
+            + "Trailing:\n" + trailing);
+        return text;
     }
 
     /// <summary>
