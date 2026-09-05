@@ -248,6 +248,10 @@ public sealed class TestDataLazyLoadPolicyTests : IDisposable
 /// the baselines the store is restored from, or the very next codeunit/test boundary wipes it
 /// (RestoreInstallBaselineSnapshot begins with ResetPerTestState).
 /// </summary>
+// Shares _installBaseline / _activeDepCompanyBaseline with
+// InstallBaselineAppendConcurrencyTests (#2914), and those are process-global statics, so the
+// two classes must not run in parallel.
+[Collection(InstallBaselineStaticsCollection.Name)]
 public sealed class TestDataBaselineAppendTests : IDisposable
 {
     private readonly List<RecordPatches.BaselineSource>? _savedInstallBaseline;
