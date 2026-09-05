@@ -163,7 +163,8 @@ public sealed class MsBucketWorkflowTests
     /// The nightly must run on the NEWEST BC version, which ms-bucket.yml resolves when
     /// `bc-version` is absent. Stefan asked for this explicitly and it is the whole point: a
     /// nightly pinned to an older BC to make it green would measure a version nobody ships.
-    /// #2780 means it is red today, deliberately.
+    /// It may well be red — it runs Microsoft's own tests, which the runner does not pass yet —
+    /// and the summary script's annotations are what say which kind of red it is.
     /// </summary>
     [Fact]
     public void NightlyWorkflow_DoesNotPinABcVersion_SoItTracksTheNewest()
@@ -173,6 +174,51 @@ public sealed class MsBucketWorkflowTests
         Assert.DoesNotContain("bc-version:", code, StringComparison.Ordinal);
         // --test-data is mandatory for a number that means anything (running-ms-test-buckets).
         Assert.Contains("test-data: true", code, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The nightly's header is 90 lines of rationale and NOTHING checks it, because every other
+    /// assertion here runs through <see cref="CodeOnly"/>, which strips comments. That is not a
+    /// theoretical gap: the same blind spot let "BusinessCentral.BakReader" survive in
+    /// ms-bucket-summary.py's blocker detail after #2863 renamed the repository everywhere a
+    /// test could see, and it left this header asserting #2780 as pending work after #2780 was
+    /// closed as completed and READER_TAG moved to reader v0.1.2.
+    ///
+    /// This reads the file WITH its comments and pins the one property that goes stale on its
+    /// own: the header must not present the closed blocker as outstanding. A workflow header
+    /// telling the next reader to wait for something that already shipped is worse than no
+    /// header — it sends them to look for work that does not exist.
+    ///
+    /// Deliberately phrase-based rather than "must not mention #2780": naming the issue to say
+    /// it is CLOSED is correct and useful, and a test that forbade the number outright would
+    /// push the next author into deleting the history instead of updating it.
+    /// </summary>
+    [Fact]
+    public void NightlyHeader_DoesNotPresentTheClosedReaderBlockerAsPendingWork()
+    {
+        var header = Read(Path.Combine("workflows", Nightly));
+
+        // Each of these asserted a fact that stopped being true when #2863 merged the reader
+        // bump: the reader CAN open a 28.2+ backup now, so there is nothing left to "land".
+        foreach (var stale in new[]
+                 {
+                     "has never been able to open a 28.2+ W1 backup",
+                     "the day #2780 lands",
+                     "once #2780 lands",
+                     "until #2780 lands",
+                 })
+        {
+            Assert.False(header.Contains(stale, StringComparison.OrdinalIgnoreCase),
+                $"ms-bucket-nightly.yml still says \"{stale}\". #2780 is closed as completed and "
+                + "READER_TAG pins reader v0.1.2, which reads BC 28.2, 28.3 and 28.4 — so this "
+                + "presents finished work as pending. Update the header rather than the test.");
+        }
+
+        // The positive half, so the test cannot be satisfied by deleting the section wholesale:
+        // the header must still explain how a red run says which kind of red it is, because that
+        // is the property that makes a scheduled job people actually read.
+        Assert.Contains("Known blocker", header, StringComparison.Ordinal);
+        Assert.Contains("does NOT recognise", header, StringComparison.Ordinal);
     }
 
     /// <summary>

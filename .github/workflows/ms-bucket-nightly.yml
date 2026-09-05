@@ -4,28 +4,38 @@ name: MS bucket (nightly)
 # runner's behaviour against Microsoft's own tests shows up the next morning instead of at the
 # next manual dispatch. Issue #2724 built the mechanics; this is the schedule on top of them.
 #
-# ─── THIS RUN IS EXPECTED TO BE RED TODAY, AND THAT IS DELIBERATE ────────────────────────────
+# ─── THIS RUN MAY BE RED, AND EITHER OUTCOME IS INFORMATIVE ──────────────────────────────────
 #
-# The backup reader has never been able to open a 28.2+ W1 backup (#2780), so --test-data
-# cannot produce a number on 28.4 — the newest version, which is exactly what this nightly is
-# supposed to measure. The choice was between pinning the nightly to an older BC to make it
-# green, and landing it red against the version that matters. Red, deliberately: a nightly
-# pinned to 28.1 would be measuring a version nobody ships, would go quietly stale, and would
-# have to be re-pointed by someone who remembered why. Landing it now proves the schedule, the
-# provisioning and the plumbing, so the day #2780 lands this starts WORKING rather than
-# starting to be WRITTEN.
+# This workflow was written when the backup reader could not open a 28.2+ W1 backup, so
+# --test-data could not produce a number on 28.4 at all, and the plan was to land it knowingly
+# red against the version that matters rather than pin it back to a version nobody ships. That
+# blocker is now FIXED: #2780 is closed as completed and READER_TAG in ms-bucket.yml pins
+# reader v0.1.2, which reads BC 28.2, 28.3 and 28.4.
 #
-# What makes that acceptable rather than noise: the failure names its own reason.
-# scripts/ms-bucket-summary.py recognises the reader's refusal signature and leads the job
-# summary with "Known blocker: the backup reader cannot open this backup — #2780 …", and emits
-# it as a `::error::` annotation so it reaches the run list and the scheduled-failure
-# notification without anyone opening the log. A knowingly-red job that says nothing trains
-# everyone to ignore it, which is worse than not having one.
+# What has NOT been measured is whether the bucket now produces a number on 28.4. The only
+# ms-bucket run in this repository's history (33967273260) ran at 12:52 UTC on 2026-09-05,
+# against reader v0.1.1, six and a half hours before the reader bump merged at 19:22 UTC. So
+# the first scheduled run here may be green or red, and this header does not claim to know
+# which — inventing an expectation from a run that never happened is how the paragraph above
+# went stale in the first place.
+#
+# Red is still an acceptable outcome, for a separate reason: this runs Microsoft's own tests,
+# which genuinely fail against the runner today, and taking the Microsoft data recipe to green
+# is deliberately the LAST thing on the list. What is not acceptable is a red whose cause is
+# this workflow rather than the runner.
+#
+# The two are told apart by the annotation, and that is what makes landing this reasonable
+# without knowing the outcome in advance. scripts/ms-bucket-summary.py recognises a known
+# blocker by signature and leads the job summary with "Known blocker: …", emitted as a
+# `::error::` annotation so the reason reaches the run list and the scheduled-failure
+# notification without anyone opening the log. A failure it does NOT recognise gets a
+# different annotation saying exactly that — the case that actually needs someone's attention.
+# A knowingly-red job that says nothing trains everyone to ignore it, which is worse than not
+# having one.
 #
 # The annotation lives in that script rather than in a step here, because a `uses:` job cannot
 # add steps to the workflow it calls — and putting it there means a MANUAL dispatch that hits
-# the same wall gets the same explanation. An unrecognised failure gets a different annotation
-# saying so explicitly, which is the case that actually needs someone's attention.
+# the same wall gets the same explanation.
 #
 # ─── IT GATES NOTHING ───────────────────────────────────────────────────────────────────────
 #
@@ -55,15 +65,15 @@ name: MS bucket (nightly)
 # contract (0 = runner exit 0/1 plus a JUnit file, 1 = no measurement). Nothing stronger,
 # because nothing stronger can be honest yet.
 #
-# Later, once #2780 lands and this goes green, it should assert a BASELINE rather than a raw
-# pass count: a raw count drifts with every merge and nobody reads it, whereas --count-baseline
-# fails in BOTH directions — a drop AND unexplained growth — which is the mechanism this repo
-# already trusts (tests/expectations/count-baseline/, docs/expectations.md).
+# Later, once this is reliably producing a number on 28.4, it should assert a BASELINE rather
+# than a raw pass count: a raw count drifts with every merge and nobody reads it, whereas
+# --count-baseline fails in BOTH directions — a drop AND unexplained growth — which is the
+# mechanism this repo already trusts (tests/expectations/count-baseline/, docs/expectations.md).
 #
-# Seeding it is deliberately NOT done here, because a baseline invented from a run that could
-# not happen is worse than no baseline. The procedure when the reader lands:
+# Seeding it is deliberately NOT done here, because a baseline invented from a run that never
+# happened is worse than no baseline. The procedure, once there is a run to read:
 #
-#   1. Let this nightly run green once on 28.4 and read total/pass/fail off the job summary.
+#   1. Let this nightly run once on 28.4 and read total/pass/fail off the job summary.
 #   2. Run it a second time unchanged and confirm the same numbers. Microsoft's buckets contain
 #      order-dependent tests (measured: a full-bucket per-test diff is not stable when a
 #      watchdog abort splits the run), so one run is not a baseline.
@@ -79,10 +89,10 @@ name: MS bucket (nightly)
 # The job summary holds the full table and caveats; the JUnit and run log are uploaded as
 # artifacts by the called workflow for clustering.
 #
-# Deliberately NOT wired to open or update an issue. It would file the same known-blocker issue
-# every night until #2780 lands, needs `issues: write` on a scheduled job, and duplicates the
-# tracking that already exists. Worth revisiting only if the nightly starts producing numbers
-# worth trending.
+# Deliberately NOT wired to open or update an issue. A recurring failure would file the same
+# issue every night until someone fixed it, it needs `issues: write` on a scheduled job, and it
+# duplicates the tracking that already exists. Worth revisiting only if the nightly starts
+# producing numbers worth trending.
 
 on:
   schedule:
