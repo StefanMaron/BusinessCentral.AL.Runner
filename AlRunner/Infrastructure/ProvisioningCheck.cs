@@ -341,6 +341,40 @@ public static class ProvisioningCheck
         });
     }
 
+    /// <summary>
+    /// #2750 — a precompiled sidecar DLL that EXISTS but cannot be loaded.
+    ///
+    /// DependencyLoader.LoadOne used to write a bare
+    /// <c>[deps] tier-1 load failed for X: &lt;reason&gt;</c> to stderr and fall through to a
+    /// lower tier. `[deps]` is NOT in Log's exemption list (`dep` is — a different category:
+    /// DependencyResolver's resolution results, not DependencyLoader's tier-by-tier
+    /// internals), so that line was dropped at default verbosity and a corrupt sidecar was
+    /// completely silent. Measured on tests/runner-extras/testpage-precompiled-dep-control
+    /// with a 5-byte bogus PE in .deps-bin/: the run printed two startup lines, two
+    /// "no loaded type Record65600 found" failures and the summary, never mentioning the DLL.
+    ///
+    /// The `[provision-gap]` tag is deliberate and load-bearing, not cosmetic: the hyphen
+    /// makes the line fail Log's `[A-Za-z][A-Za-z0-9._+]*\]` tag pattern outright, so it
+    /// survives BOTH the stderr filter and the run-summary writer (Reporter writes gaps to
+    /// the same filtered Console.Out). It also matches the sibling gap message above, so both
+    /// land in the same "Provisioning gaps" summary block.
+    /// </summary>
+    public static string BuildPrecompiledSidecarLoadFailedMessage(
+        string publisher, string appName, string appVersion, string sidecarPath, string reason)
+    {
+        return string.Join(Environment.NewLine, new[]
+        {
+            $"[provision-gap] '{publisher} {appName}' v{appVersion} has a precompiled sidecar DLL that could not be loaded.",
+            $"  Found:  {sidecarPath}",
+            $"  Reason: {reason}",
+            $"  Status: the .deps-bin sidecar exists, so it was preferred over every lower tier — but it did not load.",
+            $"  The run continues on a lower tier, where this app's objects may not exist at all;",
+            $"  that surfaces later as an unrelated-looking \"no loaded type RecordNNNNN found\".",
+            $"",
+            $"  Fix: rebuild or replace the sidecar DLL, or delete it to force a lower tier.",
+        });
+    }
+
     // ── Test-toolkit presence check ───────────────────────────────────────────
     // Microsoft ships the test-toolkit apps (Business Foundation Test Libraries,
     // Application Test Library, System Application Test Library, Test Runner, Library
