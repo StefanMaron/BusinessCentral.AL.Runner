@@ -83,4 +83,39 @@
     <_BCVersion Condition="'$(_BCVersion)' == ''">28.1.49838.53910</_BCVersion>
   </PropertyGroup>
 
+  <!--
+    #2578: the BC artifacts root — the directory the per-version artifact subdirectories
+    live under — resolved ONCE here for every project in the tree.
+
+    Why the build cares at all: AlRunner.csproj and AlRunner.Tests.csproj both <Reference>
+    the BC service-tier DLLs straight out of <root>/<_BCVersion>/, and AlRunner.csproj's
+    FailIfBCServiceTierDllsMissing target hard-ERRORS when they are not there. An
+    AL_RUNNER_ARTIFACTS_ROOT that only the RUNTIME honoured would be a half-feature: a
+    developer or CI runner who relocated the cache onto another volume could run the
+    already-built runner but could not build it.
+
+    Declared here rather than per-project for the same reason _BCVersion above is — the two
+    projects carried byte-identical _CacheBase blocks and #2102 records what a second
+    hand-maintained copy of a BC path cost when the copies drifted.
+
+    MSBuild surfaces environment variables as properties, so AL_RUNNER_ARTIFACTS_ROOT needs
+    no plumbing to be visible here; -p:AL_RUNNER_ARTIFACTS_ROOT=<dir> works too. GetFullPath
+    mirrors BcArtifacts.ResolveArtifactsRoot's absolutization (a relative root would resolve
+    against whatever directory the build was launched from and silently disagree with the
+    runtime); EnsureTrailingSlash lets the version be appended without a second separator
+    whether or not the caller typed one.
+
+    ServiceTierPath itself is NOT set here: AlRunner.csproj layers an in-repo
+    artifacts/sandbox/ location on top of this default, and a caller-supplied
+    -p:ServiceTierPath must still win in both projects.
+  -->
+  <PropertyGroup>
+    <_ArtifactsRoot Condition="'$(AL_RUNNER_ARTIFACTS_ROOT)' != ''">$([System.IO.Path]::GetFullPath('$(AL_RUNNER_ARTIFACTS_ROOT)'))</_ArtifactsRoot>
+    <!-- USERPROFILE is the Windows equivalent of $HOME (SpecialFolder.UserProfile), which is
+         what AlRunnerPaths.UserHome resolves at runtime on each OS. -->
+    <_ArtifactsRoot Condition="'$(_ArtifactsRoot)' == '' AND $([MSBuild]::IsOSPlatform('Windows'))">$(USERPROFILE)/.local/share/al-runner/artifacts</_ArtifactsRoot>
+    <_ArtifactsRoot Condition="'$(_ArtifactsRoot)' == ''">$(HOME)/.local/share/al-runner/artifacts</_ArtifactsRoot>
+    <_ArtifactsRoot>$([MSBuild]::EnsureTrailingSlash('$(_ArtifactsRoot)'))</_ArtifactsRoot>
+  </PropertyGroup>
+
 </Project>

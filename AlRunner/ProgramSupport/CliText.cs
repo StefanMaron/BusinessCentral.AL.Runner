@@ -75,7 +75,8 @@ internal static partial class ProgramSupport
         w.WriteLine("    1. every --package-cache DIR you pass (repeatable)");
         w.WriteLine("    2. the bundle's own .alpackages/");
         w.WriteLine("    3. ~/.bcartifacts.cache");
-        w.WriteLine("    4. ~/.local/share/al-runner/artifacts   (the BC artifact cache)");
+        w.WriteLine("    4. ~/.local/share/al-runner/artifacts   (the BC artifact cache; set");
+        w.WriteLine("       AL_RUNNER_ARTIFACTS_ROOT to put it somewhere else)");
         w.WriteLine();
         w.WriteLine("  THE TRAP: a .app package may carry SYMBOLS ONLY (type/method signatures, no");
         w.WriteLine("  compiled bodies) or it may be CODE-BEARING. The AL compiler needs only symbols,");
@@ -668,6 +669,18 @@ internal static partial class ProgramSupport
         w.WriteLine("                          in-process, without running tests.");
         w.WriteLine();
         w.WriteLine("ENVIRONMENT");
+        w.WriteLine("  AL_RUNNER_ARTIFACTS_ROOT=DIR");
+        w.WriteLine("                               Put the BC artifact cache somewhere other than");
+        w.WriteLine("                               ~/.local/share/al-runner/artifacts, without moving");
+        w.WriteLine("                               $HOME (which would relocate every other cache too).");
+        w.WriteLine("                               DIR is the root the per-version subdirectories live");
+        w.WriteLine("                               under, so --bc-version, latest-in-cache defaulting");
+        w.WriteLine("                               and provisioning all still work — unlike");
+        w.WriteLine("                               --artifact-path, which pins ONE version's engine");
+        w.WriteLine("                               directory and skips version selection. A relative");
+        w.WriteLine("                               value is resolved against the current directory.");
+        w.WriteLine("                               Read by the build too, so a relocated cache stays");
+        w.WriteLine("                               buildable from source.");
         w.WriteLine("  AL_RUNNER_VERBOSE=1          Same as --verbose.");
         w.WriteLine("  AL_RUNNER_FAILURES_ONLY=1    Same as --failures-only.");
         w.WriteLine("  AL_RUNNER_TRACE_NRE=1        Log every first-chance NullReferenceException with");

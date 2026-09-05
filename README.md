@@ -212,7 +212,9 @@ that table is measurably empty, so a genuine bug against a populated table is ne
 as missing data. With `--test-data` already on, the line says instead why the table is still
 empty (refused, not in this backup, or empty in it).
 
-Environment variables: `AL_RUNNER_VERBOSE=1`, `AL_RUNNER_SHOW_PASS=1`, `AL_RUNNER_TRACE_NRE=1` (logs every first-chance NRE before AL `asserterror` swallows it), `AL_RUNNER_BCBAK` (path to the `bcbak` backup reader used by `--test-data`).
+Environment variables: `AL_RUNNER_VERBOSE=1`, `AL_RUNNER_SHOW_PASS=1`, `AL_RUNNER_TRACE_NRE=1` (logs every first-chance NRE before AL `asserterror` swallows it), `AL_RUNNER_BCBAK` (path to the `bcbak` backup reader used by `--test-data`), `AL_RUNNER_ARTIFACTS_ROOT` (see below).
+
+`AL_RUNNER_ARTIFACTS_ROOT=DIR` moves the BC artifact cache off the home directory — useful when it has to sit on a different volume, or on a mounted path on a CI runner. `DIR` is the root the per-version subdirectories live under (default `~/.local/share/al-runner/artifacts`), so `--bc-version`, latest-in-cache defaulting and provisioning keep working. That is what makes it different from `--artifact-path`, which pins one version's engine directory and skips version selection entirely. A relative value is resolved against the current directory. The build reads it too, so a relocated cache stays buildable from source. Moving `$HOME` instead would relocate every other runner path (`~/.cache/al-runner`, `~/.bcartifacts.cache`, `~/.local/share/al-runner/symbols`) along with it.
 
 ## Test Corpus
 

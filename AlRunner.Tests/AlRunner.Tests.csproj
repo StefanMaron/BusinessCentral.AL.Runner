@@ -91,9 +91,10 @@
          Carrying its OWN default value on top of that Condition is what caused #2102: it
          disagreed with AlRunner.csproj's separate default on a bare local build with no
          override at all. -->
-    <_CacheBase Condition="$([MSBuild]::IsOSPlatform('Windows'))">$(USERPROFILE)/.local/share/al-runner</_CacheBase>
-    <_CacheBase Condition="!$([MSBuild]::IsOSPlatform('Windows'))">$(HOME)/.local/share/al-runner</_CacheBase>
-    <ServiceTierPath Condition="'$(ServiceTierPath)' == ''">$(_CacheBase)/artifacts/$(_BCVersion)</ServiceTierPath>
+    <!-- Same artifacts root the runtime and AlRunner.csproj resolve, AL_RUNNER_ARTIFACTS_ROOT
+         included (#2578). $(_ArtifactsRoot) is declared once in the repo-root
+         Directory.Build.props, trailing separator included. -->
+    <ServiceTierPath Condition="'$(ServiceTierPath)' == ''">$(_ArtifactsRoot)$(_BCVersion)</ServiceTierPath>
   </PropertyGroup>
   <ItemGroup>
     <Reference Include="Microsoft.Dynamics.Nav.CodeAnalysis">
