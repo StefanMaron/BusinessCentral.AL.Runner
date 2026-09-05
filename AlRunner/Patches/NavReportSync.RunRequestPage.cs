@@ -165,9 +165,48 @@ public static partial class NavReportSync
 
         var pOutFile = FindProperty(testExecution.GetType(), "ReportOutputFileName");
         var pParamFile = FindProperty(testExecution.GetType(), "ReportParameterOutputFileName");
-        var pFormat = FindProperty(testExecution.GetType(), "ReportOutputFormat");
+        var pFormat = FindProperty(testExecution.GetType(), "ReportOutputFormat")
+            ?? throw new InvalidOperationException(
+                "NavTestExecution.ReportOutputFormat not found — Ncl shape changed; do not commit");
         if (pOutFile?.GetValue(testExecution) is not string dataSetFileName || dataSetFileName.Length == 0)
             return null;
+
+        // #2887: WHICH output the handler asked for decides this, not merely that it parked a
+        // file name. BC's own GetTestResultProcessor branches on the format FIRST:
+        //
+        //     NavReportFormat f = Parameters.ReportTargetFormat;
+        //     if (f != None && f != Xml) { ...clear the three fields...; return null; }
+        //     return new ReportSaveAsXmlRenderer(...);
+        //
+        // This method implemented only the second half. Every ALSaveAs* on a TestRequestPage
+        // parks a file name (NavTestPage.ALSaveAsExcel sets ReportOutputFileName plus
+        // ReportOutputFormat = FormResult.Excel and invokes the built-in Excel action), so a
+        // handler calling SaveAsExcel got a ReportSaveAsXmlRenderer: an XML dataset written
+        // into the .xlsx path it asked for, reported as success, with the rendering step
+        // skipped because a dataset had been "written". Six Tests-SINGLESERVER tests in
+        // Codeunit134335 failed several statements later inside the test toolkit's OpenXml
+        // reader ("File contains corrupted data"), naming a corrupt workbook rather than the
+        // unsupported surface — the silent wrong answer .claude/rules/loud-failures.md exists
+        // to prevent.
+        //
+        // Returning null installs the NullResultSetProcessor instead, so datasetWritten stays
+        // false and TryRunOrControlFlow goes on to InvokeLayoutForReport — the existing loud
+        // out-of-scope refusal for rendering, which is what a real service tier's renderer
+        // would have been asked for here.
+        //
+        // Not mirrored from BC, deliberately: the ReportTargetPath copy and the
+        // Download -> Save intent flip in that branch feed a renderer the runner refuses
+        // before it can consume them.
+        if (!RequestedOutputIsDataset(pFormat.GetValue(testExecution)?.ToString()))
+        {
+            ClearParkedReportOutput(testExecution, pOutFile, pParamFile, pFormat);
+            if (Environment.GetEnvironmentVariable("AL_RUNNER_DIAG_RP") == "1")
+                Console.Error.WriteLine(
+                    "[NavReportSync] request page asked for a rendered artifact, not a dataset "
+                    + "— no test processor; the rendering path refuses");
+            return null;
+        }
+
         var parametersFileName = pParamFile?.GetValue(testExecution) as string;
 
         var metadata = FindProperty(navReport.GetType(), "Metadata")?.GetValue(navReport)
@@ -176,15 +215,41 @@ public static partial class NavReportSync
 
         var renderer = CreateReportSaveAsXmlRenderer(navReport, parametersFileName, dataSetFileName, metadata);
 
-        // BC clears all three here, not after rendering.
-        pOutFile!.SetValue(testExecution, null);
-        pParamFile?.SetValue(testExecution, null);
-        if (pFormat != null && pFormat.PropertyType.IsEnum)
-            pFormat.SetValue(testExecution, Enum.Parse(pFormat.PropertyType, "None"));
+        // BC clears all three here, not after rendering — and in BOTH of its branches, which
+        // is why the refusal above clears them too: a parked file name that outlives the run
+        // that asked for it is the next report's dataset, written where nobody asked.
+        ClearParkedReportOutput(testExecution, pOutFile, pParamFile, pFormat);
 
         if (Environment.GetEnvironmentVariable("AL_RUNNER_DIAG_RP") == "1")
             Console.Error.WriteLine($"[NavReportSync] dataset requested → {dataSetFileName}");
         return renderer;
+    }
+
+    /// <summary>
+    /// BC's rule, from <c>ReportResultSetProcessorFactory.GetTestResultProcessor</c>: only
+    /// <c>None</c> and <c>Xml</c> are answered with the dataset renderer. Every other
+    /// requested output is a rendered artifact — Excel, Word, Pdf, print, preview — which the
+    /// runner has no service tier to produce and refuses loudly on the rendering path.
+    ///
+    /// Fails CLOSED on a name it does not recognise: a FormResult value added or renamed in a
+    /// future BC build must not be silently answered with an XML dataset in a file named for
+    /// something else, which is the defect this rule exists to close (#2887). The paired
+    /// rot guard in AlRunner.Tests fails when Ncl stops declaring the names below.
+    /// </summary>
+    internal static bool RequestedOutputIsDataset(string? formResultName)
+        => formResultName is "None" or "Xml";
+
+    /// <summary>
+    /// Drop the output request a <c>[RequestPageHandler]</c> parked on the session, exactly as
+    /// BC's own factory does — in both of its branches, whether or not it built a processor.
+    /// </summary>
+    private static void ClearParkedReportOutput(
+        object testExecution, PropertyInfo? pOutFile, PropertyInfo? pParamFile, PropertyInfo pFormat)
+    {
+        pOutFile?.SetValue(testExecution, null);
+        pParamFile?.SetValue(testExecution, null);
+        if (pFormat.PropertyType.IsEnum)
+            pFormat.SetValue(testExecution, Enum.Parse(pFormat.PropertyType, "None"));
     }
 
     private static object CreateReportSaveAsXmlRenderer(
