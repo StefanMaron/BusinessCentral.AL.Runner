@@ -1093,10 +1093,11 @@ if (bcVersionArg == null && artifactPathArg == null)
                         $"Microsoft.Dynamics.Nav.CodeAnalysis. Fix with: al-runner provision --bc-version {engineVersion}"));
                     break;
                 case "cdn-minor":
-                    Console.Error.WriteLine($"[bc] no --bc-version given and BC {engineVersion} is not published on " +
-                        $"the CDN — provisioning the latest {engineMajorMinor}.x instead (still this binary's own " +
-                        $"engine minor). Build-level skew within a minor can still fail to load " +
-                        $"Microsoft.Dynamics.Nav.CodeAnalysis. Fix with: al-runner provision --bc-version {engineVersion}");
+                    // #2926: wording and the reason it is worded that way live in
+                    // ProgramSupport.CdnMinorProvisionNotice — a failed probe is not a
+                    // statement that Microsoft never published the build.
+                    Console.Error.WriteLine(ProgramSupport.CdnMinorProvisionNotice(
+                        engineVersion.ToString(), engineMajorMinor));
                     break;
                 case "major-fallback-offline":
                     // No network step is coming (--no-auto-provision, or the rare case where
@@ -1110,11 +1111,9 @@ if (bcVersionArg == null && artifactPathArg == null)
                 default: // major-fallback: neither the exact build nor the engine's own minor is
                          // available from cache or the CDN — a genuine degradation (e.g. #2010,
                          // Microsoft withdrew the build), not the default-path norm.
-                    Console.Error.WriteLine($"[bc] warning: BC {engineMajorMinor}.x is not cached and not available " +
-                        $"from the CDN — this binary's engine was built for {engineVersion}, so a different minor is " +
-                        $"a KNOWN-DEGRADED configuration (measured: dozens of extra failures from engine/artifact " +
-                        $"minor skew). Falling back to the latest {engineMajor}.x. Fix with: al-runner provision " +
-                        $"--bc-version {engineMajorMinor}");
+                    // #2926: see ProgramSupport.MajorFallbackWarning.
+                    Console.Error.WriteLine(ProgramSupport.MajorFallbackWarning(
+                        engineVersion.ToString(), engineMajorMinor, engineMajor.ToString()));
                     break;
             }
 
