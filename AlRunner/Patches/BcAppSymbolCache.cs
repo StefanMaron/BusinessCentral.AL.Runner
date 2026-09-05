@@ -142,18 +142,25 @@ internal static partial class BcAppSymbolCache
     // RapidStart's Relation Table ID stays 0, and Validate() skips the relation check. The
     // schema did not change, so a v27 payload loads without error and replays the pre-fix
     // wrong answer instead of missing — which is precisely what the bump is for.
-    private const int CacheVersion = 28;
-    // No CacheVersion bump of its own for PageSymbol.TableView (#2820), deliberately — v28
-    // above belongs to #2518, and this change rides the same integer without moving it. That
-    // member is reachable from CachePayload, so PayloadShape below (issue #2335, merged as
-    // #2856) already gives it a different cache key than any payload written without it — the
-    // stale-entry hazard every note above describes is closed by construction, and bumping as
-    // well would only be ceremony. CacheVersion means what RecordShapeFingerprint's own summary
-    // says it means: the PARSE changed while the SHAPE did not, which no structural hash can
-    // see — v28 is exactly that case, and this change is the other one. Verified rather than
-    // assumed: a cold run of this build wrote fresh entries and a warm second run read them
-    // back, on the SHARED ~/.cache/al-runner/bc-symbols with no --cache isolation, and the
-    // precompiled-page corpus arm (Base App page 1710) passed in both.
+    // v29: the same shape once more, one level up in the name (#2851). RelationArms and
+    // CalcFormula now carry a NAMESPACE-QUALIFIED table name, which the parser refused for
+    // having 3+ parts (relation) or never resolved at all (CalcFormula) — 8 Base Application
+    // 28.1 relations cached as RelationArms = null and 4 FlowFields with a source table that
+    // matches nothing. Same reason for the bump as v28: the schema is unchanged, so a v28
+    // payload loads WITHOUT error and replays those pre-fix wrong answers rather than missing.
+    private const int CacheVersion = 29;
+    // No CacheVersion bump of its own for PageSymbol.TableView (#2820), deliberately — the
+    // numbered bumps above belong to other changes (v28 to #2518, v29 to #2973), and this one
+    // rides whatever the current integer is without moving it. That member is reachable from
+    // CachePayload, so PayloadShape below (issue #2335, merged as #2856) already gives it a
+    // different cache key than any payload written without it — the stale-entry hazard every
+    // note above describes is closed by construction, and bumping as well would only be
+    // ceremony. CacheVersion means what RecordShapeFingerprint's own summary says it means: the
+    // PARSE changed while the SHAPE did not, which no structural hash can see — v28 and v29 are
+    // both exactly that case, and this change is the other one. Verified rather than assumed: a
+    // cold run of this build wrote fresh entries and a warm second run read them back, on the
+    // SHARED ~/.cache/al-runner/bc-symbols with no --cache isolation, and the precompiled-page
+    // corpus arm (Base App page 1710) passed in both.
     private static readonly ConcurrentDictionary<string, AppSymbols> ProcessCache = new(StringComparer.OrdinalIgnoreCase);
     // Issue #1820 — path -> content-hash memo. ComputeAppContentHash needs to read the
     // WHOLE .app to hash it (unlike the FileInfo.Length/LastWriteTimeUtc stat it replaced,
