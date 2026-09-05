@@ -34,6 +34,11 @@
 //     expected count of 110 would fail every 28.x leg; a single global expected
 //     count of 116 would fail every 27.x leg. A `byBcVersion` override table avoids
 //     both: `default` is the expected count for every version not explicitly listed.
+//   - Issue #2485: a suite may spell all of that as one line per APP GROUP instead
+//     (`groups`, see ParseGroups). Same exact two-way guard, same numbers — it just
+//     stops every count-changing PR from having to edit the same integer, which made
+//     all of them conflict with each other. `absentOn` replaces a byBcVersion override
+//     with the reason for it: the app group does not run on those BC versions.
 using System.Text.Json;
 
 namespace AlRunner.Infrastructure;
@@ -81,6 +86,23 @@ public sealed record CountBaselineFinding(string Suite, string Metric, int Expec
 ///   }
 /// }
 /// </code>
+/// A suite may instead declare a per-app-group breakdown, which derives both numbers from
+/// one line per app group (issue #2485 — see <c>ParseGroups</c>, and
+/// tests/expectations/count-baseline/README.md):
+/// <code>
+/// {
+///   "suites": {
+///     "runner-extras": {
+///       "groups": {
+///         "date-virtual-table-window": { "tests": 3 },
+///         "microsoft-test-library":    { "tests": 3, "absentOn": ["27.0", "27.3", "27.5"] }
+///       }
+///     }
+///   }
+/// }
+/// </code>
+/// The two forms are mutually exclusive per suite; declaring both is refused.
+///
 /// `suite-key` is matched against the basename of the bundle directory passed on the
 /// command line (e.g. `tests/al-language/tests/al-language` → `al-language`,
 /// `tests/runner-extras` → `runner-extras`) — the same convention CI already uses for
@@ -126,15 +148,117 @@ public sealed class CountBaselineManifest
                 var suiteName = suiteProp.Name;
                 if (suiteProp.Value.ValueKind != JsonValueKind.Object)
                     throw new InvalidOperationException($"--count-baseline: {path}: suite '{suiteName}' must be an object");
+
+                var hasGroups = suiteProp.Value.TryGetProperty("groups", out var groupsEl);
                 var tests = ParseExpectedCount(suiteProp.Value, "tests", path, suiteName);
                 var appGroups = ParseExpectedCount(suiteProp.Value, "appGroups", path, suiteName);
-                if (tests == null && appGroups == null)
+
+                if (hasGroups)
+                {
+                    // Two sources of truth for the same number is how a baseline goes quietly
+                    // stale: one gets bumped, the other does not, and whichever the loader
+                    // happens to prefer decides what the guard asserts. Refuse instead.
+                    if (tests != null || appGroups != null)
+                        throw new InvalidOperationException(
+                            $"--count-baseline: {path}: suite '{suiteName}' declares 'groups' AND "
+                            + "'tests'/'appGroups' — the per-group form derives both, so declaring "
+                            + "them again would be a second source of truth. Remove one.");
+                    (tests, appGroups) = ParseGroups(groupsEl, path, suiteName);
+                }
+                else if (tests == null && appGroups == null)
+                {
                     throw new InvalidOperationException(
-                        $"--count-baseline: {path}: suite '{suiteName}' declares neither 'tests' nor 'appGroups'");
+                        $"--count-baseline: {path}: suite '{suiteName}' declares none of 'groups', 'tests', 'appGroups'");
+                }
+
                 suites[suiteName] = new SuiteCountBaseline(tests, appGroups);
             }
             return new CountBaselineManifest(suites);
         }
+    }
+
+    /// <summary>
+    /// The per-app-group form (issue #2485). Same assertion as the flat form — an EXACT
+    /// expected test count and app-group count per BC version, failing in both directions —
+    /// but spelled one line per app group instead of one shared integer per suite:
+    /// <code>
+    /// "runner-extras": {
+    ///   "groups": {
+    ///     "date-virtual-table-window": { "tests": 3 },
+    ///     "microsoft-test-library":    { "tests": 3, "absentOn": ["27.0", "27.3", "27.5"] }
+    ///   }
+    /// }
+    /// </code>
+    /// The expected TEST count for a BC version is the sum of `tests` over the groups
+    /// present on that version; the expected APP-GROUP count is how many groups those are.
+    /// Both are derived from numbers that are themselves checked in and reviewed — nothing
+    /// is read back from the run, so a dropped test still fails: its group's actual count
+    /// falls below the sum, which is what exit 4 reports.
+    ///
+    /// Why: every count-changing PR must edit this file, so whatever they all edit becomes a
+    /// guaranteed conflict between all of them. With one integer per suite (plus one per
+    /// per-BC-version override), adding an app group meant editing the same six numbers
+    /// every other such PR was editing. With one line per group, two PRs adding different
+    /// groups touch different lines and git merges them itself, and a group that only exists
+    /// from BC 28.0 on says so on its own line instead of through a byBcVersion override
+    /// table nobody can tie back to a cause.
+    /// </summary>
+    private static (ExpectedCount Tests, ExpectedCount AppGroups) ParseGroups(
+        JsonElement groupsEl, string path, string suiteName)
+    {
+        if (groupsEl.ValueKind != JsonValueKind.Object)
+            throw new InvalidOperationException(
+                $"--count-baseline: {path}: suite '{suiteName}'.groups must be an object keyed by app-group name");
+
+        var groups = new List<(string Name, int Tests, IReadOnlyList<string> AbsentOn)>();
+        foreach (var g in groupsEl.EnumerateObject())
+        {
+            if (g.Value.ValueKind != JsonValueKind.Object)
+                throw new InvalidOperationException(
+                    $"--count-baseline: {path}: suite '{suiteName}'.groups.{g.Name} must be an object with a 'tests' field");
+            if (!g.Value.TryGetProperty("tests", out var testsEl) || testsEl.ValueKind != JsonValueKind.Number)
+                throw new InvalidOperationException(
+                    $"--count-baseline: {path}: suite '{suiteName}'.groups.{g.Name}.tests must be an integer "
+                    + "(0 for an app group that carries no tests of its own)");
+
+            var absentOn = new List<string>();
+            if (g.Value.TryGetProperty("absentOn", out var absentEl))
+            {
+                if (absentEl.ValueKind != JsonValueKind.Array)
+                    throw new InvalidOperationException(
+                        $"--count-baseline: {path}: suite '{suiteName}'.groups.{g.Name}.absentOn must be an array "
+                        + "of BC version keys, e.g. [\"27.0\", \"27.3\"]");
+                foreach (var v in absentEl.EnumerateArray())
+                {
+                    if (v.ValueKind != JsonValueKind.String)
+                        throw new InvalidOperationException(
+                            $"--count-baseline: {path}: suite '{suiteName}'.groups.{g.Name}.absentOn entries must be "
+                            + "BC version key strings, e.g. \"27.0\"");
+                    absentOn.Add(v.GetString()!);
+                }
+            }
+            groups.Add((g.Name, testsEl.GetInt32(), absentOn));
+        }
+
+        if (groups.Count == 0)
+            throw new InvalidOperationException(
+                $"--count-baseline: {path}: suite '{suiteName}'.groups is empty — a suite with no app groups "
+                + "declares no expectation at all, which is the guard silently standing down");
+
+        // Every version any group calls itself absent on needs its own resolved pair; every
+        // other version gets the default (all groups present).
+        var versions = groups.SelectMany(g => g.AbsentOn).Distinct().ToList();
+        var testsByVersion = new Dictionary<string, int>();
+        var appGroupsByVersion = new Dictionary<string, int>();
+        foreach (var v in versions)
+        {
+            var present = groups.Where(g => !g.AbsentOn.Contains(v)).ToList();
+            testsByVersion[v] = present.Sum(g => g.Tests);
+            appGroupsByVersion[v] = present.Count;
+        }
+
+        return (new ExpectedCount(groups.Sum(g => g.Tests), versions.Count == 0 ? null : testsByVersion),
+                new ExpectedCount(groups.Count, versions.Count == 0 ? null : appGroupsByVersion));
     }
 
     private static ExpectedCount? ParseExpectedCount(JsonElement suiteEl, string metric, string path, string suiteName)
