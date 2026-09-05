@@ -35,7 +35,7 @@ internal static class ParallelFanOut
         // Both take a value and both must reach a worker: a shard that lost --exclude-test would
         // walk straight back into the hang the parent already excluded, and one that lost
         // --resume-aborts would fall back to the default budget and start its own resume chain.
-        "--exclude-test", "--resume-aborts", "--merge-counts",
+        "--exclude-test", "--resume-aborts", "--merge-counts", "--merge-results",
     };
 
     /// <summary>

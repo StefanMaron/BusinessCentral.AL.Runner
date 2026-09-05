@@ -256,6 +256,7 @@ int jobs = 1;   // --jobs N: fan out across N worker processes (#2280)
 int resumeAborts = AlRunner.Infrastructure.AbortResume.DefaultBudget;   // #2280: resume past a watchdog abort
 var excludeTests = new List<string>();   // --exclude-test: skip these, so a run can resume past a watchdog abort (#2280)
 var mergeCountsFiles = new List<string>();   // #2280: totals carried in from earlier resume attempts
+var mergeResultsFiles = new List<string>(); // #2719: full results carried in from earlier resume attempts
 var allAbortReasons = new List<string>();   // #2280: watchdog aborts seen this run, for auto-resume
 // --coverage: statement-level coverage via BC's own StmtHit instrumentation (issue
 // #1922, first slice of #1640). Writes Cobertura XML to --coverage-out (default
@@ -457,6 +458,7 @@ for (int i = 0; i < args.Length; i++)
     }
     if (args[i] == "--exclude-test" && i + 1 < args.Length) { excludeTests.Add(args[++i]); continue; }
     if (args[i] == "--merge-counts" && i + 1 < args.Length) { mergeCountsFiles.Add(args[++i]); continue; }
+    if (args[i] == "--merge-results" && i + 1 < args.Length) { mergeResultsFiles.Add(args[++i]); continue; }
     if (args[i] == "--resume-aborts" && i + 1 < args.Length)
     {
         if (!int.TryParse(args[++i], out resumeAborts) || resumeAborts < 0)
@@ -3642,6 +3644,41 @@ else
 watchCycleIndex++; // the cycle that just finished is no longer "the first cycle"
 } // end while(true) watch loop
 
+// #2719: is this attempt about to hand off to a fresh process? Decided here, ahead of every
+// output, rather than at the resume branch far below, because two outputs must not speak for an
+// attempt that is not the run's last word: --output-json (two attempts each printing one left
+// TWO documents concatenated on stdout, which is not parseable at all — json.loads fails
+// outright, it does not merely read the wrong half) and the count-baseline check (a slice can
+// never match a whole-suite baseline, so it reported a DROP on every resumed run).
+var willResume = resumeAborts > 0
+    && AlRunner.Infrastructure.AbortResumePlan.MakesProgress(allAbortReasons, excludeTests);
+
+// ── The whole run, not this attempt's slice (issue #2719) ───────────────────────────
+// After a watchdog resume this process ran only the codeunits no earlier attempt reached, so
+// `results` is a SLICE. The printed summary and --output-junit already reassemble the run
+// through their own carry channels (--merge-counts, #2280/#2716); these are the three outputs
+// that did not, and each reported the slice as if it were the run:
+//
+//   --output-json      tests[], its counters, AND its own exitCode field
+//   --out PATH         the failure-classification file
+//   --count-baseline   the number compared against the baseline
+//
+// Deliberately a SEPARATE list rather than appending onto `results`: PrintSummary and
+// JUnitReport.WriteJUnit fold the carried attempts in themselves, so a merged `results` would
+// count every carried case twice, once in each shape. Empty carry list => the same object,
+// so a run that never resumed is bit-for-bit unchanged.
+var carriedResults = AlRunner.Infrastructure.ResumeCarry.Read(mergeResultsFiles, out var carryUnreadable);
+if (carryUnreadable > 0)
+    // Never silent: this is the difference between "the run had one error" and "the run was
+    // clean", and a scratch file going missing must not be the quiet reason a run reads green.
+    Console.Error.WriteLine(
+        $"resume: {carryUnreadable} carried result file(s) could not be read, so --output-json, "
+        + "--out and --count-baseline cover only part of this run. The printed summary and "
+        + "--output-junit are unaffected.");
+var allResults = carriedResults.Count == 0
+    ? results
+    : carriedResults.Concat(results).ToList();
+
 // ── Count-baseline check (issue #1880) ──────────────────────────────────────────────
 // Runs once, after every bundle has finished, against the FULL `results` list — same
 // timing as the exit-code computation right below, which it feeds into. See
@@ -3656,7 +3693,18 @@ if (countBaseline != null)
     // runs the SAME al-language root with --test "Codeunit6020"), so a baseline sized
     // for the full suite must not fire here. Loud, not silent: anyone who passes both
     // flags together sees exactly why the guard stood down.
-    if (testFilter != null)
+    if (willResume)
+    {
+        // #2719: this attempt ran a slice and is about to hand the rest to a fresh process, so
+        // comparing it against a whole-suite baseline can only ever report a phantom DROP —
+        // "a bundle may have silently stopped being discovered" is exactly the wrong story to
+        // tell about a watchdog resume. The final attempt carries every earlier attempt's
+        // results and does the real check.
+        Console.Error.WriteLine(
+            "[count-baseline] skipped: this attempt is resuming in a fresh process; the final "
+            + "attempt checks the whole run.");
+    }
+    else if (testFilter != null)
     {
         Console.Error.WriteLine(
             $"[count-baseline] skipped: --test '{testFilter}' narrows scope intentionally.");
@@ -3664,7 +3712,7 @@ if (countBaseline != null)
     else
     {
         var actualBySuite = new Dictionary<string, AlRunner.Infrastructure.SuiteCountActual>();
-        foreach (var b in results)
+        foreach (var b in allResults)   // #2719: the run, not this attempt's slice
         {
             var suiteKey = Path.GetFileName(b.BucketPath.TrimEnd(
                 Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
@@ -3731,7 +3779,11 @@ if (countBaseline != null)
 int computedExitCode = 0;
 {
     int failed = 0, errored = 0, compileFail = 0, execFail = 0;
-    foreach (var b in results)
+    // #2719: allResults, so a resumed run's exitCode field reports the RUN. Before this the
+    // final attempt computed 0 from its own all-passing slice and printed "exitCode": 0 into
+    // --output-json, while AbortResume.Rerun forced the process to exit 1 — the shell said
+    // failed and the JSON said success, each self-consistent from its own vantage point.
+    foreach (var b in allResults)
     {
         if (b.Stage == BucketStage.CompileFailed) { compileFail++; continue; }
         if (b.Stage == BucketStage.ExecuteFailed) { execFail++; continue; }
@@ -3755,9 +3807,17 @@ int computedExitCode = 0;
         : (countBaselineMismatch ? 4 : 0));      // #1880: suite's count didn't exactly match its baseline
 }
 
-if (outputJson)
+if (outputJson && willResume)
 {
-    var json = Reporter.SerializeJsonOutput(results, computedExitCode);
+    // The final attempt prints the whole run. If Rerun then fails to START that attempt it
+    // returns non-zero having printed none, so a consumer gets NO json rather than a wrong one
+    // — louder, and the direction to fail in.
+    Console.Error.WriteLine(
+        "resume: --output-json suppressed for this attempt; the final attempt prints the whole run.");
+}
+else if (outputJson)
+{
+    var json = Reporter.SerializeJsonOutput(allResults, computedExitCode);
     // Restore the real stdout (captured above) so this is the ONLY thing ever
     // written to it — every banner/progress line up to this point went to stderr
     // instead. See the redirect right after arg parsing for why.
@@ -3779,8 +3839,7 @@ else
 // hits a different hang. A resumed attempt re-runs the bundle from the start, so its result
 // REPLACES this one rather than needing to be merged into it; the excluded codeunits are named
 // so the total is not mistaken for a complete one.
-if (resumeAborts > 0
-    && AlRunner.Infrastructure.AbortResumePlan.MakesProgress(allAbortReasons, excludeTests))
+if (willResume)
 {
     // Exclude every codeunit already ATTEMPTED, not just the hung one, so the retry runs only
     // work no attempt has reached. Re-running from the start made a bundle pay for its whole
@@ -3805,7 +3864,20 @@ if (resumeAborts > 0
     var carry = new List<string>(mergeCountsFiles);
     if (carryPath != null) carry.Add(carryPath);
 
-    return AlRunner.Infrastructure.AbortResume.Rerun(args, nextExclusions, resumeAborts - 1, carry);
+    // #2719: the same attempt, in full. A JUnit <testcase> has a name and a status; it has no
+    // Expectation, and Expectation is what decides whether a failure is a real `fail` or a
+    // pass-known-gap / pass-oos / pass-divergence. Rebuilding a carried case from the XML would
+    // hand --out a case with no Expectation, which classifies as an UNEXPECTED failure — turning
+    // a silently missing error into a confidently wrong one. So the attempt writes what it had.
+    // THIS attempt's results only, for the same reason the JUnit carry file holds one attempt.
+    var carryResultsPath = Path.Combine(carryDir, "attempt-results.json");
+    try { AlRunner.Infrastructure.ResumeCarry.Write(carryResultsPath, results); }
+    catch { carryResultsPath = null!; }
+    var carryResults = new List<string>(mergeResultsFiles);
+    if (carryResultsPath != null) carryResults.Add(carryResultsPath);
+
+    return AlRunner.Infrastructure.AbortResume.Rerun(
+        args, nextExclusions, resumeAborts - 1, carry, carryResults);
 }
 if (tddMode)
 {
@@ -3833,7 +3905,7 @@ if (tddMode)
 }
 if (outPath != null)
 {
-    Reporter.WriteClassification(results, outPath);
+    Reporter.WriteClassification(allResults, outPath);   // #2719: the run, not this attempt's slice
     // In --output-json mode this must not land on stdout (it already printed the
     // JSON above and restored the real stdout writer) — route to stderr there.
     (outputJson ? Console.Error : Console.Out).WriteLine($"Classification → {outPath}");
