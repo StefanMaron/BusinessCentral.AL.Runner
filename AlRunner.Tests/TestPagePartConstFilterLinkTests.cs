@@ -116,12 +116,54 @@ public class TestPagePartConstFilterLinkTests
                 {
                     repeater(Rows)
                     {
+                        field("Header No."; Rec."Header No.") { ApplicationArea = All; }
                         field("Line No."; Rec."Line No.") { ApplicationArea = All; }
                         field(Kind; Rec.Kind) { ApplicationArea = All; }
                         field(Status; Rec.Status) { ApplicationArea = All; }
                         field(Name; Rec.Name) { ApplicationArea = All; }
                         field("Table ID"; Rec."Table ID") { ApplicationArea = All; }
                         field(Category; Rec.Category) { ApplicationArea = All; }
+                    }
+                }
+            }
+        }
+        """);
+
+        // Same line shape, one difference: Kind is part of the PRIMARY KEY. That is what
+        // decides whether New() carries a const(...) link onto the new row — see
+        // LiveNavTestPart.InsertEmptyRow and corpus codeunit 60324 "TSPL Tests".
+        File.WriteAllText(Path.Combine(root, "TpcfKeyedLine.Table.al"), """
+        table 62545 "Tpcf Keyed Line"
+        {
+            DataClassification = CustomerContent;
+            fields
+            {
+                field(1; "Header No."; Code[20]) { }
+                field(2; Kind; Option) { OptionMembers = Comment,Attachment; }
+                field(3; "Line No."; Integer) { }
+                field(4; Name; Text[50]) { }
+            }
+            keys { key(PK; "Header No.", Kind, "Line No.") { Clustered = true; } }
+        }
+        """);
+
+        File.WriteAllText(Path.Combine(root, "TpcfKeyedLines.Page.al"), """
+        page 62546 "Tpcf Keyed Lines"
+        {
+            PageType = ListPart;
+            SourceTable = "Tpcf Keyed Line";
+            ApplicationArea = All;
+
+            layout
+            {
+                area(Content)
+                {
+                    repeater(Rows)
+                    {
+                        field("Header No."; Rec."Header No.") { ApplicationArea = All; }
+                        field(Kind; Rec.Kind) { ApplicationArea = All; }
+                        field("Line No."; Rec."Line No.") { ApplicationArea = All; }
+                        field(Name; Rec.Name) { ApplicationArea = All; }
                     }
                 }
             }
@@ -166,6 +208,11 @@ public class TestPagePartConstFilterLinkTests
                         ApplicationArea = All;
                         SubPageLink = Kind = const(Comment);
                     }
+                    part(ConstKeyLines; "Tpcf Keyed Lines")
+                    {
+                        ApplicationArea = All;
+                        SubPageLink = "Header No." = field("No."), Kind = const(Attachment);
+                    }
                 }
             }
         }
@@ -191,13 +238,27 @@ public class TestPagePartConstFilterLinkTests
                 Line.Insert();
             end;
 
+            local procedure AddKeyedLine(HeaderNo: Code[20]; Kind: Option Comment,Attachment; LineNo: Integer; Name: Text[50])
+            var
+                KeyedLine: Record "Tpcf Keyed Line";
+            begin
+                KeyedLine.Init();
+                KeyedLine."Header No." := HeaderNo;
+                KeyedLine.Kind := Kind;
+                KeyedLine."Line No." := LineNo;
+                KeyedLine.Name := Name;
+                KeyedLine.Insert();
+            end;
+
             local procedure Initialize()
             var
                 Header: Record "Tpcf Header";
                 Line: Record "Tpcf Line";
+                KeyedLine: Record "Tpcf Keyed Line";
             begin
                 Header.DeleteAll();
                 Line.DeleteAll();
+                KeyedLine.DeleteAll();
                 Header.Init();
                 Header."No." := 'H1';
                 Header.Insert();
@@ -209,6 +270,9 @@ public class TestPagePartConstFilterLinkTests
                 AddLine('H1', 3, Line.Kind::Attachment, Line.Status::Closed, 'A-Closed', 0, 'SPECIAL');
                 AddLine('H1', 4, Line.Kind::Comment, Line.Status::Released, 'C-Rel', Database::"Tpcf Header", '');
                 AddLine('H2', 1, Line.Kind::Attachment, Line.Status::Open, 'Foreign', Database::"Tpcf Header", 'SPECIAL');
+                AddKeyedLine('H1', KeyedLine.Kind::Comment, 1, 'K-Comment');
+                AddKeyedLine('H1', KeyedLine.Kind::Attachment, 2, 'K-Attach');
+                AddKeyedLine('H2', KeyedLine.Kind::Attachment, 3, 'K-Foreign');
             end;
 
             local procedure OpenCardOn(HeaderNo: Code[20]; var Card: TestPage "Tpcf Card")
@@ -340,8 +404,13 @@ public class TestPagePartConstFilterLinkTests
                     Error('const(Comment)-only link: expected C-Open;C-Rel; got %1', Names);
             end;
 
+            // BC copies a link onto the new row only for PRIMARY KEY fields
+            // (RecordImplementation.InitRecordFromFilters; NavForm.NewRecord passes no filter
+            // groups). Kind is not part of "Tpcf Line"'s key, so it must stay at Comment --
+            // and the row is read where New() left it rather than saved, because a row
+            // outside the part's own filter is what BC reports on instead.
             [Test]
-            procedure ConstLink_NewStampsConstant()
+            procedure ConstLink_NewStampsTheFieldLinkButNotANonKeyConstant()
             var
                 Line: Record "Tpcf Line";
                 Card: TestPage "Tpcf Card";
@@ -349,13 +418,28 @@ public class TestPagePartConstFilterLinkTests
                 Initialize();
                 OpenCardOn('H1', Card);
                 Card.ConstLines.New();
-                Card.ConstLines."Line No.".SetValue(9);
-                Card.ConstLines.Name.SetValue('New-A');
+                if Card.ConstLines."Header No.".Value <> 'H1' then
+                    Error('the field("No.") half of the link is a key field; New() must have stamped it, got %1', Card.ConstLines."Header No.".Value);
+                if Card.ConstLines.Kind.Value <> Format(Line.Kind::Comment) then
+                    Error('Kind is not part of "Tpcf Line"''s key, so const(Attachment) must NOT be stamped, got %1', Card.ConstLines.Kind.Value);
                 Card.Close();
-                if not Line.Get('H1', 9) then
-                    Error('New() through the const-linked part must have inserted line 9 under H1');
-                if Line.Kind <> Line.Kind::Attachment then
-                    Error('const(Attachment) link must have stamped Kind onto the new row, got %1', Line.Kind);
+            end;
+
+            // The other direction: same link, same value, a table whose key CONTAINS the field.
+            [Test]
+            procedure ConstLink_NewStampsAKeyConstantOntoTheNewRow()
+            var
+                KeyedLine: Record "Tpcf Keyed Line";
+                Card: TestPage "Tpcf Card";
+            begin
+                Initialize();
+                OpenCardOn('H1', Card);
+                Card.ConstKeyLines.New();
+                if Card.ConstKeyLines."Header No.".Value <> 'H1' then
+                    Error('the field("No.") half of the link must have stamped the header key, got %1', Card.ConstKeyLines."Header No.".Value);
+                if Card.ConstKeyLines.Kind.Value <> Format(KeyedLine.Kind::Attachment) then
+                    Error('Kind IS part of "Tpcf Keyed Line"''s key, so const(Attachment) must be stamped, got %1', Card.ConstKeyLines.Kind.Value);
+                Card.Close();
             end;
 
             [Test]
@@ -367,13 +451,11 @@ public class TestPagePartConstFilterLinkTests
                 Initialize();
                 OpenCardOn('H1', Card);
                 Card.FilterLines.New();
-                Card.FilterLines."Line No.".SetValue(9);
-                Card.FilterLines.Name.SetValue('New-F');
+                if Card.FilterLines."Header No.".Value <> 'H1' then
+                    Error('the field("No.") half of the link must still have stamped the header key, got %1', Card.FilterLines."Header No.".Value);
+                if Card.FilterLines.Status.Value <> Format(Line.Status::"None") then
+                    Error('filter(Open | Released) has no single value to stamp; Status must stay None, got %1', Card.FilterLines.Status.Value);
                 Card.Close();
-                if not Line.Get('H1', 9) then
-                    Error('New() through the filter-linked part must have inserted line 9 under H1');
-                if Line.Status <> Line.Status::"None" then
-                    Error('filter(Open | Released) has no single value to stamp; Status must stay None, got %1', Line.Status);
             end;
         }
         """);
@@ -398,15 +480,25 @@ public class TestPagePartConstFilterLinkTests
         Assert.DoesNotContain("testpage-part-link", output);
     }
 
+    /// <summary>
+    /// The key-membership half of the rule, in BOTH directions on one bundle: the same
+    /// <c>Kind = const(Attachment)</c> link is stamped onto a <c>New()</c> row when Kind is
+    /// part of the part table's primary key and left alone when it is not. Asserting only the
+    /// negative would be satisfied by a runner that stamps nothing at all; asserting only the
+    /// positive by one that stamps everything, which is what it used to do.
+    /// The BC-behaviour claim itself is adjudicated upstream — corpus codeunit 60324
+    /// "TSPL Tests" runs the same shape on 8 real service tiers.
+    /// </summary>
     [SkippableFact]
-    public void ConstAndFilterLinks_NewStampsOnlySingleValues()
+    public void ConstLink_NewStampsALinkOnlyOntoPrimaryKeyFields()
     {
         TestArtifacts.SkipIfMissing();
 
         var (output, exit) = RunRunner(WriteBundle());
 
         Assert.True(exit == 0, $"Expected the bundle to pass; exit={exit}\n{output}");
-        Assert.Contains("PASS  Codeunit62544.ConstLink_NewStampsConstant", output);
+        Assert.Contains("PASS  Codeunit62544.ConstLink_NewStampsTheFieldLinkButNotANonKeyConstant", output);
+        Assert.Contains("PASS  Codeunit62544.ConstLink_NewStampsAKeyConstantOntoTheNewRow", output);
         Assert.Contains("PASS  Codeunit62544.FilterLink_NewDoesNotStampMultiValueExpression", output);
         Assert.DoesNotContain("FAIL", output);
     }

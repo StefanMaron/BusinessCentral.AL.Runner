@@ -289,7 +289,7 @@ public class DependencyPageMetadataXmlTests
             {
               "Id": 88123521,
               "Name": "DPX Part Table",
-              "Fields": [ { "Id": 5, "Name": "Part Link Field" } ]
+              "Fields": [ { "Id": 5, "Name": "Part Link Field" }, { "Id": 6, "Name": "Table ID" } ]
             }
           ],
           "Pages": [
@@ -522,10 +522,10 @@ public class DependencyPageMetadataXmlTests
     /// three.
     /// </summary>
     [Theory]
-    [InlineData(88123596, "88123520")]      // const(Database::"DPX Host Table") -> the host table's id
-    [InlineData(88123595, "On Hold")]       // const("DPX Kind"::"On Hold")      -> the member name, unquoted
-    [InlineData(88123594, "SPECIAL")]       // const('SPECIAL')                  -> the bare text
-    public void TryBuildDependencyPageMetadata_ConstLink_NormalisesToCompilerRepresentation(int controlId, string expected)
+    [InlineData(88123596, "88123520", "6")]      // "Table ID"       = const(Database::"DPX Host Table") -> the host table's id
+    [InlineData(88123595, "On Hold", "5")]       // "Part Link Field" = const("DPX Kind"::"On Hold")     -> the member name, unquoted
+    [InlineData(88123594, "SPECIAL", "5")]       // "Part Link Field" = const('SPECIAL')                 -> the bare text
+    public void TryBuildDependencyPageMetadata_ConstLink_NormalisesToCompilerRepresentation(int controlId, string expected, string partFieldId)
     {
         var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(dir);
@@ -544,9 +544,12 @@ public class DependencyPageMetadataXmlTests
             var links = part.SelectNodes("m:SubFormLink", ns)!.Cast<XmlElement>().ToList();
             var constLink = Assert.Single(links, l => l.GetAttribute("FilterType") == "CONST");
             Assert.Equal(expected, constLink.GetAttribute("FilterValue"));
-            // The part-side field resolved to a real number for every kind — 0 is what
-            // MockTestPage.SubPageLinks refuses by name.
-            Assert.NotEqual("0", constLink.GetAttribute("FieldID"));
+            // The part-side field resolved to the PART table's own field number for every
+            // kind — 0 is what MockTestPage.SubPageLinks refuses by name, and the fixture
+            // declares both fields these links name ("Part Link Field" 5, "Table ID" 6), so a
+            // 0 here would be a resolution failure rather than a link naming a field that
+            // genuinely does not exist.
+            Assert.Equal(partFieldId, constLink.GetAttribute("FieldID"));
         }
         finally
         {

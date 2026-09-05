@@ -2833,20 +2833,39 @@ internal sealed class LiveNavTestPart : LiveNavTestPage, ITestPart
     }
 
     /// <summary>
-    /// Start a new row already carrying the link's values. BC stamps the linked fields onto
-    /// the new record, which is why an AL test never sets them — asserting that the link
-    /// field arrived without being written is how the test proves the link ran at all.
+    /// Start a new row already carrying the link's values — for the fields BC actually
+    /// carries them onto, which is NOT every linked field.
     ///
-    /// A FIELD entry stamps the parent's current value. A CONST/FILTER entry stamps the value
-    /// BC's own new-record path would: <c>RecordImplementation.InitRecordFromFilters</c> (Ncl
-    /// 28.1) copies a filter onto the new row only when the combined filter on that field is
-    /// <c>FilterExpressionType.Equal</c> — exactly one value. A CONST always is; a FILTER is
-    /// only when its expression names a single value (<c>filter(Open)</c>), never for
-    /// <c>filter(Open | Released)</c>. Rather than re-deciding that from the text, the value
-    /// is read back through BC's own range accessors on the filter ApplyLink just set: a
-    /// single-value filter answers the same typed value for min and max (an option ORDINAL
-    /// arrives as a NavOption, not as the text "1"), a multi-value or open-ended one raises
-    /// BC's own error and stamps nothing.
+    /// <c>ApplyLink</c> above has just put every entry on the record as a filter, and
+    /// <c>base.InsertEmptyRow</c> then asks BC's own <c>NavForm.NewRecord</c> to start the row
+    /// (<c>RunnerPageInstance.TryNewRecord</c>), which runs
+    /// <c>RecordImplementation.InitRecordFromFilters</c>. That method — Ncl 28.1,
+    /// <c>InitRecordFromFilters(includeNonPrimaryKeyFields, includeIdenticalFilters,
+    /// includeNonPrimaryKeyFieldsForFilterGroups)</c> — copies a field's filter onto the new
+    /// record only when the filter is <c>FilterExpressionType.Equal</c> (exactly one value)
+    /// AND one of: the field is part of the PRIMARY KEY, the page sets
+    /// <c>PopulateAllFields</c>, or the caller names the filter's group.
+    /// <c>NavForm.NewRecordAsync(bool)</c> passes <c>Array.Empty&lt;int&gt;()</c> for the
+    /// groups, so on a TestPage it comes down to key membership.
+    ///
+    /// This loop therefore applies the same key-membership gate. Without it the runner
+    /// stamped every single-valued link onto the new row regardless of the key, which real BC
+    /// does not do: measured on all 8 BC legs of corpus codeunit 60324 "TSPL Tests", a
+    /// <c>New()</c> through a part linked <c>Kind = const(Attachment)</c>, where Kind is not
+    /// part of the line table's key, produced a row with Kind still at Comment — outside the
+    /// part's own filter, which BC then reported as "The view is filtered, and the entry is
+    /// outside the filter". The corpus pins both directions: the same const on a table whose
+    /// key CONTAINS the field IS stamped.
+    ///
+    /// The loop is not redundant with BC's own step even for the fields it does write. It
+    /// covers the record-only fallback in <c>LiveNavTestPage.InsertEmptyRow</c>, where there
+    /// is no page to ask and BC's filter step never runs; where BC's step did run it writes
+    /// the same values again, which is a no-op. A FIELD entry is read from the parent's
+    /// current row; a CONST/FILTER entry is read back through BC's own range accessors on the
+    /// filter <c>ApplyLink</c> just set, so a single-value filter answers the same typed value
+    /// for min and max (an option ORDINAL arrives as a NavOption, not as the text "1") and a
+    /// multi-value or open-ended one raises BC's own error and stamps nothing — the
+    /// <c>Equal</c> half of the same rule, decided by BC rather than re-derived from text.
     /// </summary>
     public override void InsertEmptyRow(bool beforeCurrent)
     {
@@ -2854,8 +2873,13 @@ internal sealed class LiveNavTestPart : LiveNavTestPage, ITestPart
         base.InsertEmptyRow(beforeCurrent);
         if (_links.Length == 0) return;
         var record = RequireRecord("subpage link");
+        var primaryKeyFieldNos = PrimaryKeyFieldNos(record);
         foreach (var link in _links)
         {
+            // Not part of the primary key: BC leaves it at its Init() value, so the runner
+            // must too — a stamped value here would put a row inside a filter BC would have
+            // reported as outside it.
+            if (!primaryKeyFieldNos.Contains(link.PartFieldNo)) continue;
             switch (link.Kind)
             {
                 case Microsoft.Dynamics.Nav.Types.Metadata.FilterType.FIELD:
@@ -2867,6 +2891,21 @@ internal sealed class LiveNavTestPart : LiveNavTestPage, ITestPart
                     break;
             }
         }
+    }
+
+    /// <summary>The field numbers making up the record's primary key — the membership test
+    /// <c>NCLMetaField.FieldIsPartOfPrimaryKey</c> answers inside BC, read off the same
+    /// <c>MetaTable.PrimaryKey</c> the AutoSplitKey path already uses so both agree on the key
+    /// shape. Empty for a table whose key metadata is unavailable, which makes the caller stamp
+    /// nothing rather than stamp on a guess.</summary>
+    private static HashSet<int> PrimaryKeyFieldNos(NavRecord record)
+    {
+        var fieldNos = new HashSet<int>();
+        var primaryKey = record.MetaTable?.PrimaryKey;
+        if (primaryKey == null) return fieldNos;
+        for (var i = 0; i < primaryKey.KeyFieldCount; i++)
+            fieldNos.Add(primaryKey.KeyFieldsList[i].FieldNo);
+        return fieldNos;
     }
 
     /// <summary>The one value a field's current filter selects, or false when the filter is
