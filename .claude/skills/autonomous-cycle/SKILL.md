@@ -23,7 +23,12 @@ coverage has moved a number; a fix that lands with a corpus test has moved the g
 
 The test for whether a fix owes a corpus test is wider than "is this a claim about BC?":
 **wherever it is possible to red-test something with AL tests, that should add tests to the
-corpus.** A BC-behaviour claim is the common case, not the whole rule.
+corpus** — that is, wherever the fix can be proven by AL running against a real service tier. A
+BC-behaviour claim is the common case, not the whole rule. The service-tier clause is what keeps
+the rule legal: runner-only claims are red-testable in AL too — out-of-scope reasons, AL-output
+cache HIT/MISS, provisioning-gap messages, exit codes — and they stay in `tests/runner-extras/`,
+because the corpus does not know about AL Runner and must stay that way
+(`al-language-submodule.md`).
 
 The runner fix is still the priority, and the work never stalls on the corpus. Open the corpus
 PR and keep the runner fix moving — implemented, pushed, reviewed — rather than idling until
@@ -243,10 +248,13 @@ a merge can turn `main` red, which outranks everything you were about to do.
    and the answer belongs in the PR body whichever way it comes out. Both have happened: a
    defect assumed precompiled-only also reproduced on a source-compiled table, and the corpus
    app declares a Base Application dependency, so a corpus test does reach the precompiled path
-   after all (issue #2518, corpus PR #165, merged green on 8 legs); while table `2000000001`
+   after all (issue #2518, corpus PR #165, merged green on all 8 legs); while table `2000000001`
    really is out of reach, being `Scope = OnPrem` and in `SystemTables.InternalTables`, which
-   `NavRecordRef.IsSystemTableAllowedForRecordRefUsage` refuses outright — measured across all
-   8 legs of corpus PR #153 (issue #2774).
+   `NavRecordRef.IsSystemTableAllowedForRecordRefUsage` refuses outright. Hold that second answer
+   to what actually carries it: the service tier measured a **sibling id** — corpus PR #153 put
+   `2000000071` in front of one, all eight legs came back red, and the PR was withdrawn —
+   and `2000000001` follows by **set membership in the same refused list**, not by its own
+   measurement. Make the PR body say which of the two it has (issue #2774).
 
    **Do not merge a PR that closes a BC-behaviour issue on the strength of a runner-local test
    alone.** That is the exact failure `bc-behavior-tests-go-upstream.md` exists to prevent, and it

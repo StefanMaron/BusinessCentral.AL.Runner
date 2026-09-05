@@ -45,11 +45,13 @@ against a real service tier on every push.
 
 A runner-local test that passes proves only that the runner agrees with itself.
 
-"The corpus cannot express this" is legitimate for exactly one structural reason: corpus tests
-are compiled from AL source **by the runner**, so a defect affecting only *precompiled*
-dependency artifacts cannot be reproduced there — the test would take the source-compiled path
-and pass. Accept that when the PR names the reason and puts its proving test in
-`tests/runner-extras/`. Do not accept it as a way to skip writing the upstream test.
+"The corpus cannot express this" is legitimate when the reason is structural, and it is usually
+this one: corpus tests are compiled from AL source **by the runner**, so a defect affecting only
+*precompiled* dependency artifacts cannot be reproduced there — the test would take the
+source-compiled path and pass. It is not the only structural reason — a table the runtime refuses
+outright, such as one in `SystemTables.InternalTables`, is another. Accept that when the PR names
+the reason and puts its proving test in `tests/runner-extras/`. Do not accept it as a way to skip
+writing the upstream test.
 
 Check the pin too: a submodule bump belongs **folded into the fix PR** once the corpus PR has
 merged, never as its own PR, and never before.
