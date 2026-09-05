@@ -284,13 +284,7 @@ public static partial class BcRuntime
             // concrete `OnRun` override; both with the INavRecordHandle overload first, then the
             // parameterless form. Only fall back to an inherited `OnRun` if the concrete type
             // declares no trigger of its own (genuinely empty OnRun).
-            var trigger = FindConcreteTrigger(concreteType, "OnRunAsync")
-                       ?? FindConcreteTrigger(concreteType, "OnRun")
-                       ?? concreteType.GetMethod("OnRun",
-                              BindingFlags.NonPublic | BindingFlags.Instance, null,
-                              new[] { typeof(Microsoft.Dynamics.Nav.Runtime.INavRecordHandle) }, null)
-                       ?? concreteType.GetMethod("OnRun",
-                              BindingFlags.NonPublic | BindingFlags.Instance, null, Type.EmptyTypes, null);
+            var trigger = ResolveOnRunTrigger(concreteType);
 
             if (trigger == null)
                 return;
@@ -308,6 +302,40 @@ public static partial class BcRuntime
             System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw(tie.InnerException);
         }
     }
+
+    /// <summary>
+    /// The codeunit's OWN <c>OnRun</c> entry point, in the one order every caller must use.
+    ///
+    /// BC's compiler emits <c>trigger OnRun()</c> as an async <c>OnRunAsync</c> on the concrete
+    /// type for the DEPENDENCY-compile path (Base Application, System Application, any
+    /// precompiled ISV .app), and as a synchronous <c>OnRun</c> override for the runner's own
+    /// test-bundle emit. Both are virtuals on <c>NavCodeunit</c> with an EMPTY base body, so
+    /// asking for the sync name always succeeds — on a codeunit that emitted the async flavour
+    /// it binds the empty base, which runs, returns, and does nothing. Nothing throws; the AL
+    /// simply never executes. That is the shape that made <c>Codeunit.Run("Purch.-Post", …)</c>
+    /// a no-op on source-compiled Base App codeunits (no posted documents, no ledger entries),
+    /// and the same shape that made <c>StartSession</c> on a precompiled worker report success
+    /// having run nothing (issue #2733).
+    ///
+    /// Concrete <c>OnRunAsync</c> first, then concrete <c>OnRun</c>, and only then the
+    /// inherited <c>OnRun</c> — the last of those is the genuinely-empty-trigger case, which is
+    /// legitimate and must still be invoked. The <c>INavRecordHandle</c> overload is preferred
+    /// over the parameterless one at each step.
+    ///
+    /// Exposed rather than inlined because there was more than one caller and only one of them
+    /// had the rule. Every reflective <c>OnRun</c> lookup goes through here; a second spelling
+    /// of it is the defect, not a style problem. Pair the result with
+    /// <see cref="AwaitIfTask"/> — an <c>OnRunAsync</c> whose ValueTask is discarded parks the
+    /// AL <c>Error()</c> on the awaitable and drops it.
+    /// </summary>
+    internal static MethodInfo? ResolveOnRunTrigger(Type concreteType)
+        => FindConcreteTrigger(concreteType, "OnRunAsync")
+           ?? FindConcreteTrigger(concreteType, "OnRun")
+           ?? concreteType.GetMethod("OnRun",
+                  BindingFlags.NonPublic | BindingFlags.Instance, null,
+                  new[] { typeof(Microsoft.Dynamics.Nav.Runtime.INavRecordHandle) }, null)
+           ?? concreteType.GetMethod("OnRun",
+                  BindingFlags.NonPublic | BindingFlags.Instance, null, Type.EmptyTypes, null);
 
     /// <summary>
     /// Finds a codeunit-trigger method named <paramref name="name"/> that is DECLARED ON the

@@ -380,23 +380,34 @@ public static partial class BcRuntime
             }
             var instance = ctor.Invoke(new object[] { parent! });
 
-            // Prefer the OnRun(INavRecordHandle) overload if present (record-arg
-            // StartSession overloads). Fall back to OnRun() for parameterless workers.
-            // The `record` arg is a NavRecord (the runtime type); the OnRun parameter
-            // is INavRecordHandle. Pass null when the AL-emitted overload didn't
-            // provide a record (preserves the worker's "no input" contract).
-            var onRunRec = cuType.GetMethod("OnRun",
-                BindingFlags.NonPublic | BindingFlags.Instance, null,
-                new[] { typeof(Microsoft.Dynamics.Nav.Runtime.INavRecordHandle) }, null);
-            if (onRunRec != null)
+            // Resolve the worker's OWN trigger through the shared resolver — NOT by asking
+            // for the sync name, which is what this used to do. `cuType` comes from
+            // FindCodeunitTypePublic, which searches every loaded assembly including
+            // precompiled dependencies, and BC's compiler emits those codeunits' OnRun as
+            // `OnRunAsync`. `GetMethod("OnRun")` then returns the INHERITED, EMPTY
+            // NavCodeunit.OnRun, which runs and does nothing — so StartSession on any Base
+            // Application / System Application / ISV worker returned true having executed
+            // none of its AL. Issue #2733; the identical shape in Codeunit.Run is what
+            // ResolveOnRunTrigger was written for, and reports (#2734) and pages (#2729) had
+            // it too.
+            //
+            // AwaitIfTask is not optional here: the async flavour returns a ValueTask, and
+            // discarding it would park the worker's own Error() on the awaitable and drop it
+            // — a silent failure of exactly the kind loud-failures.md forbids, and one that
+            // would survive this fix while still looking green.
+            var trigger = ResolveOnRunTrigger(cuType);
+            if (trigger != null)
             {
-                onRunRec.Invoke(instance, new object?[] { null });
-            }
-            else
-            {
-                var onRun0 = cuType.GetMethod("OnRun",
-                    BindingFlags.NonPublic | BindingFlags.Instance, null, Type.EmptyTypes, null);
-                onRun0?.Invoke(instance, null);
+                // The `record` arg is deliberately still null: BC's record-carrying
+                // StartSession overloads hand the worker a row, and this replacement has never
+                // passed it on. That is a separate defect (NavRecord does implement
+                // INavRecordHandle, so it is a drop rather than a type limitation) and it needs
+                // its own worker fixture that reads Rec — tracked separately, not widened into
+                // this fix.
+                var result = trigger.GetParameters().Length == 1
+                    ? trigger.Invoke(instance, new object?[] { null })
+                    : trigger.Invoke(instance, null);
+                AwaitIfTask(result);
             }
             return true;
         }
