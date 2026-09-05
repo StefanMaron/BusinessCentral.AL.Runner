@@ -30,6 +30,31 @@ on:
         type: string
         required: false
         default: ''
+      bc-version-filter:
+        description: >-
+          Run ONE leg instead of the whole matrix: a prefix from
+          .github/bc-versions.txt, e.g. "28.4". Empty (the default) is the full
+          matrix, which is what BOTH gating callers use — test-matrix.yml and
+          publish.yml never set this, so the push / pull-request / release paths
+          resolve exactly the list they resolved before this input existed.
+
+          The only caller that sets it is bc-leg-rerun.yml, the diagnostic
+          single-leg re-run that `.claude/rules/ci-verdicts.md` section 5 points
+          at for flake evidence. That workflow deliberately does NOT contain the
+          aggregate job that reports main's required status check, so a
+          single-leg run cannot satisfy that gate with one leg's result. (The
+          check's name is spelled out in test-matrix.yml and deliberately not
+          here — ReleaseTestParityTests asserts this file never names it, so
+          that the job cannot quietly migrate into the reusable workflow and
+          change the context's name.)
+
+          A non-empty value narrows the matrix ONLY. Every per-leg attribute
+          (`required`, `unit-tests`) is still computed from the FULL list below,
+          so a dispatched leg does exactly the work that same leg does on a
+          normal run rather than a subtly different job.
+        type: string
+        required: false
+        default: ''
     outputs:
       required-version:
         description: >-
@@ -78,6 +103,12 @@ jobs:
           dotnet-version: '8.0.x'
       - name: Resolve BC versions
         id: resolve
+        # Via env, never interpolated straight into the script body: a `${{ }}` expansion
+        # inside `run:` is textual substitution before bash ever sees it, so a crafted
+        # dispatch input would run as shell. Only users with write access can dispatch,
+        # but the mitigation costs one line.
+        env:
+          BC_VERSION_FILTER: ${{ inputs.bc-version-filter }}
         run: |
           # Each prefix in bc-versions.txt → one matrix entry {bc-version, required}.
           #
@@ -119,6 +150,31 @@ jobs:
                             printf '%s\n' $BC_PREFIXES | grep "^${major}\." | sort -V | tail -1
                           done | tr '\n' ' ')
           echo "Primary prefix: $PRIMARY_PREFIX | unit-test prefixes: $UNIT_PREFIXES"
+
+          # Single-leg narrowing for the diagnostic dispatch (bc-leg-rerun.yml). Applied
+          # HERE, after PRIMARY_PREFIX and UNIT_PREFIXES are derived from the FULL list
+          # above and before the resolve loop below — so a dispatched leg carries the same
+          # `required` and `unit-tests` flags it carries on a normal 8-leg run. Narrowing
+          # before those two were computed would silently hand a single-leg run a different
+          # job than the leg it is supposed to be reproducing, which would make it useless
+          # as flake evidence: AlRunner.Tests runs on 2 of the 8 legs, not all 8 (#2674).
+          #
+          # Unknown prefixes fail the run rather than resolving to an empty matrix. An empty
+          # matrix means the `test` job never runs, and a workflow whose only real job never
+          # ran still reports success — the silent-no-op shape this repo has been bitten by
+          # repeatedly (#1976, #2065).
+          if [ -n "${BC_VERSION_FILTER:-}" ]; then
+            case " $BC_PREFIXES " in
+              *" $BC_VERSION_FILTER "*)
+                echo "Single-leg run: narrowing to '$BC_VERSION_FILTER' (was: $BC_PREFIXES)"
+                BC_PREFIXES="$BC_VERSION_FILTER"
+                ;;
+              *)
+                echo "::error::bc-version-filter '$BC_VERSION_FILTER' is not a prefix in .github/bc-versions.txt ($BC_PREFIXES)"
+                exit 1
+                ;;
+            esac
+          fi
 
           ENTRIES="[]"
           for prefix in $BC_PREFIXES; do
@@ -507,6 +563,16 @@ jobs:
   smoke:
     name: Smoke ${{ matrix.tfm }}
     needs: resolve-versions
+    # Skipped only on a single-leg diagnostic dispatch (bc-version-filter set). Two
+    # reasons, and the first is correctness rather than cost: `required-version` is
+    # emitted by the resolve loop only for the PRIMARY prefix, and a filtered run that
+    # narrowed to any OTHER prefix never reaches that branch, so this job would build
+    # against an empty version. The second is that a single-leg re-run exists to repeat
+    # ONE leg's measurement cheaply; smoke and pack are not that leg.
+    #
+    # Both gating callers (test-matrix.yml, publish.yml) leave the filter empty, so this
+    # condition is true on every push, pull request and release exactly as before.
+    if: inputs.bc-version-filter == ''
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -577,6 +643,11 @@ jobs:
   pack:
     name: Release pack (dry, no publish)
     needs: resolve-versions
+    # Same reasoning as `smoke` above: this job reads
+    # needs.resolve-versions.outputs.required-version and versions-json, both of which a
+    # single-leg run narrows or leaves empty. Empty on every gating path, so unchanged
+    # for push / pull request / release.
+    if: inputs.bc-version-filter == ''
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6

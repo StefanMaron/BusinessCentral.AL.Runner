@@ -54,8 +54,12 @@ reporting green from a stale run has happened at least four times. Confirm the c
 SHA matches local `HEAD` — a mismatch means "not yet reported," not "green." Never report a
 PR as done while its CI is still running.
 
-The one required check on `main` is **`All BC versions passed`**
-(`.github/workflows/test-matrix.yml`); matrix legs report as `bc-tests / BC <ver> (required)`.
+`main`'s ruleset requires exactly two contexts: **`All BC versions passed`**
+(`.github/workflows/test-matrix.yml`) and **`Tests updated`** (`pr-check.yml`). The matrix legs
+report as `bc-tests / BC <ver> (required)` — the `(required)` there is part of the job's own
+name and does NOT make the leg a required context; only the aggregate gates. That is why a
+single-leg diagnostic run cannot clear the gate, and why a red leg still blocks through the
+aggregate.
 
 Wait in the **foreground** — `tools/ci-wait.py`, or `gh run watch <run-id>`. Never end a turn
 while CI you are responsible for is still running (`no-backgrounding-long-commands.md`).
@@ -106,30 +110,57 @@ Both options below create a brand-new, separate workflow run. Neither touches th
 failed run or its log — that run and its log stay exactly as they were, so a diagnosis made
 from the original log is never at risk.
 
-**When the workflow exposes `workflow_dispatch` with a way to target one leg** — dispatch that
-leg directly against the failing ref, which still points at the same commit as long as nobody
-has pushed since:
+**Preferred — dispatch the one leg.** Cheapest by far: one leg instead of eight, against the
+ref that already carries the verdict (still the same commit as long as nobody has pushed
+since).
+
+In this repository, `.github/workflows/bc-leg-rerun.yml`:
 
 ```bash
-gh workflow run ci.yml --repo <owner>/<repo> --ref <branch> -f bc_version=28.4
+gh workflow run bc-leg-rerun.yml --repo StefanMaron/BusinessCentral.AL.Runner \
+  --ref <branch> -f bc-version=28.4
 ```
 
-`StefanMaron/BusinessCentral.AL.Language.Tests`' `.github/workflows/ci.yml` supports exactly
-this (`bc_version` input). It is how impl-4 got a second, independent verdict on corpus PR
-#144's BC 28.4 leg without disturbing the original: run 33962643816, dispatched against the
-same SHA that had just failed, came back 2495/2495 clean. **This repository's own
-`test-matrix.yml` / `bc-tests.yml` do not currently expose `workflow_dispatch`** — this exact
-recipe is not available here today (see "Not done here" below).
+`bc-version` is a prefix from `.github/bc-versions.txt`; an unknown one fails the run rather
+than resolving to an empty matrix. The leg does exactly the work that leg does on a normal
+run — `required` and `unit-tests` are still computed from the full version list, so a
+dispatched 28.0 leg does not suddenly run `AlRunner.Tests` that the real 28.0 leg skips.
 
-**When there is no per-leg dispatch (the case here, today)** — push an empty commit:
+In the AL-language corpus, `.github/workflows/ci.yml` (`bc_version` input):
+
+```bash
+gh workflow run ci.yml --repo StefanMaron/BusinessCentral.AL.Language.Tests \
+  --ref <branch> -f bc_version=28.4
+```
+
+That is how impl-4 got a second, independent verdict on corpus PR #144's BC 28.4 leg without
+disturbing the original: run 33962643816, dispatched against the same SHA that had just
+failed, came back 2495/2495 clean.
+
+**A single-leg dispatch cannot satisfy this repository's required check**, by construction:
+`All BC versions passed` is declared in `test-matrix.yml`, and `bc-leg-rerun.yml` does not
+contain that job at all, so there is no conclusion — not success, not `skipped` — for it to
+report. `AlRunner.Tests/BcLegRerunWorkflowTests.cs` holds that property in place. Treat the
+result as evidence for a human, never as a gate that has been cleared.
+
+**The corpus has no equivalent guarantee** — there the eight `BC <ver> / test` legs ARE the
+required contexts, so a dispatched leg reports a check run with the same name as the one that
+gated. Measured once, on corpus PR #144: the dispatch produced a second `BC 28.4 / test` check
+run with conclusion `success` on the same head SHA as the original `failure`, and the PR stayed
+`BLOCKED` with `gh pr checks --required` still reporting the failing one. So it did not clear
+the gate — but that is one observation of undocumented GitHub behaviour, not a rule. Never
+dispatch a corpus leg expecting it to turn a PR green, and check `gh pr checks --required`
+rather than assuming either way.
+
+**Fallback, when a workflow has no per-leg dispatch** — push an empty commit:
 
 ```bash
 git commit --allow-empty -m "chore: re-run CI to check a leg-set flake (no content change)"
 git push
 ```
 
-This is the AL Runner recipe until `test-matrix.yml` gains a `workflow_dispatch` trigger, if it
-ever does.
+Same tree, so it is still "the same code" by the rule above, but it spends a full eight-leg
+run in a queue shared across the whole account. Prefer the dispatch.
 
 ### What neither of these is
 
@@ -145,16 +176,16 @@ content-changing push on corpus PR #145, it moved the failing leg from BC 28.2 t
 without fixing anything, at roughly 8 minutes of the whole account's shared Actions queue per
 attempt. GitHub Actions concurrency is scoped per account, not per repository, so that cost is
 shared with every other repo and agent using the same account, not just this one. Nobody
-bypasses a red required check. The two recipes above are for finding out whether a failure is
+bypasses a red required check. The recipes above are for finding out whether a failure is
 real, not for making it go away.
 
-### Not done here: teaching a tool to dispatch this
+### Deliberately not in `tools/ci-wait.py`
 
 `tools/ci-wait.py` answers "has this PR's required check reported a verdict on its current
 head" — a different question from "get me an independent second run of this exact commit."
 Folding the dispatch recipe into it would conflate two different operations behind one tool, so
-it stays out for now. If this recipe gets used often enough to be worth automating, that is a
-new, narrowly-scoped tool, not an addition to `ci-wait.py`.
+it stays out. If this gets used often enough to be worth automating, that is a new,
+narrowly-scoped tool, not an addition to `ci-wait.py`.
 
 ## Sister rules
 
