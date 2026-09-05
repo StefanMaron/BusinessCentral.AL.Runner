@@ -123,6 +123,44 @@ public sealed class BcAppPathsResetTests : IDisposable
         Assert.Contains(appPath, RecordPatches.RegisteredBcAppPathsForTests());
     }
 
+    [SkippableFact]
+    public void ResetForReload_KeepsTheProcessLifetimeSystemAppRegistration()
+    {
+        TestArtifacts.SkipIf(!BcEngineBootstrap.Ready,
+            BcEngineBootstrap.SkipReason ?? "the in-process BC engine is not ready (see BcEngineCollection).");
+
+        // The one entry in _bcAppPaths that NOTHING re-adds. RegisterSystemAppPackage() runs
+        // once per process, from RecordPatches.Register() at engine bootstrap — it is not part
+        // of Program.cs's per-bundle dep-register stage, so a flat _bcAppPaths.Clear() here
+        // unregistered it for the rest of a --server/--watch process. That matters because
+        // ResetForReload also clears _parsedTables and _metaTableCache: the registered .app is
+        // the only source left for the NCL-internal system tables (RecordLink 2000000068,
+        // Field 2000000041, Object 2000000038, ...) that BC's own NCL code constructs directly
+        // via `new NavRecord(parent, id)`. The first draft of #2755 did exactly that and two
+        // AlRunner.Tests classes failed with "no NCLMetaTable for table N (dependency source
+        // not parsed)" on the 27.5 and 28.4 legs — the two that run AlRunner.Tests.
+        var systemApp = RecordPatches.SystemAppPackagePathForTests;
+        Assert.NotNull(systemApp);
+        Assert.Contains(systemApp!, RecordPatches.RegisteredBcAppPathsForTests());
+
+        // A per-bundle registration alongside it, so the assertion below is a statement about
+        // WHICH entries go rather than about the reset doing nothing.
+        var bundleApp = RegisterOneSymbolApp("BcpAlongsideSystemApp", 70650);
+        Assert.Contains(bundleApp, RecordPatches.RegisteredBcAppPathsForTests());
+
+        RecordPatches.ResetForReload();
+
+        var registered = RecordPatches.RegisteredBcAppPathsForTests();
+        Assert.Contains(systemApp!, registered);      // kept: nothing re-adds it
+        Assert.DoesNotContain(bundleApp, registered); // dropped: Program.cs re-adds it
+
+        // And it is still usable, not merely still listed: a system table the SystemApp package
+        // is the only source for still resolves after the reset. Table 2000000068 (Record Link)
+        // is not in any test bundle's src/ and _parsedTables was just cleared, so the ONLY way
+        // this can answer is by re-reading the registration kept above.
+        Assert.Equal(2000000068, RecordPatches.ResolveTableIdByName("Record Link"));
+    }
+
     [Fact]
     public void TheRegisteredSetIsAnInputToTheInstallBaselineKey_SoClearingItMovesTheKey()
     {
