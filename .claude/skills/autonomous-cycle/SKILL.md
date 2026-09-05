@@ -67,25 +67,37 @@ Every check below exists because its absence has silently corrupted a result.
 5. **Headroom.** Read free RAM and disk, and derive worker and job counts from them. Never
    hardcode. Set `MemoryHigh` below `MemoryMax` on any long run so a cgroup throttles before the
    kernel's global OOM killer starts choosing victims elsewhere on the machine.
-6. **Your label namespace is yours alone.** Derive a short agent tag from the account the loop
-   is logged in as — `gh api user --jq .login` — because logins are already unique, so a tag
-   derived from one inherits that for free. Uniqueness only comes back into question when you
-   **abbreviate**, and an abbreviation is exactly what makes a readable label, so verify rather
-   than assume:
+6. **Claim a label slot, do not just derive one.** The account gives you a namespace; a slot
+   number makes you unique *within* it, because one person may run several loops at once.
 
-   - List the `agent:` labels that already exist on the repository.
-   - Check whether your intended tag already appears on issues or PRs that are **not** yours. If
-     it does, someone else is using it — pick another and re-check, or stop and report it.
-   - Check the same tag is not in flight on open work you did not create.
+   Derive the namespace from the account the loop is logged in as — `gh api user --jq .login` —
+   since logins are already unique, so a tag derived from one inherits that for free. Uniqueness
+   only comes back into question when you **abbreviate**, and an abbreviation is what makes a
+   readable label, so verify rather than assume: list the `agent:` labels already on the
+   repository and confirm your intended namespace does not appear on issues or PRs belonging to
+   someone else. On a clash pick another and re-check, or stop and report it.
 
-   Then use it consistently: labels (`agent: <tag>-1`), branch names, worktree directories,
-   scratch and cache paths. One derivation, applied everywhere, and two contributors can run the
-   same loop against the same repository without ever writing to the same name.
+   Then take the lowest free slot — `<tag>-1`, `<tag>-2`, … — by asking the repository, which is
+   the only state two loops share:
 
-   The existing `agent: impl-N` convention is the counter-example worth avoiding: it is a global
-   counter with no owner, and it drifted to `impl-69` while leaving 82 worktrees and 10 GB of
-   disk behind. A per-account namespace cannot drift that way, because the identity is not a
-   number anyone increments.
+   - A slot is **taken** if any open issue or PR carries that label and is still being worked.
+   - A slot is **free** if its label exists but nothing open carries it, or it does not exist.
+   - Claim the lowest free one, then **re-read**. Two loops starting together will pick the same
+     slot; if another loop's work appeared under yours, take the next and re-check. Same
+     compare-and-swap as issue claiming, and for the same reason.
+
+   Hold the slot visibly. A loop between tasks owns no work, so its slot looks free to a loop
+   starting up — keep your label on whatever you are working, and release it when you finish, so
+   the repository always shows which slots are live.
+
+   Use that one identity everywhere: labels, branch names, worktree directories, scratch and
+   cache paths. Several loops can then run under one account, and several accounts against one
+   repository, without ever writing the same name.
+
+   The existing `agent: impl-N` convention is the counter-example worth avoiding: a global
+   counter with no owner, which drifted to `impl-69` while leaving 82 worktrees and 10 GB of disk
+   behind. Slots numbered *inside* an account namespace cannot drift that way — they are
+   reclaimed by the next loop that starts, instead of incremented forever.
 
 7. **No stale worktree for this identity**, and no leftover scratch directories from a killed
    run.
