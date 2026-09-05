@@ -3696,14 +3696,19 @@ var willResume = resumeAborts > 0
 // JUnitReport.WriteJUnit fold the carried attempts in themselves, so a merged `results` would
 // count every carried case twice, once in each shape. Empty carry list => the same object,
 // so a run that never resumed is bit-for-bit unchanged.
-var carriedResults = AlRunner.Infrastructure.ResumeCarry.Read(mergeResultsFiles, out var carryUnreadable);
-if (carryUnreadable > 0)
-    // Never silent: this is the difference between "the run had one error" and "the run was
-    // clean", and a scratch file going missing must not be the quiet reason a run reads green.
-    Console.Error.WriteLine(
-        $"resume: {carryUnreadable} carried result file(s) could not be read, so --output-json, "
-        + "--out and --count-baseline cover only part of this run. The printed summary and "
-        + "--output-junit are unaffected.");
+var carriedResults = AlRunner.Infrastructure.ResumeCarry.Read(mergeResultsFiles, out _);
+
+// #2747: every attempt this run was PROMISED must actually be here. Both carry readers shrug at
+// a file they cannot use — right for a corrupt one, wrong for a file that is simply GONE,
+// because the carry directory is owned by the PARENT attempt, which then waits while the child
+// runs. Kill the parent alone (SIGTERM runs its ProcessExit and deletes the directory; SIGKILL
+// leaves an owner that is dead, so the next runner start sweeps it correctly) and the child
+// finishes, finds nothing, and reports a SMALLER run as a clean one. Audited in ONE place for
+// BOTH channels, because a report is complete or it is not — it cannot be half-trusted.
+var carryLosses = AlRunner.Infrastructure.CarriedAttemptFiles.Audit(mergeCountsFiles, mergeResultsFiles);
+var carryIncomplete = carryLosses.Count > 0;
+if (carryIncomplete)
+    Console.Error.WriteLine(AlRunner.Infrastructure.CarriedAttemptFiles.Describe(carryLosses));
 var allResults = carriedResults.Count == 0
     ? results
     : carriedResults.Concat(results).ToList();
@@ -3831,7 +3836,11 @@ int computedExitCode = 0;
         }
     }
     computedExitCode = compileFail > 0 ? 3       // compile errors
-        : execFail > 0 ? 2                       // bucket-level execution error
+        // #2747: a carried attempt was promised and is not here, so whatever this run reports
+        // omits it. Ranked above a plain test failure because it is not a statement about the
+        // AL at all — it says the REPORT cannot be trusted, which a consumer must not read as
+        // "some tests failed". Below a compile failure, which is the more fundamental problem.
+        : (execFail > 0 || carryIncomplete) ? 2  // bucket-level execution error, or a lost attempt
         : (failed + errored > 0 ? 1               // at least one test failed
         : (countBaselineMismatch ? 4 : 0));      // #1880: suite's count didn't exactly match its baseline
 }

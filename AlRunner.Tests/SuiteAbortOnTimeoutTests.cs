@@ -400,6 +400,57 @@ public sealed class SuiteAbortOnTimeoutTests : IDisposable
     }
 
     /// <summary>
+    /// #2747: a carried attempt that was PROMISED and is not there must fail the run loudly,
+    /// not shrink the report in silence.
+    ///
+    /// Reproduced deterministically by naming a carry file that does not exist, rather than by
+    /// racing a kill: how the file goes missing (SIGTERM running the parent's ProcessExit and
+    /// deleting the scratch directory it owns, or SIGKILL leaving a dead owner for the next
+    /// runner start to sweep correctly) does not change what the child then does with it, and
+    /// the silence was unconditional on the cause.
+    ///
+    /// Before this the same command exited 0 with a JUnit holding only the final attempt.
+    /// </summary>
+    [SkippableFact]
+    public void CarriedAttemptFileGone_FailsLoudly_InsteadOfShrinkingTheReport()
+    {
+        TestArtifacts.SkipIfMissing();
+        var dir = Path.Combine(_resumeRoot, "out3");
+        Directory.CreateDirectory(dir);
+        var missingJUnit = Path.Combine(dir, "attempt-that-vanished.xml");
+        var junit = Path.Combine(dir, "final.xml");
+
+        var (output, exit) = RunRunner(_resumeRoot, 180_000,
+            "--test-timeout 2", "--resume-aborts 0",
+            $"--merge-counts \"{missingJUnit}\"", $"--output-junit \"{junit}\"");
+
+        Assert.NotEqual(0, exit);
+        Assert.Contains("#2747", output);
+        // The lost attempt is named, because "which one?" is the first question.
+        Assert.Contains(missingJUnit, output);
+        // And the run's own results are not thrown away with it — only the total is untrusted.
+        Assert.Contains("still printed above", output);
+    }
+
+    /// <summary>
+    /// #2747 negative, and the one that matters most: a run handed NO carry files is untouched.
+    /// Every run that never resumed is in this case, so a false positive here would fail every
+    /// run on the machine.
+    /// </summary>
+    [SkippableFact]
+    public void NoCarriedAttemptFiles_IsNotTreatedAsALoss()
+    {
+        TestArtifacts.SkipIfMissing();
+        var junit = Path.Combine(_resumeRoot, "out4", "final.xml");
+        Directory.CreateDirectory(Path.GetDirectoryName(junit)!);
+
+        var (output, _) = RunRunner(_resumeRoot, 180_000,
+            "--test-timeout 2", "--resume-aborts 0", $"--output-junit \"{junit}\"");
+
+        Assert.DoesNotContain("#2747", output);
+    }
+
+    /// <summary>
     /// #2716 negative: with resume disabled the same fixture writes exactly attempt 1's two
     /// cases — nothing is carried in from nowhere, and the count is not inflated.
     /// </summary>
