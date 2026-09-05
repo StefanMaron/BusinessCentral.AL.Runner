@@ -194,6 +194,10 @@ dispatch, and report/request-page variables support a limited standalone surface
   a handler that cancels leaves the report body unexecuted, and one that calls
   `TestRequestPage.SaveAsXml(parametersFile, dataSetFile)` gets the report's dataset written
   to that file (so `Codeunit "Library - Report Dataset"` can load it) instead of a layout.
+  A handler asking for a RENDERED artifact instead — `SaveAsExcel`, `SaveAsPdf`, `SaveAsWord`,
+  print, preview — is refused loudly on the rendering path, like every other rendering request
+  here; it is not answered with a dataset written into the file it named
+  ([#2887](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2887)).
   A handler can also read and write the request page's **controls**
   (`RequestPage.ShowAmountsInLCY.SetValue(true)`): a request-page control is bound to one of
   the report's own globals, and it resolves through BC's own `NavForm.SourceExpressions`
@@ -237,17 +241,38 @@ The runner executes in a single .NET process with no attached BC debugger. Debug
 
 `Debugger.Activate()`, `Debugger.Deactivate()`, and `Debugger.IsActive()` are supported — they are stripped or return `false`.
 
-### Task scheduler — synchronous dispatch
+### Task scheduler — no scheduler, and no inline substitute
 
-`TaskScheduler.CreateTask()` dispatches the target codeunit **synchronously, inline**,
-before returning — the same pattern as `StartSession`. The implications:
+**Tasks are never executed.** `TaskScheduler.CreateTask()` does not run the target codeunit —
+not in the background, and not inline either. [`docs/scope.md` §3.6](scope.md#jobs) is the
+authoritative description of this surface; the summary below only restates what was measured
+against it, so if the two ever disagree again, §3.6 and the Cecil layer win.
 
-- `TaskExists()` always returns `false` — the task already completed before the call returned.
-- `CancelTask()` and `SetTaskReady()` are no-ops — the task has already run.
-- `CanCreateTask()` returns `false` — there is no background job queue.
-- `NotBefore` and `CompanyName` parameters are accepted but ignored — the codeunit runs immediately in the current company context.
+The runner Cecil-rewrites `ALTaskScheduler.CanCreateTask` / `ALCanCreateTask` to return
+`false` and deliberately leaves `ALCreateTaskAsync` **unmodified**, so BC's own body raises
+BC's own exception. Measured on BC 28.1:
 
-AL that tests the *logic* around task creation (what codeunit runs, what state it produces) works here. AL that tests the *scheduling contract* (task still pending, NotBefore delay, cancellation before execution) cannot work here because there is no background scheduler.
+| AL call | What actually happens |
+|---|---|
+| `CanCreateTask()` | `false` |
+| `CreateTask()` | throws `You do not have permission to create or run scheduled tasks.` The target codeunit's `OnRun` does **not** run. |
+| `TaskExists()` | throws a `NullReferenceException` — the real body reaches for a SQL connection that does not exist here. Tracked separately; it should refuse loudly rather than NRE. |
+| `CancelTask()`, `SetTaskReady()` | complete without error, having done nothing (there is no task to act on). |
+
+So: guarded AL (`if TaskScheduler.CanCreateTask() then …`) skips task creation cleanly and is
+the pattern that works here. Unguarded AL that calls `CreateTask()` directly gets BC's loud
+refusal, which is deliberate — an earlier version of the runner rewrote `ALCreateTaskAsync` to
+return `Guid.Empty`, and that was reverted (#1733, #1739) as a silent fake suppressing BC's
+own guard.
+
+AL that tests the *scheduling contract* — a task still pending, a `NotBefore` delay,
+cancellation before execution — cannot work here, because nothing is scheduled and nothing
+runs. AL that needs the target codeunit's logic to actually execute should call it directly
+(`Codeunit.Run`) rather than through `CreateTask`.
+
+> This section previously described `CreateTask()` as dispatching the codeunit
+> "synchronously, inline". That described a design that was reverted, and it was wrong in both
+> directions: no codeunit runs, and `TaskExists()` does not return `false`. See #2565.
 
 ### No DotNet interop
 
@@ -357,6 +382,52 @@ If your AL under test depends on real SA behaviour to mean anything, the support
 2. **Test-only AL codeunit shadowing the SA call.** Add an AL codeunit in your `test/` directory with the same object ID and a hand-rolled implementation that returns the values your test expects. The runner will use your codeunit because it is in the compile unit; in real BC, your production code never sees it.
 
 Concrete example — `Image` codeunit (System Application). A test that asserts on image dimensions cannot rely on the runner's blank-shell `Image.GetWidth()` (which returns `0`). The fix is to write a small stub in your test project that parses a known fixture image, not to ask the runner to ship an `Image` implementation. If the AL pattern under test is widespread enough that everyone needs the same stub, file a runner-gap issue and we can discuss whether a shared stub belongs in `AlRunner/stubs/` (the bar is high — it must be test-automation infrastructure, not business logic).
+
+### Document-service providers (`DOCUMENTSERVICEMOCK`)
+
+Base Application codeunit 9510 `"Document Service Management"` resolves a provider through
+`Microsoft.Dynamics.Nav.DocumentService.DocumentServiceFactory.CreateService`. That factory
+composes a MEF `DirectoryCatalog` over the directory holding
+`Microsoft.Dynamics.Nav.DocumentService.dll`, using the file pattern
+`*.nav.*DocumentService*.dll`, and picks the export whose `IDocumentServiceMetadata.ServiceType`
+matches the requested type, compared case-insensitively.
+
+The only provider Microsoft ships in the public platform artifacts is
+`Microsoft.Dynamics.Nav.SharePointOnlineDocumentService.dll`. The two types Microsoft's own test
+codeunit 139101 `"Document Service Mgmt Test"` asks for — `DOCUMENTSERVICEMOCK` and
+`EMPTYDOCUMENTSERVICEMOCK` — live in internal test binaries. Measured across 25 cached artifacts
+from BC 26.0 through 28.4, the string `DOCUMENTSERVICEMOCK` appears in no shipped DLL.
+
+A test that requests one of those service types therefore fails, with BC's own message:
+
+```
+NavNCLDotNetInvokeException: A call to ...DocumentServiceFactory.CreateService failed with this
+message: <install-dir> The following document service provider could not be found: 'DOCUMENTSERVICEMOCK'.
+```
+
+That is the correct result, and the runner keeps it. It names the API, the missing provider and
+the directory that was searched. `tests/runner-extras/document-service-session-seed` checks it
+from AL, and `AlRunner.Tests/DocumentServiceProviderScopeGuardTests.cs` checks that the runner
+ships no provider of its own.
+
+**The runner will not supply a `DOCUMENTSERVICEMOCK` implementation.** Ten of the eleven failing
+tests in codeunit 139101 need one, and they divide into two halves: five need the handler to
+return a result the test then asserts on, and five assert an exact error string that Microsoft's
+AL marks `Comment = 'Text is copied from Mock assembly.'`. A runner-written handler would have to
+reproduce those strings out of the test codeunit that checks them, so those five would pass
+because the runner matched its own copy, not because it behaved the way Microsoft's mock behaves.
+That is the same problem that caused MockImage to be reverted in #1502.
+
+**Bring your own provider.** The extension point is public, so this needs no runner change:
+
+1. Build a .NET assembly whose file name matches `*.nav.*DocumentService*.dll`.
+2. Export a type implementing `IDocumentServiceHandler`, decorated
+   `[DocumentServiceMetadata("YOURTYPE")]`.
+3. Put it in the artifact directory alongside `Microsoft.Dynamics.Nav.DocumentService.dll`.
+4. Call `SetServiceType('YOURTYPE')` from your AL.
+
+The factory rescans that directory on every `CreateService` call, so the assembly is picked up
+without any further setup.
 
 ---
 

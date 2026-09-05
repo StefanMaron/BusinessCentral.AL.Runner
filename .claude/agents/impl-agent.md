@@ -73,13 +73,19 @@ git fetch origin main
 # Only if the worktree already exists from a previous task:
 git -C .claude/worktrees/<AGENT-ID> status --porcelain              # must be empty
 git -C .claude/worktrees/<AGENT-ID> log --oneline origin/main..HEAD # must be empty
-git worktree remove .claude/worktrees/<AGENT-ID>
+rm -rf .claude/worktrees/<AGENT-ID> && git worktree prune   # NOT `git worktree remove` — see below
 
 git worktree add .claude/worktrees/<AGENT-ID> -b agent/<AGENT-ID>/issue-<N> origin/main
 cd .claude/worktrees/<AGENT-ID>
 ```
 
-**Never `git worktree remove --force` without running both checks first.** An agent that crashed mid-task leaves its only copy of that work there — nowhere else. If either check prints anything, stop and report rather than discard.
+**`git worktree remove` refuses on every worktree in this repository.** It reports
+`fatal: working trees containing submodules cannot be moved or removed`, because each one
+carries `tests/al-language/`. `--force` does not help. Run the two checks below, then
+`rm -rf .claude/worktrees/<AGENT-ID> && git worktree prune`, which is the only sequence that
+works here.
+
+**Never remove a worktree without running both checks first.** An agent that crashed mid-task leaves its only copy of that work there — nowhere else. If either check prints anything, stop and report rather than discard.
 
 Verify with `git rev-parse --show-toplevel` before your first commit. Never `git add -A` / `git add .` in a tree that might carry another agent's edits — stage only the files you changed, by name.
 

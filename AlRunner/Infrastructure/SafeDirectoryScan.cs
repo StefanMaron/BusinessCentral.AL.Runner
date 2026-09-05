@@ -47,6 +47,34 @@ namespace AlRunner.Infrastructure;
 /// platform-default casing, which is exactly what <c>EnumerationOptions.Compatible</c>
 /// (<c>MatchType.Win32</c>, <c>MatchCasing.PlatformDefault</c>) uses — so results are
 /// identical to the <c>SearchOption.AllDirectories</c> calls this replaces.</para>
+///
+/// <para><b>Results are ordinal-sorted by full path (issue #2872).</b> They did not used to
+/// be, and the order is load-bearing: <see cref="Files"/> is how every AL compile collects
+/// its <c>*.al</c> inputs (<c>BcCompiler.Emit</c>, <c>EmitDepSymbols</c>, the three
+/// incremental paths, <c>InProcessAppPackager</c>, …), and that list becomes the syntax-tree
+/// order handed to the AL compiler, hence the TypeDef order of the emitted assembly, hence
+/// the order <c>Assembly.GetTypes()</c> returns, hence the order <c>TestExecutor.Run</c>
+/// executes test codeunits in. <c>Directory.GetFiles</c> and <c>Directory.GetDirectories</c>
+/// return readdir order, which on Linux is creation order for a small directory, and the walk
+/// below pops subdirectories off a <see cref="Stack{T}"/>, reversing them on top of that.
+/// Measured: two bundles holding byte-identical AL sources, differing only in which file was
+/// written first, ran the same two test codeunits in opposite orders.</para>
+///
+/// <para>That was invisible until something ended a run early. It turned <c>main</c> red on
+/// the BC 27.5 leg (run 33984312053): a per-test watchdog abort ends the run at the hung
+/// codeunit, so the flipped order decided which tests had already executed and what the JUnit
+/// contained. And the mirror image is why the sort belongs here rather than at one call site
+/// — <c>ComputeAlCacheKey</c> (<c>ProgramSupport/Dependencies.cs</c>) already sorted the same
+/// file list before hashing it ("Enumerate every .al file in stable order"), so the cache KEY
+/// was order-independent while the COMPILE was not: identical sources hash to one entry that
+/// can hold either assembly, and every later run is served whichever was emitted first.
+/// Three call sites (<c>Dependencies</c>, <c>InProcessAppPackager</c>,
+/// <c>ProvisioningCheck</c>) had each added their own <c>OrderBy</c> for the same reason;
+/// <c>BcCompiler.Emit</c>, the one whose order decides execution, had not.</para>
+///
+/// <para>Ordinal, not culture-aware or case-insensitive: the point is an order that does not
+/// move between machines or locales. Cost is a single sort of the materialised result — on
+/// this repository's 94,740-directory checkout, milliseconds against a 787 ms walk.</para>
 /// </summary>
 public static class SafeDirectoryScan
 {
@@ -84,6 +112,7 @@ public static class SafeDirectoryScan
         Walk(root, searchPattern, hits, denied, matchFiles: false,
              recurse: searchOption == SearchOption.AllDirectories);
         inaccessible = denied;
+        hits.Sort(StringComparer.Ordinal);
         return hits;
     }
 
@@ -106,6 +135,11 @@ public static class SafeDirectoryScan
         Walk(root, searchPattern, hits, denied, matchFiles: true,
              recurse: searchOption == SearchOption.AllDirectories);
         inaccessible = denied;
+        // See the class remarks: this order is the AL compiler's syntax-tree order and
+        // therefore the test-execution order. Sorting the materialised result is enough —
+        // it makes the answer independent of readdir order AND of the Stack-driven
+        // traversal order below, so neither has to be reasoned about again.
+        hits.Sort(StringComparer.Ordinal);
         return hits;
     }
 

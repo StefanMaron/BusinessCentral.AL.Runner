@@ -263,6 +263,47 @@ assert_exit "PR_COMMITS unset still fails a stray body reference" 1 "fix: someth
 
 This does not close #456."
 
+# --- #2646: the PR template must not answer the check on the author's behalf ---
+#
+# The template exists so the escape hatch is discoverable where the body is
+# written rather than only where CI fails. That puts its own example text into
+# every PR body, which is a trap in two directions, and BOTH were hit while
+# writing it:
+#
+#   * a literal "Closes #<a real number>" anywhere in the template -- including
+#     inside its HTML comment -- closes that issue on merge; and
+#   * a complete "No linked issue: <a reason>" line satisfies the escape hatch,
+#     so an author who edits nothing passes the check with no linked issue and
+#     no reason. That is strictly worse than the failure this template replaces.
+#
+# So the contract is: the UNEDITED template must FAIL, and each of the two
+# completed forms must PASS. These cases read the real file, so a future edit
+# that reintroduces either trap fails here rather than on someone's PR.
+
+TEMPLATE="$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)/.github/pull_request_template.md"
+
+if [ ! -f "$TEMPLATE" ]; then
+  echo "FAIL - .github/pull_request_template.md is missing (issue #2646 added it)"
+  fail=$((fail + 1))
+else
+  template_body="$(cat "$TEMPLATE")"
+
+  assert_exit "the UNEDITED PR template fails: neither form completed" 1 \
+    "fix: something" "$template_body"
+
+  assert_exit "the template with a real Closes number passes" 0 \
+    "fix: something" "$(printf '%s' "$template_body" | sed 's/^Closes #$/Closes #4242/' | sed '/^No linked issue:$/d')"
+
+  assert_exit "the template with the escape hatch completed passes" 0 \
+    "fix: something" "$(printf '%s' "$template_body" | sed '/^Closes #$/d' | sed 's/^No linked issue:$/No linked issue: submodule pin bump/')"
+
+  # The author who fills the reason but leaves the bare "Closes #" behind: a
+  # bare marker with no number is not a reference GitHub acts on, so this is
+  # the escape-hatch case and must pass rather than trip the stray check.
+  assert_exit "escape hatch completed with a bare 'Closes #' left behind passes" 0 \
+    "fix: something" "$(printf '%s' "$template_body" | sed 's/^No linked issue:$/No linked issue: docs typo/')"
+fi
+
 echo ""
 echo "$pass passed, $fail failed"
 if [ "$fail" -ne 0 ]; then
