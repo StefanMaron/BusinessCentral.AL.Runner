@@ -3957,6 +3957,18 @@ return strictExitCode ? computedExitCode : 0;
             }
         }
 
+        // #2614: run dependencies before the bundles that consume them, whatever order the caller
+        // listed. Everything downstream — the pre-passes, the per-bundle peek, and the execution
+        // loop — uses this one order, so the symbols a bundle compiles against and the assembly it
+        // dispatches into come from the same point in the request. See
+        // SortBundlesInDependencyOrder for why the compile-time pre-pass alone did not close this.
+        //
+        // requestOrder keeps the caller's listing so the RESULTS come back in it (below), leaving
+        // the streamed `test` line order as the only visible change — documented in
+        // docs/server-mode.md.
+        var requestOrder = sourcePaths;
+        sourcePaths = SortBundlesInDependencyOrder(sourcePaths);
+
         var bundleList = sourcePaths.ToList();
         var workspaceScratch = new List<string>();
         if (sourcePaths.Length > 1)
@@ -4178,7 +4190,75 @@ return strictExitCode ? computedExitCode : 0;
             AlRunner.Infrastructure.PhaseLog.EndBundle(emitElapsed, compileElapsed, runElapsed);
             results.Add(result);
         }
+
+        // #2614: execution ran in dependency order; hand the results back in the order the caller
+        // listed the paths. A ServerRunResult carries no bundle path, so the mapping is positional
+        // — sourcePaths[k] produced results[k], and requestOrder says where that belongs. Only
+        // reached when the sort actually moved something, so the documented order pays nothing.
+        if (!ReferenceEquals(sourcePaths, requestOrder) && results.Count == sourcePaths.Length)
+        {
+            var byPath = new Dictionary<string, ServerRunResult>(StringComparer.OrdinalIgnoreCase);
+            for (var k = 0; k < sourcePaths.Length; k++) byPath[Path.GetFullPath(sourcePaths[k])] = results[k];
+            var reordered = new List<ServerRunResult>(results.Count);
+            foreach (var path in requestOrder)
+                if (byPath.TryGetValue(Path.GetFullPath(path), out var r)) reordered.Add(r);
+            // Only adopt a complete remapping: a duplicate or unresolvable path must not silently
+            // drop a bundle's results from the response.
+            if (reordered.Count == results.Count) return reordered;
+        }
         return results;
+    }
+
+    /// <summary>
+    /// Each bundle's declared identity, keyed by its full path, reading <c>app.json</c> from the
+    /// bundle root and falling back to its bucket root — the same read
+    /// <see cref="RunLayeredPrePass"/> does to decide which bundles are "impls". A bundle with no
+    /// readable <c>app.json</c> is simply absent from the result; every caller treats "no identity"
+    /// as "cannot be related to anything", never as an error.
+    ///
+    /// <para>Extracted so <see cref="ChangedLaterDependencyBundles"/> and
+    /// <see cref="SortBundlesInDependencyOrder"/> cannot drift on what counts as a bundle's
+    /// identity — they answer two halves of one question and a second copy of this loop is exactly
+    /// the shape #2478 turned into a silent divergence.</para>
+    /// </summary>
+    static Dictionary<string, AlRunner.Infrastructure.BundleIdentity> ReadBundleIdentities(
+        IEnumerable<string> sourcePaths)
+    {
+        var identities = new Dictionary<string, AlRunner.Infrastructure.BundleIdentity>(StringComparer.OrdinalIgnoreCase);
+        foreach (var bundle in sourcePaths)
+        {
+            var abs = Path.GetFullPath(bundle);
+            var appJson = Path.Combine(abs, "app.json");
+            if (!File.Exists(appJson))
+            {
+                var root = FindBucketRoot(abs);
+                if (root != null) appJson = Path.Combine(root, "app.json");
+            }
+            if (!File.Exists(appJson)) continue;
+            var id = AlRunner.Infrastructure.InProcessAppPackager.ReadIdentity(appJson);
+            if (id != null) identities[abs] = id;
+        }
+        return identities;
+    }
+
+    /// <summary>
+    /// <paramref name="sourcePaths"/> reordered so every bundle an in-request bundle depends on is
+    /// executed BEFORE it, whatever order the caller listed them in (#2614). The graph work — and
+    /// the reasoning, the stability contract and the cycle handling — lives in
+    /// <see cref="AlRunner.Infrastructure.BundleDependencyOrder"/>, which is unit-tested directly;
+    /// this is only the filesystem half that reads each bundle's declared identity.
+    ///
+    /// <para>Returns the input array itself when nothing needs to move, which the caller relies on
+    /// (by reference) to skip the paired result-reordering.</para>
+    /// </summary>
+    static string[] SortBundlesInDependencyOrder(string[] sourcePaths)
+    {
+        if (sourcePaths.Length < 2) return sourcePaths;
+        var identities = ReadBundleIdentities(sourcePaths);
+        var sorted = AlRunner.Infrastructure.BundleDependencyOrder.Sort(
+            sourcePaths,
+            path => identities.TryGetValue(Path.GetFullPath(path), out var id) ? id : null);
+        return ReferenceEquals(sorted, sourcePaths) ? sourcePaths : sorted.ToArray();
     }
 
     /// <summary>
@@ -4194,8 +4274,13 @@ return strictExitCode ? computedExitCode : 0;
     /// <para>Both inputs are already paid for: the dependency relation is the same app.json
     /// identity read <see cref="RunLayeredPrePass"/> does, and "did it change" is the per-bundle
     /// result of the peek <c>RunAllBundlesForServer</c> already performs for #2492's union.
-    /// Nothing here compiles anything, and execution order is deliberately left alone — reordering
-    /// would change the order test events stream out.</para>
+    /// Nothing here compiles anything.</para>
+    ///
+    /// <para>#2614 has since made execution order itself dependency-ordered
+    /// (<see cref="AlRunner.Infrastructure.BundleDependencyOrder"/>), so for any request this sort
+    /// can fully order, no dependency is listed later and this returns empty. It is kept rather
+    /// than deleted because that sort cannot order a dependency CYCLE, and this guard still
+    /// applies to whatever ordering comes out of one.</para>
     ///
     /// <para><b>Fail-closed on an unreadable answer.</b> A dependency whose peek could not answer
     /// (no baseline yet, app.json changed, an unclassifiable file — <c>PeekChangedObjects</c>
@@ -4213,22 +4298,8 @@ return strictExitCode ? computedExitCode : 0;
         var forced = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         if (sourcePaths.Length < 2 || peekedChangedCountByBundle.Count == 0) return forced;
 
-        var order = new List<string>();
-        var identities = new Dictionary<string, AlRunner.Infrastructure.BundleIdentity>(StringComparer.OrdinalIgnoreCase);
-        foreach (var bundle in sourcePaths)
-        {
-            var abs = Path.GetFullPath(bundle);
-            order.Add(abs);
-            var appJson = Path.Combine(abs, "app.json");
-            if (!File.Exists(appJson))
-            {
-                var root = FindBucketRoot(abs);
-                if (root != null) appJson = Path.Combine(root, "app.json");
-            }
-            if (!File.Exists(appJson)) continue;
-            var id = AlRunner.Infrastructure.InProcessAppPackager.ReadIdentity(appJson);
-            if (id != null) identities[abs] = id;
-        }
+        var order = sourcePaths.Select(Path.GetFullPath).ToList();
+        var identities = ReadBundleIdentities(order);
         if (identities.Count < 2) return forced;
 
         bool ChangedOrUnknown(string abs) =>
@@ -4240,11 +4311,8 @@ return strictExitCode ? computedExitCode : 0;
             for (int j = i + 1; j < order.Count; j++)
             {
                 if (!identities.TryGetValue(order[j], out var later)) continue;
-                bool dependsOnLater = mine.Dependencies.Any(dep =>
-                    (dep.AppId != Guid.Empty && dep.AppId == later.AppId)
-                    || (string.Equals(dep.Name, later.Name, StringComparison.OrdinalIgnoreCase)
-                        && string.Equals(dep.Publisher, later.Publisher, StringComparison.OrdinalIgnoreCase)));
-                if (dependsOnLater && ChangedOrUnknown(order[j]))
+                if (AlRunner.Infrastructure.BundleDependencyOrder.DependsOn(mine, later)
+                    && ChangedOrUnknown(order[j]))
                 {
                     forced.Add(order[i]);
                     break;

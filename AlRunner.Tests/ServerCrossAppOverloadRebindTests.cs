@@ -165,15 +165,21 @@ public class ServerCrossAppOverloadRebindTests
     /// answers exactly as a from-scratch run of the same sources does.</para>
     ///
     /// <para><c>dependencyFirst: false</c> — an order nothing documents but the runner accepts.
-    /// Before this change it returned <c>BOUND-TO=1</c>: a green-looking, silently wrong answer,
-    /// because the consuming bundle is processed before the fallback signal the forward
-    /// propagation reads even exists. <c>ChangedLaterDependencyBundles</c> now forces that bundle
-    /// to compile in full, and what remains is a LOUD failure —
-    /// <c>NavNCLCompilationException: Function ID … was called. The object with ID … does not have
-    /// a member with that ID</c> — because in this order the dependency's runtime assembly is not
-    /// reloaded until after the consuming bundle's tests have already run. That residual is #2614; the bar asserted here is the one
-    /// <c>.claude/rules/loud-failures.md</c> sets: pass, or fail in a way somebody can see.
-    /// <b>Never <c>BOUND-TO=1</c>.</b></para>
+    /// It has been wrong twice, in two different ways, and now must simply pass.</para>
+    ///
+    /// <para>Originally it returned <c>BOUND-TO=1</c>: a green-looking, silently wrong answer,
+    /// because the consuming bundle is processed before the fallback signal the forward propagation
+    /// reads even exists. #2603 made <c>ChangedLaterDependencyBundles</c> force that bundle to
+    /// compile in full, which left a LOUD failure instead — <c>NavNCLCompilationException: Function
+    /// ID … was called. The object with ID … does not have a member with that ID</c> — because the
+    /// dependency's runtime ASSEMBLY was still not reloaded until after the consuming bundle's
+    /// tests had run. #2614 closed that by executing dependencies first
+    /// (<see cref="AlRunner.Infrastructure.BundleDependencyOrder"/>), so both orders now answer
+    /// exactly as a cold run of the same sources does.</para>
+    ///
+    /// <para><b>Never <c>BOUND-TO=1</c></b> remains asserted for both orders separately from the
+    /// pass/fail bar: it is the specific silently-wrong answer, and a future regression that made
+    /// the request red again must not be able to satisfy this test by failing differently.</para>
     /// </summary>
     [SkippableTheory]
     [InlineData(true)]
@@ -225,15 +231,8 @@ public class ServerCrossAppOverloadRebindTests
             + "Which(Decimal) resolved to. That member still exists in the re-emitted dependency, so "
             + "the call succeeded with no exception and no diagnostic. Got: " + joined2);
 
-        if (!dependencyFirst)
-        {
-            // The undocumented order: loud is the bar. Passing is fine too — assert only that the
-            // answer is not silently wrong, which the check above has already established.
-            return;
-        }
-
         Assert.True(status2 == "pass",
-            "the documented dependency-first order must answer exactly as a cold run of these "
-            + $"sources does (BOUND-TO=2). Got: {joined2}");
+            $"a warm request must answer exactly as a cold run of these sources does (BOUND-TO=2), "
+            + $"in EITHER order (dependencyFirst: {dependencyFirst}). Got: {joined2}");
     }
 }
