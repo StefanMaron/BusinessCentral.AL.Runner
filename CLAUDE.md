@@ -33,6 +33,7 @@ Operating rules live in `.claude/rules/` and are auto-loaded. Task-specific refe
   start of any session that drives work through subagents**
 - Act as orchestrator or implementation agent → sub-agents `orchestrator` / `impl-agent` in `.claude/agents/`
 - Drive a full work cycle (triage → parallel impls in worktrees → orchestrator merge pass, until the queue is empty) → slash command `/work-cycle`
+- Run **unattended** (never-idle loop, one agent at a time, fixed priority order, weekly-budget pacing, preflight that refuses a box which would produce wrong answers) → skill `autonomous-cycle`
 
 ## Code navigation: use these before grepping
 
