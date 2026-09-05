@@ -5,6 +5,7 @@
 // _skeletonRootScope leak (MethodScopePatches) was pinned after the _skeletonSharedObjectContainer
 // one — a flat gcTotalMB across tests is the definitive proof a per-test leak is gone. Leave it in.
 using System.Reflection;
+using static System.FormattableString;
 
 namespace AlRunner;
 
@@ -52,7 +53,9 @@ internal static class MemoryCensus
 
         Console.Error.WriteLine(
             $"[mem-census] #{n} {codeunit}.{method} " +
-            $"gcTotalMB={gcTotal / 1024.0 / 1024.0:F1} rssMB={rssKb / 1024.0:F1} " +
+            // #2968: a measurement line, and a measurement that reads differently per operator
+            // locale is not one. Invariant so two runs stay comparable across machines.
+            Invariant($"gcTotalMB={gcTotal / 1024.0 / 1024.0:F1} rssMB={rssKb / 1024.0:F1} ") +
             $"asm={asmCount} daSources={daSources} daTables={daTables} " +
             $"media={mediaEntries} links={linkEntries} storage={storageEntries} " +
             $"sharedChildren={sharedChildren}");

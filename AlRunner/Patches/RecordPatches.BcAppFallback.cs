@@ -549,7 +549,8 @@ public static partial class RecordPatches
 
             _systemAppTempPath = tempPath;
             AddBcAppPath(tempPath);
-            Console.Error.WriteLine($"[RecordPatches] BcAppFallback: registered SystemPackage → {Path.GetFileName(tempPath)} ({new FileInfo(tempPath).Length:N0} bytes)");
+            Console.Error.WriteLine(System.FormattableString.Invariant(
+                $"[RecordPatches] BcAppFallback: registered SystemPackage → {Path.GetFileName(tempPath)} ({new FileInfo(tempPath).Length:N0} bytes)"));
 
             EagerParseAllBcAppTables();
         }

@@ -234,9 +234,15 @@ public static partial class RecordPatches
                 throw new RunnerOutOfScopeException(
                     "Date (virtual table 2000000007)",
                     $"date-virtual-table — a Date filter asks for periods in "
-                    + $"[{newMin:yyyy-MM-dd}..{newMax:yyyy-MM-dd}], which is about {estimate:N0} rows, past the "
-                    + $"{DateWindowMaxRows:N0}-row cap for the materialised window "
-                    + $"(currently [{(span.Any ? span.Min : newMin):yyyy-MM-dd}..{(span.Any ? span.Max : newMax):yyyy-MM-dd}]). "
+                    // #2968: `:N0` picks up the ambient group separator, so this diagnostic
+                    // read differently per operator locale. Invariant, like the rest of the
+                    // runner's own output.
+                    + System.FormattableString.Invariant(
+                        $"[{newMin:yyyy-MM-dd}..{newMax:yyyy-MM-dd}], which is about {estimate:N0} rows, past the ")
+                    + System.FormattableString.Invariant(
+                        $"{DateWindowMaxRows:N0}-row cap for the materialised window ")
+                    + System.FormattableString.Invariant(
+                        $"(currently [{(span.Any ? span.Min : newMin):yyyy-MM-dd}..{(span.Any ? span.Max : newMax):yyyy-MM-dd}]). ")
                     + "Raise AL_RUNNER_DATE_WINDOW_MAX_ROWS, or narrow the filter; "
                     + "see docs/limitations.md#date-virtual-table");
 

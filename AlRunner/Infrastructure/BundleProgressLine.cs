@@ -22,6 +22,8 @@
 //   the cap SAYS how many it hid, because a silent truncation is a smaller instance of exactly
 //   the defect this file is fixing. The full list is still printed unabridged by the summary and
 //   by --output-json at the end of the run.
+using static System.FormattableString;
+
 namespace AlRunner.Infrastructure;
 
 internal static class BundleProgressLine
@@ -37,8 +39,15 @@ internal static class BundleProgressLine
     internal static IEnumerable<string> Render(int pass, int fail, int error, int tests,
         IReadOnlyList<string> suiteErrors, TimeSpan elapsed)
     {
-        yield return $"  → {pass}P/{fail}F/{error}E across {tests} tests, "
-            + $"{suiteErrors.Count} suite errors ({elapsed.TotalSeconds:F1}s)";
+        // Invariant($) rather than $(): #2968. `{elapsed.TotalSeconds:F1}` formats with the
+        // AMBIENT culture, so this line printed `(30,9s)` to anyone whose LANG uses a comma
+        // decimal separator, and the tests asserting on it failed on their machine and nowhere
+        // else. This output is machine-read — AlRunner.Tests asserts it literally, and it is
+        // the same line the summary, --output-json and the --watch tree are built from — and
+        // it is English on every machine, so there is no localization here to preserve.
+        // See OutputIsLocaleInvariantTests for why this is not a global culture switch.
+        yield return Invariant($"  → {pass}P/{fail}F/{error}E across {tests} tests, ")
+            + Invariant($"{suiteErrors.Count} suite errors ({elapsed.TotalSeconds:F1}s)");
         if (suiteErrors.Count == 0) yield break;
 
         // Verbatim, for the same reason Reporter repeats them verbatim: the message names the
