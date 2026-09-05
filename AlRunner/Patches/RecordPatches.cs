@@ -1920,20 +1920,16 @@ public static partial class RecordPatches
             // below does nothing when the store already holds a row: real rows win, synthesis
             // is the fallback. Every other branch in this method serves a table no backup can
             // ever have rows for, which is why only this one loads before populating.
-            // KNOWN RACE, issue #2788: only the GetOrAdd winner runs the loader, but both
-            // racers populate, so a loser can observe the store between "created" and
-            // "hydrated" and synthesise first — inverting that precedence. Narrow window,
-            // observable only under --test-data, tracked rather than fixed here.
+            //
+            // That precedence needs the hand-out to be ordered as well as the load, or a second
+            // thread is given the store between "created" and "hydrated", finds it empty and
+            // synthesises over rows that are about to arrive (#2788). GetOrCreateHydratedDataAccess
+            // is what guarantees it — see RecordPatches.TableMaterialisation.cs — so the populate
+            // below always runs on a store that is either hydrated or never will be.
             // See RecordPatches.ObjectMetadataSystemTable.cs.
             if (IsObjectMetadataSystemTable(table))
             {
-                if (!perTable.TryGetValue(tableId, out var objectMetadataDa))
-                {
-                    var createdObjectMetadata = _mCreateTempDataAccess!.Invoke(self, new object[] { table })!;
-                    objectMetadataDa = perTable.GetOrAdd(tableId, createdObjectMetadata);
-                    if (TestDataOnDemandLoader != null && ReferenceEquals(objectMetadataDa, createdObjectMetadata))
-                        InvokeTestDataOnDemandLoader(self, tableId);
-                }
+                var objectMetadataDa = GetOrCreateHydratedDataAccess(self, perTable, table, tableId);
                 PopulateObjectMetadataSystemTable(objectMetadataDa, table);
                 return objectMetadataDa;
             }
@@ -1955,30 +1951,23 @@ public static partial class RecordPatches
                 return pageControlFieldDa;
             }
 
-            if (perTable.TryGetValue(tableId, out var cached))
-            {
-                return cached;
-            }
-            var result = _mCreateTempDataAccess!.Invoke(self, new object[] { table })!;
-            // Race: keep first winner.
-            var added = perTable.GetOrAdd(tableId, result);
             // ── --test-data on-demand load (#2262) ───────────────────────────────────────
-            // Reaching here means the store did NOT have this table, which is exactly when a
-            // --test-data run needs its rows read out of the backup. Same choke point the
-            // virtual tables above use, and for the same reason: it is the only place a
-            // table's storage is materialised, so the load always lands before the operation
-            // that triggered it — a read and a write are equally covered.
+            // A store that does not have this table yet is exactly when a --test-data run needs
+            // its rows read out of the backup. Same choke point the virtual tables above use,
+            // and for the same reason: it is the only place a table's storage is materialised,
+            // so the load always lands before the operation that triggered it — a read and a
+            // write are equally covered.
             //
             // Storage presence IS the "have we loaded this" answer, so there is no flag to
             // keep in step: RestoreInstallBaselineSnapshot repopulates perTable from exactly
             // the snapshot it restores, so a table the last restore carried is present and
-            // does not reach this line. See TestDataProvisioner's header.
+            // does not reach the create below. See TestDataProvisioner's header.
             //
-            // Only the GetOrAdd winner loads. A loser would be hydrating into storage it is
-            // about to throw away, and the winner's rows are already in the returned instance.
-            if (TestDataOnDemandLoader != null && ReferenceEquals(added, result))
-                InvokeTestDataOnDemandLoader(self, tableId);
-            return added;
+            // Only the GetOrAdd winner loads — a loser would be hydrating into storage it is
+            // about to throw away — and no racer is handed the storage until that load has
+            // finished, so a caller here can never act on a half-hydrated table (#2788).
+            // See RecordPatches.TableMaterialisation.cs.
+            return GetOrCreateHydratedDataAccess(self, perTable, table, tableId);
         }
         catch (Exception ex)
         {
