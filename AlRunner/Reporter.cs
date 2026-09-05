@@ -207,6 +207,36 @@ public static class Reporter
                 if (b.ProcessError != null) w.WriteLine($"  {b.ProcessError}");
             }
         }
+        // #2831, the sibling of the block above for a bucket that BUILT and LOADED and then
+        // failed to run. Same silence — no tests, so the Tests block reads as a clean run —
+        // and reproducible: `--test-data=<a file that is not a SQL Server backup>` gives
+        // `exec-fail: 1` with `Tests: 0 total`, every AL object having compiled cleanly.
+        //
+        // A SEPARATE heading rather than sharing "Compile failures", deliberately. #2779 exists
+        // because exactly this conflation one layer down reported that bundle as
+        // `compile-fail: 1`, and "the reader of that report goes looking for AL compile errors
+        // that do not exist". The two failures need different next actions: a compile failure
+        // says look at your AL, an execution failure says the module was fine and something
+        // around it died. Merging them here would put that mis-direction back, in the block a
+        // developer actually reads.
+        //
+        // ProcessError first when present: the out-of-process fan-out path carries its reason
+        // there rather than in CompileErrors, and a bucket whose worker died has nothing in the
+        // latter at all.
+        var deadBuckets = buckets.Where(b => b.Stage == BucketStage.ExecuteFailed).ToList();
+        if (deadBuckets.Count > 0)
+        {
+            w.WriteLine("-----------------------------------------------------------------");
+            w.WriteLine($"Execution failures: {deadBuckets.Count} bucket(s) compiled and loaded and "
+                + "then failed to run, so NONE of the tests they declare appear in the counts above "
+                + "— this run covers less than it discovered. The AL itself built cleanly.");
+            foreach (var b in deadBuckets)
+            {
+                w.WriteLine(b.BucketPath);
+                if (b.ProcessError != null) w.WriteLine($"  {b.ProcessError}");
+                foreach (var e in b.CompileErrors) w.WriteLine($"  {e}");
+            }
+        }
         var gaps = buckets
             .SelectMany(b => b.ProvisionGaps ?? Array.Empty<string>())
             .Distinct(StringComparer.Ordinal)
