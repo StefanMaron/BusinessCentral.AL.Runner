@@ -293,9 +293,39 @@ public sealed class TestExecutor
     /// directly assertable — see TestDataProvisioningTests.
     /// CacheIdentity() returns the empty string when --test-data is off, so a default run's
     /// key is byte-identical to what it was before #2258.
+    ///
+    /// #2710: the same omission, one input further out. The snapshot is the rows the Install
+    /// triggers and Company-Initialize wrote, and they write them through table metadata the
+    /// runner builds from the BC .app symbol sources REGISTERED IN THIS PROCESS
+    /// (RecordPatches._bcAppPaths). That registered set is an input to the snapshot and it
+    /// varies independently of all three terms this key used to carry — --server/--watch
+    /// accumulate it across bundles while ResetForNewBundle resets the dependency-assembly
+    /// term, and RegisterBundleSymbolApps drops an unreadable bundle-root .app with only a
+    /// [warn]. So a run with a degraded or merely different symbol state persisted a snapshot
+    /// under the identical key a healthy run then read back, with nothing at read time able to
+    /// tell: the file header's claim that this is "a pure function of (dependency assembly
+    /// set, runner build, BC version)" was false. RegisteredBcAppSymbolStateKey() names the
+    /// missing input; see its doc comment for the two reachable paths and the measured cost
+    /// (#2712: 90 of 96 table extensions dropped, 47 Tests-SMB tests flipped, exit code
+    /// unchanged).
+    ///
+    /// This is a KEY change, not a payload change: entries written under the old key simply
+    /// hash elsewhere and are never found again, so no schema version needs bumping. It can
+    /// cost reuse — a --server process's second bundle no longer shares an entry with a fresh
+    /// single-bundle process — which is correct, because those two runs did not compute the
+    /// same thing.
     /// </summary>
+    /// <remarks>
+    /// Term ORDER is load-bearing, not cosmetic: TestDataProvisioningTests
+    /// .TestDataRun_AndPlainRun_DoNotShareAnInstallBaselineCacheKey asserts that a
+    /// --test-data key STARTS WITH the plain key, i.e. that #2258's identity is purely
+    /// additive. So the #2710 term goes BEFORE CacheIdentity(), keeping that invariant
+    /// intact; appending it instead breaks the prefix relation while changing nothing about
+    /// what either term discriminates.
+    /// </remarks>
     internal static string CurrentInstallBaselineCacheKey()
         => InstallTriggerRunner.CurrentDependencySetKey()
+         + AlRunner.Patches.RecordPatches.RegisteredBcAppSymbolStateKey()
          + AlRunner.Infrastructure.TestDataOptions.CacheIdentity();
 
     /// <summary>
@@ -441,7 +471,17 @@ public sealed class TestExecutor
             else
                 lock (_depCompanyBaselineCacheLock)
                     _depCompanyBaselineCache.TryGetValue(depKey, out cached);
-            var shortKey = depKey[..Math.Min(8, depKey.Length)];
+            // #2710: this log token has to be an IDENTITY, and it was not. It used to be
+            // depKey[..8] — and depKey opens with InstallTriggerRunner.CurrentDependencySetKey(),
+            // whose first characters are the first dependency assembly's MVID, so every app
+            // group sharing a first dependency printed the SAME "key" however different their
+            // real keys were. Measured on InstallBaselineDiskCacheTests's own four-bundle run:
+            // two app groups wrote to 589cefc3….bin and a3401318….bin — provably different
+            // keys — and both logged "b13a7122", so a reader (or a test) comparing these
+            // tokens sees one entry where there are two. SHA-256 of the WHOLE depKey instead,
+            // via the same helper the on-disk filename uses, so distinct keys are distinct
+            // tokens. Same token shape, so the AL_RUNNER_PERF marker format is unchanged.
+            var shortKey = AlRunner.Infrastructure.InstallBaselineDiskCache.HashKey(depKey)[..8];
             if (cached != null)
             {
                 AlRunner.Patches.RecordPatches.RestoreInstallBaselineSnapshot(cached);

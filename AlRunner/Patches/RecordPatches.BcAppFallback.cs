@@ -92,6 +92,107 @@ public static partial class RecordPatches
     }
 
     /// <summary>
+    /// A stable digest of the BC symbol sources registered in THIS process — the
+    /// <see cref="_bcAppPaths"/> set with each entry's content hash, plus the paths of the
+    /// loose query-symbol JSON files. Folded into the install-baseline cache key
+    /// (<c>TestExecutor.CurrentInstallBaselineCacheKey</c>); see that method for why.
+    ///
+    /// <para>Why this exists (#2710). The install-baseline snapshot is the rows the Install
+    /// triggers and Company-Initialize wrote, and they write them through table metadata
+    /// built from exactly these registrations — <see cref="EnsureBcSymbolTableIndex"/> /
+    /// <see cref="EnsureBcSymbolExtensionIndex"/> rebuild the table and table-extension
+    /// indexes by walking <see cref="_bcAppPaths"/>. So the registered set is an INPUT to the
+    /// snapshot, and until this line existed the key never named it. #2712 measured what the
+    /// difference is worth: dropping 90 of 96 Base Application table extensions flipped 47
+    /// Tests-SMB tests ("field 5912 cannot be found in the 'Customer' table") with an
+    /// unchanged exit code.</para>
+    ///
+    /// <para>The set genuinely varies between two runs whose (dependency assemblies, runner
+    /// build, BC version) are identical — the three terms the key did name:</para>
+    /// <list type="bullet">
+    /// <item><description><b>--server / --watch accumulate it.</b> <see cref="_bcAppPaths"/>
+    /// is process-global and nothing ever clears it: <see cref="InvalidateBcAppIndexes"/>
+    /// drops the DERIVED indexes so they rebuild FROM this list, and <c>ResetForReload</c>
+    /// (the per-bundle reload path) calls exactly that. Meanwhile the key's only per-bundle
+    /// term is reset per bundle — <c>InstallTriggerRunner.ResetForNewBundle</c> clears
+    /// <c>_depAssemblies</c>. Two writers of the same per-bundle state, one keeping the
+    /// invariant and one not: the second bundle in a server process computes its snapshot
+    /// against its own apps UNION every earlier bundle's, then persists it under the key a
+    /// fresh single-bundle process will look up.</description></item>
+    /// <item><description><b><see cref="RegisterBundleSymbolApps"/> skips what it cannot
+    /// read.</b> An unreadable bundle-root .app is skipped as a whole with a <c>[warn]</c>
+    /// line and the run continues — which is the right call for an optional input, but it
+    /// means a transiently unreadable file (a concurrent write, a package left half-written
+    /// by a killed run) silently removes a symbol source without changing any other key
+    /// term.</description></item>
+    /// </list>
+    ///
+    /// <para>Order-independent (paths are sorted) because registration order is an artifact
+    /// of dependency-resolution order, not of what was registered. Content-hashed for .app
+    /// entries because two packages can share a path across runs and differ in bytes;
+    /// PATH-only for the query-symbol JSONs, which are this run's own compiler output — their
+    /// content is already determined by the bundle sources the AL-output key hashes, so
+    /// hashing them here would only add churn. <c>ComputeAppContentHash</c> is memoized per
+    /// path and every registered .app was already hashed by <see cref="AddBcAppPath"/>'s own
+    /// <c>BcAppSymbolCache.Get</c> call, so this costs a dictionary lookup per entry.</para>
+    /// </summary>
+    internal static string RegisteredBcAppSymbolStateKey()
+    {
+        string[] apps;
+        string[] queryJson;
+        lock (_bcTableIndexLock)
+        {
+            apps = _bcAppPaths.ToArray();
+            queryJson = _bcQuerySymbolJsonPaths.ToArray();
+        }
+        return ComputeBcAppSymbolStateKey(
+            apps.Select(p => (p, BcAppSymbolCache.ComputeAppContentHash(p))), queryJson);
+    }
+
+    /// <summary>
+    /// Testable core of <see cref="RegisteredBcAppSymbolStateKey"/>: takes the registered
+    /// entries explicitly so a test can vary the set, the order and the content hashes
+    /// without having to drive the process-global registry (which has no unregister).
+    /// Mirrors the same core/wrapper split <c>RunnerFingerprint.WriteKeyLines</c> and
+    /// <c>NclCecilRewrite.ComputeCacheKeyCore</c> use.
+    /// </summary>
+    internal static string ComputeBcAppSymbolStateKey(
+        IEnumerable<(string Path, string ContentHash)> apps, IEnumerable<string> querySymbolJsonPaths)
+    {
+        var appList = apps.ToList();
+        var jsonList = querySymbolJsonPaths.ToList();
+        if (appList.Count == 0 && jsonList.Count == 0) return "|bcapps:none";
+        appList.Sort(static (a, b) => string.CompareOrdinal(a.Path, b.Path));
+        jsonList.Sort(StringComparer.Ordinal);
+        using var hash = System.Security.Cryptography.IncrementalHash.CreateHash(
+            System.Security.Cryptography.HashAlgorithmName.SHA256);
+        void Feed(string s) => hash.AppendData(System.Text.Encoding.UTF8.GetBytes(s));
+        foreach (var (path, contentHash) in appList)
+        {
+            Feed("app\n");
+            Feed(path);
+            Feed("\n");
+            Feed(contentHash);
+            Feed("\n");
+        }
+        foreach (var p in jsonList)
+        {
+            Feed("qjson\n");
+            Feed(p);
+            Feed("\n");
+        }
+        return "|bcapps:" + Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant();
+    }
+
+    /// <summary>Test seam: the registered .app paths, so a test can assert what
+    /// <see cref="RegisteredBcAppSymbolStateKey"/> is digesting rather than inferring it
+    /// from the hash alone.</summary>
+    internal static IReadOnlyList<string> RegisteredBcAppPathsForTests()
+    {
+        lock (_bcTableIndexLock) return _bcAppPaths.ToArray();
+    }
+
+    /// <summary>
     /// Register a BC dependency .app path so its AL table sources can be used
     /// as a fallback when a test's own src/ doesn't define a referenced table.
     /// Called from Program.cs after DependencyLoader.LoadAll.
