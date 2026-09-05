@@ -824,8 +824,23 @@ public static partial class RecordPatches
     /// <summary>
     /// Replacement for TempTableDataProvider.CalcNumeric(CalcNumericProviderRequest).
     /// The real override throws NotSupportedException; this replacement iterates in-memory rows
-    /// via the private Filter() helper and accumulates count/sum/average (the only three
-    /// calculation methods routed through CalcNumeric — Exists and Lookup use separate paths).
+    /// via the private Filter() helper and aggregates each requested FlowField.
+    /// <para>#2937 — the doc comment here used to claim count/sum/average were "the only three
+    /// calculation methods routed through CalcNumeric", and the result switch ended in
+    /// <c>_ =&gt; sums[j]</c>, so Min/Max/Lookup/Exists/None were all answered with the SUM
+    /// accumulator. For Min/Max nothing ever wrote that accumulator, so they came back as a
+    /// constant 0 whatever the data — right for an empty source set only by coincidence.
+    /// Count/Sum/Average is indeed what BC ROUTES here (DistinctSourceTable.AddField buckets
+    /// Min/Max into MinMaxFlowFields → CalcMinMax, Lookup and Exists into their own lists), but
+    /// "BC does not send it" is not a reason to answer it wrongly: Min/Max are now aggregated
+    /// properly and everything else throws. Aggregation itself lives in
+    /// <see cref="ComputeCalcNumericAggregate"/>.</para>
+    /// <para>NegateResult (<c>CalcFormula = -sum(...)</c>) is applied here because BC applies it
+    /// at this level too: NavSqlAggregateCommand's aggregate reader negates each aggregated
+    /// value inside the provider, before the FieldDictionary is returned. The negation itself is
+    /// BC's own NCLMetaCalculationFormula.NegateValue, reached through
+    /// <see cref="FlowFieldPatches.NegateAggregateResult"/> so the two runner paths that negate
+    /// a FlowField aggregate share one implementation (#1708, #2323).</para>
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static object TempTableDataProvider_CalcNumeric(object self, object request)
@@ -838,8 +853,38 @@ public static partial class RecordPatches
         int fieldCount     = fieldsToCalc.Count;
 
         var primaryKeySortingFields = _fTtdpPrimaryKeySortingFields!.GetValue(self);
-        var sums = new Decimal18[fieldCount];
         int recordCount = 0;
+
+        // Per-field state resolved once, not once per row: the calculation method, the source
+        // field the formula names (Count has none), and the source values collected across the
+        // matching rows. Only the value-consuming methods get a list — a Count field's slot
+        // stays null and nothing is collected for it.
+        //
+        // Collecting the values rather than folding them into a running total is the same shape
+        // RecordPatches.QueryProjection's ComputeAggregateCore uses, and it is what lets one
+        // helper own Sum/Average/Min/Max instead of the result switch reading whichever
+        // accumulator happened to be written. The cost is one NavValue REFERENCE per matching
+        // row per aggregated field — the rows' own value objects, not copies, and the rows are
+        // already materialised in the temp store by the Filter() call below.
+        var methods = new NCLMetaCalculationMethod[fieldCount];
+        var sourceFields = new NCLMetaField?[fieldCount];
+        var sourceValues = new List<NavValue?>?[fieldCount];
+        for (int i = 0; i < fieldCount; i++)
+        {
+            var field = (NCLMetaField)fieldsToCalc[i];
+            methods[i] = field.CalculationFormula.CalculationMethod;
+            if (methods[i] is NCLMetaCalculationMethod.Sum or NCLMetaCalculationMethod.Average
+                or NCLMetaCalculationMethod.Min or NCLMetaCalculationMethod.Max)
+            {
+                sourceFields[i] = sourceTable.GetFieldByNo(field.CalculationFormula.FieldId, trapError: true);
+                // Source field unresolvable → no values are collected and the aggregate answers
+                // its empty-set value, which is what this method did before #2937 and what
+                // FlowFieldPatches' own srcFieldColumn < 0 arm does. Left as-is deliberately:
+                // making it loud is a change to the shared FlowField behaviour, not to this
+                // method, and belongs with the sibling rather than half-applied here.
+                if (sourceFields[i] != null) sourceValues[i] = new List<NavValue?>();
+            }
+        }
 
         var rows = (System.Collections.IEnumerable)_mTtdpFilter!.Invoke(
             self, new object?[] { companyToken, filtersAndMarks, null, primaryKeySortingFields, false })!;
@@ -849,17 +894,9 @@ public static partial class RecordPatches
             checked { recordCount++; }
             for (int i = 0; i < fieldCount; i++)
             {
-                var field = (NCLMetaField)fieldsToCalc[i];
-                var cm = field.CalculationFormula.CalculationMethod;
-                if (cm is NCLMetaCalculationMethod.Sum or NCLMetaCalculationMethod.Average)
-                {
-                    var srcField = sourceTable.GetFieldByNo(field.CalculationFormula.FieldId, trapError: true);
-                    if (srcField != null)
-                    {
-                        var v = row[srcField.ColumnIndex];
-                        if (v != null) sums[i] = checked(sums[i] + v.ToDecimal());
-                    }
-                }
+                var values = sourceValues[i];
+                if (values == null) continue;
+                values.Add(row[sourceFields[i]!.ColumnIndex]);
             }
         }
 
@@ -867,18 +904,108 @@ public static partial class RecordPatches
         for (int j = 0; j < fieldCount; j++)
         {
             var field = (NCLMetaField)fieldsToCalc[j];
-            NavValue navValue = field.CalculationFormula.CalculationMethod switch
-            {
-                NCLMetaCalculationMethod.Count   => NavValue.CreateNavValueFromObject(field, recordCount),
-                NCLMetaCalculationMethod.Average when recordCount > 0
-                                                 => NavValue.CreateNavValueFromObject(field, sums[j] / recordCount),
-                _                                => NavValue.CreateNavValueFromObject(field, sums[j]),
-            };
+            var navValue = ComputeCalcNumericAggregate(
+                methods[j], field, recordCount,
+                (IEnumerable<NavValue?>?)sourceValues[j] ?? Array.Empty<NavValue?>(),
+                $"{field.Parent?.TableName}.{field.FieldName}");
+
+            // BC negates at this level too — see the method's doc comment. Exists never reaches
+            // here (ComputeCalcNumericAggregate throws for it), so the #2323 exist carve-out in
+            // FlowFieldPatches has no counterpart to make here.
+            if (field.CalculationFormula.NegateResult)
+                navValue = FlowFieldPatches.NegateAggregateResult(
+                    field.CalculationFormula, navValue, "TempTableDataProvider.CalcNumeric");
+
             tuples[j] = new Tuple<INavFieldMetadata, NavValue>(field, navValue);
         }
 
         return _ctorFieldDictionaryNavValue!.Invoke(new object[] { tuples })!;
     }
+
+    /// <summary>
+    /// One CalcNumeric field's aggregate, over the source values of the rows that matched the
+    /// formula's filters (<paramref name="rowCount"/> is how many rows matched — Count's answer,
+    /// and Average's divisor, both of which count rows rather than non-null values).
+    /// <para>Min/Max reuse <see cref="FlowFieldPatches.NavValueCompare"/> and
+    /// <see cref="FlowFieldPatches.TypedDefaultForField"/> rather than re-deriving comparison or
+    /// default semantics — the same reuse RecordPatches.QueryProjection's ComputeAggregateCore
+    /// makes, so all three of the runner's aggregate paths order values and answer an empty set
+    /// identically.</para>
+    /// <para>The empty-source-set answers are deliberate, not a fallthrough: corpus PR
+    /// StefanMaron/BusinessCentral.AL.Language.Tests#171 measured real BC on eight service tiers
+    /// answering 0 for min/max/average over no matching rows — and 0D for a Date-typed one,
+    /// which is why the answer is the field's OWN typed default and not a numeric zero.</para>
+    /// <para>Anything else throws. BC never routes Exists/Lookup/None through CalcNumeric
+    /// (DistinctSourceTable.AddField buckets them into their own field lists), so one arriving
+    /// here means the dispatch changed — and per loud-failures.md that has to be loud rather
+    /// than answered with a default. Min and Max are answered even though BC does not route
+    /// them here either, because the aggregation is exactly the same work and a wrong constant
+    /// was the #2937 defect.</para>
+    /// </summary>
+    internal static NavValue ComputeCalcNumericAggregate(
+        NCLMetaCalculationMethod method,
+        INavValueMetadata resultMetadata,
+        int rowCount,
+        IEnumerable<NavValue?> sourceValues,
+        string fieldDescription)
+    {
+        switch (method)
+        {
+            case NCLMetaCalculationMethod.Count:
+                return NavValue.CreateNavValueFromObject(resultMetadata, rowCount);
+
+            case NCLMetaCalculationMethod.Sum:
+            case NCLMetaCalculationMethod.Average:
+            {
+                Decimal18 sum = default;
+                foreach (var v in sourceValues)
+                {
+                    if (v == null) continue;
+                    sum = checked(sum + v.ToDecimal());
+                }
+                if (method == NCLMetaCalculationMethod.Sum)
+                    // An empty sum is 0 by arithmetic, not by accumulator accident.
+                    return NavValue.CreateNavValueFromObject(resultMetadata, sum);
+                return rowCount > 0
+                    ? NavValue.CreateNavValueFromObject(resultMetadata, sum / rowCount)
+                    : EmptyAggregateDefault(resultMetadata);
+            }
+
+            case NCLMetaCalculationMethod.Min:
+            case NCLMetaCalculationMethod.Max:
+            {
+                NavValue? best = null;
+                foreach (var v in sourceValues)
+                {
+                    if (v == null) continue;
+                    if (best == null
+                        || (method == NCLMetaCalculationMethod.Min && FlowFieldPatches.NavValueCompare(v, best) < 0)
+                        || (method == NCLMetaCalculationMethod.Max && FlowFieldPatches.NavValueCompare(v, best) > 0))
+                        best = v;
+                }
+                return best ?? EmptyAggregateDefault(resultMetadata);
+            }
+
+            default:
+                throw new RunnerOutOfScopeException(
+                    "TempTableDataProvider.CalcNumeric",
+                    $"not-yet-implemented — CalculationMethod {method} on '{fieldDescription}' "
+                    + "is not aggregated by CalcNumeric. BC routes Exists to CalcExists and "
+                    + "Lookup to CalcLookup (DistinctSourceTable.AddField), so a CalcNumeric "
+                    + "request carrying one means the dispatch changed; answering it with the "
+                    + "sum accumulator was issue #2937",
+                    "todo");
+        }
+    }
+
+    /// <summary>
+    /// What an aggregate answers when no row contributed a value: the result field's OWN typed
+    /// default (0 for Decimal/Integer, 0D for Date, …), never a bare numeric literal — same
+    /// chain FlowFieldPatches' Min/Max/Lookup arms use.
+    /// </summary>
+    private static NavValue EmptyAggregateDefault(INavValueMetadata resultMetadata)
+        => FlowFieldPatches.TypedDefaultForField(resultMetadata)
+           ?? NavValue.CreateNavValueFromObject(resultMetadata, 0);
 
     /// Pre-populate the skeleton session's dataAccessSource field directly.
     /// NavSession.DataAccessSource getter is a trivial field return and gets inlined by JIT,
