@@ -334,6 +334,79 @@ public static partial class BcRuntime
         var disposedField = navTenantType.GetField("disposed", BindingFlags.NonPublic | BindingFlags.Instance);
         if (disposedField != null) FieldPoke.SetInstance(disposedField, _skeletonSystemTenant, false);
 
+        // 3¼. Seed NavTenant.NavProfilePageMetadataCache (issue #2811). Another field the real
+        //      ctor initialises and GetUninitializedObject skips — same class of gap as
+        //      disposingGate below, with a louder symptom.
+        //
+        //      BC reads it while evaluating a page control's CAPTION.
+        //      NavForm.CallEvaluateCaptionClassExtensionMethodAsync does:
+        //
+        //        if (!Session.ClientConnectionType.AllowsCustomizations(Session.WebConnectionType)
+        //            || IsRequestPage) break;
+        //        var addedControls = Session.Tenant.NavProfilePageMetadataCache
+        //                                   .GetAddedControls(Session.ProfileKey, formId);
+        //
+        //      The skeleton session's ClientConnectionType is UnknownClient (measured), and
+        //      Types.dll's ConnectionTypeExtensions.AllowsCustomizations returns false only for
+        //      Background and true by `default:` — so BC takes the customization branch and
+        //      dereferences this null. Twenty-one first-chance NullReferenceExceptions for a
+        //      single TestPage control write, twenty of them here. BC then MAPS the NRE, in
+        //      NavFormSourceExpression.TryExecuteAndHandleExceptionMappingSourceExpressionGetterAsync,
+        //      into a NavAppObjectMetadataException reading "An error occurred while applying
+        //      changes from the '<app>' app to the application object of type 'Page' with the ID
+        //      '<id>'. The error was: NullReferenceException" — a page-metadata message for a
+        //      defect that has nothing to do with page metadata, which sent two agents to the
+        //      wrong subsystem before this was pinned down.
+        //
+        //      WHY NOT SEED ClientConnectionType = Background INSTEAD. That also takes the NREs
+        //      to zero, and it is wrong: measured, it stops request pages opening and turns
+        //      SEVEN corpus tests red (Codeunit60933's three Report_Run_* and Codeunit60752's
+        //      four RequestPageControl_*). A Background session does not open a request page —
+        //      faithful for BC, and fatal for a runner that supports [RequestPageHandler].
+        //      ClientConnectionType is load-bearing for more than this one check; the null is
+        //      not.
+        //
+        //      WHY BC'S OWN TYPE RATHER THAN A STAND-IN. CachingDatabaseProfilePageMetadataRetriever
+        //      is the only implementation of IProfilePageMetadataRetriever, its ctor is three
+        //      field assignments and dereferences nothing, and GetAddedControls opens with
+        //      `if (profileKey == null) return new Dictionary<...>();`. The skeleton session's
+        //      ProfileKey IS null (measured alongside the rest of the chain), so every call takes
+        //      that first line and the repository argument is never touched — no database, no
+        //      stand-in behaviour to justify under loud-failures.md, and BC's own answer for "this
+        //      session has no profile customizations", which is the truth here.
+        var profileCacheField = navTenantType.GetField("<NavProfilePageMetadataCache>k__BackingField",
+            BindingFlags.NonPublic | BindingFlags.Instance);
+        var profileRetrieverType = navNcl.GetType(
+            "Microsoft.Dynamics.Nav.Runtime.CachingDatabaseProfilePageMetadataRetriever");
+        if (profileCacheField != null && profileRetrieverType != null)
+        {
+            try
+            {
+                var ctor = profileRetrieverType.GetConstructors(
+                        BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+                    .FirstOrDefault(c => c.GetParameters().Length == 3);
+                if (ctor != null)
+                {
+                    // Every argument is stored and nothing else; a value-typed parameter still
+                    // needs a value rather than null, so build one per parameter type.
+                    var args = ctor.GetParameters()
+                        .Select(pi => pi.ParameterType.IsValueType
+                            ? RuntimeHelpers.GetUninitializedObject(pi.ParameterType)
+                            : null)
+                        .ToArray();
+                    FieldPoke.SetInstance(profileCacheField, _skeletonSystemTenant!, ctor.Invoke(args));
+                }
+            }
+            catch (Exception ex)
+            {
+                // Best-effort, like the seeds around it: a tenant whose cache could not be built
+                // behaves exactly as it did before this existed — the NREs come back, caught and
+                // mapped as they were, and nothing else changes.
+                Console.Error.WriteLine(
+                    $"[BcRuntime] NavProfilePageMetadataCache seed skipped: {ex.GetType().Name}: {ex.Message}");
+            }
+        }
+
         // 3½. Seed NavTenant.disposingGate (a `readonly ManualResetGate` field initialiser BC's
         //      real ctor runs as `disposingGate = new ManualResetGate();`, skipped along with
         //      every other field initialiser by GetUninitializedObject). NavTenant.IsTenantDismounting
