@@ -144,12 +144,20 @@ check("a required context absent from the rollup is pending, not green, "
       "when nothing says whether it is still coming",
       v.code is None, f"(code={v.code}) {v.lines}")
 
-# --- neutral/skipped are not failures
+# --- neutral/skipped are not failures, and `skipped` SATISFIES a required
+# --- context rather than leaving it unreported. Measured, because a proposal to
+# --- treat `skipped` as "no verdict yet" would break the documented
+# --- 'docs-only' / 'no-tests-needed' bypass: four merged PRs carry
+# --- 'Tests updated' = skipped on their head SHA with 'All BC versions passed'
+# --- = success -- #2759 (451c757b), #2749 (8717aec3), #2717 (dbd3a1a2) and
+# --- #2668 (3d1e9792). GitHub's ruleset accepted every one of them.
 runs = [run(n, "success") for n in LEGS]
 runs.append(run("All BC versions passed", "success"))
 runs.append(run("Tests updated", "skipped"))
 v = cw.classify(runs)
 check("a skipped required context is not a failure", v.code == 0, f"(code={v.code}) {v.lines}")
+check("...and a skipped required context satisfies the gate, it is not 'unreported'",
+      v.code == 0, f"(code={v.code}) {v.lines}")
 
 # --- real data, PR #2740 head 6b95477f: 'Tests updated' failed, then a
 # --- no-tests-needed label produced a newer 'skipped'. GitHub read the newer
@@ -228,6 +236,40 @@ check("...and names the context that never reported",
       any("All BC versions passed" in l for l in v.lines), v.lines)
 check("...and does not claim anything failed",
       not any("failed" in l.lower() for l in v.lines), v.lines)
+
+# The real thing, reconstructed from PR #2868's head 4d69b0e2 at the moment the
+# false green was reported: PR Check (run 33984617959) and Require Tests (run
+# 33984617957) had both completed, Test Matrix (run 33984618294) was still
+# pending, so not one of its check runs existed. Running origin/main's classify()
+# over exactly this list returns code 0 with the line "all 1 required checks
+# passed." -- verbatim what was printed on a PR GitHub was reporting as BLOCKED.
+#
+# Note 'Tests updated' is `skipped` here and that is NOT the defect: a skipped
+# required context satisfies the ruleset (see the merged-PR measurement above).
+# The single missing context is 'All BC versions passed'.
+PR2868 = [run(n, "success") for n in [
+    "Agent definitions must allowlist the MCP tools they document",
+    "CHANGELOG generator tests",
+    "PE Authenticode detection tests",
+    "PR body closing references must be correct, both directions",
+    "PR title/body must not contain a CI-skip directive",
+    "Release workflow script tests",
+    "Required contexts must not be cancellable on the same commit",
+    "ci-wait.py unit tests",
+    "pull_request trigger lists must keep their load-bearing event types",
+    "scripts/ unit tests",
+]]
+PR2868.append(run("Tests updated", "skipped"))
+PR2868_RUNS = [
+    {"id": 33984617959, "name": "PR Check", "status": "completed", "conclusion": "success"},
+    {"id": 33984617957, "name": "Require Tests", "status": "completed", "conclusion": "skipped"},
+    {"id": 33984618294, "name": "Test Matrix", "status": "queued", "conclusion": None},
+]
+v = cw.classify(PR2868, workflow_runs=PR2868_RUNS)
+check("PR #2868's real rollup is NOT green while Test Matrix is still queued",
+      v.code is None, f"(code={v.code}) {v.lines}")
+check("...and the progress line names the context that has not reported",
+      "All BC versions passed" in v.progress, v.progress)
 
 # ...and the ordinary green case is unaffected once both contexts are present.
 v = cw.classify(green_set(), workflow_runs=ALL_DONE_RUNS)
@@ -332,6 +374,24 @@ check("...and the NEWER run's failure still fails, though its check-run id is lo
       v.code == 1, f"(code={v.code}) {v.lines}")
 check("...and the failing entry names the workflow run it came from",
       any(str(NEW_RUN) in l for l in v.lines), v.lines)
+
+# Not hypothetical: measured live on PR #2863's head, on the REQUIRED context.
+# Three concurrent "Require Tests" runs on one SHA, and the newest run owns a
+# LOWER check-run id than the run before it, because their jobs interleaved.
+#   run 33983248257  check 101352123189  success
+#   run 33983255476  check 101352142567  success   <- older run, HIGHER check id
+#   run 33983255561  check 101352142543  success   <- newest run, LOWER check id
+# All three passed, so nothing broke that time; that is what a latent wrong
+# verdict looks like the day before it matters.
+PR2863 = [
+    cr("Tests updated", "success", 33983248257, 101352123189),
+    cr("Tests updated", "failure", 33983255476, 101352142567),
+    cr("Tests updated", "success", 33983255561, 101352142543),
+]
+check("the newest of three real concurrent 'Tests updated' runs wins, "
+      "though its check-run id is the lowest of the two newest",
+      cw.newest_per_name(PR2863)["Tests updated"]["id"] == 101352142543,
+      str(cw.newest_per_name(PR2863)["Tests updated"]))
 
 check("the workflow run id is read out of a details_url",
       cw.run_id_from("https://github.com/o/r/actions/runs/33964852712/job/101303055037")

@@ -284,6 +284,16 @@ def newest_per_name(runs: list[dict]) -> dict[str, dict]:
     it is wrong in both directions -- a stale failure reported as the verdict, or
     worse, a stale success shadowing the newer run's failure.
 
+    A live inversion on that exact required context, PR #2863's head, three
+    concurrent Require Tests runs whose jobs interleaved:
+
+        run 33983248257  check 101352123189
+        run 33983255476  check 101352142567   <- older run, HIGHER check id
+        run 33983255561  check 101352142543   <- newest run, LOWER check id
+
+    All three concluded `success`, so no verdict was wrong that time. That is
+    what this looks like on the day before it matters.
+
     This is also what makes a superseded cancellation (harmless) distinguishable
     from a cancellation that is still the latest word on its context
     (merge-blocking).
