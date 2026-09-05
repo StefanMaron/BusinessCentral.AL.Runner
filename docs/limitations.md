@@ -237,17 +237,38 @@ The runner executes in a single .NET process with no attached BC debugger. Debug
 
 `Debugger.Activate()`, `Debugger.Deactivate()`, and `Debugger.IsActive()` are supported — they are stripped or return `false`.
 
-### Task scheduler — synchronous dispatch
+### Task scheduler — no scheduler, and no inline substitute
 
-`TaskScheduler.CreateTask()` dispatches the target codeunit **synchronously, inline**,
-before returning — the same pattern as `StartSession`. The implications:
+**Tasks are never executed.** `TaskScheduler.CreateTask()` does not run the target codeunit —
+not in the background, and not inline either. [`docs/scope.md` §3.6](scope.md#jobs) is the
+authoritative description of this surface; the summary below only restates what was measured
+against it, so if the two ever disagree again, §3.6 and the Cecil layer win.
 
-- `TaskExists()` always returns `false` — the task already completed before the call returned.
-- `CancelTask()` and `SetTaskReady()` are no-ops — the task has already run.
-- `CanCreateTask()` returns `false` — there is no background job queue.
-- `NotBefore` and `CompanyName` parameters are accepted but ignored — the codeunit runs immediately in the current company context.
+The runner Cecil-rewrites `ALTaskScheduler.CanCreateTask` / `ALCanCreateTask` to return
+`false` and deliberately leaves `ALCreateTaskAsync` **unmodified**, so BC's own body raises
+BC's own exception. Measured on BC 28.1:
 
-AL that tests the *logic* around task creation (what codeunit runs, what state it produces) works here. AL that tests the *scheduling contract* (task still pending, NotBefore delay, cancellation before execution) cannot work here because there is no background scheduler.
+| AL call | What actually happens |
+|---|---|
+| `CanCreateTask()` | `false` |
+| `CreateTask()` | throws `You do not have permission to create or run scheduled tasks.` The target codeunit's `OnRun` does **not** run. |
+| `TaskExists()` | throws a `NullReferenceException` — the real body reaches for a SQL connection that does not exist here. Tracked separately; it should refuse loudly rather than NRE. |
+| `CancelTask()`, `SetTaskReady()` | complete without error, having done nothing (there is no task to act on). |
+
+So: guarded AL (`if TaskScheduler.CanCreateTask() then …`) skips task creation cleanly and is
+the pattern that works here. Unguarded AL that calls `CreateTask()` directly gets BC's loud
+refusal, which is deliberate — an earlier version of the runner rewrote `ALCreateTaskAsync` to
+return `Guid.Empty`, and that was reverted (#1733, #1739) as a silent fake suppressing BC's
+own guard.
+
+AL that tests the *scheduling contract* — a task still pending, a `NotBefore` delay,
+cancellation before execution — cannot work here, because nothing is scheduled and nothing
+runs. AL that needs the target codeunit's logic to actually execute should call it directly
+(`Codeunit.Run`) rather than through `CreateTask`.
+
+> This section previously described `CreateTask()` as dispatching the codeunit
+> "synchronously, inline". That described a design that was reverted, and it was wrong in both
+> directions: no codeunit runs, and `TaskExists()` does not return `false`. See #2565.
 
 ### No DotNet interop
 

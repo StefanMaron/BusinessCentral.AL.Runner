@@ -134,7 +134,15 @@ public sealed class MsBucketWorkflowTests
         Assert.Contains("test-sources", code, StringComparison.Ordinal);
         Assert.Contains("--test-data=", code, StringComparison.Ordinal);
         Assert.Contains("--test-data-company", code, StringComparison.Ordinal);
-        Assert.Contains("BusinessCentral.BakReader", code, StringComparison.Ordinal);
+        // StefanMaron/BusinessCentral.DbReader. This assertion previously named
+        // BusinessCentral.BakReader, which is the repository's OLD name and resolves only
+        // through GitHub's rename redirect -- so the test was pinning a name that is not the
+        // repository's, and it went red the moment the workflow was corrected. A redirect is
+        // not a contract: it lasts at GitHub's discretion and ends if anyone claims the freed
+        // old name. The DoesNotContain arm is the point of the pair -- without it, a revert to
+        // the redirect name passes again in silence.
+        Assert.Contains("StefanMaron/BusinessCentral.DbReader", code, StringComparison.Ordinal);
+        Assert.DoesNotContain("BusinessCentral.BakReader", code, StringComparison.Ordinal);
         Assert.Contains(".cache/al-runner/bcbak/bcbak", code, StringComparison.Ordinal);
         // The deliverable: a job summary plus the JUnit for clustering.
         Assert.Contains("GITHUB_STEP_SUMMARY", code, StringComparison.Ordinal);

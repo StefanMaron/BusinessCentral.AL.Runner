@@ -25,7 +25,7 @@ name: MS bucket (manual)
 #   * `test-sources` — the bucket's Source.zip, from the platform artifact (2.4 MB for ERM);
 #   * `test-data`    — BusinessCentral-W1.bak from the sandbox w1 artifact (~977 MB), streamed
 #                      to disk and cached across runs with actions/cache keyed on the build;
-#   * the backup reader `bcbak` — StefanMaron/BusinessCentral.BakReader's Native AOT
+#   * the backup reader `bcbak` — StefanMaron/BusinessCentral.DbReader's Native AOT
 #                      `bcdb-linux-x64` release asset, checksum-verified, installed under the
 #                      old name the runner probes (BackupReaderTool.cs).
 #
@@ -48,23 +48,31 @@ name: MS bucket (manual)
 # Always state whether a number was measured WITH or WITHOUT --test-data: the two differ by
 # 3x on Tests-SINGLESERVER and are not comparable.
 #
-# WHICH BC BUILDS --test-data CAN ACTUALLY BE MEASURED ON, as of reader v0.1.1 (#2779, #2780)
-#   The pinned reader opens the W1 demo backup for some builds and refuses others. Measured
-#   directly, one `bcdb companies` per backup, same binary:
+# WHICH BC BUILDS --test-data CAN ACTUALLY BE MEASURED ON, as of reader v0.1.2 (#2779, #2780)
+#   Reader v0.1.1 opened the W1 demo backup for BC 28.1 and older and REFUSED 28.2, 28.3 and
+#   28.4 with "block N of MSDA region is neither mapped by the derived extent list nor padding
+#   filler — backup layout differs from the derived model, refusing to guess" (BcDb.Core's
+#   PageFile). That was never a regression — v0.1.0, v0.1.1 and the source build before both
+#   refused identically, so the reader had never read a 28.2+ backup — and it meant this
+#   workflow's DEFAULT bc-version could not produce a --test-data number at all.
 #
-#     28.0.46665.54310  OK      28.2.50931.54319  refused
-#     28.1.49838.54308  OK      28.3.52162.54309  refused
-#     27.5.46862.48827  OK      28.4.53241.54318  refused
+#   v0.1.2 reads them. Measured directly with the pinned binary, one `bcdb companies` per
+#   backup:
 #
-#   The refusal is "block N of MSDA region is neither mapped by the derived extent list nor
-#   padding filler — backup layout differs from the derived model, refusing to guess", from
-#   BcDb.Core's PageFile. It is NOT a regression: reader v0.1.0, v0.1.1 and the source build
-#   before both fail identically, so the reader has never read a 28.2+ backup. Tracked in
-#   #2780; the fix is in StefanMaron/BusinessCentral.BakReader, not here.
+#     27.5.46862.48827  OK      28.2.50931.54319  OK
+#     28.1.49838.50621  OK      28.3.52162.54309  OK
+#     28.1.49838.54308  OK      28.4.53241.54318  OK
 #
-#   Consequence for THIS workflow: the default bc-version (the newest prefix in
-#   .github/bc-versions.txt, currently 28.4) cannot produce a --test-data number. Pass
-#   `bc-version: 28.1` for one, or run with test-data off and say so.
+#   28.0.46665.54310 was not re-measured (no local backup); v0.1.1 read it and v0.1.2 changes
+#   only the refusal path, so it is expected to keep reading it. The pin comment on READER_TAG
+#   below carries the v0.1.1-vs-v0.1.2 comparison and the decoded-value check behind the bump.
+#
+#   So the default bc-version (the newest prefix in .github/bc-versions.txt, currently 28.4)
+#   is expected to produce a --test-data number. `bcdb companies` succeeding is not the same
+#   as a whole bucket run succeeding: the first full run on 28.4 is the confirmation, and if
+#   it fails it should fail for a NEW reason, surfaced verbatim by
+#   scripts/ms-bucket-summary.py's caveat scanner (which matches the runner's
+#   "=== <bundle> — EXEC FAIL ===" header and its reason lines generically, not the MSDA text).
 
 on:
   workflow_dispatch:
@@ -175,15 +183,35 @@ jobs:
           # is an argument for pinning it, not for floating it.
           #
           # To move it: pick the new tag from
-          # https://github.com/StefanMaron/BusinessCentral.BakReader/releases, run this
+          # https://github.com/StefanMaron/BusinessCentral.DbReader/releases, run this
           # workflow once on the new pin, and compare the pass/fail totals against the previous
           # pin's run before merging the bump. A reader upgrade that changes decoded values
           # changes this measurement, so the bump belongs in its own PR with both numbers in
           # the body.
-          READER_TAG: v0.1.1
+          #
+          # v0.1.1 -> v0.1.2 (#2780). v0.1.1 could not open the W1 demo backup for BC 28.2 and
+          # newer at all -- `bcdb companies` exited 1 with "block <N> of MSDA region is neither
+          # mapped by the derived extent list nor padding filler" -- so with test-data: true the
+          # workflow's DEFAULT bc-version (the newest prefix in .github/bc-versions.txt, 28.4)
+          # could not produce a number. Measured on the real backups, one binary per row, both
+          # release assets checksum-verified against their SHA256SUMS:
+          #
+          #     BC        v0.1.1                     v0.1.2
+          #     28.1      OK                         OK
+          #     28.2      refused (block 116296)     OK
+          #     28.3      refused (block 116288)     OK
+          #     28.4      refused (block 116504)     OK
+          #
+          # The totals comparison this comment asks for cannot be done like-for-like at 28.2+,
+          # because the OLD pin produces no number there at all -- that is the bug. So the
+          # decoded-value question was answered where both readers CAN read, on 28.1: the
+          # `bcdb tables` listing is byte-identical (3,956 lines) and a `bcdb read` of
+          # "Source Code Setup" is byte-identical between the two. v0.1.2 adds versions it can
+          # open; it does not change what it decodes on the versions v0.1.1 already opened.
+          READER_TAG: v0.1.2
           GH_TOKEN: ${{ github.token }}
         run: |
-          # bcbak is StefanMaron/BusinessCentral.BakReader's `bcdb`, consumed as a pinned
+          # bcbak is StefanMaron/BusinessCentral.DbReader's `bcdb`, consumed as a pinned
           # release's Native AOT asset rather than built here: a source build needs the .NET 10
           # SDK plus clang and adds minutes, and the release binary is the one that repo's own
           # hermetic test suite gated before publishing. The runner probes the OLD name at
@@ -193,7 +221,12 @@ jobs:
           tag="$READER_TAG"
           mkdir -p "$RUNNER_TEMP/reader"
           cd "$RUNNER_TEMP/reader"
-          gh release download "$tag" --repo StefanMaron/BusinessCentral.BakReader \
+          # StefanMaron/BusinessCentral.DbReader, NOT .BakReader: that repository was renamed,
+          # and the old name only still works because GitHub redirects it. A rename redirect is
+          # not a contract -- it lasts at GitHub's discretion, and it stops the moment anyone
+          # creates a new repository at the freed-up old name, at which point this line
+          # downloads someone else's asset or 404s in a nightly nobody is watching closely.
+          gh release download "$tag" --repo StefanMaron/BusinessCentral.DbReader \
             --pattern bcdb-linux-x64 --pattern SHA256SUMS
           grep 'bcdb-linux-x64$' SHA256SUMS | sha256sum -c -
           install -D -m 0755 bcdb-linux-x64 "$HOME/.cache/al-runner/bcbak/bcbak"

@@ -180,6 +180,33 @@ public static class Reporter
                 foreach (var e in b.CompileErrors) w.WriteLine($"  {e}");
             }
         }
+        // #2764, and the same argument as the "Suite errors" block directly above, for the case
+        // one step further along: a bucket that did not compile AT ALL contributes no tests, so
+        // every number in the Tests block is byte-identical to a clean run of whatever else ran.
+        // `compile-fail:` does move, but the line naming WHICH bundle and WHY was written when it
+        // happened — tens to thousands of lines above this point — and PrintPerTest's
+        // "=== X — COMPILE FAIL ===" block sits up there with it.
+        //
+        // In a one-shot run the exit code still catches it. Under --watch there is no exit code
+        // at all: this summary IS the interface, nobody scrolls a live session, and the faster
+        // the loop the more it is trusted. Deliberately the same shape as the block above rather
+        // than a second spelling of it — name the bucket, repeat its errors VERBATIM (a
+        // paraphrase sends the reader back up the log), and print nothing at all when there is
+        // nothing to say, so a clean run's summary is unchanged.
+        var failedBuckets = buckets.Where(b => b.Stage == BucketStage.CompileFailed).ToList();
+        if (failedBuckets.Count > 0)
+        {
+            w.WriteLine("-----------------------------------------------------------------");
+            w.WriteLine($"Compile failures: {failedBuckets.Count} bucket(s) did not compile, so "
+                + "NONE of the tests they declare appear in the counts above — this run covers "
+                + "less than it discovered.");
+            foreach (var b in failedBuckets)
+            {
+                w.WriteLine(b.BucketPath);
+                foreach (var e in b.CompileErrors) w.WriteLine($"  {e}");
+                if (b.ProcessError != null) w.WriteLine($"  {b.ProcessError}");
+            }
+        }
         var gaps = buckets
             .SelectMany(b => b.ProvisionGaps ?? Array.Empty<string>())
             .Distinct(StringComparer.Ordinal)
