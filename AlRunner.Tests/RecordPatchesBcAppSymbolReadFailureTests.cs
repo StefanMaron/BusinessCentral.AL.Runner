@@ -136,13 +136,21 @@ public sealed class RecordPatchesBcAppSymbolReadFailureTests : IDisposable
         RecordPatches.AddBcAppPath(appPath);
         Assert.Equal(tableId, RecordPatches.ResolveTableIdByName(tableName));
 
+        // The per-request reset, then the re-registration Program.cs performs right after it
+        // (#2755 clears the per-bundle .app registrations, so the reset alone would leave
+        // nothing for the rebuild below to read and this test would pass vacuously). Both
+        // happen while the file on disk is still healthy, so AddBcAppPath's own eager read
+        // succeeds — the subject here is the LAZY index build, not registration.
+        RecordPatches.ResetForReload();
+        RecordPatches.AddBcAppPath(appPath);
+
         // [WHEN] the .app is rebuilt on disk into a shape whose extension parse fails part-way,
-        // and the per-request reset drops the indexes (exactly what --server/--watch do).
-        // A different length + a bumped mtime give both BcAppSymbolCache caches a new key,
-        // so the next index build re-parses rather than serving the earlier good result.
+        // AFTER registration and before the first lookup rebuilds the indexes — the --watch
+        // window where a recompile lands between the two. A different length + a bumped mtime
+        // give both BcAppSymbolCache caches a new key, so the index build re-parses rather than
+        // serving the earlier good result.
         WriteApp(appPath, SymbolReference(tableId, tableName, extId, poison: true));
         File.SetLastWriteTimeUtc(appPath, File.GetLastWriteTimeUtc(appPath).AddSeconds(5));
-        RecordPatches.ResetForReload();
 
         // [THEN] the rebuild throws — before the fix it merged the one good extension, flagged
         // the index as built, printed a filtered-out stderr line and returned the id.
@@ -154,11 +162,14 @@ public sealed class RecordPatchesBcAppSymbolReadFailureTests : IDisposable
         // with the extension flag left false — the #2478 short-circuit shape).
         Assert.Throws<BcAppSymbolReadException>(() => RecordPatches.ResolveTableIdByName(tableName));
 
-        // Cleanup for later tests in this collection: restore a parseable file so the still-
-        // registered path does not fail every subsequent index rebuild in this process.
+        // Cleanup for later tests in this collection, and the positive control: restore a
+        // parseable file, reset, re-register the way a next request would, and the id resolves
+        // again. A reset that did not really clear would show up here as AddBcAppPath's
+        // already-present early return leaving the poisoned index in place.
         WriteApp(appPath, SymbolReference(tableId, tableName, extId, poison: false));
         File.SetLastWriteTimeUtc(appPath, File.GetLastWriteTimeUtc(appPath).AddSeconds(10));
         RecordPatches.ResetForReload();
+        RecordPatches.AddBcAppPath(appPath);
         Assert.Equal(tableId, RecordPatches.ResolveTableIdByName(tableName));
     }
 }

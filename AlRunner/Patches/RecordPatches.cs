@@ -243,7 +243,47 @@ public static partial class RecordPatches
         // Shares InvalidateBcAppIndexes with AddBcAppPath (RecordPatches.BcAppFallback.cs) so the
         // two call sites can't drift apart again the way they did here.
         lock (_bcTableIndexLock)
-            InvalidateBcAppIndexes();
+        {
+            // #2755: the REGISTERED set goes too, not just the indexes derived from it.
+            // InvalidateBcAppIndexes drops the derived table/extension indexes so the next lookup
+            // rebuilds them FROM _bcAppPaths — so leaving that list populated meant bundle 2 in a
+            // --server/--watch process rebuilt against its own registrations UNION every earlier
+            // bundle's, while a fresh single-bundle process running bundle 2 alone saw only its
+            // own. The neighbouring per-bundle state already held this invariant
+            // (InstallTriggerRunner.ResetForNewBundle clears _depAssemblies), and the server
+            // path's own comment states the intent: "New bundle in the server session: replace
+            // (not inherit) the install-trigger registrations".
+            //
+            // Safe for the PER-BUNDLE registrations because every caller re-registers
+            // immediately afterwards, and registers the FULL resolved closure rather than a
+            // delta — platform and Base Application .apps included. ResetForNewBundleReload
+            // (BcRuntime.cs, the single caller of this method) runs at Program.cs 2196 on the
+            // CLI path and 4049 on the server path; the matching registrations are at 2354/2357
+            // and 4533/4534, both AFTER. A clear therefore removes nothing the current bundle
+            // does not immediately put back.
+            //
+            // NOT safe for all of them, which is why this is ClearPerBundleBcAppPaths and not
+            // _bcAppPaths.Clear(): the SystemApp package is registered once per PROCESS, by
+            // RegisterSystemAppPackage() from Register(), and no per-bundle path re-adds it. A
+            // flat clear unregistered the AL source for every NCL-internal system table for the
+            // rest of a --server/--watch process — and since this method also clears
+            // _parsedTables and _metaTableCache, that registration is the only thing they can
+            // be rebuilt from. Two AlRunner.Tests classes caught it as
+            // "no NCLMetaTable for table N (dependency source not parsed)".
+            //
+            // #2478 is the reason this is spelled out rather than done quietly: the last defect
+            // in this same reset path was an index reset that did not reset ENOUGH, and it made
+            // precompiled tableextension fields vanish from every metatable from the second
+            // server request on. That failure was silent; this one was too.
+            //
+            // Still accumulating, same shape, deliberately NOT changed here: the sibling list
+            // _bcQuerySymbolJsonPaths (RecordPatches.BcAppFallback.cs), tracked in #2939. It
+            // feeds _bcSymbolQueryIndex through the same derived/registered split and is the
+            // other input to RegisteredBcAppSymbolStateKey. Left alone because #2755 scoped
+            // itself to _bcAppPaths and called the blast radius out explicitly — and the
+            // SystemApp regression above is what that caution was warning about.
+            ClearPerBundleBcAppPaths();
+        }
         _fieldTriggersWiredTables.Clear();
         _parsedPages.Clear();
         _parsedPageExtensions.Clear();
