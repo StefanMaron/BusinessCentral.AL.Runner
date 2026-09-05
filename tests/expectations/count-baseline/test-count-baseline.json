@@ -3,7 +3,7 @@
   "suites": {
     "al-language": {
       "tests": {
-        "default": 2523
+        "default": 2554
       },
       "appGroups": {
         "default": 1
