@@ -304,6 +304,187 @@ class ListUnsignedCliTests(unittest.TestCase):
             self.assertIn("OK", result.stdout)
 
 
+class EmptyScanTests(unittest.TestCase):
+    """#2298: a scan that classified NOTHING must not report success.
+
+    `verify` used to print "OK: all 0 .dll/.exe file(s) checked are
+    Authenticode-signed." and exit 0 for a directory holding no PE files at
+    all -- hit for real while verifying the v2.10.0 release, where a failed
+    `dotnet tool install` had left the target directory empty and the gate
+    reported OK against nothing. A verifier that cannot tell "0 files, all
+    good" from "40 files, all good" is not a gate. Same for `list-unsigned`:
+    a catalog built from a scan that saw no PE files is not "nothing needed
+    signing", it is "nothing was looked at".
+
+    Both directions are covered here -- the empty/unclassifiable cases must
+    fail, and the populated cases in the same class must still succeed, so a
+    fix that simply always fails is caught.
+    """
+
+    def _verify(self, *roots):
+        return subprocess.run(
+            [sys.executable, SCRIPT_PATH, "verify", *[str(r) for r in roots]],
+            capture_output=True, text=True,
+        )
+
+    def _list_unsigned(self, root, catalog=None):
+        argv = [sys.executable, SCRIPT_PATH, "list-unsigned", str(root),
+                "--relative-to", str(root)]
+        if catalog is not None:
+            argv += ["--catalog", str(catalog)]
+        return subprocess.run(argv, capture_output=True, text=True)
+
+    # --- verify: the vacuous passes that must now fail -------------------
+
+    def test_verify_fails_on_directory_with_no_pe_files_at_all(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self._verify(tmp)
+
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertNotIn("OK", result.stdout)
+            # The directory has to be named, so a caller can tell "nothing to
+            # check" apart from "everything checked out".
+            self.assertIn(tmp, result.stderr)
+            self.assertIn("no .dll/.exe files", result.stderr)
+
+    def test_verify_fails_when_every_candidate_is_not_a_pe_image(self):
+        # 3 files matching the extension, none of them a PE image: the old
+        # code counted only classifiable files, so this also printed
+        # "all 0 ... checked". The message must distinguish this case from
+        # the empty-directory one, because the fix is different (a broken
+        # build output vs. a missing one).
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for name in ("a.dll", "b.dll", "c.exe"):
+                (root / name).write_bytes(b"not a PE image at all, just text")
+
+            result = self._verify(root)
+
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertNotIn("OK", result.stdout)
+            self.assertIn("3 .dll/.exe file(s)", result.stderr)
+            self.assertIn("none of them parsed as a PE image", result.stderr)
+
+    def test_verify_fails_when_the_only_pe_files_are_in_an_excluded_dir(self):
+        # ref/ and refint/ are skipped by scan(), so a tree whose ONLY PE
+        # files live there is verified against nothing -- same vacuous pass.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "obj" / "ref").mkdir(parents=True)
+            (root / "obj" / "ref" / "app.dll").write_bytes(
+                build_fake_pe(0x20B, cert_table_size=4096))
+
+            result = self._verify(root)
+
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn("no .dll/.exe files", result.stderr)
+
+    def test_verify_fails_on_a_root_that_does_not_exist(self):
+        # os.walk() on a missing path yields nothing and raises nothing, so
+        # a typo'd or never-created root verified clean before this fix.
+        with tempfile.TemporaryDirectory() as tmp:
+            missing = Path(tmp) / "never-created"
+
+            result = self._verify(missing)
+
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertNotIn("OK", result.stdout)
+            self.assertIn(str(missing), result.stderr)
+            self.assertIn("does not exist", result.stderr)
+
+    def test_verify_fails_when_one_of_several_roots_does_not_exist(self):
+        # publish.yml passes four roots. A single missing one must not be
+        # masked by the others having content.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            good = root / "good"
+            good.mkdir()
+            (good / "signed.dll").write_bytes(build_fake_pe(0x20B, cert_table_size=999))
+            missing = root / "variants-staging"
+
+            result = self._verify(good, missing)
+
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn(str(missing), result.stderr)
+            self.assertIn("does not exist", result.stderr)
+
+    # --- verify: the control cases that must still pass ------------------
+
+    def test_verify_still_reports_ok_and_the_real_count_for_signed_pes(self):
+        # The other direction: a fix that just always fails is caught here,
+        # and the reported count must be the real one (2), not a constant --
+        # "all 0" is exactly the string this issue is about.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "signed-a.dll").write_bytes(build_fake_pe(0x20B, cert_table_size=999))
+            (root / "signed-b.exe").write_bytes(build_fake_pe(0x10B, cert_table_size=1))
+            # Unclassifiable and excluded files alongside them must not stop
+            # the OK, since two real PE files WERE checked.
+            (root / "not-a-pe.dll").write_bytes(b"plain text")
+            (root / "obj" / "ref").mkdir(parents=True)
+            (root / "obj" / "ref" / "skipped.dll").write_bytes(build_fake_pe(0x20B, 0))
+
+            result = self._verify(root)
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("OK: all 2 .dll/.exe file(s)", result.stdout)
+
+    def test_verify_of_a_single_signed_file_root_still_passes(self):
+        # scan() accepts a file path directly; that path must not be caught
+        # by the emptiness guard.
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "signed.dll"
+            path.write_bytes(build_fake_pe(0x20B, cert_table_size=7))
+
+            result = self._verify(path)
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("OK: all 1 .dll/.exe file(s)", result.stdout)
+
+    # --- list-unsigned: same distinction ---------------------------------
+
+    def test_list_unsigned_fails_on_directory_with_no_pe_files_and_writes_no_catalog(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            catalog = root / "catalog.txt"
+
+            result = self._list_unsigned(root, catalog)
+
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn(str(root), result.stderr)
+            self.assertIn("no .dll/.exe files", result.stderr)
+            # An empty catalog must not be left behind for the signing action
+            # to consume -- the failure has to be the only outcome.
+            self.assertFalse(catalog.exists(), "an empty catalog was written anyway")
+
+    def test_list_unsigned_fails_on_a_root_that_does_not_exist(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            missing = Path(tmp) / "never-created"
+
+            result = self._list_unsigned(missing)
+
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn(str(missing), result.stderr)
+            self.assertIn("does not exist", result.stderr)
+
+    def test_list_unsigned_still_succeeds_with_an_empty_listing_when_all_are_signed(self):
+        # The distinction that makes this fix correct rather than merely
+        # strict: zero UNSIGNED files in a tree that really was scanned is a
+        # legitimate, successful outcome (an already-signed tree), and stays
+        # exit 0 with an empty catalog.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "signed.dll").write_bytes(build_fake_pe(0x20B, cert_table_size=4096))
+            catalog = root / "catalog.txt"
+
+            result = self._list_unsigned(root, catalog)
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.strip(), "")
+            self.assertTrue(catalog.exists())
+            self.assertEqual(catalog.read_text().strip(), "")
+
+
 class ListUnsignedCrossDriveTests(unittest.TestCase):
     """#2286: when a path can't be made relative to --relative-to (the
     Windows cross-drive case), _cmd_list_unsigned must fail loudly instead
