@@ -33,6 +33,21 @@ Used two ways from publish.yml (#2248):
       root(s); exits 0 otherwise. This is the release-path verification gate:
       it must find zero unsigned PE files in the packed nupkg contents.
 
+BOTH subcommands exit 1 when a root does not exist, and when the walk
+classified ZERO PE files -- an empty directory, a tree whose only .dll/.exe
+files are unparseable, or one whose only PE files sit in an excluded
+ref/refint directory (#2298). verify used to print
+"OK: all 0 .dll/.exe file(s) checked are Authenticode-signed." and exit 0 for
+all of those, which is the failure class #2284 fixed one layer up: a check
+that cannot distinguish "I looked and everything was signed" from "I did not
+look at anything". An empty scan is a hard failure, not a lenient pass and
+not a warning -- every caller of this script is a release gate, and the one
+in publish.yml that builds the signing catalog already refuses to "succeed at
+signing nothing" for the same reason. Note what is NOT affected: zero
+*unsigned* files in a tree that really was scanned remains a normal success
+for list-unsigned (an already-signed tree writes a legitimately empty
+catalog); it is zero *scanned* files that fails.
+
 Both subcommands share the same walk: recurse into `.dll`/`.exe` files,
 skipping any path with a `ref` or `refint` directory component (MSBuild's
 compile-only reference-assembly output -- never copied into a publish/pack
@@ -154,16 +169,100 @@ def scan(roots: list[Path], exclude_dirs: frozenset[str] = DEFAULT_EXCLUDE_DIRS)
                     yield Path(dirpath) / name
 
 
+def _missing_roots(roots: list[Path]) -> list[Path]:
+    """Roots that do not exist on disk. os.walk() yields nothing and raises
+    nothing for a missing directory, so without this check a typo'd or
+    never-created root produces an empty scan that reads exactly like a clean
+    one (#2298)."""
+    return [root for root in roots if not root.exists()]
+
+
+def _report_missing_roots(roots: list[Path]) -> bool:
+    """Print a ::error:: line per missing root and return True if any were
+    missing (the caller then exits non-zero without scanning)."""
+    missing = _missing_roots(roots)
+    for root in missing:
+        print(
+            f"::error::scan root does not exist: {root}. Nothing would be "
+            "scanned under it, and an empty scan must not be reported as a "
+            "clean one (#2298).",
+            file=sys.stderr,
+        )
+    return bool(missing)
+
+
+def _classify(roots: list[Path], exclude_dirs: frozenset[str] = DEFAULT_EXCLUDE_DIRS):
+    """Walk the roots once and return (candidates, classified):
+
+      candidates  -- every .dll/.exe path scan() yielded, sorted
+      classified  -- the (path, is_signed) pairs among them that actually
+                     parse as a PE image (is_signed() returned a bool)
+
+    Keeping both counts is what lets the callers below tell "the directory
+    held nothing at all" apart from "it held .dll files that are not PE
+    images" -- different causes, different fixes, and both of them used to
+    print the same "all 0 ... checked" success line."""
+    candidates = sorted(scan(roots, exclude_dirs))
+    classified = []
+    for path in candidates:
+        signed = is_signed(path)
+        if signed is not None:
+            classified.append((path, signed))
+    return candidates, classified
+
+
+def _report_empty_scan(roots: list[Path], candidates: list[Path], consequence: str) -> None:
+    """Print the ::error:: line for a scan that classified zero PE files.
+
+    #2298: `verify` printed "OK: all 0 .dll/.exe file(s) checked are
+    Authenticode-signed." and exited 0 in this situation -- hit for real
+    while verifying the v2.10.0 release, where a failed `dotnet tool install`
+    had left the target directory empty. "Nothing to check" is not
+    "everything checked out"; a gate that cannot distinguish 0 files from 40
+    is not a gate. Same reasoning as the catalog step in publish.yml, which
+    already refuses to "succeed at signing nothing"."""
+    roots_text = ", ".join(str(root) for root in roots)
+    if not candidates:
+        detail = (
+            f"no .dll/.exe files found under {roots_text} "
+            f"(ref/refint directories are excluded from the scan)"
+        )
+    else:
+        detail = (
+            f"found {len(candidates)} .dll/.exe file(s) under {roots_text}, "
+            f"but none of them parsed as a PE image"
+        )
+    print(
+        f"::error::{detail}. Nothing was classified as signed or unsigned, so "
+        f"{consequence} Failing loudly instead of reporting success over an "
+        "empty scan (#2298).",
+        file=sys.stderr,
+    )
+
+
 def _cmd_list_unsigned(args: argparse.Namespace) -> int:
     exclude_dirs = DEFAULT_EXCLUDE_DIRS | set(args.exclude_dir)
     roots = [Path(r) for r in args.roots]
     relative_to = Path(args.relative_to).resolve()
 
-    unsigned_paths = []
-    for path in sorted(scan(roots, exclude_dirs)):
-        signed = is_signed(path)
-        if signed is False:
-            unsigned_paths.append(path)
+    if _report_missing_roots(roots):
+        return 1
+
+    candidates, classified = _classify(roots, exclude_dirs)
+    if not classified:
+        # Note the distinction this does NOT break: zero *unsigned* files in
+        # a tree that really was scanned stays a successful, empty catalog
+        # (an already-signed tree). What fails here is zero *scanned* files --
+        # a catalog built from a scan that saw nothing signable.
+        _report_empty_scan(
+            roots,
+            candidates,
+            "the signing catalog would be built from a scan that examined "
+            "nothing, and the signing step would have no files to sign.",
+        )
+        return 1
+
+    unsigned_paths = [path for path, signed in classified if not signed]
 
     lines = []
     for path in unsigned_paths:
@@ -203,15 +302,21 @@ def _cmd_list_unsigned(args: argparse.Namespace) -> int:
 
 def _cmd_verify(args: argparse.Namespace) -> int:
     roots = [Path(r) for r in args.roots]
-    unsigned = []
-    total_pe = 0
-    for path in sorted(scan(roots)):
-        signed = is_signed(path)
-        if signed is None:
-            continue
-        total_pe += 1
-        if not signed:
-            unsigned.append(path)
+
+    if _report_missing_roots(roots):
+        return 1
+
+    candidates, classified = _classify(roots)
+    if not classified:
+        _report_empty_scan(
+            roots,
+            candidates,
+            "this gate verified nothing at all.",
+        )
+        return 1
+
+    total_pe = len(classified)
+    unsigned = [path for path, signed in classified if not signed]
 
     if unsigned:
         print(
