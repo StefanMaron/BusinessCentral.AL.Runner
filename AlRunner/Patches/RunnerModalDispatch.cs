@@ -77,8 +77,8 @@ public static class RunnerModalDispatch
             // gone", and the one this dispatch used to skip entirely: ask the page whether it
             // may close, which is the ONLY thing that raises OnQueryClosePage. BC's
             // NavForm.CloseForm raises OnClosePage and nothing else, so a page doing its work
-            // in OnQueryClosePage — the ordinary "Manage X" shape, where the trigger writes a
-            // caller-supplied record copy back on OK — lost that write silently. See #3050.
+            // in OnQueryClosePage â€” the ordinary "Manage X" shape, where the trigger writes a
+            // caller-supplied record copy back on OK â€” lost that write silently. See #3050.
             if (opened && !TryQueryCloseForm(form!, result)) result = null;
         }
         finally
@@ -146,7 +146,7 @@ public static class RunnerModalDispatch
             Invoke(showForm, testExecution, new object?[] { handle });
 
             // Same missing step as the modal path (#3050). ShowForm returns nothing, so there
-            // is no handler result to forward here — and BC does not need one: measured on
+            // is no handler result to forward here â€” and BC does not need one: measured on
             // real BC 28.4.53241.0 (corpus "MQC Tests", codeunit 60276, arm g), a
             // [PageHandler]-driven Page.Run raises OnQueryClosePage with CloseAction OK and
             // then OnClosePage. A trapped page is the test's to close, so it is left alone.
@@ -252,12 +252,12 @@ public static class RunnerModalDispatch
     ///
     /// Returns whether the page allowed the close. A page whose OnQueryClosePage returns false
     /// makes BC's QueryCloseFormAsync throw NavFormCloseNotAllowedException; measured on real
-    /// BC 28.4.53241.0, that veto does NOT reach the test as an error — the page still closes
+    /// BC 28.4.53241.0, that veto does NOT reach the test as an error â€” the page still closes
     /// and RunModal() reports Action::None instead of what the handler chose. Answering false
     /// here reproduces exactly that: the caller drops the handler's result, so the FormResult.None
     /// BC already pushed on formResultStack is what the calling AL reads back.
     ///
-    /// Anything else the trigger raises — an Error() in AL, most of all — propagates untouched.
+    /// Anything else the trigger raises â€” an Error() in AL, most of all â€” propagates untouched.
     /// </summary>
     private static bool TryQueryCloseForm(object form, object? result)
     {
@@ -266,7 +266,7 @@ public static class RunnerModalDispatch
                                  && m.GetParameters().Length == 1
                                  && m.GetParameters()[0].ParameterType == typeof(int))
             ?? throw new InvalidOperationException(
-                "NavForm.QueryCloseForm(int) not found — Ncl shape changed; do not commit");
+                "NavForm.QueryCloseForm(int) not found â€” Ncl shape changed; do not commit");
 
         int closeActionValue;
         try { closeActionValue = Convert.ToInt32(result, System.Globalization.CultureInfo.InvariantCulture); }

@@ -396,13 +396,13 @@ internal class LiveNavTestPage : MockITestPage
     public override FormResult FormResult => _formResult;
 
     /// <summary>
-    /// How the page was closed: what a built-in action recorded, or — when the handler
-    /// invoked nothing at all — what the platform substitutes for it.
+    /// How the page was closed: what a built-in action recorded, or â€” when the handler
+    /// invoked nothing at all â€” what the platform substitutes for it.
     ///
     /// The substitute is MODE-DEPENDENT and the two halves cannot be derived from one another.
     /// Measured on real BC 28.4.53241.0 (corpus "MQC Tests", codeunit 60276, arms b and e): a
     /// handler that returns without invoking anything leaves a plain modal reporting OK and a
-    /// LookupMode(true) modal reporting LookupCancel — so OnQueryClosePage sees OK on the one
+    /// LookupMode(true) modal reporting LookupCancel â€” so OnQueryClosePage sees OK on the one
     /// and LookupCancel on the other, and RunModal() returns the same. A flat OK default made
     /// every unattended lookup read as a confirmed pick.
     /// </summary>
