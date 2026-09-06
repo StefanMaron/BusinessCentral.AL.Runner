@@ -40,9 +40,9 @@ public static partial class RecordPatches
 
     /// <summary>Record that <paramref name="tableId"/> was built while the CalcFormula source
     /// table <paramref name="sourceTableName"/> was unknown. Called from
-    /// <c>BuildMetaCalcFormula</c>; no-op while a retry pass is running, so a formula that is
-    /// still unresolvable after the rebuild is re-pended for the NEXT registration rather than
-    /// looping within one.</summary>
+    /// <c>BuildMetaCalcFormula</c>, including from inside a rebuild: a formula that is still
+    /// unresolvable after one is simply pending again for the NEXT registration, and the
+    /// name check below is what stops that from looping within a single one.</summary>
     internal static void NoteUnresolvedCalcFormulaSourceTable(int tableId, string sourceTableName)
     {
         if (tableId <= 0 || string.IsNullOrEmpty(sourceTableName)) return;
@@ -67,7 +67,7 @@ public static partial class RecordPatches
     /// A no-op — not even a cache walk — while the pending set is empty, which is the state
     /// of every run that never hit the ordering.
     /// </summary>
-    internal static void RetryUnresolvedCalcFormulaTables()
+    internal static void RetryUnresolvedCalcFormulaTables(IEnumerable<string>? newlyRegisteredTableNames = null)
     {
         if (_tablesWithUnresolvedCalcFormulaSource.IsEmpty) return;
         if (_retryingUnresolvedCalcFormulas) return;
@@ -84,12 +84,29 @@ public static partial class RecordPatches
             // run with 8 registrations, where exactly one of them changed the answer. A table
             // that stays unresolvable simply stays pending; if no .app ever declares its source
             // table, it is never rebuilt at all and BuildMetaField's line names it.
+            //
+            // The check reads the .app JUST registered, whose symbols the caller already has in
+            // hand, rather than asking TryPopulateParsedTableByName. That helper would answer
+            // the same question, but it goes through EnsureBcSymbolTableIndex — and this runs
+            // immediately after InvalidateBcAppIndexes dropped that index, so probing it here
+            // forces a full rebuild (1890 table ids plus the tableextension merge, on a Base
+            // Application closure) at EVERY registration while anything is pending: measured at
+            // 7 index builds in the package run against 2 without a retry. A name lookup over
+            // the new app's own tables costs nothing and answers the only case that can have
+            // changed, since a registration is the event this runs on.
+            var newNames = newlyRegisteredTableNames == null
+                ? null
+                : new HashSet<string>(newlyRegisteredTableNames, StringComparer.OrdinalIgnoreCase);
+
             var ids = new List<int>();
             foreach (var (tableId, names) in _tablesWithUnresolvedCalcFormulaSource)
             {
                 string[] pending;
                 lock (names) pending = names.ToArray();
-                if (!pending.Any(n => TryPopulateParsedTableByName(n) != null)) continue;
+                var resolvable = newNames != null
+                    ? pending.Any(newNames.Contains)
+                    : pending.Any(n => TryPopulateParsedTableByName(n) != null);
+                if (!resolvable) continue;
                 ids.Add(tableId);
                 _tablesWithUnresolvedCalcFormulaSource.TryRemove(tableId, out _);
             }

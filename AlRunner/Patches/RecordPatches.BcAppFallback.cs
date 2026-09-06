@@ -401,6 +401,7 @@ public static partial class RecordPatches
     public static void AddBcAppPath(string appPath)
     {
         if (string.IsNullOrEmpty(appPath) || !File.Exists(appPath)) return;
+        List<string>? registeredTableNames = null;
         lock (_bcTableIndexLock)
         {
             if (_bcAppPaths.Contains(appPath, StringComparer.OrdinalIgnoreCase)) return;
@@ -427,6 +428,8 @@ public static partial class RecordPatches
             }
 
             _bcAppPaths.Add(appPath);
+            // #3121: kept for the retry below, which runs outside this lock.
+            registeredTableNames = symbols.Tables.Select(t => t.TableName).ToList();
             // This is the ONLY live path by which a precompiled dependency's enums reach
             // AlEnumMetadataRegistry (AlEnumMetadataRegistry.RegisterFromAppPath, which
             // looks like it does the same job, has no callers). Every field the symbol
@@ -454,7 +457,10 @@ public static partial class RecordPatches
         // one such memo InvalidateBcAppIndexes does not cover — it lives in _metaTableCache and
         // in the skeleton NCLMetadata's own dictionary rather than in this class's indexes.
         // No-op unless a build actually hit that.
-        RetryUnresolvedCalcFormulaTables();
+        // The names of the tables THIS .app declares are what decide which pending tables are
+        // now rebuildable, so they are passed in rather than rediscovered through the symbol
+        // index this method just invalidated.
+        RetryUnresolvedCalcFormulaTables(registeredTableNames);
     }
 
     /// <summary>
