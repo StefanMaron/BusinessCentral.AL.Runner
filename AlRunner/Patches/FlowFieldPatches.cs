@@ -93,6 +93,15 @@ public static class FlowFieldPatches
     private static FieldInfo? _fCalcFormulaEmpty;              // NCLMetaCalculationFormula.EmptyFormula
 
     private static MethodInfo? _mGetFilterFromMetaFilterCollection; // FlowFieldsHelper (#1716)
+
+    // #2970 — BC's own per-FlowField CalcFormula validator,
+    // FlowFieldsHelper.CheckFlowFieldProperties(NCLMetaField). BC reaches it from
+    // DistinctSourceTable.AddField, which is the first statement of that method and runs for
+    // every FlowField inside GetDistinctSourceTablesFromFlowFields — i.e. on the path this
+    // patch replaces, which is why all five of its refusals went missing together. Bound as a
+    // typed delegate rather than called through MethodInfo.Invoke so the NavCSideException it
+    // raises reaches AL as itself, not wrapped in a TargetInvocationException.
+    private static Action<NCLMetaField>? _checkFlowFieldProperties;
     private static ConstructorInfo? _ctorFieldDictionary;      // FieldDictionary<NavValue>(Tuple<INavFieldMetadata,NavValue>[]) (#1757)
     private static ConstructorInfo? _ctorFiltersAndMarks;      // FiltersAndMarks(FilterFieldDictionary)
     private static PropertyInfo? _pTableStateFiltersAndMarks;  // TableState.FiltersAndMarks
@@ -239,6 +248,20 @@ public static class FlowFieldPatches
         var tFlowFieldsHelper = nclAsm.GetType("Microsoft.Dynamics.Nav.Runtime.FlowFieldsHelper");
         _mGetFilterFromMetaFilterCollection = tFlowFieldsHelper?.GetMethod(
             "GetFilterFromMetaFilterCollection", BindingFlags.NonPublic | BindingFlags.Static);
+        // #2970 — internal static void CheckFlowFieldProperties(NCLMetaField). Internal on a
+        // runtime-engine DLL, which precompiled-dll-respect.md puts squarely on the "ours to
+        // work with" side: nothing about it is rewritten, it is only called from the place BC
+        // calls it from.
+        var mCheckFlowFieldProperties = tFlowFieldsHelper?.GetMethod(
+            "CheckFlowFieldProperties", BindingFlags.NonPublic | BindingFlags.Static,
+            null, new[] { _tNCLMetaField }, null);
+        if (mCheckFlowFieldProperties != null)
+            _checkFlowFieldProperties = (Action<NCLMetaField>)Delegate.CreateDelegate(
+                typeof(Action<NCLMetaField>), mCheckFlowFieldProperties);
+        else
+            Console.Error.WriteLine(
+                "[FlowFieldPatches] WARN: FlowFieldsHelper.CheckFlowFieldProperties not found — "
+                + "CalcFormula validation will be REFUSED rather than skipped (#2970)");
         var tFiltersAndMarks = nclAsm.GetType("Microsoft.Dynamics.Nav.Runtime.FiltersAndMarks");
         var tFilterFieldDictionary = nclAsm.GetType("Microsoft.Dynamics.Nav.Runtime.FilterFieldDictionary");
         if (tFiltersAndMarks != null && tFilterFieldDictionary != null)
@@ -568,6 +591,76 @@ public static class FlowFieldPatches
     }
 
     /// <summary>
+    /// Runs BC's own <c>FlowFieldsHelper.CheckFlowFieldProperties</c> over every FlowField in
+    /// <paramref name="fields"/>, reproducing all five of its runtime refusals (#2970).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// BC raises these from <c>CheckFlowFieldProperties</c>, none of which the runner reached
+    /// before this call existed, because the method sits inside
+    /// <c>GetDistinctSourceTablesFromFlowFields</c> — on the path
+    /// <see cref="FlowFieldsHelper_CalcFieldsAsync"/> replaces:
+    /// </para>
+    /// <list type="number">
+    ///   <item><description><c>Count</c> into a field that is not Integer/BigInteger — 18023676.</description></item>
+    ///   <item><description><c>Sum</c>/<c>Average</c> over a source that is not numeric — 18023674.</description></item>
+    ///   <item><description><c>Sum</c>/<c>Average</c> whose types differ and cannot coerce — 18023443.</description></item>
+    ///   <item><description><c>Exists</c> into a field that is not Boolean — 18023675.</description></item>
+    ///   <item><description><c>Min</c>/<c>Max</c>/<c>Lookup</c> whose types differ and cannot coerce — 18023443.</description></item>
+    /// </list>
+    /// <para>
+    /// Observable-equivalence justification (<c>loud-failures.md</c>'s audit obligation): none
+    /// of the five rules is restated here. The refusal, its condition, its BC error number and
+    /// its message text all come from BC's own method body, called with the same
+    /// <c>NCLMetaField</c> BC would pass, so the runner cannot drift from BC by re-deriving a
+    /// rule slightly differently — the failure mode that made a mistyped <c>average()</c>
+    /// quietly produce a number here while a real service tier refused it on all eight legs.
+    /// </para>
+    /// <para>
+    /// The field filter matches the aggregation loop's own skips exactly, so validation and
+    /// aggregation see the same set: BLOBs are excluded (they are not FlowFields — BC's
+    /// <c>RecordImplementation</c> strips them before <c>FlowFieldsHelper</c> ever sees them,
+    /// and this replacement loads them separately), non-FlowField field classes are excluded,
+    /// and so are <c>EmptyFormula</c> / <c>CalculationMethod.None</c>. BC's sixth refusal in
+    /// this area — <c>OnlyFlowFieldsAllowedInCallsToCalcFields</c> (18023494), for a normal
+    /// field passed to <c>CalcFields</c> — lives in the caller rather than in
+    /// <c>CheckFlowFieldProperties</c> and has no service-tier measurement in the corpus, so it
+    /// is tracked separately rather than guessed at here.
+    /// </para>
+    /// </remarks>
+    private static void ValidateFlowFieldFormulas(Array fields)
+    {
+        foreach (var fieldObj in fields)
+        {
+            if (fieldObj is not NCLMetaField field) continue;
+
+            if (_pNclMetaFieldFieldNclType != null && _nclTypeNavBlob != null
+                && Equals(_pNclMetaFieldFieldNclType.GetValue(fieldObj), _nclTypeNavBlob))
+                continue;
+
+            if (!Equals(_pNclMetaFieldFieldClass!.GetValue(fieldObj), _fcFlowField)) continue;
+
+            var formula = _pNclMetaFieldCalculationFormula!.GetValue(fieldObj);
+            if (formula == null) continue;
+            if (_fCalcFormulaEmpty != null && ReferenceEquals(formula, _fCalcFormulaEmpty.GetValue(null)))
+                continue;
+            if (Equals(_pCalcFormulaCalculationMethod!.GetValue(formula), _cmNone)) continue;
+
+            // Refuse loudly rather than skip: silently not validating is precisely how the
+            // runner came to compute a value real BC rejects, so an artifact without the
+            // method must say so instead of answering permissively (loud-failures.md).
+            if (_checkFlowFieldProperties == null)
+                throw new RunnerOutOfScopeException(
+                    "FlowFieldsHelper.CheckFlowFieldProperties",
+                    "not-yet-implemented — BC's own CalcFormula validator is unavailable on this "
+                    + "artifact, and skipping it would let a CalcFormula real BC refuses compute "
+                    + "a value here instead (#2970)");
+
+            _checkFlowFieldProperties(field);
+        }
+    }
+
+    /// <summary>
     /// The shared FlowField evaluation both entry points run: the
     /// <see cref="RecordImpl_CalcFieldsAsync_3"/> hook (which then writes the values into the
     /// record's buffer) and the <see cref="FlowFieldsHelper_CalcFieldsAsync"/> hook (which
@@ -596,6 +689,17 @@ public static class FlowFieldPatches
         // Copied rather than simplified to `recursionLevel + 1` because the two agree only
         // for 0, and the guard above compares against the level BC would have produced.
         int nestedRecursionLevel = recursionLevel != 0 ? checked(recursionLevel + 1) : 1;
+
+        // ── BC's CalcFormula validation, before ANY aggregate is computed (#2970) ──────
+        // BC validates every FlowField handed to CalcFields while it is BUILDING the distinct
+        // source tables, and only then runs the queries: GetDistinctSourceTablesFromFlowFields
+        // loops the fields calling DistinctSourceTable.AddField, whose very first statement is
+        // CheckFlowFieldProperties(field), and the aggregation happens afterwards in
+        // CalcFieldsFromNonVirtualTablesAsync. So `CalcFields(GoodField, BadField)` computes
+        // NOTHING in BC — it errors before the first query. A per-field check folded into the
+        // aggregation loop below would instead compute GoodField and then throw, leaving a
+        // value behind that BC never writes. Hence a separate pass, in field order.
+        ValidateFlowFieldFormulas(fields);
 
         // The skeleton DAS — needed to obtain source-table TempTableDataProvider
         var dataAccessSource = _fSessionDataAccessSource?.GetValue(session);
@@ -892,16 +996,7 @@ public static class FlowFieldPatches
             // (ExecuteAggregateAsync's CreateNavValueFromReader(SourceField, i)), or only
             // handles Count/Sum/Average, so the types agree there by construction.
             if (negate && result != null && !Equals(calcMethod, _cmExist))
-            {
-                if (_mCalcFormulaNegateValue == null)
-                    // Writing the POSITIVE aggregate instead would be the exact silent
-                    // wrong value #1708 is about, so this is loud rather than best-effort.
-                    AlRunner.Infrastructure.RunnerScope.ThrowNotYetImplemented(
-                        "CalcFormula = -sum(...) (NCLMetaCalculationFormula.NegateValue)",
-                        "BC's own value negation is not present on this build, so a signed " +
-                        "FlowField cannot be computed faithfully — issue #1708");
-                result = (NavValue?)_mCalcFormulaNegateValue.Invoke(formula, new object?[] { result });
-            }
+                result = NegateAggregateResult(formula!, result, "Record.CalcFields");
 
             if (result != null)
                 results.Add(Tuple.Create((INavFieldMetadata)(NCLMetaField)fieldObj, result));
@@ -1210,6 +1305,33 @@ public static class FlowFieldPatches
         {
             return string.Compare(a.ToString(), b.ToString(), StringComparison.OrdinalIgnoreCase);
         }
+    }
+
+    /// <summary>
+    /// Applies BC's own <c>NCLMetaCalculationFormula.NegateValue</c> — the leading minus in
+    /// <c>CalcFormula = -sum(...)</c> (#1708). BC's method switches on the SOURCE field's type,
+    /// not the value's, which is why exist FlowFields must never be routed through it (#2323);
+    /// the callers make that call, not this helper.
+    /// <para>internal (not private): shared with
+    /// <c>RecordPatches.TempTableDataProvider_CalcNumeric</c> (#2937), which negates at the same
+    /// point BC's own provider does — NavSqlAggregateCommand's aggregate reader negates every
+    /// aggregated FlowField value whose formula has NegateResult, inside the provider, before
+    /// the FieldDictionary goes back to FlowFieldsHelper. One owner rather than two copies of
+    /// the "how is a signed FlowField negated" answer.</para>
+    /// </summary>
+    /// <param name="formula">the field's <c>NCLMetaCalculationFormula</c></param>
+    /// <param name="value">the aggregate as computed, unsigned</param>
+    /// <param name="surface">the calling surface, for the not-yet-implemented message</param>
+    internal static NavValue NegateAggregateResult(object formula, NavValue value, string surface)
+    {
+        if (_mCalcFormulaNegateValue == null)
+            // Writing the POSITIVE aggregate instead would be the exact silent
+            // wrong value #1708 is about, so this is loud rather than best-effort.
+            AlRunner.Infrastructure.RunnerScope.ThrowNotYetImplemented(
+                $"{surface} — CalcFormula = -sum(...) (NCLMetaCalculationFormula.NegateValue)",
+                "BC's own value negation is not present on this build, so a signed " +
+                "FlowField cannot be computed faithfully — issue #1708");
+        return (NavValue)_mCalcFormulaNegateValue!.Invoke(formula, new object?[] { value })!;
     }
 
     private static NavValue? ReadBufferFieldValue(object buffer, PropertyInfo bufferIndexer, int columnIndex, NCLMetaField? fieldMeta)

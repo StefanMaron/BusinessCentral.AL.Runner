@@ -1342,6 +1342,12 @@ internal sealed class RunnerPageInstance
         if (_hasOpenedBefore) ResetGlobalsForReopen();
         _hasOpenedBefore = true;
 
+        // BEFORE the trigger, exactly where BC puts it: NavForm.OpenFormAsync runs
+        // ApplySourceTableViewAndSavedValuesAsync() and only then RaiseOnOpenPageAsync().
+        // A page's OnOpenPage is entitled to READ the SourceTableView's filters (Base
+        // Application page 7016 "Sales Price List" does — see ApplySourceTableViewFilters).
+        ApplySourceTableViewFilters();
+
         InvokeRecordTrigger("OnOpenPage", Type.EmptyTypes, Array.Empty<object>());
 
         // Re-take the open-time snapshot AFTER the trigger, not before. OnOpenPage is where a
@@ -1351,6 +1357,79 @@ internal sealed class RunnerPageInstance
         // all failed. The constructor still takes one, so a page whose OnOpenPage never runs
         // still has a snapshot rather than none.
         _expressionValuesAtOpen = SnapshotExpressionValues(_sourceExpressions);
+    }
+
+    /// <summary>
+    /// Apply the page's <c>SourceTableView</c> — BC's own <c>NavForm.ApplySourceTableView</c>,
+    /// on the page's own metadata, in BC's own filter group.
+    ///
+    /// WHY THIS EXISTS (issue #2820). The runner's TestPage machinery opens a page by
+    /// invoking its lifecycle triggers directly rather than through BC's
+    /// <c>NavForm.OpenFormAsync</c>, and <c>OpenFormAsync</c> is what calls
+    /// <c>ApplySourceTableView</c> (via <c>ApplySourceTableViewAndSavedValuesAsync</c>; the
+    /// other in-BC caller is <c>SetTableView(NavRecord)</c>). So on that route a page
+    /// declaring <c>SourceTableView = where(...)</c> opened with NO view filters at all: the
+    /// page showed rows the view excludes, and <c>Rec.GetFilter(...)</c> inside
+    /// <c>FilterGroup(2)</c> — where BC puts them — answered blank.
+    ///
+    /// <para>Scope of this insertion, stated precisely because "every page open" would be
+    /// wrong: all five call sites that raise a page's OnOpenPage funnel through
+    /// <see cref="RaiseOnOpenPage"/> (host construction, part reification, the eager
+    /// recordless-part hook, RunnerTestPageState and MockTestPage), so this one line covers
+    /// all five. It is NOT the only way a page opens in this runner —
+    /// <c>RunnerModalDispatch.TryOpenForm</c> invokes BC's own <c>NavForm.OpenForm()</c> for
+    /// a modal page AL runs itself, and that route already calls ApplySourceTableView on its
+    /// own. That route was equally broken before this change, for the other half's reason: a
+    /// page from a precompiled dependency .app carried no <c>&lt;SourceTableView&gt;</c> in
+    /// its synthesized metadata, so BC's own call had nothing to apply. The metadata half
+    /// (RecordPatches.DependencyPageMetadataXml) is what fixes that path; this line is what
+    /// fixes the TestPage path.</para>
+    ///
+    /// Measured on Base Application page 7016 "Sales Price List"
+    /// (<c>SourceTableView = where("Price Type" = const(Sale))</c>): its OnOpenPage reaches
+    /// codeunit 7018 "Price UX Management".GetFirstSourceFromFilter, whose last statement is
+    /// <c>Evaluate(PriceSource."Price Type", PriceListHeader.GetFilter("Price Type"))</c>
+    /// inside FilterGroup(2). With the view unapplied that GetFilter returns <c>''</c>, and
+    /// evaluating <c>''</c> into enum "Price Type" — whose members are Any,Sale,Purchase,
+    /// none of them blank — throws NavNCLInvalidOptionStringException. The blank was never
+    /// the defect; the missing filter was.
+    ///
+    /// Delegated to BC rather than restated here: the method reads the view's Sorting
+    /// (KeyFieldsSetByView / AscendingSetByView) as well as its TableFilters, and sets
+    /// <c>ALFilterGroup = 2</c> around the SetFilter calls, restoring the previous group in a
+    /// finally. Re-deriving any of that would be guesswork whose only symptom is a filter
+    /// silently landing in the wrong group.
+    ///
+    /// Called on every open, including a reopen, which is what BC does too — a reopened page
+    /// is a fresh client-side instance whose view is applied again from metadata.
+    /// </summary>
+    private void ApplySourceTableViewFilters()
+    {
+        if (_form is not NavForm form) return;
+
+        // BC's own NavForm.SourceTableView getter dereferences MasterPage with no null check,
+        // and ApplySourceTableView calls it first thing. A page the runner could build no real
+        // metadata for (neither source-compiled nor described by a dependency's
+        // SymbolReference.json — see RunnerFormInit.ShouldResolveMasterPage) has a null
+        // MasterPage, so ask the same question BC asks, without the NRE: no metadata, or
+        // metadata stating no view, means there is nothing to apply. This is not a
+        // failure-swallowing guard — a page with a view that this cannot see would show
+        // unfiltered rows, and that is the very defect the method exists to fix, so the two
+        // states are distinguished rather than merged.
+        if (form.MasterPage?.PageProperties?.SourceObject?.SourceTableView is null) return;
+
+        var apply = FindNavFormMethod("ApplySourceTableView", Type.EmptyTypes)
+            ?? throw new InvalidOperationException(
+                "NavForm.ApplySourceTableView not found on " + form.GetType().FullName
+                + " — BC page shape changed");
+        try { apply.Invoke(form, Array.Empty<object>()); }
+        catch (TargetInvocationException tie) when (tie.InnerException != null)
+        {
+            // A filter the page's own metadata declares that BC's filter parser rejects is
+            // the page's own error and belongs to the AL test unwrapped, exactly like an
+            // Error() raised in a trigger.
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw();
+        }
     }
 
     /// <summary>

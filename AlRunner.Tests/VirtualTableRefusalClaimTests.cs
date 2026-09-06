@@ -293,11 +293,20 @@ public sealed class VirtualTableRefusalClaimTests
             return Regex.Matches(src, @"throw (RecordPatches\.)?[A-Za-z]+ShapeGap\(").Count;
         });
 
-        // 48 in the sixteen populators + 3 in RecordPatches.cs's dispatch chain + 4 in
+        // 51 in the sixteen populators + 3 in RecordPatches.cs's dispatch chain + 4 in
         // AllProfileWritePatches.cs. A refusal DELETED rather than corrected would mean a
         // precondition went back to being read as a default, which is the failure this whole
         // change is about, so the count is asserted exactly.
-        Assert.Equal(55, total);
+        //
+        // 55 -> 58 (#2938): the Table Metadata populator gained three refusals when TableType
+        // and DataClassification stopped being answered with a constant. Two guard the option
+        // set itself (the column carries no option metadata / its option string is empty) and
+        // one guards a DECLARED member name the column's own option set does not list. That
+        // last one is the point of the change rather than incidental to it: defaulting it to
+        // ordinal 0 would assert "Normal" about a table that declared something else, which is
+        // the same silent wrong answer the issue is about. Going UP is the expected direction
+        // here; this assertion exists to catch the count going down.
+        Assert.Equal(58, total);
     }
 
 

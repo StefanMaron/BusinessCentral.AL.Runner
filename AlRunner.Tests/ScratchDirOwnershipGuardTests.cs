@@ -49,10 +49,11 @@ public sealed class ScratchDirOwnershipGuardTests
     private const string Expression = "Path.GetTempPath()";
 
     /// <summary>
-    /// File name → (how many non-comment <c>Path.GetTempPath()</c> occurrences are permitted,
-    /// why they cannot be owned). The count is deliberately exact in both directions: too many
-    /// means a new unowned site slipped into an already-allowlisted file, too few means the
-    /// entry is stale and is silently pre-approving the next one.
+    /// Source path, relative to <c>AlRunner.Tests</c> → (how many non-comment
+    /// <c>Path.GetTempPath()</c> occurrences are permitted, why they cannot be owned). The
+    /// count is deliberately exact in both directions: too many means a new unowned site
+    /// slipped into an already-allowlisted file, too few means the entry is stale and is
+    /// silently pre-approving the next one.
     /// </summary>
     private static readonly Dictionary<string, (int Count, string Why)> Allowed = new()
     {
@@ -95,11 +96,34 @@ public sealed class ScratchDirOwnershipGuardTests
             (1, "drives SweepStale over the real temp root, which is the behaviour under test"),
     };
 
-    /// <summary>Non-comment occurrences of the expression, per file name.</summary>
+    /// <summary>
+    /// The allowlist key: the source path relative to <see cref="TestsDir"/>, with <c>/</c>
+    /// separators on every platform. For a top-level file this is exactly the file name, which
+    /// is why widening the scan below left all of the entries above unchanged — but a file in a
+    /// subdirectory can no longer alias a same-named top-level entry and inherit its budget.
+    /// </summary>
+    private static string Key(string path) =>
+        Path.GetRelativePath(TestsDir, path).Replace(Path.DirectorySeparatorChar, '/');
+
+    /// <summary>
+    /// Every <c>.cs</c> source in the project, at ANY depth, minus build output.
+    ///
+    /// #3000: this enumerated <c>SearchOption.TopDirectoryOnly</c>, so the first test file
+    /// added below the top level would have been unguarded — and silently, because the guard
+    /// keeps reporting green for what it never looks at. <c>bin/</c> and <c>obj/</c> are
+    /// skipped because the SDK writes generated sources there
+    /// (<c>*.AssemblyInfo.cs</c>, <c>*.GlobalUsings.g.cs</c>); they are not test code, and
+    /// whether they exist depends on whether the project has been built.
+    /// </summary>
+    private static IEnumerable<string> TestSources() =>
+        Directory.EnumerateFiles(TestsDir, "*.cs", SearchOption.AllDirectories)
+            .Where(p => !Key(p).Split('/').Any(seg => seg is "bin" or "obj"));
+
+    /// <summary>Non-comment occurrences of the expression, per source path.</summary>
     private static Dictionary<string, int> Occurrences()
     {
         var found = new Dictionary<string, int>(StringComparer.Ordinal);
-        foreach (var path in Directory.EnumerateFiles(TestsDir, "*.cs", SearchOption.TopDirectoryOnly))
+        foreach (var path in TestSources())
         {
             var n = 0;
             foreach (var raw in File.ReadAllLines(path))
@@ -115,7 +139,7 @@ public sealed class ScratchDirOwnershipGuardTests
                     i += Expression.Length;
                 }
             }
-            if (n > 0) found[Path.GetFileName(path)] = n;
+            if (n > 0) found[Key(path)] = n;
         }
         return found;
     }

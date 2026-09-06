@@ -19,7 +19,7 @@ tools/ci-wait.py 2379 --timeout 2400
 | 0 | every required check passed **on the current head** — safe to report green |
 | 1 | a required check failed; **the failing log is already printed**. The list is what has reported SO FAR — while other required checks are still running it can still grow, and the verdict says how many have not reported. Do not scope a diagnosis to those names until every check has reported (a one-leg failure that turned out to be eight cost a version-specific diagnosis that was never relevant). |
 | 2 | timed out while still running — **not a verdict**, call again |
-| 3 | could not determine (auth, network, no checks) |
+| 3 | could not determine (auth, network, no checks) — **or** the required-context set could not be established without narrowing it (#3002). A ruleset read that comes back missing a context the tool already knows about is refused, because judging on the smaller set makes "every required check passed" vacuously true. |
 | 4 | **blocked, not failing** — every check passed but the merge is still refused and nothing else says why. Two causes: a *required* context is `cancelled` on this commit (#2726) — the one case where `gh run rerun` is correct, since a cancelled run has no failure log to destroy; or a *required* context produced **no check run at all** and every workflow run for the commit has finished (#2807), which is a trigger/`paths:` filter question, not a re-run. Never reach for `--admin` for either. |
 
 `ci-wait.py` reads the required contexts from the **live branch ruleset** on each
@@ -27,7 +27,16 @@ invocation (`GET /repos/{owner}/{repo}/rules/branches/main`, which reports only 
 rulesets), falling back to its built-in list and saying so loudly if that call fails. A
 required context added in the GitHub UI is therefore waited for immediately rather than
 ignored until someone edits the tool (#2785); `check_required_contexts.py` fails CI when the
-built-in lists and the live ruleset drift apart in either direction.
+built-in lists and the live ruleset drift apart in either direction. What it will **not** do is
+accept a ruleset answer that is *narrower* than its built-in list — that returns exit 3 rather
+than a verdict, because a partial read and a deliberate removal are indistinguishable from here
+and the smaller set is the one that produces a false green (#3002).
+
+**A green names how many required contexts it accounted for**, and that number is worth
+reading. On this repository a real green reads `9/9` or `10/10` checks with
+`2/2 ruleset context(s) accounted for`. Every false green in #3002 named **one** check — that
+asymmetry is the only reason a human caught three wrong verdicts in one night, before the tool
+was taught to refuse them.
 
 Where several runs of one workflow exist on one commit — normal for `require-tests.yml`, which
 has no `concurrency` block and triggers on `labeled`/`unlabeled` — the verdict comes from the
@@ -44,6 +53,50 @@ Measured across one session's 17 subagents, CI waiting was 328 of 3,282 Bash cal
 shape was wrong — 107 `gh run view` polls and 37 `sleep` loops against only 29 blocking
 `gh run watch` calls. Each poll re-sends the whole conversation; this turns ten-to-forty
 round trips into one.
+
+### A cancelled run's leftovers sit in the same rollup as the live run, and `gh pr checks` hides which is which
+
+This is the trap behind #3002, and it bites in **both** directions. The API attaches every
+check run for a commit to that commit, including check runs from workflow runs that were
+cancelled and superseded — #3003 measured **35 of the last 40 `Test Matrix` runs on `main`
+cancelled as superseded**, so this is the common case here, not an edge case.
+
+Two things make it hard to see:
+
+- **A cancelled run does not necessarily report `cancelled`.** Recorded on PR #3010's head
+  `95c16b20`: `Test Matrix` run `34002828792` has run-level `conclusion: cancelled`, and its
+  aggregate job **`All BC versions passed` concluded `failure`** — the aggregate runs
+  `if: always()` over `needs` that were killed. The live run `34004261321` was green
+  throughout. Read literally, that leftover is a failing *required* context.
+- **`gh pr checks` shows one row per context name and drops the rest.** Measured on PR #3016's
+  head `d56466a7`: the API reports **8 `cancelled` check runs**, and `gh pr checks` prints 25
+  rows, every one of them `pass` — not one cancellation appears. So it cannot corroborate a
+  supersession question in either direction; it never shows you *which run* produced the row,
+  and when the newest entry for a name is a leftover from a cancelled run, that leftover is the
+  entire output and is indistinguishable from a live failure.
+
+**The reliable check is the run, not the rollup:**
+
+```bash
+gh run view <run-id> --json headSha,conclusion,status
+# and, for the whole commit:
+gh api "repos/StefanMaron/BusinessCentral.AL.Runner/actions/runs?head_sha=<FULL-SHA>&per_page=100" \
+  --jq '.workflow_runs[] | "\(.id) \(.name) \(.status) \(.conclusion)"'
+```
+
+A `cancelled` conclusion — on an older `headSha`, or on a run of the same workflow that a newer
+run has replaced — is **not this push's verdict**, whatever its individual jobs say. Two runs of
+the same workflow on one SHA is normal here, not exotic: `require-tests.yml` deliberately
+carries no `concurrency` block and triggers on `labeled`/`unlabeled` (#2726).
+
+`head_sha` needs the **full** 40-character SHA. An abbreviated one returns `"workflow_runs": []`
+— which reads exactly like "no runs for this commit" and is a false negative, not an error.
+
+`tools/ci-wait.py` applies all of this itself since #3002: a conclusion from a cancelled run is
+reclassified as a cancellation (so it can block, but can never be reported as a failure or
+counted toward a green), and a name whose newest check run belongs to a run being replaced by
+one still in flight gets no verdict in either direction. You still need the recipe above when
+reading a run by hand.
 
 ## 1. Check for merge conflicts first
 

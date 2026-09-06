@@ -174,11 +174,15 @@ public sealed class ObjectMetadataSystemTableRefusalTests
         Assert.DoesNotContain("new RunnerOutOfScopeException(", code, StringComparison.Ordinal);
         Assert.DoesNotContain("docs/scope.md", code, StringComparison.Ordinal);
 
-        // 12 call sites + the factory declaration. A new refusal added without the factory
-        // would fail the two assertions above; this one catches a refusal being DELETED
-        // silently, which would mean a precondition went back to being read as a default.
-        var uses = src.Split("ObjectMetadataShapeGap(").Length - 1;
-        Assert.Equal(13, uses);
+        // TWELVE refusals, still, but they no longer all carry the same type (#2946). Ten go
+        // through ObjectMetadataShapeGap (10 call sites + the factory declaration = 11), and
+        // ProviderHasAnyRow's two go through BcShape, which raises BcShapeGapException: those
+        // two are the only sites in this file where the runner could not READ a BC internal,
+        // as opposed to reading one successfully and disliking the answer. The counts are
+        // asserted separately so a refusal deleted from either group is still caught — a
+        // deletion would mean a precondition went back to being read as a default.
+        Assert.Equal(11, src.Split("ObjectMetadataShapeGap(").Length - 1);
+        Assert.Equal(2, src.Split("BcShape.").Length - 1);
     }
 
     // ── The mechanism: a docAnchor may name its own doc file (backward compatible) ───────
