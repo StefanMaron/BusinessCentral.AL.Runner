@@ -248,10 +248,13 @@ required context is cancellable on its own commit any more; `check_required_cont
 CI if one becomes so again. And `ci-wait.py` now returns **exit 4** naming the cancelled
 context instead of reporting GREEN.
 
-If you still land in this state, re-run just the cancelled run — it clears in under a minute,
-and that is NOT the forbidden `gh run rerun`, because a cancelled run has no failure log to
-destroy. Do not reach for `--admin`: protection is working, the context genuinely is not
-satisfied.
+If you still land in this state, re-run just the cancelled run — it clears in under a minute.
+That is NOT the forbidden `gh run rerun`, **provided nothing on that commit concluded
+`failure` before the cancellation**: a check run can fail on its merits and only then have its
+run cancelled, and re-running destroys that log like any other. Check the commit's check runs
+first and, if one failed, read its log or take a second run by another route
+(`ci-verdicts.md` §3, §5). Do not reach for `--admin`: protection is working, the context
+genuinely is not satisfied.
 
 **Auto-merge drains the queue — but a drained queue is not a verified one.** The
 "branches must be up to date" protection rule was removed, so arming several PRs lets them

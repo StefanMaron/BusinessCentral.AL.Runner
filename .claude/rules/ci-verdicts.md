@@ -20,7 +20,7 @@ tools/ci-wait.py 2379 --timeout 2400
 | 1 | a required check failed; **the failing log is already printed**. The list is what has reported SO FAR — while other required checks are still running it can still grow, and the verdict says how many have not reported. Do not scope a diagnosis to those names until every check has reported (a one-leg failure that turned out to be eight cost a version-specific diagnosis that was never relevant). |
 | 2 | timed out while still running — **not a verdict**, call again |
 | 3 | could not determine (auth, network, no checks) — **or** the required-context set could not be established without narrowing it (#3002). A ruleset read that comes back missing a context the tool already knows about is refused, because judging on the smaller set makes "every required check passed" vacuously true. |
-| 4 | **blocked, not failing** — every check passed but the merge is still refused and nothing else says why. Two causes: a *required* context is `cancelled` on this commit (#2726) — the one case where `gh run rerun` is correct, since a cancelled run has no failure log to destroy; or a *required* context produced **no check run at all** and every workflow run for the commit has finished (#2807), which is a trigger/`paths:` filter question, not a re-run. Never reach for `--admin` for either. |
+| 4 | **blocked, not failing** — every check passed but the merge is still refused and nothing else says why. Two causes: a *required* context is `cancelled` on this commit (#2726) — the one case where `gh run rerun` can be correct, but only after checking that no check run on this commit concluded `failure` before the cancellation (see section 3); or a *required* context produced **no check run at all** and every workflow run for the commit has finished (#2807), which is a trigger/`paths:` filter question, not a re-run. Never reach for `--admin` for either. |
 
 `ci-wait.py` reads the required contexts from the **live branch ruleset** on each
 invocation (`GET /repos/{owner}/{repo}/rules/branches/main`, which reports only *active*
@@ -142,6 +142,28 @@ run — not even after saving the log.** A re-run is never a diagnostic step —
 evidence a diagnosis needs, and section 5's flake-evidence standard needs a second, independent
 run, not the same one overwritten in place. See "Getting a second run of the same commit"
 under section 5 for how to get one without this.
+
+### "Cancelled" does not mean "no log to lose"
+
+This rule used to exempt cancelled runs outright, on the reasoning that a cancelled run never
+produced a failure log. It can have produced one: a check run concludes `failure` **on its
+merits** and its parent workflow run is cancelled only afterwards, so the log is real and
+`gh run rerun` overwrites it just the same. Measured on head `c6377b30` (#3142), where
+`preflight.py unit tests` carried three check runs for the one name — a `failure`, a
+`cancelled` from run 34037049850, and a newest `failure` from run 34037050361 whose own
+run-level conclusion was `failure`.
+
+So before re-running a cancelled required context, ask whether anything on that commit failed
+on its merits:
+
+```bash
+gh api "repos/StefanMaron/BusinessCentral.AL.Runner/commits/<FULL-SHA>/check-runs?per_page=100" \
+  --jq '.check_runs[] | select(.conclusion=="failure") | "\(.name) \(.id)"'
+```
+
+Nothing failing → re-run the cancelled run; that is the #2726 case and it stands. Something
+failing → read and save its log first, or get the second run by one of the routes in section 5
+instead.
 
 ## 4. Diagnose from the log, not from a theory
 

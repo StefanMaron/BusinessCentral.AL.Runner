@@ -767,8 +767,10 @@ Hard limits, whatever the loop concludes:
 - Never force-push a branch you do not own, and never `--admin` past a failing check.
 - Never merge a PR authored by someone else.
 - Never re-run a **failed** CI job — it destroys the log permanently. Re-running a **cancelled**
-  one is fine; it has no failure log to lose, and a cancelled required context can block a merge
-  with everything green.
+  required context is still the fix when one blocks a merge with everything green, but check
+  first that nothing on that commit concluded `failure` before the cancellation — a check run
+  can fail on its merits inside a run somebody cancelled afterwards, and that log is as real as
+  any other (`ci-verdicts.md` §3).
 - Never delete a shared cache or a scratch directory you did not create. Other work may be live.
 - Never read a secret, and never try to unlock a credential agent.
 
