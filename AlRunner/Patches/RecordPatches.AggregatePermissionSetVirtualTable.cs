@@ -332,58 +332,82 @@ public static partial class RecordPatches
         const string rt = "Microsoft.Dynamics.Nav.Runtime.";
 
         _apsProviderType = ResolveType(rt + "AggregatePermissionSetDataProvider", rt + "AggregatePermissionSetDataProvider")
-            ?? throw new InvalidOperationException("AggregatePermissionSetDataProvider type not found in Ncl");
+            ?? throw AggregatePermissionSetBcShapeGap(
+                "AggregatePermissionSetDataProvider",
+                "type not found in Ncl — the Aggregate Permission Set table cannot be populated");
 
         var tNavSession = ResolveType(rt + "NavSession", rt + "NavSession")
-            ?? throw new InvalidOperationException("NavSession type not found");
+            ?? throw AggregatePermissionSetBcShapeGap(
+                "NavSession",
+                "type not found in Ncl — the Aggregate Permission Set table cannot be populated");
         var tNclMetadata = ResolveType(rt + "NCLMetadata", rt + "NCLMetadata")
-            ?? throw new InvalidOperationException("NCLMetadata type not found");
+            ?? throw AggregatePermissionSetBcShapeGap(
+                "NCLMetadata",
+                "type not found in Ncl — the Aggregate Permission Set table cannot be populated");
         var tNavValue = ResolveType(rt + "NavValue", "Microsoft.Dynamics.Nav.Types.NavValue")
-            ?? throw new InvalidOperationException("NavValue type not found");
+            ?? throw AggregatePermissionSetBcShapeGap(
+                "NavValue",
+                "type not found in Ncl or Types — the Aggregate Permission Set table cannot be populated");
         var tNavCode = ResolveType(rt + "NavCode", "Microsoft.Dynamics.Nav.Types.NavCode")
-            ?? throw new InvalidOperationException("NavCode type not found");
+            ?? throw AggregatePermissionSetBcShapeGap(
+                "NavCode",
+                "type not found in Ncl or Types — the Aggregate Permission Set table cannot be populated");
         var tPermissionSetKey = ResolveType(
             "Microsoft.Dynamics.Nav.Runtime.Permissions.PermissionSetKey",
             "Microsoft.Dynamics.Nav.Runtime.Permissions.PermissionSetKey")
-            ?? throw new InvalidOperationException("PermissionSetKey type not found");
+            ?? throw AggregatePermissionSetBcShapeGap(
+                "Permissions.PermissionSetKey",
+                "type not found in Ncl — the Aggregate Permission Set table cannot be populated");
         var tPermissionSetRecord = _apsProviderType.GetNestedType("PermissionSetRecord", BindingFlags.Public | BindingFlags.NonPublic)
-            ?? throw new InvalidOperationException("AggregatePermissionSetDataProvider.PermissionSetRecord type not found");
+            ?? throw AggregatePermissionSetBcShapeGap(
+                "AggregatePermissionSetDataProvider.PermissionSetRecord",
+                "nested type not found — the Aggregate Permission Set table cannot be populated");
 
         _apsProviderCtor = _apsProviderType.GetConstructor(
             BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
             binder: null, types: new[] { tNavSession, tNclMetadata }, modifiers: null)
-            ?? throw new InvalidOperationException(
-                "AggregatePermissionSetDataProvider(NavSession, NCLMetadata) ctor not found");
+            ?? throw AggregatePermissionSetBcShapeGap(
+                "AggregatePermissionSetDataProvider(NavSession, NCLMetadata)",
+                "constructor not found — the Aggregate Permission Set table cannot be populated");
 
         _apsGetSystemPermissionSets = _apsProviderType.GetMethod("GetSystemPermissionSets",
             BindingFlags.NonPublic | BindingFlags.Instance, binder: null,
             types: new[] { tNavValue, tNavCode }, modifiers: null)
-            ?? throw new InvalidOperationException(
-                "AggregatePermissionSetDataProvider.GetSystemPermissionSets(NavValue, NavCode) not found");
+            ?? throw AggregatePermissionSetBcShapeGap(
+                "AggregatePermissionSetDataProvider.GetSystemPermissionSets(NavValue, NavCode)",
+                "method not found — the Aggregate Permission Set table cannot be populated");
 
         _apsGetTenantPermissionSets = _apsProviderType.GetMethod("GetTenantPermissionSets",
             BindingFlags.NonPublic | BindingFlags.Instance, binder: null,
             types: new[] { tNavValue, tNavCode }, modifiers: null)
-            ?? throw new InvalidOperationException(
-                "AggregatePermissionSetDataProvider.GetTenantPermissionSets(NavValue, NavCode) not found");
+            ?? throw AggregatePermissionSetBcShapeGap(
+                "AggregatePermissionSetDataProvider.GetTenantPermissionSets(NavValue, NavCode)",
+                "method not found — the Aggregate Permission Set table cannot be populated");
 
         _apsCreateRecordBuffer = _apsProviderType.GetMethod("CreateRecordBuffer",
             BindingFlags.NonPublic | BindingFlags.Instance, binder: null,
             types: new[] { tPermissionSetRecord, typeof(string) }, modifiers: null)
-            ?? throw new InvalidOperationException(
-                "AggregatePermissionSetDataProvider.CreateRecordBuffer(PermissionSetRecord, string) not found");
+            ?? throw AggregatePermissionSetBcShapeGap(
+                "AggregatePermissionSetDataProvider.CreateRecordBuffer(PermissionSetRecord, string)",
+                "method not found — the Aggregate Permission Set table cannot be populated");
 
         _apsRecordKeyField = tPermissionSetRecord.GetField("permissionSetKey",
             BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
-            ?? throw new InvalidOperationException("PermissionSetRecord.permissionSetKey field not found");
+            ?? throw AggregatePermissionSetBcShapeGap(
+                "PermissionSetRecord.permissionSetKey",
+                "field not found — the Aggregate Permission Set table cannot be populated");
 
         _apsKeyAppIdProp = tPermissionSetKey.GetProperty("AppId",
             BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
-            ?? throw new InvalidOperationException("PermissionSetKey.AppId property not found");
+            ?? throw AggregatePermissionSetBcShapeGap(
+                "PermissionSetKey.AppId",
+                "property not found — the Aggregate Permission Set table cannot be populated");
 
         _apsSessionNclMetadata = tNavSession.GetProperty("NCLMetadata",
             BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
-            ?? throw new InvalidOperationException("NavSession.NCLMetadata property not found");
+            ?? throw AggregatePermissionSetBcShapeGap(
+                "NavSession.NCLMetadata",
+                "property not found — the Aggregate Permission Set table cannot be populated");
 
         _apsReflectionReady = true;
     }
@@ -397,10 +421,14 @@ public static partial class RecordPatches
         var nclAsm = dataAccess.GetType().Assembly;
         const string rt = "Microsoft.Dynamics.Nav.Runtime.";
         var tDataAccess = nclAsm.GetType(rt + "DataAccess")
-            ?? throw new InvalidOperationException("DataAccess type not found in Ncl");
+            ?? throw AggregatePermissionSetBcShapeGap(
+                "DataAccess",
+                "type not found in Ncl — the Aggregate Permission Set table cannot be populated");
         _apsDataAccessSession = tDataAccess.GetProperty("Session",
             BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
-            ?? throw new InvalidOperationException("DataAccess.Session not found");
+            ?? throw AggregatePermissionSetBcShapeGap(
+                "DataAccess.Session",
+                "property not found — the Aggregate Permission Set table cannot be populated");
         _apsLiveGuardReady = true;
     }
 

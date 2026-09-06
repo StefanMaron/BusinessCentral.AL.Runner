@@ -329,9 +329,9 @@ public static partial class RecordPatches
         var code = RoleIdNavCode(permissionSet, MetadataPermissionSetRoleIdLength);
         _mpsNavStringValueValue ??= code.GetType().GetProperty("Value",
             BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
-            ?? throw new InvalidOperationException(
-                $"[MetadataPermissionSet] {code.GetType().Name}.Value not found — the Name "
-                + "fallback cannot read the Role ID back off BC's own NavCode");
+            ?? throw MetadataPermissionSetBcShapeGap(
+                $"{code.GetType().Name}.Value",
+                "property not found, so the Name fallback cannot read the Role ID back off BC's own NavCode — the Metadata Permission Set table cannot be populated");
         return _mpsNavStringValueValue.GetValue(code) as string ?? string.Empty;
     }
 
@@ -349,21 +349,33 @@ public static partial class RecordPatches
         const string rt = "Microsoft.Dynamics.Nav.Runtime.";
 
         var tNavGuid = ResolveType(rt + "NavGuid", "Microsoft.Dynamics.Nav.Types.NavGuid")
-            ?? throw new InvalidOperationException("NavGuid type not found");
+            ?? throw MetadataPermissionSetBcShapeGap(
+                "NavGuid",
+                "type not found in Ncl or Types — the Metadata Permission Set table cannot be populated");
         _mpsNavGuidCreate = tNavGuid.GetMethod("Create", BindingFlags.Public | BindingFlags.Static,
             binder: null, types: new[] { typeof(Guid) }, modifiers: null)
-            ?? throw new InvalidOperationException("NavGuid.Create(Guid) not found");
+            ?? throw MetadataPermissionSetBcShapeGap(
+                "NavGuid.Create(Guid)",
+                "method not found — the Metadata Permission Set table cannot be populated");
 
         var tNavBoolean = ResolveType(rt + "NavBoolean", "Microsoft.Dynamics.Nav.Types.NavBoolean")
-            ?? throw new InvalidOperationException("NavBoolean type not found");
+            ?? throw MetadataPermissionSetBcShapeGap(
+                "NavBoolean",
+                "type not found in Ncl or Types — the Metadata Permission Set table cannot be populated");
         _mpsNavBooleanCreate = tNavBoolean.GetMethod("Create", BindingFlags.Public | BindingFlags.Static,
             binder: null, types: new[] { typeof(bool) }, modifiers: null)
-            ?? throw new InvalidOperationException("NavBoolean.Create(bool) not found");
+            ?? throw MetadataPermissionSetBcShapeGap(
+                "NavBoolean.Create(bool)",
+                "method not found — the Metadata Permission Set table cannot be populated");
 
         var tNavCode = ResolveType(rt + "NavCode", "Microsoft.Dynamics.Nav.Types.NavCode")
-            ?? throw new InvalidOperationException("NavCode type not found");
+            ?? throw MetadataPermissionSetBcShapeGap(
+                "NavCode",
+                "type not found in Ncl or Types — the Metadata Permission Set table cannot be populated");
         _mpsNavCodeCtor = tNavCode.GetConstructor(new[] { typeof(int), typeof(string) })
-            ?? throw new InvalidOperationException("NavCode(int,string) ctor not found");
+            ?? throw MetadataPermissionSetBcShapeGap(
+                "NavCode(int, string)",
+                "constructor not found — the Metadata Permission Set table cannot be populated");
 
         _ = nclAsm;
         _mpsReflectionReady = true;
