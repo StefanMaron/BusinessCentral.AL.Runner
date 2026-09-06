@@ -76,15 +76,26 @@
 //   _userRowSeededForThisBundle stays false when no row was written.
 //
 //   WHICH REFUSALS ARE REACHABLE, MEASURED. The review that found this predicted the bite would
-//   be BC's UNIQUE key on "User Name": a --test-data backup carrying its own TESTUSER would
-//   refuse the insert and leave no row for the runner's security id. On BC 28.1.49838.53910 it
-//   does not, because the runner's in-memory provider enforces only the PRIMARY key — the seed
-//   lands and the run is left with two rows sharing a user name instead, which real BC would
-//   refuse (AlRunner#2983, with the reproducer). So today the reachable refusal is the primary-key
-//   one, which is the benign AlreadyPresent case, and Refused is reached only from the exception
-//   path. It is implemented anyway: the bug was discarding the signal, and #2983 is exactly the
-//   change that would make Refused reachable from AL.
-//   AlRunner.Tests/Fixtures/SessionUserRowNameCollision is the canary for that moment.
+//   be a UNIQUE KEY on "User Name": a --test-data backup carrying its own TESTUSER would refuse
+//   the insert and leave no row for the runner's security id. Measured on BC 28.1.49838.53910
+//   (AlRunner.Tests/Fixtures/SessionUserRowNameCollision) the seed lands anyway, and the
+//   mechanism is not the one predicted either way:
+//
+//     * The runner's store for this table is BC's own CreateTempDataAccess, which enforces the
+//       PRIMARY key and nothing else.
+//     * On a real tier the duplicate user name is refused by a TRIGGER, not an index. Ncl's
+//       SystemTableTriggers.OnBeforeInsertAsync `case 2000000120:` arm validates a unique user
+//       name (with the Windows SID, authentication email and application id) before writing.
+//       UserTableTriggerPatches's own header records that the runner reproduces exactly one
+//       thing from that arm — its User Property companion insert — and that "None of that
+//       [validation] is reproduced here".
+//
+//   So the run is left holding two rows sharing a user name where BC would hold one
+//   (AlRunner#2983, with the reproducer). Today's reachable refusal is the primary-key one,
+//   which is the benign AlreadyPresent case; Refused is reached only from the exception path.
+//   It is implemented anyway: the bug was discarding the signal, and #2983 — closed by
+//   reproducing the trigger's validation or by enforcing uniqueness in the store — is exactly
+//   what would make Refused reachable from AL. That fixture is the canary for the moment it is.
 //
 // PRECOMPILED-DLL RESPECT
 //   No AL business-logic body is touched. NavRecord, NCLMetaTable, NCLMetaField and NavValue are
@@ -117,12 +128,14 @@ public static partial class RecordPatches
     /// somebody looks. Discarding that <c>bool</c> made the two indistinguishable, logged
     /// neither, and marked the bundle seeded either way.
     ///
-    /// Which refusals are reachable is measured, not assumed. Real BC's User table also carries
-    /// a UNIQUE key on "User Name", but the runner's in-memory provider enforces only the
-    /// primary key (AlRunner#2983), so today a same-named foreign user does NOT refuse this
-    /// insert. <see cref="Refused"/> is therefore reached only from the exception path for now.
-    /// It is implemented regardless: the defect was discarding the signal, and #2983 is exactly
-    /// the change that makes the second refusal reachable from AL.
+    /// Which refusals are reachable is measured, not assumed. The runner's store for this table
+    /// is BC's own <c>CreateTempDataAccess</c>, which enforces the primary key only; and real
+    /// BC refuses a duplicate user name from its system-table TRIGGER
+    /// (<c>SystemTableTriggers.OnBeforeInsertAsync</c>, <c>case 2000000120:</c>), which
+    /// <c>UserTableTriggerPatches</c> deliberately does not reproduce. So today a same-named
+    /// foreign user does NOT refuse this insert (AlRunner#2983), and <see cref="Refused"/> is
+    /// reached only from the exception path. It is implemented regardless: the defect was
+    /// discarding the signal, and #2983 is exactly what makes the second refusal reachable.
     /// </summary>
     internal enum UserRowSeedOutcome
     {
@@ -228,12 +241,29 @@ public static partial class RecordPatches
             // NavRecordAlreadyExistsException a non-trapping path would raise.
             if (inner.GetType().Name == "NavRecordAlreadyExistsException")
             {
-                _userRowSeededForThisBundle = true;
-                PerfTrace.Log($"UserSystemTable: User row '{userName}' was already present");
-                return UserRowSeedOutcome.AlreadyPresent;
+                // Confirmed by the SAME Get the non-exception path uses, rather than inferred
+                // from the exception's type name. This method's stated invariant is that
+                // _userRowSeededForThisBundle is true only when a row for THIS security id is
+                // actually present, and "something already existed" is not evidence of that —
+                // it is evidence that something clashed. Setting the flag off the type name
+                // alone would be the same shape of unchecked claim the discarded ALInsert bool
+                // was, in the one branch that still made it.
+                if (SessionUserRowExists(session, userSid))
+                {
+                    _userRowSeededForThisBundle = true;
+                    PerfTrace.Log($"UserSystemTable: User row '{userName}' was already present");
+                    return UserRowSeedOutcome.AlreadyPresent;
+                }
+                outcome = UserRowSeedOutcome.Refused;
+                refusalDetail = $"{inner.GetType().Name}: {inner.Message} — and no row for the "
+                    + "session user's own security id is present, so the clash was with some "
+                    + "other row";
             }
-            outcome = UserRowSeedOutcome.Refused;
-            refusalDetail = $"{inner.GetType().Name}: {inner.Message}";
+            else
+            {
+                outcome = UserRowSeedOutcome.Refused;
+                refusalDetail = $"{inner.GetType().Name}: {inner.Message}";
+            }
         }
 
         switch (outcome)
@@ -361,10 +391,18 @@ public static partial class RecordPatches
     }
 
     /// <summary>
-    /// Name the reason the insert was refused, for the stderr line. The overwhelmingly likely
-    /// one is the unique key on "User Name" — a --test-data backup carrying its own user of the
-    /// same name — so that case is identified explicitly instead of being described as an
-    /// unexplained refusal.
+    /// Name the reason the insert was refused, for the stderr line. The case worth identifying
+    /// explicitly, rather than reporting as an unexplained refusal, is a second user already
+    /// holding this user name — what a <c>--test-data</c> backup carrying its own TESTUSER
+    /// produces.
+    ///
+    /// On a real tier that name collision is refused by BC's system-table TRIGGER, not by an
+    /// index: Ncl's <c>SystemTableTriggers.OnBeforeInsertAsync</c> <c>case 2000000120:</c> arm
+    /// validates a unique user name (along with the Windows SID, authentication email and
+    /// application id) before writing. <c>UserTableTriggerPatches</c>'s own header records that
+    /// the runner reproduces only that arm's User Property companion insert and none of its
+    /// validation, so the runner does not refuse the duplicate here at all. This text therefore
+    /// describes what BC would do, and says plainly that the runner did something else.
     /// </summary>
     private static string DescribeUserRowRefusal(object session, NCLMetaTable userMeta, string userName)
     {
@@ -377,12 +415,18 @@ public static partial class RecordPatches
             {
                 var otherSid = probe.GetFieldValue(FieldNoByNameOnUser(userMeta, UserSecurityIdFieldName));
                 return $"the table already holds a DIFFERENT user named \"{userName}\" whose "
-                    + $"User Security ID is {otherSid}, and BC's User table has a unique key on "
-                    + "\"User Name\" — so the session user's own row cannot be added alongside it "
-                    + "(a --test-data backup containing this user name does exactly this)";
+                    + $"User Security ID is {otherSid} (a --test-data backup carrying its own user "
+                    + "of this name does exactly this). On a real tier BC refuses that collision in "
+                    + "SystemTableTriggers.OnBeforeInsertAsync's case 2000000120: arm, which "
+                    + "validates a unique user name before writing — NOT in a unique index. The "
+                    + "runner reproduces only that arm's User Property companion insert and none of "
+                    + "its validation (see AlRunner/Patches/UserTableTriggerPatches.cs), so if this "
+                    + "line is being printed the refusal came from somewhere else and is worth "
+                    + "reading closely";
             }
             return "no row holds the session user's security id and no other row holds its user "
-                + "name either, so the refusal came from neither key";
+                + "name either, so the refusal came from neither the primary key nor a name "
+                + "collision";
         }
         catch (Exception ex)
         {

@@ -22,20 +22,24 @@
 //   pre-fix runner.
 //
 // WHAT THE REVIEW PREDICTED, AND WHAT WAS MEASURED
-//   The review named a concrete bite: BC's User table has a unique key on "User Name", so a
-//   --test-data backup containing a TESTUSER would refuse the seed and silently defeat #2296.
-//   MEASURED on BC 28.1.49838.53910 (SessionUserRowNameCollision, below) it does not: the
-//   runner's in-memory provider enforces only the PRIMARY key on "User Security ID", so the
-//   seed lands and the session user keeps its own row. The run is instead left holding two rows
-//   with the same user name, which real BC would refuse — a separate provider gap, filed as
-//   AlRunner#2983 rather than fixed here, and NOT asserted by the fixture, which would be
-//   writing a wrong number into a test.
+//   The review named a concrete bite: a unique key on User."User Name" would make a --test-data
+//   backup containing a TESTUSER refuse the seed and silently defeat #2296. MEASURED on
+//   BC 28.1.49838.53910 (SessionUserRowNameCollision, below) the seed lands anyway, and the
+//   mechanism is an index on neither side. The runner's store for this table is BC's own
+//   CreateTempDataAccess, which enforces the PRIMARY key on "User Security ID" and nothing
+//   else; and real BC refuses a duplicate user name from a TRIGGER, not an index —
+//   SystemTableTriggers.OnBeforeInsertAsync's `case 2000000120:` arm validates a unique user
+//   name before writing, and AlRunner/Patches/UserTableTriggerPatches.cs's own header states
+//   that the runner reproduces only that arm's User Property companion insert and that "None of
+//   that [validation] is reproduced here". The run is therefore left holding two rows with the
+//   same user name, which real BC would refuse — filed as AlRunner#2983 rather than fixed here,
+//   and NOT asserted by the fixture, which would be writing a wrong number into a test.
 //
 //   Consequence worth stating plainly: the Refused branch is correct and is what the review
 //   asked for, but nothing reachable from AL can trigger it today. It is exercised by the
-//   exception path only. The name-collision fixture is the canary — if unique secondary keys
-//   ever become enforceable, its "the session user still gets its own row" test fails, which is
-//   exactly when someone must decide what the seed does about a genuine refusal.
+//   exception path only. The name-collision fixture is the canary — whichever way #2983 is
+//   closed, its "the session user still gets its own row" test fails, which is exactly when
+//   someone must decide what the seed does about a genuine refusal.
 using System.Diagnostics;
 using System.Text;
 using Xunit;
@@ -146,9 +150,10 @@ public sealed class SessionUserRowRefusalTests
                 $"expected a clean run. exit={exit}\nstdout:\n{stdout}\nstderr:\n{stderr}");
 
             // Measured: the insert genuinely happens, so the seed reports the outcome it
-            // actually reached. This is the assertion that would flip if unique secondary keys
-            // became enforceable — at which point the line becomes the REFUSED one and the
-            // fixture's AL test fails too, which is the intended alarm.
+            // actually reached. This is the assertion that flips when #2983 is closed — whether
+            // by reproducing BC's OnBeforeInsertAsync validation for table 2000000120 or by
+            // enforcing uniqueness in the store — at which point the line becomes the REFUSED
+            // one and the fixture's AL test fails too, which is the intended alarm.
             Assert.Contains("UserSystemTable: seeded User row 'TESTUSER'", stderr);
             Assert.DoesNotContain("was already present", stderr);
             Assert.DoesNotContain("REFUSED", stderr);

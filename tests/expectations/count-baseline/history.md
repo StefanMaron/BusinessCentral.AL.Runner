@@ -564,7 +564,15 @@ seeds its own session user into the User system table (2000000120), and the suit
 row exists with the identity BcRuntime put on the skeleton NavSession, that it carries the User
 Property (2000000121) companion row BC creates alongside every user, that a TableRelation to
 User."User Security ID" accepts UserSecurityId(), and -- the negative control -- that a security
-id belonging to no user is still refused. Measured on an actual run (BC 28.1.49838.53910):
-268 tests across 51 app groups, up from 264/50. No `absentOn`: the bundle declares
+id belonging to no user is still refused. No `absentOn`: the bundle declares
 `"platform": "27.0.0.0"`, names only System-application tables that exist on 27.0 and carries no
 preprocessor gating, so it contributes the same 4 tests on every leg.
+
+The group's own line carries the only number that gates -- `"session-user-row": { "tests": 4 }`
+-- and the suite total is derived from the lines rather than written down, so no aggregate here
+is load-bearing. An earlier draft of this paragraph recorded "268 tests across 51 app groups, up
+from 264/50" as the suite total; that was true when it was measured and had already gone stale
+by the time this branch merged, because several other groups landed on `main` in between. The
+final run on this branch reports **282**. The lesson, not the number, is the point: a suite-wide
+total written into this file dates the moment it was measured, while the per-group line does
+not.

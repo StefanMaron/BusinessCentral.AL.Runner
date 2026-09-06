@@ -3,15 +3,29 @@
 //
 // TestExecutor runs a bundle's own Install triggers before
 // RecordPatches.EnsureUserSystemTableRowSeeded, so this row is in place when the seed executes.
-// BC's User table has a UNIQUE key on "User Name" as well as its primary key on
-// "User Security ID", so the seed's insert is refused -- and, unlike the primary-key refusal
-// next door in SessionUserRowAlreadyPresent, it leaves NO row for the session user's own
-// security id.
+// This is the shape a --test-data backup containing its own TESTUSER produces.
 //
-// This is the shape a --test-data backup containing its own TESTUSER produces, and it is what
-// silently defeated the entire #2296 fix: the seed used DataError.TrapError, which converts the
-// refusal into a `false` return rather than an exception, discarded that bool, logged nothing,
-// and set _userRowSeededForThisBundle = true regardless.
+// WHAT REFUSES A DUPLICATE USER NAME, AND WHERE
+//   On a real tier it is BC's system-table TRIGGER, not an index. Ncl's
+//   SystemTableTriggers.OnBeforeInsertAsync has a `case 2000000120:` arm that validates a unique
+//   user name -- along with the Windows SID, authentication email and application id -- before
+//   the row is written. AlRunner/Patches/UserTableTriggerPatches.cs's own header records that
+//   the runner reproduces exactly one thing from that arm, its User Property (2000000121)
+//   companion insert, and states in as many words that "None of that [validation] is reproduced
+//   here".
+//
+//   So the runner does not refuse this collision at all: the store behind the User table is
+//   BC's own CreateTempDataAccess, which enforces the primary key and nothing else. MEASURED --
+//   SurcTheSessionUserStillGetsItsOwnRow next door observes the seed landing anyway, and the run
+//   is left holding two rows that share a user name where BC would hold one. That divergence is
+//   AlRunner#2983.
+//
+// WHAT THIS FIXTURE IS FOR
+//   It measures the hazard the #2941 review predicted, end to end, and shows the fix survives
+//   it. It is also the canary for #2983: whichever way that gets closed -- reproducing the
+//   trigger's validation, or enforcing uniqueness in the store -- the seed starts being refused
+//   here, SurcTheSessionUserStillGetsItsOwnRow fails, and RecordPatches' Refused branch becomes
+//   reachable from AL for the first time.
 codeunit 70520 "SURC Installer"
 {
     Subtype = Install;
@@ -24,8 +38,8 @@ codeunit 70520 "SURC Installer"
         Evaluate(CollidingSid, CollidingSidTok);
         UserRec.Init();
         UserRec."User Security ID" := CollidingSid;
-        // Same NAME as the runner's session user, different security id -- the unique key on
-        // "User Name" is what the seed then collides with.
+        // Same NAME as the runner's session user, different security id. This is the collision
+        // BC's OnBeforeInsertAsync case 2000000120: arm would refuse and the runner does not.
         UserRec."User Name" := CopyStr(UserId(), 1, MaxStrLen(UserRec."User Name"));
         UserRec."Full Name" := BackupUserTok;
         UserRec.Insert();

@@ -4,9 +4,14 @@
   "publisher": "AL Runner",
   "version": "1.0.0.0",
   "brief": "#2941 review: what a User row carrying the session user's NAME actually does to the seed. Measured, not assumed.",
-  "description": "The #2941 review predicted that BC's unique key on User.\"User Name\" would make a --test-data backup containing its own TESTUSER refuse the seed and silently defeat #2296. This fixture arranges exactly that collision -- its Install codeunit writes a different security id under the session user's own user name, and Install triggers run ahead of EnsureUserSystemTableRowSeeded -- and the prediction does not hold: the runner's in-memory provider enforces only the PRIMARY key, so the seed lands and the session user keeps a row reachable by its own id. What the run is left with instead is two rows sharing a user name, which real BC would refuse; that divergence is a separate provider gap, filed as AlRunner#2983, and is deliberately not asserted here. This fixture is the canary for it: if unique secondary keys ever become enforceable, SurcTheSessionUserStillGetsItsOwnRow fails, which is the correct alarm, because the seed's Refused branch becomes reachable for the first time at that moment.",
+  "description": "The #2941 review predicted that a unique key on User.\"User Name\" would make a --test-data backup containing its own TESTUSER refuse the seed and silently defeat #2296. This fixture arranges exactly that collision -- its Install codeunit writes a different security id under the session user's own user name, and Install triggers run ahead of EnsureUserSystemTableRowSeeded -- and the seed lands anyway. The mechanism is an index on neither side: the runner's store for this table is BC's own CreateTempDataAccess, which enforces the primary key and nothing else, while real BC refuses a duplicate user name from a TRIGGER -- SystemTableTriggers.OnBeforeInsertAsync's case 2000000120: arm validates a unique user name before writing, and AlRunner/Patches/UserTableTriggerPatches.cs's own header records that the runner reproduces only that arm's User Property companion insert and that none of its validation is reproduced. What the run is left with is two rows sharing a user name where BC would hold one; that divergence is AlRunner#2983 and is deliberately not asserted here. This fixture is its canary: whichever way #2983 is closed, SurcTheSessionUserStillGetsItsOwnRow fails, which is the correct alarm, because the seed's Refused branch becomes reachable from AL for the first time at that moment.",
   "dependencies": [],
-  "idRanges": [{ "from": 70520, "to": 70539 }],
+  "idRanges": [
+    {
+      "from": 70520,
+      "to": 70539
+    }
+  ],
   "platform": "27.0.0.0",
   "runtime": "15.0",
   "target": "OnPrem"
