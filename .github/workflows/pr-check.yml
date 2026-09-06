@@ -148,3 +148,31 @@ jobs:
   # coverage has a real test there, so a separate hand-maintained manifest adds nothing.
   # The old file is preserved for reference at docs/archive/coverage.yaml.
   # See docs/v1-to-v2-migration.md's "Dropped" table.
+
+  expectation-gap-closed-issue-sweep:
+    name: Known-gap entries linking an already-closed issue (advisory)
+    permissions:
+      contents: read
+      issues: read
+    runs-on: ubuntu-latest
+    # The ONLINE half of check_expectation_gap_issues.py (#3089). The offline
+    # half -- "this PR closes issue N and an entry still links issue N" -- gates
+    # from pr-gate.yml. This one is advisory for the same two reasons the
+    # ruleset-drift job above is: it talks to api.github.com, so it can go red
+    # for something no author did; and #2858 established that a closed issue does
+    # not by itself prove an entry is stale. An entry can link an issue closed as
+    # a duplicate, or closed with the gap still open -- six entries pointed at
+    # closed issues when #2858 was filed and only one was actually failing.
+    #
+    # So it emits ::warning:: annotations and never a failure, and when the API
+    # is unreachable it names what it could NOT check rather than reporting
+    # nothing. It is also the only half that can see the INVERSE ordering, where
+    # the entry lands after the closing PR's own check has already run -- the
+    # ordering both 2026-09-05 incidents (#2844, #2858) actually took.
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Report entries linking an already-closed issue (non-blocking)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/check_expectation_gap_issues.py --report-closed-issues

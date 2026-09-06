@@ -289,11 +289,18 @@ a clean run does not hide manifested deviations from the corpus.
    anchor in `docs/scope.md`. If a new surface is OOS for a reason not yet
    documented, add the section to `docs/scope.md` in the same PR.
 2. **`expect-fail-known-gap` requires an `Issue` link.** No untracked known
-   failures. The issue must be open at PR time. Nothing in the run can check
+   failures. The issue must be open at PR time. Nothing in the *run* can check
    that — the manifest is evaluated in-process with no network — so when the
    issue closes, the entry must move to whichever mode is now true
    (`expect-oos`, `expect-divergence`) or be deleted. A known-gap entry pointing
    at a closed issue is the exact bookkeeping lie this mode set exists to avoid.
+
+   Since #3089 one half of that *is* checked, in CI rather than in the run:
+   `pr-gate.yml`'s `expectation-gap-issue-consistency` job goes red on a PR
+   that declares `Closes #N` while an entry still links issue N
+   (`.github/scripts/check_expectation_gap_issues.py`). See
+   [the guard](#the-ci-guard-on-issue-links) below for what it does and does not
+   cover, and for what "goes red" is and is not worth.
 3. **`expect-divergence` requires `Reason` + `Doc`, and forbids `Issue`.** It
    declares a standing decision, so it has to point at where that decision is
    recorded. If you find yourself wanting to link an issue, the entry is a gap,
@@ -311,3 +318,110 @@ a clean run does not hide manifested deviations from the corpus.
    file — so the full-corpus CI leg runs with `--expectations-require-match`
    and fails on an entry that matched no test. See the section above; a typo
    here does not make the entry invalid, it makes it inert.
+
+## The CI guard on issue links
+
+`.github/scripts/check_expectation_gap_issues.py`. Two halves, deliberately
+unequal — and since #3198 they live in different workflows, because that is the
+split #3198 introduced: `pr-gate.yml` holds the guards that are meant to block,
+`pr-check.yml` the advisory ones. The offline half is
+`pr-gate.yml`'s `expectation-gap-issue-consistency`; the half that calls
+`api.github.com` is `pr-check.yml`'s `expectation-gap-closed-issue-sweep`.
+
+**Blocking, and it needs no network.** If the PR closes issue N — read from the
+title, the body and every commit message, because this repo squash-merges with
+`squash_merge_commit_message=COMMIT_MESSAGES` and a closing keyword in a commit
+message closes the issue regardless of the body — and an `expect-fail-known-gap`
+entry links issue N, the job fails and names the file, the codeunit, the method
+and the line the reference came from.
+
+That is not a guess about which one is wrong. The PR asserts the gap is fixed;
+the manifest asserts it is not; both are in the same diff, so the author can
+settle it — delete the entry, re-target it at the open issue tracking what
+remains, or drop the closing reference.
+
+**"Blocking" means the job goes red. Whether the merge is refused is a
+separate, ruleset-level fact.** It sits in `pr-gate.yml` because it meets that
+file's rule of thumb — a failure is a real defect in the pull request, it cannot
+fail for an environmental reason, and it is cheap. But as `pr-gate.yml`'s own
+header says, being in that file does not by itself make a job a required
+context, and this one is not required yet, so `tools/ci-wait.py`'s
+`is_required()` answers `False` for it and auto-merge ignores it.
+
+Note what that does **not** mean. Measured against the live branch ruleset on
+2026-09-06, `main` requires **ten** contexts: `BC test matrix passed` (renamed
+by #3141 — the retired name is deliberately not written out here, because
+`BcMatrixDocumentationDriftTests.NoDocumentNamesTheRetiredAggregateCheck`
+forbids any document under `docs/` from carrying it: a doc that names a context
+which no longer reports sends an agent looking for a check that will never
+arrive, indistinguishable from one that has not started), `Tests updated`, and
+eight of the ten `pr-gate.yml` jobs — including `reject-ci-skip-directives` and
+`reject-bad-closing-references`, which **do** gate. So this job's non-required
+standing is not shared with most of its neighbours; after this lands it is one
+of the two jobs in `pr-gate.yml` that do not gate, the other being #3255's
+`require-corpus-linkage`. That is a reason to promote it, not a precedent that
+excuses it. Promotion is a ruleset edit, an administrator action,
+deliberately not claimed here — the interim seam is
+`PENDING_REQUIRED_CONTEXTS` in `.github/scripts/check_required_contexts.py`,
+which lists this context so the guard analyses it like a required one while the
+drift comparison tolerates it in either state.
+
+What this PR can do is put it on the side of the split whose jobs are meant to
+gate, next to `reject-ci-skip-directives` and `reject-bad-closing-references` —
+rather than in `pr-check.yml`, where #3116, #3112 and #3095 each merged with a
+job in a FAILURE state.
+
+### The two orderings, and which one this covers
+
+Manifest/issue drift arrives in one of two orders:
+
+- **Forward** — the entry is already in the checkout when the closing PR is
+  checked. The PR text and the manifest contradict each other inside one diff,
+  and the gate is red before anyone merges. This is the ordering the gate is
+  for, and the ordinary one, since an entry normally predates the fix that
+  closes its issue. Nothing checked it before #3089.
+- **Inverse** — the entry lands *after* the closing PR's own check has run.
+  Nothing evaluated at that PR's check time can see an entry that is not there
+  yet, so the gate cannot help. Only the non-blocking sweep below covers it, on
+  a later PR, and only once the linked issue has actually closed.
+
+**The two 2026-09-05 incidents were the inverse ordering, so this gate would not
+have caught either**, and it is not credited with them. What happened, measured
+rather than reasoned: issue #2795 (fixed by PR #2809) left an entry in
+`known-gaps-testpage-boolean-spelling.json` and issue #2805 (fixed by PR #2825)
+left two in `known-gaps-start-session-isolation.json`; both were reported after
+the fact, as #2844 and #2858. But both files were *created* by PR #2808's merge
+at 16:56:43Z, and #2808 closes nothing, so it declared no closing reference for
+the gate to compare its own new entries against. PR #2825 merged at 16:48:28Z,
+eight minutes before the entry existed anywhere. PR #2809's single `PR Check`
+ran at 16:29:20Z, 27 minutes before #2808 merged, and the ruleset sets
+`strict_required_status_checks_policy: false`, so the base moving underneath it
+re-triggered nothing. Replaying each PR's real title, body and commit messages
+against the manifest as it stood at its **own** check time (base `43d85ea6`,
+which held 12 `expect-fail-known-gap` entries and neither of those two files)
+exits 0 for both. The sweep would not have caught them that hour either:
+#2808's last `PR Check` ran at 16:39:50Z, when #2795 and #2805 were both still
+open — they closed at 17:29:30Z and 16:48:29Z.
+
+Those incidents are how the shape became known. They are not evidence of an
+incident prevented, and this page does not claim one.
+
+**Non-blocking, and it is the only half that touches the network.**
+`--report-closed-issues` looks up every linked issue and emits a `::warning::`
+for the ones already closed. It never fails the job, because #2858 established
+that a closed issue does not by itself prove the entry is stale — an issue can
+close as a duplicate, or close with the gap still open. Six entries pointed at
+closed issues at the time and only one was actually failing. When the API cannot
+be reached it prints a warning naming what it could **not** check rather than
+reporting nothing, so an unreachable API never reads as a clean bill of health.
+
+**What makes it non-vacuous.** Every path where the check could quietly become
+decoration exits 2 (a failure, not a pass): a missing manifest directory, a file
+that will not parse, an entry whose `Issue` does not resolve to a real issue
+reference, a `known-gaps-*.json` whose entries are not known gaps — a
+prefix/`Mode` disagreement would otherwise silence that whole file — and a run
+where the PR title, body and commit messages are all empty, which means the fetch
+failed rather than that the PR is empty. A passing run prints how many entries it
+actually scanned. `.github/scripts/test_check_expectation_gap_issues.py` builds
+each of these conditions on purpose in a temp directory rather than asserting
+over whatever the manifest holds today.
