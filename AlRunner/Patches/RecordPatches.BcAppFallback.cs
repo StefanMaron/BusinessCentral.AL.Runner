@@ -59,8 +59,38 @@ public static partial class RecordPatches
     private static bool _bcSymbolExtensionIndexBuilt;
     private static readonly object _bcTableIndexLock = new();
 
-    // Negative cache: tableIds we've already tried and not found.
+    // Negative cache: tableIds we've already tried and not found. DERIVED from the
+    // registered .app set, so InvalidateBcAppIndexes drops it with every other derived
+    // index — see the reasoning there (#2888).
     private static readonly HashSet<int> _bcMissCache = new();
+
+    // Monotonic registration epoch, bumped by InvalidateBcAppIndexes — i.e. exactly once per
+    // change to _bcAppPaths, in either direction, because that method is the single funnel
+    // both AddBcAppPath and ClearPerBundleBcAppPaths pass through.
+    //
+    // Why this exists (#2888). Seven caches elsewhere in RecordPatches memoize "which
+    // registration set was I built from" and used to spell that as _bcAppPaths.Count. A count
+    // is a sound generation only while the list cannot SHRINK — true until #2755 / PR #2873
+    // gave ResetForReload a real clear, and false since. A --server request or a --watch cycle
+    // that unregisters N .apps and registers N different ones leaves the count where it
+    // started, so the comparison reads "same generation" while the contents changed
+    // completely, and the previous bundle's rows are served for the new one. That is ABA, not
+    // staleness: no amount of extra tuple terms fixes it, because every one of them
+    // (_parsedTables, _parsedPages, _parsedReports, _parsedObjectDecls) is ALSO cleared and
+    // repopulated by the same reload, and in --watch mode — same bundle, one edited file —
+    // they all come back at the counts they had.
+    //
+    // A monotonic counter cannot ABA. It is read without the lock (an int read is atomic, and
+    // Volatile.Read pairs with the Interlocked.Increment below) because the generation checks
+    // are the fast path of every virtual-table row handout.
+    private static int _bcAppRegistrationEpoch;
+
+    /// <summary>
+    /// The current BC .app registration epoch — see <see cref="_bcAppRegistrationEpoch"/>.
+    /// Every cache whose contents are derived from <see cref="_bcAppPaths"/> keys its
+    /// generation on this, never on the list's Count.
+    /// </summary>
+    internal static int BcAppRegistrationEpoch => System.Threading.Volatile.Read(ref _bcAppRegistrationEpoch);
 
     /// <summary>
     /// Drop the PER-BUNDLE .app registrations and every index derived from them, so the next
@@ -156,6 +186,36 @@ public static partial class RecordPatches
         // duplicating them at each call site.
         _depPageMetadataXml.Clear();
         _depReportMetadataXml.Clear();
+        // #2888, instance 1: the negative table cache. It records "no registered .app declares
+        // table N" — derived from precisely this registration set, and until now dropped by
+        // nothing at all: not by this method, not by ResetForReload. So a miss taken by bundle
+        // 1 of a --server/--watch process was still answered "missing" for bundle 2, whose own
+        // dependency declares the table, for the rest of the process's life; and within a
+        // single run, a miss taken between two AddBcAppPath calls was never revisited even
+        // though this method is called after each one exactly so it would be. The symptom is
+        // TryPopulateParsedTableFromBcApps returning false with the table's symbols sitting
+        // readable in a registered .app — i.e. "no NCLMetaTable for table N", the same shape
+        // #2478 and #2712 produced from the neighbouring indexes.
+        _bcMissCache.Clear();
+        // #2888, instance 3: NavReportSync._realMetaCache is a SECOND-ORDER memo over
+        // _depReportMetadataXml two lines up — GetRealMetaReport GetOrAdds a MetaReport built
+        // from TryBuildDependencyReportMetadata's answer, and memoizes null when there is
+        // none. BcRuntime.ResetForNewBundleReload already clears it immediately before calling
+        // ResetForReload, so the SHRINK direction was covered end to end; the GROW direction
+        // was not, and a null memoized before the .app declaring the report was registered
+        // would mask the fix above for that one consumer. Its failure mode is quieter than the
+        // page memo's: GetRealMetaReport falls back to the legacy stub, which stamps
+        // ProcessingOnly, and BC then REFUSES SaveAs on a report that renders fine — a wrong
+        // refusal rather than a throw. Cleared here rather than at the AddBcAppPath call site
+        // for the same reason #2478 gave: one funnel cannot drift from the registration set.
+        // The explicit call in ResetForNewBundleReload stays — it also covers
+        // AlReportMetadataRegistry.Clear(), this memo's OTHER input, which is not derived from
+        // _bcAppPaths at all.
+        NavReportSync.ResetMetadataCache();
+        // Bumped LAST, and unconditionally: every cache keyed on the epoch must observe a
+        // value it has not built against, and everything above must already be dropped when
+        // it does.
+        System.Threading.Interlocked.Increment(ref _bcAppRegistrationEpoch);
     }
 
     /// <summary>

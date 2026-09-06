@@ -101,7 +101,13 @@ public static partial class RecordPatches
         int CardPageId);
 
     private static List<PageMetaRow>? _pageMetaRows;
-    private static (int Apps, int Parsed) _pageMetaRowsBuiltFrom = (-1, -1);
+    // The .app term is RecordPatches' registration EPOCH, never _bcAppPaths.Count (#2888):
+    // the registered set can SHRINK since #2755 / PR #2873, so a count cannot tell a set that
+    // lost N entries and gained N different ones from the one it was built against — and in
+    // --watch mode (same bundle, one edited file) that is the NORMAL case, not a corner. The
+    // remaining terms stay counts and are sound as counts, because the dictionaries they count
+    // are only ever cleared by ResetForReload, which bumps the epoch in the same breath.
+    private static (int Epoch, int Parsed) _pageMetaRowsBuiltFrom = (-1, -1);
     private static readonly object _pageMetaRowsLock = new();
 
     // Resolved once per process from the parsed Page Metadata metatable's own "PageType"
@@ -179,11 +185,11 @@ public static partial class RecordPatches
     /// </summary>
     private static List<PageMetaRow> EnumerateKnownPageMetadata()
     {
-        var generation = (_bcAppPaths.Count, _parsedPages.Count);
+        var generation = (BcAppRegistrationEpoch, _parsedPages.Count);
         if (_pageMetaRows != null && _pageMetaRowsBuiltFrom == generation) return _pageMetaRows;
         lock (_pageMetaRowsLock)
         {
-            generation = (_bcAppPaths.Count, _parsedPages.Count);
+            generation = (BcAppRegistrationEpoch, _parsedPages.Count);
             if (_pageMetaRows != null && _pageMetaRowsBuiltFrom == generation) return _pageMetaRows;
 
             var rows = new Dictionary<int, PageMetaRow>();

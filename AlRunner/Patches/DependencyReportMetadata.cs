@@ -120,10 +120,19 @@ public static partial class RecordPatches
     private static HashSet<int>? _depProcessingOnlyReportIds;
 
     /// <summary>
-    /// Generation the set above was built from. The registered-.app list grows as
-    /// dependencies load, and this question is first asked well before the last one is
-    /// registered, so a set memoized without this key would freeze an early, short answer
-    /// for the rest of the run.
+    /// Generation the set above was built from — RecordPatches' .app registration EPOCH. The
+    /// registered-.app list grows as dependencies load, and this question is first asked well
+    /// before the last one is registered, so a set memoized without this key would freeze an
+    /// early, short answer for the rest of the run.
+    ///
+    /// <para>It was <c>_bcAppPaths.Count</c> until #2888, and a count is a sound generation
+    /// only while the list cannot SHRINK — which it has been able to do since #2755 / PR
+    /// #2873 gave ResetForReload a real clear. One bundle out, one bundle in, same number of
+    /// .apps, and this comparison read "same generation" while every entry had changed:
+    /// bundle 2 was told a report is processing-only because bundle 1's .app said so, and
+    /// NavReportSync.TryRunOrControlFlow then skips the layout entirely. This is the one site
+    /// of the seven keyed on the bare count with no second term, which is why
+    /// BcAppRegistrationEpochInvalidationTests proves the ABA here.</para>
     /// </summary>
     private static int _depProcessingOnlyBuiltFrom = -1;
 
@@ -137,7 +146,7 @@ public static partial class RecordPatches
     /// </summary>
     internal static bool IsDependencyReportProcessingOnly(int reportId)
     {
-        var generation = _bcAppPaths.Count;
+        var generation = BcAppRegistrationEpoch;
         var set = _depProcessingOnlyReportIds;
         if (set == null || _depProcessingOnlyBuiltFrom != generation)
         {

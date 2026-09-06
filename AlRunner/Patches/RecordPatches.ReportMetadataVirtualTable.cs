@@ -118,7 +118,13 @@ public static partial class RecordPatches
     // build-once cache did: report 1306 stayed invisible while the bundle's own
     // reports resolved fine).
     private static List<ReportRow>? _reportRows;
-    private static (int Apps, int Parsed) _reportRowsBuiltFrom = (-1, -1);
+    // The .app term is RecordPatches' registration EPOCH, never _bcAppPaths.Count (#2888):
+    // the registered set can SHRINK since #2755 / PR #2873, so a count cannot tell a set that
+    // lost N entries and gained N different ones from the one it was built against — and in
+    // --watch mode (same bundle, one edited file) that is the NORMAL case, not a corner. The
+    // remaining terms stay counts and are sound as counts, because the dictionaries they count
+    // are only ever cleared by ResetForReload, which bumps the epoch in the same breath.
+    private static (int Epoch, int Parsed) _reportRowsBuiltFrom = (-1, -1);
     private static readonly object _reportRowsLock = new();
 
     /// <summary>
@@ -270,11 +276,11 @@ public static partial class RecordPatches
     /// </summary>
     private static List<ReportRow> EnumerateKnownReports()
     {
-        var generation = (_bcAppPaths.Count, _parsedReports.Count);
+        var generation = (BcAppRegistrationEpoch, _parsedReports.Count);
         if (_reportRows != null && _reportRowsBuiltFrom == generation) return _reportRows;
         lock (_reportRowsLock)
         {
-            generation = (_bcAppPaths.Count, _parsedReports.Count);
+            generation = (BcAppRegistrationEpoch, _parsedReports.Count);
             if (_reportRows != null && _reportRowsBuiltFrom == generation) return _reportRows;
 
             var rows = new Dictionary<int, ReportRow>();
@@ -395,12 +401,18 @@ public static partial class RecordPatches
     // Assembly count is part of the generation: a Tier-1 precompiled dependency's reports
     // only become knowable once its DLL is loaded, which happens AFTER this set is first
     // asked for. Without it the empty answer would be memoized for the whole run.
-    private static (int Apps, int Parsed, int Assemblies) _knownReportIdsBuiltFrom = (-1, -1, -1);
+    // The .app term is RecordPatches' registration EPOCH, never _bcAppPaths.Count (#2888):
+    // the registered set can SHRINK since #2755 / PR #2873, so a count cannot tell a set that
+    // lost N entries and gained N different ones from the one it was built against — and in
+    // --watch mode (same bundle, one edited file) that is the NORMAL case, not a corner. The
+    // remaining terms stay counts and are sound as counts, because the dictionaries they count
+    // are only ever cleared by ResetForReload, which bumps the epoch in the same breath.
+    private static (int Epoch, int Parsed, int Assemblies) _knownReportIdsBuiltFrom = (-1, -1, -1);
 
     /// <summary>Memoized backing set, rebuilt on the same generation key as the row cache.</summary>
     internal static HashSet<int> KnownReportIdSet()
     {
-        var generation = (_bcAppPaths.Count, _parsedReports.Count,
+        var generation = (BcAppRegistrationEpoch, _parsedReports.Count,
             AppDomain.CurrentDomain.GetAssemblies().Length);
         if (_knownReportIds != null && _knownReportIdsBuiltFrom == generation) return _knownReportIds;
 
