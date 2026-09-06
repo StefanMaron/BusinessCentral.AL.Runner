@@ -77,8 +77,18 @@ public static partial class RecordPatches
 
     /// <summary>
     /// Runtime PageDefinition metadata XML for a page declared by a precompiled dependency,
-    /// or null when no loaded dependency .app describes that page. Result cached per id
-    /// (including the null), since the answer is a property of the loaded dependency set.
+    /// or null when no loaded dependency .app describes that page.
+    ///
+    /// <para>Result cached per id, INCLUDING the null, because the answer is a property of
+    /// the loaded dependency set — and therefore only for as long as that set holds still.
+    /// <see cref="InvalidateBcAppIndexes"/> drops this memo alongside every other index
+    /// derived from <c>_bcAppPaths</c>, so both directions of a set change are covered:
+    /// a registration that ADDS the .app declaring this page (<see cref="AddBcAppPath"/>),
+    /// and a bundle roll that drops the previous bundle's registrations
+    /// (<c>ResetForReload</c>). Issue #2889: without that, an id asked about before its
+    /// declaring .app registered kept the memoized null for the life of the process, and
+    /// <see cref="RunnerXmlMetadataLoader"/> answered "no metadata XML for this object" for
+    /// a page whose metadata was readable in a registered symbol file.</para>
     /// </summary>
     internal static string? TryBuildDependencyPageMetadata(int pageId)
         => _depPageMetadataXml.GetOrAdd(pageId, BuildDependencyPageMetadata);
