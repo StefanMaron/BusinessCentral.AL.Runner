@@ -802,9 +802,12 @@ public sealed partial class BcCompiler
     // package rewritten in place (InProcessAppPackager's synthetic .apps, a --watch rebuild)
     // invalidates its own entry.
     //
-    // AppLoader.ReadPackageMeta keeps the same key across PROCESSES in its on-disk index and
-    // answers both questions off one open; this is the in-process layer in front of it, and the
-    // one ResetSharedReferencesForTests clears so a test can force the scan to re-read.
+    // AppLoader.ReadPackageMeta answers both questions off one open and carries them across
+    // PROCESSES in its on-disk index — that index is keyed on the package's CONTENT since
+    // #2987, not on this stat; this is the in-process layer in front of it, and the one
+    // ResetSharedReferencesForTests clears so a test can force the scan to re-read. A stat is
+    // the right key HERE precisely because this dictionary dies with the process: all it has
+    // to notice is a package rewritten underneath it.
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<
         string, (long Length, long Ticks, AppManifest? Manifest, bool HasSymbolReference)> _appMetaCache = new();
 

@@ -105,20 +105,41 @@ internal static class RunnerFingerprint
     //
     // ComputeContentHash reads the WHOLE file; the call sites ask per virtual-table lookup,
     // per dependency and per cache key, so an unmemoized hash is a re-read each time.
-    // Content does not change mid-run (nothing in this process writes to a dependency .app),
-    // so "one entry per path, never invalidated" is the whole invalidation policy — and it
-    // is why a test that simulates a process restart has to clear this explicitly.
+    //
+    // The memo key is (full path, length, last-write UTC) — NOT the path alone, which is what
+    // it was until #2987. "One entry per path, never invalidated" rested on "nothing in this
+    // process writes to a dependency .app", and that premise does not hold for every caller:
+    // InProcessAppPackager writes synthetic .app packages mid-run, and a --watch process
+    // outlives a rebuild of one. A path-keyed memo answers the FIRST bytes it ever saw for
+    // those, so a caller keying a persisted cache on it would consult the previous package's
+    // entry — the wrong-answer shape content addressing exists to remove, reintroduced one
+    // layer down. The stat is not trusted to identify CONTENT here (that is the whole point of
+    // this method); it is only used to notice that the file has been written since, which is
+    // exactly what a stat can tell you. A rewrite that lands on the same length and mtime is
+    // one the memo will not notice — that is a memo, not a cache key, and it lives and dies
+    // with the process, which is why the persisted keys built FROM this value are the ones
+    // that have to be right.
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _fileContentHashes =
         new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
-    /// <see cref="ComputeContentHash"/> memoized per full path — the entry point every
-    /// cache key that identifies a FILE by its content should use.
+    /// <see cref="ComputeContentHash"/> memoized per (full path, length, mtime) — the entry
+    /// point every cache key that identifies a FILE by its content should use.
     /// </summary>
     internal static string ComputeFileContentHashMemoized(string path)
     {
         var fullPath = Path.GetFullPath(path);
-        return _fileContentHashes.GetOrAdd(fullPath, static p => ComputeContentHash(p));
+        string memoKey;
+        try
+        {
+            var fi = new FileInfo(fullPath);
+            // A file we cannot stat memoizes under the bare path: ComputeContentHash is about
+            // to answer UnknownContentHash for it anyway, and a later call that CAN stat it
+            // gets a different key and recomputes rather than inheriting that answer.
+            memoKey = fi.Exists ? $"{fullPath}|{fi.Length}|{fi.LastWriteTimeUtc.Ticks}" : fullPath;
+        }
+        catch { memoKey = fullPath; }
+        return _fileContentHashes.GetOrAdd(memoKey, _ => ComputeContentHash(fullPath));
     }
 
     /// <summary>Test-only: drops the memo, so a test that rewrites a file in place can

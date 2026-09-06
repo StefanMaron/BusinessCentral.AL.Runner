@@ -69,14 +69,14 @@ public static class AppLoader
         => _manifestParseInvocationCountByPath.TryGetValue(Path.GetFullPath(appPath), out var c) ? c : 0;
 
     /// <summary>Test-only: the exact on-disk index path <see cref="ReadManifest"/> would use
-    /// for <paramref name="appPath"/> AT ITS CURRENT length/mtime — lets a test corrupt/inspect
-    /// that specific entry directly.</summary>
-    internal static string ManifestIndexPathForTests(string appPath)
+    /// for <paramref name="appPath"/> AT ITS CURRENT CONTENT — lets a test corrupt/inspect that
+    /// specific entry directly. Returns null for a package whose content hash is unavailable,
+    /// because such a package has no index entry in either direction (#2987).</summary>
+    internal static string? ManifestIndexPathForTests(string appPath)
     {
-        var fullPath = Path.GetFullPath(appPath);
-        var fi = new FileInfo(fullPath);
-        var memoKey = $"{fullPath}|{fi.Length}|{fi.LastWriteTimeUtc.Ticks}";
-        return ManifestIndexPath(memoKey);
+        var identity = TryPackageIdentity(
+            Path.GetFullPath(appPath), static p => RunnerFingerprint.ComputeFileContentHashMemoized(p));
+        return identity == null ? null : ManifestIndexPath(identity);
     }
 
     /// <summary>
@@ -87,15 +87,48 @@ public static class AppLoader
     /// Backed by a two-level cache (issue #perf-B): an in-process memo, and — on a memo
     /// miss — a small on-disk index under <c>CacheRoots.Resolve("app-manifests")</c> so a
     /// SEPARATE process (a later `al-runner` invocation, or one of the 4 that run in
-    /// parallel in CI) can skip re-parsing too. Both are keyed by (full path, length,
-    /// last-write-time-UTC) — a plain stat, not a content hash: the whole point is to avoid
-    /// touching a 98MB Base Application .app's bytes just to answer "have I seen this
-    /// exact file before". A file that changes on disk (new size or mtime — e.g. CI
-    /// re-downloading a package) gets a different key and is simply reparsed; this is not
-    /// a correctness hazard, only a cache miss (see AppLoaderManifestCacheTests
-    /// .ReadManifest_TouchedMtime_IsReparsedNotServedStale).
+    /// parallel in CI) can skip re-parsing too. The two are keyed DIFFERENTLY, and #2987 is
+    /// the reason:
+    ///
+    /// <para><b>The in-process memo</b> stays keyed on the stat — (full path, length,
+    /// last-write-time-UTC). It cannot outlive the process, so the only thing it has to get
+    /// right is noticing a file rewritten underneath it, which a stat does.</para>
+    ///
+    /// <para><b>The on-disk index</b> is keyed on the SHA-256 of the package's own bytes, via
+    /// <see cref="RunnerFingerprint.ComputeFileContentHashMemoized"/> — the one memo shared
+    /// with the bc-symbols cache, the r2r-chunks cache (#2955) and the AL-output key's
+    /// dependency terms (#2847), so a package any of them has already hashed costs a
+    /// dictionary lookup here. It is persisted and read by other processes, so a stat is not
+    /// good enough: two runs can agree on (path, length, mtime) and disagree on the bytes —
+    /// a checkout, a rebuild landing on the same size, a copy preserving mtime — and the
+    /// loser then reads an entry describing a package it does not have. What it would read is
+    /// not a derived detail but the package's IDENTITY: Publisher, Name, Version, AppId and
+    /// the whole declared Dependencies list, feeding DependencyResolver. The comment that
+    /// used to sit here called that "not a correctness hazard, only a cache miss", citing a
+    /// test (AppLoaderManifestCacheTests.ReadManifest_TouchedMtime_IsReparsedNotServedStale)
+    /// that only ever covered the case where the stat MOVES.</para>
+    ///
+    /// <para><b>What it costs.</b> Hashing every scanned package is not free, and unlike
+    /// #2955's call site this one runs over every <c>.app</c> in every package-cache
+    /// directory during DependencyResolver.EnsureIndexed, including packages the run never
+    /// loads. Measured on this repo's own CI package set — <c>~/.al-runner/platform-apps</c>
+    /// plus <c>~/.al-runner/test-apps</c>, 108 packages, 143 MB, warm page cache,
+    /// instructions-retired over 3 runs each: the stat costs 221 M instructions (5.9 ms), the
+    /// content hash 643 M (100.6 ms), and the uncached parse this index exists to avoid
+    /// 1,112 M (157 ms). So the index still saves the larger half of what it always saved,
+    /// and the marginal cost in a REAL run is far below that 95 ms delta because the packages
+    /// a run actually loads are hashed by the caches above regardless — see the PR for #2987
+    /// for the end-to-end numbers.</para>
+    ///
+    /// <para>Entries are named <c>sha256-&lt;hash&gt;.json</c>. A pre-#2987 stat-keyed entry
+    /// name was also 64 lowercase hex characters plus <c>.json</c> — identical in shape,
+    /// meaning something else entirely — so the prefix is what stops a warm pre-fix cache
+    /// directory from being silently misread as a content-keyed one.</para>
     /// </summary>
     public static AppManifest? ReadManifest(string appPath)
+        => ReadManifestCore(appPath, static p => RunnerFingerprint.ComputeFileContentHashMemoized(p));
+
+    internal static AppManifest? ReadManifestCore(string appPath, Func<string, string> contentHashOf)
     {
         string fullPath;
         long length;
@@ -120,21 +153,49 @@ public static class AppLoader
         if (_manifestMemo.TryGetValue(memoKey, out var memoized))
             return memoized;
 
-        var indexed = TryReadManifestIndex(memoKey);
-        if (indexed != null)
+        var identity = TryPackageIdentity(fullPath, contentHashOf);
+        if (identity != null)
         {
-            PerfTrace.Log($"app-manifests HIT {Path.GetFileName(fullPath)}");
-            _manifestMemo[memoKey] = indexed;
-            return indexed;
+            var indexed = TryReadManifestIndex(identity);
+            if (indexed != null)
+            {
+                PerfTrace.Log($"app-manifests HIT {Path.GetFileName(fullPath)}");
+                _manifestMemo[memoKey] = indexed;
+                return indexed;
+            }
         }
 
         _manifestParseInvocationCountByPath.AddOrUpdate(fullPath, 1, static (_, c) => c + 1);
         var parsed = ReadManifestUncached(fullPath);
         PerfTrace.Log($"app-manifests MISS {Path.GetFileName(fullPath)}");
         _manifestMemo[memoKey] = parsed;
-        if (parsed != null)
-            TryWriteManifestIndex(memoKey, parsed);
+        if (parsed != null && identity != null)
+            TryWriteManifestIndex(identity, parsed);
         return parsed;
+    }
+
+    /// <summary>
+    /// The package's content hash, or null when it cannot be computed — the signal that this
+    /// package gets NO shared index entry, in either direction (#2955's guard, same reasoning).
+    ///
+    /// <para>Keying on the <see cref="RunnerFingerprint.UnknownContentHash"/> sentinel instead
+    /// would give every unidentifiable package ONE shared index entry, so the first such
+    /// package's Publisher/Name/Version/AppId/Dependencies would be served as every later
+    /// one's — the exact wrong-answer shape content addressing exists to remove, reintroduced
+    /// by the fix. Costing a reparse is the only thing this branch can ever do.</para>
+    /// </summary>
+    private static string? TryPackageIdentity(string fullPath, Func<string, string> contentHashOf)
+    {
+        string hash;
+        try { hash = contentHashOf(fullPath); }
+        catch (Exception ex)
+        {
+            // Hashing reads the file; a package we cannot read is one we cannot identify.
+            PerfTrace.Log($"app-manifests identity unavailable for {Path.GetFileName(fullPath)}: " +
+                          $"{ex.Message} — not consulting or writing the shared index");
+            return null;
+        }
+        return string.IsNullOrEmpty(hash) || hash == RunnerFingerprint.UnknownContentHash ? null : hash;
     }
 
     /// <summary>The actual parse, with no caching — streams the .app straight off disk via
@@ -152,20 +213,22 @@ public static class AppLoader
 
     // ── on-disk manifest index (issue #perf-B) ─────────────────────────────────
 
-    private static string ManifestIndexPath(string memoKey)
-    {
-        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(memoKey))).ToLowerInvariant();
-        return Path.Combine(CacheRoots.Resolve("app-manifests"), hash + ".json");
-    }
+    /// <summary>The entry for one package CONTENT (#2987). The <c>sha256-</c> prefix is load
+    /// bearing: a pre-fix entry name was 64 lowercase hex characters plus <c>.json</c> too,
+    /// and named the hash of a <c>path|length|mtime</c> string instead — indistinguishable by
+    /// shape from what this returns, so without the prefix a warm pre-fix cache directory
+    /// would be read as if its entries were content-keyed.</summary>
+    private static string ManifestIndexPath(string contentHash)
+        => Path.Combine(CacheRoots.Resolve("app-manifests"), "sha256-" + contentHash + ".json");
 
-    private static AppManifest? TryReadManifestIndex(string memoKey)
-        => TryReadIndexPayload(memoKey) is { } hit ? hit.Manifest : null;
+    private static AppManifest? TryReadManifestIndex(string contentHash)
+        => TryReadIndexPayload(contentHash) is { } hit ? hit.Manifest : null;
 
     /// <summary>The whole index entry, so a caller that needs the symbol-reference flag can see
     /// whether it was recorded at all rather than inferring false from its absence.</summary>
-    private static (AppManifest Manifest, bool? HasSymbolReference)? TryReadIndexPayload(string memoKey)
+    private static (AppManifest Manifest, bool? HasSymbolReference)? TryReadIndexPayload(string contentHash)
     {
-        var path = ManifestIndexPath(memoKey);
+        var path = ManifestIndexPath(contentHash);
         if (!File.Exists(path)) return null;
         try
         {
@@ -187,11 +250,11 @@ public static class AppLoader
         }
     }
 
-    private static void TryWriteManifestIndex(string memoKey, AppManifest manifest, bool? hasSymbolReference = null)
+    private static void TryWriteManifestIndex(string contentHash, AppManifest manifest, bool? hasSymbolReference = null)
     {
         try
         {
-            var path = ManifestIndexPath(memoKey);
+            var path = ManifestIndexPath(contentHash);
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             var payload = ToPayload(manifest, hasSymbolReference);
             // Atomic (temp file + rename) — 4 CI processes can race a write to the SAME
@@ -267,6 +330,11 @@ public static class AppLoader
     /// directory, and for the R2R packages Microsoft ships, by the same buffered nested
     /// <c>.app</c>. Asking them separately opened every package twice.</para>
     ///
+    /// <para>Keyed exactly like <see cref="ReadManifest"/> — stat for the process memo, the
+    /// package's content hash for the persisted index (#2987). See that method for why the two
+    /// differ, and note that the index entry is SHARED between them, so the two must never
+    /// compute the identity differently.</para>
+    ///
     /// <para>Measured on the al-language corpus with two package caches (459 <c>.app</c> files,
     /// 117 MB, Microsoft_Base Application 98 MB of it), first uncached
     /// <c>DeduplicateAppPackageDirs</c> scan of a process: 835 ms, of which
@@ -277,6 +345,10 @@ public static class AppLoader
     /// every process after the first. See issue #2607.</para>
     /// </summary>
     public static (AppManifest? Manifest, bool HasSymbolReference) ReadPackageMeta(string appPath)
+        => ReadPackageMetaCore(appPath, static p => RunnerFingerprint.ComputeFileContentHashMemoized(p));
+
+    internal static (AppManifest? Manifest, bool HasSymbolReference) ReadPackageMetaCore(
+        string appPath, Func<string, string> contentHashOf)
     {
         string fullPath;
         long length;
@@ -301,9 +373,16 @@ public static class AppLoader
             && _manifestMemo.TryGetValue(memoKey, out var memoManifest))
             return (memoManifest, memoFlag);
 
+        // Content-keyed exactly like ReadManifest's, and it MUST be the same key: the two
+        // methods read and write the same entries, so a package they identified differently
+        // would have ReadManifest's entry (HasSymbolReference null) and ReadPackageMeta's
+        // entry (the flag recorded) sitting under two names for the same bytes.
+        var identity = TryPackageIdentity(fullPath, contentHashOf);
+
         // Only a FULL index entry can serve this: an entry written before the flag existed has
         // HasSymbolReference null, and null means "go and look", never false.
-        if (TryReadIndexPayload(memoKey) is { HasSymbolReference: { } storedFlag } hit)
+        if (identity != null
+            && TryReadIndexPayload(identity) is { HasSymbolReference: { } storedFlag } hit)
         {
             PerfTrace.Log($"app-manifests HIT+symref {Path.GetFileName(fullPath)}");
             _manifestMemo[memoKey] = hit.Manifest;
@@ -316,8 +395,8 @@ public static class AppLoader
         PerfTrace.Log($"app-manifests MISS {Path.GetFileName(fullPath)}");
         _manifestMemo[memoKey] = read.Manifest;
         _symbolReferenceMemo[memoKey] = read.HasSymbolReference;
-        if (read.Manifest != null)
-            TryWriteManifestIndex(memoKey, read.Manifest, read.HasSymbolReference);
+        if (read.Manifest != null && identity != null)
+            TryWriteManifestIndex(identity, read.Manifest, read.HasSymbolReference);
         return read;
     }
 
