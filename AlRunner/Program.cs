@@ -242,6 +242,29 @@ catch (Exception ex)
     PerfTrace.Log($"scratch sweep skipped: {ex.GetType().Name}: {ex.Message}");
 }
 
+// #2990: the package-dedup staging root is deliberately SHARED and owner-less — a stage must
+// outlive the run that created it, or the cache never hits — so ScratchDirs' owner-liveness
+// rule above cannot reclaim anything here and never did. Measured: 138 stage directories and
+// 28,004 staged entries on this machine, growing without bound because the stage key includes
+// the .app set's absolute paths and fixture bundles live under GUID-named temp trees.
+// PkgDedupCache removes only what it can prove is both unclaimed by a live process and unused
+// for a week; see its header for the three conditions and the one race that remains.
+try
+{
+    var pruned = AlRunner.Infrastructure.PkgDedupCache.Prune();
+    // Same reasoning as the sweep above: deleting directories on the runner's own initiative is
+    // announced unconditionally, because this line is the only evidence that would exist if the
+    // liveness or age test ever misjudged a stage that was still in use.
+    if (pruned.Removed.Count > 0)
+        Console.Error.WriteLine($"pkgdedup prune: reclaimed {pruned.Removed.Count} unused staging dir(s) under {AlRunner.Infrastructure.PkgDedupCache.Root}");
+    if (pruned.Removed.Count > 0 || pruned.Failed > 0 || pruned.MarkersRemoved > 0)
+        PerfTrace.Log($"pkgdedup prune: removed {pruned.Removed.Count}, kept {pruned.Kept}, skipped {pruned.Skipped}, failed {pruned.Failed}, markers {pruned.MarkersRemoved}");
+}
+catch (Exception ex)
+{
+    PerfTrace.Log($"pkgdedup prune skipped: {ex.GetType().Name}: {ex.Message}");
+}
+
 // Failure classification (the FAILURE CLASSIFICATION block + v2-classification.json)
 // is a runner-development diagnostic, not something end users care about. Default off.
 // Enable by passing --out PATH (which sets the JSON output path) or --classify (which
