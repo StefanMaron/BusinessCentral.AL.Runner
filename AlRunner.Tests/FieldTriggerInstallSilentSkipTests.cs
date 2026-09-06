@@ -39,7 +39,7 @@
 // carry a field its own emitted AL declares a trigger for.
 //
 // Measured rather than assumed: with the three sites instrumented to print instead of skip,
-// the al-language corpus (2523 tests) and tests/runner-extras (298 tests) executed 253 table
+// the al-language corpus (2599 tests) and tests/runner-extras (298 tests) executed 253 table
 // wirings covering 2,592 base-table field installs and 55 tableextension field installs, and
 // produced ZERO hits on any of the three. Nothing legitimate reaches them, which is why the
 // fix is a refusal rather than a narrower catch.

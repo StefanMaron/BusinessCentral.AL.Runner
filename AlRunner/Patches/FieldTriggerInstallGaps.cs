@@ -32,7 +32,7 @@
 // supported build, and the catch could only ever have been swallowing one of those two throws.
 //
 // Measured, not assumed: with the three sites instrumented to print instead of skip, the
-// al-language corpus (2523 tests) and tests/runner-extras (298 tests) performed 253 table
+// al-language corpus (2599 tests) and tests/runner-extras (298 tests) performed 253 table
 // wirings covering 2,592 base-table field installs and 55 tableextension field installs, and
 // hit NONE of the three. There is no legitimate traffic to tolerate here — which is why the
 // fix is a refusal rather than a narrower catch that keeps skipping.
