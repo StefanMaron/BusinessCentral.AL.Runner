@@ -157,7 +157,6 @@ internal static partial class BcAppSymbolCache
     // DataPerCompany column, and to everything else reading ParsedTable, as per-company when
     // they are global. A wrong answer replayed from cache rather than a cache miss — the exact
     // case this integer exists for.
-    private const int CacheVersion = 30;
     // No CacheVersion bump of its own for PageSymbol.TableView (#2820), deliberately — the
     // numbered bumps above belong to other changes (v28 to #2518, v29 to #2973), and this one
     // rides whatever the current integer is without moving it. That member is reachable from
@@ -170,6 +169,13 @@ internal static partial class BcAppSymbolCache
     // cold run of this build wrote fresh entries and a warm second run read them back, on the
     // SHARED ~/.cache/al-runner/bc-symbols with no --cache isolation, and the precompiled-page
     // corpus arm (Base App page 1710) passed in both.
+    // v31: PageSymbol and PageExtensionSymbol gained MemberIdToRunObject (#2931) — the
+    // RunObject / RunPageOnRec an ACTION of a precompiled page declares. A v30 payload
+    // deserialises it as null, which RecordPatches.TryGetActionRunObject reads as "this action
+    // declares no RunObject" — and a TestPage that invokes one is then refused as declaring no
+    // effect at all, the exact pre-fix behaviour replayed from cache rather than a cache miss.
+    // That is a wrong ANSWER, so it needs the bump.
+    private const int CacheVersion = 31;
     private static readonly ConcurrentDictionary<string, AppSymbols> ProcessCache = new(StringComparer.OrdinalIgnoreCase);
     // Issue #1820's path -> content-hash memo now lives in
     // RunnerFingerprint._fileContentHashes (#2955), because AppLoader's persisted r2r-chunks
@@ -338,7 +344,30 @@ internal static partial class BcAppSymbolCache
         Dictionary<int, string>? MemberIdToActionRefTarget = null,
         // The page's SourceTableView, parsed out of the symbol file's own AL text (#2820).
         // Null when the page declares none. See ParseSourceTableView.
-        PageTableViewSymbol? TableView = null);
+        PageTableViewSymbol? TableView = null,
+        // Member id of every action that declares a RunObject -> what it declares (#2931).
+        // See ActionRunObjectSymbol for why this is a NAME and not a resolved object id.
+        Dictionary<int, ActionRunObjectSymbol>? MemberIdToRunObject = null);
+
+    /// <summary>
+    /// One action's <c>RunObject</c> declaration as SymbolReference.json states it.
+    ///
+    /// <para><c>ObjectName</c> is a bare object NAME with no type beside it — measured on Base
+    /// Application 28.1, all 5,455 action <c>RunObject</c> property values are names
+    /// (<c>"Purchase Statistics"</c>, <c>"Vendor Card"</c>), and not one states
+    /// <c>Page</c>/<c>Report</c>/… even though the AL source does
+    /// (<c>RunObject = Page "Purchase Statistics";</c>). The compiled page metadata BC itself
+    /// loads DOES carry the resolved type and id (<c>ActionDefinition.RunObjectType</c> /
+    /// <c>TargetID</c>), but an R2R .app ships no compiled metadata form of its objects, so for
+    /// a precompiled page this is all there is and the consumer resolves the name against the
+    /// run's own page inventory — see RunnerPageInstance.ResolveRunTargetFromSymbols.</para>
+    ///
+    /// <para><c>HasRunPageLink</c> records only the PRESENCE of a <c>RunPageLink</c>, not its
+    /// content: the runner does not apply an action's link filters yet, and opening the target
+    /// without them would show a different rowset than real BC, so presence alone is what the
+    /// consumer needs in order to refuse loudly instead.</para>
+    /// </summary>
+    internal sealed record ActionRunObjectSymbol(string ObjectName, bool RunPageOnRec, bool HasRunPageLink);
 
     /// <summary>
     /// A precompiled dependency's <c>pageextension</c>, as far as SymbolReference.json states
@@ -359,7 +388,10 @@ internal static partial class BcAppSymbolCache
     internal sealed record PageExtensionSymbol(
         int Id, string Name, string TargetObjectName,
         Dictionary<int, string> MemberIdToName,
-        Dictionary<int, string> MemberIdToActionRefTarget);
+        Dictionary<int, string> MemberIdToActionRefTarget,
+        // Trailing + optional so a v26 payload still deserialises; guarded by the v27
+        // CacheVersion bump, so null here only ever means "this extension declares none".
+        Dictionary<int, ActionRunObjectSymbol>? MemberIdToRunObject = null);
 
     /// <summary>
     /// One subpage PART control of a precompiled dependency page, as SymbolReference.json
@@ -1052,6 +1084,7 @@ internal static partial class BcAppSymbolCache
         var parts = new List<PagePartSymbol>();
         var memberNames = new Dictionary<int, string>();
         var actionRefTargets = new Dictionary<int, string>();
+        var runObjects = new Dictionary<int, ActionRunObjectSymbol>();
         int seq = 0;
         if (page.TryGetProperty("Controls", out var controlsArr) && controlsArr.ValueKind == JsonValueKind.Array)
             foreach (var c in controlsArr.EnumerateArray())
@@ -1062,7 +1095,7 @@ internal static partial class BcAppSymbolCache
             }
         if (page.TryGetProperty("Actions", out var actionsArr) && actionsArr.ValueKind == JsonValueKind.Array)
             foreach (var a in actionsArr.EnumerateArray())
-                CollectMemberNames(a, "Actions", memberNames, actionRefTargets);
+                CollectMemberNames(a, "Actions", memberNames, actionRefTargets, runObjects);
 
         props.TryGetValue("SourceTableView", out var sourceTableView);
 
@@ -1072,7 +1105,7 @@ internal static partial class BcAppSymbolCache
             string.IsNullOrWhiteSpace(cardPageName) ? null : cardPageName,
             autoSplitKey, multipleNewLines, delayedInsert, parts,
             memberNames, actionRefTargets,
-            ParseSourceTableView(pageId, sourceTableView));
+            ParseSourceTableView(pageId, sourceTableView), runObjects);
     }
 
     /// <summary>
@@ -1091,18 +1124,20 @@ internal static partial class BcAppSymbolCache
 
         var memberNames = new Dictionary<int, string>();
         var actionRefTargets = new Dictionary<int, string>();
+        var runObjects = new Dictionary<int, ActionRunObjectSymbol>();
         if (ext.TryGetProperty("ActionChanges", out var actionChanges) && actionChanges.ValueKind == JsonValueKind.Array)
             foreach (var change in actionChanges.EnumerateArray())
                 if (change.TryGetProperty("Actions", out var added) && added.ValueKind == JsonValueKind.Array)
                     foreach (var a in added.EnumerateArray())
-                        CollectMemberNames(a, "Actions", memberNames, actionRefTargets);
+                        CollectMemberNames(a, "Actions", memberNames, actionRefTargets, runObjects);
         if (ext.TryGetProperty("ControlChanges", out var controlChanges) && controlChanges.ValueKind == JsonValueKind.Array)
             foreach (var change in controlChanges.EnumerateArray())
                 if (change.TryGetProperty("Controls", out var added) && added.ValueKind == JsonValueKind.Array)
                     foreach (var c in added.EnumerateArray())
                         CollectMemberNames(c, "Controls", memberNames, actionRefTargets);
 
-        return new PageExtensionSymbol(extId, name!, StripModuleQualifierPrefix(target!), memberNames, actionRefTargets);
+        return new PageExtensionSymbol(extId, name!, StripModuleQualifierPrefix(target!),
+            memberNames, actionRefTargets, runObjects);
     }
 
     /// <summary>
@@ -1130,7 +1165,8 @@ internal static partial class BcAppSymbolCache
     /// same id and the same name, so first-writer-wins loses nothing.
     /// </summary>
     private static void CollectMemberNames(JsonElement node, string childKey,
-        Dictionary<int, string> names, Dictionary<int, string> actionRefTargets)
+        Dictionary<int, string> names, Dictionary<int, string> actionRefTargets,
+        Dictionary<int, ActionRunObjectSymbol>? runObjects = null)
     {
         if (node.TryGetProperty("Id", out var idProp) && idProp.TryGetInt32(out var id) && id != 0
             && node.TryGetProperty("Name", out var nameProp) && nameProp.GetString() is { Length: > 0 } name)
@@ -1138,10 +1174,30 @@ internal static partial class BcAppSymbolCache
             names.TryAdd(id, name);
             if (node.TryGetProperty("TargetName", out var targetProp) && targetProp.GetString() is { Length: > 0 } target)
                 actionRefTargets.TryAdd(id, target);
+            if (runObjects != null && TryReadActionRunObject(node) is { } runObject)
+                runObjects.TryAdd(id, runObject);
         }
         if (node.TryGetProperty(childKey, out var children) && children.ValueKind == JsonValueKind.Array)
             foreach (var child in children.EnumerateArray())
-                CollectMemberNames(child, childKey, names, actionRefTargets);
+                CollectMemberNames(child, childKey, names, actionRefTargets, runObjects);
+    }
+
+    /// <summary>
+    /// The <c>RunObject</c> an action node declares, with the two page-run properties that
+    /// change what opening it means, or null when the node declares no <c>RunObject</c>.
+    /// See <see cref="ActionRunObjectSymbol"/> for why the target is a name.
+    /// </summary>
+    private static ActionRunObjectSymbol? TryReadActionRunObject(JsonElement node)
+    {
+        var props = SymbolProperties(node);
+        if (!props.TryGetValue("RunObject", out var runObject) || string.IsNullOrWhiteSpace(runObject))
+            return null;
+        return new ActionRunObjectSymbol(
+            runObject!,
+            // AL's default is false, so only an explicit "1"/"true" sets it — the compiler
+            // writes RunPageOnRec = "1" for `RunPageOnRec = true`.
+            SymbolBool(props, "RunPageOnRec"),
+            props.TryGetValue("RunPageLink", out var link) && !string.IsNullOrWhiteSpace(link));
     }
 
     /// <summary>

@@ -1,10 +1,21 @@
 /// The page under test. Every action that carries a trigger lives in area(Processing); every
 /// actionref lives in area(Promoted) and delegates to one of them.
 ///
-/// `TriggerlessAction` is the negative control: a RunObject action genuinely has no OnAction
-/// trigger, so both invoking it directly and invoking the actionref that points at it must
-/// keep raising the loud testpage-action refusal. Without it, a fix that resolved "no trigger
-/// found" to "run nothing, quietly" would pass every positive arm below.
+/// The last four actions are the negative controls, and they are what an implementation that
+/// resolved "no trigger found" to "run nothing, quietly" would fail:
+///
+///   TriggerlessAction / TriggerlessRef  a RunObject naming a PAGE. Since #2931 the runner
+///                                       PERFORMS this rather than refusing it, so with no
+///                                       [PageHandler] declared it must fail with BC's own
+///                                       unhandled-UI error and NOT with a runner refusal.
+///   LinkedPageAction                    the same, plus RunPageLink. The runner does not apply
+///                                       an action's link filters yet, and opening the page
+///                                       WITHOUT them would show a different rowset than real
+///                                       BC, so it refuses -- with a gap anchor.
+///   ReportRunObjectAction               a RunObject naming a REPORT: in scope, not implemented.
+///   NoEffectAction / NoEffectRef        neither a trigger nor a RunObject, so genuinely
+///                                       nothing to run; the refusal that names the actionref's
+///                                       TARGET lives here.
 page 64541 "Par Host Page"
 {
     PageType = List;
@@ -90,6 +101,27 @@ page 64541 "Par Host Page"
                 Caption = 'Triggerless Action';
                 RunObject = page "Par Host Page";
             }
+
+            action(LinkedPageAction)
+            {
+                ApplicationArea = All;
+                Caption = 'Linked Page Action';
+                RunObject = page "Par Host Page";
+                RunPageLink = "No." = field("No.");
+            }
+
+            action(ReportRunObjectAction)
+            {
+                ApplicationArea = All;
+                Caption = 'Report Run Object Action';
+                RunObject = report "Par Noop Report";
+            }
+
+            action(NoEffectAction)
+            {
+                ApplicationArea = All;
+                Caption = 'No Effect Action';
+            }
         }
 
         area(Promoted)
@@ -104,6 +136,8 @@ page 64541 "Par Host Page"
             }
 
             actionref(TriggerlessRef; TriggerlessAction) { }
+
+            actionref(NoEffectRef; NoEffectAction) { }
         }
     }
 }

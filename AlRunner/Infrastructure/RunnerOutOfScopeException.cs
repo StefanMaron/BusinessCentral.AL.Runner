@@ -52,12 +52,44 @@ public sealed class RunnerOutOfScopeException : Exception
     public string Reason { get; }
     public string? DocAnchor { get; }
 
+    // Reason is normalised on BOTH paths — the message and the property — so a manifest that
+    // matched on the property and a developer reading the message can never see different text.
     public RunnerOutOfScopeException(string api, string reason, string? docAnchor = null)
-        : base(BuildMessage(api, reason, docAnchor))
+        : base(BuildMessage(api, TrimTrailingDocPointer(reason), docAnchor))
     {
         Api = api;
-        Reason = reason;
+        Reason = TrimTrailingDocPointer(reason);
         DocAnchor = docAnchor;
+    }
+
+    /// <summary>
+    /// Drop a "See docs/scope.md" the throw site wrote at the END of its own reason text.
+    ///
+    /// <para><see cref="BuildMessage"/> always appends the canonical " — see docs/scope.md…"
+    /// link, so a reason that ends with its own copy renders as
+    /// "… See docs/scope.md — see docs/scope.md". 47 throw sites across 13 files did exactly
+    /// that (#2931); normalising here fixes all of them and every future one, instead of
+    /// editing 47 strings and leaving the trap in place for the next author.</para>
+    ///
+    /// <para>Only a TRAILING pointer is removed, and only the bare-file form: a reason that
+    /// names a specific anchor (".../scope.md#email") is carrying information the appended
+    /// link does not necessarily repeat, and a pointer in the MIDDLE of a sentence is prose.
+    /// <c>Reason</c> keeps its anchor either way — <c>ExpectationManifest.ReasonAnchor</c>
+    /// reads the text BEFORE the first em-dash separator, which this never touches.</para>
+    /// </summary>
+    internal static string TrimTrailingDocPointer(string reason)
+    {
+        if (string.IsNullOrEmpty(reason)) return reason;
+        var trimmed = reason.TrimEnd();
+        if (trimmed.EndsWith(".")) trimmed = trimmed[..^1].TrimEnd();
+        const string Pointer = "docs/scope.md";
+        if (!trimmed.EndsWith(Pointer, StringComparison.OrdinalIgnoreCase)) return reason;
+
+        var head = trimmed[..^Pointer.Length].TrimEnd();
+        // "See" / "see" is the only lead-in in use; anything else is prose that happens to end
+        // in the file name and is left alone rather than silently truncated.
+        if (!head.EndsWith("see", StringComparison.OrdinalIgnoreCase)) return reason;
+        return head[..^3].TrimEnd().TrimEnd('.', ',', ';', ':').TrimEnd();
     }
 
     // Stable contract format. AL tests match with:

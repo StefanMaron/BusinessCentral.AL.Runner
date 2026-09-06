@@ -194,7 +194,14 @@ public sealed class ObjectMetadataProviderRowProbeTests
             () => RunObjectMetadataPopulateOnce(provider, Body));
 
         Assert.Equal(first.Message, second.Message);
-        Assert.Equal("object-metadata-system-table — synthetic refusal; see docs/scope.md", second.Reason);
+        // The throw site above writes a trailing "; see docs/scope.md" — the same redundant
+        // wording twelve real refusals in this file used to carry. RunnerOutOfScopeException
+        // normalises it away, because BuildMessage appends the canonical pointer itself
+        // (#2931); the expectation here is the NORMALISED text, not the text as written. That
+        // contract is the subject of RunnerOutOfScopeMessagePointerTests — this assertion only
+        // rides on it, and asserting it here additionally proves the normalisation survives the
+        // memo replay rather than being re-applied on the way out.
+        Assert.Equal("object-metadata-system-table — synthetic refusal", second.Reason);
         // Latched, not re-derived: the refusal replays from the memo rather than re-running a
         // populate that may have left rows behind part-way through.
         Assert.Equal(1, calls);
