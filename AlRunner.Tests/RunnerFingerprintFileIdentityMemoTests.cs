@@ -20,6 +20,14 @@ using Xunit;
 
 namespace AlRunner.Tests;
 
+// Clears process-wide static state (the shared hash memo) — joins the serial collection that
+// every other class touching it already belongs to. It also reads the process-global
+// computation counter as a delta and asserts an EXACT value, so a class hashing a file on
+// another thread (ManifestDependencyEdgeScanTests, BcCompilerSharedReferenceMemoTests,
+// CacheKeyDependencyContentIdentityTests) turns "2" into "3": reproduced at 3 failures in 14
+// runs of a filter that co-schedules them, under xunit.runner.json's
+// parallelizeTestCollections + maxParallelThreads 4.
+[Collection(CacheRootsSerialCollection.Name)]
 public sealed class RunnerFingerprintFileIdentityMemoTests : IDisposable
 {
     private readonly string _root;

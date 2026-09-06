@@ -81,10 +81,17 @@ internal static class FileIdentity
             var buf = new StatxBuffer();
             // AT_FDCWD with an absolute path; flags 0 = follow symlinks. The mask is a
             // request, not a promise — the kernel reports what it actually filled in
-            // stx_mask, and an inode it did not fill is one we must not key on.
-            var rc = statx(AT_FDCWD, fullPath, 0, StatxIno | StatxSize | StatxMtime, ref buf);
+            // stx_mask.
+            const uint wanted = StatxIno | StatxSize | StatxMtime;
+            var rc = statx(AT_FDCWD, fullPath, 0, wanted, ref buf);
             if (rc != 0) return null;
-            if ((buf.Mask & StatxIno) == 0) return null;
+            // ALL THREE, not just the inode. Size and mtime are what bound inode reuse (see
+            // the header), so a filesystem that reported an inode and declined the other two
+            // would silently hand back `ino|maj:min:ino|0|0.0` — a key carrying none of the
+            // anti-aliasing weight, for every file on that mount. Answering null instead
+            // costs the dedup and keeps the fallback's guarantees. Defensive rather than
+            // observed: the mask measured on this repo's filesystems is 0x9fff.
+            if ((buf.Mask & wanted) != wanted) return null;
             return string.Create(
                 System.Globalization.CultureInfo.InvariantCulture,
                 $"ino|{buf.DevMajor}:{buf.DevMinor}:{buf.Ino}|{buf.Size}|{buf.MtimeSec}.{buf.MtimeNsec}");
