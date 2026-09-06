@@ -1960,4 +1960,199 @@ public sealed class ProvisioningCheckTests : IDisposable
             new[] { "Application", "System" },
             missing.OrderBy(n => n, StringComparer.Ordinal).ToArray());
     }
+
+    // ── Issue #3037: redundant patch directories must not be scanned ─────────
+    // CollectRunnerOwnedProvisionDirs returns the platform-apps/test-apps directory of
+    // EVERY provisioned patch of the selected major.minor. On a developer box that has
+    // provisioned a few patches, each of those holds its own complete copy of the same
+    // curated download set — Base Application alone is ~98 MB — and every caller
+    // (DependencyResolver.EnsureIndexed, FindMissingPlatformApps, ScanDependencyEdges)
+    // reads a manifest, and therefore a content hash, for every .app in every one of
+    // them. Measured on one such box: 694.2 MB across 355 files scanned to resolve six
+    // packages.
+    //
+    // The union itself is NOT gratuitous — #2226 can leave `provision`'s platform-app and
+    // test-app sub-steps under DIFFERENT patch directories of the same major.minor, and
+    // ArtifactDownloader writes each .app straight into its output directory as it
+    // downloads (no temp-dir-then-rename), so a partially populated set is reachable too.
+    // The narrowing below is therefore by CONTRIBUTION, not by version: a directory is
+    // dropped only when every app in it is already covered, at an equal or higher
+    // filename-encoded version, by a directory already kept.
+
+    /// <summary>Helper: the curated platform-app download set, named the way
+    /// ArtifactDownloader writes it (<c>&lt;Publisher&gt;_&lt;Name&gt;_&lt;Version&gt;.app</c>).</summary>
+    private static void WritePlatformAppSet(string dir, string version)
+    {
+        Directory.CreateDirectory(dir);
+        foreach (var name in new[] { "Application", "Base Application", "System Application", "Business Foundation" })
+            WriteR2RApp(dir, $"Microsoft_{name}_{version}.app", Guid.NewGuid().ToString(), name, "Microsoft", version);
+    }
+
+    /// <summary>Helper: test-toolkit apps, whose filenames carry NO version
+    /// (<c>Microsoft_Any.app</c>) — the shape ArtifactDownloader.TestApps writes.</summary>
+    private static void WriteTestToolkit(string dir, string version, params string[] names)
+    {
+        Directory.CreateDirectory(dir);
+        foreach (var name in names)
+            WriteR2RApp(dir, $"Microsoft_{name}.app", Guid.NewGuid().ToString(), name, "Microsoft", version);
+    }
+
+    [Fact]
+    public void CollectRunnerOwnedProvisionDirs_DuplicatePlatformSetsAcrossPatches_ScansOnlyTheNewest()
+    {
+        var root = Path.Combine(_dir, "artifacts-3037-dup-platform");
+        WritePlatformAppSet(Path.Combine(root, "28.1.49838.53910", "platform-apps"), "28.1.49838.53910");
+        WritePlatformAppSet(Path.Combine(root, "28.1.49838.54044", "platform-apps"), "28.1.49838.54044");
+        WritePlatformAppSet(Path.Combine(root, "28.1.49838.54308", "platform-apps"), "28.1.49838.54308");
+
+        var dirs = ProvisioningCheck.CollectRunnerOwnedProvisionDirs(root, "28.1");
+
+        Assert.Equal(
+            new[] { Path.Combine(root, "28.1.49838.54308", "platform-apps") },
+            dirs.ToArray());
+    }
+
+    [Fact]
+    public void CollectRunnerOwnedProvisionDirs_DuplicateTestToolkitsAcrossPatches_ScansOnlyTheNewest()
+    {
+        // Test-toolkit filenames carry no version, so "already covered" here rests on the
+        // patch-directory order (newest first) rather than on a filename comparison.
+        var root = Path.Combine(_dir, "artifacts-3037-dup-test");
+        WriteTestToolkit(Path.Combine(root, "28.1.49838.53910", "test-apps"), "28.1.49838.53910",
+            "Any", "Library Assert", "Test Runner");
+        WriteTestToolkit(Path.Combine(root, "28.1.49838.54308", "test-apps"), "28.1.49838.54308",
+            "Any", "Library Assert", "Test Runner");
+
+        var dirs = ProvisioningCheck.CollectRunnerOwnedProvisionDirs(root, "28.1");
+
+        Assert.Equal(
+            new[] { Path.Combine(root, "28.1.49838.54308", "test-apps") },
+            dirs.ToArray());
+    }
+
+    [Fact]
+    public void CollectRunnerOwnedProvisionDirs_PartiallyDownloadedNewestPatch_StillScansTheOlderOne()
+    {
+        // ArtifactDownloader.PlatformApps writes each .app straight into outputDir and
+        // `continue`s past an entry it could not fetch, so an interrupted download leaves a
+        // PARTIAL set behind. The older, complete patch directory must stay in the search
+        // set — dropping it is exactly the "mysterious missing-dependency error" #2206 warns
+        // about.
+        var root = Path.Combine(_dir, "artifacts-3037-partial");
+        WritePlatformAppSet(Path.Combine(root, "28.1.49838.53910", "platform-apps"), "28.1.49838.53910");
+        var newest = Path.Combine(root, "28.1.49838.54308", "platform-apps");
+        Directory.CreateDirectory(newest);
+        WriteR2RApp(newest, "Microsoft_Application_28.1.49838.54308.app",
+            Guid.NewGuid().ToString(), "Application", "Microsoft", "28.1.49838.54308");
+
+        var dirs = ProvisioningCheck.CollectRunnerOwnedProvisionDirs(root, "28.1");
+
+        Assert.Equal(
+            new[]
+            {
+                newest,
+                Path.Combine(root, "28.1.49838.53910", "platform-apps"),
+            },
+            dirs.ToArray());
+        // And the older set really does still answer the need — the point of keeping it.
+        Assert.Empty(ProvisioningCheck.FindMissingPlatformApps(
+            new[] { "Application", "Base Application", "System Application" }, dirs));
+    }
+
+    [Fact]
+    public void CollectRunnerOwnedProvisionDirs_OlderPatchHoldingAHigherVersionedApp_IsStillScanned()
+    {
+        // Dropping is by filename-encoded version, never by directory order alone, so a
+        // hand-placed newer package under an older patch directory cannot be discarded —
+        // the resolver picks the highest satisfying version, and it must still see it.
+        var root = Path.Combine(_dir, "artifacts-3037-higher-in-older");
+        var older = Path.Combine(root, "28.1.49838.53910", "platform-apps");
+        WritePlatformAppSet(older, "28.1.49838.53910");
+        WriteR2RApp(older, "Microsoft_Base Application_28.1.49838.99999.app",
+            Guid.NewGuid().ToString(), "Base Application", "Microsoft", "28.1.49838.99999");
+        WritePlatformAppSet(Path.Combine(root, "28.1.49838.54308", "platform-apps"), "28.1.49838.54308");
+
+        var dirs = ProvisioningCheck.CollectRunnerOwnedProvisionDirs(root, "28.1");
+
+        Assert.Contains(older, dirs);
+    }
+
+    [Fact]
+    public void CollectRunnerOwnedProvisionDirs_CrossPatchKindSplit_KeepsBoth()
+    {
+        // The #2226/#2234 shape with real packages in it rather than empty directories:
+        // platform apps under one patch, the test toolkit under another. Neither covers the
+        // other, so both stay.
+        var root = Path.Combine(_dir, "artifacts-3037-kind-split");
+        WriteTestToolkit(Path.Combine(root, "28.1.49838.53910", "test-apps"), "28.1.49838.53910", "Any");
+        WritePlatformAppSet(Path.Combine(root, "28.1.49838.54044", "platform-apps"), "28.1.49838.54044");
+
+        var dirs = ProvisioningCheck.CollectRunnerOwnedProvisionDirs(root, "28.1");
+
+        Assert.Equal(
+            new[]
+            {
+                Path.Combine(root, "28.1.49838.54044", "platform-apps"),
+                Path.Combine(root, "28.1.49838.53910", "test-apps"),
+            },
+            dirs.ToArray());
+    }
+
+    [Fact]
+    public void CollectRunnerOwnedProvisionDirs_EmptyDirs_AreStillReturned()
+    {
+        // An empty directory reads nothing, so it can never be the cost this narrowing is
+        // about — and it is still worth naming in "here is where we looked" diagnostics.
+        // Regression guard for CollectRunnerOwnedProvisionDirs_FindsDirsAcrossDifferentPatchVersions
+        // and PackageCacheFinalSearchSetTests, both of which fold in EMPTY runner-owned dirs.
+        var root = Path.Combine(_dir, "artifacts-3037-empty");
+        Directory.CreateDirectory(Path.Combine(root, "28.1.49838.53910", "platform-apps"));
+        Directory.CreateDirectory(Path.Combine(root, "28.1.49838.53910", "test-apps"));
+        Directory.CreateDirectory(Path.Combine(root, "28.1.49838.54308", "platform-apps"));
+
+        var dirs = ProvisioningCheck.CollectRunnerOwnedProvisionDirs(root, "28.1");
+
+        Assert.Equal(3, dirs.Count);
+    }
+
+    [Fact]
+    public void CollectRunnerOwnedProvisionDirs_OlderTestAppsHoldingAnAppTheNewestLacks_IsStillScanned()
+    {
+        var root = Path.Combine(_dir, "artifacts-3037-extra-toolkit-app");
+        var older = Path.Combine(root, "28.1.49838.53910", "test-apps");
+        WriteTestToolkit(older, "28.1.49838.53910", "Any", "Library Assert", "Tests-TestLibraries");
+        WriteTestToolkit(Path.Combine(root, "28.1.49838.54308", "test-apps"), "28.1.49838.54308",
+            "Any", "Library Assert");
+
+        var dirs = ProvisioningCheck.CollectRunnerOwnedProvisionDirs(root, "28.1");
+
+        Assert.Contains(older, dirs);
+    }
+
+    // ── AppFileCoverageKey: the filename split the narrowing rests on ────────
+
+    [Theory]
+    [InlineData("Microsoft_Base Application_28.1.49838.54308.app", "Microsoft_Base Application", "28.1.49838.54308")]
+    [InlineData("microsoft_system application_28.2.0.0.app", "microsoft_system application", "28.2.0.0")]
+    [InlineData("Microsoft_Any.app", "Microsoft_Any", null)]
+    [InlineData("System.app", "System", null)]
+    [InlineData("Microsoft_Tests-ERM.app", "Microsoft_Tests-ERM", null)]
+    public void AppFileCoverageKey_SplitsTheTrailingVersionOnlyWhenThereIsOne(
+        string fileName, string expectedStem, string? expectedVersion)
+    {
+        var (stem, version) = ProvisioningCheck.AppFileCoverageKey(fileName);
+
+        Assert.Equal(expectedStem, stem);
+        Assert.Equal(expectedVersion == null ? null : Version.Parse(expectedVersion), version);
+    }
+
+    [Fact]
+    public void AppFileCoverageKey_IsCaseInsensitiveOnTheStem()
+    {
+        var (a, _) = ProvisioningCheck.AppFileCoverageKey("Microsoft_Base Application_28.1.0.0.app");
+        var (b, _) = ProvisioningCheck.AppFileCoverageKey("MICROSOFT_BASE APPLICATION_28.1.0.0.app");
+
+        Assert.Equal(a, b, StringComparer.OrdinalIgnoreCase);
+        Assert.NotEqual(a, b, StringComparer.Ordinal);
+    }
 }

@@ -643,21 +643,150 @@ public static class ProvisioningCheck
     ///
     /// This is the single source of truth both the run path and need detection now share,
     /// so they can no longer independently drift onto different search sets. Pure
-    /// filesystem existence scan — no network — and it can only ADD directories that exist
-    /// on disk, never remove or fabricate one.
+    /// filesystem scan — no network, and no package is opened or hashed.
+    ///
+    /// <para><b>Issue #3037 — redundant patch directories are left out.</b> Every provisioned
+    /// patch of the same major.minor holds its own complete copy of the same curated download
+    /// set (Base Application alone is ~98 MB), and every caller — <see
+    /// cref="AlRunner.DependencyResolver"/>'s index, <see cref="FindMissingPlatformApps"/>,
+    /// <see cref="ScanDependencyEdges"/> — reads a manifest, and since #2987 therefore a
+    /// content hash, for every <c>.app</c> in every directory returned here. Measured on a
+    /// box with four provisioned patches: 694.2 MB across 355 files scanned to resolve six
+    /// packages, most of it the same Base Application four times over.
+    ///
+    /// So a directory is omitted when — and only when — every package in it is already
+    /// reachable, at an equal or higher version, through a directory that stays; see
+    /// <see cref="ContributesUncoveredPackages"/> for why that is lossless and which cases it
+    /// deliberately keeps (a partially downloaded newest patch, a hand-placed newer package
+    /// under an older patch, and every empty directory). It never fabricates a directory, and
+    /// it never omits one whose contents are not otherwise reachable.</para>
     /// </summary>
     public static IReadOnlyList<string> CollectRunnerOwnedProvisionDirs(
         string artifactsRootDir, string majorMinorPrefix)
     {
         var dirs = new List<string>();
+        // Issue #3037's redundancy filter. Stem -> the highest filename-encoded version of
+        // that app already reachable through a directory ALREADY in `dirs`; a null value
+        // means "present, but its file name encodes no version", which is the ordinary case
+        // for the test toolkit (Microsoft_Any.app) and for System.app.
+        var covered = new Dictionary<string, Version?>(StringComparer.OrdinalIgnoreCase);
         foreach (var name in EnumerateVersionDirNames(artifactsRootDir, majorMinorPrefix))
         {
             var platformDir = PlatformAppsDirFor(artifactsRootDir, name);
-            if (Directory.Exists(platformDir)) dirs.Add(platformDir);
+            if (Directory.Exists(platformDir) && ContributesUncoveredPackages(platformDir, covered))
+                dirs.Add(platformDir);
             var testDir = TestAppsDirFor(artifactsRootDir, name);
-            if (Directory.Exists(testDir)) dirs.Add(testDir);
+            if (Directory.Exists(testDir) && ContributesUncoveredPackages(testDir, covered))
+                dirs.Add(testDir);
         }
         return dirs;
+    }
+
+    /// <summary>
+    /// Whether <paramref name="dir"/> holds at least one package that <paramref name="covered"/>
+    /// does not already account for at an equal or higher version — and, when it does, folds
+    /// its whole contents into <paramref name="covered"/> so a later (older) patch directory
+    /// is measured against it.
+    ///
+    /// <para><b>Why this is lossless.</b> The narrowing decides purely on FILE NAMES — one
+    /// directory listing per directory, no package is opened, nothing is hashed — and it
+    /// drops a directory only when every package in it is already reachable at an equal or
+    /// higher version through a directory that stays. Three consequences worth stating,
+    /// because each is a way this could have gone wrong:</para>
+    /// <list type="bullet">
+    /// <item>A directory whose newest sibling is only PARTIALLY downloaded stays.
+    /// <see cref="AlRunner.Provisioning.ArtifactDownloader.PlatformApps"/> writes each
+    /// <c>.app</c> straight into its output directory and <c>continue</c>s past an entry it
+    /// could not fetch, so a partial set is reachable, and the older complete one is what
+    /// answers the need.</item>
+    /// <item>The <see cref="EnumerateVersionDirNames"/> order is newest patch first, so a
+    /// duplicate is dropped from the OLDER directory, never the newer one. But the decision
+    /// does not rest on that order where a file name can settle it: a hand-placed
+    /// higher-versioned package under an older patch directory is uncovered, so that
+    /// directory stays and the resolver still sees the version it would have picked.</item>
+    /// <item>An EMPTY directory always stays. It reads nothing, so it cannot be the cost
+    /// this exists to remove, and it is still worth naming in the "here is where we looked"
+    /// diagnostics that <see cref="FindMissingPlatformApps"/>'s callers build. It is also
+    /// what a `provision` run that created the directory and then failed to fill it leaves
+    /// behind — the shape #2234's own regression tests construct.</item>
+    /// </list>
+    ///
+    /// <para>An unrecognised file-name shape yields no version from
+    /// <see cref="AppFileCoverageKey"/>, which can only make this MORE conservative: it can
+    /// no longer prove one copy outranks another, so the directory stays. The failure
+    /// direction is a directory scanned needlessly, never a package that should have been
+    /// found and was not.</para>
+    /// </summary>
+    private static bool ContributesUncoveredPackages(string dir, Dictionary<string, Version?> covered)
+    {
+        // Same scan the resolver itself uses (recursive, tolerant of an unreadable
+        // subdirectory) so this can never claim a directory is redundant on a narrower
+        // view of its contents than DependencyResolver.EnsureIndexed will take.
+        var files = AlRunner.Infrastructure.SafeDirectoryScan.Files(dir, "*.app");
+        if (files.Count == 0) return true;
+
+        var keys = new List<(string Stem, Version? Version)>(files.Count);
+        var contributes = false;
+        foreach (var file in files)
+        {
+            var key = AppFileCoverageKey(Path.GetFileName(file));
+            keys.Add(key);
+            if (!covered.TryGetValue(key.Stem, out var keptVersion)) { contributes = true; continue; }
+            // Covered unless this copy can be PROVEN newer than what is already kept.
+            if (key.Version != null && (keptVersion == null || keptVersion < key.Version))
+                contributes = true;
+        }
+        if (!contributes) return false;
+
+        foreach (var (stem, version) in keys)
+        {
+            if (!covered.TryGetValue(stem, out var keptVersion))
+            {
+                covered[stem] = version;
+                continue;
+            }
+            // Never downgrade a known version to "unknown": a versionless duplicate tells us
+            // nothing about what is reachable, and forgetting the version we DO know would
+            // make a later directory look uncovered for no reason.
+            if (version != null && (keptVersion == null || keptVersion < version))
+                covered[stem] = version;
+        }
+        return true;
+    }
+
+    /// <summary>
+    /// Splits a package file name into the identity the redundancy filter in
+    /// <see cref="CollectRunnerOwnedProvisionDirs"/> compares on: a STEM
+    /// (<c>&lt;Publisher&gt;_&lt;Name&gt;</c>, or the whole base name when there is no
+    /// trailing version) and, when the name carries one, the VERSION it encodes.
+    ///
+    /// <para><c>Microsoft_Base Application_28.1.49838.54308.app</c> →
+    /// (<c>Microsoft_Base Application</c>, <c>28.1.49838.54308</c>);
+    /// <c>Microsoft_Any.app</c> → (<c>Microsoft_Any</c>, <c>null</c>);
+    /// <c>System.app</c> → (<c>System</c>, <c>null</c>). Those are exactly the three shapes
+    /// <see cref="AlRunner.Provisioning.ArtifactDownloader"/> writes into a runner-owned
+    /// <c>platform-apps</c>/<c>test-apps</c> directory: the platform set keeps the artifact
+    /// entry's versioned base name, the test toolkit's entries carry no version, and
+    /// <c>System.app</c> has no publisher prefix at all.</para>
+    ///
+    /// <para>A name that does not fit — a trailing segment that is not a
+    /// <see cref="Version"/>, an app whose own name ends in something version-like — simply
+    /// yields no version, which makes the caller MORE conservative (it can no longer prove
+    /// one copy outranks another), never less. That is the safe direction: an unrecognised
+    /// name costs a directory that could have been skipped, not a package that should have
+    /// been found.</para>
+    /// </summary>
+    internal static (string Stem, Version? Version) AppFileCoverageKey(string fileName)
+    {
+        var baseName = Path.GetFileNameWithoutExtension(fileName);
+        var cut = baseName.LastIndexOf('_');
+        if (cut <= 0) return (baseName, null);
+        var tail = baseName[(cut + 1)..];
+        // Version.TryParse accepts "1.2" and up but also parses a bare number as a failure,
+        // which is what we want: an app whose name's last segment is a plain word or a
+        // single number is not a versioned file name.
+        if (!Version.TryParse(tail, out var version)) return (baseName, null);
+        return (baseName[..cut], version);
     }
 
     // ── Issue #1996: manifest-driven need detection ──────────────────────────
