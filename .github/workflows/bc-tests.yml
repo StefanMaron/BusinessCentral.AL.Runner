@@ -523,19 +523,33 @@ jobs:
       # genuinely missing from the table is loud CI failure, per
       # .claude/rules/loud-failures.md, not another quiet report.
       #
-      # #3103: it fails only above 3x UnmeasuredWeightSeconds, and reports the 2x..3x band as
-      # a ::warning:: annotation instead. This leg rolls up into the aggregate required check
-      # that main's ruleset gates on — the job named in test-matrix.yml, deliberately not
-      # spelled out here, because ReleaseTestParityTests asserts that exact name appears in
-      # no workflow but that one and cannot tell a comment from the real thing. The old
-      # single line at 2x was summed wall clock on a shared runner — the same untouched
-      # collection landed at 59.4s on one PR's run and 63.7s on another's, so an unrelated PR
-      # went red. Both bands are also scaled by how slow this leg measured against the weight
-      # table's own entries. See the script's header.
+      # #3103: it fails only above --fail-threshold and reports the band between the
+      # advisory line (2x UnmeasuredWeightSeconds) and that one as a ::warning:: annotation
+      # instead. This leg rolls up into the aggregate required check that main's ruleset
+      # gates on — the job named in test-matrix.yml, deliberately not spelled out here,
+      # because ReleaseTestParityTests asserts that exact name appears in no workflow but
+      # that one and cannot tell a comment from the real thing. The old single line at 2x
+      # was summed wall clock on a shared runner — the same untouched collection landed at
+      # 59.4s on one PR's run and 63.7s on another's, so an unrelated PR went red. Both
+      # bands are also scaled by how slow this leg measured against the weight table's own
+      # entries. See the script's header.
+      #
+      # WHY 75s (2.5x) AND NOT THE SCRIPT'S 3x DEFAULT. 2x is under the top of the observed
+      # noise (63.7s), which is the flake being fixed; 3x (90s) clears it by 26s but stops
+      # enforcing over roughly eight entries of the weight table, among them
+      # CountBaselineIntegrationTests at 84s — one of the two collections #1887 originally
+      # FOUND with this gate, so a 90s line cannot catch its own founding case. 75s clears
+      # the noise top by 11.3s, about 2.6x the measured 4.3s run-to-run spread, and roughly
+      # doubles the number of entries still enforced. The script keeps 3x as its default
+      # for other callers; this number is a judgement about THIS weight table and is
+      # pinned, with the reasoning above, by
+      # scripts/tests/check-collection-weights.test.py::WorkflowFailThresholdTests — which
+      # asserts bands and floors rather than exact counts, so adding a collection to the
+      # table does not turn an unrelated PR red.
       - name: Collection weight table freshness (unit tests)
         if: ${{ matrix.target.unit-tests }}
         run: |
-          python3 scripts/check-collection-weights.py trx/unit-tests.trx
+          python3 scripts/check-collection-weights.py trx/unit-tests.trx --fail-threshold 75
 
       - name: Phase-log report (unit tests)
         # always(): a red unit-test step is exactly when the timings are most worth

@@ -10,6 +10,7 @@ drift-on-a-present-entry is deliberately out of scope here).
 Run: python3 scripts/tests/check-collection-weights.test.py
 """
 import importlib.util
+import re
 import tempfile
 import textwrap
 import unittest
@@ -270,12 +271,13 @@ class StraddleTheThresholdTests(unittest.TestCase):
             return f.name
 
     @staticmethod
-    def _run(trx, orderer):
+    def _run(trx, orderer, extra=None):
         import contextlib, io, sys
         old_argv = sys.argv
         buf = io.StringIO()
         try:
-            sys.argv = ["check-collection-weights.py", trx, "--orderer", orderer]
+            sys.argv = (["check-collection-weights.py", trx, "--orderer", orderer]
+                        + list(extra or []))
             with contextlib.redirect_stdout(buf):
                 rc = ccw.main()
         finally:
@@ -337,6 +339,108 @@ class StraddleTheThresholdTests(unittest.TestCase):
         rc, out = self._run(trx, orderer)
         self.assertEqual(rc, 1)
         self.assertIn("UnlistedTests", out)
+
+
+class WorkflowFailThresholdTests(unittest.TestCase):
+    """The failing line bc-tests.yml actually runs with, and why it is 2.5x rather than 3x.
+
+    The script's own DEFAULT_FAIL_MULTIPLE stays 3 for any other caller; the corpus leg
+    passes --fail-threshold explicitly. That number is a judgement about THIS repository's
+    weight table, so it is pinned against the real table rather than the fixture one -- a
+    later edit that drops the flag, or moves it back to 3x, fails here.
+    """
+
+    REPO = Path(__file__).resolve().parent.parent.parent
+    WORKFLOW = REPO / ".github" / "workflows" / "bc-tests.yml"
+    ORDERER = REPO / "AlRunner.Tests" / "CollectionCostOrderer.cs"
+
+    FAIL_MULTIPLE = 2.5
+
+    # Measured in #3103: the same untouched collection (SuiteAbortOnTimeoutTests) summed
+    # 59.4s on one run and 63.7s on another. Properties of a shared GitHub runner, not of
+    # the weight table -- so they stay fixed as the table grows.
+    OBSERVED_NOISE_TOP = 63.7
+    OBSERVED_NOISE_SPREAD = 4.3
+
+    def _workflow_fail_threshold(self):
+        text = self.WORKFLOW.read_text()
+        line = [ln for ln in text.splitlines()
+                if "check-collection-weights.py" in ln and not ln.strip().startswith("#")]
+        self.assertEqual(len(line), 1,
+                         "expected exactly one check-collection-weights.py invocation "
+                         f"in bc-tests.yml, found {len(line)}")
+        m = re.search(r"--fail-threshold\s+(\d+(?:\.\d+)?)", line[0])
+        self.assertIsNotNone(
+            m, "bc-tests.yml must pass --fail-threshold explicitly: the script's 3x default "
+               "is looser than this repository's weight table can afford (see below)")
+        return float(m.group(1))
+
+    def test_the_workflow_passes_two_and_a_half_times_unmeasured_weight(self):
+        _, unmeasured = ccw.load_table(str(self.ORDERER))
+        self.assertEqual(self._workflow_fail_threshold(), self.FAIL_MULTIPLE * unmeasured)
+
+    def test_the_chosen_line_clears_the_observed_noise_but_three_x_gives_up_too_much(self):
+        """The two-sided argument, measured against the real table, not asserted.
+
+        Below: 2x (60s) sits UNDER the top of the observed noise cluster -- the same
+        untouched collection summed 59.4s and 63.7s on two runs -- which is the flake
+        #3103 fixes. Above: at 3x (90s) the gate stops being enforced over 8 entries of
+        the real table, among them CountBaselineIntegrationTests at 84s, which is one of
+        the two collections #1887 originally FOUND with this gate. A line that cannot
+        catch its own founding case is decoration.
+        """
+        table, unmeasured = ccw.load_table(str(self.ORDERER))
+        chosen = self.FAIL_MULTIPLE * unmeasured
+        weights = sorted(table.values())
+
+        # The noise half, and the only part built from constants rather than from the
+        # table: 2x sits UNDER the top of the observed cluster, the chosen line clears it.
+        # OBSERVED_NOISE_TOP/SPREAD are measurements from #3103, not table properties, so
+        # this pair cannot drift as collections are added.
+        self.assertGreater(chosen, self.OBSERVED_NOISE_TOP)
+        self.assertLess(2 * unmeasured, self.OBSERVED_NOISE_TOP)
+        self.assertGreater(chosen - self.OBSERVED_NOISE_TOP, 2 * self.OBSERVED_NOISE_SPREAD)
+
+        # The founding-case half. Deliberately a BAND, not == 84: the point is that this
+        # collection is enforced at the chosen line and would not be at 3x, which stays
+        # true however the entry is re-measured, and does not go red because someone else
+        # added a table entry.
+        founding = table["CountBaselineIntegrationTests"]
+        self.assertGreaterEqual(
+            founding, chosen,
+            "CountBaselineIntegrationTests is one of the two collections #1887 found with "
+            "this gate; if it no longer sits at or above the failing line, the argument for "
+            f"{self.FAIL_MULTIPLE}x has to be re-made rather than quietly kept")
+        self.assertLess(
+            founding, 3 * unmeasured,
+            "if this entry has grown past 3x, the 'a 90s line cannot catch its own founding "
+            "case' argument no longer holds and this test should be revisited")
+
+        # ...and the slice of the table that stops being enforced at 3x is a real one, not
+        # a rounding difference. A floor, not an exact count, for the same reason.
+        enforced_at = lambda bar: sum(1 for w in weights if w >= bar)
+        given_up = enforced_at(chosen) - enforced_at(3 * unmeasured)
+        self.assertGreaterEqual(
+            given_up, 5,
+            f"moving the line to 3x would give up enforcement over only {given_up} entries; "
+            "if the table has shifted that far, 2.5x may no longer be buying anything")
+
+    def test_an_eighty_four_second_collection_fails_at_the_workflows_line(self):
+        """End to end through the script, so the number above is not just arithmetic."""
+        bar = self._workflow_fail_threshold()
+        reference = {f"Known{i}Tests": 100 for i in range(12)}
+        helper = StraddleTheThresholdTests("run")
+        trx = helper._write_trx({**reference, "CountBaselineIntegrationTests": 84})
+        orderer = helper._write_orderer(reference)
+
+        rc_at_workflow_line, out = helper._run(trx, orderer, extra=["--fail-threshold", str(bar)])
+        self.assertEqual(rc_at_workflow_line, 1)
+        self.assertIn("CountBaselineIntegrationTests", out)
+
+        # The same run at the script's untuned 3x default: reported, but not failing.
+        rc_at_default, out_default = helper._run(trx, orderer)
+        self.assertEqual(rc_at_default, 0)
+        self.assertIn("CountBaselineIntegrationTests", out_default)
 
 
 if __name__ == "__main__":
