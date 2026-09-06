@@ -38,6 +38,13 @@ REFUSING TO WRITE. When in doubt it exits non-zero and explains.
 
 The guards
 ----------
+  self-current        this file is not behind `origin/main` on itself. An agent
+                      runs the copy in its own worktree, and 40 of the 59
+                      worktrees carrying this file on the development box had a
+                      version that was not origin/main's (#3020). A copy that
+                      predates a guard is a copy running without that guard, so
+                      it refuses instead. A branch that legitimately EDITS this
+                      file is not stale and is not refused.
   fetch-parsed        the body is read as JSON (`gh pr view --json body`, no --jq),
                       so an empty body is distinguishable from a failed fetch. A
                       response that does not parse, or has no `body` key, is a
@@ -116,6 +123,12 @@ import sys
 import tempfile
 import time
 from typing import Callable
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    import agent_self_freshness as _freshness
+except Exception:  # pragma: no cover - a copy detached from its sibling module
+    _freshness = None
 
 REPO = "StefanMaron/BusinessCentral.AL.Runner"
 
@@ -594,8 +607,44 @@ def build_new_body(orig: str, args, edits: list[Edit]) -> tuple[str, list[Result
     return new, results
 
 
+def freshness_refusal(printer=None) -> int | None:
+    """EXIT_PRECONDITION if this copy of the tool is behind origin/main, else None.
+
+    Same shape as #3020's defect in ci-wait.py, one tool over: an agent runs the
+    copy in its own worktree, and a worktree is created once and never
+    fast-forwarded. Measured 2026-09-06, 40 of the 59 worktrees carrying this
+    file had a version that was not origin/main's. Every guard in this module was
+    added because an unguarded edit destroyed a body, so running a copy that
+    predates a guard is running without that guard -- and this tool's whole
+    failure mode is REFUSING TO WRITE, which is what a stale copy should do too.
+    """
+    printer = printer or (lambda m: print(m, file=sys.stderr))
+    if _freshness is None:
+        printer("note: could not establish whether this copy of pr-body.py is current "
+                "-- tools/agent_self_freshness.py could not be imported. Proceeding; "
+                "nothing has checked that this copy carries the latest guards.")
+        return None
+    refused = False
+    confirm = True
+    for target in (os.path.abspath(__file__), os.path.abspath(_freshness.__file__)):
+        fresh = _freshness.assess(target, remote_check=confirm)
+        confirm = False  # one ls-remote, not one per file
+        for note in fresh.notes:
+            printer(note)
+        refused = refused or fresh.refuse
+    if refused:
+        printer("\nREFUSING TO WRITE -- this copy of pr-body.py is STALE. Its guards "
+                "are older than origin/main's, and a guard you do not have cannot "
+                "refuse anything. Nothing was read or written.")
+        return EXIT_PRECONDITION
+    return None
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    stale = freshness_refusal()
+    if stale is not None:
+        return stale
     edits = collect_edits(args)
     editing = bool(edits or args.append or args.append_file or args.body_file)
 

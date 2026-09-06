@@ -381,6 +381,19 @@ jobs:
       - name: Run tools/test_ci_wait.py
         run: python3 tools/test_ci_wait.py
 
+      # #3020: the verdict logic being right on origin/main says nothing about
+      # the copy an agent actually ran out of its own worktree. 71 of the 99
+      # copies on the development box were not origin/main's, and 59 of those
+      # print a false GREEN on a recorded rollup. These cases build throwaway git
+      # repositories -- a bare remote, a checkout, and a commit landing on the
+      # remote after the checkout branched -- because the question is what git
+      # says about that relationship, and a mocked answer would prove nothing.
+      # It sets user.name/user.email per throwaway repository, so it needs no
+      # global git identity on the runner -- verified by running it under an
+      # empty GIT_CONFIG_GLOBAL.
+      - name: Run tools/test_agent_self_freshness.py
+        run: python3 tools/test_agent_self_freshness.py
+
   preflight-tests:
     name: preflight.py unit tests
     runs-on: ubuntu-latest

@@ -19,7 +19,7 @@ tools/ci-wait.py 2379 --timeout 2400
 | 0 | every required check passed **on the current head** — safe to report green |
 | 1 | a required check failed; **the failing log is already printed**. The list is what has reported SO FAR — while other required checks are still running it can still grow, and the verdict says how many have not reported. Do not scope a diagnosis to those names until every check has reported (a one-leg failure that turned out to be eight cost a version-specific diagnosis that was never relevant). |
 | 2 | timed out while still running — **not a verdict**, call again |
-| 3 | could not determine (auth, network, no checks) — **or** the required-context set could not be established without narrowing it (#3002). A ruleset read that comes back missing a context the tool already knows about is refused, because judging on the smaller set makes "every required check passed" vacuously true. |
+| 3 | could not determine (auth, network, no checks) — **or** the running copy of `ci-wait.py` is itself behind `origin/main` (#3020) — **or** the required-context set could not be established without narrowing it (#3002). A ruleset read that comes back missing a context the tool already knows about is refused, because judging on the smaller set makes "every required check passed" vacuously true. |
 | 4 | **blocked, not failing** — every check passed but the merge is still refused and nothing else says why. Two causes: a *required* context is `cancelled` on this commit (#2726) — the one case where `gh run rerun` can be correct, but only after checking that no check run on this commit concluded `failure` before the cancellation (see section 3); or a *required* context produced **no check run at all** and every workflow run for the commit has finished (#2807), which is a trigger/`paths:` filter question, not a re-run. Never reach for `--admin` for either. |
 
 `ci-wait.py` reads the required contexts from the **live branch ruleset** on each
@@ -48,6 +48,48 @@ It enforces the two rules agents keep getting wrong: checks are matched against 
 **current head SHA**, so a newer completed run for an older push is never reported as this
 push's result; and on failure it fetches `--log-failed` for you, so there is never a reason
 to reach for `gh run rerun`, which destroys the log permanently.
+
+### Run it from a tree you have fetched — the tool being right says nothing about your copy
+
+You invoke `tools/ci-wait.py` by relative path, so you run the copy in **your worktree**, and a
+worktree is created once at the start of a task and never fast-forwarded again. Measured over
+this box's 109 worktrees on 2026-09-06, **71 of the 99 copies of `ci-wait.py` were not
+`origin/main`'s**, across four distinct versions, and replaying the recorded PR #2971 rollup
+through them, **59 printed a false GREEN** that had already been fixed on `main`. The same
+count for `pr-body.py` and `preflight.py` was 40 of 59. A tool nobody has changed lately —
+`context-pack.py` — was identical in all 105, which is the point: it is the tools **under
+active repair** that run old, so the copy most likely to carry a fixed bug is the one most
+likely to be on disk.
+
+`ci-wait.py` and `pr-body.py` now refuse rather than answer when `origin/main` has moved their
+own file since your checkout branched (`tools/agent_self_freshness.py`) — exit 3 for
+`ci-wait.py`, refuse-to-write for `pr-body.py`. A branch that legitimately *edits* one of them
+is not stale and is not refused: what makes a copy stale is `origin/main` moving the file since
+the branch point, not your working file differing from `origin/main`'s. There is no flag to
+switch the check off.
+
+**Expect it to fire in bursts, and do not read a burst as an outage.** A worktree only goes
+stale when `ci-wait.py` (or `pr-body.py`) next changes on `main`, so nothing refuses for days
+and then every worktree older than that merge refuses at once. That file changed five times in
+four days. A wave of exit-3 refusals right after a merge is the guard working exactly as
+designed; the fix is `git fetch origin main` in each worktree, not reverting anything.
+
+Two things it cannot do, so do them yourself:
+
+- **It cannot help a copy older than itself.** The stale copies already on disk have no guard
+  in them. `git fetch origin main` in your worktree before you trust any tool in `tools/`, or
+  run `origin/main`'s copy directly:
+  ```bash
+  git fetch origin main
+  git show origin/main:tools/ci-wait.py > /tmp/ci-wait.py && python3 /tmp/ci-wait.py <PR>
+  ```
+- **It cannot turn a network failure into a verdict.** `refs/remotes/origin/main` is shared by
+  every worktree of the repository, so the check itself costs no network; one `git ls-remote`
+  confirms that shared ref against the remote. If the remote is unreachable, that is a loud
+  note and the local check stands — never a refusal, because a network blip is not evidence of
+  a stale checkout.
+
+`tools/preflight.py` carries the same exposure and is **not** guarded yet (#3164).
 
 Measured across one session's 17 subagents, CI waiting was 328 of 3,282 Bash calls, and the
 shape was wrong — 107 `gh run view` polls and 37 `sleep` loops against only 29 blocking

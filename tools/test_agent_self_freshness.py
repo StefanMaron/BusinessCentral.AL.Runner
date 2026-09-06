@@ -281,6 +281,53 @@ try:
 finally:
     shutil.rmtree(tmp, ignore_errors=True)
 
+# ---------------------------------------------------------------------------
+# The same shape one tool over. pr-body.py is the only sanctioned way to edit a
+# PR body, every one of its guards exists because an unguarded edit destroyed
+# one, and 40 of the 59 worktrees carrying it had a version that was not
+# origin/main's. Running a copy that predates a guard is running without it.
+
+print("\npr-body.py refuses a stale copy of itself")
+
+tmp = tempfile.mkdtemp()
+try:
+    remote, work = make_repo(tmp)
+    for name in ("pr-body.py", "agent_self_freshness.py"):
+        shutil.copy(os.path.join(HERE, name), os.path.join(work, "tools", name))
+    git(work, "add", "-A")
+    git(work, "commit", "-m", "the real tool")
+    git(work, "push", "origin", "main")
+    land_on_remote(tmp, remote, "tools/pr-body.py", "# a newer pr-body\n")
+    git(work, "fetch", "origin", "main")
+
+    stale = os.path.join(work, "tools/pr-body.py")
+    spec = importlib.util.spec_from_file_location("pr_body_stale", stale)
+    pb = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(pb)
+
+    said: list[str] = []
+    rc = pb.freshness_refusal(printer=said.append)
+    check("a stale pr-body.py refuses with EXIT_PRECONDITION",
+          rc == pb.EXIT_PRECONDITION, f"{rc}")
+    check("...and says nothing was read or written",
+          any("Nothing was read or written" in m for m in said), said)
+    check("...and prints the runnable remedy",
+          any("git show origin/main:" in m for m in said), said)
+
+    # A current copy must get out of the way, or the guard is just an outage.
+    git(work, "merge", "--ff-only", "origin/main")
+    shutil.copy(os.path.join(HERE, "pr-body.py"), stale)
+    git(work, "add", "-A")
+    git(work, "commit", "-m", "restore")
+    spec = importlib.util.spec_from_file_location("pr_body_fresh", stale)
+    pb2 = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(pb2)
+    said2: list[str] = []
+    check("a current pr-body.py is NOT refused",
+          pb2.freshness_refusal(printer=said2.append) is None, said2)
+finally:
+    shutil.rmtree(tmp, ignore_errors=True)
+
 print()
 if FAILURES:
     print(f"FAILED: {len(FAILURES)} check(s): {', '.join(FAILURES)}")
