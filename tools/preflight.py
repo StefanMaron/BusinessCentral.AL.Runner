@@ -26,8 +26,14 @@ tools/lsp-query.py, graphify, and the bc-decompiler MCP server (#3087). Those
 three do not affect whether the runner is correct; they affect whether an agent
 gets a confidently wrong answer while reading it, which each of them has already
 produced here. So they are probed for a KNOWN-GOOD ANSWER rather than for
-presence, and they only ever WARN -- see the comment on LSP_PROBE_SYMBOL for why
-a stale graph must not be allowed to halt a cycle.
+presence -- an installed-but-broken tool returns nothing, which is what a real
+negative looks like.
+
+The graph is REPAIRED rather than reported: a stale one is rebuilt (~2s) and a
+stray copy outside AlRunner/ is deleted, because telling a human to run a
+two-second command is asking a person to do a script's job and an unattended loop
+has no person to ask. This is the only check in this file that writes anything;
+--no-tools skips it. See the comment on LSP_PROBE_SYMBOL for the severity split.
 
 Usage:
     tools/preflight.py                 # human-readable report
@@ -100,21 +106,25 @@ OMARCHY_USAGE_BIN = "/usr/share/omarchy/bin/omarchy-agent-usage-claude"
 # nothing. Each probe additionally validates its own fixture against the checkout,
 # so a probe that has drifted reports itself as drifted instead of blaming the tool.
 #
-# SEVERITY: these top out at WARN and never FAIL, which is a deliberate choice
-# rather than an oversight.
+# SEVERITY: WARN by default, with exactly one condition that can FAIL. The split
+# is the point, so it is spelled out.
 #   - overall_exit() turns any FAIL into exit 1, and the autonomous cycle treats
-#     that as "do not start". Halting an unattended cycle because a 3.4 MB graph
-#     file is four days old costs far more than the staleness does, and the
-#     remedy is a two-second rebuild.
-#   - Every one of these degrades to a documented fallback that still produces
-#     correct work: ripgrep, tools/context-pack.py, reading the DLL another way.
-#     A missing navigation tool makes an agent slower, not wrong.
-#   - `--strict` already exists for the operator who wants zero tolerance: it
-#     turns any WARN into exit 2. That is the right place for that policy,
-#     because it is the caller's call and not this file's.
-# A genuinely untrustworthy box is what FAIL is for -- disk, memory, push, the
-# corpus baseline. Navigation tooling is not that, and saying so keeps FAIL
-# meaning something.
+#     that as "do not start". A tool being absent, or a server not answering, does
+#     not earn that: each degrades to a documented fallback that still produces
+#     correct work (ripgrep, tools/context-pack.py, reading the DLL another way),
+#     so it makes an agent slower rather than wrong. `--strict` already turns any
+#     WARN into exit 2 for a caller who wants zero tolerance.
+#   - The exception is a STRAY GRAPH that could not be removed. That one is not
+#     "a tool is missing", it is a tool CONFIDENTLY ANSWERING WRONG: measured, an
+#     18-day-old graph at the repo root returned "No matching nodes found." -- exit
+#     0 -- for a symbol that exists, while the correct graph returned 11 nodes. No
+#     rebuild fixes it, because a rebuild under AlRunner/ never touches it. That is
+#     precisely the class of failure preflight exists to catch, so it can halt.
+#     Preflight deletes it first and only fails if it could not.
+#   - Staleness is not reported at all any more. It is repaired -- see
+#     probe_graphify.
+# Keeping FAIL for "this box produces wrong answers" is what keeps FAIL worth
+# reading; the stray graph is in that category, and nothing else here is.
 LSP_PROBE_SYMBOL = "SafeDirectoryScan"
 # The answer the probe must get back. Checked against the working tree first, so a
 # rename turns into "the probe fixture moved" rather than "the language server is
@@ -1233,7 +1243,13 @@ class GraphifyState:
     graph_mtime: Optional[float] = None
     newest_source: Optional[float] = None
     newest_source_path: str = ""
-    stray: list = field(default_factory=list)   # other graph.json copies a query could pick up
+    stray_removed: list = field(default_factory=list)   # stray graph dirs preflight deleted
+    stray_kept: list = field(default_factory=list)      # stray graph dirs it could NOT delete
+    stray_error: str = ""
+    rebuilt: bool = False               # preflight ran `graphify update .` itself
+    rebuild_rc: Optional[int] = None
+    rebuild_secs: Optional[float] = None
+    rebuild_out: str = ""
     query_rc: Optional[int] = None
     query_out: str = ""
 
@@ -1315,46 +1331,63 @@ def classify_lsp(st: LspState) -> CheckResult:
 
 
 def classify_graphify(st: GraphifyState) -> CheckResult:
-    """Verdict on graphify, including the two traps that produce wrong answers quietly."""
+    """Verdict on graphify.
+
+    Two failure modes, and they are NOT the same size:
+
+    * A **stray graph outside AlRunner/** makes a query run from the repo root read
+      a different file, indefinitely -- rebuilding the canonical one does not touch
+      it. Measured on the box this was written on: an 18-day-old root copy answered
+      `No matching nodes found.` for a symbol that exists, while the correct graph
+      returned 11 nodes. That is a confident false negative, which is the failure
+      class preflight exists to catch, so it can FAIL. Preflight deletes the stray
+      first (it is gitignored, derived, and rebuilt in two seconds) and only fails
+      if it could not.
+
+    * A **stale graph** is not reported at all any more, because reporting it asked a
+      human to run a two-second command -- and in an unattended loop there is no
+      human to ask. `probe_graphify` rebuilds it and this says that it did. CLAUDE.md
+      already says "rebuild rather than wonder whether it is current".
+    """
     name = "nav-graphify"
     cmd = f"cd {GRAPHIFY_DIR} && graphify query \"{GRAPHIFY_PROBE_QUERY}\""
     rebuild = f"cd {GRAPHIFY_DIR} && graphify update .   # ~2 seconds"
+    stray_why = (
+        "Both `graphify update` and `graphify query` default to graphify-out/graph.json "
+        "relative to the CURRENT directory, so a query run from the repository root "
+        "reads the stray one and a rebuild under AlRunner/ never touches it. A stale "
+        "graph answers `No matching nodes found.` -- and exits 0 -- for symbols that "
+        "exist, which is indistinguishable from a true negative.")
     if not st.binary:
         return CheckResult(name=name, status="WARN", command="command -v graphify",
                            summary="graphify is not on PATH",
                            remedy="Install it, or use tools/context-pack.py and rg instead. "
                                   "Nothing is blocked.")
-    # The wrong-directory trap first: it is the one that answers, plausibly, from the
-    # wrong file. A stale graph you know about is better than a fresh one you are not
-    # actually querying.
-    if st.stray:
+    # A stray that is still there is the one condition here that can halt a cycle: it
+    # produces wrong answers, silently, and no rebuild fixes it.
+    if st.stray_kept:
         return CheckResult(
-            name=name, status="WARN", command=cmd,
-            summary=f"a second graph exists outside {GRAPHIFY_DIR}/ and a query run from "
-                    f"there would silently use it",
-            detail=[f"stray: {p}" for p in st.stray] +
-                   [f"canonical: {st.graph or '(missing)'}",
-                    "Both `graphify update` and `graphify query` default to "
-                    "graphify-out/graph.json relative to the CURRENT directory, so a "
-                    "rebuild in one place and a query in another use different files "
-                    "with no warning."],
-            remedy=f"Delete the stray copy, and always run both halves from "
-                   f"{GRAPHIFY_DIR}/:\n{rebuild}")
+            name=name, status="FAIL", command=cmd,
+            summary=f"a graph outside {GRAPHIFY_DIR}/ could not be removed and will answer "
+                    f"false negatives",
+            detail=[f"stray: {p}" for p in st.stray_kept]
+                   + ([st.stray_error] if st.stray_error else [])
+                   + [stray_why],
+            remedy="Delete it by hand -- it is gitignored derived data:\n"
+                   + "\n".join(f"  rm -rf {p}" for p in st.stray_kept))
+    if st.rebuilt and st.rebuild_rc not in (0, None):
+        return CheckResult(
+            name=name, status="WARN", command=rebuild,
+            summary=f"the graph needed rebuilding and `graphify update .` exited "
+                    f"{st.rebuild_rc}",
+            detail=[(st.rebuild_out or "").strip()[:400]],
+            remedy="Run it by hand and read the output. Meanwhile use rg / "
+                   "tools/context-pack.py; nothing is blocked.")
     if not st.graph:
-        return CheckResult(name=name, status="WARN", command=cmd,
-                           summary=f"no graph at {GRAPHIFY_DIR}/{GRAPHIFY_REL}",
+        return CheckResult(name=name, status="WARN", command=rebuild,
+                           summary=f"no graph at {GRAPHIFY_DIR}/{GRAPHIFY_REL}, and preflight "
+                                   f"could not build one",
                            remedy=rebuild)
-    if (st.graph_mtime is not None and st.newest_source is not None
-            and st.graph_mtime < st.newest_source):
-        behind = st.newest_source - st.graph_mtime
-        return CheckResult(
-            name=name, status="WARN", command=cmd,
-            summary=f"the graph is stale: {human_age(behind)} behind the newest source file",
-            detail=[f"graph   {ts(st.graph_mtime)}  {st.graph}",
-                    f"source  {ts(st.newest_source)}  {st.newest_source_path}",
-                    "A stale graph answers with line numbers and edges that no longer "
-                    "exist, and looks exactly like a fresh one."],
-            remedy=rebuild)
     if st.query_rc not in (None, 0):
         return CheckResult(name=name, status="WARN", command=cmd,
                            summary=f"the graph exists but a query against it exited {st.query_rc}",
@@ -1366,12 +1399,32 @@ def classify_graphify(st: GraphifyState) -> CheckResult:
             detail=[f"expected a node named {LSP_PROBE_SYMBOL}",
                     (st.query_out or "").strip()[:400]],
             remedy=rebuild)
+    # Healthy. Anything preflight had to FIX to get here is said out loud rather than
+    # folded into a silent PASS -- a reader has to be able to tell "it was already
+    # right" from "it was wrong and preflight repaired it".
+    fixed = []
+    if st.stray_removed:
+        fixed += [f"removed a stray graph that would have answered false negatives: {p}"
+                  for p in st.stray_removed] + [stray_why]
+    if st.rebuilt:
+        secs = f" in {st.rebuild_secs:.1f}s" if st.rebuild_secs is not None else ""
+        fixed.append(f"rebuilt the graph{secs} -- it was missing or behind "
+                     f"{os.path.basename(st.newest_source_path) or 'the sources'}")
+    detail = fixed + ["Query with bare symbols or `Symbol callers`. An English question "
+                      "matches on the words you type and silently returns unrelated nodes."]
+    if st.stray_removed:
+        return CheckResult(
+            name=name, status="WARN", command=cmd,
+            summary=f"a stray graph outside {GRAPHIFY_DIR}/ was found and removed; the "
+                    f"graph now resolves {LSP_PROBE_SYMBOL}",
+            detail=detail, remedy="Nothing to do -- preflight removed it. It comes back "
+                                  "if something runs `graphify update` from the repo root.",
+            data={"graph": st.graph, "stray_removed": st.stray_removed})
     return CheckResult(
         name=name, status="PASS", command=cmd,
-        summary=f"graph is current and resolved {LSP_PROBE_SYMBOL}",
-        detail=["Query with bare symbols or `Symbol callers`. An English question "
-                "matches on the words you type and silently returns unrelated nodes."],
-        data={"graph": st.graph})
+        summary=("rebuilt, and resolved " + LSP_PROBE_SYMBOL) if st.rebuilt
+                else f"graph is current and resolved {LSP_PROBE_SYMBOL}",
+        detail=detail, data={"graph": st.graph, "rebuilt": st.rebuilt})
 
 
 def classify_decompiler(st: DecompilerState) -> CheckResult:
@@ -1481,26 +1534,70 @@ def probe_lsp(repo: str, timeout: float = 180) -> LspState:
     return st
 
 
-def probe_graphify(repo: str, timeout: float = 60) -> GraphifyState:
+def stray_graph_dirs(repo: str) -> list:
+    """graphify-out directories that are NOT the canonical one under AlRunner/.
+
+    The documented trap is a rebuild in one directory and a query in another, and the
+    two directories in play are the repo root and AlRunner/ -- so a graph at the root
+    is the stray. A `graphify query` run from there reads it, forever, and a rebuild
+    under AlRunner/ never touches it.
+    """
+    canonical = os.path.abspath(os.path.join(repo, GRAPHIFY_DIR, "graphify-out"))
+    root = os.path.abspath(os.path.join(repo, "graphify-out"))
+    return [root] if os.path.isdir(root) and root != canonical else []
+
+
+def probe_graphify(repo: str, timeout: float = 180) -> GraphifyState:
+    """Measure graphify -- and REPAIR what is cheap and unambiguous to repair.
+
+    This probe is not read-only, unlike every other check in this file, and that is
+    deliberate on two counts:
+
+    * A stray graph is **deleted**. It is gitignored derived data, rebuilt in about two
+      seconds, and while it exists a query from the repo root answers false negatives.
+      Leaving it in place to report it would leave the box broken for the next agent.
+    * A stale or missing graph is **rebuilt** rather than reported. It costs ~2s warm,
+      and CLAUDE.md already says "rebuild rather than wonder whether it is current".
+      Telling a human to run a two-second command is asking a person to do a script's
+      job, and in an unattended loop there is no person to ask.
+
+    Both repairs are reported in the result, never folded into a silent PASS.
+    `--no-tools` skips this check entirely for a caller who wants nothing touched.
+    """
     st = GraphifyState(binary=shutil.which("graphify"))
-    canonical = os.path.join(repo, GRAPHIFY_DIR, GRAPHIFY_REL)
-    if os.path.exists(canonical):
-        st.graph = canonical
+    for stray in stray_graph_dirs(repo):
         try:
-            st.graph_mtime = os.path.getmtime(canonical)
+            shutil.rmtree(stray)
+            st.stray_removed.append(stray)
+        except OSError as exc:
+            st.stray_kept.append(stray)
+            st.stray_error = str(exc)
+
+    graph_dir = os.path.join(repo, GRAPHIFY_DIR)
+    canonical = os.path.join(graph_dir, GRAPHIFY_REL)
+    st.newest_source, st.newest_source_path = newest_source_mtime(graph_dir)
+
+    def graph_mtime() -> Optional[float]:
+        try:
+            return os.path.getmtime(canonical)
         except OSError:
-            st.graph_mtime = None
-    # The documented trap is a rebuild in one directory and a query in another. The
-    # two directories in play are the repo root and AlRunner/, so a graph at the root
-    # is the stray -- a `graphify query` run from there uses it and says nothing.
-    root_copy = os.path.join(repo, GRAPHIFY_REL)
-    if os.path.exists(root_copy) and os.path.abspath(root_copy) != os.path.abspath(canonical):
-        st.stray.append(root_copy)
-    st.newest_source, st.newest_source_path = newest_source_mtime(
-        os.path.join(repo, GRAPHIFY_DIR))
-    if st.binary and st.graph and not st.stray:
-        r = run([st.binary, "query", GRAPHIFY_PROBE_QUERY],
-                cwd=os.path.join(repo, GRAPHIFY_DIR), timeout=timeout)
+            return None
+
+    mtime = graph_mtime()
+    stale = mtime is None or (st.newest_source is not None and mtime < st.newest_source)
+    if st.binary and not st.stray_kept and stale:
+        started = time.monotonic()
+        r = run([st.binary, "update", "."], cwd=graph_dir, timeout=timeout)
+        st.rebuilt = True
+        st.rebuild_rc = 124 if r.timed_out else r.rc
+        st.rebuild_secs = time.monotonic() - started
+        st.rebuild_out = r.out + r.err
+        mtime = graph_mtime()
+
+    if mtime is not None:
+        st.graph, st.graph_mtime = canonical, mtime
+    if st.binary and st.graph and not st.stray_kept:
+        r = run([st.binary, "query", GRAPHIFY_PROBE_QUERY], cwd=graph_dir, timeout=timeout)
         st.query_rc, st.query_out = r.rc, r.out + r.err
     return st
 

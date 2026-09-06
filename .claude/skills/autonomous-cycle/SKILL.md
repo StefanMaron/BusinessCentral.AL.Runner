@@ -150,10 +150,6 @@ the cause.
 
    - `tools/lsp-query.py` exits 2 when the server never answered. Read as "nothing calls this",
      that is a false negative wearing the shape of a finding.
-   - `graphify update` and `graphify query` both default to `graphify-out/graph.json` *relative
-     to the current directory*, so a rebuild in one directory and a query in another silently
-     use different files. A root-level copy once sat 13 days stale while the documented rebuild
-     appeared to work.
    - `.mcp.json` changes need a **session restart**, so "configured" and "usable right now" are
      different states and only the second is worth anything. Preflight establishes the second by
      speaking MCP to the server directly; a session still has to restart before it can call it.
@@ -161,13 +157,26 @@ the cause.
    Each probe also validates its own fixture against the working tree first, so a renamed symbol
    reports as "this check's probe drifted" rather than as a broken language server.
 
-   **These WARN and never FAIL.** They do not affect whether the runner is correct, only how
-   fast and how accurately an agent reads it, and every one degrades to a documented fallback
-   (`rg`, `tools/context-pack.py`) that still produces correct work. Halting an unattended cycle
-   over a four-day-old graph file costs more than the staleness does, and the remedy is a
-   two-second rebuild. `--strict` is where zero tolerance belongs, because that is the caller's
-   policy and not this step's. Keeping FAIL for the checks that genuinely mean "this box will
-   produce wrong answers" is what keeps FAIL worth reading.
+   **Repair the graph, do not report it.** `graphify update` and `graphify query` both default
+   to `graphify-out/graph.json` *relative to the current directory*, and two things follow:
+
+   - A **stale** graph is rebuilt, not classified. It costs about two seconds warm, and telling
+     a human to run a two-second command is asking a person to do a script's job — in an
+     unattended loop there is no person to ask.
+   - A **stray** `graphify-out/` outside `AlRunner/` is deleted. It is gitignored derived data,
+     and while it exists a query run from the repository root reads it instead. Measured: an
+     18-day-old root copy answered `No matching nodes found.` — exit 0 — for a symbol that
+     exists, while the correct graph returned 11 nodes. A rebuild under `AlRunner/` never
+     touches it, so the two diverge indefinitely; that is the 13-day-stale incident `CLAUDE.md`
+     records. Both repairs are reported rather than folded into a silent PASS.
+
+   **Severity: WARN, with one exception.** A tool that is absent or unusable does not halt a
+   cycle — each degrades to a documented fallback (`rg`, `tools/context-pack.py`) that still
+   produces correct work, so it makes an agent slower rather than wrong, and `--strict` is where
+   zero tolerance belongs. The exception is a **stray graph that could not be deleted**: that is
+   not a missing tool, it is a tool confidently answering wrong, with no fallback and no rebuild
+   that fixes it. That one FAILs. Keeping FAIL for "this box produces wrong answers" is what
+   keeps FAIL worth reading.
 
 **Print the preflight as a readable report** — one line per check, PASS or FAIL with the reason
 and the command that produced it. That report is what a new contributor reads to find out

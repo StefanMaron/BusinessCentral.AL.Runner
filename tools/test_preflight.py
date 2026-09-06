@@ -672,6 +672,8 @@ def nav_states():
                              graph_mtime=2000.0, newest_source=1000.0,
                              newest_source_path="/repo/AlRunner/X.cs",
                              query_rc=0, query_out=f"NODE {pf.LSP_PROBE_SYMBOL} [src=...]")
+    # Healthy = nothing stray, nothing rebuilt. probe_graphify repairs both before
+    # the classifier ever sees them, so a healthy state carries no trace of either.
     dec = pf.DecompilerState(config="/repo/.mcp.json", registered=True,
                              target="/opt/DecompilerServer.dll", target_exists=True,
                              probe_rc=0, aliases=list(pf.DECOMPILER_ALIASES))
@@ -729,25 +731,49 @@ check("a language server that never answers is reported as a timeout", r.status 
 r = pf.classify_lsp(pf.LspState(script=False))
 check("a checkout without tools/lsp-query.py is reported", r.status == "WARN", r.summary)
 
-# ---- nav-graphify: stale, wrong directory, and no graph at all
+# ---- nav-graphify: the stray copy FAILs, staleness is repaired rather than reported
 def graph_with(**kw):
     return pf.classify_graphify(_dc.replace(_graph, **kw))
 
 
-r = graph_with(graph_mtime=1000.0, newest_source=1000.0 + 18 * 86400)
-check("a graph older than the newest source is reported stale", r.status == "WARN", r.summary)
-check("the stale summary quantifies how far behind it is",
-      "18.0d" in r.summary, r.summary)
-check("the stale remedy is the two-second rebuild",
-      "graphify update ." in r.remedy, r.remedy)
+# The stray copy is the one navigation condition that can halt a cycle, because it
+# is a tool answering WRONG rather than a tool being absent, and no rebuild fixes it.
+r = graph_with(stray_kept=["/repo/graphify-out"], stray_error="Permission denied")
+check("a stray graph that could NOT be removed is a FAIL", r.status == "FAIL", r.summary)
+check("the un-removable stray is named so it can be deleted by hand",
+      "/repo/graphify-out" in " ".join(r.detail), str(r.detail))
+check("the un-removable stray reports why removal failed",
+      "Permission denied" in " ".join(r.detail), str(r.detail))
+check("the un-removable stray explains the false negative it causes",
+      "No matching nodes found" in " ".join(r.detail), str(r.detail))
+check("a FAILing stray halts the cycle", pf.overall_exit([r], strict=False) == 1)
 
-r = graph_with(stray=["/repo/graphify-out/graph.json"])
-check("a second graph outside AlRunner/ is reported", r.status == "WARN", r.summary)
-check("the stray graph is named, so it can be deleted",
-      "/repo/graphify-out/graph.json" in " ".join(r.detail), str(r.detail))
+# Removed: the box is repaired, so it must not halt -- but it must not read as a
+# clean PASS either, or nobody learns the root copy keeps coming back.
+r = graph_with(stray_removed=["/repo/graphify-out"])
+check("a stray graph preflight REMOVED does not halt the cycle",
+      r.status == "WARN" and pf.overall_exit([r], strict=False) == 0, r.status)
+check("the removed stray is named in the report",
+      "/repo/graphify-out" in " ".join(r.detail), str(r.detail))
+
+# Staleness: no longer a verdict at all. probe_graphify rebuilds; this reports it.
+r = graph_with(rebuilt=True, rebuild_rc=0, rebuild_secs=1.9)
+check("a graph preflight rebuilt is a PASS, not a staleness warning",
+      r.status == "PASS", r.summary)
+check("the PASS says it rebuilt rather than hiding the repair",
+      "rebuilt" in r.summary, r.summary)
+check("the rebuild duration is reported",
+      "1.9s" in " ".join(r.detail), str(r.detail))
+check("no verdict mentions the word stale any more - staleness is fixed, not classified",
+      "stale" not in (r.summary + " ".join(r.detail)).lower(), r.summary + str(r.detail))
+
+r = graph_with(rebuilt=True, rebuild_rc=1, rebuild_out="graphify: boom")
+check("a rebuild that FAILED is reported", r.status == "WARN", r.summary)
+check("the failed rebuild shows graphify's output",
+      "boom" in " ".join(r.detail), str(r.detail))
 
 r = graph_with(graph=None, graph_mtime=None)
-check("no graph at all is reported with the rebuild command",
+check("no graph, and preflight could not build one, is reported",
       r.status == "WARN" and "graphify update ." in r.remedy, r.remedy)
 
 r = graph_with(query_rc=1, query_out="boom")
@@ -763,6 +789,55 @@ check("graphify missing from PATH is reported", r.status == "WARN", r.summary)
 check("the passing graphify report warns about English-question queries",
       "English question" in " ".join(pf.classify_graphify(_graph).detail),
       str(pf.classify_graphify(_graph).detail))
+
+# stray_graph_dirs: the root copy is a stray, AlRunner/'s own is never one.
+_g = tempfile.mkdtemp(prefix="preflight-stray-")
+os.makedirs(os.path.join(_g, "AlRunner", "graphify-out"), exist_ok=True)
+check("the canonical graph under AlRunner/ is not treated as a stray",
+      pf.stray_graph_dirs(_g) == [], str(pf.stray_graph_dirs(_g)))
+os.makedirs(os.path.join(_g, "graphify-out"), exist_ok=True)
+check("a graphify-out at the repository root IS a stray",
+      pf.stray_graph_dirs(_g) == [os.path.join(_g, "graphify-out")],
+      str(pf.stray_graph_dirs(_g)))
+shutil.rmtree(_g, ignore_errors=True)
+
+# probe_graphify REMOVES a stray rather than reporting it, and only reports the ones
+# it could not remove. Both halves against a real directory, because "did it actually
+# delete the thing" is not a claim a constructed state can make.
+_g = tempfile.mkdtemp(prefix="preflight-stray-rm-")
+os.makedirs(os.path.join(_g, "AlRunner"))
+os.makedirs(os.path.join(_g, "graphify-out"))
+with open(os.path.join(_g, "graphify-out", "graph.json"), "w") as fh:
+    fh.write("{}")
+_st = pf.probe_graphify(_g, timeout=10)
+check("probe_graphify deletes a stray graph directory rather than reporting it",
+      not os.path.exists(os.path.join(_g, "graphify-out")), str(_st.stray_removed))
+check("the deletion is reported, not silent",
+      _st.stray_removed == [os.path.join(_g, "graphify-out")], str(_st.stray_removed))
+shutil.rmtree(_g, ignore_errors=True)
+
+# The FAIL path has to be reachable, not merely classifiable: a directory whose parent
+# denies unlink. Skipped as root, which ignores the permission bits.
+if os.geteuid() != 0:
+    import stat as _stat
+    _g = tempfile.mkdtemp(prefix="preflight-stray-keep-")
+    os.makedirs(os.path.join(_g, "AlRunner"))
+    os.makedirs(os.path.join(_g, "graphify-out"))
+    with open(os.path.join(_g, "graphify-out", "graph.json"), "w") as fh:
+        fh.write("{}")
+    os.chmod(_g, _stat.S_IRUSR | _stat.S_IXUSR)
+    try:
+        _st = pf.probe_graphify(_g, timeout=10)
+        _r = pf.classify_graphify(_st)
+        check("a stray that cannot be deleted is kept and reported",
+              _st.stray_kept == [os.path.join(_g, "graphify-out")], str(_st.stray_kept))
+        check("an un-deletable stray reaches FAIL end to end, not just in a fixture",
+              _r.status == "FAIL", _r.summary)
+        check("and that FAIL is what halts a cycle",
+              pf.overall_exit([_r], strict=False) == 1)
+    finally:
+        os.chmod(_g, _stat.S_IRWXU)
+        shutil.rmtree(_g, ignore_errors=True)
 
 # ---- nav-bc-decompiler: configured is not the same as usable
 def dec_with(**kw):
@@ -804,8 +879,8 @@ _broken = [
     pf.classify_lsp(_dc.replace(_lsp, timed_out=True, rc=124)),
     pf.classify_lsp(_dc.replace(_lsp, rc=0, out="nope")),
     pf.classify_graphify(pf.GraphifyState()),
-    graph_with(stray=["/repo/graphify-out/graph.json"]),
-    graph_with(graph_mtime=1.0, newest_source=99999.0),
+    graph_with(stray_removed=["/repo/graphify-out"]),
+    graph_with(rebuilt=True, rebuild_rc=1, rebuild_out="boom"),
     graph_with(query_rc=1),
     # Every branch, not every classifier: an earlier version of this list reached
     # classify_graphify only through GraphifyState() (graphify not on PATH), so a
@@ -821,9 +896,19 @@ _broken = [
     dec_with(target_exists=False),
     dec_with(aliases=[]),
 ]
-check("no navigation check can ever FAIL - they must not halt a cycle",
+check("a tool being absent or unusable never halts a cycle - only a wrong ANSWER does",
       all(r.status != "FAIL" for r in _broken),
       str([(r.name, r.status) for r in _broken if r.status == "FAIL"]))
+# The boundary itself, asserted from both sides in one place so it cannot drift: the
+# un-removable stray graph is the ONLY navigation condition that may halt a cycle.
+# Everything above degrades to rg / tools/context-pack.py and merely slows an agent
+# down; a stray graph makes graphify answer "No matching nodes found." for symbols
+# that exist, which no fallback rescues and no rebuild fixes.
+check("the un-removable stray graph is the one navigation condition that CAN fail",
+      pf.classify_graphify(_dc.replace(_graph, stray_kept=["/x"])).status == "FAIL")
+check("and it is the ONLY one - every other broken state stays advisory",
+      {r.status for r in _broken} == {"WARN"},
+      str(sorted({(r.name, r.status) for r in _broken})))
 check("every broken navigation state still says what to do about it",
       all(r.remedy for r in _broken),
       str([r.name for r in _broken if not r.remedy]))
@@ -910,7 +995,7 @@ shutil.rmtree(_fake, ignore_errors=True)
 
 # ---- the report a contributor actually reads
 _txt = pf.render_report([pf.classify_lsp(_dc.replace(_lsp, rc=2)),
-                         graph_with(stray=["/repo/graphify-out/graph.json"]),
+                         graph_with(stray_removed=["/repo/graphify-out"]),
                          dec_with(probe_rc=1, error="no answer")], strict=False)
 check("the navigation warnings render one line each with a name",
       _txt.count("WARN") >= 3, _txt)
