@@ -77,6 +77,10 @@ public sealed class ScratchDirOwnershipGuardTests
             (1, "a .so path that must not exist; this file's three real directories ARE owned"),
 
         // ── path strings handed to a resolver, never created ────────────────────────────
+        ["CacheRootStartupFailureTests.cs"] =
+            (1, "one absolute path handed to CacheRoots.RequireRooted, which is a pure "
+              + "Path.IsPathRooted check that touches no filesystem, so the path is never "
+              + "created; this file's three real directories ARE owned via TestScratch"),
         ["ArtifactsRootEnvOverrideTests.cs"] =
             (3, "AL_RUNNER_ARTIFACTS_ROOT values fed to BcArtifacts.ResolveArtifactsRoot; the "
               + "test asserts on the resolved string and never touches the filesystem"),

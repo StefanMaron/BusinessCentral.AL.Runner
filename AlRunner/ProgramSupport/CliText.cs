@@ -528,6 +528,9 @@ internal static partial class ProgramSupport
         w.WriteLine("                          ONCE, when the flag is parsed, and stored absolute: an");
         w.WriteLine("                          unrooted cache root cannot be handed to the .NET assembly");
         w.WriteLine("                          loader, and would otherwise move with the process (#3084).");
+        w.WriteLine("                          A DIR this process cannot resolve to a path at all exits 2");
+        w.WriteLine("                          naming the flag and the value, never an unhandled crash");
+        w.WriteLine("                          (#3111) — same for AL_RUNNER_NO_CACHE_ROOT under --no-cache.");
         w.WriteLine("  --no-cache              Disable every on-disk cache for this run, not just the");
         w.WriteLine("                          AL-output cache: the other named caches above are");
         w.WriteLine("                          redirected to a throwaway per-run directory (removed on");

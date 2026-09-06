@@ -162,7 +162,7 @@ public static class CacheRoots
             // (#2706) so a run killed before CleanupThrowawayRoot fires is reclaimed by the
             // next runner start instead of leaking a full cache per killed --no-cache run.
             root = Path.GetFullPath(ScratchDirs.Reserve(
-                Path.Combine(Path.GetTempPath(), "al-runner-no-cache-" + Guid.NewGuid().ToString("N"))));
+                Path.Combine(ThrowawayRootParent, "al-runner-no-cache-" + Guid.NewGuid().ToString("N"))));
             // Publish the ROOTED form, so a re-exec'd child inherits an absolute path
             // even if this generation was handed a relative one (#3084).
             Environment.SetEnvironmentVariable(NoCacheRootEnvVar, root);
@@ -211,15 +211,96 @@ public static class CacheRoots
         // all eight rather than each consumer having to know that LoadFromAssemblyPath —
         // or a re-exec, or a path-prefix comparison — is downstream of it.
         //
+        // #3111, inventory: r2r-chunks is not the only consumer that would break. ncl-shadow
+        // is resolved by NclShadowRuntime.EnsureShadowDir and the dll under it is added to a
+        // child process's ArgumentList at ProgramSupport/Provisioning.cs:106 (`dotnet exec
+        // <dll>`) — a relative root there is resolved by the CHILD, against whatever working
+        // directory the child happens to inherit, so it is undefended for a reason unrelated
+        // to assembly loading. Both consequences are named in the message below.
+        //
         // Loud rather than best-effort-rooted-here on purpose (.claude/rules/loud-failures.md):
         // silently calling Path.GetFullPath at THIS point would re-resolve against whatever
         // the current directory is right now, which is the moving-target bug the write-site
         // rooting exists to prevent, and would hide the defect that produced the unrooted
         // value instead of naming it.
-        if (!Path.IsPathRooted(root))
-            throw new InvalidOperationException(BuildUnrootedCacheRootMessage(root, name));
+        //
+        // #3111: the check itself moved into RequireRooted so the ONE cache root that
+        // deliberately does not come through here — Program.cs's alCacheDir, see this
+        // class's "Deliberately NOT wired into alCacheDir" note — can assert the same
+        // invariant with the same wording instead of having no guard at all.
+        RequireRooted(root, name);
         return Path.Combine(root, name);
     }
+
+    /// <summary>
+    /// Throws unless <paramref name="dir"/> is absolute; returns it unchanged when it is.
+    ///
+    /// <para>Extracted from <see cref="Resolve"/> in #3111 because the guard #3084 added
+    /// covered every cache that flows through <see cref="Resolve"/> and NOTHING else, and
+    /// there is exactly one cache root that does not flow through it: the AL-output
+    /// directory (<c>Program.cs</c>'s <c>alCacheDir</c>), which keeps exact-directory
+    /// semantics on purpose and therefore never asks this class for a path. That left the
+    /// two halves of one <c>--cache</c> value under different rules — the derived roots
+    /// guarded, the al-out root not — which is the same "two code paths write the same
+    /// state, only one holds the invariant" shape #3084's <see cref="DisableForRun"/> half
+    /// was about. Call it from any consumer that holds a cache root it did not get from
+    /// <see cref="Resolve"/>.</para>
+    /// </summary>
+    /// <param name="dir">The cache root to check.</param>
+    /// <param name="name">The cache's name, for the diagnostic (e.g. <c>"r2r-chunks"</c>,
+    /// <c>"al-out"</c>).</param>
+    internal static string RequireRooted(string dir, string name)
+        => Path.IsPathRooted(dir)
+            ? dir
+            : throw new InvalidOperationException(BuildUnrootedCacheRootMessage(dir, name));
+
+    /// <summary>
+    /// The directory <see cref="DisableForRun"/> mints its throwaway root under when
+    /// <see cref="NoCacheRootEnvVar"/> is unset. A property rather than a second inline
+    /// <c>Path.GetTempPath()</c> so the error path below names the directory the mint
+    /// actually failed under, instead of a second copy of the expression that could drift
+    /// from it — the same "two code paths, one invariant" hygiene the rest of this class
+    /// is about.
+    /// </summary>
+    internal static string ThrowawayRootParent => Path.GetTempPath();
+
+    /// <summary>
+    /// The diagnostic for the OTHER way <see cref="DisableForRun"/> can fail: the branch
+    /// that mints a throwaway root itself, reached only when <see cref="NoCacheRootEnvVar"/>
+    /// is unset.
+    ///
+    /// <para>Separate from <see cref="BuildUnusableCacheRootMessage"/> because that one
+    /// names a SOURCE and a VALUE, and this branch has neither — nothing supplied a path,
+    /// the runner chose one. #3111's first cut reused it anyway and reported
+    /// <c>AL_RUNNER_NO_CACHE_ROOT '' is not a usable directory path: …</c>, naming a
+    /// variable the user never set and quoting an empty value that was never anybody's
+    /// input. An error that names a cause which did not happen is worse than a generic
+    /// one: it sends the reader to unset a variable that is already unset.</para>
+    /// </summary>
+    /// <param name="parent">The directory the mint was attempted under, normally
+    /// <see cref="ThrowawayRootParent"/>.</param>
+    /// <param name="detail">The underlying failure, normally the exception's message.</param>
+    internal static string BuildUnreservableThrowawayRootMessage(string parent, string detail)
+        => $"al-runner could not reserve a throwaway --no-cache root under '{parent}': " +
+           $"{detail}. Set {NoCacheRootEnvVar} to a writable absolute directory, or drop " +
+           $"--no-cache to use the normal cache root.";
+
+    /// <summary>
+    /// One wording for "this cache root could not even be turned into a usable path", shared
+    /// by all three writers of a cache root at startup (#3111): <c>Program.cs</c>'s
+    /// <c>--cache</c> parsing, its <see cref="DisableForRun"/> call, and its
+    /// <see cref="SetOverride"/> call. They previously had one inline message between them
+    /// and no message at all on the other two paths, which is how the
+    /// <see cref="DisableForRun"/> path came to abort the process with an unhandled
+    /// exception (exit 134) where <c>--cache</c> returned the documented exit 2 — the exact
+    /// asymmetry #2114 is about, one flag over.
+    /// </summary>
+    /// <param name="source">What supplied the value, spelled the way the user typed it:
+    /// <c>"--cache"</c>, or the environment variable's name.</param>
+    /// <param name="value">The offending value, quoted into the message verbatim.</param>
+    /// <param name="detail">The underlying failure, normally the exception's message.</param>
+    internal static string BuildUnusableCacheRootMessage(string source, string value, string detail)
+        => $"{source} '{value}' is not a usable directory path: {detail}";
 
     /// <summary>
     /// The diagnostic for a cache root that is not absolute. Separate and internal so the
@@ -233,7 +314,9 @@ public static class CacheRoots
            $"root must be absolute: the r2r-chunks cache feeds " +
            $"AssemblyLoadContext.LoadFromAssemblyPath, which refuses a relative path, and a " +
            $"relative root also means a different directory for any part of the run that " +
-           $"executes from a different working directory. Left unchecked this does not fail " +
+           $"executes from a different working directory — the ncl-shadow root is handed to " +
+           $"a CHILD process as a `dotnet exec` argument (ProgramSupport/Provisioning.cs), " +
+           $"which is a second consumer that cannot survive one. Left unchecked this does not fail " +
            $"the load loudly — it drops Base Application / System Application / Business " +
            $"Foundation to a lower tier where their objects do not exist, and the run then " +
            $"reports ordinary test failures. Pass an absolute directory to --cache (issue #3084).";
