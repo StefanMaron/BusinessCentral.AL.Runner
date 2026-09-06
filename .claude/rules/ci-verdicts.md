@@ -83,8 +83,25 @@ Two things it cannot do, so do them yourself:
   run `origin/main`'s copy directly:
   ```bash
   git fetch origin main
-  git show origin/main:tools/ci-wait.py > /tmp/ci-wait.py && python3 /tmp/ci-wait.py <PR>
+  d=$(mktemp -d) && mkdir -p "$d/tools"
+  for f in ci-wait.py agent_self_freshness.py; do
+    git show "origin/main:tools/$f" > "$d/tools/$f"
+  done
+  python3 "$d/tools/ci-wait.py" <PR>
   ```
+  **Extract both files, not just `ci-wait.py`** (#3295). A lone copy cannot import its sibling
+  guard, and that used to print a note and judge the PR anyway — so the recipe *recommended
+  here* was itself a way to reach the one path where nothing checked the running code. It now
+  exits 3 instead, so the one-file version of this recipe no longer works at all, which is the
+  intended outcome: a tool whose job is to withhold an unsafe verdict must not have a path that
+  emits one with the safety check skipped.
+
+  Expect two loud `unknown` notes from the copy above — a directory under `/tmp` is not inside
+  a git repository, so neither file can check its own freshness. That is fine *here* and only
+  here: you just extracted both from `origin/main` yourself, so their provenance is the
+  guarantee the check would otherwise provide. It is not fine in general, and the same
+  fails-open-on-`unknown` path is reachable by other routes in `pr-body.py` and `preflight.py`
+  too — tracked in #3296.
 - **It cannot turn a network failure into a verdict.** `refs/remotes/origin/main` is shared by
   every worktree of the repository, so the check itself costs no network; one `git ls-remote`
   confirms that shared ref against the remote. If the remote is unreachable, that is a loud
