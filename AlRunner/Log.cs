@@ -66,6 +66,13 @@ public static class Log
     //     `[test-data]`, `[provision-gap]`, `[count-baseline]`, `[dep-load-fail]`, … — fails
     //     the pattern and passes through whether or not anyone intended it. That is
     //     load-bearing and pinned by LogUserFacingTagsTests; do not "tidy" the class.
+    //     It is ALSO accidental for most of them: punctuation, not intent, decides. #2257
+    //     owns that — it tracks the whole set and the per-tag decision each one needs, and
+    //     it is where the count lives, so this comment does not carry a number that would
+    //     rot here. Re-measured 2026-09-06 for that issue: 30 distinct hyphenated tags
+    //     across 83 console-output call sites, several plainly internal (`[type-index]`,
+    //     `[emit-timing]`, `[mem-census]`, `[instrumentation-counters]`, `[DIAG-RETRY]`).
+    //     Retagging that set is #2257's job, deliberately not this change's.
     //   * only the START of the value is examined, so a multi-line WriteLine is decided
     //     entirely by its first line.
     //
