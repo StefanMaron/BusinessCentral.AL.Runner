@@ -17,7 +17,7 @@
 //
 //     line  31, col 24 → `            => global::AlRunner.BcRuntime.NCLEnumMetadata_CreateByIdAlAware(id);`
 //                         (12 spaces + "=> global::" is 23 characters; `AlRunner` starts at 24)
-//     line 323, col 18 → `            var (appId, name, publisher, version) = global::AlRunner…`
+//     line 327, col 18 → `            var (appId, name, publisher, version) = global::AlRunner…`
 //                         (`appId` starts at 18, and CS8130 names 'appId')
 //
 //   PolyfillReferenceCoordinatesTests below pins both, so this diagnosis cannot rot into a
@@ -189,15 +189,15 @@ public sealed class PolyfillReferenceCoordinatesTests
     }
 
     [Fact]
-    public void PolyfillLine323Column18_IsTheDeconstructionVariableCs8130Named()
+    public void PolyfillLine327Column18_IsTheDeconstructionVariableCs8130Named()
     {
         var lines = PolyfillLines();
-        var line323 = lines[322];
+        var line327 = lines[326];
 
         Assert.Contains("global::AlRunner.BcRuntime.GetModuleAppInfoFor",
-            line323, StringComparison.Ordinal);
+            line327, StringComparison.Ordinal);
         // CS8130 named 'appId'; column 18, 1-based.
-        Assert.Equal("appId", line323.Substring(17, "appId".Length));
+        Assert.Equal("appId", line327.Substring(17, "appId".Length));
     }
 
     /// <summary>

@@ -193,6 +193,30 @@ the four assert something the group's name does not suggest and the reason is wo
 
 Measured by running the group, not computed: `9P/0F/0E across 9 tests`, cold and warm.
 
+### navapp-moduleinfo-main 10 -> 15 (#2960 / PR #3225)
+
+Five tests added to an existing app group, so no new group line and no app-group count change.
+The group has no `absentOn`, so the same +5 lands on every BC version: runner-extras goes
+301 -> 306 on 27.0/27.3/27.5 and 312 -> 317 on 28.0-28.4.
+
+Three came with the by-id `NavApp.GetModuleInfo` fix, which the two stack-walk patches did not
+cover — the boolean/statement not-found arms and the derived PackageId. Two more came out of
+the review of that PR and are worth naming, because neither is about the reported bug:
+
+- `ModuleInfo_ForOneApp_AgreesOnPackageIdAcrossEntryPoints` — real BC has ONE module-info
+  implementation (`ALGetCurrentModuleInfo` and `ALGetCallerModuleInfo` both forward into
+  `ALGetModuleInfo`), so AL asking about one app three ways cannot get three answers. The
+  runner patches the entry points independently, so fixing only the by-id one made this bundle
+  report two different PackageIds for ITSELF. The test fails against that state and is what
+  holds the five sites on one shared constructor.
+- `GetModuleInfo_ByEmptyGuid_RefusesLoudlyInsteadOfAnsweringNotInstalled` — folding the
+  source-compiled polyfill onto the shared implementation changed first-party AL behaviour:
+  the old private copy answered plain `false` for `Guid.Empty`, which BC never does on that
+  branch. Now it refuses loudly.
+
+Measured by running the group, not computed: `15P/0F/0E across 15 tests`, cold and warm; and
+the whole suite under `--count-baseline` on BC 28.x, `317 total / 317 pass`, exit 0.
+
 ## Migrated log (everything above 2026-09-05, verbatim)
 
 This is the `_comment` string `test-count-baseline.json` used to carry: 40,178 characters on
