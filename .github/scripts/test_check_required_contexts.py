@@ -146,7 +146,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   all-tests:
-    name: All BC versions passed
+    name: BC test matrix passed
     runs-on: ubuntu-latest
     steps:
       - run: 'true'
@@ -242,7 +242,7 @@ check("cancel-in-progress with no same-SHA type is fine", rc == 0, f"(rc={rc}) {
 rc, msg = run({"require-tests.yml": SAFE_NO_CONCURRENCY}, "Tests updated")
 check("same-SHA types with no concurrency block is fine", rc == 0, f"(rc={rc}) {msg}")
 
-rc, msg = run({"test-matrix.yml": DEFAULT_TYPES_CANCELLING}, "All BC versions passed")
+rc, msg = run({"test-matrix.yml": DEFAULT_TYPES_CANCELLING}, "BC test matrix passed")
 check("default pull_request types + cancel-in-progress is fine",
       rc == 0, f"(rc={rc}) {msg}")
 
@@ -271,10 +271,10 @@ check("a reusable workflow's job resolves to '<caller> / <name>'",
 
 # --- multiple required contexts: one bad is enough, and both get reported
 rc, msg = run({"pr-check.yml": CANCELLABLE_EDITED, "test-matrix.yml": DEFAULT_TYPES_CANCELLING},
-              "Tests updated,All BC versions passed")
+              "Tests updated,BC test matrix passed")
 check("a mixed set fails on the bad one only", rc == 1, f"(rc={rc})")
 check("...and does not accuse the safe one",
-      "All BC versions passed" not in msg.split("Fix:")[0], msg)
+      "BC test matrix passed" not in msg.split("Fix:")[0], msg)
 
 # --- unreadable input is exit 2, distinct from 'check failed'
 rc, msg = run({}, "Tests updated")
@@ -310,7 +310,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   all-tests:
-    name: All BC versions passed
+    name: BC test matrix passed
     runs-on: ubuntu-latest
 """,
 }
@@ -359,7 +359,7 @@ check("a required context added to the ruleset fails the guard", rc == 1, f"(rc=
 check("...and names it", "Provenance attested" in msg, msg)
 
 # --- and the other direction: a name still listed here but no longer required
-rc, msg = run_live(lambda: rules_payload(["All BC versions passed"]))
+rc, msg = run_live(lambda: rules_payload(["BC test matrix passed"]))
 check("a context no longer required by the ruleset also fails the guard",
       rc == 1, f"(rc={rc}) {msg}")
 check("...and names it", "Tests updated" in msg, msg)
@@ -407,7 +407,7 @@ check("...and the guard passes with both in agreement", rc == 0, f"(rc={rc}) {ms
 with tempfile.TemporaryDirectory() as _d:
     _fake = os.path.join(_d, "ci-wait.py")
     with open(_fake, "w", encoding="utf-8") as fh:
-        fh.write('RULESET_CONTEXTS = ("All BC versions passed",)\n')
+        fh.write('RULESET_CONTEXTS = ("BC test matrix passed",)\n')
     problems = crc.ruleset_drift_problems(
         fetch=lambda: rules_payload(crc.DEFAULT_REQUIRED_CONTEXTS), ci_wait_path=_fake)
 check("a drifted tools/ci-wait.py list is reported as a problem",
@@ -452,13 +452,13 @@ check("...disjoint from DEFAULT_REQUIRED_CONTEXTS (a name is one or the other)",
 # message and a cause nowhere near it.
 _COMMA_NAME = "PR body closing references must be correct, both directions"
 check("a context name containing a comma survives the newline-separated override",
-      crc._split(f"All BC versions passed\n{_COMMA_NAME}")
-      == ["All BC versions passed", _COMMA_NAME],
-      str(crc._split(f"All BC versions passed\n{_COMMA_NAME}")))
+      crc._split(f"BC test matrix passed\n{_COMMA_NAME}")
+      == ["BC test matrix passed", _COMMA_NAME],
+      str(crc._split(f"BC test matrix passed\n{_COMMA_NAME}")))
 check("...while a single-line value still splits on commas",
-      crc._split("All BC versions passed, Tests updated")
-      == ["All BC versions passed", "Tests updated"],
-      str(crc._split("All BC versions passed, Tests updated")))
+      crc._split("BC test matrix passed, Tests updated")
+      == ["BC test matrix passed", "Tests updated"],
+      str(crc._split("BC test matrix passed, Tests updated")))
 
 PENDING_CANCELLABLE = """
 name: PR Check

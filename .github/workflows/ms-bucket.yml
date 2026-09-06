@@ -8,7 +8,7 @@ name: MS bucket (manual)
 #   * `on: workflow_dispatch` only. No push, no pull_request, no schedule. A 9,500-test
 #     bucket is a multi-hour job and must never land on a PR.
 #   * Not a required check and not in any branch ruleset. Nothing about `main`'s gate
-#     ("All BC versions passed", test-matrix.yml) changes.
+#     ("BC test matrix passed", test-matrix.yml) changes.
 #   * It measures; it does not try to make the suite green. The job is GREEN when it
 #     produced a number (runner exit 0 or 1 plus a JUnit file) and RED only when it did not
 #     (compile fail, exec fail, crash, or no JUnit) — thousands of failing tests are the

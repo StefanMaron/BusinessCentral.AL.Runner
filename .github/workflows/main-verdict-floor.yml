@@ -7,8 +7,11 @@ name: Main verdict floor
 #
 # WHAT IS AND IS NOT BROKEN
 #
-# `All BC versions passed` still gates every pull request targeting `main`, and that is
-# untouched. This is not a hole a red PR can merge through. What the cancellation destroys is
+# `BC test matrix passed` still gates every pull request targeting `main`, and that is
+# untouched. (#3141 renamed that context from `All BC versions passed` and narrowed the
+# pull-request matrix to three legs; this workflow runs on a `schedule`, so it is unaffected
+# by that narrowing and still delegates at full width — which is now load-bearing, because it
+# is the only cadence on which 27.3, 28.0, 28.1, 28.2 and 28.3 run at all.) This is not a hole a red PR can merge through. What the cancellation destroys is
 # the POST-MERGE signal: when a merge breaks `main`, or when two individually-green PRs
 # conflict semantically after landing (#2924, and #2991 for the concrete instance), the run
 # that would have said so is cancelled by the next merge and nobody is notified.
@@ -189,7 +192,7 @@ jobs:
       ref: ${{ github.sha }}
 
   floor-verdict:
-    # Deliberately NOT named `All BC versions passed`. That context is one of main's two
+    # Deliberately NOT named `BC test matrix passed`. That context is one of main's two
     # required status checks, declared in test-matrix.yml, and a second workflow reporting it
     # on the same head SHA would make `gh pr checks` ambiguous about which run a verdict came
     # from — the stale-verdict trap ci-verdicts.md section 2 exists for.
