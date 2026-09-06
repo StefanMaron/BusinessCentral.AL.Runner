@@ -336,13 +336,44 @@ public sealed class VirtualTableRefusalClaimTests
         // package or assembly it could not read, which PopulateAllObjVirtualTable then wrote
         // out as Guid.Empty -- indistinguishable from "this app does not own it".
         //
+        // +4 (#3080): the Page Metadata and CodeUnit Metadata populators each
+        // gained the same two refusals, for the same invariant but not for the same reason.
+        // Both columns used to fall through to NavValue.GetDefaultNavValue for a member name
+        // the column's option string does not list, under a comment saying the case could not
+        // arise. It arises.
+        //
+        // Page Metadata: BC 28.1's PageType column stops at HeadlinePart while the runtime
+        // enum reaches PromptDialog (20) and UserControlHost (22), and Base Application 28.1
+        // ships a page of each -- both answered "Card", about a page that declared neither.
+        // Refusing is only correct once those members RESOLVE, which is why #3080 added BC's
+        // own runtime PageType enum as a second ordinal source before adding these throws;
+        // refusing on the option string alone would have taken Page Metadata out entirely.
+        //
+        // CodeUnit Metadata: its SubType column stops at Upgrade while CodeunitSubType adds
+        // Install (4), so the analogous overlay looked right, and it is not -- a service tier
+        // disagreed on all eight legs (corpus #201: an Install codeunit reports 0). The AL
+        // compiler never writes Install into object metadata, so the three Base App Install
+        // codeunits answered "Normal" were answered CORRECTLY. That column resolves from its
+        // own option string with an Install -> Normal translation in front, and these two
+        // throws can now only fire on a subtype AL does not accept at all.
+        // MetadataOptionColumnOrdinalTests pins all four messages.
+        //
         // NOTE TO WHOEVER REBASES THIS NEXT: more than one open PR moves this number at a
-        // time (#3128 moves it too, by a different amount). Do NOT add your delta to whatever
-        // is on main -- run the test, read the "Actual:" value out of the failure message, and
-        // write that. An arithmetic guess here is how the assertion silently stopped meaning
-        // what it says once before.
+        // time, and this rebase is the case in point. #3015 and #3080 both branched from 71;
+        // #3015 merged first and wrote 72, this branch had written 75, and NEITHER running
+        // total survives the rebase. The two entries below it are therefore written as
+        // DELTAS (+1, +4) rather than as `71 -> n` -- a running total in a comment is a claim
+        // about what else had merged when it was written, which stops being true the moment
+        // somebody else's PR lands first.
+        //
+        // Do NOT add your delta to whatever is on main -- run the test, read the "Actual:"
+        // value out of the failure message, and write that. An arithmetic guess here is how
+        // the assertion silently stopped meaning what it says once before. (Here the two
+        // deltas happen to be disjoint and 71+1+4 does land on 76. That is a fact about these
+        // two changes, confirmed by the measurement afterwards, not a method for the next one:
+        // two PRs touching one populator can move the same throw.)
 
-        // 71 -> 72 (#3015): the AllObj populator gained one more. It resolves its columns by
+        // +1 (#3015): the AllObj populator gained one more. It resolves its columns by
         // field NUMBER rather than by name, and a number matching nothing was simply never
         // written — the row still inserted, the column kept BC's own default, and
         // `AllObj."App Runtime Package ID" <> PublishedApplication."Runtime Package ID"` then
@@ -354,8 +385,9 @@ public sealed class VirtualTableRefusalClaimTests
         // EnsureAllObjSharedReflection.
         //
         // Per the note above: this number was READ OUT of the test's own failure message after
-        // rebasing onto #3117, not arrived at by adding 1 to what was on main.
-        Assert.Equal(72, total);
+        // rebasing this branch's four #3080 refusals onto main's #3015 one, not arrived at by
+        // adding 4 to 72 or 1 to 75.
+        Assert.Equal(76, total);
     }
 
 

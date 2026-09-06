@@ -153,15 +153,117 @@ public static partial class RecordPatches
             case "singleinstance":
                 return NavBoolean(row.SingleInstance);
             case "subtype":
-                if (subtypeOrdinals.TryGetValue(NormalizeObjectTypeName(row.Subtype), out var ordinal))
-                    return _aovNavOptionCreate!.Invoke(null, new object?[] { field.FieldOptionMetadata, ordinal });
-                // A Subtype this BC artifact's option set does not list (should not happen —
-                // the compiler validated it against the same enum) — BC's own default rather
-                // than a guessed ordinal.
-                return _aovGetDefaultNavValue!.Invoke(null, new object?[] { field, false });
+                return _aovNavOptionCreate!.Invoke(null, new object?[]
+                {
+                    field.FieldOptionMetadata,
+                    ResolveCodeunitSubtypeOrdinal(
+                        subtypeOrdinals, field.FieldOptionMetadata?.OptionString, row.Subtype, row.Id)
+                });
             default:
                 return _aovGetDefaultNavValue!.Invoke(null, new object?[] { field, false });
         }
+    }
+
+    /// <summary>
+    /// AL's default <c>Subtype</c> for a codeunit that declares none. Pinned upstream by
+    /// <c>Record_CodeunitMetadata_Get_DeclaredCodeunit_ReturnsMatchingRow</c> in the al-language
+    /// corpus, which asserts <c>Subtype::Normal</c> for ALT Codeunit Meta Probe — a fixture
+    /// that declares no <c>Subtype</c> — and is green on a real BC service tier.
+    /// <para>Both row sources already substitute it before a row is built
+    /// (<c>d.Subtype ?? "Normal"</c> in <see cref="EnumerateKnownCodeunitMetadata"/>), so this
+    /// is the backstop, and the one place the substitution is stated as a MEMBER NAME resolved
+    /// against the live column rather than as a position.</para>
+    /// </summary>
+    private const string AlDefaultCodeunitSubtype = "Normal";
+
+    /// <summary>
+    /// The one AL codeunit subtype the AL compiler does not carry into object metadata, and the
+    /// member it collapses to. <c>Install</c> is a subtype AL accepts and
+    /// <c>Microsoft.Dynamics.Nav.Types.CodeunitSubType</c> numbers 4, one past the last member
+    /// this column names — but nothing ever puts a 4 in front of the column, because the
+    /// compiler writes 0 for it.
+    /// <para>Measured, not inferred, on Base Application 28.1.49838.53910: decoding every
+    /// <c>NavCodeunitOptionsAttribute</c> in the package's own assemblies (1,690) and joining
+    /// it to the same package's <c>SymbolReference.json</c> and AL sources, which record the
+    /// DECLARED property —</para>
+    /// <para><c>Subtype = Upgrade</c>: 28 codeunits, attribute value 3, 28 of 28.
+    /// <c>Subtype = TestRunner</c>: 2 codeunits, attribute value 2, 2 of 2.
+    /// <c>SubType = Install</c>: codeunits 3999, 5000 and 7582 — attribute value <b>0</b>, all
+    /// three. Across all 1,690 the only values that occur are 0, 2 and 3; not one carries 4.</para>
+    /// <para>A real service tier agrees:
+    /// <c>Record_CodeunitMetadata_Get_InstallCodeunit_ReportsSubtypeNormal</c> in the
+    /// al-language corpus reads an <c>Install</c> fixture through this column on eight Cloud
+    /// legs and gets ordinal 0, <c>Subtype::Normal</c>, on every one — while a
+    /// <c>Subtype = Test</c> codeunit read in the same run reports 1, so the column is not
+    /// simply always Normal.</para>
+    /// </summary>
+    private const string AlSubtypeTheCompilerDoesNotEmit = "Install";
+
+    /// <summary>
+    /// The ordinal CodeUnit Metadata's <c>SubType</c> column carries for one codeunit: the
+    /// declared member when the codeunit states the property,
+    /// <see cref="AlDefaultCodeunitSubtype"/> when it does not,
+    /// <see cref="AlDefaultCodeunitSubtype"/> again when it declares
+    /// <see cref="AlSubtypeTheCompilerDoesNotEmit"/>, and a refusal when the column's option
+    /// string does not know the name.
+    /// <para>The lookup is the column's own <c>OptionString</c> and nothing else — no runtime
+    /// enum is overlaid here, unlike Page Metadata's <c>PageType</c> (#3080). The enum DOES
+    /// reach one member further, and reading only that far predicts 4 for an <c>Install</c>
+    /// codeunit; a service tier says 0. The reason is upstream of the provider:
+    /// <c>NCLMetaCodeunit.Subtype</c> returns <c>options?.Subtype</c> off the codeunit's
+    /// <c>NavCodeunitOptionsAttribute</c> — what the compiler wrote, not what the AL author
+    /// declared — through <c>GetValueOrDefault()</c>. See
+    /// <see cref="AlSubtypeTheCompilerDoesNotEmit"/> for the measurement and
+    /// RecordPatches.MetadataOptionEnumOrdinals.cs for the contrast with PageType.</para>
+    /// <para>The translation has to live here rather than in either row source, because BOTH
+    /// sources carry the declared name: the AL parser reads <c>Subtype = Install;</c> out of
+    /// source, and BcAppSymbolCache reads <c>"Subtype": "Install"</c> out of
+    /// SymbolReference.json (present there for all three Base Application codeunits above). One
+    /// translation in front of one lookup keeps the two paths answering the same thing.</para>
+    /// <para>A name the option string does not know is refused rather than defaulted (#3080),
+    /// in both directions — declared miss, and default-member miss. Before this, a miss fell
+    /// through to <c>NavValue.GetDefaultNavValue</c> — ordinal 0 — under a comment claiming the
+    /// case could not arise. With the <c>Install</c> translation in front, the refusal can only
+    /// fire on a subtype AL does not accept at all, which is what it is for.</para>
+    /// <para>Split out of <c>BuildCodeunitMetadataValue</c> so the resolution can be driven with
+    /// an option string the caller chooses; the cases that matter — a column that orders its
+    /// members differently, or omits the default — are ones no single artifact can present.</para>
+    /// </summary>
+    /// <param name="ordinals">Member name (normalized) to ordinal, from
+    /// <see cref="EnsureCodeunitSubtypeOrdinals"/> or
+    /// <see cref="BuildMetadataOptionOrdinals(string?, Type?)"/> with a null enum.</param>
+    /// <param name="optionString">The column's own option string, for the refusal message.</param>
+    /// <param name="declaredSubtype">What the codeunit declares, or null/blank when it declares nothing.</param>
+    /// <param name="codeunitId">The codeunit, for the refusal message.</param>
+    internal static int ResolveCodeunitSubtypeOrdinal(
+        IReadOnlyDictionary<string, int> ordinals, string? optionString, string? declaredSubtype, int codeunitId)
+    {
+        // What the compiler wrote, not what the author declared. Unconditional and in front of
+        // the lookup, so an "Install" key that somehow reached the map — an overlaid enum, an
+        // artifact whose column grew a fifth member — still cannot make this answer 4.
+        var effectiveSubtype =
+            string.Equals(NormalizeObjectTypeName(declaredSubtype ?? string.Empty),
+                          NormalizeObjectTypeName(AlSubtypeTheCompilerDoesNotEmit), StringComparison.Ordinal)
+                ? AlDefaultCodeunitSubtype
+                : declaredSubtype;
+
+        if (string.IsNullOrWhiteSpace(effectiveSubtype))
+        {
+            if (ordinals.TryGetValue(NormalizeObjectTypeName(AlDefaultCodeunitSubtype), out var defaultOrdinal))
+                return defaultOrdinal;
+            throw CodeunitMetadataShapeGap(
+                $"codeunit {codeunitId} declares no Subtype, and the default for it "
+                + $"('{AlDefaultCodeunitSubtype}') is not a member of that column's own option set "
+                + $"('{optionString}')");
+        }
+        if (ordinals.TryGetValue(NormalizeObjectTypeName(effectiveSubtype), out var ordinal))
+            return ordinal;
+        throw CodeunitMetadataShapeGap(
+            $"codeunit {codeunitId} declares Subtype = '{declaredSubtype}', which is not a member of "
+            + $"that column's own option set ('{optionString}'). AL accepts one subtype the column "
+            + $"does not name — '{AlSubtypeTheCompilerDoesNotEmit}', which the compiler emits as "
+            + $"'{AlDefaultCodeunitSubtype}' and this resolver translates — so this is not an AL "
+            + "codeunit subtype at all");
     }
 
     /// <summary>
@@ -261,6 +363,12 @@ public static partial class RecordPatches
     /// metatable's own NCLOptionMetadata.OptionString, matched by name — never a hardcoded
     /// table, so the mapping tracks whatever the System package in the resolved artifact
     /// declares. Mirrors Page Metadata's EnsurePageTypeOrdinals for its "PageType" column.
+    /// <para>The option string is the ONLY source for this column, which is not true of Page
+    /// Metadata's PageType sibling. BC's CodeUnitDataProvider does write
+    /// GetOptionValue(5, (int)metaCodeunit.Subtype) — the ordinal of its own CodeunitSubType
+    /// enum, which carries Install one past this column's last member — but the value reaching
+    /// it is the one the AL compiler wrote, and the compiler emits no Install. Measured, and
+    /// confirmed on a service tier: see ResolveCodeunitSubtypeOrdinal (#3080).</para>
     /// </summary>
     private static Dictionary<string, int> EnsureCodeunitSubtypeOrdinals(NCLMetaTable metaTable)
     {
@@ -273,14 +381,10 @@ public static partial class RecordPatches
         var optionMetadata = field.FieldOptionMetadata
             ?? throw CodeunitMetadataShapeGap("\"Subtype\" carries no option metadata");
 
-        var map = new Dictionary<string, int>(StringComparer.Ordinal);
-        var parts = (optionMetadata.OptionString ?? string.Empty).Split(',');
-        for (int i = 0; i < parts.Length; i++)
-        {
-            var key = NormalizeObjectTypeName(parts[i]);
-            if (key.Length == 0) continue;
-            map.TryAdd(key, i);
-        }
+        // Deliberately no runtime-enum overlay: this column is filled from what the AL compiler
+        // wrote, and the compiler never writes a value past the members the column names. See
+        // ResolveCodeunitSubtypeOrdinal and RecordPatches.MetadataOptionEnumOrdinals.cs.
+        var map = BuildMetadataOptionOrdinals(optionMetadata.OptionString, bcRuntimeEnum: null);
         if (map.Count == 0)
             throw CodeunitMetadataShapeGap("\"Subtype\" option string is empty");
 

@@ -155,12 +155,12 @@ public static partial class RecordPatches
             case "editable":
                 return NavBoolean(row.Editable);
             case "pagetype":
-                if (pageTypeOrdinals.TryGetValue(NormalizeObjectTypeName(row.PageType), out var ordinal))
-                    return _aovNavOptionCreate!.Invoke(null, new object?[] { field.FieldOptionMetadata, ordinal });
-                // A PageType this BC artifact's option set does not list (should not happen —
-                // the compiler validated it against the same enum) — BC's own default rather
-                // than a guessed ordinal.
-                return _aovGetDefaultNavValue!.Invoke(null, new object?[] { field, false });
+                return _aovNavOptionCreate!.Invoke(null, new object?[]
+                {
+                    field.FieldOptionMetadata,
+                    ResolvePageTypeOrdinal(
+                        pageTypeOrdinals, field.FieldOptionMetadata?.OptionString, row.PageType, row.Id)
+                });
             case "sourcetable":
                 return _aovNavIntegerCreate!.Invoke(null, new object?[] { row.SourceTableId });
             case "cardpageid":
@@ -176,6 +176,57 @@ public static partial class RecordPatches
             default:
                 return _aovGetDefaultNavValue!.Invoke(null, new object?[] { field, false });
         }
+    }
+
+    /// <summary>
+    /// AL's default <c>PageType</c> for a page that declares none. Both row sources already
+    /// substitute it before a row is built — <c>ParsePages</c> and
+    /// <c>BcAppSymbolCache.TryParsePageSymbol</c> each write "Card" for an absent property —
+    /// so this is the backstop for a null that slips past them (a symbol payload cached by an
+    /// older schema version, say), and the one place the substitution is stated as a MEMBER
+    /// NAME resolved against the live column rather than as a position.
+    /// </summary>
+    private const string AlDefaultPageType = "Card";
+
+    /// <summary>
+    /// The ordinal Page Metadata's <c>PageType</c> column carries for one page: the declared
+    /// member when the page states the property, <see cref="AlDefaultPageType"/> when it does
+    /// not, and a refusal when neither the column's option string nor BC's own
+    /// <c>PageType</c> enum knows the name.
+    /// <para>Both misses are refused rather than defaulted (#3080). Before this, a name in
+    /// neither fell through to <c>NavValue.GetDefaultNavValue</c> — ordinal 0 — under a comment
+    /// claiming the case could not arise because "the compiler validated it against the same
+    /// enum". The compiler does; the COLUMN does not list everything the compiler accepts. See
+    /// RecordPatches.MetadataOptionEnumOrdinals.cs: BC 28.1's option string stops at
+    /// HeadlinePart, while the enum runs on to PromptDialog (20) and UserControlHost (22), and
+    /// Base Application 28.1 ships a page of each. Both were answered "Card".</para>
+    /// <para>Split out of <c>BuildPageMetadataValue</c> so the resolution can be driven with an
+    /// option string and an enum the caller chooses; the row-build path holds live BC metatable
+    /// objects a unit test cannot construct, and the case that matters is precisely the one
+    /// where the two sources DISAGREE, which no single artifact can present.</para>
+    /// </summary>
+    /// <param name="ordinals">Member name (normalized) to ordinal, from
+    /// <see cref="EnsurePageTypeOrdinals"/> or <see cref="BuildMetadataOptionOrdinals(string?, Type?)"/>.</param>
+    /// <param name="optionString">The column's own option string, for the refusal message.</param>
+    /// <param name="declaredPageType">What the page declares, or null/blank when it declares nothing.</param>
+    /// <param name="pageId">The page, for the refusal message.</param>
+    internal static int ResolvePageTypeOrdinal(
+        IReadOnlyDictionary<string, int> ordinals, string? optionString, string? declaredPageType, int pageId)
+    {
+        if (string.IsNullOrWhiteSpace(declaredPageType))
+        {
+            if (ordinals.TryGetValue(NormalizeObjectTypeName(AlDefaultPageType), out var defaultOrdinal))
+                return defaultOrdinal;
+            throw PageMetadataShapeGap(
+                $"page {pageId} declares no PageType, and the default for it ('{AlDefaultPageType}') is "
+                + $"neither a member of that column's own option set ('{optionString}') nor of BC's own "
+                + $"{BcPageTypeEnumName}");
+        }
+        if (ordinals.TryGetValue(NormalizeObjectTypeName(declaredPageType), out var ordinal))
+            return ordinal;
+        throw PageMetadataShapeGap(
+            $"page {pageId} declares PageType = '{declaredPageType}', which is neither a member of that "
+            + $"column's own option set ('{optionString}') nor of BC's own {BcPageTypeEnumName}");
     }
 
     /// <summary>
@@ -269,6 +320,11 @@ public static partial class RecordPatches
     /// metatable's own NCLOptionMetadata.OptionString, matched by name — never a hardcoded
     /// table, so the mapping tracks whatever the System package in the resolved artifact
     /// declares. Mirrors AllObj's EnsureAllObjObjectTypeOrdinals for its "Object Type" column.
+    /// <para>The option string is not the only source, and it is not the authoritative one:
+    /// BC's PageDataProvider writes GetOptionValue(5, (int)properties.PageType), the ordinal of
+    /// its OWN PageType enum, which reaches past the last member this column names. See
+    /// RecordPatches.MetadataOptionEnumOrdinals.cs for the measurement and for why the enum
+    /// wins any name the two share (#3080).</para>
     /// </summary>
     private static Dictionary<string, int> EnsurePageTypeOrdinals(NCLMetaTable metaTable)
     {
@@ -281,14 +337,8 @@ public static partial class RecordPatches
         var optionMetadata = field.FieldOptionMetadata
             ?? throw PageMetadataShapeGap("\"PageType\" carries no option metadata");
 
-        var map = new Dictionary<string, int>(StringComparer.Ordinal);
-        var parts = (optionMetadata.OptionString ?? string.Empty).Split(',');
-        for (int i = 0; i < parts.Length; i++)
-        {
-            var key = NormalizeObjectTypeName(parts[i]);
-            if (key.Length == 0) continue;
-            map.TryAdd(key, i);
-        }
+        var map = BuildMetadataOptionOrdinals(
+            optionMetadata.OptionString, BcPageTypeEnumName, "Page Metadata \"PageType\"");
         if (map.Count == 0)
             throw PageMetadataShapeGap("\"PageType\" option string is empty");
 
