@@ -119,6 +119,64 @@ public sealed class PackageCacheFinalSearchSetTests
         return Path.Combine(TestArtifacts.StandardCacheDir(home), version.ToString());
     }
 
+    /// <summary>
+    /// Issue #3037: three patch directories of the selected major.minor, each holding its
+    /// own copy of the same two packages at that patch's version — the shape a developer box
+    /// reaches after provisioning a few BC patches. Nothing Microsoft, for the same reason
+    /// <see cref="WriteFixture"/>'s manifests declare nothing Microsoft: need detection must
+    /// stay out of this, or the test acquires a 116 MB download.
+    /// </summary>
+    private static IReadOnlyList<string> DuplicatePatchVersions()
+    {
+        var engine = AlRunner.Infrastructure.BcArtifacts.EngineBuiltVersion()
+            ?? throw new InvalidOperationException("EngineBuiltVersion() unavailable.");
+        // Same major.minor as the selected engine (that is what CollectRunnerOwnedProvisionDirs
+        // matches on), and deliberately NOT the engine's own patch, so this exercises the
+        // sibling-patch path on every BC leg of the matrix rather than only on 28.1.
+        return new[] { $"{engine.Major}.{engine.Minor}.0.1", $"{engine.Major}.{engine.Minor}.0.2", $"{engine.Major}.{engine.Minor}.0.3" };
+    }
+
+    private static void WriteDuplicatePatchDirs(string isolatedHome)
+    {
+        var artifactsRoot = TestArtifacts.StandardCacheDir(isolatedHome);
+        foreach (var version in DuplicatePatchVersions())
+        {
+            foreach (var kind in new[] { "platform-apps", "test-apps" })
+            {
+                var dir = Path.Combine(artifactsRoot, version, kind);
+                Directory.CreateDirectory(dir);
+                File.WriteAllBytes(
+                    Path.Combine(dir, $"Repro3037_{kind} Filler_{version}.app"),
+                    MinimalNavxApp(Guid.NewGuid().ToString(), $"{kind} Filler", "Repro3037", version));
+            }
+        }
+    }
+
+    /// <summary>A minimal NAVX .app — NAVX header, then a ZIP holding only NavxManifest.xml.</summary>
+    private static byte[] MinimalNavxApp(string appId, string name, string publisher, string version)
+    {
+        var xml = $"""
+            <?xml version="1.0" encoding="utf-8"?>
+            <Package xmlns="http://schemas.microsoft.com/navx/2015/manifest">
+              <App Id="{appId}" Name="{name}" Publisher="{publisher}" Version="{version}"/>
+            </Package>
+            """;
+        using var ms = new MemoryStream();
+        using (var zip = new System.IO.Compression.ZipArchive(
+            ms, System.IO.Compression.ZipArchiveMode.Create, leaveOpen: true))
+        {
+            var entry = zip.CreateEntry("NavxManifest.xml");
+            using var es = entry.Open();
+            es.Write(Encoding.UTF8.GetBytes(xml));
+        }
+        var zipBytes = ms.ToArray();
+        var result = new byte[8 + zipBytes.Length];
+        result[0] = (byte)'N'; result[1] = (byte)'A'; result[2] = (byte)'V'; result[3] = (byte)'X';
+        BitConverter.TryWriteBytes(result.AsSpan(4, 4), (uint)8);
+        zipBytes.CopyTo(result, 8);
+        return result;
+    }
+
     private static string RunAgainstIsolatedHome(
         string testsDir, string alCacheDir, string isolatedHome, bool foldRunnerOwnedDirs)
     {
@@ -203,6 +261,47 @@ public sealed class PackageCacheFinalSearchSetTests
 
             Assert.Contains("package caches (requested): 0 dir(s)", output);
             Assert.Matches(new Regex(@"package caches \(final search set\): 2 dir\(s\)"), output);
+        }
+        finally
+        {
+            try { Directory.Delete(scratchRoot, recursive: true); } catch { }
+        }
+    }
+
+    /// <summary>
+    /// Issue #3037, end to end: three provisioned patch directories of the selected
+    /// major.minor, each holding a duplicate of the same two packages. Before the fix the
+    /// final search set was all SIX runner-owned directories and dependency resolution read
+    /// a manifest — and therefore a content hash — for every package in every one of them.
+    /// It is now the newest patch's two directories, and the bundle still compiles and its
+    /// test still passes, which is the half that matters: a narrower search set that stopped
+    /// resolving the closure would be a regression, not an optimisation.
+    /// </summary>
+    [SkippableFact]
+    public void FinalSearchSet_DuplicatePatchDirs_FoldsInOnlyTheNewest()
+    {
+        TestArtifacts.SkipIfMissing();
+        var scratchRoot = TestScratch.Dir("al-runner-pkgcache-3037");
+        var testsDir = WriteFixture(scratchRoot);
+        var isolatedHome = Path.Combine(scratchRoot, "home");
+        Directory.CreateDirectory(isolatedHome);
+        WriteDuplicatePatchDirs(isolatedHome);
+        var alCacheDir = Path.Combine(scratchRoot, "al-out");
+        try
+        {
+            // foldRunnerOwnedDirs: false — WriteDuplicatePatchDirs has already created the
+            // runner-owned dirs this case is about, under patch versions of its own.
+            var output = RunAgainstIsolatedHome(testsDir, alCacheDir, isolatedHome, foldRunnerOwnedDirs: false);
+
+            Assert.Contains("package caches (requested): 0 dir(s)", output);
+            Assert.Contains("package caches (final search set): 2 dir(s)", output);
+            var versions = DuplicatePatchVersions();
+            var newest = versions[^1];
+            Assert.Contains(Path.Combine(TestArtifacts.StandardCacheDir(isolatedHome), newest, "platform-apps"), output);
+            Assert.Contains(Path.Combine(TestArtifacts.StandardCacheDir(isolatedHome), newest, "test-apps"), output);
+            // The two older patches are no longer in the search set at all.
+            foreach (var older in versions.Take(versions.Count - 1))
+                Assert.DoesNotContain(Path.Combine(TestArtifacts.StandardCacheDir(isolatedHome), older), output);
         }
         finally
         {
