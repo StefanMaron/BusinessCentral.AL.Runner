@@ -446,7 +446,23 @@ internal static partial class BcAppSymbolCache
     internal sealed record PagePartSymbol(
         int Id, string Name, int PagePartId,
         string? Caption, string? EditableExpr, string? EnabledExpr, string? VisibleExpr, string? ShowFilterExpr,
-        List<PageSubFormLinkSymbol> SubFormLink);
+        List<PageSubFormLinkSymbol> SubFormLink,
+        // The raw text of every SubPageLink entry ParseSubPageLink could NOT read (#2978).
+        // Null when there were none, which is the case for all 1357 SubPageLink entries
+        // across BC 28.1's Base Application, System Application, Business Foundation and
+        // Application.
+        //
+        // It lives in the PAYLOAD rather than being written to stderr where it is detected,
+        // for the reason PageSymbol.UnreadableBooleanProperties spells out: parsing sits
+        // behind a content-addressed on-disk cache, so a Console.Error line is emitted on a
+        // cache MISS and silently lost on every warm run after. Carrying it here means a
+        // cache HIT replays it, which is also the truthful answer — the same bytes could not
+        // be read either time.
+        //
+        // DependencyPageMetadataXml.EmitPartXml turns each one into a refusing SubFormLink
+        // rather than dropping it: a two-condition link reduced to one filters the part LESS,
+        // so the subpage shows rows the host row does not own.
+        List<string>? UnreadableSubPageLinkEntries = null);
 
     /// <summary>
     /// One entry of a part's <c>SubPageLink</c> property, still as AL source text.
@@ -457,7 +473,13 @@ internal static partial class BcAppSymbolCache
     /// compiled representation by RecordPatches.DependencyPageMetadataXml's
     /// EmitSubFormLinkXml, then applied by MockTestPage.SubPageLinks — #2469).
     /// </summary>
-    internal sealed record PageSubFormLinkSymbol(string PartFieldName, string Kind, string Value);
+    internal sealed record PageSubFormLinkSymbol(string PartFieldName, string Kind, string Value,
+        // True when this entry sits inside an AL `#if`/`#else` block in the property's source
+        // text, so it MAY not be in the compiled app at all (#2978). See SplitPropertyEntries
+        // for the measurement, and DependencyPageMetadataXml.EmitSubFormLinkXml for what the
+        // difference buys: an unresolvable field name is a refusal for an unconditional entry
+        // and an absence for a conditional one.
+        bool Conditional = false);
 
     /// <summary>
     /// A precompiled dependency page's <c>SourceTableView</c>, parsed from the AL text
@@ -470,7 +492,18 @@ internal static partial class BcAppSymbolCache
     /// the view SET it (<c>AscendingSetByView</c>).</para>
     /// </summary>
     internal sealed record PageTableViewSymbol(
-        List<string> SortingFieldNames, bool? Ascending, List<PageViewFilterSymbol> Filters);
+        List<string> SortingFieldNames, bool? Ascending, List<PageViewFilterSymbol> Filters,
+        // The raw text of every where(...) entry — and every clause whose parenthesis never
+        // closed — ParseSourceTableView could NOT read (#2978). Null when there were none,
+        // which is the case for all 255 where-entries across the 417 SourceTableView pages of
+        // BC 28.1's Base Application, System Application, Business Foundation and Application.
+        //
+        // Same payload-not-stderr reasoning as PagePartSymbol.UnreadableSubPageLinkEntries
+        // above. DependencyPageMetadataXml.EmitSourceTableViewXml turns each one into a
+        // refusing <TableFilters>, because a view shipped without one of its entries is WIDER
+        // than the view the page declares: the page opens on rows the real view excludes, and
+        // a test asserting over them passes against a record set BC would never give.
+        List<string>? UnreadableEntries = null);
 
     /// <summary>
     /// One <c>where(...)</c> entry of a <c>SourceTableView</c>: the page's OWN source-table
@@ -478,7 +511,12 @@ internal static partial class BcAppSymbolCache
     /// <c>field(...)</c>, which references a host record a page-level view has none of), and
     /// the value text verbatim.
     /// </summary>
-    internal sealed record PageViewFilterSymbol(string FieldName, string Kind, string Value);
+    internal sealed record PageViewFilterSymbol(string FieldName, string Kind, string Value,
+        // Same meaning as PageSubFormLinkSymbol.Conditional (#2978). No SourceTableView in BC
+        // 27.5 or 28.1 W1 carries a directive today — all 547 where-entries are unconditional
+        // — but the property text comes from the same compiler and through the same splitter,
+        // so the two paths answer it the same way rather than one of them being surprised.
+        bool Conditional = false);
 
     /// <summary>
     /// One field control of a precompiled dependency page, as SymbolReference.json states
@@ -1308,19 +1346,110 @@ internal static partial class BcAppSymbolCache
                 props.TryGetValue("Visible", out var visible);
                 props.TryGetValue("ShowFilter", out var showFilter);
                 props.TryGetValue("SubPageLink", out var subPageLink);
+                var links = ParseSubPageLink(subPageLink, out var unreadableLinks);
                 into.Add(new PagePartSymbol(id, name!, partPageId,
                     string.IsNullOrEmpty(caption) ? null : caption,
                     string.IsNullOrEmpty(editable) ? null : editable,
                     string.IsNullOrEmpty(enabled) ? null : enabled,
                     string.IsNullOrEmpty(visible) ? null : visible,
                     string.IsNullOrEmpty(showFilter) ? null : showFilter,
-                    ParseSubPageLink(subPageLink)));
+                    links, unreadableLinks));
             }
         }
 
         if (control.TryGetProperty("Controls", out var children) && children.ValueKind == JsonValueKind.Array)
             foreach (var child in children.EnumerateArray())
                 CollectPagePartSymbols(child, into);
+    }
+
+    /// <summary>
+    /// Split a <c>SubPageLink</c> / <c>SourceTableView where(...)</c> property text into its
+    /// comma-separated entries, stripping the AL PREPROCESSOR DIRECTIVE lines the compiler
+    /// records verbatim inside the property's source text, and saying which entries sit
+    /// inside a conditional block.
+    ///
+    /// <para>Measured, not anticipated. Across BC 27.5 and 28.1 W1 (every extension in the
+    /// artifact: 7,646 pages, 3,655 SubPageLink entries, 981 pages declaring a
+    /// SourceTableView with 547 where-entries) exactly six entries fail the entry regex, all
+    /// six on BC 27.5 Base Application, all six because of a directive:</para>
+    /// <code>
+    /// page 76 "Resource Card"  / Control1906609707
+    /// page 77 "Resource List"  / Control1906609707, Control1907012907
+    ///     "No." = field("No."),
+    ///     "Unit of Measure Filter" = field("Unit of Measure Filter"),
+    /// #if not CLEAN25
+    ///     "Service Zone Filter" = field("Service Zone Filter"),
+    /// #endif
+    ///     "Chargeable Filter" = field("Chargeable Filter")
+    /// </code>
+    /// <para>Comma-splitting that leaves <c>#if not CLEAN25\r\n"Service Zone Filter" = …</c>
+    /// and <c>#endif\r\n"Chargeable Filter" = …</c>, neither of which the entry regex can
+    /// read. Before this, both were dropped — so those three subpages filtered on TWO of
+    /// their four conditions and showed rows the host resource does not own.</para>
+    ///
+    /// <para>Which of the two is actually in the compiled app is not a guess either. BC
+    /// 27.5's own symbol file states table <c>Resource</c> with 58 fields and NO "Service Zone
+    /// Filter", so <c>CLEAN25</c> was defined when Microsoft compiled it and the guarded entry
+    /// was compiled OUT; "Chargeable Filter" exists and is unconditional, and BC 28.1 — where
+    /// the directive is gone from the source entirely — carries exactly the three
+    /// unconditional entries. So: an entry after a directive that only closes or opens a
+    /// region (<c>#endif</c>, <c>#region</c>, <c>#endregion</c>, <c>#pragma</c>,
+    /// <c>#define</c>, <c>#undef</c>) is unconditionally present and must parse; an entry
+    /// inside an <c>#if</c>/<c>#ifdef</c>/<c>#ifndef</c>/<c>#else</c>/<c>#elif</c> block is
+    /// CONDITIONAL, and the caller resolves it against this app's own fields rather than
+    /// refusing the page over it — see <c>DependencyPageMetadataXml</c>.</para>
+    ///
+    /// <para>Nesting is tracked across entries, not per entry: in
+    /// <c>#if X  A=…, B=…, #endif  C=…</c> only A carries the directive text, and B is inside
+    /// the block just as much as A is.</para>
+    /// </summary>
+    private static List<(string Text, bool Conditional)> SplitPropertyEntries(string text)
+    {
+        var result = new List<(string, bool)>();
+        var depth = 0;
+        foreach (var rawEntry in SplitTopLevelCommas(text, preserveNewlines: true))
+        {
+            var body = new System.Text.StringBuilder();
+            var sawBody = false;
+            var conditional = depth > 0;
+            foreach (var rawLine in rawEntry.Split('\n'))
+            {
+                var line = rawLine.Trim();      // also drops the '\r' of a CRLF pair
+                if (line.Length == 0) continue;
+                if (line[0] == '#')
+                {
+                    switch (DirectiveName(line))
+                    {
+                        case "if": case "ifdef": case "ifndef": depth++; break;
+                        case "endif": if (depth > 0) depth--; break;
+                        // #else / #elif keep the block open; #region / #endregion / #pragma /
+                        // #define / #undef never gate anything.
+                        default: break;
+                    }
+                    // Only directives BEFORE the entry's own text decide whether THIS entry is
+                    // conditional; ones after it belong to whatever follows.
+                    if (!sawBody) conditional = depth > 0;
+                    continue;
+                }
+                if (sawBody) body.Append(' ');
+                body.Append(line);
+                sawBody = true;
+            }
+            if (sawBody) result.Add((body.ToString(), conditional));
+        }
+        return result;
+    }
+
+    /// <summary>The directive keyword of a line starting with '#', lowercased and without
+    /// its arguments — <c>"#if not CLEAN25"</c> -&gt; <c>"if"</c>. AL allows whitespace
+    /// between the '#' and the keyword.</summary>
+    private static string DirectiveName(string line)
+    {
+        var i = 1;
+        while (i < line.Length && char.IsWhiteSpace(line[i])) i++;
+        var start = i;
+        while (i < line.Length && char.IsLetter(line[i])) i++;
+        return line.Substring(start, i - start).ToLowerInvariant();
     }
 
     private static readonly System.Text.RegularExpressions.Regex SubPageLinkEntryRegex = new(
@@ -1332,28 +1461,29 @@ internal static partial class BcAppSymbolCache
     /// field("No.")</c>, or a comma-separated list of such pairs — into (part field, kind,
     /// value) triples. Measured across Base Application 28.1's 1311 SubPageLink entries:
     /// 1168 are <c>field(...)</c>, 140 are <c>const(...)</c>, 3 are <c>filter(...)</c>; an
-    /// entry this cannot parse is dropped and reported on stderr; the three kinds the regex
-    /// accepts are the only ones AL defines, so a drop here means AL text this parser has
-    /// never seen, not a link kind the runner declines.
+    /// entry this cannot parse is returned in <paramref name="unreadable"/> — NOT dropped
+    /// (#2978), because a link shipped without one of its conditions filters the part less
+    /// than the AL says and the subpage then shows rows the host row does not own; the three
+    /// kinds the regex accepts are the only ones AL defines, so an unreadable entry means AL
+    /// text this parser has never seen, not a link kind the runner declines.
     /// </summary>
-    private static List<PageSubFormLinkSymbol> ParseSubPageLink(string? text)
+    private static List<PageSubFormLinkSymbol> ParseSubPageLink(string? text, out List<string>? unreadable)
     {
+        unreadable = null;
         var result = new List<PageSubFormLinkSymbol>();
         if (string.IsNullOrWhiteSpace(text)) return result;
-        foreach (var rawEntry in SplitTopLevelCommas(text))
+        foreach (var (entry, conditional) in SplitPropertyEntries(text!))
         {
-            var entry = rawEntry.Trim();
-            if (entry.Length == 0) continue;
             var m = SubPageLinkEntryRegex.Match(entry);
             if (!m.Success)
             {
-                Console.Error.WriteLine($"[BcAppSymbolCache] SubPageLink entry not understood, dropped: '{entry}'");
+                (unreadable ??= new List<string>()).Add(entry);
                 continue;
             }
             var partField = m.Groups["left"].Value.Trim('"');
             var kind = m.Groups["kind"].Value.ToLowerInvariant();
             var value = m.Groups["val"].Value.Trim();
-            result.Add(new PageSubFormLinkSymbol(partField, kind, value));
+            result.Add(new PageSubFormLinkSymbol(partField, kind, value, conditional));
         }
         return result;
     }
@@ -1375,7 +1505,16 @@ internal static partial class BcAppSymbolCache
     ///
     /// <para>Returns null for a page declaring no view, and for text no clause could be read
     /// out of (reported on stderr) — the caller then emits no <c>&lt;SourceTableView&gt;</c>
-    /// element at all, which is the same state as before this parse existed.</para>
+    /// element at all, which is the same state as before this parse existed, rather than a
+    /// manufactured narrower one.</para>
+    ///
+    /// <para>A <c>where(...)</c> entry this cannot read, and a clause whose parenthesis never
+    /// closes, are recorded in <see cref="PageTableViewSymbol.UnreadableEntries"/> — NOT
+    /// dropped (#2978). Dropping shipped a PARTIAL view, which is WIDER than the one the page
+    /// declares: the page opens on rows the real view excludes, and the only trace was a
+    /// Console.Error line the symbol cache loses on every warm run. The caller turns each one
+    /// into a filter the page refuses to open on, matching what
+    /// <c>EmitSourceTableViewXml</c> already does for a field name it cannot resolve.</para>
     /// </summary>
     private static PageTableViewSymbol? ParseSourceTableView(int pageId, string? text)
     {
@@ -1384,13 +1523,23 @@ internal static partial class BcAppSymbolCache
         var sorting = new List<string>();
         bool? ascending = null;
         var filters = new List<PageViewFilterSymbol>();
+        List<string>? unreadable = null;
         var sawClause = false;
 
         foreach (System.Text.RegularExpressions.Match m in ViewClauseRegex.Matches(text!))
         {
             var open = m.Index + m.Length - 1;           // the '(' itself
             var close = MatchingCloseParen(text!, open);
-            if (close < 0) continue;                     // unbalanced — reported below
+            if (close < 0)
+            {
+                // Unbalanced. Dropping the clause silently was the worst of the #2978 shapes:
+                // `sorting(X) where(Y = const(1)` came up SORTED as declared and UNFILTERED,
+                // so the half that is easy to eyeball was right. A where/sorting/order clause
+                // that could not be read is unreadable AL, whichever clause it is, so it goes
+                // to the refusal channel regardless of which keyword opened it.
+                (unreadable ??= new List<string>()).Add(text!.Substring(m.Index).Trim());
+                continue;
+            }
             var inner = text!.Substring(open + 1, close - open - 1);
             sawClause = true;
 
@@ -1412,21 +1561,19 @@ internal static partial class BcAppSymbolCache
                         $"[BcAppSymbolCache] page {pageId} SourceTableView order() not understood, ignored: '{dir}'");
                     break;
                 default:
-                    foreach (var rawEntry in SplitTopLevelCommas(inner))
+                    foreach (var (entry, conditional) in SplitPropertyEntries(inner))
                     {
-                        var entry = rawEntry.Trim();
-                        if (entry.Length == 0) continue;
                         var em = SubPageLinkEntryRegex.Match(entry);
                         if (!em.Success)
                         {
-                            Console.Error.WriteLine(
-                                $"[BcAppSymbolCache] page {pageId} SourceTableView where() entry not understood, dropped: '{entry}'");
+                            (unreadable ??= new List<string>()).Add(entry);
                             continue;
                         }
                         filters.Add(new PageViewFilterSymbol(
                             em.Groups["left"].Value.Trim('"'),
                             em.Groups["kind"].Value.ToLowerInvariant(),
-                            em.Groups["val"].Value.Trim()));
+                            em.Groups["val"].Value.Trim(),
+                            conditional));
                     }
                     break;
             }
@@ -1438,8 +1585,8 @@ internal static partial class BcAppSymbolCache
                 $"[BcAppSymbolCache] page {pageId} SourceTableView not understood, ignored: '{text!.Trim()}'");
             return null;
         }
-        if (sorting.Count == 0 && ascending == null && filters.Count == 0) return null;
-        return new PageTableViewSymbol(sorting, ascending, filters);
+        if (sorting.Count == 0 && ascending == null && filters.Count == 0 && unreadable == null) return null;
+        return new PageTableViewSymbol(sorting, ascending, filters, unreadable);
     }
 
     /// <summary>Index of the ')' closing the '(' at <paramref name="open"/>, ignoring
@@ -1468,9 +1615,16 @@ internal static partial class BcAppSymbolCache
     /// the corpus, but a nested nested-paren value like <c>field("A, B")</c> would otherwise
     /// split wrongly).
     /// </summary>
-    private static IEnumerable<string> SplitTopLevelCommas(string text)
+    /// <param name="preserveNewlines">Keep the entry's own line breaks instead of flattening
+    /// them to spaces. <see cref="SplitPropertyEntries"/> needs them: an AL preprocessor
+    /// directive is a LINE, and once the newline after <c>#if not CLEAN25</c> is a space the
+    /// directive and the entry it guards are indistinguishable from one run-on entry — which
+    /// is exactly how three BC 27.5 Base Application subpage links were silently losing half
+    /// their conditions (#2978). Everything else keeps the flattening, which is what the
+    /// entry regexes have always been handed.</param>
+    private static IEnumerable<string> SplitTopLevelCommas(string text, bool preserveNewlines = false)
     {
-        var normalized = text.Replace("\r\n", " ").Replace('\n', ' ');
+        var normalized = preserveNewlines ? text : text.Replace("\r\n", " ").Replace('\n', ' ');
         var result = new List<string>();
         int depth = 0;
         bool inQuotes = false;

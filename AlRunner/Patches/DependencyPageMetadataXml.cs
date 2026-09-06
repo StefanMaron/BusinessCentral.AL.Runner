@@ -398,6 +398,28 @@ public static partial class RecordPatches
         foreach (var link in part.SubFormLink)
             EmitSubFormLinkXml(w, hostPage, part, link);
 
+        // #2978: a SubPageLink entry ParseSubPageLink could not read at all. Dropping it —
+        // what this did before — left the part filtered on FEWER conditions than its AL
+        // declares, so the subpage showed rows the host row does not own, and the only trace
+        // was a Console.Error line the symbol cache loses on every warm run. Emit it as a
+        // link BC refuses instead: FieldID 0 is what MockTestPage.SubPageLinks already
+        // refuses BY NAME for every kind, the same fail-closed channel an unresolvable part
+        // field already uses two lines above.
+        if (part.UnreadableSubPageLinkEntries is { Count: > 0 } unreadable)
+            foreach (var entry in unreadable)
+            {
+                Console.Error.WriteLine(
+                    $"[RecordPatches] page {hostPage.Id} \"{hostPage.Name}\" part \"{part.Name}\": "
+                    + $"SubPageLink entry not readable: '{entry}' — the part will refuse to open "
+                    + "rather than show rows its link excludes");
+                w.WriteStartElement("SubFormLink");
+                w.WriteAttributeString("FilterGroup", "4");
+                w.WriteAttributeString("FieldID", "0");
+                w.WriteAttributeString("FilterType", "CONST");
+                w.WriteAttributeString("FilterValue", XmlSafe(entry));
+                w.WriteEndElement();
+            }
+
         w.WriteEndElement(); // Controls
     }
 
@@ -421,16 +443,37 @@ public static partial class RecordPatches
     {
         int partTableId = RecordPatches.ResolveSourceTableIdForAnyPage(part.PagePartId);
         int? partFieldId = RecordPatches.TryResolveDependencyFieldId(partTableId, link.PartFieldName);
+        var isFieldKind = string.Equals(link.Kind, "field", StringComparison.OrdinalIgnoreCase);
+        var parentFieldName = isFieldKind ? link.Value.Trim('"') : null;
+        int? parentFieldId = isFieldKind
+            ? RecordPatches.TryResolveDependencyFieldId(hostPage.SourceTableId, parentFieldName!)
+            : null;
+
+        // #2978: an entry inside an AL `#if` block MAY not be in the compiled app. BC 27.5's
+        // Base Application pages 76/77 declare `#if not CLEAN25 "Service Zone Filter" =
+        // field("Service Zone Filter")` and the same symbol file states table Resource with 58
+        // fields and no such field — CLEAN25 was defined when Microsoft compiled it, so that
+        // entry is not in the app, and BC 28.1 (directive deleted from the source) carries
+        // exactly the three unconditional entries. A field name that does not resolve is a
+        // REFUSAL for an unconditional entry and an ABSENCE for a conditional one: the app
+        // itself is the evidence for which, and refusing the page over a link it does not have
+        // would be a wrong answer in the other direction.
+        if (link.Conditional && (partFieldId is null || (isFieldKind && parentFieldId is null)))
+        {
+            Console.Error.WriteLine(
+                $"[RecordPatches] page {hostPage.Id} \"{hostPage.Name}\" part \"{part.Name}\": "
+                + $"conditional SubPageLink entry \"{link.PartFieldName}\" omitted — the field it "
+                + $"names is not in this app, so the AL directive guarding it compiled the entry out");
+            return;
+        }
 
         w.WriteStartElement("SubFormLink");
         w.WriteAttributeString("FilterGroup", "4");
         w.WriteAttributeString("FieldID",
             (partFieldId ?? 0).ToString(System.Globalization.CultureInfo.InvariantCulture));
 
-        if (string.Equals(link.Kind, "field", StringComparison.OrdinalIgnoreCase))
+        if (isFieldKind)
         {
-            var parentFieldName = link.Value.Trim('"');
-            int? parentFieldId = RecordPatches.TryResolveDependencyFieldId(hostPage.SourceTableId, parentFieldName);
             w.WriteAttributeString("FilterType", "FIELD");
             // Unresolved renders as the field NAME, not a number — MockTestPage.SubPageLinks
             // int.TryParse()s this and refuses by name when it isn't numeric, which is
@@ -543,6 +586,21 @@ public static partial class RecordPatches
         foreach (var filter in view.Filters)
         {
             var fieldId = RecordPatches.TryResolveDependencyFieldId(page.SourceTableId, filter.FieldName);
+
+            // #2978: an entry inside an AL `#if` block may not be in the compiled app at all,
+            // and this app's own field list is the evidence for which — same rule, same
+            // reasoning as EmitSubFormLinkXml's conditional arm. No SourceTableView in BC 27.5
+            // or 28.1 W1 carries a directive today; the arm exists so the two paths through
+            // the same splitter cannot answer it differently.
+            if (filter.Conditional && fieldId is null)
+            {
+                Console.Error.WriteLine(
+                    $"[RecordPatches] page {page.Id} \"{page.Name}\": conditional SourceTableView "
+                    + $"filter \"{filter.FieldName}\" omitted — the field it names is not in this "
+                    + "app, so the AL directive guarding it compiled the entry out");
+                continue;
+            }
+
             if (fieldId is null)
                 Console.Error.WriteLine(
                     $"[RecordPatches] page {page.Id} \"{page.Name}\": SourceTableView field "
@@ -566,7 +624,48 @@ public static partial class RecordPatches
             w.WriteEndElement(); // TableFilters
         }
 
+        // #2978: a where(...) entry — or a whole clause whose parenthesis never closed —
+        // ParseSourceTableView could not read. Dropping it shipped a PARTIAL view, which is
+        // WIDER than the one the page declares: the page opened on rows the real view
+        // excludes, a test asserting over them passed against a record set BC never gives,
+        // and the only trace was a Console.Error line the symbol cache loses on every warm
+        // run. FieldID 0 makes BC's own MetaTable.GetFieldByNo(0) refuse the page with
+        // NavNCLFieldNotFoundException instead — the identical fail-closed channel the
+        // unresolvable-field-name case above already uses, for the identical reason.
+        if (view.UnreadableEntries is { Count: > 0 } unreadable)
+            foreach (var entry in unreadable)
+            {
+                Console.Error.WriteLine(
+                    $"[RecordPatches] page {page.Id} \"{page.Name}\": SourceTableView entry not "
+                    + $"readable: '{entry}' — the page will refuse to open rather than show rows "
+                    + "its view excludes");
+                w.WriteStartElement("TableFilters");
+                w.WriteAttributeString("FilterGroup", "2");
+                w.WriteAttributeString("FieldID", "0");
+                w.WriteAttributeString("FilterType", "CONST");
+                w.WriteAttributeString("FilterValue", XmlSafe(entry));
+                w.WriteEndElement();
+            }
+
         w.WriteEndElement(); // SourceTableView
+    }
+
+    /// <summary>
+    /// The unreadable AL text, made safe to put in an XML attribute: characters
+    /// <see cref="XmlConvert.IsXmlChar"/> rejects would make XmlWriter throw, and the whole
+    /// point of this value is that the runner could NOT read it, so it cannot be assumed
+    /// well-formed. Capped, because it is a diagnostic for whoever reads the synthesized
+    /// metadata — BC never gets as far as reading it, since FieldID 0 refuses first.
+    /// </summary>
+    private static string XmlSafe(string text)
+    {
+        var sb = new System.Text.StringBuilder(Math.Min(text.Length, 200));
+        foreach (var c in text)
+        {
+            if (sb.Length >= 200) break;
+            sb.Append(XmlConvert.IsXmlChar(c) ? (char.IsControl(c) ? ' ' : c) : ' ');
+        }
+        return sb.ToString();
     }
 
     /// <summary>
