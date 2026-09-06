@@ -96,6 +96,38 @@ internal static class RunnerFingerprint
     /// </summary>
     internal const string UnknownContentHash = "unknown";
 
+    /// <summary>
+    /// Non-null when the runner cannot identify ITSELF — the reason no persisted cache key
+    /// computed in this process may be consulted or written (#2954).
+    ///
+    /// <para><see cref="ContentHash"/> answers <see cref="UnknownContentHash"/> for an
+    /// assembly with no readable on-disk location (a single-file publish, an in-memory host,
+    /// the DLL unlinked underneath a running process). Every key that calls
+    /// <see cref="WriteKeyLines(Action{string})"/> — the AL-output key and the
+    /// source-workspace key — then writes the literal line <c>runner:unknown</c>, which is
+    /// the SAME line for every runner build that ever lands in that state. That is one
+    /// shared cache identity standing in for an input the runner could not read, so a warm
+    /// entry written by one runner build is served to a different one: different rewriters,
+    /// different patches, different emit, and nothing in the run says so.</para>
+    ///
+    /// <para>The answer is not a better term — there is no term, the input is unknown — it is
+    /// to claim no cache identity at all. <see cref="AppLoader"/>'s manifest index (#2987) and
+    /// its r2r-chunk cache (#2955) already refuse the sentinel for exactly this reason; the
+    /// runner's own fingerprint was the one place still passing it into a persisted key.</para>
+    /// </summary>
+    internal static string? UncacheableReason => UncacheableReasonFor(ContentHash);
+
+    /// <summary>
+    /// Testable core of <see cref="UncacheableReason"/>: takes the hash explicitly, because a
+    /// test cannot make the RUNNING assembly location-less without unloading itself.
+    /// </summary>
+    internal static string? UncacheableReasonFor(string? contentHash) =>
+        string.IsNullOrEmpty(contentHash) || contentHash == UnknownContentHash
+            ? "the running al-runner assembly has no readable on-disk location, so every cache "
+              + $"key this process computes would carry 'runner:{UnknownContentHash}' — one "
+              + "shared identity for every runner build at once"
+            : null;
+
     // Path -> content hash memo. Moved down here from BcAppSymbolCache (#1820) so every
     // layer that needs "which bytes is this file?" as a cache-key term shares ONE memo
     // instead of each growing its own (#2955): AppLoader.ExtractAllDllPaths hashes the same

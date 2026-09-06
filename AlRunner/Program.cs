@@ -2716,11 +2716,20 @@ foreach (var bundle in bundles)
         // overhead, eating the "unattributed" line. Inside the factory it is also recorded
         // exactly once, on the app that actually opens the gate, instead of a zero-length row
         // on every later app.
-        var orderedDepIds = new Lazy<IReadOnlyList<string>>(() =>
+        var orderedDepIds = new Lazy<OrderedDependencyIds>(() =>
         {
             using (AlRunner.Infrastructure.PhaseLog.AppStage("ordered-dep-ids"))
-                return GetOrderedDepIds(bucketRoot, packageCacheDirs, bundleAbs);
+                return ResolveOrderedDepIds(bucketRoot, packageCacheDirs, bundleAbs);
         });
+
+        // #2954: the reason — if there is one — that this bundle may claim NO AL-output cache
+        // identity. Reported ONCE per bundle rather than once per app group: the cause is
+        // bundle-wide (an unresolvable closure, a package that could not be hashed, a runner
+        // that cannot identify itself), so a per-group line would repeat the same sentence for
+        // every module. Not gated behind --verbose, unlike HIT/MISS: HIT/MISS is a performance
+        // detail, this is "the cache is off for this run and here is why".
+        string? cacheBlocker = null;
+        var cacheBlockerReported = false;
 
         int agIdx = 0;
         foreach (var appGroup in appGroups)
@@ -2834,9 +2843,29 @@ foreach (var bundle in bundles)
             // the report's "unattributed" remainder. An AppStage, not a Stage — BeginApp is
             // already open here, and a bundle stage overlapping an app group is what #1828's
             // stage sum reports as manufactured overhead.
+            var depIds = orderedDepIds.Value;
+            cacheBlocker = AlOutputCacheBlocker(depIds);
+            if (cacheBlocker != null)
+            {
+                // Leaving cacheKey/cachePath/sidecarPath null is the whole mechanism: the HIT
+                // branch below is skipped because cachedBytes stays null, and BOTH write sites
+                // (the CLI publish and the server-mode one) are already guarded on
+                // `cachePath != null`. One skipped assignment, two skipped operations — a
+                // degraded key that got written and then read back is what #2954 is about, so
+                // the read and the write have to be refused together or not at all.
+                if (!cacheBlockerReported)
+                {
+                    cacheBlockerReported = true;
+                    Console.Error.WriteLine(
+                        $"  [{rel}] [cache] NOKEY — this run cannot compute an AL-output cache "
+                        + $"identity, so the cache is neither consulted nor written: {cacheBlocker}");
+                }
+            }
+            else
+            {
             using (AlRunner.Infrastructure.PhaseLog.AppStage("query-decl-probe"))
                 bundleDeclaresQuery = BcCompiler.BundleDeclaresQuery(allPaths);
-            cacheKey = ComputeAlCacheKey(allPaths, moduleName, ordered: orderedDepIds.Value, appRootDir: appGroup.SuiteDir);
+            cacheKey = ComputeAlCacheKey(allPaths, moduleName, ordered: depIds.Terms, appRootDir: appGroup.SuiteDir);
             cachePath = Path.Combine(alCacheDir, cacheKey + ".dll");
             sidecarPath = Path.Combine(alCacheDir, cacheKey + AlRunner.Infrastructure.AlCacheSidecars.EnumRegistrySuffix);
             querySidecarPath = Path.Combine(alCacheDir, cacheKey + AlRunner.Infrastructure.AlCacheSidecars.QuerySymbolsSuffix);
@@ -2864,6 +2893,7 @@ foreach (var bundle in bundles)
                 var missing = !File.Exists(sidecarPath) ? sidecarPath : querySidecarPath;
                 Console.Error.WriteLine($"  [cache] DLL present but sidecar missing — treating as MISS ({missing})");
             }
+            }
         }
 
         // ── --print-cache-key short-circuit (issue #1851) ──────────────────
@@ -2879,11 +2909,18 @@ foreach (var bundle in bundles)
         {
             if (cacheKey == null)
             {
-                Console.Error.WriteLine(
-                    "--print-cache-key found no key to print: either the AL-output cache is " +
-                    "disabled (--no-cache) or this app group's module was already loaded " +
-                    "earlier in this process (cross-bundle dedup, issue #1683) and so never " +
-                    "reached the ComputeAlCacheKey call. Re-run without --no-cache, alone.");
+                // #2954: distinguish "no key was computed" from "this run has no cache identity
+                // and that is the answer". Collapsing the two would report a deliberate refusal
+                // as a misuse of the flag, and the reason — which is the actionable part — would
+                // never reach the caller.
+                Console.Error.WriteLine(cacheBlocker != null
+                    ? "--print-cache-key: this run has NO AL-output cache key. It is not being "
+                      + "withheld, it does not exist: the runner cannot compute a cache identity "
+                      + $"for this bundle, so the cache is neither consulted nor written. Reason: {cacheBlocker}"
+                    : "--print-cache-key found no key to print: either the AL-output cache is "
+                      + "disabled (--no-cache) or this app group's module was already loaded "
+                      + "earlier in this process (cross-bundle dedup, issue #1683) and so never "
+                      + "reached the ComputeAlCacheKey call. Re-run without --no-cache, alone.");
                 return 2;
             }
             Console.WriteLine($"  [{rel}] {moduleName}: [cache] KEY key={cacheKey}");
@@ -2925,7 +2962,10 @@ foreach (var bundle in bundles)
         }
         if (needCompile && assemblyBytes == null)
         {
-            if (alCacheDir != null)
+            // cacheKey == null with alCacheDir set is #2954's do-not-cache path: there is no key
+            // to miss against, and counting it as a MISS would put it in the same bucket as a
+            // cold entry that the next run will HIT. It never will — nothing was written.
+            if (alCacheDir != null && cacheKey != null)
             {
                 if (AlRunner.Log.Verbose)
                     Console.Error.WriteLine($"  [cache] MISS key={cacheKey} — running Emit+Compile");
@@ -4922,11 +4962,27 @@ return strictExitCode ? computedExitCode : 0;
                 // answer "no". Outside the gate, a cross-bundle module reuse (reusedAsm != null)
                 // — the case --server exists to make fast — paid for a whole-tree scan whose
                 // answer it then threw away.
+                // #2954, the server-mode half. The CLI gate and this one must agree on when a
+                // run has no cache identity: they write into the SAME <cacheDir>, so a server
+                // request that wrote an entry under a key blind to its dependency closure would
+                // be served to a later CLI run, and the other way round. Same helper, same
+                // answer.
+                var serverDepIds = ResolveOrderedDepIds(bucketRoot, effectivePkgDirs);
+                var serverCacheBlocker = AlOutputCacheBlocker(serverDepIds);
+                if (serverCacheBlocker != null)
+                {
+                    Console.Error.WriteLine(
+                        $"  [server] {moduleName}: [cache] NOKEY — this run cannot compute an "
+                        + "AL-output cache identity, so the cache is neither consulted nor "
+                        + $"written: {serverCacheBlocker}");
+                }
+                else
+                {
                 bool bundleDeclaresQuery;
                 using (AlRunner.Infrastructure.PhaseLog.AppStage("query-decl-probe"))
                     bundleDeclaresQuery = BcCompiler.BundleDeclaresQuery(allPaths);
                 cacheKey = ComputeAlCacheKey(allPaths, moduleName,
-                    ordered: GetOrderedDepIds(bucketRoot, effectivePkgDirs), appRootDir: bucketRoot);
+                    ordered: serverDepIds.Terms, appRootDir: bucketRoot);
                 cachePath = Path.Combine(alCacheDir, cacheKey + ".dll");
                 sidecarPath = Path.Combine(alCacheDir, cacheKey + AlRunner.Infrastructure.AlCacheSidecars.EnumRegistrySuffix);
                 querySidecarPath = Path.Combine(alCacheDir, cacheKey + AlRunner.Infrastructure.AlCacheSidecars.QuerySymbolsSuffix);
@@ -4955,6 +5011,7 @@ return strictExitCode ? computedExitCode : 0;
                         cached = false;
                     }
                 }
+                }
             }
 
             var compileErrors = new List<string>();
@@ -4962,7 +5019,10 @@ return strictExitCode ? computedExitCode : 0;
             string? changeModelFallbackReason = null;
             if (reusedAsm == null && assemblyBytes == null)
             {
-                if (alCacheDir != null)
+                // cacheKey == null here means #2954's do-not-cache path (see the gate above):
+                // no key was computed, so there is nothing to have missed. Same accounting rule
+                // as the CLI loop.
+                if (alCacheDir != null && cacheKey != null)
                     AlRunner.Infrastructure.PhaseLog.NoteCacheMiss();
                 IReadOnlyList<EmittedSource> sources;
                 IReadOnlyList<string> alDiagnostics;
