@@ -295,28 +295,196 @@ public static partial class RecordPatches
             PopulateFieldVirtualTable(dataAccess, fieldMetaTable, session);
 
             // Targeted: if a specific TableNo is filtered and not yet built, build+insert it now.
-            if (filteredTableNo is int t && t > 0)
-            {
-                NCLMetaTable? srcMeta;
-                try { srcMeta = EnsureTableInMetadataCache(t); }
-                catch { srcMeta = null; }
-                if (srcMeta != null)
-                {
-                    EnsureDataAccessProviderReflection(dataAccess);
-                    var provider = _pDataAccessDataProvider!.GetValue(dataAccess)!;
-                    var done = _fvtPopulatedByProvider.GetValue(provider, static _ => new ConcurrentDictionary<int, byte>());
-                    if (done.TryAdd(t, 0))
-                        InsertFieldRowsForTable(provider, fieldMetaTable, srcMeta);
-                }
-            }
+            PopulateFieldRowsForTargetTable(dataAccess, fieldMetaTable, filteredTableNo);
         }
         catch (AlRunner.Infrastructure.RunnerOutOfScopeException) { throw; }
         catch { /* best-effort populate; the find still runs over whatever is present */ }
     }
 
+    /// <summary>
+    /// Build and insert <paramref name="targetTableNo"/>'s real Field rows into the store behind
+    /// the 2000000041 data access, unless they are already there.
+    ///
+    /// This is the ONLY populate that can serve a table the runner has not otherwise
+    /// materialised. The creation-time pass in <see cref="PopulateFieldVirtualTable"/> iterates
+    /// the metadata cache's CURRENT keys, so it covers exactly the tables something else has
+    /// already touched; this one calls <c>EnsureTableInMetadataCache</c> and therefore builds the
+    /// named table on demand. Measured on a Base Application bundle that never opens table 5802
+    /// as a Record: <c>Field.SetRange(TableNo, 5802); FindSet()</c> enumerates 85 rows with this
+    /// arm and 0 without it (issue #2792).
+    ///
+    /// Idempotent per (provider, tableNo) via the same done-set the creation-time pass uses.
+    /// </summary>
+    private static void PopulateFieldRowsForTargetTable(object dataAccess, NCLMetaTable fieldMetaTable, int? targetTableNo)
+    {
+        if (targetTableNo is not int t || t <= 0) return;
+
+        NCLMetaTable? srcMeta;
+        try { srcMeta = EnsureTableInMetadataCache(t); }
+        catch { srcMeta = null; }
+        if (srcMeta == null) return;
+
+        EnsureDataAccessProviderReflection(dataAccess);
+        var provider = _pDataAccessDataProvider!.GetValue(dataAccess)!;
+        var done = _fvtPopulatedByProvider.GetValue(provider, static _ => new ConcurrentDictionary<int, byte>());
+        if (done.TryAdd(t, 0))
+            InsertFieldRowsForTable(provider, fieldMetaTable, srcMeta);
+    }
+
+    /// <summary>
+    /// The populate the find path runs, reached from a request that is NOT a find — the count
+    /// path and the primary-key Get path below. Reads the Field metatable and the session off
+    /// the request/DataAccess with the LIGHT reflection only, so a count or a Get on any of the
+    /// other ~4,000 tables never triggers the heavy find-intercept bind.
+    /// </summary>
+    private static void EnsureFieldRowsForNonFindRequest(object dataAccess, object request, int? targetTableNo)
+    {
+        // Same #2524 invariant the find path holds: a `Record "Field" temporary` holds exactly
+        // the rows AL inserted, and real metadata rows must never be injected into that private
+        // store.
+        if (IsTemporaryRecordDataAccess(dataAccess)) return;
+
+        try
+        {
+            if (FindRequestMetaApplicationObject(request) is not NCLMetaTable fieldMetaTable) return;
+            var session = FieldGuardSession(dataAccess);
+            if (session == null) return;
+
+            PopulateFieldVirtualTable(dataAccess, fieldMetaTable, session);
+            PopulateFieldRowsForTargetTable(dataAccess, fieldMetaTable, targetTableNo);
+        }
+        catch (AlRunner.Infrastructure.RunnerOutOfScopeException) { throw; }
+        catch { /* best-effort populate, exactly as the find path: never a different answer */ }
+    }
+
+    /// <summary>
+    /// Prepended to DataAccess.CountAsync(CountCacheRequest) for every table. <c>Record.Count()</c>
+    /// and <c>Record.IsEmpty()</c> build a CountCacheRequest, not a FindCacheRequest, so the
+    /// InnerFindAsync guard never sees them and the on-demand populate never ran for them.
+    ///
+    /// Measured on main, one Base Application bundle, table 5802 never opened as a Record:
+    ///
+    ///   Field.SetRange(TableNo, 5802); Count()   -> 0     IsEmpty() -> true
+    ///   Field.SetRange(TableNo, 5802); FindSet() -> 85 rows, field 1 = "Entry No.", Integer
+    ///
+    /// The same filter on the same table, answered two different ways depending on which method
+    /// AL called — and the wrong one is the quiet one, because 0 is what "this table has no
+    /// fields" would also look like. On a service tier the Field table is computed per request
+    /// and both answer 85. Same shape as #2648 (Date) and #2504 (Aggregate Permission Set) on
+    /// this method and on the Get path below; the Field table was left behind by both.
+    ///
+    /// For every table but 2000000041 this is one integer comparison and returns.
+    /// </summary>
+    public static void DataAccess_FieldGuardForCount(object self, object request)
+    {
+        if (FindRequestTableId(request) != FieldFindTableId) return;
+        int? filtered;
+        try { filtered = ExtractTableNoFilter(request); }
+        catch { filtered = null; }
+        EnsureFieldRowsForNonFindRequest(self, request, filtered);
+    }
+
+    /// <summary>
+    /// Prepended to DataAccess.ExistsAsync(ExistsCacheRequest) for every table. <c>Record.IsEmpty()</c>
+    /// does NOT take the count path: RecordImplementation.IsEmptyAsync calls its own
+    /// ExistsAsync, which builds an ExistsCacheRequest and goes straight to
+    /// provider.ExistsAsync (decompiled from Ncl.dll — the comment on the Date table's count
+    /// guard, which says IsEmpty() takes the count path, is wrong about this). So it reached
+    /// none of the three guards and answered over an empty store.
+    ///
+    /// Measured on this branch with the count and Get guards already in place, table 270 never
+    /// opened as a Record: <c>Field.SetRange(TableNo, 270); IsEmpty()</c> still answered TRUE
+    /// while <c>Count()</c> over the same filter answered its real field count. A fourth path,
+    /// found only because the test asserted IsEmpty() separately rather than trusting it to
+    /// share Count()'s implementation.
+    ///
+    /// For every table but 2000000041 this is one integer comparison and returns.
+    /// </summary>
+    public static void DataAccess_FieldGuardForExists(object self, object request)
+    {
+        if (FindRequestTableId(request) != FieldFindTableId) return;
+        int? filtered;
+        try { filtered = ExtractTableNoFilter(request); }
+        catch { filtered = null; }
+        EnsureFieldRowsForNonFindRequest(self, request, filtered);
+    }
+
+    /// <summary>
+    /// Prepended to DataAccess.InternalTryGetByPrimaryKeyAsync(PrimaryKeyCacheRequest) for every
+    /// table. A full-primary-key <c>Record.Get()</c> takes DataAccess's own primary-key path
+    /// straight to provider.TryGetByPrimaryKeyAsync, reaching neither the find guard nor the
+    /// count guard.
+    ///
+    /// Measured on main, same bundle, table 5803 never opened as a Record:
+    /// <c>Field.Get(5803, 1)</c> answered FALSE. On a service tier it answers TRUE with
+    /// FieldName "Entry No." — so FALSE here is a wrong answer, not a missing feature, and a
+    /// quiet one: "no such field" is exactly what a Get returning false normally means.
+    ///
+    /// The table is taken from the request's own RecordId rather than from a filter, because a
+    /// keyed Get carries its key there and need carry no TableNo filter at all. The Field
+    /// table's primary key is (TableNo, "No."), so TableNo is the FIRST key value.
+    /// </summary>
+    public static void DataAccess_FieldGuardForGet(object self, object request)
+    {
+        if (FindRequestTableId(request) != FieldFindTableId) return;
+        int? keyed;
+        try { keyed = PrimaryKeyTableNo(request); }
+        catch { keyed = null; }
+        EnsureFieldRowsForNonFindRequest(self, request, keyed);
+    }
+
+    /// <summary>
+    /// The TableNo out of a primary-key request's RecordId — the FIRST key value, the Field
+    /// table's key being (TableNo, "No."). Null for a SystemIdCacheRequest, which carries no key
+    /// values: the SystemId of a row that was never materialised has never been handed out, so
+    /// such a request cannot name a table the store does not already hold.
+    /// </summary>
+    private static int? PrimaryKeyTableNo(object request)
+    {
+        var recordId = request.GetType().GetProperty("RecordId",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(request);
+        if (recordId == null) return null;
+
+        var fields = recordId.GetType().GetProperty("Fields",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(recordId);
+        if (fields is not System.Collections.IList list || list.Count < 1) return null;
+
+        return NavValueToInt(list[0]);
+    }
+
+    private static PropertyInfo? _ffiDaSessionLight;   // DataAccess.Session, bound WITHOUT the heavy bind
+    private static volatile bool _ffiDaSessionLightReady;
+
+    /// <summary>
+    /// DataAccess.Session, resolved off the instance's own type. Deliberately separate from
+    /// <see cref="_pDaSession"/>, which only exists once EnsureFindInterceptReflection has run —
+    /// that heavy bind is reached only from the Field find path, and the count/Get guards must
+    /// not trigger it.
+    /// </summary>
+    private static object? FieldGuardSession(object dataAccess)
+    {
+        try
+        {
+            if (!_ffiDaSessionLightReady)
+            {
+                _ffiDaSessionLight = dataAccess.GetType().GetProperty("Session",
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                _ffiDaSessionLightReady = _ffiDaSessionLight != null;
+                if (!_ffiDaSessionLightReady) return null;
+            }
+            return _ffiDaSessionLight!.GetValue(dataAccess);
+        }
+        catch { return null; }
+    }
+
     private static int? ExtractTableNoFilter(object cacheRequest)
     {
         EnsureFilterReflection(cacheRequest);
+        // A failed bind means "we cannot read this request's filters", never "there is no
+        // TableNo filter" — but the two are indistinguishable to the caller, so both end in the
+        // same place: no targeted populate. Returning here rather than dereferencing a null
+        // handle keeps the count guard (which has no find-path try/catch around it) honest.
+        if (!_filterReflReady) return null;
         var fam = _pFiltersAndMarks!.GetValue(cacheRequest);
         if (fam == null) return null;
         var filters = _pFamFilters!.GetValue(fam);
@@ -372,6 +540,12 @@ public static partial class RecordPatches
         if (_filterReflReady) return;
         var nclAsm = cacheRequest.GetType().Assembly;
         const string rt = "Microsoft.Dynamics.Nav.Runtime.";
+        // DataCacheRequest.FiltersAndMarks — the base of BOTH FindCacheRequest and
+        // CountCacheRequest, so the count guard reads the same TableNo filter the find path
+        // does. It used to be bound only by EnsureFindInterceptReflection, which the count path
+        // must never trigger (that bind is the heavy one, and it runs for the Field table only).
+        _pFiltersAndMarks ??= nclAsm.GetType(rt + "DataCacheRequest")!
+            .GetProperty("FiltersAndMarks", BindingFlags.Public | BindingFlags.Instance);
         var tFam = nclAsm.GetType(rt + "FiltersAndMarks")!;
         _pFamFilters = tFam.GetProperty("Filters", BindingFlags.Public | BindingFlags.Instance);
         var tFfdBase = nclAsm.GetType(rt + "FilterFieldDictionary")!;
@@ -391,7 +565,8 @@ public static partial class RecordPatches
         var tMetaField = nclAsm.GetType(rt + "NCLMetaField")!;
         _pFieldNo = tMetaField.GetProperty("FieldNo", BindingFlags.Public | BindingFlags.Instance)
             ?? tMetaField.GetProperty("No", BindingFlags.Public | BindingFlags.Instance);
-        _filterReflReady = _pFamFilters != null && _pFfdItems != null && _pFieldNo != null;
+        _filterReflReady = _pFamFilters != null && _pFfdItems != null && _pFieldNo != null
+            && _pFiltersAndMarks != null;
     }
 
     private static MethodInfo? _mValueTaskFromResult; // ValueTask.FromResult<ResultSetEnumerator>

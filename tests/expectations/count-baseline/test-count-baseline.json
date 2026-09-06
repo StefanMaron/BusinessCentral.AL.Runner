@@ -45,7 +45,7 @@
         "server-reload-dep": { "tests": 0 },
         "server-reload-main": { "tests": 1 },
         "session-user-row": { "tests": 4 },
-        "standalone-suites": { "tests": 108 },
+        "standalone-suites": { "tests": 113 },
         "static-runmodal-record": { "tests": 5 },
         "table-connection-live-oos": { "tests": 2 },
         "tableext-eviction-field-trigger-timing": { "tests": 2 },
