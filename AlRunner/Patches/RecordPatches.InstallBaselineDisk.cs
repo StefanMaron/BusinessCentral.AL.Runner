@@ -67,7 +67,16 @@ public static partial class RecordPatches
     /// install-trigger output, and which
     /// <see cref="GetDataAccessForTableCore"/> re-populates on every access. Excluded from the
     /// on-disk baseline — see the file header for why that is a correctness decision and not
-    /// just a size one.</summary>
+    /// just a size one.
+    ///
+    /// <para>UNCONDITIONAL, and it stays that way: no backup can own rows in any of these,
+    /// because every one of them is a virtual table with no SQL behind it. The one table that
+    /// fits the same description but CAN also be loaded from a backup — Object (2000000001) —
+    /// is therefore not in this list; it is decided per run by
+    /// <see cref="IsProjectionOwnedSystemTableId"/> (#2875). Do not merge the two: adding
+    /// 2000000001 here would drop a backup's real rows on the floor, and making this predicate
+    /// conditional would weaken #2272's refusal for tables that have no second writer at
+    /// all.</para></summary>
     internal static bool IsSelfPopulatingVirtualTableId(int tableId) => tableId switch
     {
         AllObjVirtualTableId or AllObjWithCaptionVirtualTableId or FieldVirtualTableId
