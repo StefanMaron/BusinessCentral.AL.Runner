@@ -168,14 +168,23 @@ internal sealed partial class RunnerPageInstance
     /// two in that order (see this file's header).</para>
     /// </summary>
     private void RunTargetPage(int actionId, ActionRunTarget target)
+        => RunPageThroughBcFrontDoor(
+            target.ObjectId,
+            target.Links.Count > 0
+                ? BuildLinkedTargetRecord(actionId, target)
+                : (target.RunPageOnRec ? _record : null));
+
+    /// <summary>
+    /// Open <paramref name="pageId"/> through BC's own <c>NavForm.RunAsync</c> /
+    /// <c>RunModalAsync</c>, on <paramref name="record"/> when one is supplied.
+    ///
+    /// <para>Static and internal since #3185, because the other caller has no
+    /// RunnerPageInstance to go through: a list page's BUILT-IN View/Edit action opens the
+    /// page's <c>CardPageId</c> card, and the runner can know that card's id from the page
+    /// inventory even for a list it never compiled a page instance for.</para>
+    /// </summary>
+    internal static void RunPageThroughBcFrontDoor(int pageId, NavRecord? record)
     {
-        var pageId = target.ObjectId;
-        var runPageOnRec = target.RunPageOnRec;
-
-        var record = target.Links.Count > 0
-            ? BuildLinkedTargetRecord(actionId, target)
-            : (runPageOnRec ? _record : null);
-
         if (TargetPageOpensModally(pageId))
         {
             // isInLookupTrigger / isLookup both false — the shape the AL compiler emits for a
