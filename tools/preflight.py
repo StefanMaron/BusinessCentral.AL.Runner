@@ -42,6 +42,7 @@ Usage:
     tools/preflight.py --reap          # remove worktrees of MERGED PRs, if clean
     tools/preflight.py --with-corpus   # also run the corpus baseline (minutes)
     tools/preflight.py --no-tools      # skip the code-navigation checks (~10s)
+    tools/preflight.py --no-freshness-fetch   # skip the ls-remote in the staleness check
 """
 from __future__ import annotations
 
@@ -56,6 +57,12 @@ import sys
 import time
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Optional
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    import agent_self_freshness as _freshness
+except Exception:  # pragma: no cover - a copy detached from its sibling module
+    _freshness = None
 
 GIB = 1024 ** 3
 
@@ -80,6 +87,16 @@ BUDGET_WARN_FRACTION = 0.85
 BUDGET_STALE_MINUTES = 60
 
 OMARCHY_USAGE_BIN = "/usr/share/omarchy/bin/omarchy-agent-usage-claude"
+
+# How many times a network probe is attempted, and how long it waits in between.
+# A HEALTHY BOX PAYS NONE OF THIS: the first attempt succeeds and the probe
+# returns. The waits exist because back-to-back retries are the weakest kind --
+# they re-ask inside the same dropped-packet window -- and the measurement in
+# #3076 was a probe that failed, succeeded and failed again over several seconds
+# by hand, then succeeded six times in a row.
+PUSH_PROBE_ATTEMPTS = 3
+PUSH_RETRY_BACKOFF = (1.0, 3.0)     # before attempt 2, before attempt 3
+RETRY_BACKOFF_SECONDS = 0.7         # run_retry's base wait, multiplied by attempt number
 
 # --------------------------------------------------------------------------
 # code-navigation tooling (issue #3087)
@@ -147,7 +164,8 @@ EXIT_MEANING = {
     0: "every check passed (warnings may be present; see --strict)",
     1: "at least one check FAILED - this box would produce untrustworthy results",
     2: "--strict was given and at least one check WARNED (nothing failed)",
-    3: "preflight could not complete - bad usage, or no checks ran",
+    3: "preflight could not complete - bad usage, no checks ran, or this copy of "
+       "preflight.py is stale (see --no-freshness-fetch)",
 }
 
 
@@ -219,15 +237,30 @@ def strip_shim_banner(text: str) -> str:
     return "".join(lines[i:])
 
 
-def run_retry(argv: list[str], *, attempts: int = 3, **kw) -> Ran:
-    """Retry a network-touching command. This box's network times out
-    intermittently, and a single timeout read as a FAIL would halt a healthy
-    loop."""
+def run_retry(argv: list[str], *, attempts: int = 3, backoff: Optional[float] = None,
+              sleeper=None, **kw) -> Ran:
+    """Retry a network-touching command, spacing the attempts.
+
+    This box's network times out intermittently, and a single timeout read as a
+    FAIL halts a healthy loop. The attempts are SPACED rather than fired back to
+    back, because consecutive retries re-ask inside the same dropped-packet
+    window; #3076 measured a probe that needed seconds, not milliseconds, to
+    start working again.
+
+    It is deliberately CLASS-BLIND -- it retries any non-zero exit. A caller
+    whose failures must be told apart, because retrying one class would mask a
+    real verdict, does that itself: check_push() below is the one that does, and
+    it does not use this function.
+    """
+    backoff = RETRY_BACKOFF_SECONDS if backoff is None else backoff
+    sleeper = sleeper or time.sleep
     last = Ran(rc=127, out="", err="never ran")
-    for _ in range(attempts):
+    for i in range(attempts):
         last = run(argv, **kw)
         if last.ok:
             return last
+        if i + 1 < attempts and backoff > 0:
+            sleeper(backoff * (i + 1))
     return last
 
 
@@ -977,6 +1010,105 @@ def check_stale_scratch(tmp_dir: str, rows: list[tuple], stale_hours: float) -> 
                              "orphan_registrations": [r[0].path for r in orphan]})
 
 
+# --------------------------------------------------------------------------
+# the push probe: telling a dropped packet apart from a broken credential (#3076)
+# --------------------------------------------------------------------------
+# ONE SAMPLE CANNOT TELL THOSE TWO APART, and they need opposite responses.
+# Halting an unattended loop on a dropped packet costs a whole window; continuing
+# on a broken credential costs every push after it. Measured 2026-09-06: the
+# probe reported FAIL, and the same push by hand seconds later succeeded on 1 of
+# 3 attempts and then on 6 of 6. `ssh -T git@github.com` timed out every time
+# while pushes got through, so port 22 was filtered or flaky on that network --
+# and the reported summary, "push was refused: and the repository exists.", was
+# the trailing line of SSH boilerplate that BOTH failures print, so it read as an
+# authorization problem when the cause was reachability.
+#
+# So the line drawn here is the CLASS of the failure, never the count:
+#
+#   * a REFUSAL (permission, authentication, no such repository, host key) is a
+#     verdict. It is not retried at all -- the probe FAILs on the first attempt,
+#     which also removes a real hazard the old code had: run_retry() would retry
+#     a publickey refusal, and a later success turned a broken credential into a
+#     PASS.
+#   * a TRANSPORT failure (timeout, reset, DNS, refused connection) is retried,
+#     spaced out, up to PUSH_PROBE_ATTEMPTS.
+#   * an UNRECOGNISED failure is retried, because the alternative is treating an
+#     error nobody has classified yet as a credential verdict.
+#
+# and no number of retries can manufacture a PASS: a PASS still requires one
+# attempt to negotiate successfully with the remote. When it took more than one,
+# the verdict is a WARN that says what it measured -- the box can work, but every
+# other network round trip in the cycle is on the same unreliable path.
+_TRANSPORT_REFUSAL = re.compile(
+    r"permission denied|permission to .+ denied|authentication failed"
+    r"|invalid username or password|the requested url returned error: 40"
+    r"|403 forbidden|repository not found|does not have permission"
+    r"|terminal prompts disabled|could not read username|could not read password"
+    r"|support for password authentication was removed|access denied"
+    r"|not authorized|bad credentials|no such identity"
+    r"|host key verification failed", re.I)
+
+_TRANSPORT_TRANSIENT = re.compile(
+    r"connection timed out|connection reset|connection refused|connection closed"
+    r"|could not resolve host|temporary failure in name resolution"
+    r"|network is unreachable|no route to host|operation timed out|timed out"
+    r"|kex_exchange_identification|broken pipe|early eof|unexpected disconnect"
+    r"|remote end hung up|gnutls_handshake|ssl_read|ssl connect error"
+    r"|the requested url returned error: 5|error: 429|server hung up", re.I)
+
+# Both failure shapes end with these lines, so neither classifies anything and
+# neither may be reported as the cause. This is the exact text that reached the
+# report as "push was refused: and the repository exists."
+_TRANSPORT_BOILERPLATE = re.compile(
+    r"^(fatal: could not read from remote repository\.?"
+    r"|please make sure you have the correct access rights"
+    r"|and the repository exists\.?)$", re.I)
+
+
+def classify_transport_error(text: str) -> str:
+    """"auth" (a verdict), "transient" (worth another attempt), or "unknown".
+
+    Refusals are tested first: a refusal message never carries a transport
+    marker, but ordering it first means a message carrying both is treated as
+    the verdict rather than retried, which is the safe direction.
+    """
+    body = text or ""
+    if _TRANSPORT_REFUSAL.search(body):
+        return "auth"
+    if _TRANSPORT_TRANSIENT.search(body):
+        return "transient"
+    return "unknown"
+
+
+def transport_error_line(text: str) -> str:
+    """The line that names the CAUSE, not the last line of shared boilerplate."""
+    lines = [ln.strip() for ln in (text or "").replace("\r", "\n").splitlines()]
+    lines = [ln for ln in lines if ln and not _TRANSPORT_BOILERPLATE.match(ln)]
+    for pattern in (_TRANSPORT_REFUSAL, _TRANSPORT_TRANSIENT):
+        for ln in lines:
+            if pattern.search(ln):
+                return ln
+    return lines[0] if lines else "no message"
+
+
+def push_transport(repo: str) -> tuple[str, str]:
+    """(kind, url) of the PUSH remote. Named in the report because it is not
+    necessarily the fetch remote: the box in #3076 fetched over https and pushed
+    over ssh, and nothing said so."""
+    r = run(["git", "-C", repo, "remote", "get-url", "--push", "origin"])
+    url = r.out.strip().splitlines()[-1].strip() if r.ok and r.out.strip() else ""
+    if not url:
+        return "unknown", ""
+    low = url.lower()
+    if low.startswith(("http://", "https://")):
+        return "https", url
+    if low.startswith("ssh://") or re.match(r"^[^/]+@[^/:]+:", url):
+        return "ssh", url
+    if low.startswith("git://"):
+        return "git", url
+    return "other", url
+
+
 def check_push(repo: str, identity: str) -> CheckResult:
     """`git ls-remote` proves READ. Only a push proves push.
 
@@ -984,29 +1116,111 @@ def check_push(repo: str, identity: str) -> CheckResult:
     interactive credential agent, and a false PASS here has happened. --dry-run
     performs the full negotiation, including authentication, and transfers
     nothing, so the probe ref is never created.
+
+    The retry policy, and why a retry here cannot hide a broken credential, is in
+    the block comment above.
     """
     ref = f"refs/heads/preflight-probe-{identity}"
     cmd = f"git push --dry-run origin HEAD:{ref}"
-    r = run_retry(["git", "-C", repo, "push", "--dry-run", "--porcelain", "origin",
-                   f"HEAD:{ref}"], timeout=120, attempts=2)
-    if r.timed_out:
-        return CheckResult(name="push", status="FAIL",
-                           summary="the push probe timed out - credentials are probably "
-                                   "waiting on an interactive prompt nobody will answer",
-                           command=cmd,
-                           remedy="Configure a non-interactive credential helper, or "
-                                  "`gh auth setup-git`, then re-run.")
-    if not r.ok:
-        return CheckResult(name="push", status="FAIL",
-                           summary=f"push was refused: {(r.err or r.out).strip().splitlines()[-1] if (r.err or r.out).strip() else 'no message'}",
-                           command=cmd,
-                           detail=[(r.err or r.out).strip()[:600]],
-                           remedy="Re-authenticate (`gh auth login`, then `gh auth setup-git`) "
-                                  "and confirm the account has push permission on origin.")
-    return CheckResult(name="push", status="PASS",
-                       summary="push works (dry-run negotiated with origin; nothing was written)",
-                       command=cmd,
-                       detail=["git ls-remote would only have proven read access."])
+    argv = ["git", "-C", repo, "push", "--dry-run", "--porcelain", "origin", f"HEAD:{ref}"]
+    kind, url = push_transport(repo)
+    fetch = run(["git", "-C", repo, "remote", "get-url", "origin"]).out.strip()
+
+    total = max(1, PUSH_PROBE_ATTEMPTS)
+    outcomes: list[str] = []
+    last = Ran(rc=127, out="", err="never ran")
+    for i in range(total):
+        last = run(argv, timeout=120)
+        if last.ok:
+            outcomes.append("ok")
+            break
+        outcomes.append("timeout" if last.timed_out
+                        else classify_transport_error(last.err or last.out))
+        if outcomes[-1] == "auth":
+            break                       # a verdict; retrying it only delays the report
+        if i + 1 < total and PUSH_RETRY_BACKOFF:
+            pause = PUSH_RETRY_BACKOFF[min(i, len(PUSH_RETRY_BACKOFF) - 1)]
+            if pause:
+                time.sleep(pause)
+
+    used = len(outcomes)
+    trail = ", ".join(outcomes)
+    where = f"push transport: {kind}" + (f" ({url})" if url else "")
+    if fetch and url and fetch != url:
+        where += f"; fetch is a different remote: {fetch}"
+    detail = [where, f"attempts: {used} of {total} ({trail})"]
+    text = (last.err or last.out).strip()
+
+    if outcomes[-1] == "ok":
+        if used == 1:
+            return CheckResult(
+                name="push", status="PASS",
+                summary="push works (dry-run negotiated with origin on the first attempt; "
+                        "nothing was written)",
+                command=cmd,
+                detail=detail + ["git ls-remote would only have proven read access."])
+        return CheckResult(
+            name="push", status="WARN",
+            summary=f"push works, but the transport is FLAKY: 1 of {used} attempts "
+                    f"succeeded ({trail})",
+            command=cmd,
+            detail=detail + [f"first failure: {transport_error_line(text)}",
+                             "The credential is fine -- it negotiated. This is the network "
+                             "path, and every other round trip in the cycle uses it too."],
+            remedy="Nothing here stops the cycle. Treat a single network failure elsewhere "
+                   "in this run as unproven rather than as a verdict, and if pushes keep "
+                   "needing retries, look at the transport named above rather than at "
+                   "credentials.",
+            data={"attempts": outcomes, "transport": kind, "push_url": url})
+
+    if outcomes[-1] == "auth":
+        return CheckResult(
+            name="push", status="FAIL",
+            summary=f"push was REFUSED: {transport_error_line(text)}",
+            command=cmd,
+            detail=detail + [text[:600],
+                             "Refused on the first attempt and not retried: this is a "
+                             "credential or permission verdict, not a dropped packet."],
+            remedy="Re-authenticate (`gh auth login`, then `gh auth setup-git`) and confirm "
+                   "the account has push permission on origin.",
+            data={"attempts": outcomes, "transport": kind, "push_url": url})
+
+    if set(outcomes) == {"timeout"}:
+        return CheckResult(
+            name="push", status="FAIL",
+            summary=f"the push probe timed out on all {used} attempts - credentials are "
+                    f"probably waiting on an interactive prompt nobody will answer",
+            command=cmd, detail=detail,
+            remedy="Configure a non-interactive credential helper, or `gh auth setup-git`, "
+                   "then re-run.",
+            data={"attempts": outcomes, "transport": kind, "push_url": url})
+
+    if "transient" in outcomes or "timeout" in outcomes:
+        return CheckResult(
+            name="push", status="FAIL",
+            summary=f"push failed on all {used} attempts and the remote was not reachable: "
+                    f"{transport_error_line(text)}",
+            command=cmd,
+            detail=detail + [text[:600],
+                             "Every attempt failed on the TRANSPORT, not on a refusal, so "
+                             "nothing here has disproven the credential."],
+            remedy="This is reachability, not authorization. Check the network path to the "
+                   "push remote named above -- for ssh that is port 22, which some networks "
+                   "filter (`ssh -o BatchMode=yes -T git@github.com`); an https push remote "
+                   "avoids that port entirely. Re-run once the path is back.",
+            data={"attempts": outcomes, "transport": kind, "push_url": url})
+
+    return CheckResult(
+        name="push", status="FAIL",
+        summary=f"push failed on all {used} attempts: {transport_error_line(text)}",
+        command=cmd,
+        detail=detail + [text[:600],
+                         "The error is not one this check recognises, so it was retried "
+                         "rather than read as a credential verdict."],
+        remedy="Read the error above. If it is a credential problem, re-authenticate "
+               "(`gh auth login`, then `gh auth setup-git`); if it is the network, re-run "
+               "once the path to the push remote is back.",
+        data={"attempts": outcomes, "transport": kind, "push_url": url})
 
 
 def check_commit(repo: str) -> CheckResult:
@@ -1069,6 +1283,26 @@ def check_commit(repo: str) -> CheckResult:
         shutil.rmtree(objdir, ignore_errors=True)
 
 
+_TOKEN_SCOPES_LINE = re.compile(r"Token scopes:\s*(.+)")
+
+
+def parse_token_scopes(text: str) -> Optional[set]:
+    """The classic OAuth scopes `gh auth status` reports, or None for UNKNOWN.
+
+    None must never be rendered as "the scope is missing". A fine-grained token
+    reports `Token scopes: none` and can still be permitted to write workflow
+    files, and a `gh` that does not print the line at all says nothing either
+    way. Only a NON-EMPTY classic scope list is evidence about what the token may
+    do, so only that produces a negative answer.
+    """
+    m = _TOKEN_SCOPES_LINE.search(text or "")
+    if not m:
+        return None
+    scopes = {piece.strip().strip("'\"") for piece in m.group(1).split(",")}
+    scopes = {sc for sc in scopes if sc and sc.lower() != "none"}
+    return scopes or None
+
+
 def check_github(slug: Optional[str]) -> CheckResult:
     """Report what this account can do. Do not branch on it.
 
@@ -1112,10 +1346,25 @@ def check_github(slug: Optional[str]) -> CheckResult:
     except ValueError:
         perms = {}
     can_push = bool(perms.get("push") or perms.get("maintain") or perms.get("admin"))
+    # The REPOSITORY's permissions and the TOKEN's scopes answer different
+    # questions, and reporting only the first said "merge a PR: yes" while every
+    # PR touching .github/workflows/ was unmergeable (#3192): `gh pr merge`
+    # refuses with "refusing to allow an OAuth App to create or update workflow
+    # ... without `workflow` scope". That arrived at the LAST step, after review
+    # and after CI -- the most expensive place to discover a missing permission.
+    scopes = parse_token_scopes((auth.out or "") + "\n" + (auth.err or ""))
+    can_workflow = None if scopes is None else ("workflow" in scopes)
     detail = [f"account: {login or 'unknown'}; repository: {slug}",
               "permissions: " + ", ".join(f"{k}={v}" for k, v in sorted(perms.items())),
               f"merge a PR: {'yes' if can_push else 'no'}; label and assign: "
               f"{'yes' if (can_push or perms.get('triage')) else 'no'} (both need push or triage)"]
+    if can_workflow is None:
+        detail.append("merge a PR that touches .github/workflows/: unknown - `gh auth status` "
+                      "did not report classic token scopes (a fine-grained token reports none)")
+    else:
+        detail.append(f"merge a PR that touches .github/workflows/: "
+                      f"{'yes' if can_workflow else 'no'} - needs the token's `workflow` "
+                      f"scope; scopes: {', '.join(sorted(scopes))}")
     if not can_push:
         return CheckResult(name="github", status="FAIL",
                            summary=f"{login or 'this account'} cannot push to {slug}, so the "
@@ -1124,10 +1373,25 @@ def check_github(slug: Optional[str]) -> CheckResult:
                            remedy="Grant push access, or run the loop as an account that has it. "
                                   "This is a precondition to report, not a second mode to "
                                   "implement.")
+    data = {"login": login, "permissions": perms,
+            "token_scopes": sorted(scopes) if scopes else None,
+            "can_merge_workflow_changes": can_workflow}
+    if can_workflow is False:
+        return CheckResult(
+            name="github", status="WARN",
+            summary=f"authenticated as {login} with push access to {slug}, but the token has "
+                    f"no `workflow` scope: pull requests touching .github/workflows/ cannot "
+                    f"be merged from this box",
+            command="gh auth status; gh api repos/%s --jq .permissions" % slug,
+            detail=detail, data=data,
+            remedy="Either grant it (`gh auth refresh -h github.com -s workflow`), or accept "
+                   "that workflow-touching pull requests need a human to merge them and know "
+                   "that up front. Do NOT teach the loop to route them differently: a missing "
+                   "permission is a precondition to report, not a second mode to implement.")
     return CheckResult(name="github", status="PASS",
                        summary=f"authenticated as {login} with push access to {slug}",
                        command=f"gh auth status; gh api repos/{slug} --jq .permissions",
-                       detail=detail, data={"login": login, "permissions": perms})
+                       detail=detail, data=data)
 
 
 def check_budget(skip_fallback: bool = False) -> CheckResult:
@@ -1848,6 +2112,57 @@ def default_identity() -> str:
     return re.sub(r"[^A-Za-z0-9._-]", "-", login or os.environ.get("USER", "unknown"))
 
 
+def freshness_refusal(printer=None, *, remote_check: bool = True) -> Optional[int]:
+    """3 if the copy of preflight.py that is RUNNING is behind origin/main, else None.
+
+    The same exposure #3020 fixed in ci-wait.py and pr-body.py, one tool over. An
+    agent invokes this by relative path, so it runs whichever copy is on disk in
+    that agent's worktree -- and a worktree is created once, at the start of a
+    task, and never fast-forwarded. Measured 2026-09-06 across this box's 109
+    worktrees: 40 of the 59 carrying tools/preflight.py had a version that was not
+    origin/main's, across four distinct versions, while a tool nobody had changed
+    lately (context-pack.py) was identical in all 105 copies of it. It is the
+    tools under active repair that run old.
+
+    WHY A REFUSAL AND NOT A NOTE, for a tool whose job is reporting: because the
+    failure is a WRONG VERDICT, not a missing one. A copy predating #2936 does not
+    know that mise prints a banner on stdout, so it parses the permissions JSON
+    into {} and reports a HEALTHY account as unable to push -- FAIL, exit 1, which
+    the autonomous cycle treats as stop-everything. A copy predating #3095 reports
+    nothing at all about the code-navigation tools and does not say that it did
+    not look. Neither announces itself. Exit 3 rather than 1: "could not
+    complete", which is not a verdict about the box.
+
+    Note what this does NOT cover, because the sibling tool demonstrates it: a
+    defect in origin/main's own copy is carried faithfully by every fresh copy.
+    Staleness is the only question asked here.
+    """
+    printer = printer or (lambda m: print(m))
+    if _freshness is None:
+        printer("note: could not establish whether this copy of preflight.py is current -- "
+                "tools/agent_self_freshness.py could not be imported. Reporting anyway; "
+                "nothing has checked that this copy carries the latest checks and "
+                "thresholds.")
+        return None
+    refused = False
+    confirm = remote_check
+    for target in (os.path.abspath(__file__), os.path.abspath(_freshness.__file__)):
+        # Both halves: the staleness rule itself lives in the sibling module, and
+        # a stale copy of THAT is a stale guard. One ls-remote, reused.
+        fresh = _freshness.assess(target, remote_check=confirm)
+        confirm = False
+        for note in fresh.notes:
+            printer(note)
+        refused = refused or fresh.refuse
+    if refused:
+        printer("\nREFUSING TO REPORT ON THIS BOX -- this copy of preflight.py is STALE. It "
+                "would apply an older set of checks and thresholds without saying so, and a "
+                "copy predating #2936 reports a HEALTHY box as unable to push. NOTHING WAS "
+                "PROBED; this is not a verdict about the box.")
+        return 3
+    return None
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     epilog = "exit codes:\n" + "\n".join(f"  {k}  {v}" for k, v in sorted(EXIT_MEANING.items()))
     ap = argparse.ArgumentParser(
@@ -1879,7 +2194,31 @@ def main(argv: Optional[list[str]] = None) -> int:
                     help="skip the code-navigation checks (C# LSP, graphify, bc-decompiler). "
                          "They cost about 10s, dominated by the language server's first "
                          "answer, and only ever WARN")
+    ap.add_argument("--no-freshness-fetch", action="store_true",
+                    help="skip the single `git ls-remote` that confirms origin/main before "
+                         "the staleness check. It does NOT disable the staleness check "
+                         "itself; there is no flag for that")
     args = ap.parse_args(argv)
+
+    # BEFORE the box is probed at all: is THIS copy of preflight.py current? A
+    # stale copy reports confidently out of an older rulebook (#3164). In --json
+    # mode the refusal is still a document, so a machine reader cannot mistake
+    # silence on stdout for success.
+    refusal_notes: list[str] = []
+    stale = freshness_refusal(refusal_notes.append if args.json else None,
+                              remote_check=not args.no_freshness_fetch)
+    if stale is not None:
+        if args.json:
+            print(json.dumps({
+                "exit_code": stale,
+                "exit_code_meaning": EXIT_MEANING[stale],
+                "exit_codes": {str(k): v for k, v in EXIT_MEANING.items()},
+                "strict": args.strict,
+                "generated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+                "checks": [],
+                "refusal": {"reason": "stale-preflight", "notes": refusal_notes},
+            }, indent=2))
+        return stale
 
     here = os.path.dirname(os.path.abspath(__file__))
     repo = git_repo_root(here)
