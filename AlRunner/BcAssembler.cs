@@ -843,12 +843,14 @@ namespace AlRunnerShim
             Microsoft.Dynamics.Nav.Types.DataError errorLevel,
             Microsoft.Dynamics.Nav.Runtime.ByRef<Microsoft.Dynamics.Nav.Runtime.NavModuleInfo> info)
         {
+            // MakeModuleInfo, not a local `new NavModuleInfo(...)`: it is the one constructor
+            // every module-info entry point shares, so this polyfill and the by-id lookup
+            // below cannot report different PackageIds for the same app. See its header —
+            // in real BC all three entry points ARE one method (#2961).
             var (appId, name, publisher, version) = global::AlRunner.BcRuntime.GetModuleAppInfoFor(
                 global::System.Reflection.Assembly.GetExecutingAssembly());
-            var navVersion = new Microsoft.Dynamics.Nav.Runtime.NavVersion(version);
-            var emptyDeps = Microsoft.Dynamics.Nav.Runtime.NavList<Microsoft.Dynamics.Nav.Runtime.NavModuleDependencyInfo>.Default;
-            info.Value = new Microsoft.Dynamics.Nav.Runtime.NavModuleInfo(
-                appId, name, publisher, navVersion, navVersion, emptyDeps, appId);
+            info.Value = global::AlRunner.Patches.NavAppModuleInfoPatches.MakeModuleInfo(
+                appId, name, publisher, version);
             return true;
         }
 
@@ -879,12 +881,11 @@ namespace AlRunnerShim
             Microsoft.Dynamics.Nav.Types.DataError errorLevel,
             Microsoft.Dynamics.Nav.Runtime.ByRef<Microsoft.Dynamics.Nav.Runtime.NavModuleInfo> info)
         {
+            // Shared constructor — see ALNavApp_GetCurrentModuleInfo above.
             var (appId, name, publisher, version) = global::AlRunner.BcRuntime.GetCallerModuleAppInfoFor(
                 global::System.Reflection.Assembly.GetExecutingAssembly());
-            var navVersion = new Microsoft.Dynamics.Nav.Runtime.NavVersion(version);
-            var emptyDeps = Microsoft.Dynamics.Nav.Runtime.NavList<Microsoft.Dynamics.Nav.Runtime.NavModuleDependencyInfo>.Default;
-            info.Value = new Microsoft.Dynamics.Nav.Runtime.NavModuleInfo(
-                appId, name, publisher, navVersion, navVersion, emptyDeps, appId);
+            info.Value = global::AlRunner.Patches.NavAppModuleInfoPatches.MakeModuleInfo(
+                appId, name, publisher, version);
             return true;
         }
 

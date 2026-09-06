@@ -173,8 +173,12 @@ public static class InstallTriggerRunner
             // install trigger as an async ValueTask state machine whenever the body needs
             // one, and measured across the BC 28.1 platform closure that is every
             // precompiled install trigger there is (Codeunit1809, 1933, 3999, 3907, 1596,
-            // 290, 2014, 4331, 7760, 7782, 8352, 9056, 9993 …). Only the runner's own
-            // source-compiled output is synchronous.
+            // 290, 2014, 4331, 7760, 7782, 8352, 9056, 9993 …). Every source-compiled install
+            // trigger measured so far is synchronous instead — see
+            // AlRunner.Tests/InstallTriggerAsyncObservationTests for exactly which bodies were
+            // tried, and for why that is a measurement over shapes rather than a rule the
+            // emitter enforces. Either shape has to arrive here correctly, which is what the
+            // observe-then-unwrap below is for.
             //
             // Discarding that ValueTask abandoned the body at its FIRST suspension: the
             // rest of the per-company seeding never ran, and an Error() raised past that

@@ -23,6 +23,52 @@ namespace AlRunner.Patches;
 
 public static class NavAppModuleInfoPatches
 {
+    /// <summary>
+    /// The ONE place a <c>NavModuleInfo</c> is constructed for an app the runner has
+    /// identified. Every module-info entry point goes through it — the two Cecil patches in
+    /// this file that serve PRECOMPILED AL, the by-id patch below, and the two source-compiled
+    /// polyfills in <c>BcAssembler.NavRuntimeHelpersShim</c>.
+    ///
+    /// <para>WHY IT HAS TO BE ONE PLACE. Real BC has exactly one implementation:
+    /// <c>ALGetCurrentModuleInfo</c> and <c>ALGetCallerModuleInfo</c> are each a two-line
+    /// forward into <c>ALGetModuleInfo</c> (decompiled from bc281, and the same shape on every
+    /// cached version), which fills <c>PackageId</c> from
+    /// <c>navAppRuntimeMetadata.PackageId.Value</c> for all three callers. So in BC, AL asking
+    /// about one app three different ways gets three identical answers, and any runner in
+    /// which it does not is diverging from AL-observable behaviour.</para>
+    ///
+    /// <para>The runner patches the three entry points independently, so keeping them
+    /// consistent is a property of this code and nothing else. Before #2961 all five sites
+    /// passed <c>appId</c> as the <c>PackageId</c> — wrong, but at least uniformly wrong.
+    /// Fixing only the by-id one would have made <c>GetModuleInfo(x).PackageId</c> and
+    /// <c>GetCurrentModuleInfo().PackageId</c> disagree for the same app x, which is worse
+    /// than either answer on its own. Routing them all through here is what stops that
+    /// recurring the next time one of the five is touched.</para>
+    ///
+    /// <para>PACKAGE ID. <see cref="AlRunner.Infrastructure.AppPackageIdentity.PackageIdFor"/>
+    /// — the SAME deterministic per-app GUID the runner stamps onto that app's Published
+    /// Application row (#2963) and onto its AllObj rows (#3066), so AL that reads
+    /// <c>ModuleInfo.PackageId</c> and then looks the app up by package id finds it. It is
+    /// <c>Guid.Empty</c> in / <c>Guid.Empty</c> out, so an unidentified caller still reports a
+    /// blank package id rather than a derived one claiming to be some app.</para>
+    ///
+    /// <para>NOT FAITHFUL, AND SAID SO: <c>DataVersion</c> is reported as the app version. Real
+    /// BC computes it from <c>GetDataVersionForInstall</c> / <c>GetDataVersionForUpgrade</c>,
+    /// which read publish-time state the runner has no source for. The dependency list is
+    /// likewise empty where BC projects the app's real dependency set; nothing measured here
+    /// reads it, and inventing entries would be worse than an empty list a caller can see is
+    /// empty.</para>
+    /// </summary>
+    public static Microsoft.Dynamics.Nav.Runtime.NavModuleInfo MakeModuleInfo(
+        System.Guid appId, string name, string publisher, string version)
+    {
+        var navVersion = new Microsoft.Dynamics.Nav.Runtime.NavVersion(version);
+        var emptyDeps = Microsoft.Dynamics.Nav.Runtime.NavList<Microsoft.Dynamics.Nav.Runtime.NavModuleDependencyInfo>.Default;
+        return new Microsoft.Dynamics.Nav.Runtime.NavModuleInfo(
+            appId, name, publisher, navVersion, navVersion, emptyDeps,
+            AlRunner.Infrastructure.AppPackageIdentity.PackageIdFor(appId));
+    }
+
     // Cecil patch target: static bool ALNavApp.ALGetCurrentModuleInfo(DataError, ByRef<NavModuleInfo>)
     // Called from precompiled deps where the BcAssembler polyfill redirect does not apply.
     // Uses a stack-walk to identify the first registered AL assembly on the call stack —
@@ -32,10 +78,7 @@ public static class NavAppModuleInfoPatches
         Microsoft.Dynamics.Nav.Runtime.ByRef<Microsoft.Dynamics.Nav.Runtime.NavModuleInfo> info)
     {
         var (appId, name, publisher, version) = AlRunner.BcRuntime.GetCurrentModuleFromCallStack();
-        var navVersion = new Microsoft.Dynamics.Nav.Runtime.NavVersion(version);
-        var emptyDeps = Microsoft.Dynamics.Nav.Runtime.NavList<Microsoft.Dynamics.Nav.Runtime.NavModuleDependencyInfo>.Default;
-        info.Value = new Microsoft.Dynamics.Nav.Runtime.NavModuleInfo(
-            appId, name, publisher, navVersion, navVersion, emptyDeps, appId);
+        info.Value = MakeModuleInfo(appId, name, publisher, version);
         return true;
     }
 
@@ -73,15 +116,11 @@ public static class NavAppModuleInfoPatches
     // info, and the raising arm still throws NavAppException with BC's own message. A patch
     // that answered "installed" for every id would be the silent-fake this repo forbids.
     //
-    // PackageId comes from AppPackageIdentity — the SAME deterministic per-app GUID stamped
-    // onto this app's Published Application row and its AllObj rows — so AL that reads
-    // ModuleInfo.PackageId and then looks the app up by package id finds it. The two
-    // stack-walk patches above still pass appId there; they predate AppPackageIdentity and
-    // are left alone rather than changed blind (#3072-adjacent, not measured here).
-    //
-    // DataVersion is reported as the app version, matching the two patches above. Real BC
-    // computes GetDataVersionForInstall/GetDataVersionForUpgrade off publish-time state the
-    // runner does not have.
+    // PackageId, DataVersion and the dependency list all come from MakeModuleInfo above,
+    // shared with the two stack-walk patches and the two source-compiled polyfills, so the
+    // three AL-visible ways of asking about one app cannot disagree — which is exactly what
+    // real BC guarantees by having ALGetCurrentModuleInfo and ALGetCallerModuleInfo forward
+    // into THIS method. See MakeModuleInfo's header for what is and is not faithful in it.
     //
     // The moduleId == Guid.Empty branch is NOT implemented: BC answers it from
     // NavGlobal.AppDatabase.SqlDatabaseProperties.ApplicationFamily, which the runner has no
@@ -103,15 +142,23 @@ public static class NavAppModuleInfoPatches
         if (found != null)
         {
             var (appId, name, publisher, version) = found.Value;
-            var navVersion = new Microsoft.Dynamics.Nav.Runtime.NavVersion(version);
-            var emptyDeps = Microsoft.Dynamics.Nav.Runtime.NavList<Microsoft.Dynamics.Nav.Runtime.NavModuleDependencyInfo>.Default;
-            info.Value = new Microsoft.Dynamics.Nav.Runtime.NavModuleInfo(
-                appId, name, publisher, navVersion, navVersion, emptyDeps,
-                AlRunner.Infrastructure.AppPackageIdentity.PackageIdFor(appId));
+            info.Value = MakeModuleInfo(appId, name, publisher, version);
             return true;
         }
 
-        // Not loaded => not installed. BC's own two arms, verbatim in behaviour.
+        // Not loaded => not installed. Same CONTROL FLOW as BC's two arms: a TrapError caller
+        // gets false with a null info, a raising caller gets a NavAppException of the same type
+        // naming the same id.
+        //
+        // ONE DIVERGENCE, and it is in the message TEXT rather than the behaviour. BC formats
+        // Lang.NavApp_NoInstalledMatchFound under CultureInfo.CurrentCulture — a localized
+        // resource — and this inlines the English literal. Under the invariant culture the
+        // runner executes in the two are the same string, and the runner-extras test that
+        // matches on it asserts the English fragment, so nothing observes the difference today.
+        // It would become observable the moment the runner ran under a localized culture with
+        // BC's own resources loaded, which is why it is recorded here rather than left to be
+        // rediscovered. Reading the resource instead would couple this patch to a Lang class
+        // whose accessibility is not part of the DLL contract we may rely on.
         info.Value = null;
         if (errorLevel == Microsoft.Dynamics.Nav.Types.DataError.TrapError)
             return false;
@@ -133,10 +180,7 @@ public static class NavAppModuleInfoPatches
         Microsoft.Dynamics.Nav.Runtime.ByRef<Microsoft.Dynamics.Nav.Runtime.NavModuleInfo> info)
     {
         var (appId, name, publisher, version) = AlRunner.BcRuntime.GetCallerModuleFromCallStack();
-        var navVersion = new Microsoft.Dynamics.Nav.Runtime.NavVersion(version);
-        var emptyDeps = Microsoft.Dynamics.Nav.Runtime.NavList<Microsoft.Dynamics.Nav.Runtime.NavModuleDependencyInfo>.Default;
-        info.Value = new Microsoft.Dynamics.Nav.Runtime.NavModuleInfo(
-            appId, name, publisher, navVersion, navVersion, emptyDeps, appId);
+        info.Value = MakeModuleInfo(appId, name, publisher, version);
         return true;
     }
 }

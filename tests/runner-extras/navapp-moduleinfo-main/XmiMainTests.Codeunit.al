@@ -220,4 +220,99 @@ codeunit 61240 "XMI Main Tests"
             Error('Caller module inside the dep must be this bundle through the boolean form, got %1.',
                 DepApi.CallerNameBooleanForm());
     end;
+
+    /// <summary>
+    /// #2961. The THREE ways AL can ask about one app must agree on that app's PackageId.
+    ///
+    /// In real BC they cannot disagree, because there is only one implementation:
+    /// ALGetCurrentModuleInfo and ALGetCallerModuleInfo are each a two-line forward into
+    /// ALGetModuleInfo, which fills PackageId from navAppRuntimeMetadata.PackageId.Value for
+    /// all three. The runner patches the three entry points independently — five sites in
+    /// total once the source-compiled polyfills are counted — so the agreement is a property
+    /// of runner code and nothing else, and it needs a test that fails when one of the five
+    /// is changed alone.
+    ///
+    /// This is exactly what it caught: giving the by-id lookup the runner's derived package
+    /// identity while the two stack-walk patches still echoed the AppId made this bundle
+    /// report two different PackageIds for ITSELF depending on which call was used. RED
+    /// against that state, GREEN once all five share one constructor
+    /// (NavAppModuleInfoPatches.MakeModuleInfo).
+    ///
+    /// It is deliberately written against the bundle's OWN id, read back from
+    /// GetCurrentModuleInfo rather than hard-coded, so it stays true if the fixture's app id
+    /// ever changes and so it cannot pass by comparing two constants.
+    /// </summary>
+    [Test]
+    procedure ModuleInfo_ForOneApp_AgreesOnPackageIdAcrossEntryPoints()
+    var
+        Current: ModuleInfo;
+        ById: ModuleInfo;
+        EmptyId: Guid;
+    begin
+        if not NavApp.GetCurrentModuleInfo(Current) then
+            Error('GetCurrentModuleInfo must resolve the executing bundle.');
+        if Current.Id() = EmptyId then
+            Error('The executing bundle must have a non-empty AppId.');
+
+        if not NavApp.GetModuleInfo(Current.Id(), ById) then
+            Error('GetModuleInfo must resolve the executing bundle by its own AppId %1.', Current.Id());
+
+        // The same app, asked two ways: every identity field must match.
+        if ById.Id() <> Current.Id() then
+            Error('AppId disagrees across entry points: by-id %1 vs current %2.', ById.Id(), Current.Id());
+        if ById.Name() <> Current.Name() then
+            Error('Name disagrees across entry points: by-id %1 vs current %2.', ById.Name(), Current.Name());
+        if ById.PackageId() <> Current.PackageId() then
+            Error('PackageId disagrees across entry points: by-id %1 vs current %2. In BC both come from the same field.',
+                ById.PackageId(), Current.PackageId());
+
+        // ...and it is the runner's derived package identity on BOTH, not an echo of the
+        // AppId. Without this, two entry points that BOTH echoed the AppId would agree and
+        // pass the comparison above while still reporting a value that does not join to the
+        // app's Published Application row.
+        if Current.PackageId() = EmptyId then
+            Error('The executing bundle must carry a non-empty PackageId.');
+        if Current.PackageId() = Current.Id() then
+            Error('PackageId must be the derived package identity, not an echo of the AppId (%1).', Current.Id());
+    end;
+
+    /// <summary>
+    /// #2961. NavApp.GetModuleInfo(Guid.Empty) is BC's "give me the application family"
+    /// branch: real BC answers it from NavGlobal.AppDatabase.SqlDatabaseProperties.
+    /// ApplicationFamily, which the runner has no truthful source for, so it REFUSES loudly
+    /// (.claude/rules/loud-failures.md) instead of inventing a family string.
+    ///
+    /// This is here because unifying the source-compiled polyfill onto the shared
+    /// implementation CHANGED first-party AL behaviour: the old private copy returned plain
+    /// `false` for the empty id, so AL saw "not installed" — an answer BC never gives on this
+    /// branch, and one indistinguishable from a genuine miss. Refusing is the right change,
+    /// and a behaviour change to first-party AL needs a test whether or not it is an
+    /// improvement.
+    ///
+    /// asserterror DOES trap a RunnerOutOfScopeException — see the header of
+    /// AlRunner/Infrastructure/RunnerOutOfScopeException.cs — so the refusal is observable
+    /// from AL and the three fragments below pin the API, the reason and the marker
+    /// separately rather than matching one long string.
+    /// </summary>
+    [Test]
+    procedure GetModuleInfo_ByEmptyGuid_RefusesLoudlyInsteadOfAnsweringNotInstalled()
+    var
+        Info: ModuleInfo;
+        EmptyId: Guid;
+    begin
+        asserterror NavApp.GetModuleInfo(EmptyId, Info);
+
+        if StrPos(GetLastErrorText(), 'out-of-scope:') = 0 then
+            Error('Guid.Empty must raise the runner''s out-of-scope refusal, got: %1', GetLastErrorText());
+        if StrPos(GetLastErrorText(), 'NavApp.GetModuleInfo(Guid.Empty)') = 0 then
+            Error('The refusal must name the API that was touched, got: %1', GetLastErrorText());
+        if StrPos(GetLastErrorText(), 'not-yet-implemented') = 0 then
+            Error('The reason must be not-yet-implemented — this branch is in scope, just unbuilt. Got: %1',
+                GetLastErrorText());
+
+        // NOT the not-found message: answering the empty id with "no installed extension was
+        // found with ID 00000000-..." would be the silent wrong answer this replaced.
+        if StrPos(GetLastErrorText(), 'No installed extension was found') > 0 then
+            Error('Guid.Empty must not be reported as a not-found app id, got: %1', GetLastErrorText());
+    end;
 }

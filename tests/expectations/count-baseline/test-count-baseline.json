@@ -33,7 +33,7 @@
         "navapp-callermodule-dispatch-dep": { "tests": 0 },
         "navapp-callermodule-dispatch-main": { "tests": 4 },
         "navapp-moduleinfo-dep": { "tests": 0 },
-        "navapp-moduleinfo-main": { "tests": 10 },
+        "navapp-moduleinfo-main": { "tests": 15 },
         "object-metadata-system-table": { "tests": 6 },
         "object-system-table": { "tests": 3 },
         "page-enum-control-modal": { "tests": 4 },

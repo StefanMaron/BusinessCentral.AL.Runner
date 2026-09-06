@@ -13,14 +13,29 @@ namespace AlRunner.Tests;
 /// instead of being parked on a discarded <c>ValueTask</c> (#2960).
 ///
 /// WHY THIS IS A C# TEST AND NOT AL. The broken shape needs an install trigger compiled as
-/// an <c>async ValueTask</c> state machine, and the runner's own AL-to-C# emitter does not
-/// produce one. Measured on BC 28.1 by printing <c>trigger.ReturnType</c> at the call site
-/// while running <c>tests/runner-extras/install-trigger-seed</c>: all sixteen precompiled
-/// platform install triggers in that bundle's closure returned <c>ValueTask</c>
-/// (Codeunit1809, 1933, 3999, 3907, 1596, 2014, 290, 4331, 5000, 7582, 7760, 7782, 8352,
-/// 9056, 9993 …) and the bundle's own source-compiled Codeunit60711 returned <c>Void</c> —
-/// for both of its triggers. So a first-party AL reproducer cannot reach the defect and
-/// would pass with and without the fix, which <c>.claude/rules/tdd.md</c> calls noise.
+/// an <c>async ValueTask</c> state machine, and no install trigger the runner's own compile
+/// path has produced is one. Measured on BC 28.1 by printing <c>trigger.ReturnType</c> at the
+/// call site:
+///
+/// <list type="bullet">
+/// <item>all sixteen PRECOMPILED platform install triggers in the closure returned
+/// <c>ValueTask</c> (Codeunit1809, 1933, 3999, 3907, 1596, 2014, 290, 4331, 5000, 7582,
+/// 7760, 7782, 8352, 9056, 9993 …);</item>
+/// <item>every SOURCE-COMPILED one returned <c>Void</c>: both triggers of
+/// <c>tests/runner-extras/install-trigger-seed</c>'s Codeunit60711 — whose per-company body
+/// is not just <c>Record.Init/Insert</c>, it also calls <c>StartSession</c> — and both
+/// triggers of a throwaway probe bundle written specifically to try to force the async shape,
+/// one of them a bare <c>Codeunit.Run(Codeunit::"…")</c>.</item>
+/// </list>
+///
+/// <para>WHAT THAT DOES AND DOES NOT ESTABLISH. It is not a property of "the emitter": the
+/// runner compiles AL with BC's own compiler, so <c>Void</c> versus <c>async ValueTask</c> is
+/// decided by the BODY, and the precompiled sixteen are async because their bodies await. So
+/// this is a measurement over the shapes tried, not a law — <c>Codeunit.Run</c> was the most
+/// promising candidate for reaching the async shape from first-party AL and it does not, but
+/// some other body might, and if one is ever found an AL reproducer becomes possible and
+/// should be written. Until then a first-party AL test cannot reach the defect and would pass
+/// with and without the fix, which <c>.claude/rules/tdd.md</c> calls noise.</para>
 ///
 /// Same split, and the same reason, as <c>ObservingSubscriberMethodInfoTests</c> (#2932's
 /// table-event-subscriber half of this defect) and <c>DispatchObserveAsyncResultTests</c>.
