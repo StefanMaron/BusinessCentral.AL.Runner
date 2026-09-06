@@ -1422,10 +1422,12 @@ public static partial class RecordPatches
             foreach (var kvp in byField)
             {
                 var fieldNo = kvp.Key;
-                NCLMetaField? metaField;
-                try { metaField = built.GetFieldByNo(fieldNo, /*trapError:*/ false); }
-                catch { continue; }
-                if (metaField == null) continue;
+                // #3048: this used to be `catch { continue; }` — a field the metatable does not
+                // carry was skipped with nothing recorded, and the caller was still told the
+                // table was wired, so the AL trigger silently never fired. See
+                // FieldTriggerInstallGaps.cs for what GetFieldByNo can actually raise and for
+                // the measurement showing nothing legitimate reaches here.
+                var metaField = ResolveMetaFieldForTriggerInstall(built, tableId, fieldNo);
 
                 var existing = etdValueBacking.GetValue(metaField);
                 var etd = existing ?? Activator.CreateInstance(etdType)!;
@@ -1438,16 +1440,14 @@ public static partial class RecordPatches
                     var backing = FieldTriggerShapeGap.RequireHandlerBacking(
                         _fValidateHandlerBacking, "ValidateHandler", tableId, fieldNo);
                     var handler = BuildFieldTriggerHandler(kvp.Value.validate, recordType);
-                    if (handler != null)
-                        AlRunner.Infrastructure.FieldPoke.SetInstance(backing, etd, handler);
+                    AlRunner.Infrastructure.FieldPoke.SetInstance(backing, etd, handler);
                 }
                 if (kvp.Value.lookup != null)
                 {
                     var backing = FieldTriggerShapeGap.RequireHandlerBacking(
                         _fLookupHandlerBacking, "LookupHandler", tableId, fieldNo);
                     var handler = BuildFieldTriggerHandler(kvp.Value.lookup, recordType);
-                    if (handler != null)
-                        AlRunner.Infrastructure.FieldPoke.SetInstance(backing, etd, handler);
+                    AlRunner.Infrastructure.FieldPoke.SetInstance(backing, etd, handler);
                 }
                 AlRunner.Infrastructure.FieldPoke.SetInstance(etdValueBacking, metaField, etd);
             }
@@ -1462,7 +1462,15 @@ public static partial class RecordPatches
         // do that if this frame swallows it first. Everything else — notably Ncl not being
         // loaded yet, which makes EnsureFieldTriggerReflection's First() throw — keeps its
         // old behaviour.
-        catch (Exception ex) when (AlRunner.Infrastructure.BcShapeGapException.Find(ex) is null)
+        //
+        // #3048 widened it to the TYPED RunnerOutOfScopeException for the same reason: the two
+        // refusals in FieldTriggerInstallGaps.cs are raised from inside this try, and swallowing
+        // one here would restore precisely the silent skip they replace. Typed only — a BC
+        // exception whose message merely happens to contain the out-of-scope convention is not
+        // one of ours and must keep the old behaviour.
+        catch (Exception ex) when (AlRunner.Infrastructure.BcShapeGapException.Find(ex) is null
+                                   && AlRunner.Infrastructure.OutOfScopeMessage.FromException(ex)
+                                      is not { Typed: true })
         {
             Console.Error.WriteLine($"[RecordPatches] WireFieldTriggerHandlers({tableId}) failed: {ex.GetType().Name}: {ex.Message}");
             return false;
@@ -1524,7 +1532,6 @@ public static partial class RecordPatches
                     if (ttName == "OnValidate" || ttName == "OnLookup")
                     {
                         var single = BuildFieldTriggerHandler(mi, extType);
-                        if (single == null) continue;
                         if (ttName == "OnValidate") validateByField[fieldNo] = single;
                         else lookupByField[fieldNo] = single;
                         continue;
@@ -1534,7 +1541,6 @@ public static partial class RecordPatches
                                : null;
                     if (target == null) continue;
                     var handler = BuildFieldTriggerHandler(mi, extType);
-                    if (handler == null) continue;
                     if (!target.TryGetValue(fieldNo, out var list))
                         target[fieldNo] = list = new List<object>();
                     list.Add(handler);
@@ -1554,10 +1560,10 @@ public static partial class RecordPatches
 
         foreach (var fieldNo in fieldsToWire)
         {
-            NCLMetaField? metaField;
-            try { metaField = built.GetFieldByNo(fieldNo, /*trapError:*/ false); }
-            catch { continue; }
-            if (metaField == null) continue;
+            // #3048: the sibling of the base-table loop's skip, over the same GetFieldByNo call
+            // and the same EventTriggerData state — issue #1835's shape (a tableextension
+            // trigger that never fires) came back silently on this half.
+            var metaField = ResolveMetaFieldForTriggerInstall(built, tableId, fieldNo);
 
             var etd = etdValueBacking.GetValue(metaField)
                       ?? Activator.CreateInstance(etdType)!;
@@ -1586,6 +1592,40 @@ public static partial class RecordPatches
         }
     }
 
+    /// <summary>
+    /// The metafield an install loop is about to attach a built AL trigger handler to, or a
+    /// refusal naming the table and the field (#3048).
+    ///
+    /// <para>Called only once a handler for <paramref name="fieldNo"/> is in hand, so it can
+    /// never fire for a field that declares no trigger. <c>trapError: false</c> is deliberate
+    /// and unchanged: BC's own body then returns the field (or a <c>DisabledFields</c> entry,
+    /// also non-null), or throws — it cannot return null, which is why the null branch below
+    /// says what it says rather than skipping.</para>
+    /// </summary>
+    private static NCLMetaField ResolveMetaFieldForTriggerInstall(NCLMetaTable built, int tableId, int fieldNo)
+    {
+        NCLMetaField? metaField;
+        try
+        {
+            metaField = built.GetFieldByNo(fieldNo, /*trapError:*/ false);
+        }
+        catch (Exception ex) when (AlRunner.Infrastructure.BcShapeGapException.Find(ex) is null
+                                   && AlRunner.Infrastructure.OutOfScopeMessage.FromException(ex)
+                                      is not { Typed: true })
+        {
+            // NavNCLFieldNotFoundException (the field is not in AllFields) or
+            // InvalidOperationException("field is null") (a hole in AllFields). The filter keeps
+            // a refusal raised deeper from being re-wrapped into a second one.
+            throw FieldTriggerInstallGap.FieldUnresolvable(
+                tableId, fieldNo, $"{ex.GetType().Name}: {ex.Message}");
+        }
+        return metaField
+            ?? throw FieldTriggerInstallGap.FieldUnresolvable(
+                tableId, fieldNo,
+                "NCLMetaTable.GetFieldByNo(trapError: false) returned null, which BC's own body "
+                + "cannot do on any supported build");
+    }
+
     // Box a List<object> of FieldTriggerHandler<NavApplicationObjectBase> into the strongly
     // typed List<FieldTriggerHandler<NavApplicationObjectBase>> the EventTriggerData expects.
     private static object ToHandlerList(List<object> handlers, int tableId, int fieldNo)
@@ -1599,7 +1639,13 @@ public static partial class RecordPatches
 
     private static Type? _tNavApplicationObjectBase;
 
-    private static object? BuildFieldTriggerHandler(MethodInfo target, Type recordType)
+    /// <summary>
+    /// Wrap one AL trigger method in BC's <c>FieldTriggerHandler&lt;NavApplicationObjectBase&gt;</c>.
+    /// Returns non-null or throws (#3048): every caller used to skip its install on a null and
+    /// still report the table as wired, so a handler that could not be built was indistinguishable
+    /// from one that was.
+    /// </summary>
+    private static object BuildFieldTriggerHandler(MethodInfo target, Type recordType)
     {
         // FieldTriggerHandler<T> is closed by BC over T = NavApplicationObjectBase
         // (the base class for all AL-emitted Record/Codeunit/etc. types) — this is
@@ -1664,8 +1710,11 @@ public static partial class RecordPatches
                     + "wrapped and the trigger would never fire");
             return ctor.Invoke(new object[] { recordType, wrapper });
         }
-        Console.Error.WriteLine($"[RecordPatches] WireFieldTriggerHandlers: skip {target.DeclaringType?.Name}.{target.Name} — unsupported return type {ret.Name}");
-        return null;
+        // #3048: this used to print one stderr line and return null, and every call site then
+        // skipped the install while WireFieldTriggerHandlers still returned true — a
+        // successful-looking install that installed nothing. It is NOT a BcShapeGapException:
+        // the return type is a property of the AL the runner emitted, not of BC's layout.
+        throw FieldTriggerInstallGap.UnsupportedTriggerReturnType(target, ret);
     }
 
     // Helpers that produce strongly typed delegates over the concrete recordType.

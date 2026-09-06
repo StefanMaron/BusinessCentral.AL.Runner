@@ -1158,14 +1158,59 @@ internal class LiveNavTestPage : MockITestPage
     // to the table notices. Tests of the first shape were green while asserting nothing.
     private bool _pendingModify;
 
+    /// <summary>
+    /// A control is ABOUT to write to the record. Called by the field before it validates —
+    /// which is the only moment at which the implicit new-row line can still be turned into
+    /// the row BC would have started.
+    ///
+    /// <para>Typing into the draft line is what creates a record on a repeater, and the
+    /// platform step that creates it is the SAME one <c>New()</c> runs:
+    /// <c>NavForm.NewRecordAsync</c>, which resets the buffer, copies the page's single-valued
+    /// filters onto the primary-key fields (<c>RecordImplementation.InitRecordFromFilters</c>)
+    /// and raises OnNewRecord. So the promotion goes through <see cref="InsertEmptyRow"/>,
+    /// the same entry point <c>New()</c> uses — including
+    /// <see cref="LiveNavTestPart.InsertEmptyRow"/>'s SubPageLink stamping when the page is a
+    /// linked part.</para>
+    ///
+    /// <para>WHY BEFORE THE VALIDATE, NOT AFTER (issue #2923). <c>MarkEdited</c> below runs
+    /// after the control's write, and it used to be the whole promotion: it flipped
+    /// <c>_pendingNewRow</c> and left the buffer exactly as <see cref="EnterNewRowLine"/> had
+    /// blanked it — key fields cleared, link values sitting unread in the record's filters.
+    /// The typed field's own OnValidate therefore ran against a row with no key. On a linked
+    /// document part that is fatal rather than cosmetic: <c>Sales Line</c>'s first OnValidate
+    /// reaches <c>TestStatusOpen</c> → <c>GetSalesHeader</c> → <c>TestField("Document No.")</c>
+    /// and raises "Document No. must have a value" — 35 tests of Microsoft's Tests-SMB bucket,
+    /// on the commonest shape in BC test code (<c>SalesQuote.SalesLines.First()</c> on an empty
+    /// part, then <c>SetValue</c>).</para>
+    ///
+    /// <para>Reading the draft line still answers blank, including in the column a SubPageLink
+    /// constrains — nothing here runs until a WRITE arrives. Both halves are measured upstream
+    /// on real BC (corpus codeunit 60996 "TPDL Tests",
+    /// StefanMaron/BusinessCentral.AL.Language.Tests): the draft line of a linked part reads
+    /// blank in the linked column, and the row a write starts on it carries the link's value
+    /// early enough that the typed field's OnValidate already sees it.</para>
+    /// </summary>
+    internal void PromoteNewRowLineForWrite()
+    {
+        if (!_onNewRowLine) return;
+        // beforeCurrent: false — the draft line is the LAST row of the rowset, so the row it
+        // becomes is inserted after the data, which is also what BC's own TestPageProxy asks
+        // for (InsertBehavior = RowUpdateBehavior.After, whatever beforeCurrent says).
+        // Virtual on purpose: a part must reach LiveNavTestPart's override.
+        InsertEmptyRow(beforeCurrent: false);
+    }
+
     /// <summary>A control wrote to the record. Called by the field, which owns no page state.</summary>
     internal void MarkEdited()
     {
-        // Typing into the new-row line is exactly what turns it into a record — it is how a
-        // user creates a row without ever invoking New(). Promote it to the pending-insert
-        // the flush path already knows how to finish (EnterNewRowLine has already done the
-        // CaptureInsertPosition that ProposeAutoSplitKey needs). Falling through to
-        // _pendingModify instead would try to Modify a row that has no row in the table.
+        // The new-row line is normally already gone by the time this runs — the field calls
+        // PromoteNewRowLineForWrite() before validating, and that turns the draft line into a
+        // pending insert. This branch stays for any write that reaches the record without
+        // going through a LiveNavTestField setter: the row still has to become an insert
+        // rather than a Modify of a row that is not in the table. It does NOT do the
+        // link-stamping half — a write that never announced itself cannot be given one — so
+        // the two paths are not equivalent and the pre-write call above is the one that
+        // matters.
         if (_onNewRowLine)
         {
             _onNewRowLine = false;
@@ -1314,7 +1359,8 @@ internal class LiveNavTestPage : MockITestPage
             // _pageVariableFields beside it is already keyed this way.
             if (!_fields.TryGetValue(id, out var field))
                 _fields[id] = field =
-                    new LiveNavTestField(_record!, tableFieldNo, _page, id, MarkEdited);
+                    new LiveNavTestField(_record!, tableFieldNo, _page, id,
+                        MarkEdited, PromoteNewRowLineForWrite);
             return field;
         }
 
@@ -1466,9 +1512,12 @@ internal class LiveNavTestPage : MockITestPage
     /// raise and no before-image to snapshot. Deliberately NOT _pendingNewRow either — the
     /// client only turns the draft line into a record once someone types into it, so merely
     /// walking a page must not insert a blank row (corpus CU60743
-    /// NewRowLine_LeftUntouched_InsertsNothing). MarkEdited is where typing promotes it.
+    /// NewRowLine_LeftUntouched_InsertsNothing, and CU60996 for the linked-part case).
+    /// <see cref="PromoteNewRowLineForWrite"/> is where typing promotes it — BEFORE the
+    /// write's own validate, so the row the trigger sees is the one BC's NewRecord would
+    /// have handed it, link values and all (#2923).
     /// </summary>
-    private bool EnterNewRowLine(NavRecord record)
+    private protected bool EnterNewRowLine(NavRecord record)
     {
         if (!ShowsNewRowLine) return false;
 
@@ -1480,20 +1529,57 @@ internal class LiveNavTestPage : MockITestPage
         // real insert later.
         CaptureInsertPosition();
 
-        // ALInit is AL's Init(), which deliberately PRESERVES the primary key — so on its own
-        // it left the key fields reading the row that was just walked off (the new-row line
-        // reported the last row's "No."). The draft line is blank in every column, so the key
-        // fields are cleared too.
+        // BC'S NavForm.NewRecord, MINUS THE SAVE. Measured on all 8 BC legs, corpus codeunit
+        // 60996 (runs 33995429394 and 33997895349), that the draft line of a linked part:
         //
-        // ClearFieldValue per key field rather than NavRecord.Clear(): Clear() is AL's
-        // Clear(Rec), which also drops filters and the current key — and the page's filters
-        // are what make the rowset the page's own (a part's SubPageLink above all). Blanking
-        // the buffer must not silently widen what the page is showing.
-        record.ALInit();
-        var primaryKey = record.MetaTable?.PrimaryKey;
-        if (primaryKey != null)
-            for (var i = 0; i < primaryKey.KeyFieldCount; i++)
-                record.ClearFieldValue(primaryKey.KeyFieldsList[i].FieldNo);
+        //   * reads the SubPageLink's value in the linked PRIMARY-KEY column, not blank
+        //     (LinkedPart_DraftLine_ReadsTheLinkValueInTheLinkedKeyColumn — the first run
+        //     answered 'H1' where this file had asserted blank);
+        //   * has ALREADY run the page's OnNewRecord before anyone types
+        //     (LinkedPart_DraftLine_HasRunTheOnNewRecordTrigger — the second run answered
+        //     'NEWREC' where this file had asserted blank);
+        //   * still reads 0 in the AutoSplitKey column
+        //     (LinkedPart_DraftLine_ReadsZeroInTheAutoSplitKeyColumn), and writes nothing while
+        //     nobody types (LinkedPart_DraftLineLeftUntouched_InsertsNothing).
+        //
+        // Those four together are exactly NewRecord and nothing after it: ALInit, copy the
+        // page's single-valued filters onto the primary key
+        // (RecordImplementation.InitRecordFromFilters), raise OnNewRecord — while SplitKey,
+        // OnInsertRecord and the Insert all belong to NavForm.SaveRecord, which is where
+        // FlushPendingNewRow does them. So the client starts the record when the blank line
+        // becomes current; it just never saves it.
+        //
+        // This is the SAME call InsertEmptyRow makes for New(). The runner used to do a subset
+        // of it by hand here — ALInit, then clear every primary-key field — which left a linked
+        // part's key column blank and its OnNewRecord unrun.
+        //
+        // Deliberately NOT _pendingNewRow (that is what makes walking a page insert nothing)
+        // and deliberately NO ALValidateAsync of what the filter copy wrote. The validate step
+        // is NavForm.NewRecordAsync's second half, which the promotion path
+        // (LiveNavTestPart.InsertEmptyRow -> ValidateStampedFields) runs when a write actually
+        // starts the row.
+        if (!(_page?.TryNewRecord(belowXRec: true) ?? false))
+        {
+            // Record-only mode: no page to ask, so BC's filter step never runs. Do the two
+            // halves by hand — ALInit is AL's Init(), which deliberately PRESERVES the primary
+            // key, so without the clear the draft line reported the key of the row just walked
+            // off; without the copy back it reads blank where the page's filter says otherwise.
+            //
+            // ClearFieldValue per key field rather than NavRecord.Clear(): Clear() is AL's
+            // Clear(Rec), which also drops filters and the current key — and the page's filters
+            // are what make the rowset the page's own (a part's SubPageLink above all).
+            // Blanking the buffer must not silently widen what the page is showing.
+            record.ALInit();
+            var primaryKey = record.MetaTable?.PrimaryKey;
+            if (primaryKey != null)
+                for (var i = 0; i < primaryKey.KeyFieldCount; i++)
+                {
+                    var keyFieldNo = primaryKey.KeyFieldsList[i].FieldNo;
+                    record.ClearFieldValue(keyFieldNo);
+                    if (TryGetSingleFilterValue(record, keyFieldNo, out var fromFilter))
+                        record.SetFieldValue(keyFieldNo, fromFilter);
+                }
+        }
 
         _onNewRowLine = true;
         return true;
@@ -1511,6 +1597,51 @@ internal class LiveNavTestPage : MockITestPage
         var position = _newRowLineReturnPosition;
         _newRowLineReturnPosition = null;
         if (!string.IsNullOrEmpty(position)) _record!.ALSetPosition(position);
+    }
+
+    /// <summary>
+    /// Drop the new-row line WITHOUT restoring the position it saved — for the one case where
+    /// that position is not valid to go back to: a linked part being re-pointed at a different
+    /// parent row (<see cref="LiveNavTestPart.ReloadLinkedRow"/>). The saved position names a
+    /// row of the OLD link's rowset, and the caller re-finds against the new one immediately,
+    /// so restoring it would put the buffer on a row the part no longer shows.
+    ///
+    /// Kept distinct from <see cref="LeaveNewRowLine"/> because the flag itself must still be
+    /// cleared either way: <c>Loaded()</c> does not touch it, so a part that walked onto its
+    /// draft line and then had its parent move would otherwise sit on a real row while still
+    /// claiming to be on the blank line — and the next write would insert instead of modify.
+    /// </summary>
+    private protected void AbandonNewRowLine()
+    {
+        _onNewRowLine = false;
+        _newRowLineReturnPosition = null;
+    }
+
+    /// <summary>The one value a field's current filter selects, or false when the filter is
+    /// not a single value (BC's <c>GetRangeMin</c>/<c>GetRangeMax</c> raise for a filter that
+    /// is not a range; a range whose ends differ is not a single value either).
+    ///
+    /// On the base class rather than on <see cref="LiveNavTestPart"/> because BOTH users of
+    /// BC's filter-copy rule need it: the part's New() stamping, and
+    /// <see cref="EnterNewRowLine"/>'s draft line. The rule is about the record's FILTERS, not
+    /// about a SubPageLink — so reading it off the filters covers const/filter/field links and
+    /// a plain filtered page with one mechanism, and answers "nothing to copy" for an
+    /// unfiltered page without needing a special case.</summary>
+    private protected static bool TryGetSingleFilterValue(NavRecord record, int fieldNo, out NavValue value)
+    {
+        try
+        {
+            var min = record.ALGetRangeMin(fieldNo);
+            var max = record.ALGetRangeMax(fieldNo);
+            if (min != null && min.Equals(max)) { value = min; return true; }
+        }
+        catch (NavBaseException)
+        {
+            // Not a range: a multi-value expression (1|2), an open-ended one (>1), or a
+            // wildcard. BC's own InitRecordFromFilters stamps nothing for these either.
+        }
+        value = null!;
+        return false;
     }
 
     /// <summary>
@@ -2325,17 +2456,25 @@ internal sealed class LiveNavTestField : ITestField
     // page, not to the card the test is holding.
     private readonly Action? _onEdited;
 
+    // Told BEFORE this field writes, so the page can turn its implicit new-row line into a
+    // real started row while the write's own OnValidate can still see it — see
+    // LiveNavTestPage.PromoteNewRowLineForWrite (#2923). Separate from _onEdited because the
+    // order is the whole point: _onEdited runs after the validate and is far too late to give
+    // the row its keys.
+    private readonly Action? _onBeforeEdit;
+
     public LiveNavTestField(NavRecord record, int fieldNo)
-        : this(record, fieldNo, page: null, controlId: 0, onEdited: null) { }
+        : this(record, fieldNo, page: null, controlId: 0, onEdited: null, onBeforeEdit: null) { }
 
     public LiveNavTestField(NavRecord record, int fieldNo, RunnerPageInstance? page, int controlId,
-        Action? onEdited)
+        Action? onEdited, Action? onBeforeEdit)
     {
         _record = record;
         _fieldNo = fieldNo;
         _page = page;
         _controlId = controlId;
         _onEdited = onEdited;
+        _onBeforeEdit = onBeforeEdit;
     }
 
     // The refusals this control has recorded, read back by ValidationErrorCount /
@@ -2366,6 +2505,20 @@ internal sealed class LiveNavTestField : ITestField
 
     private void Write(string value)
     {
+        // FIRST, before anything reads or writes the record: if the page is parked on its
+        // implicit new-row line, this write is what turns that line into a row the flush path
+        // will persist, and BC settles the row's key BEFORE the typed value is validated onto
+        // it. Doing it after (which is all MarkEdited below could do) handed the field's own
+        // OnValidate a row with no key: issue #2923, 35 Tests-SMB failures on Sales Line and
+        // Purchase Line. A no-op on every page not sitting on that line, which is all of them
+        // once a real row is current.
+        //
+        // Inside Write, so it is inside the RunRecordingRefusal the setter wraps this in
+        // (#3007): starting the row is part of this control write, so a refusal raised while
+        // starting it is recorded and re-raised by BC's NavTestField.CheckError exactly as a
+        // refusal of the value itself would be.
+        _onBeforeEdit?.Invoke();
+
         // Issue #1870 — the Rec-bound half of #1837 that #1869 (the page-variable half)
         // left open. FieldType (sourced from the source table field's own declared type,
         // see TryGetMetaFieldType) answers Boolean for a `field(Flag; Rec.Flag)` control
@@ -3021,11 +3174,23 @@ internal sealed class LiveNavTestPart : LiveNavTestPage, ITestPart
     /// shape) stayed at its field defaults for the page's whole life.
     ///
     /// Deliberately reuses <c>Loaded(bool)</c> rather than <c>MoveFirst()</c>: MoveFirst()
-    /// also flushes pending parts/rows and, on a not-found part, enters the insertable
-    /// new-row line (<c>EnterNewRowLine</c>) — state changes appropriate to an AL-driven
-    /// cursor move, not to a parent row simply becoming current. A part with no matching row
-    /// here shows empty, exactly as it did before this method existed; this only adds the
-    /// FOUND case BC already runs.
+    /// also flushes pending parts/rows — a state change appropriate to an AL-driven cursor
+    /// move, not to a parent row simply becoming current. Only the two steps a parent move
+    /// really does are taken: run the FOUND case's trigger, or park on the draft line.
+    ///
+    /// THE NOT-FOUND CASE IS NOT "SHOW NOTHING" (#2923). It used to be, and that was the
+    /// remaining half of #2392 applied to parts: a client renders an editable, insert-allowed
+    /// repeater with no matching rows as exactly one row — its blank new-row line — and a
+    /// write with no <c>New()</c> and no <c>First()</c> of its own lands there. Corpus
+    /// codeunit 60743 <c>EmptyEditableList_SetValueWithoutNewOrFirst_InsertsARow</c> measured
+    /// that on a real service tier for a standalone page; codeunit 60996
+    /// <c>EmptyLinkedPart_WriteWithoutFirst_ValidateSeesTheLinkedKey</c> measures it for a
+    /// LINKED part, which is the shape Microsoft's own document tests use. Leaving the part
+    /// unpositioned sent that write into a record nothing had ever positioned.
+    ///
+    /// <c>AbandonNewRowLine</c> first, because this method is re-entered on every parent move:
+    /// a draft line the part was parked on belongs to the parent being left, and
+    /// <c>Loaded()</c> would not have cleared it.
     ///
     /// NOT once-guarded: every call re-applies the link filter and re-finds, which is exactly
     /// what makes a GoToRecord-driven refresh work. A repeat call for the SAME still-current
@@ -3043,8 +3208,10 @@ internal sealed class LiveNavTestPart : LiveNavTestPage, ITestPart
     {
         if (Record is not { } record) return;
         ApplyLink();
+        AbandonNewRowLine();
         var found = record.ALFindFirstAsync(DataError.TrapError).GetAwaiter().GetResult();
         Loaded(found);
+        if (!found) EnterNewRowLine(record);
     }
 
     public override bool FindRowFromTableFieldValues(int[] fieldNos, object[] values, bool forward)
@@ -3178,23 +3345,4 @@ internal sealed class LiveNavTestPart : LiveNavTestPage, ITestPart
         return fieldNos;
     }
 
-    /// <summary>The one value a field's current filter selects, or false when the filter is
-    /// not a single value (BC's <c>GetRangeMin</c>/<c>GetRangeMax</c> raise for a filter that
-    /// is not a range; a range whose ends differ is not a single value either).</summary>
-    private static bool TryGetSingleFilterValue(NavRecord record, int fieldNo, out NavValue value)
-    {
-        try
-        {
-            var min = record.ALGetRangeMin(fieldNo);
-            var max = record.ALGetRangeMax(fieldNo);
-            if (min != null && min.Equals(max)) { value = min; return true; }
-        }
-        catch (NavBaseException)
-        {
-            // Not a range: a multi-value expression (1|2), an open-ended one (>1), or a
-            // wildcard. BC's own InitRecordFromFilters stamps nothing for these either.
-        }
-        value = null!;
-        return false;
-    }
 }

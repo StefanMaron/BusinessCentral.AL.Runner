@@ -163,6 +163,11 @@ public sealed class PermissionMetadataShapeGapTests
             for (var i = 0; i < lines.Length; i++)
             {
                 if (!lines[i].Contains("throw new InvalidOperationException", StringComparison.Ordinal)) continue;
+                // A COMMENT naming the retired convention is prose, not a refusal. Without this
+                // the guard fires on the header of any change that explains what it converted —
+                // measured, #3046's own comment tripped it (StartsWith, so an end-of-line
+                // comment after live code still counts).
+                if (lines[i].TrimStart().StartsWith("//", StringComparison.Ordinal)) continue;
 
                 // The whole throw expression, which may span lines.
                 var end = i;

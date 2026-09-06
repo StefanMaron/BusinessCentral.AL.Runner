@@ -106,41 +106,82 @@ internal static class RunnerFingerprint
     // ComputeContentHash reads the WHOLE file; the call sites ask per virtual-table lookup,
     // per dependency and per cache key, so an unmemoized hash is a re-read each time.
     //
-    // The memo key is (full path, length, last-write UTC) — NOT the path alone, which is what
-    // it was until #2987. "One entry per path, never invalidated" rested on "nothing in this
-    // process writes to a dependency .app", and that premise does not hold for every caller:
-    // InProcessAppPackager writes synthetic .app packages mid-run, and a --watch process
-    // outlives a rebuild of one. A path-keyed memo answers the FIRST bytes it ever saw for
-    // those, so a caller keying a persisted cache on it would consult the previous package's
-    // entry — the wrong-answer shape content addressing exists to remove, reintroduced one
-    // layer down. The stat is not trusted to identify CONTENT here (that is the whole point of
-    // this method); it is only used to notice that the file has been written since, which is
-    // exactly what a stat can tell you. A rewrite that lands on the same length and mtime is
-    // one the memo will not notice — that is a memo, not a cache key, and it lives and dies
-    // with the process, which is why the persisted keys built FROM this value are the ones
-    // that have to be right.
+    // The memo key identifies the FILE, not the path: (device, inode, size, last-write) where
+    // the platform can answer, falling back to (full path, length, last-write UTC).
+    //
+    // The stat half is #2987. "One entry per path, never invalidated" rested on "nothing in
+    // this process writes to a dependency .app", and that premise does not hold for every
+    // caller: InProcessAppPackager writes synthetic .app packages mid-run, and a --watch
+    // process outlives a rebuild of one. A path-keyed memo answers the FIRST bytes it ever saw
+    // for those, so a caller keying a persisted cache on it would consult the previous
+    // package's entry — the wrong-answer shape content addressing exists to remove,
+    // reintroduced one layer down. The stat is not trusted to identify CONTENT here (that is
+    // the whole point of this method); it is only used to notice that the file has been
+    // written since, which is exactly what a stat can tell you. A rewrite that lands on the
+    // same length and mtime is one the memo will not notice — that is a memo, not a cache key,
+    // and it lives and dies with the process, which is why the persisted keys built FROM this
+    // value are the ones that have to be right.
+    //
+    // The device/inode half is #3036. `provision-bc` hard-links `~/.al-runner/platform-apps`
+    // into the default artifacts directory and Program.cs scans both, so the same inodes
+    // arrive here under two absolute paths — and neither the path nor a stat can see that, so
+    // the second one was a full re-read of 122.5 MB, 98 MB of it Base Application, on every
+    // invocation. FileIdentity answers "same file?" from the filesystem instead; see its
+    // header for why (device, inode, size, mtime) cannot say "same file" about two files that
+    // both exist, which is the only claim this memo makes. Size and mtime appear in BOTH
+    // halves and do the same job in each: notice that the file has been written since.
+    // A platform that cannot answer falls back to the stat key and behaves as it did before.
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _fileContentHashes =
         new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
-    /// <see cref="ComputeContentHash"/> memoized per (full path, length, mtime) — the entry
-    /// point every cache key that identifies a FILE by its content should use.
+    /// <see cref="ComputeContentHash"/> memoized per FILE — the entry point every cache key
+    /// that identifies a file by its content should use. Two paths that are hard links to one
+    /// inode share an entry and are read once (#3036); two files that both exist never do,
+    /// whatever their paths, lengths or timestamps say.
     /// </summary>
     internal static string ComputeFileContentHashMemoized(string path)
     {
         var fullPath = Path.GetFullPath(path);
-        string memoKey;
+        // The two key spaces are kept disjoint by the "ino|" / "path|" prefixes rather than by
+        // an argument about what an absolute path can start with — a memo whose two keying
+        // schemes could ever produce the same string is the wrong-answer shape this exists to
+        // avoid, not a place to be clever.
+        var memoKey = FileIdentity.TryGetStableKey(fullPath) ?? StatKey(fullPath);
+        return _fileContentHashes.GetOrAdd(memoKey, _ =>
+        {
+            System.Threading.Interlocked.Increment(ref _contentHashComputations);
+            return ComputeContentHash(fullPath);
+        });
+    }
+
+    /// <summary>
+    /// The fallback key for a file the filesystem cannot identify for us (no statx: Windows,
+    /// macOS, an older libc) — #2987's (path, length, mtime).
+    ///
+    /// <para>A file we cannot stat at all memoizes under the bare path: ComputeContentHash is
+    /// about to answer <see cref="UnknownContentHash"/> for it anyway, and a later call that
+    /// CAN stat it gets a different key and recomputes rather than inheriting that answer.</para>
+    /// </summary>
+    private static string StatKey(string fullPath)
+    {
         try
         {
             var fi = new FileInfo(fullPath);
-            // A file we cannot stat memoizes under the bare path: ComputeContentHash is about
-            // to answer UnknownContentHash for it anyway, and a later call that CAN stat it
-            // gets a different key and recomputes rather than inheriting that answer.
-            memoKey = fi.Exists ? $"{fullPath}|{fi.Length}|{fi.LastWriteTimeUtc.Ticks}" : fullPath;
+            return fi.Exists
+                ? $"path|{fullPath}|{fi.Length}|{fi.LastWriteTimeUtc.Ticks}"
+                : "path|" + fullPath;
         }
-        catch { memoKey = fullPath; }
-        return _fileContentHashes.GetOrAdd(memoKey, _ => ComputeContentHash(fullPath));
+        catch { return "path|" + fullPath; }
     }
+
+    private static int _contentHashComputations;
+
+    /// <summary>Test-only: how many times this process has actually READ AND HASHED a file
+    /// through the memo. The memo's whole job is that this stays below the number of calls,
+    /// and a test that asserts on returned hashes alone cannot see the difference between
+    /// one read and two — two paths to one file return the same hash either way.</summary>
+    internal static int ContentHashComputationCountForTests => Volatile.Read(ref _contentHashComputations);
 
     /// <summary>Test-only: drops the memo, so a test that rewrites a file in place can
     /// observe what a fresh process would compute for it. Production code never needs

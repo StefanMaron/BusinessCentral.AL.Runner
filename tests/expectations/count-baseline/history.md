@@ -606,3 +606,25 @@ by the time this branch merged, because several other groups landed on `main` in
 final run on this branch reports **282**. The lesson, not the number, is the point: a suite-wide
 total written into this file dates the moment it was measured, while the per-group line does
 not.
+
+The al-language number moves 2599 -> 2610 with the submodule pin bump to corpus
+`9ba6f581`, which takes two corpus merges. Eight of the eleven are codeunit 60996 "TPDL
+Tests" (corpus PR #176), pinning what typing into the draft line of a subpage part that
+carries a SubPageLink creates -- the upstream half of issue #2923. The other three extend
+`TestQueryFlowFieldColumn` with how a flow filter reaches a query's FlowField column
+(corpus PR #175); their runner-side fix is already on main (#2947), which is why the bump
+does not need a second fix folded in for them.
+
+2610 is measured from an actual run against the new pin, not counted off the source.
+appGroups is unchanged at 1: every new test joined the single existing al-language app
+group, and al-language carries no byBcVersion override, so CI's eight legs are what confirm
+one is not needed. Only the al-language number moved; runner-extras and
+al-language-internals-fixture are main's values, untouched.
+
+Worth recording about codeunit 60996 specifically, because it is the reason two of its
+assertions read the way they do: a service tier refuted the test twice before it merged.
+Run 33995429394 answered `H1` where the file asserted the draft line reads blank in the
+column a SubPageLink constrains, and run 33997895349 answered `NEWREC` where it asserted
+the page's OnNewRecord had not yet run for that line. Both are now asserted at the measured
+value. The runner change in this PR follows those measurements rather than the other way
+round.
