@@ -2006,6 +2006,30 @@ public static partial class RecordPatches
             if (IsObjectMetadataSystemTable(table))
                 return MaterialiseObjectMetadataStore(self, perTable, table, tableId);
 
+            // ── Object (2000000001) ──────────────────────────────────────────────────────
+            // The other half of the table relation Object Metadata."Object ID" declares
+            // (TableRelation = Object.ID WHERE(Type = FIELD("Object Type"))). Also NOT a
+            // virtual table: the legacy object registry, a real application-database SQL
+            // table. Its store was empty, so every read answered "no such object" — silently,
+            // because Microsoft has that field's TestTableRelation commented out (#2774).
+            //
+            // Its rows are an object INVENTORY, so unlike Object Metadata's fixed id list they
+            // are projected from the same EnumerateKnownAlObjects that answers AllObj — which
+            // is what stops the two tables disagreeing about which objects exist.
+            //
+            // Same --test-data precedence as Object Metadata directly above, for the same
+            // reason (a restored backup can genuinely carry rows for a real SQL table), and
+            // through the same ordered materialisation: GetOrCreateHydratedDataAccess is what
+            // stops a second thread being handed this store between "created" and "hydrated",
+            // finding it empty and synthesising over rows that are about to arrive (#2788).
+            // See RecordPatches.ObjectSystemTable.cs and RecordPatches.TableMaterialisation.cs.
+            if (IsObjectSystemTable(table))
+            {
+                var objectDa = GetOrCreateHydratedDataAccess(self, perTable, table, tableId);
+                PopulateObjectSystemTable(objectDa, table);
+                return objectDa;
+            }
+
             // ── Page Control Field (2000000192) ──────────────────────────────────────────
             // Virtual on the service tier too: one row per field control declared on a
             // page, INCLUDING controls declared Visible = false. An empty store made every
