@@ -353,15 +353,18 @@ public sealed class ExpectationManifestWiringTests : IDisposable
     public void RequireMatch_MisspelledCodeunitName_FailsTheRun_AndNamesTheCorrection()
     {
         TestArtifacts.SkipIfMissing();
-        var dir = OneEntryManifest("match-name-typo", "Expct Fixture Test", "GreenPath_KnownGapDeclared");
+        // Driven against a test that PASSES, so nothing else can move the exit code and
+        // the 5 is attributable to the audit alone.
+        var dir = OneEntryManifest("match-name-typo", "Expct Fixture Test", "GreenPath_PlainPass");
 
         var (output, exit) = RunRunner(
             $"--expectations \"{dir}\" --expectations-require-match "
-            + $"--test GreenPath_KnownGapDeclared \"{SuitePath}\"");
+            + $"--test GreenPath_PlainPass \"{SuitePath}\"");
 
+        AssertCount(output, "  fail:", 0);
         Assert.Contains("UNMATCHED", output, StringComparison.Ordinal);
         Assert.Contains("known-gaps-fixture.json", output, StringComparison.Ordinal);
-        Assert.Contains("Expct Fixture Test.GreenPath_KnownGapDeclared", output, StringComparison.Ordinal);
+        Assert.Contains("Expct Fixture Test.GreenPath_PlainPass", output, StringComparison.Ordinal);
         Assert.Contains("object id 60810 was loaded as \"Expct Fixture Tests\"", output, StringComparison.Ordinal);
         Assert.True(exit == 5,
             $"an entry that matches no test must fail with exit 5 under --expectations-require-match. "
@@ -377,15 +380,40 @@ public sealed class ExpectationManifestWiringTests : IDisposable
     public void RequireMatch_MisspelledMethod_FailsTheRun_AndListsTheRealMethods()
     {
         TestArtifacts.SkipIfMissing();
-        var dir = OneEntryManifest("match-method-typo", "Expct Fixture Tests", "GreenPath_KnownGapDeclare");
+        var dir = OneEntryManifest("match-method-typo", "Expct Fixture Tests", "GreenPath_PlainPas");
+
+        var (output, exit) = RunRunner(
+            $"--expectations \"{dir}\" --expectations-require-match "
+            + $"--test GreenPath_PlainPass \"{SuitePath}\"");
+
+        AssertCount(output, "  fail:", 0);
+        Assert.Contains("declares no test method 'GreenPath_PlainPas'", output, StringComparison.Ordinal);
+        Assert.Contains("GreenPath_PlainPass", output, StringComparison.Ordinal);
+        Assert.True(exit == 5, $"expected exit 5, got {exit}\n{output}");
+    }
+
+    /// <summary>
+    /// An unmatched entry alongside a real test failure. The audit must still SAY so —
+    /// that is the whole point — but exit code 1 outranks 5, because "a test failed" is
+    /// the more actionable statement and the manifest problem is already in the log.
+    /// This pins the ranking rather than leaving it to be rediscovered.
+    /// </summary>
+    [SkippableFact]
+    public void RequireMatch_AlongsideARealTestFailure_StillReports_ButTheFailureRanksFirst()
+    {
+        TestArtifacts.SkipIfMissing();
+        var dir = OneEntryManifest("match-and-fail", "Expct Fixture Test", "GreenPath_KnownGapDeclared");
 
         var (output, exit) = RunRunner(
             $"--expectations \"{dir}\" --expectations-require-match "
             + $"--test GreenPath_KnownGapDeclared \"{SuitePath}\"");
 
-        Assert.Contains("declares no test method 'GreenPath_KnownGapDeclare'", output, StringComparison.Ordinal);
-        Assert.Contains("GreenPath_KnownGapDeclared", output, StringComparison.Ordinal);
-        Assert.True(exit == 5, $"expected exit 5, got {exit}\n{output}");
+        // The entry did not match, so the known-gap reclassification never happened and
+        // the test failed plainly — exactly the pre-#3123 outcome, now explained.
+        AssertCount(output, "  fail:", 1);
+        Assert.Contains("UNMATCHED", output, StringComparison.Ordinal);
+        Assert.Contains("object id 60810 was loaded as \"Expct Fixture Tests\"", output, StringComparison.Ordinal);
+        Assert.True(exit == 1, $"a real test failure outranks the audit. exit={exit}\n{output}");
     }
 
     /// <summary>
