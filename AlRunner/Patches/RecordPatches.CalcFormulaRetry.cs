@@ -110,7 +110,27 @@ public static partial class RecordPatches
                 ids.Add(tableId);
                 _tablesWithUnresolvedCalcFormulaSource.TryRemove(tableId, out _);
             }
-            if (ids.Count == 0) return;
+            if (ids.Count == 0)
+            {
+                // Nothing this registration can repair. Name what is still waiting and on
+                // what: a source table that arrives by any route OTHER than a .app
+                // registration — an AL source dir added later, say — fires no retry at all,
+                // so these tables keep a FlowField with no formula for the rest of the run and
+                // CalcFields refuses it with BC's "You must define a CalcFormula", blaming a
+                // declaration that is correct. Saying so is the difference between a known
+                // limit and a silent wrong answer (.claude/rules/loud-failures.md).
+                foreach (var (pendingTableId, pendingNames) in _tablesWithUnresolvedCalcFormulaSource)
+                {
+                    string[] names;
+                    lock (pendingNames) names = pendingNames.ToArray();
+                    Console.Error.WriteLine(
+                        $"[RecordPatches] CalcFormula retry: table {pendingTableId} still has no "
+                        + $"formula for a FlowField whose source table ({string.Join(", ", names)}) "
+                        + "no registered .app declares — it is only retried when a .app declaring "
+                        + "that table is registered");
+                }
+                return;
+            }
 
             foreach (var id in ids)
             {

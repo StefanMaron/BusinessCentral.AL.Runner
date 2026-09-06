@@ -956,6 +956,59 @@ public static partial class RecordPatches
     }
 
     /// <summary>
+    /// #3121 — parse the CalcFormula TEXT a tableextension symbol carried through
+    /// registration into a <see cref="ParsedCalcFormula"/>, here rather than in
+    /// <c>BcAppSymbolCache.TryParseTableExtensionSymbol</c>: that parse runs while
+    /// <c>AddBcAppPath</c> is registering the .app, and calling into RecordPatches from there
+    /// is what the SIGSEGV note in that file warns about. This method runs from the lazy index
+    /// build instead, on the same stack as every other RecordPatches parse.
+    ///
+    /// <para>Without it every FlowField a PRECOMPILED tableextension contributes reached
+    /// <c>NCLMetaField</c> with <c>CalculationFormula = EmptyFormula</c>, so <c>CalcFields</c>
+    /// refused it with BC's own "You must define a CalcFormula for the {0} FlowField in the {1}
+    /// table" — measured on <c>Customer."Outstanding Serv.Invoices(LCY)"</c> (Service app) and
+    /// <c>"Stockkeeping Unit"."Qty. on Prod. Order"</c> (Manufacturing app), both of which
+    /// calculate on a real service tier.</para>
+    ///
+    /// <para>A field whose text is refused by the parser keeps its null formula — the same
+    /// discipline the base-table path applies (<c>BcAppSymbolCache</c> stores whatever
+    /// <c>TryParseCalcFormula</c> returns, null included) — and says so on stderr naming the
+    /// refused text. Without that line the only signal is BC's own "You must define a
+    /// CalcFormula", which blames a declaration that is present.</para>
+    /// </summary>
+    private static List<ParsedField> ResolveExtensionCalcFormulas(TableExtensionSymbol ext)
+    {
+        if (ext.CalcFormulaTexts == null || ext.CalcFormulaTexts.Count == 0) return ext.Fields;
+        var result = new List<ParsedField>(ext.Fields.Count);
+        foreach (var f in ext.Fields)
+        {
+            if (f.IsFlowField && f.CalcFormula == null
+                && ext.CalcFormulaTexts.TryGetValue(f.FieldId, out var text))
+            {
+                var parsed = TryParseCalcFormula($"CalcFormula = {text};");
+                if (parsed == null)
+                {
+                    // Loud, not silent: the field keeps a null formula, so CalcFields on it
+                    // raises BC's "You must define a CalcFormula for the {0} FlowField in the
+                    // {1} table" — a message that blames a declaration which is in fact
+                    // present and which this parser refused. Say which text was refused, so
+                    // the reader is not left with the misleading BC wording alone
+                    // (.claude/rules/loud-failures.md).
+                    Console.Error.WriteLine(
+                        $"[RecordPatches] extension CalcFormula REFUSED for field {f.FieldId} "
+                        + $"'{f.FieldName}' on '{ext.TargetTableName}' (extension {ext.ExtensionId}): "
+                        + $"the parser did not accept '{text}', so the field keeps no formula and "
+                        + "CalcFields will refuse it");
+                }
+                result.Add(parsed != null ? f with { CalcFormula = parsed } : f);
+                continue;
+            }
+            result.Add(f);
+        }
+        return result;
+    }
+
+    /// <summary>
     /// Merge tableextension fields from all registered BC .app SymbolReference.json files
     /// into <c>_parsedExtensionFields</c> and <c>_extensionIdsByBaseTable</c>.
     ///
@@ -974,44 +1027,6 @@ public static partial class RecordPatches
     /// fields already present in _parsedTables (if the base table has been populated) by
     /// checking the merged list at build time — see NclMetaTableBuilder's deduplicate block.
     /// </summary>
-    /// <summary>
-    /// #3121 — parse the CalcFormula TEXT a tableextension symbol carried through
-    /// registration into a <see cref="ParsedCalcFormula"/>, here rather than in
-    /// <c>BcAppSymbolCache.TryParseTableExtensionSymbol</c>: that parse runs while
-    /// <c>AddBcAppPath</c> is registering the .app, and calling into RecordPatches from there
-    /// is what the SIGSEGV note in that file warns about. This method runs from the lazy index
-    /// build instead, on the same stack as every other RecordPatches parse.
-    ///
-    /// <para>Without it every FlowField a PRECOMPILED tableextension contributes reached
-    /// <c>NCLMetaField</c> with <c>CalculationFormula = EmptyFormula</c>, so <c>CalcFields</c>
-    /// refused it with BC's own "You must define a CalcFormula for the {0} FlowField in the {1}
-    /// table" — measured on <c>Customer."Outstanding Serv.Invoices(LCY)"</c> (Service app) and
-    /// <c>"Stockkeeping Unit"."Qty. on Prod. Order"</c> (Manufacturing app), both of which
-    /// calculate on a real service tier.</para>
-    ///
-    /// <para>A field whose text is refused by the parser keeps its null formula: that is the
-    /// same discipline the base-table path applies (<c>BcAppSymbolCache</c> line ~1671 stores
-    /// whatever <c>TryParseCalcFormula</c> returns, null included), and the refusal is loud —
-    /// <c>BuildMetaField</c> logs the field it built without a formula.</para>
-    /// </summary>
-    private static List<ParsedField> ResolveExtensionCalcFormulas(TableExtensionSymbol ext)
-    {
-        if (ext.CalcFormulaTexts == null || ext.CalcFormulaTexts.Count == 0) return ext.Fields;
-        var result = new List<ParsedField>(ext.Fields.Count);
-        foreach (var f in ext.Fields)
-        {
-            if (f.IsFlowField && f.CalcFormula == null
-                && ext.CalcFormulaTexts.TryGetValue(f.FieldId, out var text))
-            {
-                var parsed = TryParseCalcFormula($"CalcFormula = {text};");
-                result.Add(parsed != null ? f with { CalcFormula = parsed } : f);
-                continue;
-            }
-            result.Add(f);
-        }
-        return result;
-    }
-
     private static void EnsureBcSymbolExtensionIndex()
     {
         if (_bcSymbolExtensionIndexBuilt) return;

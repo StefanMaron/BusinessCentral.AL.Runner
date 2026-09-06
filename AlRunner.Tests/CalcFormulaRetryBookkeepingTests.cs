@@ -9,12 +9,13 @@
 //     FlowFields failed;
 //   * a reload clears the ledger, because every table is rebuilt from scratch anyway.
 //
-// The rebuild itself (evict _metaTableCache + the skeleton NCLMetadata entry, repopulate) needs
-// a live BC skeleton runtime and is measured end to end instead — see the PR for #3121: a
-// source-bearing dependency .app consumed through --package-cache, where
-// `CalcFormula = lookup(Customer.Name where(...))` went from BC's "You must define a CalcFormula
-// for the Customer Name FlowField" to the calculated value, while a count formula over a table
-// in the SAME package passed both before and after.
+// The rebuild itself — evict _metaTableCache plus the skeleton NCLMetadata entry, repopulate,
+// and the decision of WHICH pending tables that applies to — is covered by
+// CalcFormulaLateSourceTableRebuildTests, which drives it against the in-process skeleton under
+// BcEngineCollection and asserts the rebuilt FlowField's formula names the source table and
+// field. (An earlier version of this header claimed that needed a live service tier and could
+// only be measured end to end. That was wrong: the skeleton is available in-process, the same
+// way RecordPatchesPrecompiledTableExtEvictionTests uses it, and the test runs in ~0.2s.)
 
 using AlRunner.Patches;
 using Xunit;
