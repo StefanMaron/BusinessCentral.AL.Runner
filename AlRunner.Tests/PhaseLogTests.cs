@@ -431,12 +431,17 @@ public sealed class PhaseLogTests : IDisposable
     /// produces a value about 1024x off — and a value 1024x too small still clears an
     /// "8 MB" floor on a process using several GB.
     ///
-    /// A high-water mark can never be below the current working set, and the current
-    /// working set of this test process is a real number in real bytes from a source this
-    /// code does not touch. So that comparison pins the units from below on all three
-    /// platforms at once, without an upper bound: a ratio ceiling would be a flake on a
-    /// loaded CI machine, where the suite spawns runner subprocesses and does heavy AL
-    /// compiles, peaks high, and then releases.
+    /// The current working set of this test process is a real number in real bytes from a
+    /// source this code does not touch, so comparing against it pins the units from below
+    /// on all three platforms at once — with no upper bound, since a ratio ceiling would
+    /// flake on a loaded CI machine where the suite spawns runner subprocesses, peaks high,
+    /// and then releases.
+    ///
+    /// What it can NOT do is state "a high-water mark is never below the current working
+    /// set" exactly, because the two numbers come from two /proc files read at two instants
+    /// (#3005). That claim moved to LinuxRssSample_PeakIsNotBelowCurrentWithinOneSample,
+    /// where one read of one file makes it an invariant; the bound left here is the
+    /// order-of-magnitude one the units hazard actually needs.
     /// </summary>
     [Fact]
     public void PeakRssBytes_IsInBytes_AndNotBelowTheCurrentWorkingSet()
@@ -446,9 +451,105 @@ public sealed class PhaseLogTests : IDisposable
         var peak = PhaseLog.PeakRssBytes();
 
         Assert.True(live > 0, $"the test's own working set should be readable, got {live}");
-        Assert.True(peak >= live,
-            $"peak RSS {peak} is below this process's current working set {live}; "
-            + "a high-water mark cannot be, so the value is in the wrong units or read "
-            + "from the wrong field");
+
+        // BANDED ON PURPOSE, and the band is not a weakening of the units check.
+        // This comparison crosses two sources — VmHWM out of /proc/self/status here
+        // versus /proc/<pid>/stat inside WorkingSet64 — read at two instants, and those
+        // two cannot promise agreement to the page: #3005 saw them 0.13% apart on CI and
+        // the strict >= that used to stand here failed at random. A 1024x units error is
+        // 512x clear of this bound, so the hazard is still caught by an enormous margin,
+        // and the EXACT peak >= current invariant now lives below, where a single read of
+        // a single file makes it true rather than probable.
+        Assert.True(peak * 2 >= live,
+            $"peak RSS {peak} is more than 2x below this process's current working set "
+            + $"{live}; a high-water mark cannot be, so the value is in the wrong units "
+            + "or read from the wrong field");
+    }
+
+    /// <summary>
+    /// The exact half of the claim above, on the one platform that can state it exactly.
+    /// The kernel builds VmHWM and VmRSS from the same counter read inside a single
+    /// task_mem() call (hiwater is max(mm-&gt;hiwater_rss, that same rss)), so within ONE
+    /// read of /proc/self/status "the peak is not below the current" is an invariant, not
+    /// a race. Across two files and two instants — the shape this test used to have — it
+    /// is neither.
+    /// </summary>
+    [Fact]
+    public void LinuxRssSample_PeakIsNotBelowCurrentWithinOneSample()
+    {
+        if (!OperatingSystem.IsLinux()) return;
+
+        Assert.True(PhaseLog.TryReadLinuxRssSample(out var peak, out var current),
+            "a Linux process must be able to read its own /proc/self/status");
+        Assert.True(current > 8 * 1024 * 1024,
+            $"the sample's current RSS looks stubbed or unscaled: {current} bytes");
+        Assert.True(peak >= current,
+            $"peak RSS {peak} is below current RSS {current} in the SAME sample; "
+            + "that is impossible from one read, so the two values were not parsed from "
+            + "one snapshot or one of them is in the wrong units");
+    }
+
+    /// <summary>
+    /// The units hazard, pinned deterministically instead of by comparing live numbers:
+    /// /proc/self/status reports these fields in KILOBYTES, so the parse must scale by
+    /// 1024. Dropping that conversion understates by ~1024x, and a value 1024x too small
+    /// still clears an "8 MB" floor on a process using several GB — which is why the
+    /// original check reached for a live cross-source comparison and inherited its race.
+    /// A fixed input needs no live process at all.
+    /// </summary>
+    [Fact]
+    public void LinuxRssSample_ParsesKilobyteFieldsIntoBytes()
+    {
+        const string status =
+            "Name:\tdotnet\n"
+            + "VmPeak:\t 4472124 kB\n"
+            + "VmSize:\t 4406588 kB\n"
+            + "VmHWM:\t  371448 kB\n"
+            + "VmRSS:\t  370960 kB\n"
+            + "Threads:\t18\n";
+
+        Assert.True(PhaseLog.TryParseLinuxRssSample(status, out var peak, out var current));
+        Assert.Equal(371448L * 1024, peak);
+        Assert.Equal(370960L * 1024, current);
+    }
+
+    /// <summary>
+    /// Negative direction: a status blob without the fields must report failure, not a
+    /// zero the aggregate would present as "this run used no memory". VmPeak is deliberately
+    /// present — it is virtual size, not RSS, and a prefix match loose enough to accept it
+    /// would report a number several times too large.
+    /// </summary>
+    [Fact]
+    public void LinuxRssSample_ReportsFailureWhenTheFieldsAreAbsent()
+    {
+        Assert.False(PhaseLog.TryParseLinuxRssSample(
+            "Name:\tdotnet\nVmPeak:\t 4472124 kB\nThreads:\t18\n", out var peak, out var current));
+        Assert.Equal(0, peak);
+        Assert.Equal(0, current);
+    }
+
+    /// <summary>
+    /// The same two-source hazard on the macOS branch of <see cref="PhaseLog.PeakRssBytes"/>,
+    /// which sanity-checks getrusage's ru_maxrss against Process.WorkingSet64 and falls back
+    /// to the working set when the check fails. Strict &gt;= there discards a perfectly good
+    /// peak over the same sub-percent skew that made #3005 flake, so the guard is banded the
+    /// same way — while a 1024x units error (ru_maxrss is BYTES on Darwin, KILOBYTES on
+    /// Linux) still fails it and still falls back.
+    /// </summary>
+    [Fact]
+    public void DarwinPeakChoice_KeepsASlightlyLowerMaxRss_ButRejectsAUnitsError()
+    {
+        // The exact numbers from #3005: 499,712 bytes apart, peak below live by 0.13%.
+        Assert.Equal(379_863_040L, PhaseLog.ChooseDarwinPeak(379_863_040L, 380_362_752L));
+
+        // Normal case: a real high-water mark above the live working set is kept as-is.
+        Assert.Equal(500_000_000L, PhaseLog.ChooseDarwinPeak(500_000_000L, 380_362_752L));
+
+        // Kilobytes read as bytes — 1024x too small. Rejected, and the working set (a real
+        // measurement and a valid lower bound on the peak) is reported instead.
+        Assert.Equal(380_362_752L, PhaseLog.ChooseDarwinPeak(379_863_040L / 1024, 380_362_752L));
+
+        // A failed getrusage reports 0; that must never be reported as the peak.
+        Assert.Equal(380_362_752L, PhaseLog.ChooseDarwinPeak(0, 380_362_752L));
     }
 }
