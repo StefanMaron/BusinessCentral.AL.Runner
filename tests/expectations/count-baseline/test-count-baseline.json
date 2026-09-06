@@ -6,6 +6,7 @@
       "appGroups": { "default": 1 }
     },
     "al-language-internals-fixture": { "tests": { "default": 0 }, "appGroups": { "default": 1 } },
+    "al-language-onprem": { "tests": { "default": 19 }, "appGroups": { "default": 1 } },
     "runner-extras": {
       "groups": {
         "bundle-page-over-dep-table": { "tests": 2 },

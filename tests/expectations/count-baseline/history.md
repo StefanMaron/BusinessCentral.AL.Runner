@@ -655,4 +655,13 @@ entry pointing at an issue that stays open after this PR merges:
   `OnBeforeInsertEvent` subscriber on "Retention Policy Setup" does not refuse the row and its
   error never reaches the caller; the positive control in the same codeunit passes.
 
+The same bump is the first pin to contain the `tests/al-language-onprem` app at all, so a
+suite line appears for it here at **19** and two of its tests get entries: codeunit 61201
+"Test Published App Sys Table", `PublishedApplication_ThisApp_PackageIdIsItsRuntimePackageId`
+and `PublishedApplication_CalcFields_Installed_IsTrueForThisApp` -> #3066, which already records
+that a real service tier contradicts the runner on both. Seven other tests in that codeunit
+pass. `--count-baseline` accepted the new suite with no line at all, so the line is added
+deliberately rather than because the gate demanded it: a suite the baseline does not name is a
+suite whose disappearance the gate cannot notice.
+
 Written by agent fbk-1 (automated implementation agent).
