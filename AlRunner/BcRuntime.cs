@@ -17,6 +17,25 @@ public static partial class BcRuntime
 
     /// <summary>The skeleton NavSession every runner-side patch reaches BC through.</summary>
     internal static object? SkeletonSession => _skeletonSession;
+
+    private static DateTime? _skeletonSessionLoginTime;
+
+    /// <summary>
+    /// Host-local wall clock at the instant the skeleton NavSession came up — this session's
+    /// login time, and the only source the runner has for the Session virtual table's
+    /// "Login Date" / "Login Time" columns (#2940).
+    ///
+    /// LOCAL, not UTC, deliberately. BC's own SessionDataProvider reads Active Session's
+    /// "Login Datetime" and splits it with NavDateTime.GetDatePart(session) /
+    /// GetTimePart(session), i.e. through the SESSION's time zone. The skeleton session's
+    /// ClientTimeZone is seeded to TimeZoneInfo.Local a few hundred lines below, so the host's
+    /// local clock IS that session's view of the instant, and recording it that way keeps the
+    /// two columns from disagreeing with a session-time-zone conversion done anywhere else.
+    ///
+    /// Null until ApplyAllPatches has built the session, which is the same window in which
+    /// <see cref="SkeletonSession"/> is null; callers must handle both together.
+    /// </summary>
+    internal static DateTime? SkeletonSessionLoginTime => _skeletonSessionLoginTime;
     private static Microsoft.Dynamics.Nav.Runtime.NavMethodScope? _skeletonRootScope;
     public static Microsoft.Dynamics.Nav.Runtime.ITreeObject? RootTreeStub;
 
@@ -970,6 +989,11 @@ public static partial class BcRuntime
         if (aoType != null && sessType != null)
         {
             _skeletonSession = RuntimeHelpers.GetUninitializedObject(sessType);
+            // Stamped HERE, at the one place the session is created, so "when did this session
+            // log in" is recorded once and read back rather than recomputed by whoever asks
+            // (#2940). A second DateTime.Now taken at read time would drift from this instant
+            // and would give two readers two different answers for one session.
+            _skeletonSessionLoginTime = DateTime.Now;
             // GetUninitializedObject leaves cultureSettings = default(ClientSettings) — a
             // struct whose every pattern string is null. Because it is a struct, BC's own
             // "no session → use the default" fallback can never fire (see

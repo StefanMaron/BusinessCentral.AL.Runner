@@ -1252,7 +1252,7 @@ https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
 - **System virtual tables — the runner refuses rather than answering a shape it cannot read.**
   AllObj, AllObjWithCaption, All Profile, Integer, Field, Table/Page/CodeUnit/Report Metadata,
   Report Data Items, Report Layout List, Page Control Field, Metadata and Aggregate Permission
-  Set, Feature Key, Time Zone and Windows Language are all populated in-memory by
+  Set, Feature Key, Session, Time Zone and Windows Language are all populated in-memory by
   `AlRunner/Patches/RecordPatches.*VirtualTable.cs`. Each populator reads something it does not
   own — the runner's in-memory store, the artifact's own metatable and option strings, or
   Microsoft's own data provider — and when what it finds is not the shape it drives, it raises
@@ -1266,6 +1266,21 @@ https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
   ([#2945](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2945)). Time Zone
   and Windows Language have documented *divergences* as well — see their own sections above —
   and those are answers the runner gives on purpose, not refusals.
+- **`Session` (2000000009) answers one row — the reading session — and two of its columns are
+  blank.** That single row is not a runner simplification: BC's own `SessionDataProvider`
+  returns `new ReadOnlyRecordBuffer[1]` unconditionally, with `My Session` a constant `true`,
+  so on a modern service tier this table answers "who am I" rather than "who is logged on".
+  The runner matches that, reading every identity column back from the skeleton session so the
+  table cannot disagree with `SessionId()` / `UserId()`
+  ([#2940](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2940)).
+
+  `Database Name` and `Application Name` keep BC's own per-field default. BC takes both from
+  `Active Session` (2000000110), a tenant-database table the runner does not maintain — there
+  is no database to name, and the client type BC stringifies into `Application Name` is
+  unmeasured here. Blank rather than invented, tracked in
+  [#3230](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3230). `Host Name`
+  reports the machine the runner is on, the same host-derived answer BC's `DnsHelper.HostName`
+  gives on a tier.
 - **FilterGroup** — `Rec.FilterGroup(n)` has no effect; filters always apply to group 0.
 - **Query aggregation** — a query column with `Method = Sum`/`Count`/`Average`/`Min`/`Max`
   does not aggregate or group rows; it silently returns each row's own unaggregated value.
