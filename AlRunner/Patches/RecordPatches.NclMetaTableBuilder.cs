@@ -142,11 +142,6 @@ public static partial class RecordPatches
             // SystemCreatedBy (2000000002), SystemModifiedAt (2000000003), SystemModifiedBy
             // (2000000004). These are required for system-field access via FieldRef and RecordRef.
             var timestampParsed       = new ParsedField(0,          "timestamp",         "BigInteger", 0);
-            var systemIdParsed        = new ParsedField(2000000000, "SystemId",          "Guid",       0);
-            var systemCreatedAtParsed = new ParsedField(2000000001, "SystemCreatedAt",   "DateTime",   0);
-            var systemCreatedByParsed = new ParsedField(2000000002, "SystemCreatedBy",   "Guid",       0);
-            var systemModifiedAtParsed= new ParsedField(2000000003, "SystemModifiedAt",  "DateTime",   0);
-            var systemModifiedByParsed= new ParsedField(2000000004, "SystemModifiedBy",  "Guid",       0);
             // Merge any tableextension fields for this base table.
             // De-duplicate by field id: precompiled .app SymbolReference.json sometimes lists
             // extension fields both in the base table's Tables[].Fields entry AND in
@@ -160,8 +155,7 @@ public static partial class RecordPatches
             var extFieldsNew = extFields.Where(f => !baseFieldIds.Contains(f.FieldId));
             var allParsed = new[] { timestampParsed }.Concat(parsed.Fields)
                 .Concat(extFieldsNew)
-                .Concat(new[] { systemIdParsed, systemCreatedAtParsed, systemCreatedByParsed,
-                                systemModifiedAtParsed, systemModifiedByParsed }).ToArray();
+                .Concat(SystemParsedFields).ToArray();
             var fields = allParsed.Select((f, idx) =>
                 BuildMetaField(f, idx, parsed.PkFieldIds.Contains(f.FieldId), parsed)).ToArray();
 
@@ -750,9 +744,7 @@ public static partial class RecordPatches
             int fieldId = 0;
             if (target != null && arm.FieldName != null)
             {
-                var tf = target.Fields.FirstOrDefault(x =>
-                    string.Equals(x.FieldName, arm.FieldName, StringComparison.OrdinalIgnoreCase));
-                if (tf != null)
+                if (TryResolveTableFieldByName(target, arm.FieldName, out var tf))
                 {
                     fieldId = tf.FieldId;
                 }
@@ -778,9 +770,8 @@ public static partial class RecordPatches
             var conditionObjects = new List<object>();
             foreach (var c in arm.Conditions)
             {
-                var localField = referencingTable?.Fields.FirstOrDefault(x =>
-                    string.Equals(x.FieldName, c.SourceFieldName, StringComparison.OrdinalIgnoreCase));
-                if (localField == null)
+                if (referencingTable == null
+                    || !TryResolveTableFieldByName(referencingTable, c.SourceFieldName, out var localField))
                 {
                     Console.Error.WriteLine(
                         $"[RecordPatches] TableRelation on '{forFieldName}': condition field '{c.SourceFieldName}' not found on '{referencingTable?.TableName}' — relation dropped");
@@ -796,9 +787,7 @@ public static partial class RecordPatches
             var filterObjects = new List<object>();
             foreach (var w in arm.Filters)
             {
-                var srcField = target.Fields.FirstOrDefault(x =>
-                    string.Equals(x.FieldName, w.SourceFieldName, StringComparison.OrdinalIgnoreCase));
-                if (srcField == null)
+                if (!TryResolveTableFieldByName(target, w.SourceFieldName, out var srcField))
                 {
                     Console.Error.WriteLine(
                         $"[RecordPatches] TableRelation on '{forFieldName}': where() field '{w.SourceFieldName}' not found on '{target.TableName}' — relation dropped");
@@ -814,9 +803,8 @@ public static partial class RecordPatches
                 // field(upperlimit(X)).
                 if (w.Kind == ParsedCalcFilterKind.Field)
                 {
-                    var refField = referencingTable?.Fields.FirstOrDefault(x =>
-                        string.Equals(x.FieldName, w.ParentFieldName, StringComparison.OrdinalIgnoreCase));
-                    if (refField == null)
+                    if (referencingTable == null
+                        || !TryResolveTableFieldByName(referencingTable, w.ParentFieldName!, out var refField))
                     {
                         Console.Error.WriteLine(
                             $"[RecordPatches] TableRelation on '{forFieldName}': where() field() link '{w.ParentFieldName}' not found on '{referencingTable?.TableName}' — relation dropped");
@@ -999,6 +987,57 @@ public static partial class RecordPatches
         return ctor.Invoke(args)!;
     }
 
+    /// <summary>
+    /// The BC system fields every table carries, in the id order BC itself uses. This is the
+    /// ONE declaration of the set: <see cref="BuildNCLMetaTable"/> appends exactly these to
+    /// the MetaField[] it builds, and <see cref="TryResolveTableFieldByName"/> resolves a
+    /// CalcFormula field name against exactly these. Keeping resolver and materialised set
+    /// the same array is the invariant that matters — resolving a name to an id the built
+    /// NCLMetaTable does not carry faults inside NCL instead of refusing loudly here.
+    /// </summary>
+    private static readonly ParsedField[] SystemParsedFields = new[]
+    {
+        new ParsedField(2000000000, "SystemId",         "Guid",     0),
+        new ParsedField(2000000001, "SystemCreatedAt",  "DateTime", 0),
+        new ParsedField(2000000002, "SystemCreatedBy",  "Guid",     0),
+        new ParsedField(2000000003, "SystemModifiedAt", "DateTime", 0),
+        new ParsedField(2000000004, "SystemModifiedBy", "Guid",     0),
+    };
+
+    /// <summary>
+    /// Resolve a field NAME a CalcFormula or a TableRelation names, on
+    /// <paramref name="table"/>, to the
+    /// <see cref="ParsedField"/> the built NCLMetaTable carries for it.
+    /// <para>#3178: the table's own parsed field list does not carry the system fields, so a
+    /// formula naming one — <c>max(T.SystemCreatedAt where(...))</c>,
+    /// <c>where(X = field(SystemId))</c>, <c>where(SystemCreatedBy = field(Y))</c> — resolved
+    /// to nothing and the whole formula (or, worse, one silently dropped where-arm) went
+    /// missing. Seven Base App FlowFields have that shape. The system fields ARE materialised
+    /// on every built table, so the only thing missing was this second lookup layer. The
+    /// TableRelation builder above resolves field names the same way and had the identical
+    /// miss — <c>TableRelation = T.SystemId</c>, the shape an API page's foreign key uses,
+    /// dropped the whole relation — so it goes through this too.</para>
+    /// <para>Returns false for a genuinely unknown name; the caller then logs and refuses, so
+    /// an unresolvable formula stays loud.</para>
+    /// </summary>
+    private static bool TryResolveTableFieldByName(ParsedTable table, string fieldName, out ParsedField field)
+    {
+        foreach (var f in table.Fields)
+            if (string.Equals(f.FieldName, fieldName, StringComparison.OrdinalIgnoreCase))
+            {
+                field = f;
+                return true;
+            }
+        foreach (var f in SystemParsedFields)
+            if (string.Equals(f.FieldName, fieldName, StringComparison.OrdinalIgnoreCase))
+            {
+                field = f;
+                return true;
+            }
+        field = default!;
+        return false;
+    }
+
     private static object? BuildMetaCalcFormula(ParsedCalcFormula cf, ParsedTable parentTable)
     {
         if (_tMetaCalcFormula == null || _tMetaFilter == null || _tFilterType == null) return null;
@@ -1025,9 +1064,7 @@ public static partial class RecordPatches
         int srcFieldId = 0;
         if (cf.SourceFieldName != null)
         {
-            var srcField = srcTable.Fields.FirstOrDefault(f =>
-                string.Equals(f.FieldName, cf.SourceFieldName, StringComparison.OrdinalIgnoreCase));
-            if (srcField == null)
+            if (!TryResolveTableFieldByName(srcTable, cf.SourceFieldName, out var srcField))
             {
                 Console.Error.WriteLine($"[RecordPatches] BuildMetaCalcFormula: source field '{cf.SourceFieldName}' not found in table '{cf.SourceTableName}'");
                 return null;
@@ -1044,9 +1081,7 @@ public static partial class RecordPatches
         var filterObjects = new List<object>();
         foreach (var filter in cf.Filters)
         {
-            var srcFilterField = srcTable.Fields.FirstOrDefault(f =>
-                string.Equals(f.FieldName, filter.SourceFieldName, StringComparison.OrdinalIgnoreCase));
-            if (srcFilterField == null)
+            if (!TryResolveTableFieldByName(srcTable, filter.SourceFieldName, out var srcFilterField))
             {
                 Console.Error.WriteLine($"[RecordPatches] BuildMetaCalcFormula: filter source field '{filter.SourceFieldName}' not found in '{cf.SourceTableName}'");
                 continue;
@@ -1055,9 +1090,7 @@ public static partial class RecordPatches
             switch (filter.Kind)
             {
                 case ParsedCalcFilterKind.Field:
-                    var parentFilterField = parentTable.Fields.FirstOrDefault(f =>
-                        string.Equals(f.FieldName, filter.ParentFieldName, StringComparison.OrdinalIgnoreCase));
-                    if (parentFilterField == null)
+                    if (!TryResolveTableFieldByName(parentTable, filter.ParentFieldName!, out var parentFilterField))
                     {
                         Console.Error.WriteLine($"[RecordPatches] BuildMetaCalcFormula: filter parent field '{filter.ParentFieldName}' not found in '{parentTable.TableName}'");
                         continue;
