@@ -397,17 +397,17 @@ public static partial class RecordPatches
                 "PermissionSetRecord.permissionSetKey",
                 "field not found — the Aggregate Permission Set table cannot be populated");
 
-        _apsKeyAppIdProp = tPermissionSetKey.GetProperty("AppId",
-            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+        _apsKeyAppIdProp = FindBcProperty(tPermissionSetKey, "AppId", out var nAppId)
             ?? throw AggregatePermissionSetBcShapeGap(
                 "PermissionSetKey.AppId",
-                "property not found — the Aggregate Permission Set table cannot be populated");
+                BcPropertyGapDetail("AppId", nAppId)
+                + " — the Aggregate Permission Set table cannot be populated");
 
-        _apsSessionNclMetadata = tNavSession.GetProperty("NCLMetadata",
-            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+        _apsSessionNclMetadata = FindBcProperty(tNavSession, "NCLMetadata", out var nNclMetadata)
             ?? throw AggregatePermissionSetBcShapeGap(
                 "NavSession.NCLMetadata",
-                "property not found — the Aggregate Permission Set table cannot be populated");
+                BcPropertyGapDetail("NCLMetadata", nNclMetadata)
+                + " — the Aggregate Permission Set table cannot be populated");
 
         _apsReflectionReady = true;
     }
@@ -424,11 +424,11 @@ public static partial class RecordPatches
             ?? throw AggregatePermissionSetBcShapeGap(
                 "DataAccess",
                 "type not found in Ncl — the Aggregate Permission Set table cannot be populated");
-        _apsDataAccessSession = tDataAccess.GetProperty("Session",
-            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+        _apsDataAccessSession = FindBcProperty(tDataAccess, "Session", out var nSession)
             ?? throw AggregatePermissionSetBcShapeGap(
                 "DataAccess.Session",
-                "property not found — the Aggregate Permission Set table cannot be populated");
+                BcPropertyGapDetail("Session", nSession)
+                + " — the Aggregate Permission Set table cannot be populated");
         _apsLiveGuardReady = true;
     }
 
