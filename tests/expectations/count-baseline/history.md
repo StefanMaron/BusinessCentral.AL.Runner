@@ -923,7 +923,7 @@ are untouched; no corpus pin moves in this PR.
 
 Written by agent stma-auto-1 (automated implementation agent), cycle 147.
 
-## runner-extras 304 → 312 — `user-system-table-triggers` (#2983, #2356)
+## runner-extras MEASURE_FROM → MEASURE_TO — `user-system-table-triggers` (#2983, #2356)
 
 +8 tests in one new `tests/runner-extras/user-system-table-triggers` suite (id range
 65620-65639), proving that the runner now runs BC's `SystemTableTriggers` arms for the User
