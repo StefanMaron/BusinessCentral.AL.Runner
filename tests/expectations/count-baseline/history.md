@@ -784,3 +784,27 @@ first.
 No `absentOn`: both pages and both tables exist on every supported leg, and the bundle already
 declares `"application": "27.0.0.0"`. The 26 is measured from a run of the bundle, not counted
 off the source.
+
+## +6 runner-extras tests: `permission-set-assignment` (#3039)
+
+`tests/runner-extras/permission-set-assignment` is new, so `runner-extras` goes from 55 app
+groups / 306 tests to 56 / 312. No existing group's count moves. (Rebased onto the
+`microsoft-dependencies` 24 -> 26 bump above, which is why the starting total is 306 and not
+the 304 measured before that bump landed.)
+
+The suite is the RED -> GREEN for #3039: BC's
+`PermissionManagement.IsPermissionSetAssignedAsync` ends in
+`session.Permissions.HasRole(...)`, `NavSession.Permissions` is null on the skeleton session,
+and every AL path through `NavUserAccountHelper.IsPermissionSetAssigned` therefore raised
+`NavNCLDotNetInvokeException` on a valid `User.Modify`. Five of the six tests fail without the
+fix; the sixth is the `asserterror` control that must keep passing either way, because it
+proves codeunit 9002's subscriber still runs rather than having been bypassed.
+
+No `absentOn`: the bundle declares `"platform": "27.0.0.0"` / `"application": "27.0.0.0"` and
+uses only codeunit 152 `"User Permissions"` and table 2000000053 `"Access Control"`, both of
+which exist across the supported range. That was not validated locally — a self-built runner
+is compiled against Ncl 28.x and cannot run 27.x artifacts — so the 27.0/27.3/27.5 legs are
+what adjudicate it. If any of them discovers a different number, the exit-4 message names it
+and the line gains an `absentOn`.
+
+Written by agent impl-13 (automated implementation agent).
