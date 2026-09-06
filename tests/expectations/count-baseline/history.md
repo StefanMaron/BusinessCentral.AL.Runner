@@ -993,3 +993,46 @@ pin, attributing four more to corpus #199 and one to #196; those were measured b
 2689, but it was made against a different `main` and was re-run rather than copied.
 
 Written by agent impl-4 (automated implementation agent).
+
+## runner-extras 330 → 335 — `user-table-baseapp-subscriber` (#2381)
+
++5 tests in one new `tests/runner-extras/user-table-baseapp-subscriber` suite (id range
+65640-65649). No corpus pin moves and no other group changes; `al-language` (2689),
+`appGroups` (1), `al-language-internals-fixture` (0) and `al-language-onprem` (19) are
+untouched.
+
+**Why the entry is here at all.** The README says per-bump rationale goes in this file and
+never as a prose line in `test-count-baseline.json`. The first version of this PR bumped the
+JSON with no entry here at all, which is the thing that rule exists to stop.
+
+**330 is measured off `main`**, not carried over — it is the sum of the 58 group entries in
+`main`'s own `test-count-baseline.json`, re-read after this branch was rebased onto `d6776eeb`,
+and 335 is the sum of the 59 entries here. `runner-extras` moved five times while this PR was
+open, so every number computed earlier was already stale: earlier drafts of this entry said
+`304 -> 309`, `314 -> 319` and `332 -> 337`. The last of those was stale within eight minutes,
+because #3265 landed and took `object-system-table` from 5 to 3. Re-measure both ends from the
+file rather than copying either number forward:
+
+```
+python3 -c "import json;g=json.load(open('tests/expectations/count-baseline/test-count-baseline.json'))['suites']['runner-extras']['groups'];print(len(g),sum(v['tests'] for v in g.values()))"
+```
+
+**This suite is the AL-level regression coverage for #2979, not a new fix.** #2381 reported that
+Base App table-trigger subscribers on the User system table never fire; the report was accurate,
+and commit `8ef72629` (#2979) fixed it by observing the `ValueTask` a precompiled async
+subscriber returns. #2979 shipped one C# unit test and a known-gap deletion — nothing exercised
+the fixed path from AL against a real Microsoft subscriber. Two of the five tests raise through
+Base Application codeunit 418 "User Management"; the other three are controls (a supported
+licence type must still insert and modify cleanly, and SaaS is asserted separately as the
+precondition both raising tests rest on), so a build that refused every User write cannot pass
+this suite.
+
+**Interaction with #3224, now settled.** That PR added `user-system-table-triggers` to the same
+file and merged first; #3257, #3180, #3101 and #3265 also moved `runner-extras`, and the corpus
+count reached 2689 via #3101's bump to 2681 and #3057's pin move to `7394c15f`. This branch is rebased onto all of it. The conflict was the
+add/add of two adjacent lines predicted here, resolved by keeping both keys in sorted order —
+`user-system-table-triggers` (10) and `user-table-baseapp-subscriber` (5) are distinct keys and
+the file carries no total, so neither side replaces the other. #3265's reduction of
+`object-system-table` from 5 to 3 is a separate line and merged without a conflict at all.
+
+Written by agent impl-24 (automated implementation agent).

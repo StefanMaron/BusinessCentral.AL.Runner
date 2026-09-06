@@ -1,13 +1,36 @@
 // Issue #2381 — a subscriber declared by a PRECOMPILED dependency must reach the User system table.
 //
-// #2381 reported that "Base App table-trigger event subscribers on the User system table never
-// fire". Measured on main at 718a9384 (BC 28.1.49838.53910) that is not what happens: Base
-// Application codeunit 418 "User Management" raises from both arms, and two of the three
-// Microsoft tests the issue named -- Codeunit139460's CannotAddNewUserOfLimitedLicenseTypeInSaaS
-// and CannotModifyUserLicenseTypeToLimitedInSaaS -- pass. This suite exists so that stays true:
-// the discovery scan in AlRunner/Patches/EventSubscriberPatches.cs reads the Base Application's
-// R2R chunks through AssemblyTypeIndex and injects what it finds onto the User metatable, and
-// nothing else in the repository fails if that stops happening for a precompiled dependency.
+// WHAT #2381 REPORTED, AND WHAT HAPPENED TO IT
+//   #2381 reported on 2026-09-02 that "Base App table-trigger event subscribers on the User
+//   system table never fire", so SaaS licence-type validation was silently skipped. That report
+//   was ACCURATE. It was fixed on 2026-09-06 by #2979 (commit 8ef72629, "observe a precompiled
+//   table-event subscriber's ValueTask so its error reaches AL") — before this suite was written,
+//   which is why the subscribers fire when measured today.
+//
+//   #2979 names the mechanism exactly: EventSubscriberPatches.BuildSubscription passes
+//   `memberId: 0`, so every injected table-event subscription took BC's branch that calls
+//   SubscriberMethodInfo.Invoke and DISCARDS the result, rather than the awaited
+//   InvokeAsync(memberId, ...) branch. That is harmless for a subscriber the runner compiled
+//   itself — the AL-to-C# emitter emits those as synchronous void methods — but Microsoft's AL
+//   compiler emits Base/System Application subscribers as `async ValueTask` state machines, and
+//   an exception thrown inside one is captured onto the returned ValueTask. Discarding it
+//   discarded the error, so the write the subscriber existed to refuse went through and a test
+//   real BC would have failed passed. That is precisely #2381's symptom.
+//
+//   An earlier note by this agent on #2381 claimed the report's premise was wrong. It was not,
+//   and that note has been corrected. This suite is NOT a refutation of #2381 — it is the
+//   AL-level regression coverage #2979 shipped without. #2979 landed one C# unit test
+//   (ObservingSubscriberMethodInfoTests) and a known-gap deletion; nothing in the repository
+//   exercised the fixed path from AL, against a real Microsoft subscriber, until this suite.
+//
+// WHAT THE RED BASELINE ACTUALLY PROVES, AND WHAT IT DOES NOT
+//   The RED for this suite is produced by disabling the 64-hex-named chunk scan that finds
+//   precompiled [NavEventSubscriber] methods. Be precise about what that measures: it kills
+//   discovery for EVERY precompiled subscriber on EVERY table, not just the User one. So it
+//   demonstrates that these tests depend on precompiled-subscriber discovery, and it would
+//   certainly catch a regression in the narrower "injects onto the User metatable" claim this
+//   header makes — but by inference, not by measurement. A RED scoped to the User table alone
+//   would be the stronger instrument; it is not available without a seam that does not exist.
 //
 // The AL under test is Microsoft's, unmodified:
 //
