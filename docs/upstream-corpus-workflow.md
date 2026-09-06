@@ -31,19 +31,23 @@ corpus.
 
 The corpus repo's own CI is also a real service tier, and is the stronger
 check of the two. `.github/workflows/ci.yml` there boots a real BC sandbox on
-Linux (via `StefanMaron/MsDyn365Bc.On.Linux`) and runs the suite on **every BC
-minor from 27.0 to 28.4**, `fail-fast: false` — sixteen legs, because the
-cloud app and the OnPrem app are built and run separately on each of the eight
-versions. So a green PR check upstream *is* the service-tier adjudication this
-rule demands. If you have no local container, opening the PR and letting CI
-run is a legitimate way to perform step 2 — not a way to skip it. Having no
+Linux (via `StefanMaron/MsDyn365Bc.On.Linux`) and runs the suite on **eight BC
+versions — 27.0, 27.3, 27.5, 28.0, 28.1, 28.2, 28.3 and 28.4**,
+`fail-fast: false`. Not every minor in that span: 27.1, 27.2 and 27.4 are not
+run. Sixteen legs, because the cloud app and the OnPrem app are built and run
+separately on each version; the **eight cloud legs are the required status
+contexts** on the corpus's `master`, and the eight OnPrem legs run alongside
+them without gating. So a green PR check upstream *is* the service-tier
+adjudication this rule demands. If you have no local container, opening the PR
+and letting CI run is a legitimate way to perform step 2 — not a way to skip
+it. Having no
 container is the normal case for agents in web/remote sessions and is fully
 handled by this workflow.
 
 ## Step 3 in full — why the orchestrator merges, not the authoring agent
 
 An impl agent opens the corpus PR and stops there. The orchestrator reviews
-it and merges once both BC legs are green. This split is deliberate — an
+it and merges once the corpus's eight required BC legs are green. This split is deliberate — an
 agent merging its own test means the same reasoning that wrote the test also
 clears it, which is this rule's original failure mode relocated from
 "unvalidated" to "unreviewed". Green CI proves the test *runs and passes
@@ -122,7 +126,9 @@ Windows tier, and a corpus result on that surface is a verdict again.
 1. **Anything whose only observable is client-side UI with no AL-visible
    consequence.** Microsoft's own `catch (NavBaseException)` inside `ShowForm`
    shows the error and force-closes the form rather than rethrowing, so AL is
-   never told. A corpus test can measure the *side effects* of that — whether
+   never told. That mechanism is read from BC's shipped IL, not measured on a
+   tier — necessarily, since being invisible to AL is the very thing that makes
+   it unadjudicable. A corpus test can measure the *side effects* of that — whether
    the target's `OnOpenPage` ran, whether a row was written — but never
    "a dialog was displayed". Codeunit 60285 is the worked example: it answers
    "did the page open" by making the page record its own opening, because the

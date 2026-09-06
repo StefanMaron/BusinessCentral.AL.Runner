@@ -32,6 +32,11 @@ A corpus test green on a real service tier beats, in this order, every one of:
 3. Microsoft's documentation,
 4. the name of a BC codeunit, or a comment naming one.
 
+**One qualifier on that ranking**, and it is not a footnote: the tier is patched. On a
+surface an unfaithful patch covers, a corpus result measures the patch, not BC — read
+"The tier is patched, so check before quoting it on a UI surface" below before resting a
+UI-side claim on a corpus result.
+
 ## The two incidents this rule is made of
 
 **#2144 — the container differential lost, and a self-inflicted failure got classified
