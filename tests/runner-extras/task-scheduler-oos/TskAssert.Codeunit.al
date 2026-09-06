@@ -41,4 +41,10 @@ codeunit 65600 "Tsk Assert"
             Error('Expected ''%1'' exactly once in the error text but found it %2 time(s): ''%3''',
                 Fragment, Occurrences, GetLastErrorText());
     end;
+
+    procedure AreEqualText(Expected: Text; Actual: Text; Msg: Text)
+    begin
+        if Expected <> Actual then
+            Error('Expected ''%1'' but got ''%2'': %3', Expected, Actual, Msg);
+    end;
 }

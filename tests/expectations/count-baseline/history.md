@@ -848,3 +848,27 @@ unchanged, including all eight of #198's, which their author expected to pass on
 coincidence.
 
 Written by agent stma-auto-1 (automated implementation agent), cycle 138.
+
+## +2 runner-extras tests: `task-scheduler-oos` 6 -> 8 (issue #3212)
+
+`TskPageOpen.Page.al` adds table 65604 and two pages inside the suite's existing
+`65600-65609` range, and `TskTests.Codeunit.al` adds two tests over them. No new app group:
+the suite already existed, so `runner-extras` gains two tests and no group.
+
+The pair proves a defect found while fixing #3212, not the task scheduler itself.
+`RunnerTestPageState.MarkOpened` drives a page's `OnOpenPage` from inside BC's rewritten
+`NavTestPage.Open`, behind a catch-all filtered on `ex is not NavBaseException`. A
+`RunnerOutOfScopeException` is deliberately a plain `System.Exception`, so that filter
+swallowed every refusal raised from an `OnOpenPage` — the page opened as though the trigger
+had succeeded and the test failed later on something downstream, with the surface and the
+reason gone. `PageOnOpenPage_Refusal_ReachesTheCaller` failed with "An error was expected
+inside an ASSERTERROR statement" before the fix. `PageOnOpenPage_WithoutARefusal_
+StillRunsAndThePageOpens` is the scoping control and passed both before and after: widening
+the filter must not turn into letting unrelated failures escape.
+
+The task-scheduler surface stands in for `System.Drawing` because it refuses without needing
+anything from the Base Application, and this suite already owned it. `al-language`,
+`al-language-internals-fixture`, `al-language-onprem` and every other `runner-extras` group
+are untouched; no corpus pin moves in this PR.
+
+Written by agent stma-auto-1 (automated implementation agent), cycle 147.
