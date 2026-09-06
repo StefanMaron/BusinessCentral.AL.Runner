@@ -72,6 +72,38 @@
 //   `LiveNavTestPart.ApplyLink` already applies a part's SubPageLink, and the CONST quoting rule
 //   is literally shared with it (`LiveNavTestPart.ConstFilterExpression`).
 //
+// NO HANDLER BOUND — THE TARGET STILL OPENS (issue #2975)
+//   The AL routes that open a page (`Page.Run` / `Page.RunModal`) are REFUSED when the test
+//   binds nothing to answer them: NavTestExecution.TestHandleForm asks FindHandler with its
+//   `throwIfNotFound = true` default and the resulting NavNCLMissingUIHandlerException
+//   ("Unhandled UI: Page N") surfaces to AL while NavForm.RunAsync is still on its call stack.
+//   Company.RegisterForm runs only AFTER that lookup succeeds, so on the AL route a
+//   handler-less page is never registered, never opens, and never raises its OnOpenPage.
+//
+//   The RunObject route does NOT behave that way, and eight real service tiers say so — corpus
+//   codeunit 60285 "TPARONH Tests", green on 27.0, 27.3, 27.5 and 28.0-28.4. Microsoft's
+//   client-services layer builds, registers and OPENS the target first and only then asks
+//   NavTestExecution.ShowForm for a handler, so the target's OnOpenPage has already run by the
+//   time BC finds nobody bound; and the throw is then off AL's call stack, where
+//   NavOpenTaskPageAction.ShowForm (Microsoft.Dynamics.Nav.Client.UI.dll, 28.1) catches it:
+//
+//       catch (NavTestBaseException) { throw; }                     // reaches AL
+//       catch (NavBaseException ex3) {                              // does NOT reach AL
+//           if (!ex3.SuppressMessage) ...MessageHelper.ShowError(ex3, showModal: true);
+//           childForm.Close(FormClose.ForceClose);
+//       }
+//
+//   NavNCLMissingUIHandlerException derives from NavNCLException -> NavException ->
+//   NavBaseException and is NOT a NavTestBaseException, so it lands in the second arm: the
+//   error is shown to a user who is not there, the form is force-closed, and Invoke() returns
+//   normally. The two corpus arms measure exactly both halves — the target's OnOpenPage row is
+//   written, on the HOST's current row (RunPageOnRec), and AL sees no error.
+//
+//   So the non-modal RunObject route below asks BC's own FindHandler whether anything is bound
+//   BEFORE running the page, and when nothing is, opens the target through BC's own
+//   NavForm.OpenForm and force-closes it the way Microsoft's catch does. Nothing about handler
+//   matching, trapping or OnOpenPage is reimplemented — see RunTargetPage.
+//
 // WHAT IS STILL REFUSED, LOUDLY
 //   RunObject targeting a Report / Codeunit / XmlPort / Query. It raises with a
 //   `not-yet-implemented` reason anchor, which `docs/expectations.md` lets a manifest track as
@@ -80,7 +112,9 @@
 //   answer, which is what `loud-failures.md` exists to prevent. The same applies to a link whose
 //   fields this run cannot resolve to numbers: a link that cannot be applied is refused by name,
 //   never dropped, because a dropped link shows the target's WHOLE table.
+using System.Reflection;
 using Microsoft.Dynamics.Nav.Runtime;
+using Microsoft.Dynamics.Nav.Types.Exceptions;
 using MetaTypes = Microsoft.Dynamics.Nav.Types.Metadata;
 
 namespace AlRunner.Patches;
@@ -180,6 +214,15 @@ internal sealed partial class RunnerPageInstance
         {
             // isInLookupTrigger / isLookup both false — the shape the AL compiler emits for a
             // plain `Page.RunModal(id, Rec)`, and the one RunnerModalDispatch already serves.
+            //
+            // Deliberately NOT given the unattended-open treatment below. BC parts here too —
+            // NavTestExecution.ShowDialog asks FindHandler with throwIfNotFound: FALSE and then
+            // raises NavTestPageInvokedWithoutHandlerException, which IS a NavTestBaseException
+            // and therefore IS rethrown into AL by NavOpenTaskPageAction.ShowForm's first catch
+            // arm. So a dialog target with nothing bound raises in real BC, where a non-modal
+            // one does not. No service tier has measured that arm — corpus codeunit 60285's
+            // targets are both PageType = Card — so the modal route keeps refusing loudly
+            // rather than being changed on a reading. Tracked by issue #3223.
             if (record != null)
                 NavForm.RunModalAsync(false, false, pageId, record).AsTask().GetAwaiter().GetResult();
             else
@@ -187,10 +230,120 @@ internal sealed partial class RunnerPageInstance
             return;
         }
 
-        if (record != null)
-            NavForm.RunAsync(pageId, record).AsTask().GetAwaiter().GetResult();
-        else
-            NavForm.RunAsync(pageId).AsTask().GetAwaiter().GetResult();
+        // BC's own static NavForm.RunAsync(formId, record, fieldNo), spelled out so the form
+        // instance is in reach: it is what the unattended open below has to register and open,
+        // and it must be the SAME instance NavForm.RunAsync's own preamble positioned with
+        // SetSourceTable(record, clone: true, ...). Creating a second one would run the page's
+        // construction twice and lose the host's row.
+        var session = NavCurrentThread.Session;
+        using var handle = new NavFormHandle(
+            session,
+            NavGlobal.NCLMetadata.GetMetaFormById(pageId, requireCompiled: true).CreateObjectInstance(record));
+        var form = handle.Target;
+
+        // Ask BC, before running anything, whether this page is answered at all — the same
+        // question TestHandleForm asks and in the same order (a TestPage.Trap() short-circuits
+        // the handler lookup there, so it must short-circuit here too, or the probe would fire
+        // FindHandler's RemoveHandlerName side effect that BC would not have fired).
+        var attended = HasTrapForPage(session, form) || FindPageHandler(session, form) != null;
+
+        try
+        {
+            form.RunAsync(record, 0).AsTask().GetAwaiter().GetResult();
+        }
+        catch (NavNCLMissingUIHandlerException) when (!attended)
+        {
+            // Guaranteed to be TestHandleForm's own lookup and nothing deeper: `attended` is
+            // false, so FindHandler cannot have returned a handler and not one statement of the
+            // target page has run yet. The exception filter is what makes that airtight — an
+            // unqualified catch here would also swallow an unhandled-UI refusal raised from
+            // INSIDE a handled page.
+            OpenTargetUnattended(session, form);
+        }
+    }
+
+    /// <summary>
+    /// Open <paramref name="form"/> with nobody bound to answer it, then force-close it — the
+    /// shape Microsoft's own <c>NavOpenTaskPageAction.ShowForm</c> is left in when its
+    /// <c>catch (NavBaseException)</c> arm fires (see this file's header). Registering first is
+    /// what BC's client layer does before it looks a handler up, and <c>NavForm.OpenForm</c> is
+    /// the only thing that raises <c>OnOpenPage</c>.
+    ///
+    /// <para><c>ForceClose</c>, not <c>CloseForm</c>, and deliberately: Microsoft closes with
+    /// <c>FormClose.ForceClose</c> on this path, and <c>NavForm.ForceClose</c> unregisters
+    /// without raising <c>OnClosePage</c> / <c>OnQueryClosePage</c>. Nothing has measured
+    /// whether real BC raises those here, so this raises neither rather than inventing one.</para>
+    ///
+    /// <para>An <c>Error()</c> raised by the target's own OnOpenPage is NOT absorbed — it is AL,
+    /// and a real test failure. Only BC's missing-handler refusal is, and only by the caller.</para>
+    /// </summary>
+    private static void OpenTargetUnattended(NavSession session, NavForm form)
+    {
+        session.Company.RegisterForm(form);
+        try
+        {
+            form.OpenForm();
+        }
+        finally
+        {
+            if (form.IsOpen) form.ForceClose();
+            else session.Company.UnregisterForm(form);
+        }
+    }
+
+    /// <summary>
+    /// Whether the test has an outstanding <c>TestPage.Trap()</c> for this form's page, asked
+    /// through BC's own <c>NavTestExecution.HasTrap</c> — the same question, on the same state,
+    /// that <see cref="RunnerModalDispatch"/> asks on the dispatch side.
+    /// </summary>
+    private static bool HasTrapForPage(NavSession session, NavForm form)
+    {
+        var hasTrap = session.TestExecution.GetType().GetMethod(
+            "HasTrap",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+            binder: null, types: new[] { typeof(int) }, modifiers: null)
+            ?? throw new InvalidOperationException(
+                "NavTestExecution.HasTrap(int) not found — Ncl shape changed; do not commit");
+
+        return hasTrap.Invoke(session.TestExecution, new object?[] { form.ObjectId.ObjectNumber }) is true;
+    }
+
+    /// <summary>
+    /// The <c>[PageHandler]</c> BC would dispatch this form to, or null when the test bound
+    /// none — BC's OWN <c>NavTestExecution.FindHandler</c>, called with
+    /// <c>throwIfNotFound: false</c> so asking does not raise. Nothing about handler matching is
+    /// reimplemented: the <c>[HandlerFunctions]</c> split, the handler-type check and the
+    /// <c>[NavObjectId]</c> match against THIS page all stay Microsoft's.
+    ///
+    /// <para>Asking is idempotent. The only state <c>FindHandler</c> mutates on a hit is
+    /// <c>executingHandlers</c>, through <c>RemoveHandlerName</c>, which removes the first
+    /// occurrence of the name and does nothing when the name is already gone — so the lookup
+    /// TestHandleForm makes moments later leaves the run in exactly the state one lookup
+    /// would have.</para>
+    /// </summary>
+    private static MethodInfo? FindPageHandler(NavSession session, NavForm form)
+    {
+        var testExecution = session.TestExecution;
+        var findHandler = testExecution.GetType().GetMethod(
+            "FindHandler",
+            BindingFlags.NonPublic | BindingFlags.Instance,
+            binder: null,
+            types: new[] { typeof(NavHandlerType), typeof(NavApplicationObjectBase), typeof(bool), typeof(string) },
+            modifiers: null)
+            ?? throw new InvalidOperationException(
+                "NavTestExecution.FindHandler(NavHandlerType, NavApplicationObjectBase, bool, string) "
+                + "not found — Ncl shape changed; do not commit");
+
+        try
+        {
+            return findHandler.Invoke(
+                testExecution,
+                new object?[] { NavHandlerType.Page, form, false, null }) as MethodInfo;
+        }
+        catch (TargetInvocationException ex)
+        {
+            throw ex.GetBaseException();
+        }
     }
 
     /// <summary>
