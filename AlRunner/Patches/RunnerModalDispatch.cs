@@ -79,7 +79,14 @@ public static class RunnerModalDispatch
             // NavForm.CloseForm raises OnClosePage and nothing else, so a page doing its work
             // in OnQueryClosePage — the ordinary "Manage X" shape, where the trigger writes a
             // caller-supplied record copy back on OK — lost that write silently. See #3050.
-            if (opened && !TryQueryCloseForm(form!, result)) result = null;
+            // Gated on BC's OWN IsOpen, not only the runner-local `opened` captured above.
+            // A page can close ITSELF while the handler is running -- CurrPage.Close() from an
+            // action's OnAction -- and that path raises both close triggers at the moment the
+            // AL asks for them. `opened` cannot see that; IsOpen can. Running this step anyway
+            // fired every close trigger a second time, so a page persisting from
+            // OnQueryClosePage wrote twice (issue #3091). Real BC runs each exactly once:
+            // corpus codeunit 60296 "MQC Self Close Tests".
+            if (opened && IsFormOpen(form) && !TryQueryCloseForm(form!, result)) result = null;
         }
         finally
         {
@@ -89,7 +96,7 @@ public static class RunnerModalDispatch
             // FormResult.None stays deliberate: passing the handler's real result would also
             // turn on CloseFormAsync's StoreSaveValues(..., persistData: true), a second
             // behaviour change nothing here has measured.
-            if (opened) TryCloseForm(form!, result: null);
+            if (opened && IsFormOpen(form)) TryCloseForm(form!, result: null);
         }
 
         // The handler's outcome (OK/Cancel) is what the AL that called RunModal receives.
@@ -150,11 +157,12 @@ public static class RunnerModalDispatch
             // real BC 28.4.53241.0 (corpus "MQC Tests", codeunit 60276, arm g), a
             // [PageHandler]-driven Page.Run raises OnQueryClosePage with CloseAction OK and
             // then OnClosePage. A trapped page is the test's to close, so it is left alone.
-            if (opened && !trapped) TryQueryCloseForm(form!, NonModalCloseResult(form!));
+            if (opened && !trapped && IsFormOpen(form))
+                TryQueryCloseForm(form!, NonModalCloseResult(form!));
         }
         finally
         {
-            if (opened && !trapped) TryCloseForm(form!, result: null);
+            if (opened && !trapped && IsFormOpen(form)) TryCloseForm(form!, result: null);
         }
     }
 
@@ -244,6 +252,35 @@ public static class RunnerModalDispatch
         if (openForm == null) return false;
         Invoke(openForm, form, Array.Empty<object?>());
         return true;
+    }
+
+    /// <summary>
+    /// Whether BC still considers this form open — <c>NavForm.IsOpen</c>, the state BC's own
+    /// <c>NavForm.Close()</c> guards on. Asked instead of trusting the runner-local flag
+    /// captured before the handler ran, because AL can close the page from under it.
+    ///
+    /// A form whose IsOpen cannot be read answers TRUE, deliberately: that preserves the
+    /// behaviour this gate was added to, so an unreadable property cannot silently turn the
+    /// close sequence off. Doing the close twice is the bug being fixed; not doing it at all
+    /// would be the bug #3050 fixed, and this is not the place to reintroduce it.
+    /// </summary>
+    private static bool IsFormOpen(object? form)
+    {
+        if (form == null) return false;
+        try
+        {
+            var isOpen = form.GetType().GetProperty("IsOpen",
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            return isOpen?.GetValue(form) is not false;
+        }
+        catch (Exception)
+        {
+            // One caller is inside a finally, where an exception raised here would REPLACE
+            // whatever the handler was already failing with — the test would report a
+            // reflection error instead of its own. Answer "open", the same way an unreadable
+            // property does above, and let the original failure through.
+            return true;
+        }
     }
 
     /// <summary>

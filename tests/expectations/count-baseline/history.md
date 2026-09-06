@@ -732,3 +732,38 @@ green. That is the drift complaint which retired codeunit 60455's five entries t
 and it settles the caveat this file recorded for them.
 
 Written by agent stma-auto-1 (automated implementation agent).
+
+## 2661 -> 2665 — corpus pin 3268bf1b (#191) -> 861a5662 (#193)
+
+Folded into the fix PR for #3091, which is what the bump exists to enable: corpus #193 added
+`codeunit 60296 "MQC Self Close Tests"` (4 tests), the RED -> GREEN for a page that closes
+ITSELF -- `CurrPage.Close()` from its own action's OnAction, under a `[ModalPageHandler]`. Those
+four are the entire delta. The corpus commit is the direct child of `3268bf1b`, the pin the
+section above deliberately stopped at, so nothing else rides along and there is no collateral
+to classify.
+
++4 tests, measured from an actual run against the new pin, not counted off the source.
+appGroups is unchanged at 1; `runner-extras`, `al-language-internals-fixture` (0) and
+`al-language-onprem` (19) are `main`'s values, untouched.
+
+**No new known-gap entries, and the earlier revision of this branch was wrong to add two files
+of them.** At head `b1215021` the branch was based on a `main` whose pin was still `83b54a91`,
+so bumping to `861a5662` pulled in #185, #189 and #191 as collateral and eight of their tests
+failed. Both families were declared here. Then `main` moved: PR #3079 merged as `1aef9e75` and
+brought exactly that collateral with it, correctly classified. What was left on this branch was
+worse than redundant --
+
+- `known-gaps-runobject-no-handler.json` declared the same two `TPARONH Tests` methods as
+  `main`'s own `known-gaps-testpage-runobject-no-handler.json`, and
+  `AlRunner/Infrastructure/ExpectationManifest.cs:120-131` throws
+  `Expectation for {CodeunitName}.{Method} declared in multiple files` — a hard load failure on
+  every leg, before a single test runs. Not drift; the run would not have started.
+- `known-gaps-calcfields-field-class.json` declared six tests that #3079's fix makes pass, and
+  linked **#3012**, which that same PR closed. An entry pointing at a closed issue is precisely
+  the failure this file records having avoided with #2931 one bump earlier.
+
+Both files are deleted. `main`'s classification stands, and the only thing this bump adds to the
+manifest is nothing at all.
+
+Written by agent fbk-1 (automated implementation agent).
+

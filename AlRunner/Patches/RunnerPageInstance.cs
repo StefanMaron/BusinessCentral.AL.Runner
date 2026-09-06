@@ -112,6 +112,31 @@ internal sealed partial class RunnerPageInstance
 
     internal object Form => _form;
 
+    private static readonly object Sentinel = new();
+
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<object, object>
+        ClosedForms = new();
+
+    /// <summary>
+    /// Whether AL has already closed this form through <see cref="ForceCloseForm"/> — the
+    /// CurrPage.Close() path. Weak-keyed on the form so a closed page cannot keep itself
+    /// alive, and false for every form nobody closed that way, including one that was never
+    /// opened.
+    /// </summary>
+    internal static bool WasClosedFromAl(object? form)
+        => form != null && ClosedForms.TryGetValue(form, out _);
+
+    /// <summary>
+    /// Record a form as closed-from-AL without going through <see cref="ForceCloseForm"/>.
+    /// Exists so the bookkeeping can be tested for the TRUE case too — reaching it through
+    /// ForceCloseForm would need a live NavForm, and a set of tests that only ever assert
+    /// false would pass just as well against a <c>WasClosedFromAl =&gt; false</c> stub.
+    /// </summary>
+    internal static void MarkClosedFromAlForTests(object form) => ClosedForms.AddOrUpdate(form, Sentinel);
+
+    /// <summary>Counterpart of <see cref="MarkClosedFromAlForTests"/>, for the reopen case.</summary>
+    internal static void ClearClosedFromAlForTests(object form) => ClosedForms.Remove(form);
+
     /// <summary>
     /// The record this instance is actually bound to — null for a record-less page. Needed
     /// by callers of <see cref="AdoptFromHost"/>: when adoption reuses an ALREADY-bound
@@ -1365,6 +1390,13 @@ internal sealed partial class RunnerPageInstance
         if (_hasOpenedBefore) ResetGlobalsForReopen();
         _hasOpenedBefore = true;
 
+        // A reopen un-closes the page, and the mark has to go with it. RunnerPageInstance keeps
+        // the SAME _form across close and reopen — that is what _hasOpenedBefore and
+        // ResetGlobalsForReopen exist for (#2658) — so without this a page closed once with
+        // CurrPage.Close() would have GetBuiltInAction refusing "The TestPage is not open."
+        // forever, on a page BC considers open again.
+        ClosedForms.Remove(_form);
+
         // BEFORE the trigger, exactly where BC puts it: NavForm.OpenFormAsync runs
         // ApplySourceTableViewAndSavedValuesAsync() and only then RaiseOnOpenPageAsync().
         // A page's OnOpenPage is entitled to READ the SourceTableView's filters (Base
@@ -1511,6 +1543,53 @@ internal sealed partial class RunnerPageInstance
             return false;
         InvokeRecordTrigger("OnClosePage", Type.EmptyTypes, Array.Empty<object>());
         return true;
+    }
+
+    /// <summary>
+    /// Bring BC's own form state in line after this page has already been closed by the
+    /// runner's trigger-raising path, using BC's <c>NavForm.ForceClose()</c> — which
+    /// unregisters the form and clears <c>IsOpen</c> and, deliberately, raises nothing.
+    ///
+    /// It exists because there are two ways a modal page ends and they used to disagree about
+    /// whether the page was still open. <c>CurrPage.Close()</c> reaches BC's
+    /// <c>NavForm.Close()</c> → <c>NavTestExecution.ClosePage</c> → <c>ITestPage.Close()</c>,
+    /// which lands on <see cref="LiveNavTestPage.Close"/> and raises OnQueryClosePage and
+    /// OnClosePage itself — but never called <c>CloseForm</c>, so <c>IsOpen</c> stayed true and
+    /// the modal dispatch ran the whole sequence a second time when the handler returned. Both
+    /// triggers fired twice, and a page that persists from OnQueryClosePage wrote twice
+    /// (issue #3091).
+    ///
+    /// <c>ForceClose</c> rather than <c>CloseForm</c> is the point: the triggers have already
+    /// run exactly once, at the moment the AL asked for them, and <c>CloseForm</c> would raise
+    /// OnClosePage again. Real BC runs each once — corpus codeunit 60296 "MQC Self Close
+    /// Tests", measured on a service tier.
+    /// </summary>
+    internal void ForceCloseForm()
+    {
+        // Recorded BEFORE the call and keyed on the FORM, because that is the only object the
+        // two views of this page share: RunnerTestClientSession.GetPage builds a fresh
+        // LiveNavTestPage (and Adopt a fresh RunnerPageInstance) every time, so the instance
+        // the handler is holding is never the one that performed the close. A flag on either
+        // instance would be invisible to the other.
+        //
+        // Deliberately NOT read off NavForm.IsOpen: a page a test opened itself may have a form
+        // that was never opened at all, and "never opened" must stay distinguishable from
+        // "closed from AL" -- reading IsOpen for this refused four TRT Tests whose OpenNew() /
+        // OK().Invoke() flow is entirely legitimate.
+        ClosedForms.AddOrUpdate(_form, Sentinel);
+
+        // Loud, like ApplySourceTableView and SplitKey in this file. Returning quietly would
+        // leave the form MARKED but still IsOpen, which is precisely the double-close #3091
+        // fixes — reintroduced with no signal at all.
+        var forceClose = FindNavFormMethod("ForceClose", Type.EmptyTypes)
+            ?? throw new InvalidOperationException(
+                "NavForm.ForceClose not found on " + _form.GetType().FullName
+                + " — BC page shape changed");
+        try { forceClose.Invoke(_form, Array.Empty<object>()); }
+        catch (TargetInvocationException tie) when (tie.InnerException != null)
+        {
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw();
+        }
     }
 
     /// <summary>
