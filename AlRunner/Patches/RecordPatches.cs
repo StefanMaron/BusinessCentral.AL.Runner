@@ -868,7 +868,12 @@ public static partial class RecordPatches
         // seen it. This call materialises the whole window on first such read (and is a
         // ConditionalWeakTable miss for every other table). It lives inside the replacement body
         // rather than as a Cecil prepend because Cecil REPLACES this method's body outright.
-        EnsureDateStoreFullyMaterialised(self);
+        //
+        // #3044: the request goes with it, so a read whose "Period Start" filter is closed at
+        // both ends AND already materialised does not re-materialise the whole window behind a
+        // guard that had already narrowed it. Anything else — which is every FlowField shape
+        // #2988 measured — still gets the window.
+        EnsureDateStoreCoversProviderRequest(self, request);
 
         var rt = request.GetType();
         var companyToken   = (int)rt.GetProperty("CompanyToken")!.GetValue(request)!;

@@ -107,6 +107,30 @@ public sealed class DateVirtualTableLazyWindowTests
             // this cap it must still refuse by name rather than answer from fewer rows.
             Assert.Contains(
                 "PASS  Codeunit61631.Date_UnfilteredRead_StillDemandsTheWholeDocumentedWindow", stdout);
+
+            // #3044 — Record.IsEmpty() reaches DataAccess.ExistsAsync, whose guard materialises
+            // exactly what the request can select, and ExistsAsync then calls
+            // TempTableDataProvider.Exists, where the provider-level net materialised the whole
+            // 86,885-row window BEHIND it. Under this same 2,000-row cap the stacked pair does
+            // not merely cost more, it refuses: run against the pre-fix runner this line fails
+            // with "would add about 86,885 rows for 86,910 in all … (currently 25 rows in 1
+            // span(s), [1820-01-01..1820-01-07])". That is the RED, and it is a row count, not
+            // a duration.
+            Assert.Contains(
+                "PASS  Codeunit61631.Date_IsEmptyOnABoundedSpan_DoesNotMaterialiseTheWindow", stdout);
+            // The other direction: the fast path has to answer TRUE for a closed range that
+            // legitimately selects nothing, not just "not empty" whenever it skips the window.
+            Assert.Contains(
+                "PASS  Codeunit61631.Date_IsEmptyOnABoundedSpanThatSelectsNothing_ReturnsTrue", stdout);
+            // The two controls. An IsEmpty() naming no closed bound is still answered from the
+            // whole window, and a FlowField over Date — which reaches the provider without any
+            // DataAccess guard having seen it, the shape #2988's net exists for — still demands
+            // it too. Both must still refuse by name under the cap.
+            Assert.Contains(
+                "PASS  Codeunit61631.Date_UnboundedIsEmpty_StillDemandsTheWholeDocumentedWindow", stdout);
+            Assert.Contains(
+                "PASS  Codeunit61631.Date_FlowFieldOverDate_StillDemandsTheWholeDocumentedWindow", stdout);
+
             Assert.DoesNotContain("FAIL", stdout);
         }
         finally
