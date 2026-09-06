@@ -87,6 +87,14 @@ public sealed class CacheRootStartupFailureTests
         // The negative half: a guard that threw unconditionally would satisfy the test
         // above. It must also hand the value straight back, because Resolve composes on
         // the return value.
+        //
+        // Allowlisted in ScratchDirOwnershipGuardTests rather than routed through
+        // TestScratch, deliberately: RequireRooted is `Path.IsPathRooted(dir) ? dir :
+        // throw` and touches no filesystem, so this path is never created and there is
+        // nothing to own. Reserving it would CREATE the parent and drop a .owner sidecar
+        // for a directory that will never exist — litter, to satisfy a guard about leaks.
+        // The temp root is here only because it is conveniently absolute, which is the
+        // same reason AlRunnerPathsTests is on that allowlist.
         var abs = Path.Combine(Path.GetTempPath(), "al-runner-required-rooted");
         Assert.Equal(abs, CacheRoots.RequireRooted(abs, "al-out"));
     }
@@ -147,13 +155,84 @@ public sealed class CacheRootStartupFailureTests
                 "--no-cache",
                 "--expectations", emptyExpectations,
             },
-            env: new Dictionary<string, string> { [CacheRoots.NoCacheRootEnvVar] = "relcache" });
+            env: new Dictionary<string, string?> { [CacheRoots.NoCacheRootEnvVar] = "relcache" });
 
         Assert.Equal(2, exit);
         Assert.Contains(
             "AL_RUNNER_NO_CACHE_ROOT 'relcache' is not a usable directory path:",
             output, StringComparison.Ordinal);
         // The part that regressed: exit 134 with a stack trace, not a documented exit.
+        AssertNotAnUnhandledCrash(exit, output);
+    }
+
+    /// <summary>
+    /// The sibling of the test above, and the review follow-up to this PR's own first cut.
+    ///
+    /// <para>DisableForRun has TWO failure sites, not one. It ADOPTS
+    /// AL_RUNNER_NO_CACHE_ROOT when that variable is set (the test above), and otherwise
+    /// MINTS a root through ScratchDirs.Reserve — publishing it to the variable only after
+    /// the reserve succeeds. So a throw from the mint branch leaves the variable unset, and
+    /// the catch in Program.cs, which reads the variable back to name the offending value,
+    /// got null. Reusing the one wording for both sites then printed:</para>
+    ///
+    /// <code>AL_RUNNER_NO_CACHE_ROOT '' is not a usable directory path: Unable to find the specified file.</code>
+    ///
+    /// <para>naming a variable the user never set and quoting an empty value that was
+    /// nobody's input — an error whose stated cause did not happen, which sends the reader
+    /// to unset something already unset. Both directions are asserted: the honest message
+    /// is present, AND the misattributed one is absent. Without the second assertion this
+    /// would still pass if the code printed both.</para>
+    ///
+    /// <para>REACHING the mint branch's throw needs Path.GetFullPath to reject the minted
+    /// path. Reserve swallows IOException and UnauthorizedAccessException, so an unwritable
+    /// temp root is not enough — the GetFullPath on its first line is outside that catch and
+    /// is the only part that can throw. A RELATIVE TMPDIR makes the minted path relative
+    /// (measured on net8.0/Linux: TMPDIR=reltmp gives Path.GetTempPath() == "reltmp/"), and
+    /// the unlinked working directory this file's helper sets up makes getcwd(2) fail, so
+    /// GetFullPath of that relative path throws. Both halves are real process states.</para>
+    /// </summary>
+    [SkippableFact]
+    public void NoCache_WhenMintingItsOwnRootFails_BlamesTheMintAndNotAnUnsetEnvironmentVariable()
+    {
+        SkipUnlessLinux();
+        TestArtifacts.SkipIfMissing();
+
+        // Same scaffolding, and the same reason, as the test above (issue #3120).
+        var emptyExpectations = TestScratch.Dir("al-runner-mint-failure-expectations");
+        Directory.CreateDirectory(emptyExpectations);
+
+        var (exit, output) = RunFromUnlinkedWorkingDirectory(
+            new[]
+            {
+                Path.Combine(RepoRoot, "AlRunner.Tests", "Fixtures", "RecordTriggerXRec"),
+                "--no-cache",
+                "--expectations", emptyExpectations,
+            },
+            env: new Dictionary<string, string?>
+            {
+                // Unset, so DisableForRun takes the MINT branch rather than the adopt one.
+                [CacheRoots.NoCacheRootEnvVar] = null,
+                // Relative, so the path it mints is relative and GetFullPath rejects it
+                // against the unlinked cwd.
+                ["TMPDIR"] = "reltmp",
+            });
+
+        Assert.Equal(2, exit);
+
+        // Positive: the message names what actually failed — the runner's own mint, under
+        // the directory it tried to mint in — and offers the remedy that applies.
+        Assert.Contains(
+            "al-runner could not reserve a throwaway --no-cache root under 'reltmp/':",
+            output, StringComparison.Ordinal);
+        Assert.Contains(
+            "Set AL_RUNNER_NO_CACHE_ROOT to a writable absolute directory",
+            output, StringComparison.Ordinal);
+
+        // Negative, and the whole point: it must NOT blame the variable that is unset.
+        Assert.DoesNotContain(
+            "AL_RUNNER_NO_CACHE_ROOT '' is not a usable directory path",
+            output, StringComparison.Ordinal);
+
         AssertNotAnUnhandledCrash(exit, output);
     }
 
@@ -249,7 +328,7 @@ public sealed class CacheRootStartupFailureTests
     /// that makes Path.GetFullPath reject a value that can actually reach the runner.
     /// </summary>
     private static (int Exit, string Output) RunFromUnlinkedWorkingDirectory(
-        string[] runnerArgs, IDictionary<string, string>? env)
+        string[] runnerArgs, IDictionary<string, string?>? env)
     {
         var doomed = Path.Combine(TestScratch.Dir("al-runner-unlinked-cwd"), "doomed");
         Directory.CreateDirectory(doomed);
@@ -269,7 +348,14 @@ public sealed class CacheRootStartupFailureTests
         };
         psi.ArgumentList.Add("-c");
         psi.ArgumentList.Add(script.ToString());
-        if (env != null) foreach (var kv in env) psi.Environment[kv.Key] = kv.Value;
+        // A null VALUE removes the variable, so a test can assert on the branch taken when
+        // something is UNSET without depending on the ambient environment not having it.
+        if (env != null)
+            foreach (var kv in env)
+            {
+                if (kv.Value == null) psi.Environment.Remove(kv.Key);
+                else psi.Environment[kv.Key] = kv.Value;
+            }
         return Capture(psi);
     }
 

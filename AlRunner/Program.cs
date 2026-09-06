@@ -1415,9 +1415,25 @@ catch (Exception ex)
     var badRoot = noCacheRequested
         ? Environment.GetEnvironmentVariable(AlRunner.Infrastructure.CacheRoots.NoCacheRootEnvVar)
         : cacheRootOverride;
-    Console.Error.WriteLine(AlRunner.Infrastructure.CacheRoots.BuildUnusableCacheRootMessage(
-        noCacheRequested ? AlRunner.Infrastructure.CacheRoots.NoCacheRootEnvVar : "--cache",
-        badRoot ?? "", ex.Message));
+
+    // …but only ONE of DisableForRun's two branches has a value to name. It adopts
+    // AL_RUNNER_NO_CACHE_ROOT when that is set, and otherwise MINTS a root through
+    // ScratchDirs.Reserve, publishing it to the variable only after that succeeds — so a
+    // throw from the mint branch leaves the variable unset and the read-back above
+    // returns null. Attributing that to `AL_RUNNER_NO_CACHE_ROOT ''` blames an input the
+    // user never gave and points them at a variable that is already unset, which is worse
+    // than saying nothing. Narrow the attribution to what is actually known instead.
+    //
+    // The `--cache` arm needs no such split: SetOverride's null/empty passthrough cannot
+    // throw, so reaching this catch with !noCacheRequested means cacheRootOverride held a
+    // real value the user typed.
+    Console.Error.WriteLine(
+        noCacheRequested && string.IsNullOrEmpty(badRoot)
+            ? AlRunner.Infrastructure.CacheRoots.BuildUnreservableThrowawayRootMessage(
+                AlRunner.Infrastructure.CacheRoots.ThrowawayRootParent, ex.Message)
+            : AlRunner.Infrastructure.CacheRoots.BuildUnusableCacheRootMessage(
+                noCacheRequested ? AlRunner.Infrastructure.CacheRoots.NoCacheRootEnvVar : "--cache",
+                badRoot ?? "", ex.Message));
     return 2;
 }
 // #2041/#2066: deferred — see `deferredStartupLines`' declaration above. This generation

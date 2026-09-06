@@ -162,7 +162,7 @@ public static class CacheRoots
             // (#2706) so a run killed before CleanupThrowawayRoot fires is reclaimed by the
             // next runner start instead of leaking a full cache per killed --no-cache run.
             root = Path.GetFullPath(ScratchDirs.Reserve(
-                Path.Combine(Path.GetTempPath(), "al-runner-no-cache-" + Guid.NewGuid().ToString("N"))));
+                Path.Combine(ThrowawayRootParent, "al-runner-no-cache-" + Guid.NewGuid().ToString("N"))));
             // Publish the ROOTED form, so a re-exec'd child inherits an absolute path
             // even if this generation was handed a relative one (#3084).
             Environment.SetEnvironmentVariable(NoCacheRootEnvVar, root);
@@ -253,6 +253,37 @@ public static class CacheRoots
         => Path.IsPathRooted(dir)
             ? dir
             : throw new InvalidOperationException(BuildUnrootedCacheRootMessage(dir, name));
+
+    /// <summary>
+    /// The directory <see cref="DisableForRun"/> mints its throwaway root under when
+    /// <see cref="NoCacheRootEnvVar"/> is unset. A property rather than a second inline
+    /// <c>Path.GetTempPath()</c> so the error path below names the directory the mint
+    /// actually failed under, instead of a second copy of the expression that could drift
+    /// from it — the same "two code paths, one invariant" hygiene the rest of this class
+    /// is about.
+    /// </summary>
+    internal static string ThrowawayRootParent => Path.GetTempPath();
+
+    /// <summary>
+    /// The diagnostic for the OTHER way <see cref="DisableForRun"/> can fail: the branch
+    /// that mints a throwaway root itself, reached only when <see cref="NoCacheRootEnvVar"/>
+    /// is unset.
+    ///
+    /// <para>Separate from <see cref="BuildUnusableCacheRootMessage"/> because that one
+    /// names a SOURCE and a VALUE, and this branch has neither — nothing supplied a path,
+    /// the runner chose one. #3111's first cut reused it anyway and reported
+    /// <c>AL_RUNNER_NO_CACHE_ROOT '' is not a usable directory path: …</c>, naming a
+    /// variable the user never set and quoting an empty value that was never anybody's
+    /// input. An error that names a cause which did not happen is worse than a generic
+    /// one: it sends the reader to unset a variable that is already unset.</para>
+    /// </summary>
+    /// <param name="parent">The directory the mint was attempted under, normally
+    /// <see cref="ThrowawayRootParent"/>.</param>
+    /// <param name="detail">The underlying failure, normally the exception's message.</param>
+    internal static string BuildUnreservableThrowawayRootMessage(string parent, string detail)
+        => $"al-runner could not reserve a throwaway --no-cache root under '{parent}': " +
+           $"{detail}. Set {NoCacheRootEnvVar} to a writable absolute directory, or drop " +
+           $"--no-cache to use the normal cache root.";
 
     /// <summary>
     /// One wording for "this cache root could not even be turned into a usable path", shared
