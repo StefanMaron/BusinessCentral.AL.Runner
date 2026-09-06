@@ -284,12 +284,16 @@ public class DependencyPageMetadataXmlTests
             {
               "Id": 88123520,
               "Name": "DPX Host Table",
-              "Fields": [ { "Id": 1, "Name": "Host Link Field" } ]
+              "Fields": [ { "Id": 1, "Name": "Host Link Field" }, { "Id": 2, "Name": "Chargeable Filter" } ]
             },
             {
               "Id": 88123521,
               "Name": "DPX Part Table",
-              "Fields": [ { "Id": 5, "Name": "Part Link Field" }, { "Id": 6, "Name": "Table ID" } ]
+              "Fields": [
+                { "Id": 5, "Name": "Part Link Field" },
+                { "Id": 6, "Name": "Table ID" },
+                { "Id": 7, "Name": "Chargeable Filter" }
+              ]
             }
           ],
           "Pages": [
@@ -365,6 +369,42 @@ public class DependencyPageMetadataXmlTests
                   ],
                   "Id": 88123593,
                   "Name": "DPXFilterPart"
+                },
+                {
+                  "Kind": 6,
+                  "RelatedPagePartId": { "Name": "", "Id": 88123502 },
+                  "Properties": [
+                    { "Name": "SubPageLink", "Value": "\"Part Link Field\" = field(\"Host Link Field\"), \"Table ID\" = valuefilter(1)" }
+                  ],
+                  "Id": 88123592,
+                  "Name": "DPXPartialLinkPart"
+                },
+                {
+                  "Kind": 6,
+                  "RelatedPagePartId": { "Name": "", "Id": 88123502 },
+                  "Properties": [
+                    { "Name": "SubPageLink", "Value": "\"Part Link Field\" = field(\"Host Link Field\"),\r\n#if not CLEAN25\r\n                              \"Service Zone Filter\" = field(\"Service Zone Filter\"),\r\n#endif\r\n                              \"Chargeable Filter\" = field(\"Chargeable Filter\")" }
+                  ],
+                  "Id": 88123591,
+                  "Name": "DPXDirectiveCompiledOutPart"
+                },
+                {
+                  "Kind": 6,
+                  "RelatedPagePartId": { "Name": "", "Id": 88123502 },
+                  "Properties": [
+                    { "Name": "SubPageLink", "Value": "\"Part Link Field\" = field(\"Host Link Field\"),\r\n#if not CLEAN25\r\n                              \"Table ID\" = const(88123520),\r\n#endif\r\n                              \"Chargeable Filter\" = field(\"Chargeable Filter\")" }
+                  ],
+                  "Id": 88123590,
+                  "Name": "DPXDirectiveCompiledInPart"
+                },
+                {
+                  "Kind": 6,
+                  "RelatedPagePartId": { "Name": "", "Id": 88123502 },
+                  "Properties": [
+                    { "Name": "SubPageLink", "Value": "\"Part Link Field\" = field(\"Host Link Field\"),\r\n#if not CLEAN25\r\n                              \"Service Zone Filter\" = field(\"Service Zone Filter\"),\r\n                              \"Second Absent Field\" = field(\"Host Link Field\"),\r\n#endif\r\n                              \"Chargeable Filter\" = field(\"Chargeable Filter\")" }
+                  ],
+                  "Id": 88123589,
+                  "Name": "DPXDirectiveBlockPart"
                 }
               ]
             },
@@ -593,6 +633,213 @@ public class DependencyPageMetadataXmlTests
     }
 
     /// <summary>
+    /// #2978's sibling. <c>ParseSubPageLink</c> makes the same fail-open assumption
+    /// <c>ParseSourceTableView</c> did, with the same <c>continue</c> and the same regex: an
+    /// entry it cannot read is dropped, and the remaining entries ship as if they were the
+    /// whole link. A two-condition SubPageLink reduced to one condition filters the part
+    /// LESS, so the subpage shows rows the host row does not own — the same class of wrong
+    /// answer as a widened page view, one level down.
+    ///
+    /// <para>The refusal channel is the one <c>EmitSubFormLinkXml</c> already documents:
+    /// <c>FieldID="0"</c>, which <c>MockTestPage.SubPageLinks</c> refuses by name for every
+    /// kind. Two links, not one, and the unreadable one refuses.</para>
+    /// </summary>
+    [Fact]
+    public void TryBuildDependencyPageMetadata_UnreadableSubPageLinkEntry_KeepsARefusingLinkRatherThanWideningThePart()
+    {
+        var dir = TestScratch.Dir("al-runner-dep-pagemeta-xml-tests");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            RecordPatches.AddBcAppPath(WriteApp(dir, PartsSymbolReference));
+
+            var xml = RecordPatches.TryBuildDependencyPageMetadata(PartsHostPageId);
+            var doc = new XmlDocument();
+            doc.LoadXml(xml!);
+            var ns = new XmlNamespaceManager(doc.NameTable);
+            ns.AddNamespace("m", "urn:schemas-microsoft-com:dynamics:NAV:MetaObjects");
+
+            var part = GetPartControl(doc, ns, 88123592);
+            var links = part.SelectNodes("m:SubFormLink", ns)!.Cast<XmlElement>().ToList();
+
+            // BEFORE #2978 this was 1 — the part filtered on "Part Link Field" alone.
+            Assert.Equal(2, links.Count);
+
+            Assert.Equal("5", links[0].GetAttribute("FieldID"));
+            Assert.Equal("FIELD", links[0].GetAttribute("FilterType"));
+            Assert.Equal("1", links[0].GetAttribute("FilterValue"));
+
+            Assert.Equal("0", links[1].GetAttribute("FieldID"));
+            Assert.Equal("4", links[1].GetAttribute("FilterGroup"));
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// #2978, the half that is not hypothetical. The AL compiler records a property's SOURCE
+    /// text in SymbolReference.json, PREPROCESSOR DIRECTIVES AND ALL, and BC 27.5's Base
+    /// Application ships three subpage parts that carry one — page 76 "Resource Card"
+    /// Control1906609707, page 77 "Resource List" Control1906609707 and Control1907012907, all
+    /// three verbatim:
+    /// <code>
+    /// "No." = field("No."),
+    ///                               "Unit of Measure Filter" = field("Unit of Measure Filter"),
+    /// #if not CLEAN25
+    ///                               "Service Zone Filter" = field("Service Zone Filter"),
+    /// #endif
+    ///                               "Chargeable Filter" = field("Chargeable Filter")
+    /// </code>
+    /// <para>Comma-splitting leaves two entries the regex cannot read — one prefixed
+    /// <c>#if not CLEAN25</c>, one prefixed <c>#endif</c> — and both were dropped. So those
+    /// three parts filtered on TWO of their four conditions and showed rows the host resource
+    /// does not own. That is not the unmeasured tail this issue was filed about; it is
+    /// shipping, on a BC version this runner's own CI matrix covers.</para>
+    ///
+    /// <para>The <c>#endif</c> entry is unconditionally in the app and must parse and apply —
+    /// BC 28.1, where the directive has been deleted from the source, carries it. The
+    /// <c>#if</c> entry is CONDITIONAL, and nothing in the symbol file records whether the
+    /// compiler kept it, so the runner resolves it against the app's own field inventory
+    /// instead of guessing: applied when every name it uses resolves, omitted when one does
+    /// not. Omitted, NOT refused — refusing a page over a link the app does not contain is a
+    /// wrong answer in the other direction, and this fixture is the omitted half.</para>
+    ///
+    /// <para>On the real BC 27.5 pages the guarded name DOES resolve ("Service Zone Filter"
+    /// comes from the Serv. Resource tableextension, present in 27.5 and 28.1 alike), so the
+    /// runner applies it and those three parts go from two link conditions to four. Everything
+    /// observable says that is right: Microsoft's shipped W1 builds do not appear to define
+    /// <c>CLEANnn</c> — 28.1 still carries <c>#if not CLEAN27</c> though it is BC 28, the
+    /// 27.5 guards reading <c>CLEAN25</c>/<c>CLEAN26</c> read <c>CLEAN28</c> in 28.1 rather
+    /// than having been resolved, and 28.1 wraps one such block's body in
+    /// <c>#pragma warning disable AL0432</c>, which suppresses an obsolete-USAGE warning and
+    /// is only needed on code that compiles.</para>
+    ///
+    /// <para>Measured across every extension of BC 27.5 and 28.1 W1 — 7,646 pages, 3,655
+    /// SubPageLink entries, 981 SourceTableView pages with 547 where-entries — those six
+    /// entries on those three controls are the ONLY ones in either version that fail to
+    /// parse, and no SourceTableView carries a directive at all.</para>
+    /// </summary>
+    [Fact]
+    public void TryBuildDependencyPageMetadata_DirectiveGuardedLinkCompiledOut_AppliesTheEntryAfterEndifAndOmitsTheGuardedOne()
+    {
+        var dir = TestScratch.Dir("al-runner-dep-pagemeta-xml-tests");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            RecordPatches.AddBcAppPath(WriteApp(dir, PartsSymbolReference));
+
+            var xml = RecordPatches.TryBuildDependencyPageMetadata(PartsHostPageId);
+            var doc = new XmlDocument();
+            doc.LoadXml(xml!);
+            var ns = new XmlNamespaceManager(doc.NameTable);
+            ns.AddNamespace("m", "urn:schemas-microsoft-com:dynamics:NAV:MetaObjects");
+
+            var part = GetPartControl(doc, ns, 88123591);
+            var links = part.SelectNodes("m:SubFormLink", ns)!.Cast<XmlElement>().ToList();
+
+            // BEFORE #2978 this was 1: the "#endif …Chargeable Filter" entry was dropped along
+            // with the guarded one, and the part showed every Chargeable Filter value.
+            Assert.Equal(2, links.Count);
+
+            Assert.Equal("5", links[0].GetAttribute("FieldID"));      // "Part Link Field"
+            Assert.Equal("1", links[0].GetAttribute("FilterValue"));  // <- "Host Link Field"
+
+            // The entry that only LOOKED unreadable because #endif preceded it.
+            Assert.Equal("7", links[1].GetAttribute("FieldID"));      // "Chargeable Filter"
+            Assert.Equal("FIELD", links[1].GetAttribute("FilterType"));
+            Assert.Equal("2", links[1].GetAttribute("FilterValue"));  // <- host "Chargeable Filter"
+
+            // …and NOT as a refusal: the guarded entry names a field this app does not have,
+            // which is the app saying the directive compiled it out.
+            Assert.DoesNotContain(links, l => l.GetAttribute("FieldID") == "0");
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// The direction that stops the test above from passing for an implementation that just
+    /// throws every conditional entry away: a <c>#if</c>-guarded entry whose fields this app
+    /// DOES have is in the app, and must filter. Same three-entry link, same directive, only
+    /// the guarded entry's field names differ.
+    /// </summary>
+    [Fact]
+    public void TryBuildDependencyPageMetadata_DirectiveGuardedLinkCompiledIn_KeepsFilteringOnIt()
+    {
+        var dir = TestScratch.Dir("al-runner-dep-pagemeta-xml-tests");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            RecordPatches.AddBcAppPath(WriteApp(dir, PartsSymbolReference));
+
+            var xml = RecordPatches.TryBuildDependencyPageMetadata(PartsHostPageId);
+            var doc = new XmlDocument();
+            doc.LoadXml(xml!);
+            var ns = new XmlNamespaceManager(doc.NameTable);
+            ns.AddNamespace("m", "urn:schemas-microsoft-com:dynamics:NAV:MetaObjects");
+
+            var part = GetPartControl(doc, ns, 88123590);
+            var links = part.SelectNodes("m:SubFormLink", ns)!.Cast<XmlElement>().ToList();
+
+            Assert.Equal(3, links.Count);
+            Assert.Equal("5", links[0].GetAttribute("FieldID"));
+
+            // The guarded entry, applied: "Table ID" = const(88123520), field 6 of the part.
+            Assert.Equal("6", links[1].GetAttribute("FieldID"));
+            Assert.Equal("CONST", links[1].GetAttribute("FilterType"));
+            Assert.Equal("88123520", links[1].GetAttribute("FilterValue"));
+
+            Assert.Equal("7", links[2].GetAttribute("FieldID"));
+            Assert.DoesNotContain(links, l => l.GetAttribute("FieldID") == "0");
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// Conditional-ness is a property of the BLOCK, not of the entry that happens to carry the
+    /// directive text. Comma-splitting only puts <c>#if not CLEAN25</c> on the FIRST guarded
+    /// entry, so a second entry inside the same block carries no <c>#</c> line of its own —
+    /// and reading it as unconditional would turn its absent field into a refusal, i.e. a page
+    /// that will not open because of AL that is not in the app. Before this, that is exactly
+    /// what happened: the pre-fix build emitted this entry with <c>FieldID="0"</c>.
+    /// </summary>
+    [Fact]
+    public void TryBuildDependencyPageMetadata_SecondEntryInsideTheSameDirectiveBlock_IsConditionalToo()
+    {
+        var dir = TestScratch.Dir("al-runner-dep-pagemeta-xml-tests");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            RecordPatches.AddBcAppPath(WriteApp(dir, PartsSymbolReference));
+
+            var xml = RecordPatches.TryBuildDependencyPageMetadata(PartsHostPageId);
+            var doc = new XmlDocument();
+            doc.LoadXml(xml!);
+            var ns = new XmlNamespaceManager(doc.NameTable);
+            ns.AddNamespace("m", "urn:schemas-microsoft-com:dynamics:NAV:MetaObjects");
+
+            var part = GetPartControl(doc, ns, 88123589);
+            var links = part.SelectNodes("m:SubFormLink", ns)!.Cast<XmlElement>().ToList();
+
+            Assert.Equal(2, links.Count);
+            Assert.Equal("5", links[0].GetAttribute("FieldID"));
+            Assert.Equal("7", links[1].GetAttribute("FieldID"));
+            Assert.DoesNotContain(links, l => l.GetAttribute("FieldID") == "0");
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    /// <summary>
     /// A page with no parts at all must keep the pre-#2467 shape: Content present but with
     /// no Containers child — never an empty <c>&lt;Containers&gt;</c> wrapper, which would be
     /// a needless divergence from what the real compiler emits for such a page.
@@ -700,6 +947,8 @@ public class DependencyPageMetadataXmlTests
     private const int UnresolvableViewPageId = 88123603;
     private const int WhereOnlyViewPageId = 88123604;
     private const int ViewPlusPropsPageId = 88123605;
+    private const int PartialViewPageId = 88123606;
+    private const int UnbalancedViewPageId = 88123607;
 
     private const string ViewSymbolReference = """
         {
@@ -760,6 +1009,24 @@ public class DependencyPageMetadataXmlTests
                 { "Name": "LinksAllowed", "Value": "0" },
                 { "Name": "PopulateAllFields", "Value": "1" },
                 { "Name": "SourceTableView", "Value": "where(Bucket = const(7))" }
+              ]
+            },
+            {
+              "Id": 88123606,
+              "Name": "DPX Partial View Page",
+              "Properties": [
+                { "Name": "PageType", "Value": "List" },
+                { "Name": "SourceTable", "Value": "88123620" },
+                { "Name": "SourceTableView", "Value": "where(Bucket = const(7), \"Price Type\" = valuefilter(Sale))" }
+              ]
+            },
+            {
+              "Id": 88123607,
+              "Name": "DPX Unbalanced View Page",
+              "Properties": [
+                { "Name": "PageType", "Value": "List" },
+                { "Name": "SourceTable", "Value": "88123620" },
+                { "Name": "SourceTableView", "Value": "sorting(Bucket) where(Bucket = const(7)" }
               ]
             }
           ]
@@ -952,6 +1219,103 @@ public class DependencyPageMetadataXmlTests
             var filters = sourceObject.SelectNodes("m:SourceTableView/m:TableFilters", ns)!
                 .Cast<XmlElement>().ToList();
 
+            Assert.Single(filters);
+            Assert.Equal("0", filters[0].GetAttribute("FieldID"));
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// #2978 — the fail-OPEN half of the same feature. A <c>where(...)</c> entry
+    /// <c>ParseSourceTableView</c> cannot read used to be dropped with a
+    /// <c>Console.Error.WriteLine</c> and a <c>continue</c>, and the page shipped the
+    /// remaining entries as if they were the whole view. That is WIDER than the view the
+    /// page declares: rows the real view excludes are shown, a test asserting over them
+    /// passes against a record set BC would not give, and nothing reports it — the stderr
+    /// line is written on a symbol-cache MISS and lost on every warm run after.
+    ///
+    /// <para>So an entry that could not be read keeps its place in the emitted
+    /// <c>&lt;TableFilters&gt;</c> list with <c>FieldID="0"</c>: BC's own
+    /// <c>MetaTable.GetFieldByNo(0)</c> refuses it with NavNCLFieldNotFoundException when the
+    /// page opens, which is exactly the fail-closed choice the unresolvable-FIELD-NAME case
+    /// above already makes. The page refuses to open rather than open on the wrong rows.</para>
+    ///
+    /// <para>The trigger is a kind keyword outside <c>field</c>/<c>const</c>/<c>filter</c>,
+    /// standing in for "AL text this parser has not been taught". Whether that exact spelling
+    /// compiles is beside the point: the claim under test is what the runner does when it
+    /// cannot read an entry, not which entries it can read. Measured on BC 28.1's Base
+    /// Application, System Application, Business Foundation and Application: 2845 pages, 417
+    /// declaring a SourceTableView, 255 where-entries and 1357 SubPageLink entries, and every
+    /// single one parses — so this path is unreachable for what Microsoft ships today, and
+    /// this change cannot alter any of it.</para>
+    /// </summary>
+    [Fact]
+    public void TryBuildDependencyPageMetadata_UnreadableViewEntry_KeepsARefusingFilterRatherThanWideningTheView()
+    {
+        var dir = TestScratch.Dir("al-runner-dep-pagemeta-xml-tests");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            RecordPatches.AddBcAppPath(WriteApp(dir, ViewSymbolReference));
+
+            var sourceObject = ReadSourceObjectFor(PartialViewPageId);
+            var ns = MetaNs(sourceObject.OwnerDocument!);
+            var filters = sourceObject.SelectNodes("m:SourceTableView/m:TableFilters", ns)!
+                .Cast<XmlElement>().ToList();
+
+            // BEFORE #2978 this was Single(filters) — Bucket alone, and the page opened on
+            // every "Price Type".
+            Assert.Equal(2, filters.Count);
+
+            // The entry that DID parse is untouched: field 2 of the fixture table, CONST 7.
+            Assert.Equal("2", filters[0].GetAttribute("FieldID"));
+            Assert.Equal("CONST", filters[0].GetAttribute("FilterType"));
+            Assert.Equal("7", filters[0].GetAttribute("FilterValue"));
+
+            // The one that did not is present and refusing, in the same filter group.
+            Assert.Equal("0", filters[1].GetAttribute("FieldID"));
+            Assert.Equal("2", filters[1].GetAttribute("FilterGroup"));
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// #2978, the clause-level half: a <c>sorting(...) where(...</c> whose parenthesis never
+    /// closes made <c>MatchingCloseParen</c> return -1 and the whole <c>where</c> clause
+    /// vanish, while the <c>sorting</c> beside it still applied. The page then came up SORTED
+    /// as declared and UNFILTERED — the most convincing possible wrong answer, because the
+    /// half that is easy to eyeball is right.
+    ///
+    /// <para>Only the case where NO clause at all could be read stays a <c>return null</c>,
+    /// and that one is safe: the caller emits no <c>&lt;SourceTableView&gt;</c> element, which
+    /// is the pre-#2820 state rather than a manufactured narrower one.</para>
+    /// </summary>
+    [Fact]
+    public void TryBuildDependencyPageMetadata_UnbalancedViewClause_RefusesRatherThanSortingAnUnfilteredPage()
+    {
+        var dir = TestScratch.Dir("al-runner-dep-pagemeta-xml-tests");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            RecordPatches.AddBcAppPath(WriteApp(dir, ViewSymbolReference));
+
+            var sourceObject = ReadSourceObjectFor(UnbalancedViewPageId);
+            var ns = MetaNs(sourceObject.OwnerDocument!);
+
+            // The sorting half still reads — that is what made the drop convincing.
+            var sorting = (XmlElement?)sourceObject.SelectSingleNode("m:SourceTableView/m:Sorting", ns);
+            Assert.NotNull(sorting);
+            Assert.Equal("Field2", sorting!.GetAttribute("KeyFields"));
+
+            // BEFORE #2978 there were no TableFilters at all here.
+            var filters = sourceObject.SelectNodes("m:SourceTableView/m:TableFilters", ns)!
+                .Cast<XmlElement>().ToList();
             Assert.Single(filters);
             Assert.Equal("0", filters[0].GetAttribute("FieldID"));
         }
