@@ -7,6 +7,12 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **expectations:** report an expectations entry that matched no test instead of ignoring it
+- **preflight:** check that the code-navigation tools answer, not that they exist
+- **testpage:** perform an action's RunObject instead of refusing it as out-of-scope
+- **permissions:** transcribe permission masks so BC can compose real permission sets
+- **tools:** pr-body.py, a guarded PR-body editor
+- **tools:** preflight.py — the autonomous-cycle preflight as an executable check with a real exit code
 - **artifacts:** relocate the BC artifacts root with AL_RUNNER_ARTIFACTS_ROOT
 - **agents:** an autonomous-cycle skill for running AL Runner development unattended
 - **cli:** a hung codeunit no longer takes the whole run down
@@ -19,6 +25,132 @@ All notable changes to this project are documented here. Format based on
 - **all-profile:** populate the All Profile system virtual table (2000000178)
 
 ### Fixed
+- **metadata:** clear the object-reference const memo on a bundle reload, and cover the resolver's bare-name and call-site halves
+- **seeding:** refuse a system-table column the seeder cannot find, instead of skipping it
+- **testpage:** name the AL error "The TestPage is not open." was reported in place of
+- **testpage:** a plain Cancel needs dialog chrome, and bump the corpus pin to 6e198a97
+- **metadata:** resolve a Database::/Report:: const in a where() clause to the object id
+- **expectations:** audit the run, not the final attempt's own discovery set
+- **tools:** refuse a verdict from a copy of the tool that origin/main has moved on
+- **bundle:** collect a multi-app bundle's manifests from the suites, at any depth
+- **page-metadata:** revalidate EnsureRealPageMetadata's negative answers when the .app set grows
+- **permissions:** answer IsPermissionSetAssigned from Access Control instead of NREing on a null permission cache
+- **test-data:** take the --test-data summary as one snapshot
+- **reflection:** resolve eleven BC method lookups by enumeration, and ratchet the rest
+- **pkgdedup:** apply the stage-name rule to claim files, floor the age threshold, and bound the rollout window with a measurement
+- **agents:** derive an agent's worktree path from identity AND issue, so two loops on one slot cannot share a checkout
+- **ci-wait:** never print a genuine failure under "Superseded ... Harmless"
+- **allobj:** refuse loudly when the owner index cannot read an assembly, instead of silently unowning every object it declares
+- **log:** stop the [Component] filter eating every "Loud, never silent" diagnosis
+- **permissions:** refuse an unreadable permission-set symbol read instead of answering blank
+- **cache:** one error contract for every startup cache-root writer, and a guard for the al-out root
+- **tests:** make a bc-engine-serial skip say which collection, why, and what would fix it
+- **guards:** decide the Base App floor from the manifest, not from prose that quotes it
+- **pages:** carry the five SourceObject properties a dependency page's symbol file states
+- **test-exec:** run test codeunits in ascending object ID instead of Assembly.GetTypes() order
+- **permissions:** delete two dead permission-metadata helpers and guard the shape that hid them
+- **ci:** see a colon between a closing keyword and its issue reference
+- **allobj:** an app owns the objects its assembly declares, even when its bundle-root .app is stale
+- **testpage:** close a self-closing page once, not once per closing mechanism
+- **cache:** root a relative --cache once, and refuse an unrooted cache root loudly
+- **events:** observe a precompiled table-event subscriber's ValueTask so its error reaches AL
+- **record:** refuse a CalcFields field that is not a FlowField or a BLOB, the way BC does
+- **published-app:** match BC's package ids and Installed, and drop the two known-gaps for it
+- **deps:** give every R2R chunk of an app its module identity, not just the first
+- **table-metadata:** resolve an undeclared option column's default by name, not ordinal 0
+- **permission-metadata:** name the BC-layout change instead of throwing a type asserterror swallows
+- **record:** decide Object's --test-data precedence from what the backup loaded, not from what the store holds
+- **testpage:** discard a New() row that nothing wrote to when the page closes
+- **testpage:** raise OnQueryClosePage on a page the platform closes for a handler
+- **deps:** ask same-SourcePath before identity, so a version bump is not a self-collision
+- **field-triggers:** refuse the two silent skips left on the install path
+- **testpage:** start the row before validating a write to a part's draft line
+- **cache:** key the content-hash memo on the file, not the path, so hard-linked packages are read once
+- **permission-metadata:** refuse loudly when a BC member behind a null-forgiving read has moved
+- **bcapp:** key .app-derived caches on a registration epoch, and drop the negative table cache with them
+- **field-triggers:** refuse loudly when BC's handler backing field cannot be read
+- **cache:** identify the layered workspace dir and the table-extension cache by content
+- **permissions:** say a BC-internals read that failed is a shape gap, not an out-of-scope refusal
+- **cache:** identify the persisted app-manifests index by package content, not a stat
+- **testpage:** use the tier's measured refusal text and out-of-range behavior
+- **published-application:** list the loaded apps, so System App ownership checks stop declining
+- **pkgdedup:** bound the shared al-runner-pkgdedup staging root
+- **date:** answer Record Date.IsEmpty() over the widened window, and stop its nine refusals claiming permanent scope
+- **refusals:** say sixteen TestPage refusals are gaps, not scope boundaries
+- **record:** answer the Field virtual table on Count, IsEmpty and keyed Get, not only on find
+- **test-data:** make TestDataProvisioner's --test-data tallies Interlocked
+- **tests:** guards that scan nothing now fail, and none of them exempts by bare file name
+- **compile,patches:** name the malformed AL, and stop erasing the frames that say where a failure came from
+- **cache:** identify the persisted r2r-chunks cache by package content, not a stat
+- **temp,output:** validate a shared pkgdedup stage before reuse, and stop printing a locale-dependent elapsed time
+- **testpage:** record a refused control write so ValidationErrorCount can read it
+- **refusals:** say twenty-seven scope.md citations outside the virtual tables are gaps
+- **ci-wait:** refuse a verdict resolved from a run that is not the head's live run
+- **table-metadata:** read TableType, DataClassification and ExternalName off the table declaration
+- **install-baseline:** serialise baseline appends and the walks that race them
+- **flowfields:** run BC's own CheckFlowFieldProperties before aggregating
+- **phaselog:** read VmHWM and VmRSS from one /proc/self/status sample so the peak-RSS invariant cannot race
+- **skeleton:** put the runner's session user in the User table, so a relation to it resolves
+- **flowfields:** aggregate Min/Max in CalcNumeric instead of answering a never-written sum accumulator
+- **server:** drop the dependency page/report metadata memos when the registered .app set changes
+- **refusals:** say when the runner could not read BC's internals
+- **record:** fill the Object (2000000001) system table, and make its four OemText columns readable
+- **pages:** apply a page's SourceTableView on open, precompiled pages included
+- **provisioning:** report what the network actually did instead of blaming the CDN
+- **table-relation:** read a namespace-qualified target instead of refusing the relation
+- **virtual-tables:** say the 55 refusals are gaps, not scope boundaries
+- **task-scheduler:** refuse TaskExists/CancelTask by name instead of NRE-ing out of BC's scheduler data layer
+- **object-metadata:** say these twelve refusals are gaps, not scope boundaries
+- **test-data:** load a table first materialised inside another table's hydration
+- **query:** give a query FlowField column the query's own flow filters
+- **watch,cli:** one module per AL identity under --watch, and brace the TEST-TIMEOUT-ABORT guard
+- **table-relation:** carry a where(... = field(...)) link instead of dropping the whole relation
+- **ci-wait:** drive the verdict from the ruleset and the newest workflow run
+- **server:** clear the registered symbol .apps on bundle reload, not just their derived indexes
+- **preflight:** strip mise's stdout banner, which made a healthy box read as unable to push
+- **reporter:** tell a collateral failure from a real one when a bundle loses a suite
+- **build:** make the runner content hash a function of source, not of the build path
+- **record:** order the hand-out of a table's storage against its --test-data hydration
+- **summary:** name the bundles that built and then failed to run
+- **test-data:** hand only symbol-bearing packages to the backup reader
+- two failures that reported as clean results — a PARTIAL pe_signing scan, and a silent corrupt sidecar DLL
+- **expectations:** give the count baseline one line per app group
+- **rad:** stop the incremental fast path shipping a caller bound to a moved ordinal or field id
+- **date:** widen the Date window for a keyed Get, not only for a find
+- **cache:** identify AL-output cache dependencies by content hash, not mtime+size
+- **object-metadata:** refuse a moved primaryTree layout instead of reading it as "no rows"
+- **permissions:** fall back to the Role ID, not the object name, for a Caption-less Name
+- **testpage:** opening a TestPage is not a commit point
+- **report:** refuse a request page's rendered-output request instead of writing a dataset
+- **cache:** key the install-baseline on what was PARSED, not just the .app bytes
+- **compile:** sort AL source discovery, so test execution order stops depending on readdir
+- **resume:** hand the carry directory to the child, so a killed parent stops costing the run
+- **testpage:** load-trigger a handler page opened on a caller-positioned row
+- **testpage:** run OnValidate on the fields New() stamps from a SubPageLink
+- **bc-symbols:** key the cache on the payload's SHAPE, not just a number someone has to remember
+- **skeleton:** seed the tenant's profile page-metadata cache BC reads for control captions
+- **expectations:** drop the Boolean-spelling known-gap entry #2809 made stale
+- **expectations:** drop the StartSession known-gap entry that #2825 had already fixed
+- **testpage:** render a Boolean control as Yes/No, the way real BC does
+- **summary:** name the bundles that did not compile, in the block that gets read
+- **session:** refuse StartSession inside a test codeunit, as BC does
+- **http:** let AL's HttpClient mocking run, and refuse real egress at the egress boundary
+- **resume:** refuse to report a run whose carried attempt files went missing
+- **watch:** execute bundles in dependency order, the defect #2614 fixed for --server
+- **recordref:** scope-check RecordRef.Open against the app's compilation target at runtime
+- **reports:** run BC's whole pre-report step, not just the OnPreReport trigger
+- **resume:** carry full results so --output-json, --out and --count-baseline describe the run
+- **virtual-tables:** stop the find-time populates writing into a temporary record's store
+- **server:** run a request's bundles in dependency order, not sourcePaths order
+- **jobs:** scale the per-test watchdog by shard count, after measuring whether it needed it
+- **ci:** scan commit messages, not just the PR body, for closing and skip directives
+- **record:** answer the Object Metadata (2000000071) application-database system table
+- **reporter:** name the suites a bundle lost instead of printing a clean summary
+- **session:** run a precompiled worker's OnRun body under StartSession
+- **dep-metadata:** read a precompiled table's TableRelation from SymbolReference.json
+- **ci:** stop a same-commit cancellation blocking the merge with everything green
+- **report:** an execution failure must not be reported as a compile failure
+- **test-boundary:** roll back a failed test's uncommitted writes, as BC's own catch does
 - **testpage:** fall back to the source table field's OnLookup trigger
 - **capture-values:** unwrap ByRef<T> so a var parameter renders its value
 - **watch:** stop serving a dependent bundle the previous compile of its dependency
@@ -134,6 +266,20 @@ All notable changes to this project are documented here. Format based on
 - **alsid:** answer Sid(name) with BC's not-mapped empty string on a host with no Windows identity store
 
 ### Documentation
+- **corpus:** record that the action-opens-a-page blind spot is closed, and what is left
+- **rules:** scan the open-issue queue and fold in siblings that land in the same file
+- **ci:** narrow the cancelled-run re-run exemption to commits with no failure log
+- **skills:** say that --auto merges a green PR instead of refusing to arm it
+- **skills:** size the reviewer pool from measured throughput, arm on approve, and make a conflicted PR visible
+- **oos:** stop claiming RunnerOutOfScopeException is untrappable from AL, and pin what it does
+- **reviewer:** post the review on the PR, and stop contradicting the posting rule
+- **agents:** a rule that an issue's open PRs, not its assignee, decide ownership
+- **agents:** the loop can measure its own budget, and the assignee is not the lock
+- **agents:** widen the corpus-test rule, and say the runner fix never waits on it
+- **scope:** document-service providers are out of scope, and guard the decision
+- **pr:** put the closing-reference escape hatch where the body is written
+- **skill:** record that --test-data gives a restored CRONUS, not a prepared one
+- **limitations:** correct the task-scheduler section — nothing runs, inline or otherwise
 - **rules:** resolve the never-rerun vs flake-evidence contradiction in ci-verdicts.md
 - **rules:** the corpus default branch is master, not main
 - **patches:** correct a transaction-snapshot comment that still says two fixed tests fail
@@ -141,6 +287,39 @@ All notable changes to this project are documented here. Format based on
 - **agents:** opening a corpus PR needs no approval
 
 ### Changed
+- run 3 BC legs on a pull request, and rename the required check to match
+- move the guards that must block into a workflow that can gate
+- **guards:** stop the _BCVersion drift gate walking into every agent's worktree
+- **testpage:** pin a refusal raised in a table subscriber below a page-global control write
+- **main:** put a floor under how long main can sit without a verdict
+- **guard:** fail when two runner-extras app groups claim overlapping idRanges
+- **recordref:** measure 2000000001's target gate directly, and retire the stale "no tier can see Object"
+- **date:** stop materialising the 86,885-row window behind a guard that already narrowed the request
+- **events:** cover the ValueTask<T> reflection arm at both async-unwrap seams
+- **preflight:** build both halves of the stray-graph FAIL, and name a stray with no graphify
+- **guards:** scan the runtime shape-gap guards repo-wide, not over five hard-coded filenames
+- **oos:** stop a throw site from doubling the scope.md pointer, and read IL to do it
+- **deps:** fold the dependency cache key's package hash into the shared content-hash memo
+- **field-triggers:** pin all 17 install-path refusals, the proportionality claim and the bundle-load abort
+- **provision:** stop scanning patch directories whose packages a kept one already covers
+- **date:** materialise Date rows per request, not a whole window per record variable
+- **corpus:** enumerate the corpus's test apps instead of naming one path
+- **record-patches:** keep parsed AL trees across a warm reload, keyed on content
+- **guards:** scan AlRunner.Tests sources at any depth, not just the top level
+- own every scratch directory in AlRunner.Tests, and enforce it
+- **compiler:** stop a layered dependency republish re-warming the package reference loader
+- **compile:** pin the DotNet/compilation-target matrix end to end
+- a nightly Microsoft-bucket run on the newest BC, red for a named reason
+- **watch:** cover the app-with-table plus test-app arrangement, which had none
+- **fixtures:** add a way to build a REGISTRABLE .app in-process, and prove it registers
+- **startsession:** verify the isolation guard stays inert outside a [Test]
+- **ms-bucket:** move the reader pin to v0.1.2 and name the repository that exists
+- **startsession:** restore AL coverage of the dispatch path behind the isolation guard
+- **suite-abort:** make the watchdog flake say what happened instead of nothing
+- **corpus:** catch up the al-language pin to a307df8 and classify what newly fails
+- **#2819:** capture a core dump when the runner is killed by a signal
+- **cache-gate:** stop resolving dep ids into a dead variable, and gate both whole-tree probes
+- **systemid:** index the duplicate-SystemId check instead of scanning every row
 - add a single-leg diagnostic re-run, so the flake-evidence recipe works in this repo too
 - manual-dispatch workflow to run one Microsoft BaseApp bucket with --test-data
 - **jobs:** tune each worker for footprint — half the peak memory for 6-7% wall
