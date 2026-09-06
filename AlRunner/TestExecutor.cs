@@ -1119,8 +1119,19 @@ public sealed class TestExecutor
     /// tests run in and nothing else. Deliberately does NOT touch method order inside a
     /// codeunit: <see cref="OrderTestMethodsBySourceDeclaration"/> already pins that to source
     /// declaration order, which is a different rule and stays.</para>
+    ///
+    /// <para><b>Internal, not private</b>, for two reasons. <c>Program.RunFirstCodeunitOnRun</c>
+    /// (server-mode <c>execute</c>) picks WHICH codeunit's <c>OnRun</c> to run out of the same
+    /// unordered <c>Assembly.GetTypes()</c> array and shares this rule rather than growing a
+    /// second, differently-arbitrary one (#3086). And
+    /// <c>TestCodeunitOrderingContractTests</c> drives it with an input array it controls: the
+    /// end-to-end guards (<c>TestCodeunitExecutionOrderTests</c>,
+    /// <c>AlObjectEmitOrderDeterminismTests</c>) can only observe whatever layout the AL
+    /// compiler happened to emit that day, so they pass or fail a no-op implementation by
+    /// luck — measured, with this method reduced to <c>types =&gt; types</c>, all seven
+    /// <c>SuiteAbortOnTimeoutTests</c> cases still passed.</para>
     /// </summary>
-    private static Type[] OrderTestCodeunitsByObjectId(Type[] types) =>
+    internal static Type[] OrderTestCodeunitsByObjectId(Type[] types) =>
         types
             .Select((t, i) => (t, i, id: TryReadAlObjectId(t)))
             .OrderBy(x => x.id ?? int.MaxValue)
