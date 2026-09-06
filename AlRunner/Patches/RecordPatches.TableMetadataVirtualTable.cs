@@ -234,9 +234,17 @@ public static partial class RecordPatches
     /// <c>DataClassification</c>, and
     /// <c>Record_TableMetadata_Get_TableDeclaringNoDataClassification_ReportsTheDefault</c> in
     /// StefanMaron/BusinessCentral.AL.Language.Tests#191 asserts <c>CustomerContent</c> for it.
-    /// That PR came back green on all sixteen legs — BC 27.0, 27.3, 27.5, 28.0, 28.1, 28.2,
-    /// 28.3 and 28.4, Cloud and OnPrem — so a real service tier reports <c>CustomerContent</c>
-    /// and the documented <c>ToBeClassified</c> is not what a Table Metadata row carries.</para>
+    /// That assertion RAN, and passed, on the eight Cloud legs of run 34026600861 — BC 27.0,
+    /// 27.3, 27.5, 28.0, 28.1, 28.2, 28.3 and 28.4 — so a real service tier reports
+    /// <c>CustomerContent</c> and the documented <c>ToBeClassified</c> is not what a Table
+    /// Metadata row carries.</para>
+    /// <para>Eight, not sixteen: that run has eight further OnPrem legs and they are all green
+    /// too, but they build a DIFFERENT app (<c>tests/al-language-onprem</c>, codeunits 61200
+    /// and 61201) and never execute codeunit 60801. Their green says the fixture compiles in
+    /// that closure as well; it is not a second measurement of this answer. Eight is enough
+    /// for this particular claim on its own terms — the legs span both supported majors, and
+    /// an option member's position in its column's option set is a property of the artifact's
+    /// System package, not of the deployment target.</para>
     /// </summary>
     private const string AlDefaultDataClassification = "CustomerContent";
 

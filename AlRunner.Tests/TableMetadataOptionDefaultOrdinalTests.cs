@@ -6,8 +6,11 @@
 // The BC-behaviour half of #3019 — "a table declaring no DataClassification reports
 // CustomerContent" — belongs upstream and is there: corpus fixture ALT Unclassified (60837)
 // and Record_TableMetadata_Get_TableDeclaringNoDataClassification_ReportsTheDefault, in
-// StefanMaron/BusinessCentral.AL.Language.Tests#191, green on all sixteen legs (BC 27.0, 27.3,
-// 27.5, 28.0, 28.1, 28.2, 28.3, 28.4, Cloud and OnPrem). Nothing here re-states that claim.
+// StefanMaron/BusinessCentral.AL.Language.Tests#191. The assertion RAN, and passed, on the eight
+// Cloud legs of run 34026600861 (BC 27.0, 27.3, 27.5, 28.0, 28.1, 28.2, 28.3, 28.4). That run's
+// eight OnPrem legs are green as well but build a different app (tests/al-language-onprem,
+// codeunits 61200 and 61201) and never execute codeunit 60801, so they say the fixture compiles
+// there, not what the column answered. Nothing here re-states that claim.
 //
 // What it pins instead is the ROUTE, which no AL test can see. Both defaults this file needs
 // sit FIRST in their column's option set in every BC artifact measured so far, so the
@@ -22,6 +25,20 @@
 // So the assertions below drive the resolver with option strings the test chooses, including
 // reordered ones. Every case is asserted at TWO different ordinals for the same member name,
 // which is exactly what a `return 0` cannot satisfy.
+//
+// WHAT ALREADY COVERS THE REFACTOR ITSELF
+// ---------------------------------------
+// The rewritten undeclared branch is not first exercised here. Codeunit 60801's
+// Record_TableMetadata_Get_DeclaredTable_ReturnsMatchingRow, already in the corpus at the pin
+// this repo carries, asserts TableType::Normal for ALT Relation Parent — a fixture that
+// declares no TableType — so it drives exactly this branch through a live NCLMetaTable and
+// that artifact's real OptionString on every BC leg of this repo's own matrix. The same
+// codeunit asserts DataClassification::CustomerContent through the DECLARED path, which is
+// what establishes, per leg, that the member this file's default names is present in that
+// artifact's option set at all: the precondition the refusal below tests for.
+//
+// This file adds the cases those cannot reach, because an AL test only ever sees the option
+// set of the artifact it is running on.
 
 using System;
 using System.Collections.Generic;

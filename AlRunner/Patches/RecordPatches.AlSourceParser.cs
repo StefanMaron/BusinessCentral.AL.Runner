@@ -770,9 +770,11 @@ public static partial class RecordPatches
             // defaults (CustomerContent, blank) are applied at row-build time, so "declares
             // none" stays distinguishable from "declares the default" all the way through.
             // CustomerContent there is a MEASUREMENT, not AL documentation — Microsoft
-            // documents ToBeClassified — settled on sixteen green BC legs by
+            // documents ToBeClassified — settled on the eight Cloud legs of corpus run
+            // 34026600861 (BC 27.0 through 28.4) by
             // StefanMaron/BusinessCentral.AL.Language.Tests#191 and cited at
-            // RecordPatches.TableMetadataVirtualTable.cs's AlDefaultDataClassification (#3019).
+            // RecordPatches.TableMetadataVirtualTable.cs's AlDefaultDataClassification, which
+            // records why eight is the number and why it is enough (#3019).
             var dataClassification = PropValue(table.PropertyList, "DataClassification")?.ToString()?.Trim();
             // AlStringLiteralText, not the raw node text: ExternalName is an AL STRING LITERAL
             // (ExternalName = 'alt_entity'), so the node stringifies WITH its single quotes and a

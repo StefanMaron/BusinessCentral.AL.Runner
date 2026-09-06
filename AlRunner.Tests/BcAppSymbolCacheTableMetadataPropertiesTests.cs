@@ -155,9 +155,10 @@ public class BcAppSymbolCacheTableMetadataPropertiesTests
             // measurement: Microsoft documents the DataClassification default as
             // ToBeClassified, and corpus fixture ALT Unclassified (60837) put the question to a
             // real service tier in StefanMaron/BusinessCentral.AL.Language.Tests#191, which
-            // came back CustomerContent on all sixteen legs (BC 27.0-28.4, Cloud and OnPrem).
-            // See RecordPatches.TableMetadataVirtualTable.cs's AlDefaultDataClassification
-            // (#3019).
+            // answered CustomerContent on the eight Cloud legs of run 34026600861 (BC 27.0
+            // through 28.4) — the legs that actually execute codeunit 60801. See
+            // RecordPatches.TableMetadataVirtualTable.cs's AlDefaultDataClassification, which
+            // records why eight is the number and why it is enough (#3019).
             Assert.Null(bare.TableTypeName);
             Assert.Null(bare.DataClassificationName);
             Assert.Null(bare.ExternalName);
