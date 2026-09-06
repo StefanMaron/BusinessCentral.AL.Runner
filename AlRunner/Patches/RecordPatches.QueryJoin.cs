@@ -131,8 +131,14 @@ public static partial class RecordPatches
 
     private static void Join_Log(string m) => QLog(m);
 
-    private static Exception Join_OutOfScope(string api, string reason)
-        => new AlRunner.Infrastructure.RunnerOutOfScopeException(api, reason);
+    // The executor's nine refusals route through the SAME factory as this file's own two and
+    // RecordPatches.QueryProjection.cs's seven, so a join sub-shape gap cannot claim one thing
+    // from the in-proc mirror and another from the isolated executor (#2966). Before this the
+    // executor spelled its own reason and cited docs/scope.md, which an AL [TryFunction]
+    // absorbed into `false` — including "query-join-synthesized-subquery", the one shape that
+    // is refused on BOTH paths and used to disagree with itself.
+    private static Exception Join_OutOfScope(string api, string surface, string detail)
+        => RunnerShapeGap.Query(api, surface, detail);
 
     // Produce a typed default NavValue (boxed as object) for an NCLMetaField, matching the
     // field's type — used to fill unmatched LeftOuterJoin child columns. BC projects a
@@ -150,11 +156,11 @@ public static partial class RecordPatches
         _mGetDefaultNavValue ??= tNavValue.GetMethod("GetDefaultNavValue",
             BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Static,
             binder: null, types: new[] { tMeta, typeof(bool) }, modifiers: null)
-            ?? throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+            ?? throw RunnerShapeGap.Query(
                 "NavQuery (multi-dataitem join)",
-                "query-join-leftouter-default — NavValue.GetDefaultNavValue(INavValueMetadata,bool) " +
-                "not found; cannot mint a typed default for an unmatched LeftOuterJoin child column; " +
-                "see docs/scope.md");
+                "query-join-leftouter-default",
+                "NavValue.GetDefaultNavValue(INavValueMetadata,bool) not found on this BC build, so no " +
+                "typed default can be minted for an unmatched LeftOuterJoin child column");
         // nullSupport:false → the field's typed DEFAULT (0 / '' / 0D), matching BC's NULL→default
         // projection for a non-nullable query column.
         return _mGetDefaultNavValue.Invoke(null, new object?[] { field, false });
@@ -185,23 +191,32 @@ public static partial class RecordPatches
     /// AlRunner.QueryJoin executor. Materialised eagerly inside the executor so any failure
     /// surfaces as a managed exception here, never a native crash mid-enumeration.
     /// </summary>
-    private static IEnumerable ExecuteJoinQuery(object nclMetaQuery)
+    private static IEnumerable ExecuteJoinQuery(object nclMetaQuery, object? flowFiltersAndMarks)
     {
         EnsureJoinExecutorLoaded();
         var queryDef = _tNCLMetaQuery!.GetProperty("QueryDefinition", BindingFlags.Public | BindingFlags.Instance)!
             .GetValue(nclMetaQuery)!;
         if (!_joinSourceByQueryDef.TryGetValue(queryDef, out var dataAccessSource))
-            throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+            throw RunnerShapeGap.Query(
                 "NavQuery (multi-dataitem join)",
-                "query-join-no-source — internal: join DataAccessSource was not stashed; see docs/scope.md");
+                "query-join-no-source",
+                "internal: the join's DataAccessSource was not stashed");
 
         try
         {
-            return (IEnumerable)_mExecute!.Invoke(null, new[] { _joinCtx, nclMetaQuery, dataAccessSource })!;
+            return (IEnumerable)_mExecute!.Invoke(null,
+                new[] { _joinCtx, nclMetaQuery, dataAccessSource, flowFiltersAndMarks })!;
         }
         catch (TargetInvocationException tie) when (tie.InnerException != null)
         {
-            throw tie.InnerException; // surface the executor's real exception (e.g. OOS)
+            // Surface the executor's real exception (e.g. OOS) — via ExceptionDispatchInfo, NOT
+            // `throw tie.InnerException`. A bare rethrow RESETS the stack trace to this frame, so
+            // every failure inside the executor was reported as originating HERE, at
+            // RecordPatches.QueryJoin.cs. That is how #2925's second cluster (4 Tests-SMB tests)
+            // looked like a different bug from its first (21 tests): the same
+            // FlowFieldsHelper.GetFilterFromMetaFilterCollection NRE, with its origin erased.
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw(tie.InnerException);
+            throw; // unreachable; satisfies definite assignment
         }
     }
 

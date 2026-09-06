@@ -243,7 +243,47 @@ public static partial class RecordPatches
         // Shares InvalidateBcAppIndexes with AddBcAppPath (RecordPatches.BcAppFallback.cs) so the
         // two call sites can't drift apart again the way they did here.
         lock (_bcTableIndexLock)
-            InvalidateBcAppIndexes();
+        {
+            // #2755: the REGISTERED set goes too, not just the indexes derived from it.
+            // InvalidateBcAppIndexes drops the derived table/extension indexes so the next lookup
+            // rebuilds them FROM _bcAppPaths — so leaving that list populated meant bundle 2 in a
+            // --server/--watch process rebuilt against its own registrations UNION every earlier
+            // bundle's, while a fresh single-bundle process running bundle 2 alone saw only its
+            // own. The neighbouring per-bundle state already held this invariant
+            // (InstallTriggerRunner.ResetForNewBundle clears _depAssemblies), and the server
+            // path's own comment states the intent: "New bundle in the server session: replace
+            // (not inherit) the install-trigger registrations".
+            //
+            // Safe for the PER-BUNDLE registrations because every caller re-registers
+            // immediately afterwards, and registers the FULL resolved closure rather than a
+            // delta — platform and Base Application .apps included. ResetForNewBundleReload
+            // (BcRuntime.cs, the single caller of this method) runs at Program.cs 2196 on the
+            // CLI path and 4049 on the server path; the matching registrations are at 2354/2357
+            // and 4533/4534, both AFTER. A clear therefore removes nothing the current bundle
+            // does not immediately put back.
+            //
+            // NOT safe for all of them, which is why this is ClearPerBundleBcAppPaths and not
+            // _bcAppPaths.Clear(): the SystemApp package is registered once per PROCESS, by
+            // RegisterSystemAppPackage() from Register(), and no per-bundle path re-adds it. A
+            // flat clear unregistered the AL source for every NCL-internal system table for the
+            // rest of a --server/--watch process — and since this method also clears
+            // _parsedTables and _metaTableCache, that registration is the only thing they can
+            // be rebuilt from. Two AlRunner.Tests classes caught it as
+            // "no NCLMetaTable for table N (dependency source not parsed)".
+            //
+            // #2478 is the reason this is spelled out rather than done quietly: the last defect
+            // in this same reset path was an index reset that did not reset ENOUGH, and it made
+            // precompiled tableextension fields vanish from every metatable from the second
+            // server request on. That failure was silent; this one was too.
+            //
+            // Still accumulating, same shape, deliberately NOT changed here: the sibling list
+            // _bcQuerySymbolJsonPaths (RecordPatches.BcAppFallback.cs), tracked in #2939. It
+            // feeds _bcSymbolQueryIndex through the same derived/registered split and is the
+            // other input to RegisteredBcAppSymbolStateKey. Left alone because #2755 scoped
+            // itself to _bcAppPaths and called the blast radius out explicitly — and the
+            // SystemApp regression above is what that caution was warning about.
+            ClearPerBundleBcAppPaths();
+        }
         _fieldTriggersWiredTables.Clear();
         _parsedPages.Clear();
         _parsedPageExtensions.Clear();
@@ -281,6 +321,15 @@ public static partial class RecordPatches
         // Drop the in-memory table rows so an edited re-run starts clean instead of
         // seeing Inserts from the previous run (which would e.g. throw "already exists").
         _dataAccessByTable.Clear();
+        // _materialisationGates is deliberately NOT cleared here, and no reset path clears it.
+        // A gate's latch names the storage INSTANCE it was set for, so clearing the map above
+        // invalidates it on its own — see RecordPatches.TableMaterialisation.cs. Clearing the
+        // gates as well would be a second mechanism for one fact, which is what let the fast
+        // path trust a latch that no longer described anything (the reset paths that drop
+        // storage are not all in one place, and only one of them knew to do it); worse, it
+        // hands out fresh gate objects, so a reset racing a materialisation would put two
+        // threads inside the create -> hydrate step under two different monitors. The gates are
+        // a handful of empty objects keyed weakly by DataAccessSource, and they die with it.
         // Registered table connections cache one CrmTestDataProvider per table id, bound to
         // the previous run's NCLMetaTable — they go with the rows (#2725).
         TableConnectionPatches.ResetForReload();
@@ -785,8 +834,31 @@ public static partial class RecordPatches
     /// <summary>
     /// Replacement for TempTableDataProvider.CalcNumeric(CalcNumericProviderRequest).
     /// The real override throws NotSupportedException; this replacement iterates in-memory rows
-    /// via the private Filter() helper and accumulates count/sum/average (the only three
-    /// calculation methods routed through CalcNumeric — Exists and Lookup use separate paths).
+    /// via the private Filter() helper and aggregates each requested FlowField.
+    /// <para>#2937 — the doc comment here used to claim count/sum/average were "the only three
+    /// calculation methods routed through CalcNumeric", and the result switch ended in
+    /// <c>_ =&gt; sums[j]</c>, so Min/Max/Lookup/Exists/None were all answered with the SUM
+    /// accumulator. For Min/Max nothing ever wrote that accumulator, so they came back as a
+    /// constant 0 whatever the data — right for an empty source set only by coincidence.
+    /// Count/Sum/Average is indeed what BC ROUTES here (DistinctSourceTable.AddField buckets
+    /// Min/Max into MinMaxFlowFields → CalcMinMax, Lookup and Exists into their own lists), but
+    /// "BC does not send it" is not a reason to answer it wrongly: Min/Max are now aggregated
+    /// properly and everything else throws. Aggregation itself lives in
+    /// <see cref="ComputeCalcNumericAggregate"/>.</para>
+    /// <para>NegateResult (<c>CalcFormula = -sum(...)</c>) is applied here because BC applies it
+    /// at this level too: NavSqlAggregateCommand's aggregate reader negates each aggregated
+    /// value inside the provider, before the FieldDictionary is returned. The negation itself is
+    /// BC's own NCLMetaCalculationFormula.NegateValue, reached through
+    /// <see cref="FlowFieldPatches.NegateAggregateResult"/> so the two runner paths that negate
+    /// a FlowField aggregate share one implementation (#1708, #2323).</para>
+    /// <para>REACHABILITY, measured rather than assumed (#2937 left this open): instrumenting
+    /// this method's result loop and running the whole al-language corpus (2496 tests) plus all
+    /// of tests/runner-extras (264 tests) produced ZERO hits. FlowFieldPatches hooks
+    /// NavRecord.CalcFieldsAsync ahead of FlowFieldsHelper, so ordinary CalcFields — on a
+    /// temporary record too, since every runner table is backed by TempTableDataProvider — never
+    /// arrives here. That is why the coverage for this method is C# (CalcNumericAggregateTests)
+    /// and not AL: there is no AL shape today that reaches it, so an AL test would pass without
+    /// executing a line of it.</para>
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static object TempTableDataProvider_CalcNumeric(object self, object request)
@@ -799,8 +871,38 @@ public static partial class RecordPatches
         int fieldCount     = fieldsToCalc.Count;
 
         var primaryKeySortingFields = _fTtdpPrimaryKeySortingFields!.GetValue(self);
-        var sums = new Decimal18[fieldCount];
         int recordCount = 0;
+
+        // Per-field state resolved once, not once per row: the calculation method, the source
+        // field the formula names (Count has none), and the source values collected across the
+        // matching rows. Only the value-consuming methods get a list — a Count field's slot
+        // stays null and nothing is collected for it.
+        //
+        // Collecting the values rather than folding them into a running total is the same shape
+        // RecordPatches.QueryProjection's ComputeAggregateCore uses, and it is what lets one
+        // helper own Sum/Average/Min/Max instead of the result switch reading whichever
+        // accumulator happened to be written. The cost is one NavValue REFERENCE per matching
+        // row per aggregated field — the rows' own value objects, not copies, and the rows are
+        // already materialised in the temp store by the Filter() call below.
+        var methods = new NCLMetaCalculationMethod[fieldCount];
+        var sourceFields = new NCLMetaField?[fieldCount];
+        var sourceValues = new List<NavValue?>?[fieldCount];
+        for (int i = 0; i < fieldCount; i++)
+        {
+            var field = (NCLMetaField)fieldsToCalc[i];
+            methods[i] = field.CalculationFormula.CalculationMethod;
+            if (methods[i] is NCLMetaCalculationMethod.Sum or NCLMetaCalculationMethod.Average
+                or NCLMetaCalculationMethod.Min or NCLMetaCalculationMethod.Max)
+            {
+                sourceFields[i] = sourceTable.GetFieldByNo(field.CalculationFormula.FieldId, trapError: true);
+                // Source field unresolvable → no values are collected and the aggregate answers
+                // its empty-set value, which is what this method did before #2937 and what
+                // FlowFieldPatches' own srcFieldColumn < 0 arm does. Left as-is deliberately:
+                // making it loud is a change to the shared FlowField behaviour, not to this
+                // method, and belongs with the sibling rather than half-applied here.
+                if (sourceFields[i] != null) sourceValues[i] = new List<NavValue?>();
+            }
+        }
 
         var rows = (System.Collections.IEnumerable)_mTtdpFilter!.Invoke(
             self, new object?[] { companyToken, filtersAndMarks, null, primaryKeySortingFields, false })!;
@@ -810,17 +912,9 @@ public static partial class RecordPatches
             checked { recordCount++; }
             for (int i = 0; i < fieldCount; i++)
             {
-                var field = (NCLMetaField)fieldsToCalc[i];
-                var cm = field.CalculationFormula.CalculationMethod;
-                if (cm is NCLMetaCalculationMethod.Sum or NCLMetaCalculationMethod.Average)
-                {
-                    var srcField = sourceTable.GetFieldByNo(field.CalculationFormula.FieldId, trapError: true);
-                    if (srcField != null)
-                    {
-                        var v = row[srcField.ColumnIndex];
-                        if (v != null) sums[i] = checked(sums[i] + v.ToDecimal());
-                    }
-                }
+                var values = sourceValues[i];
+                if (values == null) continue;
+                values.Add(row[sourceFields[i]!.ColumnIndex]);
             }
         }
 
@@ -828,18 +922,141 @@ public static partial class RecordPatches
         for (int j = 0; j < fieldCount; j++)
         {
             var field = (NCLMetaField)fieldsToCalc[j];
-            NavValue navValue = field.CalculationFormula.CalculationMethod switch
-            {
-                NCLMetaCalculationMethod.Count   => NavValue.CreateNavValueFromObject(field, recordCount),
-                NCLMetaCalculationMethod.Average when recordCount > 0
-                                                 => NavValue.CreateNavValueFromObject(field, sums[j] / recordCount),
-                _                                => NavValue.CreateNavValueFromObject(field, sums[j]),
-            };
+            var formula = field.CalculationFormula;
+
+            // BC negates at this level too — see the method's doc comment. The negation is
+            // passed IN rather than applied after the call so that "aggregate, then negate iff
+            // NegateResult" is one decision with one owner, and so a test can drive it: BC's
+            // own NCLMetaCalculationFormula.NegateValue resolves SourceField through the
+            // metadata registry and therefore needs a live session, which a unit test does not
+            // have. Exists never reaches the negation (ComputeCalcNumericAggregate throws for
+            // it first), so the #2323 exist carve-out in FlowFieldPatches has no counterpart to
+            // make here.
+            var navValue = ComputeCalcNumericAggregate(
+                methods[j], field, recordCount,
+                (IEnumerable<NavValue?>?)sourceValues[j] ?? Array.Empty<NavValue?>(),
+                $"{field.Parent?.TableName}.{field.FieldName}",
+                formula.NegateResult,
+                v => FlowFieldPatches.NegateAggregateResult(
+                    formula, v, "TempTableDataProvider.CalcNumeric"));
+
             tuples[j] = new Tuple<INavFieldMetadata, NavValue>(field, navValue);
         }
 
         return _ctorFieldDictionaryNavValue!.Invoke(new object[] { tuples })!;
     }
+
+    /// <summary>
+    /// One CalcNumeric field's aggregate, over the source values of the rows that matched the
+    /// formula's filters (<paramref name="rowCount"/> is how many rows matched — Count's answer,
+    /// and Average's divisor, both of which count rows rather than non-null values).
+    /// <para>Min/Max reuse <see cref="FlowFieldPatches.NavValueCompare"/> and
+    /// <see cref="FlowFieldPatches.TypedDefaultForField"/> rather than re-deriving comparison or
+    /// default semantics — the same reuse RecordPatches.QueryProjection's ComputeAggregateCore
+    /// makes, so all three of the runner's aggregate paths order values and answer an empty set
+    /// identically.</para>
+    /// <para>The empty-source-set answers are deliberate, not a fallthrough: corpus PR
+    /// StefanMaron/BusinessCentral.AL.Language.Tests#171 measured real BC on eight service tiers
+    /// answering 0 for min/max/average over no matching rows — and 0D for a Date-typed one,
+    /// which is why the answer is the field's OWN typed default and not a numeric zero.</para>
+    /// <para>Anything else throws. BC never routes Exists/Lookup/None through CalcNumeric
+    /// (DistinctSourceTable.AddField buckets them into their own field lists), so one arriving
+    /// here means the dispatch changed — and per loud-failures.md that has to be loud rather
+    /// than answered with a default. Min and Max are answered even though BC does not route
+    /// them here either, because the aggregation is exactly the same work and a wrong constant
+    /// was the #2937 defect.</para>
+    /// </summary>
+    /// <param name="negateResult">the formula's <c>NegateResult</c> — the leading minus in
+    /// <c>CalcFormula = -sum(...)</c> (#1708).</param>
+    /// <param name="negate">applies that minus, and is only ever called when
+    /// <paramref name="negateResult"/> is true. Required rather than optional: a null default
+    /// would let a caller silently answer the POSITIVE aggregate for a negated formula, which
+    /// is the exact silent wrong value #1708 is about. Production passes
+    /// <see cref="FlowFieldPatches.NegateAggregateResult"/>, so BC's own
+    /// NCLMetaCalculationFormula.NegateValue stays the single owner of the negation.</param>
+    internal static NavValue ComputeCalcNumericAggregate(
+        NCLMetaCalculationMethod method,
+        INavValueMetadata resultMetadata,
+        int rowCount,
+        IEnumerable<NavValue?> sourceValues,
+        string fieldDescription,
+        bool negateResult,
+        Func<NavValue, NavValue> negate)
+    {
+        if (negateResult && negate == null)
+            throw new ArgumentNullException(nameof(negate),
+                $"NegateResult is set on '{fieldDescription}' but no negation was supplied — "
+                + "answering the positive aggregate would be the silent wrong value of #1708");
+
+        var aggregate = ComputeCalcNumericAggregateCore(
+            method, resultMetadata, rowCount, sourceValues, fieldDescription);
+        return negateResult ? negate(aggregate) : aggregate;
+    }
+
+    private static NavValue ComputeCalcNumericAggregateCore(
+        NCLMetaCalculationMethod method,
+        INavValueMetadata resultMetadata,
+        int rowCount,
+        IEnumerable<NavValue?> sourceValues,
+        string fieldDescription)
+    {
+        switch (method)
+        {
+            case NCLMetaCalculationMethod.Count:
+                return NavValue.CreateNavValueFromObject(resultMetadata, rowCount);
+
+            case NCLMetaCalculationMethod.Sum:
+            case NCLMetaCalculationMethod.Average:
+            {
+                Decimal18 sum = default;
+                foreach (var v in sourceValues)
+                {
+                    if (v == null) continue;
+                    sum = checked(sum + v.ToDecimal());
+                }
+                if (method == NCLMetaCalculationMethod.Sum)
+                    // An empty sum is 0 by arithmetic, not by accumulator accident.
+                    return NavValue.CreateNavValueFromObject(resultMetadata, sum);
+                return rowCount > 0
+                    ? NavValue.CreateNavValueFromObject(resultMetadata, sum / rowCount)
+                    : EmptyAggregateDefault(resultMetadata);
+            }
+
+            case NCLMetaCalculationMethod.Min:
+            case NCLMetaCalculationMethod.Max:
+            {
+                NavValue? best = null;
+                foreach (var v in sourceValues)
+                {
+                    if (v == null) continue;
+                    if (best == null
+                        || (method == NCLMetaCalculationMethod.Min && FlowFieldPatches.NavValueCompare(v, best) < 0)
+                        || (method == NCLMetaCalculationMethod.Max && FlowFieldPatches.NavValueCompare(v, best) > 0))
+                        best = v;
+                }
+                return best ?? EmptyAggregateDefault(resultMetadata);
+            }
+
+            default:
+                throw new RunnerOutOfScopeException(
+                    "TempTableDataProvider.CalcNumeric",
+                    $"not-yet-implemented — CalculationMethod {method} on '{fieldDescription}' "
+                    + "is not aggregated by CalcNumeric. BC routes Exists to CalcExists and "
+                    + "Lookup to CalcLookup (DistinctSourceTable.AddField), so a CalcNumeric "
+                    + "request carrying one means the dispatch changed; answering it with the "
+                    + "sum accumulator was issue #2937",
+                    "todo");
+        }
+    }
+
+    /// <summary>
+    /// What an aggregate answers when no row contributed a value: the result field's OWN typed
+    /// default (0 for Decimal/Integer, 0D for Date, …), never a bare numeric literal — same
+    /// chain FlowFieldPatches' Min/Max/Lookup arms use.
+    /// </summary>
+    private static NavValue EmptyAggregateDefault(INavValueMetadata resultMetadata)
+        => FlowFieldPatches.TypedDefaultForField(resultMetadata)
+           ?? NavValue.CreateNavValueFromObject(resultMetadata, 0);
 
     /// Pre-populate the skeleton session's dataAccessSource field directly.
     /// NavSession.DataAccessSource getter is a trivial field return and gets inlined by JIT,
@@ -1490,14 +1707,40 @@ public static partial class RecordPatches
     /// </summary>
     internal static Action<object, int>? TestDataOnDemandLoader;
 
+    /// <summary>
+    /// Told the id of a table whose storage was published from inside ANOTHER table's hydration
+    /// and therefore could not be loaded there (#2877). Installed by TestDataProvisioner.Arm()
+    /// alongside the loader, and null for every run without --test-data.
+    ///
+    /// The point is reporting, not mechanism: without it the provisioner has no record for that
+    /// table at all, so TableOutcome answers null — which under the on-demand policy means
+    /// "nothing in this run ever touched it", the opposite of what happened. Same argument as
+    /// #2240.
+    /// </summary>
+    internal static Action<int>? TestDataDeferredLoadNotifier;
+
+    /// <summary>
+    /// Told (table id, reason) when a deferred load could not be run after all, because the
+    /// store had rows by then or could not be read. Arriving here means the table ends the run
+    /// WITHOUT its backup rows, so it is reported rather than skipped — a silent skip is what
+    /// produced #2877. See .claude/rules/loud-failures.md.
+    /// </summary>
+    internal static Action<int, string>? TestDataDeferredLoadWriteOffNotifier;
+
     /// <summary>Re-entrancy depth for the loader — NOT a "which tables are loaded" cache,
     /// which #2262 rules out on purpose.
     ///
     /// Hydrating a table runs BC's own metadata and NavValue construction, and that code can
     /// reach a Record of ANOTHER table, which lands back in GetDataAccessForTableCore and
-    /// would recurse. Skipping the nested load is safe rather than lossy: the nested table is
-    /// left with empty storage, which is the same state it would have had a moment earlier,
-    /// so the next independent touch of it loads it normally.</summary>
+    /// would recurse.
+    ///
+    /// Skipping the nested load is only safe because the omission is RECORDED. The nested call
+    /// has already published the nested table's storage by the time the load is refused, and
+    /// "storage presence IS the have-we-loaded-this answer" then made the omission permanent:
+    /// every later touch found the entry and never loaded it, so the table silently kept none
+    /// of its backup rows for the whole run (#2877). GetOrCreateHydratedDataAccessCore's nested
+    /// branch marks that instance as owing a load, and the next touch outside a materialisation
+    /// settles it — see RecordPatches.TableMaterialisation.cs.</summary>
     [ThreadStatic] private static int _testDataLoadDepth;
 
     private static void InvokeTestDataOnDemandLoader(object source, int tableId)
@@ -1607,9 +1850,7 @@ public static partial class RecordPatches
                 // on demand there. This whole path is now DEFAULT-ON (no env gate): the find
                 // interception means a populated Field table no longer crashes under R2R.
                 var session = _fDasSession?.GetValue(self)
-                    ?? throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
-                        "Field (virtual table 2000000041)",
-                        "field-virtual-table — DataAccessSource has no skeleton session; see docs/scope.md");
+                    ?? throw FieldVirtualShapeGap("DataAccessSource has no skeleton session");
                 PopulateFieldVirtualTable(fieldDa, table, session);
                 return fieldDa;
             }
@@ -1782,11 +2023,9 @@ public static partial class RecordPatches
                     aggPermSetDa = perTable.GetOrAdd(tableId, createdAggPermSet);
                 }
                 var aggPermSetSession = _fDasSession?.GetValue(self)
-                    ?? throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
-                        "Aggregate Permission Set (virtual table 2000000167)",
-                        "aggregate-permission-set-virtual-table — DataAccessSource has no skeleton "
-                        + "session, so BC's own AggregatePermissionSetDataProvider cannot be "
-                        + "constructed; see docs/scope.md");
+                    ?? throw AggregatePermissionSetShapeGap(
+                        "DataAccessSource has no skeleton session, so BC's own "
+                        + "AggregatePermissionSetDataProvider cannot be constructed");
                 PopulateAggregatePermissionSetVirtualTable(aggPermSetDa, table, aggPermSetSession);
                 return aggPermSetDa;
             }
@@ -1875,10 +2114,9 @@ public static partial class RecordPatches
                     featureKeyDa = perTable.GetOrAdd(tableId, createdFeatureKey);
                 }
                 var featureKeySession = _fDasSession?.GetValue(self)
-                    ?? throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
-                        "Feature Key (system table 2000000211)",
-                        "feature-key-virtual-table — DataAccessSource has no skeleton session, so "
-                        + "BC's own FeatureKeyDataProvider cannot be constructed; see docs/scope.md");
+                    ?? throw FeatureKeyShapeGap(
+                        "DataAccessSource has no skeleton session, so BC's own "
+                        + "FeatureKeyDataProvider cannot be constructed");
                 PopulateFeatureKeyVirtualTable(featureKeyDa, table, featureKeySession);
                 return featureKeyDa;
             }
@@ -1930,22 +2168,44 @@ public static partial class RecordPatches
             // below does nothing when the store already holds a row: real rows win, synthesis
             // is the fallback. Every other branch in this method serves a table no backup can
             // ever have rows for, which is why only this one loads before populating.
-            // KNOWN RACE, issue #2788: only the GetOrAdd winner runs the loader, but both
-            // racers populate, so a loser can observe the store between "created" and
-            // "hydrated" and synthesise first — inverting that precedence. Narrow window,
-            // observable only under --test-data, tracked rather than fixed here.
+            //
+            // That precedence needs the hand-out to be ordered as well as the load, or a second
+            // thread is given the store between "created" and "hydrated", finds it empty and
+            // synthesises over rows that are about to arrive (#2788). GetOrCreateHydratedDataAccess
+            // is what guarantees it — see RecordPatches.TableMaterialisation.cs — so the populate
+            // below always runs on a store that is either hydrated or never will be.
             // See RecordPatches.ObjectMetadataSystemTable.cs.
+            //
+            // A store published by a NESTED materialisation is the one case where the populate
+            // must NOT run yet: it owes a --test-data load that could not run there, and
+            // synthesising into it now would make that load a mix of real and synthesised rows.
+            // MaterialiseObjectMetadataStore holds the populate off until the debt is settled
+            // (#2877) — with no loader installed nothing is ever owed and this is unchanged.
             if (IsObjectMetadataSystemTable(table))
+                return MaterialiseObjectMetadataStore(self, perTable, table, tableId);
+
+            // ── Object (2000000001) ──────────────────────────────────────────────────────
+            // The other half of the table relation Object Metadata."Object ID" declares
+            // (TableRelation = Object.ID WHERE(Type = FIELD("Object Type"))). Also NOT a
+            // virtual table: the legacy object registry, a real application-database SQL
+            // table. Its store was empty, so every read answered "no such object" — silently,
+            // because Microsoft has that field's TestTableRelation commented out (#2774).
+            //
+            // Its rows are an object INVENTORY, so unlike Object Metadata's fixed id list they
+            // are projected from the same EnumerateKnownAlObjects that answers AllObj — which
+            // is what stops the two tables disagreeing about which objects exist.
+            //
+            // Same --test-data precedence as Object Metadata directly above, for the same
+            // reason (a restored backup can genuinely carry rows for a real SQL table), and
+            // through the same ordered materialisation: GetOrCreateHydratedDataAccess is what
+            // stops a second thread being handed this store between "created" and "hydrated",
+            // finding it empty and synthesising over rows that are about to arrive (#2788).
+            // See RecordPatches.ObjectSystemTable.cs and RecordPatches.TableMaterialisation.cs.
+            if (IsObjectSystemTable(table))
             {
-                if (!perTable.TryGetValue(tableId, out var objectMetadataDa))
-                {
-                    var createdObjectMetadata = _mCreateTempDataAccess!.Invoke(self, new object[] { table })!;
-                    objectMetadataDa = perTable.GetOrAdd(tableId, createdObjectMetadata);
-                    if (TestDataOnDemandLoader != null && ReferenceEquals(objectMetadataDa, createdObjectMetadata))
-                        InvokeTestDataOnDemandLoader(self, tableId);
-                }
-                PopulateObjectMetadataSystemTable(objectMetadataDa, table);
-                return objectMetadataDa;
+                var objectDa = GetOrCreateHydratedDataAccess(self, perTable, table, tableId);
+                PopulateObjectSystemTable(objectDa, table);
+                return objectDa;
             }
 
             // ── Page Control Field (2000000192) ──────────────────────────────────────────
@@ -1965,30 +2225,23 @@ public static partial class RecordPatches
                 return pageControlFieldDa;
             }
 
-            if (perTable.TryGetValue(tableId, out var cached))
-            {
-                return cached;
-            }
-            var result = _mCreateTempDataAccess!.Invoke(self, new object[] { table })!;
-            // Race: keep first winner.
-            var added = perTable.GetOrAdd(tableId, result);
             // ── --test-data on-demand load (#2262) ───────────────────────────────────────
-            // Reaching here means the store did NOT have this table, which is exactly when a
-            // --test-data run needs its rows read out of the backup. Same choke point the
-            // virtual tables above use, and for the same reason: it is the only place a
-            // table's storage is materialised, so the load always lands before the operation
-            // that triggered it — a read and a write are equally covered.
+            // A store that does not have this table yet is exactly when a --test-data run needs
+            // its rows read out of the backup. Same choke point the virtual tables above use,
+            // and for the same reason: it is the only place a table's storage is materialised,
+            // so the load always lands before the operation that triggered it — a read and a
+            // write are equally covered.
             //
             // Storage presence IS the "have we loaded this" answer, so there is no flag to
             // keep in step: RestoreInstallBaselineSnapshot repopulates perTable from exactly
             // the snapshot it restores, so a table the last restore carried is present and
-            // does not reach this line. See TestDataProvisioner's header.
+            // does not reach the create below. See TestDataProvisioner's header.
             //
-            // Only the GetOrAdd winner loads. A loser would be hydrating into storage it is
-            // about to throw away, and the winner's rows are already in the returned instance.
-            if (TestDataOnDemandLoader != null && ReferenceEquals(added, result))
-                InvokeTestDataOnDemandLoader(self, tableId);
-            return added;
+            // Only the GetOrAdd winner loads — a loser would be hydrating into storage it is
+            // about to throw away — and no racer is handed the storage until that load has
+            // finished, so a caller here can never act on a half-hydrated table (#2788).
+            // See RecordPatches.TableMaterialisation.cs.
+            return GetOrCreateHydratedDataAccess(self, perTable, table, tableId);
         }
         catch (Exception ex)
         {

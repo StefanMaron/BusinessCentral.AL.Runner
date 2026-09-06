@@ -86,7 +86,7 @@ public sealed class TestPageNewRecordValidationTests
     [Fact]
     public void New_ValidatesTheStampedSet_AndOnlyTheStampedSet()
     {
-        var cacheDir = Path.Combine(Path.GetTempPath(), "al-runner-tnv-tests", "cache-" + Guid.NewGuid().ToString("N"));
+        var cacheDir = TestScratch.Dir("al-runner-tnv-tests");
         try
         {
             var (exit, stdout, stderr) = Run(cacheDir);

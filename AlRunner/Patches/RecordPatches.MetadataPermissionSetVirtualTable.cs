@@ -81,6 +81,17 @@ namespace AlRunner.Patches;
 
 public static partial class RecordPatches
 {
+    /// <summary>
+    /// Every refusal in this file, built in one place. See
+    /// RecordPatches.VirtualTableShapeGap.cs for the three-bucket classification and for
+    /// why the anchor is "not-yet-implemented" rather than a docs/scope.md section (#2945).
+    /// </summary>
+    /// <remarks>
+    /// Category (2): one store-wiring refusal, on a table this file populates.
+    /// </remarks>
+    internal static RunnerOutOfScopeException MetadataPermissionSetShapeGap(string detail)
+        => VirtualTableShapeGap("Metadata Permission Set (virtual table 2000000250)", "metadata-permission-set-virtual-table", detail);
+
     internal const int MetadataPermissionSetVirtualTableId = 2000000250;
 
     // Per in-memory-provider guard so repeated data-access handouts only insert roles
@@ -108,17 +119,24 @@ public static partial class RecordPatches
         EnsureDataAccessProviderReflection(dataAccess);
 
         var provider = _pDataAccessDataProvider!.GetValue(dataAccess)
-            ?? throw new RunnerOutOfScopeException(
-                "Metadata Permission Set (virtual table 2000000250)",
-                "metadata-permission-set-virtual-table — data access has no in-memory provider; see docs/scope.md");
+            ?? throw MetadataPermissionSetShapeGap("data access has no in-memory provider");
 
         var done = _mpsPopulatedByProvider.GetValue(provider, static _ => new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase));
 
-        foreach (var (permissionSet, owningAppId) in EnumerateKnownPermissionSets())
+        foreach (var (permissionSet, owningAppId, _) in EnumerateKnownPermissionSets())
         {
             if (!done.TryAdd(permissionSet.Name, 0)) continue;
             InsertMetadataPermissionSetRow(provider, metaTable, permissionSet, owningAppId);
         }
+
+        // #2893: the same inventory BC's own permission metadata layer needs, and this is the
+        // moment it is complete — the run has parsed its AL source and loaded its dependency
+        // .app packages, and something is asking about permission sets. Populating here rather
+        // than at session setup also means the app group is filled from the FULL inventory
+        // instead of whatever was known before the bundle was read. Idempotent: it recomputes
+        // only when the known count changed, and always installs a fresh lazy, so a later call
+        // after the inventory grows is correct rather than a no-op.
+        EnsurePermissionMetadataPopulated();
     }
 
     /// <summary>
@@ -138,20 +156,29 @@ public static partial class RecordPatches
     /// .app to read a SymbolReference.json from (#2357).
     /// </para>
     /// </summary>
-    private static IEnumerable<(BcAppSymbolCache.PermissionSetSymbol PermissionSet, Guid OwningAppId)> EnumerateKnownPermissionSets()
+    private static IEnumerable<(BcAppSymbolCache.PermissionSetSymbol PermissionSet, Guid OwningAppId, string OwningAppName)> EnumerateKnownPermissionSets()
     {
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         // 1. Permission sets the runner compiled from source.
         foreach (var p in ParsedPermissionSets)
             if (seen.Add(p.Name))
-                yield return (new BcAppSymbolCache.PermissionSetSymbol(p.Id, p.Name, p.Caption, p.Assignable), p.AppId);
+                yield return (new BcAppSymbolCache.PermissionSetSymbol(
+                        p.Id, p.Name, p.Caption, p.Assignable,
+                        // #2910: a source-declared set's permissions name their objects; a
+                        // precompiled one's carry ids. Resolve here so both shapes reach BC's
+                        // composer identically.
+                        ResolveSourcePermissionEntries(p.Permissions),
+                        p.IncludedPermissionSets,
+                        p.Access),
+                    p.AppId, p.AppName ?? string.Empty);
 
         // 2. Permission sets declared by precompiled dependency .app packages.
         foreach (var appPath in _bcAppPaths.ToArray())
         {
             List<BcAppSymbolCache.PermissionSetSymbol> permissionSets;
             Guid owningAppId;
+            string owningAppName;
             try
             {
                 var symbols = BcAppSymbolCache.Get(appPath);
@@ -160,6 +187,11 @@ public static partial class RecordPatches
                 // SymbolReference.json. An app whose symbol file states none leaves the
                 // column empty rather than getting an invented id.
                 Guid.TryParse(symbols.AppId, out owningAppId);
+                // #2893: the owning app's NAME travels with the id now. The permission
+                // metadata layer's summaries carry a NavAppRuntimeMetadata owner, and an
+                // owner whose Name is empty when SymbolReference.json states one would be a
+                // value invented by omission.
+                owningAppName = symbols.AppName ?? string.Empty;
             }
             catch (Exception ex)
             {
@@ -169,7 +201,7 @@ public static partial class RecordPatches
             }
             foreach (var p in permissionSets)
                 if (seen.Add(p.Name))
-                    yield return (p, owningAppId);
+                    yield return (p, owningAppId, owningAppName);
         }
     }
 

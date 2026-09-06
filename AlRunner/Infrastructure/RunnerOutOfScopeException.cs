@@ -5,8 +5,32 @@
 //   .claude/rules/loud-failures.md — the rule.
 //   docs/scope.md                  — the manifest. Anchors land developers in the right row.
 //
-// Plain System.Exception (NOT derived from any BC exception type) so AL
-// `asserterror` cannot swallow it. The developer must see the failure.
+// Plain System.Exception, NOT derived from any BC exception type, for two reasons that
+// hold: it is unmistakable in test output (no BC error path produces it), and it carries
+// typed Api/Reason fields that tests/expectations/ matches on — something a
+// MissingFieldException or an InvalidOperationException cannot offer.
+//
+// It is NOT uncatchable from AL, and an earlier version of this comment claimed it was.
+// AL `asserterror` DOES catch it. The runner's asserterror replacement —
+// BcRuntime.NavMethodScope_AssertError in AlRunner/Patches/MethodScopePatches.cs, bound
+// over NavMethodScope::AssertError/1 in NclCecilRewrite.Runtime.cs — is an unfiltered
+// `catch (Exception)`, so a refusal raised inside an `asserterror` block makes that
+// asserterror PASS. Runner-extras suites rely on this deliberately:
+// tests/runner-extras/table-connection-live-oos and tests/runner-extras/
+// date-virtual-table-window both do `asserterror <oos surface>` followed by
+// `Assert.ExpectedError('out-of-scope: ...')`. Do not write a new refusal on the
+// assumption that AL cannot trap it.
+//
+// An AL [TryFunction] is the deliberate exception to that, and the asymmetry is the point:
+// BcRuntime.NavApplicationObjectBase_TryInvoke traps a PERMANENTLY out-of-scope refusal
+// into `false` (matching a real BC environment that also lacks the surface) but lets a
+// "not-yet-implemented" one tear through, so a runner gap can never read as a green test.
+// See AlRunner.Tests/TryFunctionOutOfScopeTrapTests.cs.
+//
+// Whether AL should be able to swallow a refusal at all is a live design question — see
+// .claude/rules/loud-failures.md and issue #2871 — and a maintainer decision, not something
+// to change from a patch site. AlRunner.Tests/AssertErrorOutOfScopeCatchabilityTests.cs pins
+// today's answer so a change to it is visible rather than silent.
 
 using System;
 
@@ -17,7 +41,10 @@ namespace AlRunner.Infrastructure;
 ///   (a) permanently out of scope (e.g. SMTP) → reason cites §3.x of scope.md, or
 ///   (b) in scope but not yet implemented    → reason = "not-yet-implemented".
 /// Distinct from any BC runtime exception so the failure is unmistakable in
-/// test output and uncatchable via AL `asserterror`.
+/// test output, and carrying typed <see cref="Api"/> / <see cref="Reason"/>
+/// fields that <c>tests/expectations/</c> matches on. It is NOT uncatchable
+/// via AL <c>asserterror</c> — see this file's header for what actually
+/// happens, and why.
 /// </summary>
 public sealed class RunnerOutOfScopeException : Exception
 {
@@ -38,9 +65,25 @@ public sealed class RunnerOutOfScopeException : Exception
     // or just 'out-of-scope:' for any-OOS. Keep the prefix + " — " separators stable.
     private static string BuildMessage(string api, string reason, string? docAnchor)
     {
-        var link = docAnchor != null
-            ? $"docs/scope.md{(docAnchor.StartsWith("#") ? docAnchor : "#" + docAnchor)}"
-            : "docs/scope.md";
+        // A docAnchor that names its own doc file is used verbatim (#2894). scope.md is the
+        // manifest of what is permanently out of scope, and it is the right target for most
+        // refusals — but not for every one. An IN-SCOPE surface the runner cannot answer for
+        // yet is written up in docs/limitations.md, and pointing that case at scope.md sends
+        // the reader to a file with no matching section AND asserts a permanence that is not
+        // true. The twelve Object Metadata (2000000071) refusals in
+        // RecordPatches.ObjectMetadataSystemTable.cs are the case that showed it.
+        //
+        // OutOfScopeMessage.TryParse strips everything from " — see " onward, so the file name
+        // here is invisible to the expectations manifest and to the reporter's bucketing —
+        // this is a reader-facing pointer only, and widening it changes no classification.
+        const string DefaultDoc = "docs/scope.md";
+        var link = docAnchor switch
+        {
+            null => DefaultDoc,
+            var a when a.StartsWith("docs/", StringComparison.Ordinal) => a,
+            var a when a.StartsWith("#", StringComparison.Ordinal) => DefaultDoc + a,
+            var a => DefaultDoc + "#" + a,
+        };
         return $"{OutOfScopeMessage.Prefix}{api} — {reason} — see {link}";
     }
 }
@@ -50,7 +93,8 @@ public sealed class RunnerOutOfScopeException : Exception
 /// </summary>
 /// <param name="Api">BC API that was touched, e.g. <c>HttpClient.Get</c>.</param>
 /// <param name="Reason">
-/// Reason as written by the throw site: a <c>docs/scope.md</c> anchor,
+/// Reason as written by the throw site: an anchor (a <c>docs/scope.md</c> section
+/// for a permanent refusal, or <c>not-yet-implemented</c> for an in-scope one),
 /// optionally followed by free-text detail after an em-dash separator.
 /// Empty when the throw site did not carry one.
 /// </param>
@@ -153,6 +197,8 @@ public static class RunnerScope
     /// <summary>
     /// Permanently-out-of-scope API. <paramref name="docAnchor"/> is the
     /// section anchor under <c>docs/scope.md</c> (e.g. "email", "external-http").
+    /// A caller documenting an in-scope refusal elsewhere may pass a full
+    /// <c>docs/&lt;file&gt;.md#anchor</c> instead — see <c>BuildMessage</c>.
     /// </summary>
     public static void ThrowOutOfScope(string api, string reason, string docAnchor)
         => throw new RunnerOutOfScopeException(api, reason, docAnchor);

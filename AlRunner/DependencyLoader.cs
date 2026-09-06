@@ -339,7 +339,19 @@ public sealed class DependencyLoader
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"[deps] tier-1 load failed for {m.Name}: {ex.Message}");
+                // #2750: this was a bare `[deps] tier-1 load failed …` on stderr, and `[deps]`
+                // is NOT exempted by Log's component-tag filter (`dep` is — a different
+                // category), so a CORRUPT sidecar DLL was completely silent at default
+                // verbosity: the load fell through to a lower tier and the run failed later
+                // with an unrelated-looking "no loaded type RecordNNNNN found".
+                //
+                // A sidecar that exists and was preferred over every other tier, then failed
+                // to load, is a provisioning gap — not a diagnostic. Reported so it is loud
+                // now AND repeated in the run summary (#2587), where a caller reading the
+                // bottom of a long run will actually find it.
+                AlRunner.Infrastructure.ProvisionGapLog.Report(
+                    AlRunner.Infrastructure.ProvisioningCheck.BuildPrecompiledSidecarLoadFailedMessage(
+                        m.Publisher, m.Name, m.Version.ToString(), precompiled, ex.Message));
             }
         }
 
@@ -383,7 +395,15 @@ public sealed class DependencyLoader
                     }
                     catch (Exception ex)
                     {
-                        Console.Error.WriteLine($"[deps] tier-2 R2R chunk load failed for {m.Name}: {ex.Message}");
+                        // #2750, sibling of the Tier-1 catch above and the same shape: a DLL
+                        // chunk we extracted and intended to use did not load, and the loop
+                        // carries on with the chunks that did. `primary` can still come back
+                        // non-null from another chunk, so the caller sees a successful load of
+                        // an app that is missing part of itself. Same treatment: a gap, loud
+                        // and summarised, not a suppressed `[deps]` line.
+                        AlRunner.Infrastructure.ProvisionGapLog.Report(
+                            AlRunner.Infrastructure.ProvisioningCheck.BuildPrecompiledSidecarLoadFailedMessage(
+                                m.Publisher, m.Name, m.Version.ToString(), dllPath, ex.Message));
                     }
                 }
                 if (loaded > 1)

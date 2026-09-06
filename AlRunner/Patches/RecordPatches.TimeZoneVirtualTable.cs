@@ -64,6 +64,23 @@ namespace AlRunner.Patches;
 
 public static partial class RecordPatches
 {
+    /// <summary>
+    /// Every refusal in this file, built in one place. See
+    /// RecordPatches.VirtualTableShapeGap.cs for the three-bucket classification and for
+    /// why the anchor is "not-yet-implemented" rather than a docs/scope.md section (#2945).
+    /// </summary>
+    /// <remarks>
+    /// Category (2) for both, and neither is the documented Time Zone DIVERGENCE. That
+    /// divergence -- IANA ids on a Linux host where a Windows-hosted tier reports Windows ids
+    /// -- is a real answer this provider gives on purpose, and it never throws. These two
+    /// refusals are the runner failing to answer at all: no in-memory provider, or a host with
+    /// no usable time zone database. Both point at the table's own limitations.md section,
+    /// which is where a reader who hits either one needs to end up.
+    /// </remarks>
+    internal static RunnerOutOfScopeException TimeZoneShapeGap(string detail)
+        => VirtualTableShapeGap("Time Zone (virtual table 2000000164)", "time-zone-virtual-table", detail,
+            "docs/limitations.md#time-zone-virtual-table");
+
     internal const int TimeZoneVirtualTableId = 2000000164;
 
     // One-shot per provider, unlike AllObj's per-id memo: the host's time zone list cannot
@@ -85,9 +102,7 @@ public static partial class RecordPatches
         EnsureDataAccessProviderReflection(dataAccess);
 
         var provider = _pDataAccessDataProvider!.GetValue(dataAccess)
-            ?? throw new RunnerOutOfScopeException(
-                "Time Zone (virtual table 2000000164)",
-                "time-zone-virtual-table — data access has no in-memory provider; see docs/scope.md");
+            ?? throw TimeZoneShapeGap("data access has no in-memory provider");
 
         if (_tzPopulatedProviders.TryGetValue(provider, out _)) return;
 
@@ -101,13 +116,11 @@ public static partial class RecordPatches
         }
         catch (Exception ex)
         {
-            throw new RunnerOutOfScopeException(
-                "Time Zone (virtual table 2000000164)",
-                "time-zone-virtual-table — the host reports no usable time zone database "
+            throw TimeZoneShapeGap(
+                "the host reports no usable time zone database "
                 + $"({ex.GetType().Name}: {ex.Message}). BC's own TimeZoneDataProvider reads the "
                 + "same TimeZoneInfo.GetSystemTimeZones(), so there is no other source to answer "
-                + "from, and an empty table would be a wrong answer rather than a missing one. "
-                + "See docs/scope.md");
+                + "from, and an empty table would be a wrong answer rather than a missing one");
         }
 
         for (var i = 0; i < zones.Count; i++)

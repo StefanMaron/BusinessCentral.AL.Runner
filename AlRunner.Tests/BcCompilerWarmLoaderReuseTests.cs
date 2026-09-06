@@ -167,38 +167,60 @@ public sealed class BcCompilerWarmLoaderReuseTests : IDisposable
     }
 
     /// <summary>
-    /// The `scripts/tests/server-mode-test.sh` regression in unit form. A source dependency
-    /// recompiled from edited AL keeps its AppId, Name and Version but is republished under a
-    /// NEW content-addressed path. Nothing else moves — the scanned .app dirs are unchanged,
-    /// because a synthetic source-only package carries no SymbolReference.json and is
-    /// filtered out of the .app scan set entirely. The changed dep KEY is therefore the only
-    /// signal that the cached loader's symbols are stale, and it must rebuild: otherwise the
-    /// dependent app compiles green against the OLD schema and fails at runtime instead of
-    /// failing loudly at compile time.
+    /// The `scripts/tests/server-mode-test.sh` regression in unit form, and issue #2678's
+    /// measured cost. A source dependency recompiled from edited AL keeps its AppId, Name and
+    /// Version but is republished under a NEW content-addressed path. Nothing else moves — the
+    /// scanned .app dirs are unchanged, because a synthetic source-only package carries no
+    /// SymbolReference.json and is filtered out of the .app scan set entirely, reaching the
+    /// compile through the JSON symbol loaders instead.
+    ///
+    /// Two things must both hold, and before #2678 only the first did:
+    ///
+    ///  * CORRECTNESS — the compile must see the NEWLY published symbols, not the ones the
+    ///    cached loader indexed at construction. The JSON loaders index in their constructor,
+    ///    so something has to be rebuilt.
+    ///  * COST — the something must be the JSON chain ALONE. The package loader is built from
+    ///    the .app scan set, which is byte-identical either side of a republish (the control
+    ///    below asserts exactly that), so nothing about its answers can have gone stale — and
+    ///    rebuilding it means paying <see cref="BcCompiler.WarmReferenceLoader"/> again, which
+    ///    on a real Microsoft dep set is 36-43 s. Measured on Pageworks under `--server`
+    ///    (issue #2678): every warm edit cycle republished the layered dependency at a new
+    ///    `workspace-deps/&lt;hash&gt;` path, the dep-universe key grew, and the whole loader was
+    ///    re-warmed — 36.1 s, 39.4 s and 43.0 s on three consecutive cycles of one process.
+    ///
+    /// The sidecar content differs between the two paths, so the correctness half is a real
+    /// observation of the served symbols rather than a proxy for one: a stale chain answers
+    /// "Before Edit" and fails the test.
     /// </summary>
     [Fact]
-    public void ASymbolLessDepRepublishedAtANewPath_RebuildsTheLoader_EvenThoughTheScanSetIsIdentical()
+    public void ASymbolLessDepRepublishedAtANewPath_RefreshesTheJsonSymbols_WithoutRewarmingThePackageLoader()
     {
         // A stable .app scan set the loader is really built from…
         var pkg = MakeDir("pkg");
         var platform = WriteApps(pkg, 2);
 
-        // …plus a synthetic source-only dep, symbol-less, in a content-addressed dir.
+        // …plus a synthetic source-only dep, symbol-less, in a content-addressed dir, with a
+        // dependency sidecar the JSON loader chain serves on its behalf.
         var v1 = MakeDir("workspace-deps/9c31b7ece106");
         var dep = WriteSymbolLessApp(v1, "AL_Runner_Src_Dep_1_0_0_0.app", "Src Dep");
+        WriteDepsSidecar(v1, dep, "Before Edit");
 
         BcCompiler.SetResolvedDeps(
             platform.Append(dep).Select(a => (ManifestFor(a), PathFor(a))).ToList(),
             new[] { pkg, v1 });
-        InvokeGetSharedReferences(new[] { pkg });
+        var first = InvokeGetSharedReferences(new[] { pkg });
         Assert.Equal(1, BcCompiler.ReferenceLoaderBuildCount);
+        Assert.Equal(1, BcCompiler.JsonSymbolLoaderBuildCount);
+        Assert.Equal("Before Edit", SoleSidecarDependencyName(first.Loader!, dep));
+        var warmedAfterFirst = BcCompiler.ReferenceLoaderWarmSpecCount;
 
-        // Republish the same identity under a new content-addressed dir — exactly what the
-        // layered pre-pass does when the dep's AL changes.
+        // Republish the same identity under a new content-addressed dir, with CHANGED symbols
+        // — exactly what the layered pre-pass does when the dep's AL changes.
         var v2 = MakeDir("workspace-deps/d750c87b300c");
         var republished = Path.Combine(v2, "AL_Runner_Src_Dep_1_0_0_0.app");
         File.Copy(_files[dep.AppId], republished);
         _files[dep.AppId] = republished;
+        WriteDepsSidecar(v2, dep, "After Edit");
 
         BcCompiler.SetResolvedDeps(
             platform.Append(dep).Select(a => (ManifestFor(a), PathFor(a))).ToList(),
@@ -206,13 +228,20 @@ public sealed class BcCompilerWarmLoaderReuseTests : IDisposable
 
         // Control: the .app SCAN set really is unchanged — a symbol-less package is filtered
         // out of it, so the dedup staging key (the picked-app set) is identical either side.
-        // Without the dep key in the rule, nothing here would invalidate the loader.
+        // This is what makes reusing the package loader provably safe rather than hopeful.
         Assert.Equal(
             InvokeDedupScanSet(new List<string> { pkg, v1 }),
             InvokeDedupScanSet(new List<string> { pkg, v2 }));
 
-        InvokeGetSharedReferences(new[] { pkg });
-        Assert.Equal(2, BcCompiler.ReferenceLoaderBuildCount);
+        var second = InvokeGetSharedReferences(new[] { pkg });
+
+        // CORRECTNESS: the republished symbols are what the compile sees now.
+        Assert.Equal("After Edit", SoleSidecarDependencyName(second.Loader!, dep));
+        // COST: neither the package loader nor its warm was redone to achieve that.
+        Assert.Equal(1, BcCompiler.ReferenceLoaderBuildCount);
+        Assert.Equal(warmedAfterFirst, BcCompiler.ReferenceLoaderWarmSpecCount);
+        // …and the cheap half is what moved instead.
+        Assert.Equal(2, BcCompiler.JsonSymbolLoaderBuildCount);
     }
 
     /// <summary>
@@ -375,6 +404,22 @@ public sealed class BcCompilerWarmLoaderReuseTests : IDisposable
 
 
     // ── Helpers ───────────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// A <c>*.symbols.deps.json</c> sidecar for <paramref name="dep"/> declaring exactly one
+    /// dependency named <paramref name="soleDependencyName"/> — a cheap, readable-back marker
+    /// for WHICH published copy of the dep's symbols a loader chain is actually serving.
+    /// </summary>
+    private static void WriteDepsSidecar(string dir, AppFixture dep, string soleDependencyName)
+        => DepsSidecarWriter.Write(
+            Path.Combine(dir, $"{dep.Publisher}_{dep.Name}_{dep.Version}.symbols.deps.json".Replace(' ', '_')),
+            dep.Publisher, dep.Name, dep.Version, dep.AppId,
+            new[] { new DepsSidecarWriter.DepEntry(
+                "Marker", soleDependencyName, new Version(1, 0, 0, 0), Guid.NewGuid()) });
+
+    /// <summary>The single dependency name the loader chain reports for <paramref name="dep"/>.</summary>
+    private static string SoleSidecarDependencyName(ISymbolReferenceLoader loader, AppFixture dep)
+        => loader.GetDependencies(SpecFor(dep), new List<Diagnostic>()).Single().Name;
 
     private sealed record AppFixture(Guid AppId, string Name, string Publisher, Version Version);
 

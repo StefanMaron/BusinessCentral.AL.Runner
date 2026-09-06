@@ -390,8 +390,18 @@ public class ParserStaticsIsolationGuardTests
 
     private static string TestSourceDirectory()
     {
-        // Preferred: the compile-time path of this very file. Exact when the assembly is built
-        // and tested on the same checkout, which is how CI and every dev box run it.
+        // First choice: the compile-time path of this very file — exact when the assembly is
+        // built and tested on the same checkout, and the reason [CallerFilePath] is used here
+        // at all.
+        //
+        // Since #2818 it is, in practice, NEVER taken: the repo-root Directory.Build.props sets
+        // PathMap=<repo-root>/=/_/ on every dev, CI and test build, and PathMap rewrites the
+        // value the compiler bakes into [CallerFilePath], so this reads
+        // "/_/AlRunner.Tests/ParserStaticsIsolationGuardTests.cs" and the File.Exists probe
+        // below fails. The walk-up fallback is the live path everywhere. It is kept rather
+        // than deleted because the probe is what makes the choice safe either way, and the
+        // release-pack build (-p:SuppressImplicitGitSourceLink=false, no PathMap) still
+        // produces a real absolute path here.
         var compileTimeDir = Path.GetDirectoryName(ThisFilePath());
         if (compileTimeDir is not null &&
             File.Exists(Path.Combine(compileTimeDir, "AlRunner.Tests.csproj")))

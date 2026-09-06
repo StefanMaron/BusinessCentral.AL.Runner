@@ -117,7 +117,7 @@ public class RecordPatchesGetPageControlFieldMapDependencyTests
     [Fact]
     public void GetPageControlFieldMap_DependencyPage_ResolvesPlainRecFieldControl()
     {
-        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.Dir("al-runner-pagecontrol-fieldmap-tests");
         Directory.CreateDirectory(dir);
         try
         {
@@ -142,7 +142,7 @@ public class RecordPatchesGetPageControlFieldMapDependencyTests
     [Fact]
     public void GetPageControlFieldMap_DependencyPage_OmitsControlWhoseFieldDoesNotExist()
     {
-        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.Dir("al-runner-pagecontrol-fieldmap-tests");
         Directory.CreateDirectory(dir);
         try
         {

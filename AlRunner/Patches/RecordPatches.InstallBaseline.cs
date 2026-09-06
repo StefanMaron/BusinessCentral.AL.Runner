@@ -68,6 +68,63 @@ public static partial class RecordPatches
         object? RecordLinks,
         IReadOnlyDictionary<int, long>? AutoIncrement);
 
+    /// <summary>
+    /// Serialises every mutation of a PUBLISHED baseline list, and every walk of one (#2914).
+    ///
+    /// The lists here are plain <see cref="List{T}"/>s — safe for concurrent readers only when
+    /// there are no writers — and there is a writer that runs on a thread of its own:
+    /// <see cref="AppendBaselineTable"/> fires from #2262's lazy --test-data load, which runs
+    /// inside a table materialisation. Materialisations are serialised per (DataAccessSource,
+    /// table id) by a TableMaterialisationGate and NOT globally, so two threads hydrating two
+    /// DIFFERENT tables hold two different monitors and append to these same lists at once.
+    ///
+    /// WHY NOT WIDEN THE GATE INSTEAD. The wait-graph note in
+    /// RecordPatches.TableMaterialisation.cs is explicit: a hydration must be able to nest
+    /// (hydrating table X runs BC metadata and NavValue construction, which can reach a Record
+    /// of table Y and land straight back in the materialisation), so one lock covering all
+    /// tables deadlocks on the nested case. The lists therefore get a lock of their own.
+    ///
+    /// WHY IT CANNOT DEADLOCK. It is a strict leaf. Everything done while holding it is list
+    /// and record construction over baseline objects: no BC call, no reflection into the
+    /// engine, no other lock, and nothing that can re-enter a materialisation. So a thread can
+    /// hold a materialisation gate and then take this (that is the real call path), but never
+    /// the reverse, and the wait graph gains no cycle. The walk helper below is what keeps that
+    /// true on the reader side: the restore copies the spine under this lock and then does its
+    /// BC work with the lock released, rather than holding it across
+    /// _mCreateTempDataAccess and a row-by-row provider insert.
+    /// </summary>
+    private static readonly object _baselineMutationLock = new();
+
+    /// <summary>
+    /// A structurally stable view of <paramref name="sources"/> for a walker to enumerate:
+    /// the sources list and each source's Tables list copied under
+    /// <see cref="_baselineMutationLock"/>, so an append landing mid-walk can neither tear the
+    /// enumeration (List&lt;T&gt; throws "Collection was modified") nor let a walker see a
+    /// half-published source.
+    ///
+    /// The copies are of the mutable SPINE only. <see cref="BaselineTable"/> is immutable once
+    /// published and its Rows array is never mutated in place (both writers deep-copy), so the
+    /// walker still sees the same table and row objects — no rows are duplicated by this.
+    /// Reference identity where it is load-bearing is preserved too: each copied
+    /// <see cref="BaselineSource"/> carries the SAME <c>Source</c> object, which is what every
+    /// lookup here and in the disk codec resolves by (<c>ReferenceEquals</c>, never value
+    /// equality).
+    ///
+    /// A walker that needs to see later appends walks again — by design, since the whole point
+    /// is that what it is iterating does not change underneath it.
+    /// </summary>
+    internal static IReadOnlyList<BaselineSource> StableBaselineSourcesForWalk(
+        IReadOnlyList<BaselineSource> sources)
+    {
+        lock (_baselineMutationLock)
+        {
+            var copy = new BaselineSource[sources.Count];
+            for (var i = 0; i < sources.Count; i++)
+                copy[i] = new BaselineSource(sources[i].Source, new List<BaselineTable>(sources[i].Tables));
+            return copy;
+        }
+    }
+
     private static List<BaselineSource>? _installBaseline;
     private static object? _isolatedStorageBaseline;
     private static object? _recordLinkBaseline;
@@ -83,8 +140,15 @@ public static partial class RecordPatches
     /// requires it to be set.</summary>
     private static InstallBaselineSnapshot? _activeDepCompanyBaseline;
 
+    // #2914: under the same lock the appends take, so that a thread reaching
+    // AppendBaselineTable is guaranteed to see the baseline the executor last published rather
+    // than a stale reference — a reference assignment is atomic, but atomic is not visible.
+    // Nothing but the assignment happens in here, so the lock stays a leaf.
     internal static void SetActiveDepCompanyBaseline(InstallBaselineSnapshot? snapshot)
-        => _activeDepCompanyBaseline = snapshot;
+    {
+        lock (_baselineMutationLock)
+            _activeDepCompanyBaseline = snapshot;
+    }
 
     /// <summary>Test-only seam over the per-app-group baseline. A test exercising
     /// AppendBaselineTable hands it a synthetic DataAccessSource, and leaving that in a
@@ -92,8 +156,8 @@ public static partial class RecordPatches
     /// not a DataAccessSource at all. Save, null, act, restore.</summary>
     internal static List<BaselineSource>? InstallBaselineForTests
     {
-        get => _installBaseline;
-        set => _installBaseline = value;
+        get { lock (_baselineMutationLock) return _installBaseline; }
+        set { lock (_baselineMutationLock) _installBaseline = value; }
     }
 
     /// <summary>
@@ -138,50 +202,107 @@ public static partial class RecordPatches
         for (var i = 0; i < pristineRows.Length; i++)
             rows[i] = CloneValues(pristineRows[i]);
 
-        if (_installBaseline != null)
-            AppendInto(_installBaseline, source, tableId, metaTable, rows);
-        // Both, deliberately (#2262): the per-app-group singleton is what a codeunit/test
-        // boundary restores, and the dep+company snapshot is what the NEXT app group on this
-        // dependency key is restored from before its own capture overwrites the singleton.
-        // Appending to only the first would make the table's presence depend on which app
-        // group happened to touch it.
-        if (_activeDepCompanyBaseline != null)
-            AppendInto(_activeDepCompanyBaseline.Sources, source, tableId, metaTable, rows);
+        // #2914: both appends under one acquisition of the leaf lock (see its doc comment),
+        // so the two baselines are updated as a unit and no second thread can observe the
+        // window where one carries the table and the other does not. CloneValues above is
+        // deliberately OUTSIDE it: it touches only the caller's own pristine rows, and the
+        // critical section stays as short as it can be.
+        lock (_baselineMutationLock)
+        {
+            if (_installBaseline != null)
+                AppendInto(_installBaseline, source, tableId, metaTable, rows);
+            // Both, deliberately (#2262): the per-app-group singleton is what a codeunit/test
+            // boundary restores, and the dep+company snapshot is what the NEXT app group on this
+            // dependency key is restored from before its own capture overwrites the singleton.
+            // Appending to only the first would make the table's presence depend on which app
+            // group happened to touch it.
+            if (_activeDepCompanyBaseline != null)
+                AppendInto(_activeDepCompanyBaseline.Sources, source, tableId, metaTable, rows);
+        }
     }
+
+    /// <summary>Test-only seam: invoked inside <see cref="AppendInto"/> at the two points where
+    /// a second thread's interleaving used to be observable (#2914), so the proving test can
+    /// FORCE the interleaving instead of hoping for it — the same technique
+    /// TableMaterialisationOrderingTests uses through the --test-data loader stub, which has no
+    /// equivalent here because AppendInto calls nothing a test could stand in for.
+    ///
+    /// Null on every real run, so the cost is one null check per appended table. See
+    /// AlRunner.Tests/InstallBaselineAppendConcurrencyTests.cs.</summary>
+    internal static Action<int>? AppendInterleaveProbeForTests;
+
+    /// <summary>The probe phase reached after the source search and before the new
+    /// BaselineSource is published — where a second thread used to be able to publish its own,
+    /// leaving one of the two unreachable to every later ReferenceEquals lookup.</summary>
+    internal const int AppendPhaseBeforeSourceAdd = 1;
+
+    /// <summary>The probe phase reached after the per-table idempotence check and before the
+    /// table is published — where a second thread used to be able to append the same table id,
+    /// so both threads passed the check and the restore inserted its rows twice.</summary>
+    internal const int AppendPhaseBeforeTableAdd = 2;
 
     private static void AppendInto(
         List<BaselineSource> sources, object source, int tableId, object metaTable, NavValue[][] rows)
     {
+        // #2914. Every read and write below is on a plain List<T>, which is safe for concurrent
+        // readers only when there are no writers — and there IS a second writer: both callers
+        // run inside a --test-data hydration, which is serialised per (DataAccessSource, table
+        // id) by a TableMaterialisationGate and NOT globally, so two threads hydrating two
+        // different tables append to these same two lists at once. The gate cannot be widened
+        // to cover this (see the wait-graph note in RecordPatches.TableMaterialisation.cs: a
+        // hydration must be able to nest, and one lock for all tables deadlocks on the nested
+        // case), so the lists get a lock of their own, taken by the caller.
+        if (!System.Threading.Monitor.IsEntered(_baselineMutationLock))
+            throw new InvalidOperationException(
+                "[RecordPatches] install-baseline append: AppendInto was called without holding "
+                + "_baselineMutationLock (#2914). Every mutation of a published baseline list "
+                + "has to be serialised by it — take the lock in the new call site rather than "
+                + "removing this check.");
+
         BaselineSource? target = null;
         foreach (var candidate in sources)
             if (ReferenceEquals(candidate.Source, source)) { target = candidate; break; }
         if (target == null)
         {
+            AppendInterleaveProbeForTests?.Invoke(AppendPhaseBeforeSourceAdd);
             target = new BaselineSource(source, new List<BaselineTable>());
             sources.Add(target);
         }
         foreach (var existing in target.Tables)
             if (existing.TableId == tableId) return;   // already carried — see the doc comment
+        AppendInterleaveProbeForTests?.Invoke(AppendPhaseBeforeTableAdd);
         target.Tables.Add(new BaselineTable(tableId, metaTable, rows));
     }
 
     public static void CaptureInstallBaseline()
     {
+        // The capture itself walks the live store and must NOT hold the lock; only the
+        // publication of the four fields does (#2914), so the set is swapped in as a unit and a
+        // reader cannot pair this capture's rows with the previous one's isolated storage.
         var snapshot = CaptureInstallBaselineSnapshot();
-        _installBaseline = snapshot.Sources;
-        _isolatedStorageBaseline = snapshot.IsolatedStorage;
-        _recordLinkBaseline = snapshot.RecordLinks;
-        _autoIncrementBaseline = snapshot.AutoIncrement;
+        lock (_baselineMutationLock)
+        {
+            _installBaseline = snapshot.Sources;
+            _isolatedStorageBaseline = snapshot.IsolatedStorage;
+            _recordLinkBaseline = snapshot.RecordLinks;
+            _autoIncrementBaseline = snapshot.AutoIncrement;
+        }
     }
 
     public static void RestoreInstallBaseline()
     {
         ResetPerTestState();
-        if (_installBaseline == null)
-            return;
-        RestoreInstallBaselineSnapshot(new InstallBaselineSnapshot(
-            _installBaseline, _isolatedStorageBaseline, _recordLinkBaseline, _autoIncrementBaseline),
-            resetFirst: false);
+        // Read the four as one (#2914), for the same reason CaptureInstallBaseline publishes
+        // them as one. The restore then runs against the locals, outside the lock.
+        InstallBaselineSnapshot pending;
+        lock (_baselineMutationLock)
+        {
+            if (_installBaseline == null)
+                return;
+            pending = new InstallBaselineSnapshot(
+                _installBaseline, _isolatedStorageBaseline, _recordLinkBaseline, _autoIncrementBaseline);
+        }
+        RestoreInstallBaselineSnapshot(pending, resetFirst: false);
     }
 
     /// <summary>Capture the current committed state as an independent snapshot object,
@@ -242,23 +363,27 @@ public static partial class RecordPatches
                 // RunAll()-per-boundary approach reseeded EVERYTHING, so a quiet `continue`
                 // here is a behaviour change disguised as an optimisation. Say so instead.
                 if (provider.GetType().Name != "TempTableDataProvider")
-                    throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+                    throw RunnerShapeGap.InstallBaselineSnapshot(
                         $"install-baseline snapshot (table {tableId})",
-                        $"install-baseline — table {tableId} is backed by {provider.GetType().Name}, "
-                        + "which the per-codeunit baseline snapshot cannot capture or restore; "
-                        + "its install-seeded state would silently vanish at the next codeunit "
-                        + "boundary. See docs/scope.md");
+                        $"table {tableId} is backed by {provider.GetType().Name}, which the per-codeunit "
+                        + "baseline snapshot cannot capture or restore; its install-seeded state would "
+                        + "silently vanish at the next codeunit boundary");
 
                 var providerType = provider.GetType();
-                var metaTable = RequiredField(providerType, "table").GetValue(provider)
+                var metaTable = RequiredField(providerType, "table", InstallBaselineSurface).GetValue(provider)
                     ?? throw new InvalidOperationException("TempTableDataProvider.table is null");
                 // A null primaryTree is simply "no rows were ever inserted into this table" —
                 // nothing to snapshot, and the restore starts from an empty store anyway.
-                var primaryTreeValue = RequiredField(providerType, "primaryTree").GetValue(provider);
+                var primaryTreeValue = RequiredField(providerType, "primaryTree", InstallBaselineSurface)
+                    .GetValue(provider);
                 if (primaryTreeValue == null)
                     continue;
-                if (primaryTreeValue is not IEnumerable primaryTree)
-                    throw new InvalidOperationException("TempTableDataProvider.primaryTree is not enumerable");
+                // Present but uninterpretable is the SAME "BC's layout moved" case as absent —
+                // #2946 gave it the same type rather than a second convention.
+                var primaryTree = AlRunner.Infrastructure.BcShape.RequiredEnumerable(
+                    primaryTreeValue, $"{providerType.Name}.primaryTree", InstallBaselineSurface,
+                    $"the install baseline for table {tableId} cannot be captured, so its "
+                    + "install-seeded rows would silently vanish at the next codeunit boundary");
 
                 var rows = new List<NavValue[]>();
                 foreach (var row in primaryTree)
@@ -343,7 +468,14 @@ public static partial class RecordPatches
             ResetPerTestState();
 
         var restoredRows = 0;
-        foreach (var source in snapshot.Sources)
+        // #2914: a stable copy of the spine, not the live lists. This loop calls into BC for
+        // every table (create the temp data access, then insert row by row), so it is inside
+        // the walk for as long as the restore takes — and #2262's lazy --test-data load appends
+        // to these very lists from whatever thread touched the table. Enumerating them directly
+        // throws "Collection was modified" the moment that lands. The copy is taken under the
+        // append lock and the lock is released before any of the BC work below, which is what
+        // keeps the lock a leaf (see its doc comment).
+        foreach (var source in StableBaselineSourcesForWalk(snapshot.Sources))
         {
             var perTable = _dataAccessByTable.GetValue(source.Source,
                 static _ => new ConcurrentDictionary<int, object>());
@@ -419,9 +551,50 @@ public static partial class RecordPatches
         .GetProperty("DataProvider", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
         ?.GetValue(dataAccess);
 
-    private static FieldInfo RequiredField(Type type, string name) => type
-        .GetField(name, BindingFlags.NonPublic | BindingFlags.Instance)
-        ?? throw new MissingFieldException(type.FullName, name);
+    /// <summary>
+    /// A private instance field of BC's in-memory provider that the runner must be able to
+    /// read, or a <see cref="AlRunner.Infrastructure.BcShapeGapException"/> naming it.
+    ///
+    /// <para>TWO THINGS CHANGED HERE UNDER #2946, both of them defects rather than polish.</para>
+    ///
+    /// <para>The exception TYPE. This helper used to raise
+    /// <see cref="MissingFieldException"/> while RowVersionPatches.SystemIdIntegrity.cs threw
+    /// an <see cref="InvalidOperationException"/> and
+    /// RecordPatches.ObjectMetadataSystemTable.cs raised a
+    /// <see cref="AlRunner.Infrastructure.RunnerOutOfScopeException"/> — three conventions for
+    /// one private structure, so what a caller could catch depended on which reader it reached.
+    /// None of the three said the true thing, which is that the runner could not READ BC's
+    /// internals; the two RunnerOutOfScopeException flavours are both claims about SCOPE, and
+    /// this surface is in scope and implemented. See
+    /// AlRunner/Infrastructure/BcShapeGapException.cs for the whole derivation.</para>
+    ///
+    /// <para>The RESOLUTION. <c>GetField(NonPublic)</c> does not return a BASE class's private
+    /// field, and BC's own <c>CrmTableConnection.CrmTestDataProvider</c> derives from
+    /// <c>TempTableDataProvider</c> (#2725) — so this helper called an inherited, perfectly
+    /// readable field absent, exactly the bug <see cref="PrivateMemberLookup"/> was written to
+    /// fix and which the two readers that use it directly do not have. Today a
+    /// <c>GetType().Name != "TempTableDataProvider"</c> gate upstream of every caller means no
+    /// derived provider reaches here, so the old resolution was not observably wrong; it was
+    /// wrong the moment that gate moved, and it made "the four readers agree" false in a way a
+    /// reader had to check three files to notice.</para>
+    /// </summary>
+    private static FieldInfo RequiredField(Type type, string name, string surface = ProviderStoreSurface)
+        => AlRunner.Infrastructure.BcShape.RequiredField(
+            type, name, surface,
+            "the runner reflects on BC's in-memory provider to read this table's stored rows, "
+            + "and cannot tell an empty store from an unreadable one without it");
+
+    /// <summary>
+    /// Default surface name for a refusal raised while reading BC's in-memory provider. Callers
+    /// that serve a narrower AL-visible operation (a rollback, a SystemId check) pass their own.
+    /// </summary>
+    internal const string ProviderStoreSurface = "in-memory table store (TempTableDataProvider)";
+
+    /// <summary>Surface name for the per-codeunit install-baseline capture/restore.</summary>
+    private const string InstallBaselineSurface = "install-baseline snapshot";
+
+    /// <summary>Surface name for the AL write-transaction rollback (see RecordPatches.TransactionSnapshot.cs).</summary>
+    internal const string TransactionRollbackSurface = "AL write-transaction rollback";
 
     private static NavValue[] CloneValues(NavValue[] values)
     {

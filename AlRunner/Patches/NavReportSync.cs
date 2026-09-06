@@ -308,10 +308,9 @@ public static partial class NavReportSync
     {
         var report = navReportOrNull ?? CreateReportForRequestPage(reportId);
         if (report == null)
-            throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+            throw AlRunner.Patches.RunnerShapeGap.ReportConstruction(
                 $"NavReport.RunRequestPage({reportId})",
-                "not-yet-implemented — the runner could not construct report " + reportId +
-                " to run its request page. See docs/scope.md");
+                "the runner could not construct report " + reportId + " to run its request page");
 
         // offersOk: true — RunRequestPage opens the page with ReportIntent.Parameters, where a
         // plain OK means "these are the parameters" and is available on every request page.
@@ -438,10 +437,9 @@ public static partial class NavReportSync
     {
         var meta = GetNclMetaReportById(reportId);
         if (meta == null)
-            throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+            throw AlRunner.Patches.RunnerShapeGap.ReportConstruction(
                 $"NavReport.Run/RunModal({reportId})",
-                "not-yet-implemented — the runner could not construct report " + reportId +
-                " to run it. See docs/scope.md");
+                "the runner could not construct report " + reportId + " to run it");
 
         var parent = BcRuntime.SkeletonSession;
         var instance = CreateReportInstance(meta, parent!, skipRestoreSavedReportSettings: true);

@@ -61,6 +61,29 @@ namespace AlRunner.Patches;
 
 public static partial class RecordPatches
 {
+    /// <summary>
+    /// Every refusal in this file, built in one place. See
+    /// RecordPatches.VirtualTableShapeGap.cs for the three-bucket classification and for
+    /// why the anchor is "not-yet-implemented" rather than a docs/scope.md section (#2945).
+    /// </summary>
+    /// <remarks>
+    /// Category (2): one store-wiring refusal, on a table this file populates.
+    /// </remarks>
+    internal static RunnerOutOfScopeException ReportMetadataShapeGap(string detail)
+        => VirtualTableShapeGap("Report Metadata (virtual table 2000000139)", "report-metadata-virtual-table", detail);
+
+    /// <summary>
+    /// Every refusal in this file, built in one place. See
+    /// RecordPatches.VirtualTableShapeGap.cs for the three-bucket classification and for
+    /// why the anchor is "not-yet-implemented" rather than a docs/scope.md section (#2945).
+    /// </summary>
+    /// <remarks>
+    /// Category (2): the sibling table populated from the same report inventory, with the
+    /// same single store-wiring refusal.
+    /// </remarks>
+    internal static RunnerOutOfScopeException ReportDataItemsShapeGap(string detail)
+        => VirtualTableShapeGap("Report Data Items (virtual table 2000000203)", "report-data-items-virtual-table", detail);
+
     internal const int ReportMetadataVirtualTableId = 2000000139;
     internal const int ReportDataItemsVirtualTableId = 2000000203;
 
@@ -109,9 +132,7 @@ public static partial class RecordPatches
         EnsureDataAccessProviderReflection(dataAccess);
 
         var provider = _pDataAccessDataProvider!.GetValue(dataAccess)
-            ?? throw new RunnerOutOfScopeException(
-                "Report Metadata (virtual table 2000000139)",
-                "report-metadata-virtual-table — data access has no in-memory provider; see docs/scope.md");
+            ?? throw ReportMetadataShapeGap("data access has no in-memory provider");
 
         var done = _rmvPopulatedByProvider.GetValue(provider, static _ => new ConcurrentDictionary<int, byte>());
 
@@ -136,9 +157,7 @@ public static partial class RecordPatches
         EnsureDataAccessProviderReflection(dataAccess);
 
         var provider = _pDataAccessDataProvider!.GetValue(dataAccess)
-            ?? throw new RunnerOutOfScopeException(
-                "Report Data Items (virtual table 2000000203)",
-                "report-data-items-virtual-table — data access has no in-memory provider; see docs/scope.md");
+            ?? throw ReportDataItemsShapeGap("data access has no in-memory provider");
 
         var done = _rdiPopulatedByProvider.GetValue(provider, static _ => new ConcurrentDictionary<(int, int), byte>());
 

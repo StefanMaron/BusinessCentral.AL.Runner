@@ -52,6 +52,18 @@ namespace AlRunner.Patches;
 
 public static partial class RecordPatches
 {
+    /// <summary>
+    /// Every refusal in this file, built in one place. See
+    /// RecordPatches.VirtualTableShapeGap.cs for the three-bucket classification and for
+    /// why the anchor is "not-yet-implemented" rather than a docs/scope.md section (#2945).
+    /// </summary>
+    /// <remarks>
+    /// Category (2): the runner materialises this table, so the single refusal is a store-
+    /// wiring gap and never a statement that Integer is out of scope.
+    /// </remarks>
+    internal static RunnerOutOfScopeException IntegerShapeGap(string detail)
+        => VirtualTableShapeGap("Integer (virtual table 2000000026)", "integer-virtual-table", detail);
+
     internal const int IntegerVirtualTableId = 2000000026;
 
     /// <summary>
@@ -107,9 +119,7 @@ public static partial class RecordPatches
         EnsureDataAccessProviderReflection(dataAccess);
 
         var provider = _pDataAccessDataProvider!.GetValue(dataAccess)
-            ?? throw new RunnerOutOfScopeException(
-                "Integer (virtual table 2000000026)",
-                "integer-virtual-table — Integer data access has no in-memory provider; see docs/scope.md");
+            ?? throw IntegerShapeGap("Integer data access has no in-memory provider");
 
         // Fixed window ⇒ populate exactly once per provider.
         if (_ivtPopulatedProviders.TryGetValue(provider, out _)) return;

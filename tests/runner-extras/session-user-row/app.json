@@ -1,0 +1,18 @@
+{
+  "id": "3f5b7c21-9d84-46ae-b0f2-7c1d5e93a840",
+  "name": "Runner Extras - Session User Row",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Issue #2296: the runner's own synthetic session user must be a row in the User table (2000000120), so a TableRelation pointing at User.\"User Security ID\" resolves for the id the runner itself hands AL.",
+  "description": "Runner-mechanism claim. That BC's session user is a row in the User table is plain BC behaviour and is asserted upstream in the al-language corpus, where a real service tier adjudicates it. What this suite pins is the runner's OWN identity: the specific synthetic user AlRunner/BcRuntime.cs seeds onto the skeleton NavSession -- user name TESTUSER and the deterministic security id {C0A1BDFA-0000-0000-0000-545553545553} -- must be the SAME user the database contains, because those two literals are runner inventions no service tier can confirm. It also pins the User Property (2000000121) companion row BC creates alongside every User, because the seed goes through BC's own AL insert entry point rather than straight at the data provider -- target is OnPrem for exactly that reason, since Microsoft declares User Property Scope = OnPrem and a Cloud-target object cannot name it (AL0296). The last test is the negative control that stops the fix from being 'switch the relation check off': a security id that belongs to nobody must still be refused by the relation check, exactly as before.",
+  "dependencies": [],
+  "idRanges": [
+    {
+      "from": 65560,
+      "to": 65569
+    }
+  ],
+  "platform": "27.0.0.0",
+  "runtime": "15.0",
+  "target": "OnPrem"
+}

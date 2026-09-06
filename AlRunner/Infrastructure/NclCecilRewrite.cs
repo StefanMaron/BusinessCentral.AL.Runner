@@ -1131,7 +1131,11 @@ public static partial class NclCecilRewrite
     /// unconditionally — same defect family as #1815 (al-out) / #1820 (bc-symbols).
     /// Replaced with <see cref="RunnerFingerprint.ContentHash"/>: stable across rebuilds
     /// of unchanged source, still sensitive to any change in the runner's own
-    /// Cecil-rewrite logic. No `bc:` line is needed here (unlike RunnerFingerprint's
+    /// Cecil-rewrite logic. #2818: that stability is a property of the BUILD, not of this
+    /// method — it holds only while the repo-root Directory.Build.props keeps the commit
+    /// SHA and the build machine's absolute paths out of al-runner.dll's bytes. Before the
+    /// PathMap line landed there, two worktrees of one commit computed two different keys
+    /// here from byte-identical source. See RunnerFingerprint.cs's header. No `bc:` line is needed here (unlike RunnerFingerprint's
     /// WriteKeyLines) — the rewrite only depends on the source Ncl bytes (already hashed
     /// below) and the runner's own rewrite logic, neither of which vary by BC version
     /// within one build.

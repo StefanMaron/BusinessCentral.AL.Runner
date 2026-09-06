@@ -130,6 +130,26 @@ public static partial class RecordPatches
     }
 
     /// <summary>
+    /// The TEXT of a property whose AL value is a plain string literal — <c>ExternalName</c>,
+    /// <c>ExternalType</c> and friends — with the surrounding single quotes removed and doubled
+    /// quotes unescaped, or null when the property is absent or empty.
+    /// <para>Neither existing helper covers this shape. <see cref="CaptionFrom"/> unwraps only a
+    /// <c>LabelPropertyValueSyntax</c> (a Label/Caption, which may carry Comment/Locked), and
+    /// <see cref="PropertyTextFrom"/> falls back to the node's raw text for anything else — so
+    /// <c>ExternalName = 'alt_entity'</c> came through as the 12-character <c>'alt_entity'</c>,
+    /// quotes included. <c>Unquote</c> in the query builder strips double quotes only, which an
+    /// AL string literal never uses.</para>
+    /// </summary>
+    private static string? AlStringLiteralText(NavSyntax.PropertyValueSyntax? value)
+    {
+        var text = PropertyTextFrom(value)?.Trim();
+        if (string.IsNullOrEmpty(text)) return null;
+        if (text.Length >= 2 && text[0] == '\'' && text[^1] == '\'') text = text[1..^1];
+        text = text.Replace("''", "'");
+        return string.IsNullOrEmpty(text) ? null : text;
+    }
+
+    /// <summary>
     /// The last name segment of a possibly-namespaced object reference:
     /// <c>Microsoft.Sales.History."Sales Invoice Header"</c> → <c>Sales Invoice Header</c>,
     /// <c>Customer</c> → <c>Customer</c>. Quote-aware, so a quoted name that itself contains a
@@ -486,17 +506,26 @@ public static partial class RecordPatches
         var arms = new List<ParsedRelationArm>();
         for (var node = tr; node != null; node = node.ElseExpression?.ElseTableRelationCondition)
         {
-            var parts = NameParts(node.RelatedTableField);
-            // 1 part = table; 2 parts = table + field. A 3+-part (namespace-qualified) name
-            // is ambiguous without symbol resolution, so the relation stays uncaptured.
+            var parts = RelationTargetNameParts(node.RelatedTableField);
+            // 1 part = table; 2 parts = table + field, OR namespace + table — BuildMetaFieldRelations
+            // tries both readings and that ambiguity is already its job. RelationTargetNameParts drops
+            // any leading namespace segments (#2851), so reaching here with any other count means the
+            // name did not read as a name at all, and the relation stays uncaptured.
             if (parts.Count is not (1 or 2))
             {
                 Console.Error.WriteLine(
                     $"[TableRelation] REFUSED {fieldName}: {parts.Count}-part related-table name '{node.RelatedTableField}'");
                 return null;
             }
-            var conditions = RelationConditionList(node.IfExpression?.IfTableRelationCondition, fieldName);
-            var filters = RelationConditionList(node.TableFilter?.Filter, fieldName);
+            // The two lists differ in ONE way, and it is not cosmetic (#2518): a where(...)
+            // filter may carry a `field(...)` link, an if(...) condition may not. BC models
+            // the first as MetaFilter/FilterType.FIELD → NCLMetaFilterField and the second as
+            // MetaCondition, whose NCLMetaFilter.CreateFromMetaCondition has CONST and FILTER
+            // cases only and throws NotSupportedException on FIELD.
+            var conditions = RelationConditionList(node.IfExpression?.IfTableRelationCondition,
+                fieldName, allowFieldLinks: false);
+            var filters = RelationConditionList(node.TableFilter?.Filter,
+                fieldName, allowFieldLinks: true);
             if (conditions == null || filters == null) return null;
             arms.Add(new ParsedRelationArm(parts[0], parts.Count == 2 ? parts[1] : null,
                 conditions, filters));
@@ -507,16 +536,28 @@ public static partial class RecordPatches
     /// <summary>
     /// The conditions of an <c>if (...)</c> arm, or the entries of a <c>where(...)</c>
     /// filter — the same <c>TableFilterExpressionSyntax</c> node, and the same shapes as a
-    /// CalcFormula's where, so they reuse <see cref="ParsedCalcFilter"/>. Only
-    /// <c>const(...)</c> and <c>filter(...)</c> are carried: they are what
-    /// <c>MetaCondition</c>/<c>MetaFilter</c> hold as evaluable text. A <c>field(...)</c>
-    /// link (and the FlowFilter forms) reads ANOTHER field of the referencing row at
-    /// evaluation time; emitting it as const/filter text would apply a comparison BC never
-    /// wrote, so it refuses the whole relation instead (null) — those shapes remain a
-    /// tracked gap, dropped as loudly as they were silently before #1737.
+    /// CalcFormula's where, so they reuse <see cref="ParsedCalcFilter"/>.
+    /// <para><c>const(...)</c> and <c>filter(...)</c> are carried in both positions: they are
+    /// what <c>MetaCondition</c> / <c>MetaFilter</c> hold as evaluable text.</para>
+    /// <para><paramref name="allowFieldLinks"/> is the asymmetry, and it mirrors BC's own
+    /// metadata rather than a runner preference (#2518). A <c>where(...)</c> entry becomes a
+    /// <c>MetaFilter</c>, and <c>NCLMetaFilter.CreateFromMetaFilter</c> has a
+    /// <c>FilterType.FIELD</c> case building an <c>NCLMetaFilterField</c> whose value is read
+    /// from the referencing row at evaluation time — so <c>field(...)</c> and the three
+    /// flow-filter spellings around it are representable there. An <c>if (...)</c> condition
+    /// becomes a <c>MetaCondition</c>, and <c>NCLMetaFilter.CreateFromMetaCondition</c> has
+    /// CONST and FILTER cases only, throwing <c>NotSupportedException</c> on FIELD; carrying
+    /// one there would build metadata BC cannot load, so it still refuses the whole relation.
+    /// </para>
+    /// <para>Refusing returns null — the WHOLE relation is dropped, never half-captured. That
+    /// is deliberate for an unrepresentable shape, but it is also why this list matters: a
+    /// dropped relation leaves <c>FieldRef.Relation</c> answering 0, which is
+    /// indistinguishable from "no TableRelation declared". Before #2518 every
+    /// <c>where(... = field(...))</c> relation was dropped for exactly that reason — 826 of
+    /// them in Base Application 28.1, including <c>Customer.City</c>.</para>
     /// </summary>
     private static List<ParsedCalcFilter>? RelationConditionList(
-        NavSyntax.TableFilterExpressionSyntax? filter, string fieldName)
+        NavSyntax.TableFilterExpressionSyntax? filter, string fieldName, bool allowFieldLinks)
     {
         var list = new List<ParsedCalcFilter>();
         if (filter == null) return list;
@@ -540,9 +581,44 @@ public static partial class RecordPatches
                         Value: FilterValueText(fe.Filter?.ToString())));
                     break;
 
+                // "Country/Region Code" = field("Country/Region Code") — and the three
+                // flow-filter spellings, which BC models as the SAME FIELD link plus
+                // MetaFilter's two mode flags (#1716), not as separate kinds.
+                case NavSyntax.SimpleFieldExpressionSyntax sfe when allowFieldLinks:
+                    list.Add(new ParsedCalcFilter(
+                        Unquote(sfe.LeftHandSide?.ToString()?.Trim() ?? ""),
+                        ParsedCalcFilterKind.Field,
+                        ParentFieldName: Unquote(sfe.Identifier?.ToString()?.Trim() ?? "")));
+                    break;
+
+                case NavSyntax.FieldFilterExpressionSyntax ffe when allowFieldLinks:
+                    list.Add(new ParsedCalcFilter(
+                        Unquote(ffe.LeftHandSide?.ToString()?.Trim() ?? ""),
+                        ParsedCalcFilterKind.Field,
+                        ParentFieldName: Unquote(ffe.Identifier?.ToString()?.Trim() ?? ""),
+                        ValueIsFilter: true));
+                    break;
+
+                case NavSyntax.FieldUpperLimitExpressionSyntax ule when allowFieldLinks:
+                    list.Add(new ParsedCalcFilter(
+                        Unquote(ule.LeftHandSide?.ToString()?.Trim() ?? ""),
+                        ParsedCalcFilterKind.Field,
+                        ParentFieldName: Unquote(ule.Identifier?.ToString()?.Trim() ?? ""),
+                        OnlyMaxLimit: true));
+                    break;
+
+                case NavSyntax.FieldUpperLimitFilterExpressionSyntax ulf when allowFieldLinks:
+                    list.Add(new ParsedCalcFilter(
+                        Unquote(ulf.LeftHandSide?.ToString()?.Trim() ?? ""),
+                        ParsedCalcFilterKind.Field,
+                        ParentFieldName: Unquote(ulf.Identifier?.ToString()?.Trim() ?? ""),
+                        ValueIsFilter: true, OnlyMaxLimit: true));
+                    break;
+
                 default:
                     Console.Error.WriteLine(
-                        $"[TableRelation] REFUSED {fieldName}: unsupported condition " +
+                        $"[TableRelation] REFUSED {fieldName}: unsupported " +
+                        (allowFieldLinks ? "where() entry " : "if() condition ") +
                         $"{cond?.GetType().Name} ({cond})");
                     return null;
             }
@@ -571,6 +647,64 @@ public static partial class RecordPatches
         }
         Walk(name);
         return parts;
+    }
+
+    /// <summary>
+    /// The parts of a TableRelation TARGET name, with any namespace qualification dropped:
+    /// at most the last two (#2851).
+    /// <para>AL lets a relation name its table through the table's namespace, and Base
+    /// Application does — <c>Microsoft.Manufacturing.Capacity."Capacity Ledger Entry"</c>,
+    /// <c>System.Azure.Identity.Plan."Plan ID"</c>, and six other shapes across 8 fields of
+    /// 28.1.49838.53910. Those used to be refused for having three or more parts, which drops
+    /// the WHOLE relation, so <c>FieldRef.Relation</c> answered 0 — the value that also means
+    /// "this field declares no TableRelation" (#2851, the silent zero #2518 was reported as).
+    /// </para>
+    /// <para>Object names are global in AL — the namespace organises source, it does not
+    /// namespace the name a relation resolves by — so the namespace segments carry no
+    /// information the runner needs and are dropped here rather than plumbed through
+    /// <see cref="ParsedRelationArm"/> and the on-disk symbol cache.</para>
+    /// <para>Keeping the last TWO, not the last one, is what makes both shipped shapes work:
+    /// the last part is the TABLE in <c>NS.NS.Table</c> but the FIELD in
+    /// <c>NS.NS.Table."Field"</c>, and nothing here can tell them apart without symbol
+    /// resolution. That ambiguity is not new and is not this method's to settle —
+    /// <c>BuildMetaFieldRelations</c> already disambiguates a two-part name by trying
+    /// <c>Table.Field</c> first and falling back to reading the last part as the table, so
+    /// handing it the last two parts routes the namespace-qualified shapes through the resolver
+    /// that already exists. Checked against the real 28.1 closure (Base Application + System
+    /// Application + Business Foundation + System.app): every namespace segment Base
+    /// Application uses in this position — <c>Capacity</c>, <c>Forecast</c>, <c>Identity</c>,
+    /// <c>Reflection</c> — is not a table name, so the fallback fires and lands on the right
+    /// table, while <c>Plan</c>, <c>AllObjWithCaption</c> and <c>Production Forecast Name</c>
+    /// are real tables that really do carry the field named after them.</para>
+    /// </summary>
+    private static List<string> RelationTargetNameParts(NavSyntax.NameSyntax? name)
+    {
+        var parts = NameParts(name);
+        return parts.Count <= 2 ? parts : parts.GetRange(parts.Count - 2, 2);
+    }
+
+    /// <summary>
+    /// The last part of a (possibly namespace-qualified) name — the table name a CalcFormula
+    /// source resolves by (#2851).
+    /// <para>Unlike a TableRelation target this is unambiguous: <c>count</c>/<c>exist</c> carry
+    /// a table and no field, and <c>sum</c>/<c>lookup</c>/<c>average</c>/<c>min</c>/<c>max</c>
+    /// carry <c>Table.Field</c> as a qualified name whose Left half is the table, so in both
+    /// positions the last part IS the table and no fallback reading is needed.</para>
+    /// <para>This read the name's whole text before #2851, so a namespace-qualified source
+    /// arrived as the literal <c>Microsoft.Manufacturing.Forecast."Production Forecast Entry"</c>,
+    /// matched no table, and <c>BuildMetaCalcFormula</c> returned null — a FlowField that
+    /// silently never computes. Four Base Application 28.1 FlowFields are that shape:
+    /// Gen. Journal Line and Purchase Line's "Alloc. Acc. Modified by User",
+    /// Item."Prod. Forecast Quantity (Base)" and User Group Plan."Plan Name".</para>
+    /// <para><paramref name="fallbackText"/> is the pre-#2851 expression, used when the node is
+    /// a NameSyntax shape <see cref="NameParts"/> does not walk. Without it an unrecognised
+    /// shape would yield the empty string, which <c>CalcFormulaFrom</c> refuses — turning a
+    /// formula that used to parse into a refused one, a regression rather than a fix.</para>
+    /// </summary>
+    private static string LastNamePart(NavSyntax.NameSyntax? name, string? fallbackText)
+    {
+        var parts = NameParts(name);
+        return parts.Count > 0 ? parts[^1] : Unquote(fallbackText?.Trim() ?? "");
     }
 
     private static void TryParseTableFile(string text)
@@ -631,9 +765,24 @@ public static partial class RecordPatches
             // this table in compile order is not in the page inventory yet.
             var lookupPage = PageRefText(PropValue(table.PropertyList, "LookupPageId"));
             var drillDownPage = PageRefText(PropValue(table.PropertyList, "DrillDownPageId"));
+            // DataClassification / ExternalName feed the Table Metadata (2000000136) columns of
+            // the same name (#2938). Both are kept AS WRITTEN and null when undeclared: AL's
+            // own defaults (CustomerContent, blank) are applied at row-build time, so "declares
+            // none" stays distinguishable from "declares the default" all the way through.
+            var dataClassification = PropValue(table.PropertyList, "DataClassification")?.ToString()?.Trim();
+            // AlStringLiteralText, not the raw node text: ExternalName is an AL STRING LITERAL
+            // (ExternalName = 'alt_entity'), so the node stringifies WITH its single quotes and a
+            // raw read hands out "'alt_entity'" — measured, that is exactly what the Table
+            // Metadata column reported before this call was corrected. Unquote() strips only
+            // DOUBLE quotes and PropertyTextFrom only unwraps a LabelPropertyValueSyntax, which
+            // this value is not; neither would have caught it. DataClassification above is an
+            // identifier, not a literal, so it needs none of this.
+            var externalName = AlStringLiteralText(PropValue(table.PropertyList, "ExternalName"));
             _parsedTables[tableId] = new ParsedTable(tableId, tableName, fields, pkFieldIds,
                 secondaryKeys, isTableTypeTemporary, dataPerCompany, lookupPage, drillDownPage,
-                TableTypeName: string.IsNullOrWhiteSpace(tableTypeName) ? null : tableTypeName.Trim());
+                TableTypeName: string.IsNullOrWhiteSpace(tableTypeName) ? null : tableTypeName.Trim(),
+                DataClassificationName: string.IsNullOrWhiteSpace(dataClassification) ? null : dataClassification,
+                ExternalName: string.IsNullOrWhiteSpace(externalName) ? null : externalName);
         }
     }
 
@@ -738,14 +887,14 @@ public static partial class RecordPatches
         {
             case NavSyntax.FieldCalculationFormulaSyntax f:
                 formulaType = f.FormulaKeywordToken.ValueText;
-                sourceTableName = Unquote(f.Field?.Left?.ToString()?.Trim() ?? "");
+                sourceTableName = LastNamePart(f.Field?.Left, f.Field?.Left?.ToString());
                 sourceFieldName = f.Field?.Right == null ? null : Unquote(f.Field.Right.ToString().Trim());
                 where = f.WhereExpression;
                 signText = f.Sign.ValueText ?? "";
                 break;
             case NavSyntax.TableCalculationFormulaSyntax t:
                 formulaType = t.FormulaKeywordToken.ValueText;
-                sourceTableName = Unquote(t.Table?.ToString()?.Trim() ?? "");
+                sourceTableName = LastNamePart(t.Table, t.Table?.ToString());
                 sourceFieldName = null; // count/exist have no field part
                 where = t.WhereExpression;
                 signText = t.Sign.ValueText ?? "";
@@ -1288,8 +1437,20 @@ internal record ParsedColumnFilter(string FieldName, ParsedColumnFilterKind Kind
 /// DataAccessSource routes every non-Normal, non-Temporary value through a table connection
 /// rather than SQL, so collapsing them to Normal silently served CRM tables from a plain
 /// temp store (#2725).</param>
+/// <param name="DataClassificationName">The declared <c>DataClassification</c> as written
+/// (<c>SystemMetadata</c>, <c>OrganizationIdentifiableInformation</c>, ...); null when the
+/// table declares none, which AL defaults to <c>CustomerContent</c>. Feeds the Table Metadata
+/// (2000000136) column of the same name (#2938) — before that the column answered a constant
+/// ordinal 0, i.e. CustomerContent for every table including the 61 Base Application 28.1
+/// tables that declare SystemMetadata.</param>
+/// <param name="ExternalName">The declared <c>ExternalName</c> — the name the table carries in
+/// the external system it is bound to, set on CRM/Exchange/Graph tables (61 of Base
+/// Application 28.1's 1523 tables state one, e.g. "CDS BC Table Relation" ->
+/// <c>dyn365bc_syntheticrelation</c>). Null when the table declares none, which is the blank
+/// the Table Metadata column must then report (#2938).</param>
 internal record ParsedTable(int TableId, string TableName,
     List<ParsedField> Fields, List<int> PkFieldIds, List<ParsedKey>? SecondaryKeys = null,
     bool IsTableTypeTemporary = false, bool DataPerCompany = true,
     string? LookupPageName = null, string? DrillDownPageName = null,
-    string? TableTypeName = null);
+    string? TableTypeName = null,
+    string? DataClassificationName = null, string? ExternalName = null);

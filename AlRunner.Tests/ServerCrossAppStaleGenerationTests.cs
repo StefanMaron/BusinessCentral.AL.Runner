@@ -88,7 +88,7 @@ public class ServerCrossAppStaleGenerationTests : IClassFixture<SharedCliServer>
     private static (string libDir, string testDir, string answerFile) MakeLibTestPair(
         string rootName, int variant)
     {
-        var root = Path.Combine(Path.GetTempPath(), rootName, Guid.NewGuid().ToString("N"));
+        var root = TestScratch.Dir(rootName);
         var libDir = Path.Combine(root, "Lib");
         var testDir = Path.Combine(root, "Test");
         Directory.CreateDirectory(libDir);

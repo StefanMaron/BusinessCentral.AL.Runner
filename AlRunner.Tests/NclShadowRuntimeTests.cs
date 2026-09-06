@@ -27,7 +27,7 @@ public sealed class NclShadowRuntimeTests
 {
     private static string NewTempDir(string label)
     {
-        var dir = Path.Combine(Path.GetTempPath(), $"ncl-shadow-tests-{label}-" + Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.FlatDir($"ncl-shadow-tests-{label}-");
         Directory.CreateDirectory(dir);
         return dir;
     }
