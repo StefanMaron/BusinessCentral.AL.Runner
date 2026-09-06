@@ -78,6 +78,7 @@ public sealed class VirtualTableRefusalClaimTests
         "RecordPatches.PageMetadataVirtualTable.cs",
         "RecordPatches.ReportLayoutListVirtualTable.cs",
         "RecordPatches.ReportMetadataVirtualTable.cs",
+        "RecordPatches.SessionVirtualTable.cs",
         "RecordPatches.TableMetadataVirtualTable.cs",
         "RecordPatches.TimeZoneVirtualTable.cs",
         "RecordPatches.WindowsLanguageVirtualTable.cs",
@@ -118,6 +119,7 @@ public sealed class VirtualTableRefusalClaimTests
         new object[] { "ReportDataItemsShapeGap",        "Report Data Items (virtual table 2000000203)",        "report-data-items-virtual-table",         GapDoc },
         new object[] { "ReportLayoutListShapeGap",       "Report Layout List (virtual table 2000000234)",       "report-layout-list-virtual-table",        GapDoc },
         new object[] { "ReportMetadataShapeGap",         "Report Metadata (virtual table 2000000139)",          "report-metadata-virtual-table",           GapDoc },
+        new object[] { "SessionVirtualShapeGap",         "Session (virtual table 2000000009)",                  "session-virtual-table",                   GapDoc },
         new object[] { "TableMetadataShapeGap",          "Table Metadata (virtual table 2000000136)",           "table-metadata-virtual-table",            GapDoc },
         new object[] { "TimeZoneShapeGap",               "Time Zone (virtual table 2000000164)",                "time-zone-virtual-table",                 TimeZoneDoc },
         new object[] { "WindowsLanguageShapeGap",        "Windows Language (virtual table 2000000045)",         "windows-language-virtual-table",          WindowsLanguageDoc },
@@ -361,8 +363,8 @@ public sealed class VirtualTableRefusalClaimTests
         // NOTE TO WHOEVER REBASES THIS NEXT: more than one open PR moves this number at a
         // time, and this rebase is the case in point. #3015 and #3080 both branched from 71;
         // #3015 merged first and wrote 72, this branch had written 75, and NEITHER running
-        // total survives the rebase. The two entries below it are therefore written as
-        // DELTAS (+1, +4) rather than as `71 -> n` -- a running total in a comment is a claim
+        // total survives the rebase. The entries around it are therefore written as
+        // DELTAS (+1, +4, +6) rather than as `71 -> n` -- a running total in a comment is a claim
         // about what else had merged when it was written, which stops being true the moment
         // somebody else's PR lands first.
         //
@@ -387,7 +389,19 @@ public sealed class VirtualTableRefusalClaimTests
         // Per the note above: this number was READ OUT of the test's own failure message after
         // rebasing this branch's four #3080 refusals onto main's #3015 one, not arrived at by
         // adding 4 to 72 or 1 to 75.
-        Assert.Equal(76, total);
+
+        // +6 (#2940): the Session (2000000009) populator joined, with five refusals of its own
+        // plus the sixth in RecordPatches.cs's dispatch chain. Four of the five guard the
+        // identity read-back — no NavSession.Id property, an Id that is not an Int32, no user
+        // name on the skeleton session, no recorded login instant — because a Session row whose
+        // "Connection ID" or "User ID" was invented is strictly worse than the empty table it
+        // replaces: FindSet() would then SUCCEED and hand AL a wrong answer.
+        //
+        // Per the note above: 82 was READ OUT of this test's own failure message ("Expected: 76,
+        // Actual: 82") after rebasing this branch onto main with #3128 merged, not arrived at by
+        // adding 6 to 76. The branch had previously written 78 against a base of 72; that running
+        // total did not survive the rebase, which is exactly what the note above predicts.
+        Assert.Equal(82, total);
     }
 
 

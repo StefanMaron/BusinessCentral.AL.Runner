@@ -238,6 +238,36 @@ public sealed class CollectionCostOrdererTests
     }
 
     /// <summary>
+    /// #3103 loosened the freshness guard's failing band; it must not have loosened it into
+    /// nothing. The step in bc-tests.yml still has to FAIL its leg, because a collection
+    /// genuinely missing from the table above the failing band is the #1887 tail — and this
+    /// job rolls up into the `BC test matrix passed` required check, so `continue-on-error`
+    /// there would silently retire the whole guard while leaving the step in place.
+    /// </summary>
+    [Fact]
+    public void FreshnessGuard_IsWiredAsAFailingStepWithItsOwnUnitSuite()
+    {
+        var repoRoot = Path.GetFullPath(
+            Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
+
+        Assert.True(File.Exists(Path.Combine(repoRoot, "scripts", "check-collection-weights.py")),
+            "scripts/check-collection-weights.py is referenced by bc-tests.yml but is not checked in.");
+        // pr-gate.yml's scripts-tests job runs every scripts/tests/*.test.py (it moved there
+        // from pr-check.yml in #3165); without this file the two bands and the leg
+        // calibration #3103 added are unasserted.
+        Assert.True(
+            File.Exists(Path.Combine(repoRoot, "scripts", "tests", "check-collection-weights.test.py")),
+            "scripts/tests/check-collection-weights.test.py is missing; the guard's own behaviour would be untested.");
+
+        var workflow = File.ReadAllText(Path.Combine(repoRoot, ".github", "workflows", "bc-tests.yml"));
+        var steps = workflow.Split("      - name: ");
+        var step = Assert.Single(steps.Where(s => s.StartsWith("Collection weight table freshness")));
+
+        Assert.Contains("scripts/check-collection-weights.py", step);
+        Assert.DoesNotContain("continue-on-error", step);
+    }
+
+    /// <summary>
     /// The orderer is dead code unless the assembly attribute names it. Asserts the exact
     /// type and assembly strings xUnit resolves, so a typo (which xUnit reports only as a
     /// diagnostic message and otherwise ignores) fails the build instead of silently

@@ -198,24 +198,13 @@ public static partial class RecordPatches
                 + "(see IsSelfPopulatingVirtualTableId) and must not be appended to an install "
                 + "baseline; GetDataAccessForTableCore re-derives it on every access.");
 
-        // #2875: the same invariant for the one table that is self-populating AND reachable by
-        // the on-demand loader. Object (2000000001) is projected from the loaded-object
-        // inventory on every access, so a baseline carrying THAT projection replays it into a
-        // brand-new provider at the next boundary and the projection can no longer tell its own
-        // stale output from a backup's rows.
-        //
-        // Unreachable from the loader by construction, and loudly so rather than skipped: this
-        // method's only production caller records the load's provenance immediately before
-        // calling it (TestDataProvisioner.LoadOnDemand), which is exactly what makes the table
-        // not projection-owned. So reaching this throw means a NEW writer appended a projection
-        // it did not load, which is the bug the check exists to stop rather than one to absorb.
-        if (IsProjectionOwnedSystemTableId(tableId))
-            throw new InvalidOperationException(
-                $"install-baseline — table {tableId} holds a runner-synthesised projection in "
-                + "this run (no --test-data backup contributed rows to it; see "
-                + "RecordPatches.BackupRowProvenance.cs) and must not be appended to an install "
-                + "baseline; GetDataAccessForTableCore re-derives it on every access, and a "
-                + "replayed projection is indistinguishable from a backup's rows (#2875).");
+        // Object (2000000001) used to need a SECOND guard here, because it was the one table
+        // that was both projected on every access and reachable by the on-demand loader
+        // (#2875). #3071 deleted that projection — a real service tier measured the legacy
+        // registry as EMPTY, so the runner synthesises nothing into it — and with it the
+        // ambiguity: the only rows 2000000001 can hold now are a --test-data backup's, which
+        // is exactly the case a baseline SHOULD carry. It is an ordinary application-database
+        // table here again, handled by the same code as its sibling 2000000071.
 
         var rows = new NavValue[pristineRows.Length][];
         for (var i = 0; i < pristineRows.Length; i++)
@@ -367,17 +356,13 @@ public static partial class RecordPatches
                 // already reports the union — dropping the rows here changes what it costs,
                 // not what it answers.
                 //
-                // ── And the one table that is BOTH of those and loader-backed (#2875) ──
-                // Object (2000000001) is a real application-database SQL table, so a
-                // --test-data backup can genuinely own its rows and those must be captured.
-                // With no backup behind them its rows are a projection of the loaded-object
-                // inventory, re-derived on every access exactly like the ids above — and
-                // capturing THAT is worse than merely wasteful: a boundary restore replays it
-                // into a brand-new provider, whose ConditionalWeakTable guard is empty, so the
-                // projection reads its own stale output as somebody else's rows and latches
-                // itself off. IsProjectionOwnedSystemTableId asks which of the two writers
-                // actually produced them rather than guessing from row presence.
-                if (IsSelfPopulatingVirtualTableId(tableId) || IsProjectionOwnedSystemTableId(tableId))
+                // Object (2000000001) was a second disjunct here until #3071 (#2875 added it):
+                // a real application-database SQL table whose rows, absent a --test-data
+                // backup, were a projection of the loaded-object inventory that a boundary
+                // restore replayed into a fresh provider. There is no such projection any more
+                // — a service tier measured the legacy registry as empty — so the table has
+                // nothing to exclude and is captured like every other loader-backed table.
+                if (IsSelfPopulatingVirtualTableId(tableId))
                 {
                     skippedVirtual.Add(tableId);
                     continue;
