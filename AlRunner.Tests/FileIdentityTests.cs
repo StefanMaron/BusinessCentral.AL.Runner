@@ -17,7 +17,8 @@ public sealed class FileIdentityTests : IDisposable
 
     public FileIdentityTests()
     {
-        _root = Path.Combine(Path.GetTempPath(), "al-runner-tests", "fileid-" + Guid.NewGuid().ToString("N"));
+        // TestScratch, not a hand-built temp path — see ScratchDirOwnershipGuardTests.
+        _root = TestScratch.Dir("al-runner-fileid");
         Directory.CreateDirectory(_root);
     }
 
@@ -99,7 +100,7 @@ public sealed class FileIdentityTests : IDisposable
         // and showing the device component differs — not by inspecting the source.
         var here = Write("here.bin", new byte[] { 9 });
         string? other = null;
-        foreach (var dir in new[] { "/dev/shm", "/run/user/" + Environment.GetEnvironmentVariable("UID"), "/run/shm" })
+        foreach (var dir in new[] { "/dev/shm", "/run/shm" })
         {
             try
             {

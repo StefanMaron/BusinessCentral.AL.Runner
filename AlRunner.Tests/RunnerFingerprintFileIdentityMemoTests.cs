@@ -27,8 +27,10 @@ public sealed class RunnerFingerprintFileIdentityMemoTests : IDisposable
     public RunnerFingerprintFileIdentityMemoTests()
     {
         // A fixture tree of our own — never the real shared package cache, which other
-        // processes on this machine are using while these tests run.
-        _root = Path.Combine(Path.GetTempPath(), "al-runner-tests", "fileid-memo-" + Guid.NewGuid().ToString("N"));
+        // processes on this machine are using while these tests run. TestScratch, not a
+        // hand-built temp path: ScratchDirs records an owner so a killed test host's tree is
+        // reclaimed rather than leaked (ScratchDirOwnershipGuardTests enforces this).
+        _root = TestScratch.Dir("al-runner-fileid-memo");
         Directory.CreateDirectory(_root);
         RunnerFingerprint.ClearFileContentHashMemoForTests();
     }
