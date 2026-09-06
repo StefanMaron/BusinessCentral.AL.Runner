@@ -65,29 +65,48 @@ Read it: `gh issue view <N> --repo StefanMaron/BusinessCentral.AL.Runner`.
 
 If you were not handed an isolated checkout, run `git status --short` on the tree you were given before touching git. Uncommitted changes you did not make mean another agent is mid-edit there — do **not** `git checkout -b`, you will either drag their work onto your branch or yank the tree out from under them. Take a worktree instead.
 
-`.claude/worktrees/<AGENT-ID>` may already exist from an earlier task, because identities are reused. That is expected. **Do not pick a fresh identity just to get a clean directory** — reset the one you have:
+Your working tree is `.claude/worktrees/<AGENT-ID>-issue-<N>` — the identity **and** the issue number, mirroring the branch name `agent/<AGENT-ID>/issue-<N>`. Both halves are load-bearing, and the issue number is the one that is easy to leave out.
+
+A path built from the identity alone is the #3014 defect. Two autonomous loops claimed the slot `stma-auto-1`, so both rendered the same directory `.claude/worktrees/stma-auto-1` — while their branch names, which *do* carry the issue number, stayed distinct. A directory is what `git commit` and `git push` consult to decide which branch they act on, so the second loop's two commits (554 added lines across 9 files, belonging to a different issue) landed on the first loop's PR branch, and the Test Matrix reported **success** on the mixture. Same account on both sides, so the author field, the branch prefix and the commit shape were all identical, and nothing objected at any layer.
+
+The directory normally does not exist yet. It exists only when you are **resuming the same issue** (Step 1), because the issue number is part of the name. **Do not pick a fresh identity just to get a clean directory** — reset the one you have:
 
 ```
 git fetch origin main
 
-# Only if the worktree already exists from a previous task:
-git -C .claude/worktrees/<AGENT-ID> status --porcelain              # must be empty
-git -C .claude/worktrees/<AGENT-ID> log --oneline origin/main..HEAD # must be empty
-rm -rf .claude/worktrees/<AGENT-ID> && git worktree prune   # NOT `git worktree remove` — see below
+# Only if the worktree already exists, i.e. you are resuming this same issue:
+git -C .claude/worktrees/<AGENT-ID>-issue-<N> status --porcelain              # must be empty
+git -C .claude/worktrees/<AGENT-ID>-issue-<N> log --oneline origin/main..HEAD # must be empty
+rm -rf .claude/worktrees/<AGENT-ID>-issue-<N> && git worktree prune   # NOT `git worktree remove` — see below
 
-git worktree add .claude/worktrees/<AGENT-ID> -b agent/<AGENT-ID>/issue-<N> origin/main
-cd .claude/worktrees/<AGENT-ID>
+git worktree add .claude/worktrees/<AGENT-ID>-issue-<N> -b agent/<AGENT-ID>/issue-<N> origin/main
+cd .claude/worktrees/<AGENT-ID>-issue-<N>
 ```
 
 **`git worktree remove` refuses on every worktree in this repository.** It reports
 `fatal: working trees containing submodules cannot be moved or removed`, because each one
 carries `tests/al-language/`. `--force` does not help. Run the two checks below, then
-`rm -rf .claude/worktrees/<AGENT-ID> && git worktree prune`, which is the only sequence that
+`rm -rf .claude/worktrees/<AGENT-ID>-issue-<N> && git worktree prune`, which is the only sequence that
 works here.
+
+**If that directory already exists and you are not resuming this issue, stop and report.** Somebody else is in it. Do not reset it, do not `cd` into it, and do not run the two checks as though it were yours to reclaim — a foreign claim looks identical whether the agent that made it is live or gone.
 
 **Never remove a worktree without running both checks first.** An agent that crashed mid-task leaves its only copy of that work there — nowhere else. If either check prints anything, stop and report rather than discard.
 
-Verify with `git rev-parse --show-toplevel` before your first commit. Never `git add -A` / `git add .` in a tree that might carry another agent's edits — stage only the files you changed, by name.
+Per-issue directories do not accumulate: `tools/preflight.py --reap` removes the worktrees of MERGED pull requests once they are clean, keyed on the pull request's state rather than on the directory's name.
+
+Before your first commit, verify **both** the directory and the branch:
+
+```
+git rev-parse --show-toplevel        # the worktree you meant to be in
+git rev-parse --abbrev-ref HEAD      # MUST equal agent/<AGENT-ID>/issue-<N>
+```
+
+The second line is the one that catches #3014, and it catches it even if the first passes. That agent was in a checkout whose HEAD was `agent/stma-auto-1/issue-3005` while it was working issue 3011; the directory looked right to it, and the branch did not match its issue. **A branch that names an issue other than yours is not yours to commit to** — stop and report, whatever the prefix says.
+
+Note what that prefix does and does not mean. `agent/<AGENT-ID>/` records who **created** a branch, not who may write to it, and nothing enforces it: a second agent committing there is a normal push that no check refuses. It is a naming convention, not an ownership boundary, and today it was used as one on `agent/impl-4/issue-2771` by two different writers. The assignee locks an *issue*; nothing plays that role for a *branch*.
+
+Never `git add -A` / `git add .` in a tree that might carry another agent's edits — stage only the files you changed, by name.
 
 ### RED → GREEN
 
@@ -214,6 +233,8 @@ If `mergeStateStatus` already reads `DIRTY`/`CONFLICTING` at this point, that is
 with `main`, not a CI problem — rebase, resolve, re-run your targeted tests (never carry a
 stale test result across a rebase), force-push with `--force-with-lease`, and re-check the
 SHA before returning.
+
+**If `--force-with-lease` is rejected, that is the finding — never force past it.** The rejection means the remote moved since you last fetched, so somebody else wrote to your branch, and the lease is the only thing standing between their work and your overwrite. Twice on 2026-09-06 it was the sole reason work survived: once where the repository owner had pushed to a corpus branch 44 minutes earlier, once where two agents shared a branch. Fetch, read what arrived with `git log @{u}...HEAD`, and report it. Do not reach for `--force`.
 
 Then report: the issue, the PR number, the head SHA, what you changed, what the RED → GREEN
 proved, and anything you deliberately left out. Return. Do not claim another issue.
