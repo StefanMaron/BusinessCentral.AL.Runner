@@ -31,10 +31,13 @@
 //   into its DELETE. "The rows are there with no database behind them" is a claim about the
 //   runner, and it is what the first two tests assert.
 //
-//   And the compiled-metadata payload has no runner source at all. Those columns are left at
-//   BC's own default rather than fabricated, which is a DECLARED divergence (docs/limitations.md)
-//   — declared precisely because this suite asserts it. Issue #2771 tracks making them refuse
-//   by name instead; when that lands, this half of the suite is what tells you the answer moved.
+//   And the compiled-metadata payload has no runner source at all. Since #2771 those nine
+//   columns REFUSE BY NAME when read, rather than handing back BC's default — a 0-byte BLOB,
+//   0, '' or false, every one of which is a legitimate value for the column and therefore
+//   indistinguishable from "the runner has no source for this". Two of the tests below assert
+//   the refusal, split by which of the two seams catches it (the runner's own blob load for the
+//   BLOBs, NavRecord.GetFieldValueSafe for the scalars), and a third asserts that refusing one
+//   COLUMN did not take the four request paths down with it — the trap #2519 named.
 //
 // IDS USED BELOW ARE ALL LIVE TABLES ON PURPOSE
 //   11 of the 43 ids in SystemTables.ApplicationDatabaseTables are declared
@@ -105,29 +108,120 @@ codeunit 65541 "OMST Tests"
     end;
 
     [Test]
-    procedure MetadataPayloadColumns_ReadBlank_DeclaredDivergence()
+    procedure MetadataPayloadBlobs_RefuseByName_RatherThanReadingAnEmptyPayload()
     var
         ObjectMetadata: Record "Object Metadata";
     begin
-        // On a real tier these carry the output of publishing the system app into the
-        // application database. The runner publishes nothing, so it leaves them at BC's own
-        // default instead of fabricating a payload. Asserting the exact blanks is what makes
-        // that a declared divergence rather than a silent one — see docs/limitations.md.
+        // On a real tier these four BLOBs carry the output of publishing the system app into
+        // the application database. The runner publishes nothing, so it has no payload — and
+        // until #2771 it handed back BC's own default, a 0-byte BLOB. That is the silent kind
+        // of wrong answer .claude/rules/loud-failures.md forbids: `HasValue()` reads false and
+        // `CreateInStream` yields an empty stream, both of which are exactly what a legitimately
+        // empty BLOB looks like, so nothing complains.
+        //
+        // Each arm names its OWN column. A refusal that named only the table would pass a
+        // single assertion and tell a developer nothing about which read to stop making.
         ObjectMetadata.SetRange("Object Type", ObjectMetadata."Object Type"::Table);
         ObjectMetadata.SetRange("Object ID", 2000000071);
         Assert.IsTrue(ObjectMetadata.FindFirst(), 'Object Metadata must have a row for its own table id.');
 
-        Assert.AreEqual(0, ObjectMetadata."Metadata Version", '"Metadata Version" must read 0.');
-        Assert.AreEqual('', ObjectMetadata.Hash, '"Hash" must read empty.');
-        Assert.AreEqual('', ObjectMetadata."Object Subtype", '"Object Subtype" must read empty.');
-        Assert.IsFalse(ObjectMetadata."Has Subscribers", '"Has Subscribers" must read false.');
-        Assert.AreEqual(0, ObjectMetadata."Schema Hash", '"Schema Hash" must read 0.');
+        asserterror ObjectMetadata.CalcFields(Metadata);
+        Assert.ExpectedError('out-of-scope: Object Metadata."Metadata" (system table 2000000071)');
+        Assert.ExpectedError('object-metadata-payload');
+        Assert.NotExpectedError('Object reference not set');
 
-        ObjectMetadata.CalcFields(Metadata, "User Code", "User AL Code", "Symbol Reference");
-        Assert.IsFalse(ObjectMetadata.Metadata.HasValue(), '"Metadata" must carry no payload.');
-        Assert.IsFalse(ObjectMetadata."User Code".HasValue(), '"User Code" must carry no payload.');
-        Assert.IsFalse(ObjectMetadata."User AL Code".HasValue(), '"User AL Code" must carry no payload.');
-        Assert.IsFalse(ObjectMetadata."Symbol Reference".HasValue(), '"Symbol Reference" must carry no payload.');
+        asserterror ObjectMetadata.CalcFields("User Code");
+        Assert.ExpectedError('out-of-scope: Object Metadata."User Code" (system table 2000000071)');
+
+        asserterror ObjectMetadata.CalcFields("User AL Code");
+        Assert.ExpectedError('out-of-scope: Object Metadata."User AL Code" (system table 2000000071)');
+
+        asserterror ObjectMetadata.CalcFields("Symbol Reference");
+        Assert.ExpectedError('out-of-scope: Object Metadata."Symbol Reference" (system table 2000000071)');
+
+        // A CalcFields naming several refusing columns at once still refuses, and names one of
+        // them rather than dying somewhere unattributable.
+        asserterror ObjectMetadata.CalcFields(Metadata, "User Code", "User AL Code", "Symbol Reference");
+        Assert.ExpectedError('out-of-scope: Object Metadata.');
+        Assert.ExpectedError('(system table 2000000071)');
+    end;
+
+    [Test]
+    procedure MetadataPayloadScalars_RefuseByName_RatherThanReadingBlank()
+    var
+        ObjectMetadata: Record "Object Metadata";
+        Sink: Text;
+    begin
+        // The five non-BLOB payload columns had the same defect in a quieter form: 0, '' and
+        // false are all ordinary values, so `if ObjectMetadata."Has Subscribers" then` simply
+        // took the wrong branch. Read through Format() so the assertion does not depend on
+        // this test guessing each column's declared AL type.
+        ObjectMetadata.SetRange("Object Type", ObjectMetadata."Object Type"::Table);
+        ObjectMetadata.SetRange("Object ID", 2000000071);
+        Assert.IsTrue(ObjectMetadata.FindFirst(), 'Object Metadata must have a row for its own table id.');
+
+        asserterror Sink := Format(ObjectMetadata."Metadata Version");
+        Assert.ExpectedError('out-of-scope: Object Metadata."Metadata Version" (system table 2000000071)');
+        Assert.ExpectedError('object-metadata-payload');
+
+        asserterror Sink := Format(ObjectMetadata.Hash);
+        Assert.ExpectedError('out-of-scope: Object Metadata."Hash" (system table 2000000071)');
+
+        asserterror Sink := Format(ObjectMetadata."Object Subtype");
+        Assert.ExpectedError('out-of-scope: Object Metadata."Object Subtype" (system table 2000000071)');
+
+        asserterror Sink := Format(ObjectMetadata."Has Subscribers");
+        Assert.ExpectedError('out-of-scope: Object Metadata."Has Subscribers" (system table 2000000071)');
+
+        asserterror Sink := Format(ObjectMetadata."Schema Hash");
+        Assert.ExpectedError('out-of-scope: Object Metadata."Schema Hash" (system table 2000000071)');
+    end;
+
+    [Test]
+    procedure RefusingAPayloadColumn_LeavesAllFourRequestPathsWorking()
+    var
+        ObjectMetadata: Record "Object Metadata";
+        EmitVersion: Integer;
+    begin
+        // The trap #2519 named: throwing at ROW-BUILD time would refuse the payload columns and
+        // take out FindSet / Count / Get with them, which is the original bug wearing a new hat.
+        // The refusal is on the READ of one column, so every request path still answers, and the
+        // three columns that have a real source still read.
+        //
+        // All FOUR DataAccess request paths, because they are four independent implementations:
+        // RecordImplementation.IsEmptyAsync calls its own ExistsAsync and never routes through
+        // CountAsync, so a fix verified on find, count and keyed Get can still be broken here.
+
+        // find — InnerFindAsync
+        ObjectMetadata.SetRange("Object Type", ObjectMetadata."Object Type"::Table);
+        ObjectMetadata.SetRange("Object ID", 2000000071);
+        Assert.IsTrue(ObjectMetadata.FindFirst(), 'FindFirst must still answer after the refusal.');
+        Assert.AreEqual(2000000071, ObjectMetadata."Object ID", 'The found row must be the one asked for.');
+        EmitVersion := ObjectMetadata."Emit Version";
+        Assert.IsTrue(EmitVersion >= 27000, 'A column with a real source must still read.');
+
+        // count — CountAsync
+        Assert.AreEqual(1, ObjectMetadata.Count(), 'Count must still answer after the refusal.');
+
+        // IsEmpty — ExistsAsync, a fourth path and not a spelling of Count
+        Assert.IsFalse(ObjectMetadata.IsEmpty(), 'IsEmpty must still answer after the refusal.');
+
+        // keyed Get — InternalTryGetByPrimaryKeyAsync
+        Clear(ObjectMetadata);
+        Assert.IsTrue(
+            ObjectMetadata.Get(ObjectMetadata."Object Type"::Table, 2000000071, EmitVersion),
+            'A keyed Get must still answer after the refusal.');
+        Assert.AreEqual(2000000071, ObjectMetadata."Object ID", 'The Get row must be the one asked for.');
+
+        // ...and the negative twin on every path, so none of them passes vacuously.
+        ObjectMetadata.Reset();
+        ObjectMetadata.SetRange("Object ID", 18);
+        Assert.AreEqual(0, ObjectMetadata.Count(), 'Count must still refuse an id with no row.');
+        Assert.IsTrue(ObjectMetadata.IsEmpty(), 'IsEmpty must still refuse an id with no row.');
+        Assert.IsFalse(ObjectMetadata.FindFirst(), 'FindFirst must still refuse an id with no row.');
+        Assert.IsFalse(
+            ObjectMetadata.Get(ObjectMetadata."Object Type"::Table, 18, EmitVersion),
+            'A keyed Get must still refuse an id with no row.');
     end;
 
     [Test]

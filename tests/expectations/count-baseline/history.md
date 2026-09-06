@@ -72,6 +72,31 @@ move whatever that number is. The fixture app is still a separate, test-free app
 
 ## runner-extras
 
+### object-metadata-system-table 4 -> 6 (PR for #2771)
+
+One test replaced by three, so the group gains two.
+`MetadataPayloadColumns_ReadBlank_DeclaredDivergence` asserted the exact blanks the nine
+compiled-metadata payload columns read; it is gone, because those columns now refuse by name.
+What replaces it is deliberately three tests and not one rewrite:
+
+- `MetadataPayloadBlobs_RefuseByName_RatherThanReadingAnEmptyPayload` and
+  `MetadataPayloadScalars_RefuseByName_RatherThanReadingBlank` are split because the two kinds
+  of column are caught at two different seams — the runner's own blob load inside
+  `FlowFieldPatches.RecordImpl_CalcFieldsAsync_3` for the BLOBs, and
+  `NavRecord.GetFieldValueSafe` for the scalars. One test over all nine would have gone green
+  with either seam missing, since the first `asserterror` it reached would have satisfied it.
+- `RefusingAPayloadColumn_LeavesAllFourRequestPathsWorking` is the control, and it is the
+  reason the count moved by two rather than one. #2519's whole argument for tolerating the
+  blanks was that refusing at row-build time takes `FindSet` / `Count` / `IsEmpty` / keyed
+  `Get` down with it. That test asserts all four still answer, each with a negative twin, so a
+  refusal that spread past the one column it names cannot ship green. `IsEmpty()` is asserted
+  separately from `Count()` on purpose: `RecordImplementation.IsEmptyAsync` calls its own
+  `ExistsAsync`, the same fourth-path assumption that let #3006 sit unnoticed.
+
+It passed before the fix and must keep passing after it, which makes it the one test in the
+group whose value is entirely in not moving.
+
+
 ### date-virtual-table-window 5 -> 9 (PRs for #3006 and #2965)
 
 Four tests added to an existing app group, so no new group line. Written down because two of

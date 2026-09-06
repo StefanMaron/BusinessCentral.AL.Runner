@@ -461,6 +461,13 @@ public static class FlowFieldPatches
             // entry point where `self` is available — the shared core below has no `self`.
             foreach (var fieldObj in blobFields)
             {
+                // #2771: a BLOB the runner has no source for refuses HERE, by name, before
+                // anything is loaded. This is the runner's own blob-load site and therefore
+                // the only one AL can reach — the replacement above means BC's
+                // DataAccess.GetBlobContentAsync never runs. Handing back the 0-byte
+                // placeholder instead reads as a legitimately empty BLOB (HasValue() false,
+                // CreateInStream empty), which is the silent default loud-failures.md forbids.
+                RecordPatches.ThrowIfColumnHasNoSource(fieldObj as NCLMetaField);
                 int blobColumn = -1;
                 try { blobColumn = (int)_pNclMetaFieldColumnIndex!.GetValue(fieldObj)!; } catch { }
                 if (blobColumn >= 0)

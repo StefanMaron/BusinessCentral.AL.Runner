@@ -701,12 +701,26 @@ where all 8 BC legs failed on that message before reaching a single assertion. S
 remainder needs an OnPrem-target app in the corpus, or Microsoft's `Tests-SINGLESERVER` bucket,
 which is OnPrem-target and reads this table directly.
 
-The payload columns are a **declared divergence** — there is nothing to reproduce, because
-nothing was ever published. Per `.claude/rules/loud-failures.md` those nine columns should refuse
-by name rather than read blank; that needs a per-(table, field) blob-read seam on the shared
-`TempTableDataProvider` path which does not exist yet, and **issue #2771** tracks it. Throwing at
-row-build time instead is not an option — it would take out `FindSet` / `FindLast` / `Count` as
-well, which is the bug (#2519) this table's support closed.
+The nine payload columns **refuse by name** when read (#2771). There is nothing to reproduce,
+because nothing was ever published, and a blank was indistinguishable from a real empty value —
+`HasValue()` false on a 0-byte BLOB, `''`, `0`, `false` — so a caller could not tell the runner's
+"I have no source for this" from BC's "this is empty". Reading one now raises
+`out-of-scope: Object Metadata."<column>" (system table 2000000071)` with reason
+`object-metadata-payload`.
+
+The refusal is on the **read of that column**, never at row-build time. Throwing while building
+the row would take `FindSet` / `FindLast` / `Count` / `IsEmpty` with it, which is the bug (#2519)
+this table's support closed; `tests/runner-extras/object-metadata-system-table` asserts all four
+request paths still answer, positively and negatively, alongside the refusals.
+
+Two seams, because BC reads the two kinds of column through different machinery. The BLOBs are
+caught at the runner's own blob-load site in `FlowFieldPatches.RecordImpl_CalcFieldsAsync_3` —
+**not** at `DataAccess.GetBlobContentAsync`, which is where BC itself would read them and which is
+dead here, because the runner replaces both `RecordImplementation.CalcFieldsAsync` overloads
+outright. The five scalars have no data-access call to intercept at all: a plain AL field read is
+`NavRecord.GetFieldValueSafe(fieldNo, expectedType)` straight off the record buffer, so that is
+the seam. Neither covers a `RecordRef`/`FieldRef` read, which 2000000071 cannot be opened as
+anyway (see the `CheckIsOpenAllowed` refusal above).
 
 `tests/runner-extras/object-metadata-system-table` asserts the runner-side behaviour so it cannot
 move quietly. It deliberately uses only ids that are live table objects, so it does not encode

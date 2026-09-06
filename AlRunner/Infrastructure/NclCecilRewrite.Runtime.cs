@@ -1042,6 +1042,49 @@ public static partial class NclCecilRewrite
                 H(recordPatches, "DataAccess_FieldGuardForExists"),
                 argSlots: 2); // `this` — the DataAccess — and the exists request
 
+            // ── Why there is NO DataAccess.GetBlobContentAsync prepend here (#2771) ─────────
+            // That is the seam BC itself would use — RecordImplementation.CalcFieldsAsync sends
+            // its NavBlob fields to DataAccess.GetBlobContentAsync(GetBlobContentCacheRequest),
+            // decompiled from Ncl.dll 28.1 — and it is the one #2771's issue body proposed. It
+            // is DEAD IN THIS RUNNER, measured rather than reasoned: prepending it left the
+            // runner-extras BLOB refusal test failing with "An error was expected inside an
+            // ASSERTERROR statement", because this file ALREADY replaces both CalcFieldsAsync
+            // overloads with FlowFieldPatches.RecordImpl_CalcFieldsAsync_2/_3 (see
+            // NclCecilRewrite.Records.cs), and that replacement loads BLOBs through its own
+            // LoadBlobField straight off the in-memory provider. BC's body never runs, so
+            // GetBlobContentAsync is never reached from AL.
+            //
+            // The refusal therefore lives at the runner's OWN blob-load site, in
+            // FlowFieldPatches.RecordImpl_CalcFieldsAsync_3. Adding the prepend anyway would
+            // ship a rewrite that never fires — the orphaned-hook shape AL_RUNNER_HOOK_AUDIT
+            // exists to find.
+
+            // ── NavRecord.GetFieldValueSafe — no-source column refusal, scalars (#2771) ──────
+            // The other five columns are not BLOBs, and there is no data-access call to
+            // intercept for them at all: a plain AL field read is
+            // GetFieldValueSafe(fieldNo, expectedType) -> GetFieldValue(ValidateExpectedType(..))
+            // straight off the record buffer (decompiled from Ncl.dll 28.1). So this is the only
+            // seam, and 0 / '' / false went back to AL as ordinary values —
+            // `if ObjectMetadata."Has Subscribers" then` simply took the wrong branch.
+            //
+            // This looked like the hottest method anything is prepended to in this file, and it
+            // is not — COUNTED, not assumed: ~45,600 guard calls across the whole 2,610-test
+            // al-language corpus and ~38,100 across runner-extras, against 209-268 billion
+            // instructions:u for that corpus run. The guard is written for the cheap case
+            // anyway (one property read, one REFERENCE compare against the last metatable seen,
+            // then return, with no dictionary lookup or allocation for an unregistered table),
+            // but the cost is not measurable and the numbers are recorded in
+            // RecordPatches.NoSourceColumns.cs so the wrong fear is not re-derived.
+            //
+            // Two arg slots, not three: the third is a NavType enum, and a raw ldarg of a value
+            // type into a helper parameter of a different type is invalid IL (PrependStaticCall
+            // does not box). The helper's first parameter is NavRecord, which is exactly what
+            // IL slot 0 holds on an instance method of NavRecord.
+            PrependStaticCall(nclMod,
+                ByParams(Rt + "NavRecord", "GetFieldValueSafe", "Int32", "NavType"),
+                H(recordPatches, "NavRecord_NoSourceColumnGuardForRead"),
+                argSlots: 2); // `this` — the NavRecord — and the field number
+
             // ── NavDatabase / NavRecordId collation comparers ───────────────────
             ReplaceBodyWithHelper(nclMod,
                 FindNclMethod(nclMod, Rt + "NavDatabase", "get_CollationAwareStringComparer", 0),

@@ -128,11 +128,17 @@
 //   string, 0D, 0T (and, for "Version List" / "Locked By", an empty OemText). THIS IS A DECLARED DIVERGENCE, NOT A FAITHFUL SUBSTITUTION: it is
 //   recorded in docs/limitations.md and asserted by tests/runner-extras/object-system-table so
 //   it cannot change quietly. Per .claude/rules/loud-failures.md those columns should refuse
-//   BY NAME rather than read blank; that needs the same per-(table, field) read seam on the
-//   shared TempTableDataProvider path that #2771 tracks for Object Metadata's payload columns,
-//   and this table is a second consumer of it. Throwing at row-build time instead is not an
-//   option — it would take out FindSet / Count / Get as well, which is the bug this file
-//   closes.
+//   BY NAME rather than read blank. THE SEAM FOR THAT NOW EXISTS —
+//   RecordPatches.NoSourceColumns.cs, landed by #2771 for Object Metadata's payload columns —
+//   so what is left here is registering this table's eleven names, flipping the runner-extras
+//   suite that currently asserts the blanks, and measuring the blast radius on code that reads
+//   Object.Caption or Object."Version List" today. Issue #3096 tracks exactly that.
+//
+//   Whichever way that lands, the refusal has to be on the COLUMN READ and never at row-build
+//   time — throwing while building the row would take out FindSet / Count / IsEmpty / Get as
+//   well, which is the bug this file closes. #2771's two seams are both read-time for exactly
+//   that reason, and its runner-extras suite carries a control test that asserts all four
+//   request paths still answer.
 //
 //   Caption is deliberately in the blank list even though the shared inventory DOES carry a
 //   caption for most objects (AllObjWithCaption is answered from it). Whether this legacy
