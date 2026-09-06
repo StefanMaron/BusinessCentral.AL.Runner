@@ -510,7 +510,25 @@ for (int i = 0; i < args.Length; i++)
     // #2555: --cache and --no-cache are last-wins against each other for BOTH
     // alCacheDir and cacheRootOverride — an explicit --cache re-enables everything
     // a preceding --no-cache turned off, including the other caches' redirect.
-    if (args[i] == "--cache" && i + 1 < args.Length) { alCacheDir = args[++i]; cacheRootOverride = alCacheDir; noCacheRequested = false; continue; }
+    // #3084: rooted HERE, once, for BOTH consumers. CacheRoots.SetOverride roots what it
+    // stores too, but alCacheDir deliberately does NOT go through CacheRoots (see that
+    // class's "Deliberately NOT wired into alCacheDir" note), so it needs its own rooting
+    // or the AL-output cache keeps the CWD-dependent behaviour this fixes everywhere else.
+    // Path.GetFullPath is the only thing that can throw in this parse loop; a malformed
+    // --cache value returns the same exit 2 every other CLI usage error here returns,
+    // rather than an unhandled exception out of top-level statements (exit 134).
+    if (args[i] == "--cache" && i + 1 < args.Length)
+    {
+        var rawCacheDir = args[++i];
+        try { alCacheDir = Path.GetFullPath(rawCacheDir); }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine(
+                $"--cache '{rawCacheDir}' is not a usable directory path: {ex.Message}");
+            return 2;
+        }
+        cacheRootOverride = alCacheDir; noCacheRequested = false; continue;
+    }
     // #2555: previously only disabled the AL-output cache (alCacheDir); the other
     // caches CacheRoots redirects stayed warm, so a run reached for specifically to
     // reproduce/measure a cold compile still got most of what "cold" is supposed to

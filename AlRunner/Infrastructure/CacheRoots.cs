@@ -75,8 +75,49 @@ public static class CacheRoots
     /// <see cref="DisableForRun"/> for the <c>--no-cache</c> case — it also arranges
     /// cleanup and re-exec continuity that calling this directly with an ad hoc directory
     /// would not get.
+    ///
+    /// <para><b>Rooted here, once (issue #3084).</b> A <c>--cache</c> value is user-supplied
+    /// and may be relative; every path <see cref="Resolve"/> derives from it then stays
+    /// relative, and the failure that produces is silent in the worst way. The r2r-chunks
+    /// cache feeds <c>AssemblyLoadContext.LoadFromAssemblyPath</c>, which REQUIRES an
+    /// absolute path and refuses a relative one — so with <c>--cache .measure/relcache</c>
+    /// every extracted chunk of Base Application / System Application / Business Foundation
+    /// failed to load, the run dropped to a tier where those apps' objects do not exist, and
+    /// it reported ordinary test failures plus 16 <c>[provision-gap]</c> blocks instead of
+    /// naming the cache path. Measured on tests/runner-extras/microsoft-test-library, same
+    /// build and same package caches: relative <c>--cache</c> 0 pass / 3 fail, absolute
+    /// <c>--cache</c> 3 pass / 0 fail.
+    ///
+    /// Rooted at the WRITE site rather than in <see cref="Resolve"/> for two reasons.
+    /// A new named cache added later cannot forget to root itself, the way N read sites
+    /// each doing their own <c>Path.GetFullPath</c> can. And rooting here PINS the root to
+    /// the working directory as it was when the flag was parsed: <c>Path.GetFullPath</c>
+    /// inside <see cref="Resolve"/> would re-resolve against whatever the current directory
+    /// happens to be at each call, so a <c>--watch</c> session or anything else that moves
+    /// the process's CWD mid-run would move a live run's cache underneath it.
+    ///
+    /// Same family as issue #2114, which rooted the HOME-derived half of exactly this
+    /// problem; <c>--cache</c> is the user-supplied root that sweep did not reach, and it
+    /// is strictly worse because #2114 crashed the process where this one degrades quietly.
+    /// This changes no persisted cache KEY — no cache resolved here hashes its own root
+    /// (r2r-chunks keys on the package content hash, ncl-cecil on the Ncl bytes plus the
+    /// runner content hash, and Program.cs's AL-output key deliberately hashes source paths
+    /// RELATIVE to the common source root) — and for an unchanged working directory
+    /// <c>GetFullPath</c> names the same physical directory the relative form already
+    /// resolved to, so entries written by an earlier run under a relative <c>--cache</c>
+    /// stay reachable.</para>
     /// </summary>
-    public static void SetOverride(string? cacheDir) => _override = cacheDir;
+    public static void SetOverride(string? cacheDir) => _override = Root(cacheDir);
+
+    /// <summary>
+    /// <c>Path.GetFullPath</c>, plus a null passthrough for the bare-default case. Both
+    /// writers of <see cref="_override"/> go through this so the invariant
+    /// "<see cref="_override"/> is absolute or null" holds no matter which one wrote it —
+    /// <see cref="DisableForRun"/> mints under <see cref="Path.GetTempPath"/> (already
+    /// absolute) but ALSO adopts a value out of the environment, which nothing validates.
+    /// </summary>
+    private static string? Root(string? dir)
+        => string.IsNullOrEmpty(dir) ? dir : Path.GetFullPath(dir);
 
     /// <summary>
     /// <c>--no-cache</c> (#2555): redirects every cache resolved through <see cref="Resolve"/>
@@ -100,15 +141,30 @@ public static class CacheRoots
         string root;
         if (!string.IsNullOrEmpty(existing))
         {
-            root = existing;
+            // #3084: rooted, like every other write to _override. This branch is the ONE
+            // path into the override that does not come from Program.cs's flag parsing —
+            // it adopts a raw environment value, which nothing validates and which a
+            // caller (or a shell that exported a relative path) can set to anything. The
+            // sibling branch below is absolute by construction (Path.GetTempPath), so
+            // without this the two writers of the same field would not maintain the same
+            // invariant, which is exactly how #3084's silent tier-drop got in.
+            root = Path.GetFullPath(existing);
+            // Republish the rooted form so a child re-exec'd from here inherits an absolute
+            // path. Rooting only in this process would leave the child to root the SAME
+            // relative value against ITS working directory — the one-throwaway-root-per-RUN
+            // guarantee this branch exists to provide would then quietly become two.
+            if (!string.Equals(root, existing, StringComparison.Ordinal))
+                Environment.SetEnvironmentVariable(NoCacheRootEnvVar, root);
         }
         else
         {
             // Reserved (not created — nothing may ever write into it) through ScratchDirs
             // (#2706) so a run killed before CleanupThrowawayRoot fires is reclaimed by the
             // next runner start instead of leaking a full cache per killed --no-cache run.
-            root = ScratchDirs.Reserve(
-                Path.Combine(Path.GetTempPath(), "al-runner-no-cache-" + Guid.NewGuid().ToString("N")));
+            root = Path.GetFullPath(ScratchDirs.Reserve(
+                Path.Combine(Path.GetTempPath(), "al-runner-no-cache-" + Guid.NewGuid().ToString("N"))));
+            // Publish the ROOTED form, so a re-exec'd child inherits an absolute path
+            // even if this generation was handed a relative one (#3084).
             Environment.SetEnvironmentVariable(NoCacheRootEnvVar, root);
         }
         _override = root;
@@ -146,8 +202,51 @@ public static class CacheRoots
         // AlRunnerPaths.UserHome throws loudly (issue #2114) rather than silently handing
         // back a relative path when $HOME names a directory that does not exist.
         var root = _override ?? Path.Combine(AlRunnerPaths.UserHome, ".cache", "al-runner");
+        // #3084: the invariant, restated where it is consumed. Both writers of _override
+        // root what they store, so this cannot fire through SetOverride/DisableForRun —
+        // it fires for a THIRD writer added later that forgets to. Stated here, and not
+        // only at the write sites, because this one method is the choke point every named
+        // cache goes through (compiled-deps, workspace-deps, ncl-cecil, bc-symbols,
+        // ncl-shadow, app-manifests, r2r-chunks, install-baseline), so one guard covers
+        // all eight rather than each consumer having to know that LoadFromAssemblyPath —
+        // or a re-exec, or a path-prefix comparison — is downstream of it.
+        //
+        // Loud rather than best-effort-rooted-here on purpose (.claude/rules/loud-failures.md):
+        // silently calling Path.GetFullPath at THIS point would re-resolve against whatever
+        // the current directory is right now, which is the moving-target bug the write-site
+        // rooting exists to prevent, and would hide the defect that produced the unrooted
+        // value instead of naming it.
+        if (!Path.IsPathRooted(root))
+            throw new InvalidOperationException(BuildUnrootedCacheRootMessage(root, name));
         return Path.Combine(root, name);
     }
+
+    /// <summary>
+    /// The diagnostic for a cache root that is not absolute. Separate and internal so the
+    /// tests can assert the exact text without reaching into <see cref="Resolve"/>'s
+    /// control flow. Names the value, the flag that most likely supplied it, and — the part
+    /// that was missing in #3084 — the consequence, so the reader is not left to conclude
+    /// from 16 <c>[provision-gap]</c> blocks that their package cache is unprovisioned.
+    /// </summary>
+    internal static string BuildUnrootedCacheRootMessage(string root, string name)
+        => $"al-runner resolved the '{name}' cache to a RELATIVE root '{root}'. Every cache " +
+           $"root must be absolute: the r2r-chunks cache feeds " +
+           $"AssemblyLoadContext.LoadFromAssemblyPath, which refuses a relative path, and a " +
+           $"relative root also means a different directory for any part of the run that " +
+           $"executes from a different working directory. Left unchecked this does not fail " +
+           $"the load loudly — it drops Base Application / System Application / Business " +
+           $"Foundation to a lower tier where their objects do not exist, and the run then " +
+           $"reports ordinary test failures. Pass an absolute directory to --cache (issue #3084).";
+
+    /// <summary>
+    /// Test-only seam for the <see cref="Resolve"/> rootedness guard above. Both production
+    /// writers of the override root what they store, so the guard is unreachable through
+    /// them by construction — and a guard with no test is a guard nobody knows still works.
+    /// Same shape, and the same reason, as
+    /// <c>AppLoader.ExtractAllDllPathsCore</c>'s internal content-hash-provider overload,
+    /// which exists so the identity tests can drive its no-identity branch.
+    /// </summary>
+    internal static void SetOverrideBypassingRootingForTests(string cacheDir) => _override = cacheDir;
 
     /// <summary>Test-only: resets the override so test processes/hosts that share this
     /// static (e.g. in-process unit tests, as opposed to the spawned-subprocess

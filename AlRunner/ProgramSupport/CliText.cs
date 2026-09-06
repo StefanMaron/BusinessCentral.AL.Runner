@@ -524,6 +524,10 @@ internal static partial class ProgramSupport
         w.WriteLine("                          are unchanged) AND every other named cache normally under");
         w.WriteLine("                          ~/.cache/al-runner/<name> (compiled-deps, workspace-deps,");
         w.WriteLine("                          ncl-cecil, bc-symbols, and more) as <DIR>/<name>.");
+        w.WriteLine("                          A relative DIR is resolved against the working directory");
+        w.WriteLine("                          ONCE, when the flag is parsed, and stored absolute: an");
+        w.WriteLine("                          unrooted cache root cannot be handed to the .NET assembly");
+        w.WriteLine("                          loader, and would otherwise move with the process (#3084).");
         w.WriteLine("  --no-cache              Disable every on-disk cache for this run, not just the");
         w.WriteLine("                          AL-output cache: the other named caches above are");
         w.WriteLine("                          redirected to a throwaway per-run directory (removed on");
