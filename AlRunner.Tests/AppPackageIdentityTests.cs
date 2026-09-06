@@ -46,11 +46,23 @@ public class AppPackageIdentityTests
     }
 
     [Fact]
-    public void TheTwoColumnsAreNeverTheSameGuidForOneApp()
+    public void TheTwoColumnsCarryOneGuidForOneApp()
     {
-        // Real BC assigns Package ID and Runtime Package ID independently. If the runner made
-        // them equal, AL comparing one column against the other would silently succeed.
-        Assert.NotEqual(AppPackageIdentity.PackageIdFor(AppA), AppPackageIdentity.RuntimePackageIdFor(AppA));
+        // This test used to assert the opposite, on the reading that "real BC assigns Package
+        // ID and Runtime Package ID independently". A real service tier disagreed:
+        // BusinessCentral.AL.Language.Tests#187's
+        // PublishedApplication_ThisApp_PackageIdIsItsRuntimePackageId passed on all eight
+        // OnPrem legs, BC 27.0 through 28.4, with the two columns EQUAL for a freshly published
+        // app (AlRunner#3066). The runner matches that rather than diverging from it.
+        //
+        // Pinned here as well as upstream because this is where the two-salt design would come
+        // back: the upstream test can only see the ids the runner puts on ONE app's row, and
+        // it takes a service tier to run at all.
+        Assert.Equal(AppPackageIdentity.PackageIdFor(AppA), AppPackageIdentity.RuntimePackageIdFor(AppA));
+
+        // And equality within a row must not have been bought by making the value constant —
+        // DifferentAppsGetDifferentIds covers the columns separately, this covers the collapse.
+        Assert.NotEqual(AppPackageIdentity.PackageIdFor(AppA), AppPackageIdentity.RuntimePackageIdFor(AppB));
     }
 
     [Fact]

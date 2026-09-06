@@ -1,20 +1,27 @@
 // Issue #2519. Object Metadata (2000000071) on the runner: where the rows come from when
 // there is no application database, and what the columns the runner cannot answer read.
 //
-// WHY THIS IS A RUNNER TEST AND NOT A CORPUS TEST — AND WHAT IS THEREFORE UNVERIFIED
-//   The table's CONTENT is plain BC behaviour and BELONGS upstream. It could not go there.
-//   Corpus PR StefanMaron/BusinessCentral.AL.Language.Tests#153 tried and was withdrawn: the
-//   corpus app targets Cloud and this table is Scope = OnPrem, so `Record "Object Metadata"`
-//   does not compile there (AL0296), and the RecordRef route is refused at RUNTIME by
-//   NavRecordRef.CheckIsOpenAllowed on all 8 BC legs of run 33968379281 —
-//   "You cannot open record 2000000071 from a RecordRef data type when you are using target
-//   Cloud." 2000000071 is in SystemTables.InternalTables, and the escape hatch
-//   SystemTables.OnPremSystemTableRecordRefAllowed is only { 2000000187, 2000000188 }.
+// WHY THIS IS A RUNNER TEST AND NOT A CORPUS TEST — AND WHAT A TIER HAS SINCE CONFIRMED
+//   The table's CONTENT is plain BC behaviour and belongs upstream. This header used to say
+//   "NO SERVICE TIER HAS CONFIRMED THE ROW SET THIS SUITE OBSERVES", because the first attempt
+//   to put it upstream failed: corpus PR StefanMaron/BusinessCentral.AL.Language.Tests#153 was
+//   withdrawn after all 8 BC legs of run 33968379281 refused the only route a Cloud-target app
+//   has — "You cannot open record 2000000071 from a RecordRef data type when you are using
+//   target Cloud" (NavRecordRef.CheckIsOpenAllowed; 2000000071 is in
+//   SystemTables.InternalTables, and the escape hatch
+//   SystemTables.OnPremSystemTableRecordRefAllowed is only { 2000000187, 2000000188 }).
 //
-//   SO NO SERVICE TIER HAS CONFIRMED THE ROW SET THIS SUITE OBSERVES. It is derived from
-//   Microsoft's own publish-side code (see the C# file's header). Treat the assertions below
-//   as pinning what the RUNNER does, which is what a runner suite is for — not as evidence
-//   about BC.
+//   THAT IS NO LONGER TRUE, and leaving it here was how two neighbouring stale claims survived
+//   long enough to be contradicted (AlRunner#3066). Corpus PR #179 added a Target = OnPrem app
+//   — the compilation target is what decides both refusals, and nothing else — and
+//   tests/al-language-onprem/record/TestObjectMetadataSystemTable.al now measures the row set
+//   on all eight OnPrem legs, BC 27.0 through 28.4: 43 rows under Object Type = Table, one per
+//   id on Microsoft's application-database table list, INCLUDING the ObsoleteState = Removed
+//   and Pending ids; no row for a virtual system table or an ordinary application table;
+//   FindLast landing on 2000000400. This repository's own corpus leg runs that file against
+//   the runner, so the claim is adjudicated on both sides.
+//
+//   What is left for this suite is the RUNNER's side of it, which no tier can see.
 //
 //   What IS runner-specific: on a real tier those rows exist because publishing wrote them
 //   into a SQL table. The runner has no application database and never publishes anything, so
@@ -31,10 +38,13 @@
 //
 // IDS USED BELOW ARE ALL LIVE TABLES ON PURPOSE
 //   11 of the 43 ids in SystemTables.ApplicationDatabaseTables are declared
-//   ObsoleteState = Removed in System.app (2000000151 among them). Whether real BC publishes a
-//   row for those is the one part of the row set that is genuinely open — see the C# header —
-//   so this suite asserts only ids that are live table objects on both BC 27.0 and 28.1, and
-//   does not encode the open question as settled either way.
+//   ObsoleteState = Removed in System.app (2000000151 among them). When this suite was written
+//   it was open whether real BC publishes a row for those, so it asserts only ids that are live
+//   table objects on both BC 27.0 and 28.1. Corpus #179 has since settled it — a tier does
+//   publish rows for the Removed ids, and upstream's
+//   ObjectMetadata_Find_ObsoleteRemovedId_ReturnsARow pins 2000000151 specifically. This suite
+//   is left narrower on purpose: the wider claim is upstream's now, and duplicating it here
+//   would put a BC assertion back into a runner-local suite.
 codeunit 65541 "OMST Tests"
 {
     Subtype = Test;

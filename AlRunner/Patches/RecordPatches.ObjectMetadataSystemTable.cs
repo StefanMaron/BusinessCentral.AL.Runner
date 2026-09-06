@@ -68,23 +68,38 @@
 //   Enumerating the .al sources shipped inside System.app: on BOTH BC 27.0 and BC 28.1 every
 //   one of the 43 ids has a table object, none missing, highest 2000000400.
 //
-// ── WHAT IS NOT SETTLED, AND WHY IT COULD NOT BE SETTLED HERE ────────────────────────────
-//   NO SERVICE TIER HAS CONFIRMED THIS ROW SET. The claim belongs upstream and could not go
-//   there: corpus PR StefanMaron/BusinessCentral.AL.Language.Tests#153 was withdrawn after all
-//   8 BC legs of run 33968379281 refused the only route a Cloud-target app has —
+// ── SETTLED BY A SERVICE TIER, AND WHAT IT TOOK ──────────────────────────────────────────
+//   This section used to open "NO SERVICE TIER HAS CONFIRMED THIS ROW SET". One has, since
+//   StefanMaron/BusinessCentral.AL.Language.Tests#179 merged: the corpus grew a Target = OnPrem
+//   app, and tests/al-language-onprem/record/TestObjectMetadataSystemTable.al measures the row
+//   set on all eight OnPrem legs, BC 27.0 through 28.4. It confirms, against a real tier:
+//
+//     * 43 rows under Object Type = Table — one per id on
+//       SystemTables.ApplicationDatabaseTables, exactly the equality the insert predicate and
+//       Microsoft's DELETE each bound from one side without establishing;
+//     * every row carries Object Type = Table;
+//     * ObsoleteState = Pending does NOT keep an id off the list (2000000001);
+//     * ObsoleteState = Removed does NOT either (2000000151) — which was the one sub-question
+//       this comment recorded as open on Microsoft-code reading alone;
+//     * virtual system tables (2000000026, 2000000038) and ordinary application tables (18)
+//       get no row;
+//     * FindLast under a Table filter lands on 2000000400;
+//     * "Emit Version" is the build's own emit version, uniform within one published app.
+//
+//   WHY THAT TOOK A SECOND CORPUS APP. Corpus PR #153 tried it from the Cloud-target app and
+//   was withdrawn: all 8 BC legs of run 33968379281 refused the only route such an app has —
 //   "You cannot open record 2000000071 from a RecordRef data type when you are using target
 //   Cloud" (NavRecordRef.CheckIsOpenAllowed; 2000000071 is in SystemTables.InternalTables, and
 //   the escape hatch SystemTables.OnPremSystemTableRecordRefAllowed is only {2000000187,
-//   2000000188}). Everything above is read off Microsoft's code, which
-//   .claude/rules/ask-the-corpus-before-claiming-bc-behavior.md ranks BELOW a tier verdict.
+//   2000000188}). Both refusals are decided by the CALLING APP'S compilation target and by
+//   nothing else — NavRecordRef.IsOpenAllowed returns true outright for an OnPrem target — so
+//   one app with a different target was all it took.
 //
-//   One sub-question stays open even on that reading: 11 of the 43 ids are declared
-//   ObsoleteState = Removed in System.app (2000000072, 74, 100, 104, 150, 151, 155, 160, 161,
-//   176, 186), and 5 more are ObsoleteState = Pending (2000000001, 4, 5, 78, 82). They are full
-//   table objects with real field definitions rather than tombstones — NAV App Object Metadata
-//   (2000000150) still declares 13 fields — so they should reach outputter.ObjectMetadata and
-//   get rows. "Should" is not "does". If a tier ever reports fewer than 43 rows, that is where
-//   the difference will be, and EnumerateApplicationDatabaseTableIds is the one place to fix it.
+//   Everything in the section above is still read off Microsoft's code, which
+//   .claude/rules/ask-the-corpus-before-claiming-bc-behavior.md ranks BELOW a tier verdict. It
+//   is kept because it explains WHY the row set is what it is; the tier verdict is what makes
+//   it true. Where they ever disagree, the tier wins and
+//   EnumerateApplicationDatabaseTableIds is the one place to fix it.
 //
 //   A hypothesis raised in review and CHECKED, recorded so it is not re-raised: that 2000000004
 //   (Permission Set) and 2000000005 (Permission) are excluded because SystemTables.VirtualTables
@@ -94,8 +109,9 @@
 //   metadata is published — and both are ordinary Scope = Cloud, ObsoleteState = Pending table
 //   objects present in System.app on 27.0 and 28.1. So 43, not 41, on this evidence.
 //
-//   What would settle the remainder: an OnPrem-target app in the corpus, or Microsoft's
-//   Tests-SINGLESERVER bucket, which is OnPrem-target and reads this table directly.
+//   What is STILL not tier-adjudicated: the compiled-metadata payload columns below. The
+//   upstream file asserts CalcFields(Metadata) has a payload on a real tier, and the runner
+//   declares its blank answer as an expect-divergence rather than pretending otherwise.
 //
 // ── THE COLUMNS, AND WHICH ONES ARE A DECLARED DIVERGENCE ────────────────────────────────
 //   Answered truthfully:
