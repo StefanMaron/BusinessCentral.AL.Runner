@@ -1174,37 +1174,197 @@ public sealed class TestExecutor
 
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<Type, int?> _objectIdCache = new();
 
-    private static MethodInfo[] OrderTestMethodsBySourceDeclaration(Type t) =>
-        _sourceOrderCache.GetOrAdd(t, static type =>
-        {
-            var methods = type.GetMethods(BindingFlags.Public | BindingFlags.Instance);
-            var lineByMethod = ResolveSignatureLines(type, methods);
-            if (lineByMethod.Count == 0) return methods; // nothing resolved — keep original order
-            // Stable: a method whose line we couldn't resolve keeps its relative
-            // reflection-order position, sorted after every line we DID resolve.
-            return methods
-                .Select((m, i) => (m, i, line: lineByMethod.TryGetValue(m, out var l) ? l : int.MaxValue))
-                .OrderBy(x => x.line)
-                .ThenBy(x => x.i)
-                .Select(x => x.m)
-                .ToArray();
-        });
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<Type, bool>
+        _orderWarningIssued = new();
 
-    private static Dictionary<MethodInfo, int> ResolveSignatureLines(Type codeunitType, MethodInfo[] methods)
+    private static MethodInfo[] OrderTestMethodsBySourceDeclaration(Type t)
+    {
+        if (_sourceOrderCache.TryGetValue(t, out var cached)) return cached;
+
+        var methods = t.GetMethods(BindingFlags.Public | BindingFlags.Instance);
+        var lineByMethod = ResolveSignatureLines(t, methods, out var resolverAvailable);
+        var ordered = OrderMethodsByDeclarationLine(methods, lineByMethod);
+
+        // #3201 / .claude/rules/loud-failures.md: degrading to a fallback order is a real
+        // change of behaviour, so it says so. Once per codeunit, and only when an actual
+        // [Test] procedure failed to resolve — never for the inherited framework members
+        // that can never have an AL line (see DescribeUnresolvedTestMethodOrder).
+        var warning = DescribeUnresolvedTestMethodOrder(t, methods, lineByMethod, resolverAvailable);
+        if (warning != null && _orderWarningIssued.TryAdd(t, true))
+            Console.Error.WriteLine(warning);
+
+        // Memoise only once the SignatureSpanAttribute lookup has actually succeeded. Before
+        // that the map is empty for a reason that can still go away — Ncl not yet loaded — and
+        // caching it would pin the degraded order for this type for the rest of the process,
+        // which is the more damaging half of #3201. GetOrAdd's single-computation guarantee is
+        // deliberately given up with it: the result is now a pure function of the method set,
+        // so two racing callers compute equal arrays and neither can win a different answer.
+        if (resolverAvailable) _sourceOrderCache.TryAdd(t, ordered);
+        return ordered;
+    }
+
+    /// <summary>
+    /// Order <paramref name="methods"/> by AL source declaration line, breaking every tie with
+    /// a stable key derived from the method itself.
+    ///
+    /// <para><b>The fallback may not be reflection order (#3201).</b> This used to return the
+    /// <c>Type.GetMethods()</c> array untouched when no line resolved, and to break ties — both
+    /// between unresolved methods and between two methods on the SAME line — with each method's
+    /// index in that array. The CLR defines no order for it, so in all three cases the execution
+    /// order of a codeunit's <c>[Test]</c> procedures was undefined: the same defect class as
+    /// the <c>Assembly.GetTypes()</c> walk in #2801, one level down. That one was not
+    /// theoretical — it reversed two codeunits on a 28.4 leg while 27.5 passed, because the two
+    /// compilers laid their TypeDefs out differently.</para>
+    ///
+    /// <para><b>Why the name, and not the metadata token.</b> The token IS that compiler layout,
+    /// so tie-breaking on it would reproduce #2801's failure exactly: deterministic within one
+    /// process, different between two BC compiler versions, and therefore a green leg and a red
+    /// leg on one commit. An ordinal comparison of name + signature depends on nothing but the
+    /// methods, so it holds across processes, across BC versions and across CLR
+    /// implementations.</para>
+    ///
+    /// <para>This is <b>not</b> a claim about what BC does. Real BC always knows a procedure's
+    /// declaration position, so it has no fallback to have behaviour in; the rule it does have —
+    /// AL source declaration order (#1766) — is the primary key here and is unchanged. What the
+    /// name key decides is only the order among procedures whose line THIS RUNNER could not
+    /// recover, which is a runner-internal metadata gap with no BC counterpart.</para>
+    /// </summary>
+    internal static MethodInfo[] OrderMethodsByDeclarationLine(
+        MethodInfo[] methods, IReadOnlyDictionary<MethodInfo, int> lineByMethod) =>
+        methods
+            .OrderBy(m => lineByMethod.TryGetValue(m, out var l) ? l : int.MaxValue)
+            .ThenBy(StableMethodKey, StringComparer.Ordinal)
+            .ToArray();
+
+    /// <summary>
+    /// A total, reflection-order-independent sort key. The name alone is not one: overloads
+    /// share it, so the parameter types and the declaring type join it — the latter because a
+    /// derived type may shadow an inherited member of identical signature with <c>new</c>.
+    /// </summary>
+    internal static string StableMethodKey(MethodInfo m)
+    {
+        var sb = new System.Text.StringBuilder(m.Name);
+        if (m.IsGenericMethodDefinition) sb.Append('`').Append(m.GetGenericArguments().Length);
+        sb.Append('(');
+        var ps = m.GetParameters();
+        for (var i = 0; i < ps.Length; i++)
+        {
+            if (i > 0) sb.Append(',');
+            sb.Append(ps[i].ParameterType.ToString());
+        }
+        return sb.Append(")@").Append(m.DeclaringType?.FullName ?? "").ToString();
+    }
+
+    /// <summary>
+    /// The message to print when a codeunit's <c>[Test]</c> procedures did not all resolve to a
+    /// declaration line, or <c>null</c> when there is nothing to report.
+    ///
+    /// <para>The filter is the whole design. <c>GetMethods(Public | Instance)</c> also returns
+    /// every INHERITED framework member — <c>ToString</c>, <c>Equals</c>, <c>GetHashCode</c>,
+    /// <c>GetType</c>, and <c>NavApplicationObjectBase</c>'s own — none of which has an AL
+    /// declaration line or ever could. Counting those would put a warning on every codeunit of
+    /// every green run, and a warning that is always on is the same silence in a louder font. So
+    /// only <c>[Test]</c> procedures DECLARED BY this codeunit count, which makes the message
+    /// fire exactly when the #1766 source-order contract has actually been dropped.</para>
+    /// </summary>
+    internal static string? DescribeUnresolvedTestMethodOrder(
+        Type codeunitType, MethodInfo[] methods,
+        IReadOnlyDictionary<MethodInfo, int> lineByMethod, bool resolverAvailable)
+    {
+        var alTests = methods.Where(m => IsTestMethod(m) && m.DeclaringType == codeunitType).ToArray();
+        if (alTests.Length == 0) return null;
+        var unresolved = alTests.Where(m => !lineByMethod.ContainsKey(m)).ToArray();
+        if (unresolved.Length == 0) return null;
+
+        var why = resolverAvailable
+            ? "no \"{procedure}_Scope_<hash>\" nested type carrying a readable SignatureSpanAttribute"
+            : $"the {SignatureSpanAttrTypeName} type is not loaded in this process";
+        return $"[test-exec] WARNING: {codeunitType.Name}: {unresolved.Length} of {alTests.Length} "
+             + $"[Test] procedure(s) have no resolvable AL declaration line ({why}). They run "
+             + "after every procedure that did resolve, ordered by name — NOT in AL source "
+             + "declaration order, which is what real BC uses and what this runner otherwise "
+             + "guarantees. A test relying on an earlier test's state may therefore run first. "
+             + "See StefanMaron/BusinessCentral.AL.Runner#3201. Affected: "
+             + string.Join(", ", unresolved.Select(m => m.Name).OrderBy(x => x, StringComparer.Ordinal));
+    }
+
+    internal const string SignatureSpanAttrTypeName =
+        "Microsoft.Dynamics.Nav.Runtime.SignatureSpanAttribute";
+
+    /// <summary>Number of times the assembly scan below has actually run. Test seam.</summary>
+    internal static int SignatureSpanAttrSearchCount;
+
+    /// <summary>
+    /// The <c>SignatureSpanAttribute</c> type, searched for once and then cached.
+    /// </summary>
+    private static readonly object _signatureSpanAttrGate = new();
+
+    /// <summary>
+    /// The <c>SignatureSpanAttribute</c> type, searched for once and then cached — the metadata
+    /// every AL declaration line is read out of, so a null here silently disables source-order
+    /// dispatch for whatever calls arrive while it lasts.
+    ///
+    /// <para><b>Two things it must not do (#3201).</b> It must not publish "resolved" before the
+    /// value: the old code set the flag and THEN walked the assemblies, writing the shared field
+    /// on every miss, so a second thread arriving mid-walk read <c>resolved == true</c> alongside
+    /// a null type, got an empty line map, and had its degraded order memoised by the caller. And
+    /// it must not latch a FAILURE: a first call landing before Ncl is loaded would otherwise
+    /// answer null for the entire process, permanently, with nothing on stderr to say the
+    /// runner had stopped honouring #1766.</para>
+    ///
+    /// <para>A success still latches, so this stays one scan per process rather than one per
+    /// codeunit; only the miss is retried, and a miss means the caller is about to warn anyway.</para>
+    /// </summary>
+    internal static Type? ResolveSignatureSpanAttrType(Func<IEnumerable<Assembly>> assemblySource)
+    {
+        if (System.Threading.Volatile.Read(ref _signatureSpanAttrTypeResolved))
+            return _signatureSpanAttrType;
+
+        lock (_signatureSpanAttrGate)
+        {
+            if (_signatureSpanAttrTypeResolved) return _signatureSpanAttrType;
+            System.Threading.Interlocked.Increment(ref SignatureSpanAttrSearchCount);
+
+            Type? found = null;
+            foreach (var asm in assemblySource())
+            {
+                // A dynamic or otherwise uncooperative assembly must not abort the scan and
+                // leave a later one unexamined.
+                try { found = asm.GetType(SignatureSpanAttrTypeName); }
+                catch { found = null; }
+                if (found != null) break;
+            }
+            if (found == null) return null; // deliberately NOT latched — Ncl may load later
+
+            _signatureSpanAttrType = found;
+            System.Threading.Volatile.Write(ref _signatureSpanAttrTypeResolved, true);
+            return found;
+        }
+    }
+
+    internal static void ResetSignatureSpanAttrTypeForTests()
+    {
+        _signatureSpanAttrTypeResolved = false;
+        _signatureSpanAttrType = null;
+        SignatureSpanAttrSearchCount = 0;
+        // Both are keyed on the resolver having worked; leaving them would carry an order
+        // computed under the old state into the next test.
+        _sourceOrderCache.Clear();
+        _orderWarningIssued.Clear();
+    }
+
+    /// <param name="resolverAvailable">
+    /// False when the <c>SignatureSpanAttribute</c> type itself could not be found, which makes
+    /// an empty result provisional rather than settled — the caller must not memoise it (#3201).
+    /// </param>
+    private static Dictionary<MethodInfo, int> ResolveSignatureLines(
+        Type codeunitType, MethodInfo[] methods, out bool resolverAvailable)
     {
         var result = new Dictionary<MethodInfo, int>();
-        if (!_signatureSpanAttrTypeResolved)
-        {
-            _signatureSpanAttrTypeResolved = true;
-            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
-            {
-                _signatureSpanAttrType = asm.GetType("Microsoft.Dynamics.Nav.Runtime.SignatureSpanAttribute");
-                if (_signatureSpanAttrType != null) break;
-            }
-        }
-        var tSig = _signatureSpanAttrType;
+        var tSig = ResolveSignatureSpanAttrType(static () => AppDomain.CurrentDomain.GetAssemblies());
         var piSig = tSig?.GetProperty("EncodedSpan");
-        if (tSig == null || piSig == null) return result;
+        resolverAvailable = tSig != null && piSig != null;
+        if (!resolverAvailable) return result;
 
         var nested = codeunitType.GetNestedTypes(BindingFlags.Public | BindingFlags.NonPublic);
         foreach (var m in methods)
