@@ -350,7 +350,12 @@ context, and this one is not required yet, so `tools/ci-wait.py`'s
 
 Note what that does **not** mean. Measured against the live branch ruleset on
 2026-09-06, `main` requires **ten** contexts: `BC test matrix passed` (renamed
-from `All BC versions passed` by #3141), `Tests updated`, and the eight
+by #3141 — the retired name is deliberately not written out here, because
+`BcMatrixDocumentationDriftTests.NoDocumentNamesTheRetiredAggregateCheck`
+forbids any document under `docs/` from carrying it: a doc that names a context
+which no longer reports sends an agent looking for a check that will never
+arrive, indistinguishable from one that has not started), `Tests updated`, and
+the eight
 `pr-gate.yml` jobs — including `reject-ci-skip-directives` and
 `reject-bad-closing-references`, which **do** gate. So this job's non-required
 standing is not shared with its neighbours; after this lands it is the only job
