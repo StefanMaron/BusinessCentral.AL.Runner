@@ -21,12 +21,18 @@
 //   does not hide the gap, it INVERTS the result. BcShapeGapException tears through both AL
 //   seams, which is the whole point of the conversion.
 //
-// THE FOUR END-TO-END ARMS
-//   SetProperty, SetBackingField, SetEmptyListBackingField and BuildIncludeList each take the
-//   reflected type or target as a PARAMETER, so they can be driven with a fake standing in for
-//   a BC type whose member moved — real production code, no BC install required. Every one is
-//   paired with a control arm that still succeeds, so a conversion that threw unconditionally
-//   would fail here rather than pass.
+// THE TWO END-TO-END ARMS
+//   SetProperty and BuildIncludeList each take the reflected type or target as a PARAMETER, so
+//   they can be driven with a fake standing in for a BC type whose member moved — real
+//   production code, no BC install required. Each is paired with a control arm that still
+//   succeeds, so a conversion that threw unconditionally would fail here rather than pass.
+//
+//   #3100 removed two further arms, over SetBackingField and SetEmptyListBackingField. Those two
+//   helpers were superseded inside PR #2921 itself — 793ab838 poked NCLMetaPermissionSet's
+//   backing fields by hand, 75630e98 replaced that with BC's own AssignFromMetaPermissionSet —
+//   so their arms exercised production code no production path could reach, and read as coverage
+//   of a live one. Driving a private member by name cannot tell the difference;
+//   ReflectionDrivenHelperLivenessTests measures it from IL and now guards this file.
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -66,48 +72,7 @@ public sealed class PermissionMetadataShapeGapTests
         Assert.Equal("SUPER", target.Name);
     }
 
-    // ══ 2. SetBackingField — the auto-property backing field BC generates ════════════════
-
-    [Fact]
-    public void SetBackingField_RaisesAShapeGapNamingTheMember_WhenTheBackingFieldIsGone()
-    {
-        var ex = Assert.Throws<BcShapeGapException>(
-            () => Invoke("SetBackingField", typeof(HasNoSuchProperty), new HasNoSuchProperty(), "Permissions", null));
-
-        Assert.Contains("Permissions", ex.Member, StringComparison.Ordinal);
-        Assert.Contains("backing field", ex.Detail, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void SetBackingField_StillPokes_WhenTheBackingFieldIsPresent()
-    {
-        var target = new HasAutoProperty();
-        Invoke("SetBackingField", typeof(HasAutoProperty), target, nameof(HasAutoProperty.Name), "SECURITY");
-        Assert.Equal("SECURITY", target.Name);
-    }
-
-    // ══ 3. SetEmptyListBackingField — the property whose element type it reads ════════════
-
-    [Fact]
-    public void SetEmptyListBackingField_RaisesAShapeGapNamingTheProperty_WhenItIsGone()
-    {
-        var ex = Assert.Throws<BcShapeGapException>(
-            () => Invoke("SetEmptyListBackingField", typeof(HasNoSuchProperty), new HasNoSuchProperty(), "IncludedPermissionSets"));
-
-        Assert.Contains("IncludedPermissionSets", ex.Member, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void SetEmptyListBackingField_StillInstallsAnEmptyList_WhenThePropertyIsPresent()
-    {
-        var target = new HasListProperty();
-        Invoke("SetEmptyListBackingField", typeof(HasListProperty), target, nameof(HasListProperty.Items));
-
-        Assert.NotNull(target.Items);
-        Assert.Empty(target.Items!);
-    }
-
-    // ══ 4. BuildIncludeList — BC's include/exclude element type is one it cannot fill ═════
+    // ══ 2. BuildIncludeList — BC's include/exclude element type is one it cannot fill ═════
 
     [Fact]
     public void BuildIncludeList_RaisesAShapeGapNamingTheElementType_WhenItCannotBeFilled()
@@ -129,7 +94,7 @@ public sealed class PermissionMetadataShapeGapTests
         Assert.Equal("SECURITY", list[1]);
     }
 
-    // ══ 5. The sweep happened, and it stopped exactly where the judgement said ════════════
+    // ══ 3. The sweep happened, and it stopped exactly where the judgement said ════════════
     //
     // Pins BOTH directions. Under-conversion fails (a BC-internals read still raising the
     // retired type is not in the allowlist); over-conversion fails too (the five deliberate
@@ -194,7 +159,7 @@ public sealed class PermissionMetadataShapeGapTests
         "RecordPatches.PermissionMetadataPopulator.cs",
     };
 
-    // ══ 6. The three factories, and what AL can do with what they raise: nothing ══════════
+    // ══ 4. The three factories, and what AL can do with what they raise: nothing ══════════
 
     public static TheoryData<string, string> Factories() => new()
     {
@@ -318,11 +283,6 @@ public sealed class PermissionMetadataShapeGapTests
     private sealed class HasAutoProperty
     {
         public string? Name { get; set; }
-    }
-
-    private sealed class HasListProperty
-    {
-        public List<string>? Items { get; set; }
     }
 
     private sealed class NotFillableElement
