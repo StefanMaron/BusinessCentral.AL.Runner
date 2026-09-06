@@ -70,13 +70,16 @@ public static partial class RecordPatches
     /// just a size one.
     ///
     /// <para>UNCONDITIONAL, and it stays that way: no backup can own rows in any of these,
-    /// because every one of them is a virtual table with no SQL behind it. The one table that
-    /// fits the same description but CAN also be loaded from a backup — Object (2000000001) —
-    /// is therefore not in this list; it is decided per run by
-    /// <see cref="IsProjectionOwnedSystemTableId"/> (#2875). Do not merge the two: adding
-    /// 2000000001 here would drop a backup's real rows on the floor, and making this predicate
-    /// conditional would weaken #2272's refusal for tables that have no second writer at
-    /// all.</para></summary>
+    /// because every one of them is a virtual table with no SQL behind it.</para>
+    ///
+    /// <para>Object (2000000001) is deliberately NOT here, and the reason changed with #3071.
+    /// It used to be the one table that fitted this description AND could be loaded from a
+    /// backup, so #2875 decided it per run with a separate predicate. The projection is gone —
+    /// a real service tier measured the legacy registry as empty — so 2000000001 no longer
+    /// fits the description at all: its only possible writer is a --test-data backup, and
+    /// adding it here would drop that backup's real rows on the floor. Keeping this predicate
+    /// unconditional is what preserves #2272's refusal for tables that have no second writer
+    /// at all.</para></summary>
     internal static bool IsSelfPopulatingVirtualTableId(int tableId) => tableId switch
     {
         AllObjVirtualTableId or AllObjWithCaptionVirtualTableId or FieldVirtualTableId

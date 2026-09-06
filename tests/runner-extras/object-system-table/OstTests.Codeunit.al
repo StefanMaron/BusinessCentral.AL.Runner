@@ -1,55 +1,47 @@
-// Issue #2774. Object (2000000001) on the runner: where the rows come from when there is no
-// application database, and what the columns the runner cannot answer read.
+// Issue #3071. Object (2000000001) on the runner: what it holds, and what stays true about it
+// now that it holds nothing.
 //
-// WHY THIS IS A RUNNER TEST AND NOT A CORPUS TEST — AND WHAT IS THEREFORE UNVERIFIED
-//   What Object CONTAINS on a real tier is plain BC behaviour and BELONGS upstream. NO SERVICE
-//   TIER HAS CONFIRMED THE ROW SET THIS SUITE OBSERVES, so the assertions below are about what
-//   the RUNNER does, which is what a runner suite is for.
+// WHAT A REAL TIER SAID, AND WHY THAT IS NOT WHAT THIS SUITE ASSERTS
+//   This suite used to pin a row set: the runner projected its own object inventory — the one
+//   AllObj (2000000038) is answered from — into this table's column shape, and five tests here
+//   asserted that projection and the blanks it left behind (#2774).
 //
-//   THE REASON THIS HEADER USED TO GIVE FOR THAT IS NO LONGER TRUE, and correcting it is the
-//   point of AlRunner#3071. It said the claim "cannot go there", on two grounds:
+//   A service tier has since measured the table. Corpus codeunit 61202,
+//   tests/al-language-onprem/record/TestObjectSystemTable.al
+//   (StefanMaron/BusinessCentral.AL.Language.Tests#197), reads 2000000001 from a Target = OnPrem
+//   app and finds it present, readable and EMPTY — on every BC OnPrem leg that executed it,
+//   seven of the corpus's eight. Its centerpiece carries a control arm reading the populated
+//   sibling "Object Metadata" in the same session, so "empty" cannot be an unreadable table
+//   misreported as an empty one.
 //
-//     * The corpus app targets Cloud (tests/al-language/tests/al-language/app.json,
-//       "target": "Cloud") and Microsoft declares this table Scope = OnPrem, so
-//       `Record "Object"` does not compile there (AL0296).
-//     * The RecordRef escape hatch is refused at RUNTIME too. 2000000001 is a member of
-//       Microsoft.Dynamics.Nav.Types.SystemTables.InternalTables (read off the shipped
-//       Types assembly), and NavRecordRef.IsSystemTableAllowedForRecordRefUsage returns
-//       false for every id in that set, so NavRecordRef.CheckIsOpenAllowed throws
-//       "You cannot open record ... when you are using target Cloud". Measured on the SIBLING
-//       id, not reasoned about: corpus PR StefanMaron/BusinessCentral.AL.Language.Tests#153
-//       tried the RecordRef route for 2000000071 and was withdrawn after all 8 BC legs of run
-//       33968379281 refused it. The mechanism is set membership in that one FrozenSet, and
-//       2000000001 is in the same set.
+//   THAT CLAIM IS NOT REPEATED HERE. "The legacy Object registry holds no rows" is plain BC
+//   behaviour and belongs upstream, where a tier adjudicates it every time the corpus runs
+//   (.claude/rules/bc-behavior-tests-go-upstream.md). Copying it down into a runner suite would
+//   turn a measured fact into the runner agreeing with itself — which is how the two stale
+//   assertions #3066 found survived.
 //
-//   Both grounds are about a CLOUD-TARGET app. Corpus PR #179 added a second corpus app,
-//   tests/al-language-onprem (Target = OnPrem), and NavRecordRef.IsOpenAllowed returns true
-//   outright for an OnPrem target without consulting InternalTables at all — so the table is
-//   reachable from there, and corpus #179 and #187 have since adjudicated two other
-//   Scope = OnPrem system tables on all eight OnPrem legs.
+// WHAT IS RUNNER-SPECIFIC, AND IS THEREFORE WHAT THESE THREE TESTS PIN
+//   1. THE POLICY, NOT THE ROW COUNT. The runner has no application database, so an empty
+//      2000000001 could equally be "correct" or "we never got round to it". The distinction is
+//      visible in ONE session: AllObj is a table the runner DOES project, from the very
+//      inventory this table used to be projected from, and it still lists these objects. Object
+//      being empty WHILE AllObj is full is a statement about which tables the runner
+//      synthesises for — the same shape as 61202's control arm, and the arm that fails if the
+//      projection is ever reinstated.
+//   2. AN EMPTY TABLE IS STILL A READABLE ONE. All four DataAccess request paths must ANSWER,
+//      not refuse: keyed Get, find, count, and IsEmpty — which RecordImplementation.IsEmptyAsync
+//      serves from its own ExistsAsync rather than from CountAsync, so a change that handles
+//      three of them and forgets the fourth is green until somebody writes the line. #2519 is
+//      the trap: refusing at row-build time takes out FindSet / Count / IsEmpty / Get together.
+//   3. THE OemText COLUMNS STAY READABLE. Microsoft's own AL compiler treats four of this
+//      table's Text[n] columns as OemText (CodeGenerator.IsOemTextFieldOnObjectTable), and the
+//      runner mirrors that when it builds the metatable. Get the metadata wrong and the read
+//      throws NavObjectDefinitionChangedException — it does NOT return a wrong value. With the
+//      row projection gone that predicate has no rows left to protect, so nothing else would
+//      notice if it were deleted as dead; this is the test that would.
 //
-//   THE TEST FOR THIS TABLE NOW EXISTS: corpus PR #197 puts 2000000001's row set in front of a
-//   real tier from that app, and AlRunner#3071 tracks reconciling the runner with the verdict.
-//   Until it merges, everything below remains a claim about the RUNNER — and one of them is
-//   already known to be contested, because #197 asks whether a modern tier's Object table is
-//   EMPTY, where the runner projects its own object inventory into it. Whichever way that
-//   comes back, the answer belongs upstream and the reconciliation belongs in #3071; do not
-//   pre-emptively change these assertions to match a guess.
-//
-//   Saying this precisely matters: #3066 found two runner-local assertions a real tier
-//   contradicted, and a stale "no tier can see this" is how both survived.
-//
-//   What IS runner-specific, and what these tests actually pin: on a real tier these rows
-//   exist because something wrote them into a SQL table in the application database. The
-//   runner has no application database and never publishes anything, so it projects its own
-//   object inventory — the same one AllObj (2000000038) and AllObjWithCaption (2000000058)
-//   are answered from — into Object's column shape. "The rows are there with no database
-//   behind them, and Object and AllObj cannot disagree about which objects exist" is a claim
-//   about the runner.
-//
-//   The columns with no runner source are left at BC's own default rather than fabricated.
-//   That is a DECLARED divergence, recorded in docs/limitations.md and asserted below so it
-//   cannot change quietly; issue #2771 tracks making such columns refuse by name instead.
+// Target is OnPrem, not Cloud: Microsoft declares this table Scope = OnPrem, so a Cloud-target
+// app fails AL0296 on `Record "Object"` before any of this runs.
 codeunit 65551 "OST Tests"
 {
     Subtype = Test;
@@ -59,147 +51,100 @@ codeunit 65551 "OST Tests"
         Assert: Codeunit "OST Assert";
 
     [Test]
-    procedure RowSet_ListsObjectsTheRunnerKnows_WithNoApplicationDatabase()
-    var
-        Obj: Record "Object";
-    begin
-        // The runner has no SQL, no publish step and no restored backup here, yet the objects
-        // it compiled moments ago are listed. That is the whole fix for #2774: before it this
-        // table was empty, so every read of it silently answered "no such object".
-        //
-        // Asserting the concrete id AND the concrete name is what makes this fail against a
-        // provider that emits one placeholder row, or that leaves Name at its default.
-        Assert.IsTrue(
-            Obj.Get(Obj.Type::Codeunit, '', 65551),
-            'Object must have a row for codeunit 65551, the test codeunit running this line.');
-        Assert.AreEqual('OST Tests', Obj.Name, 'Object.Name must be the object''s real name.');
-        Assert.AreEqual(65551, Obj.ID, 'Object.ID must be the object''s real id.');
-        Assert.AreEqual('', Obj."Company Name", 'Object."Company Name" must be blank for an application object.');
-
-        // A second kind, so a provider that maps every object to one option ordinal fails.
-        Assert.IsTrue(
-            Obj.Get(Obj.Type::Table, '', 2000000001),
-            'Object must have a row for table 2000000001, its own table id.');
-        Assert.AreEqual('Object', Obj.Name, 'Object.Name for table 2000000001 must be "Object".');
-    end;
-
-    [Test]
-    procedure Key_TypeIsPartOfTheKey_AndUnknownObjectsAreAbsent()
-    var
-        Obj: Record "Object";
-    begin
-        // Anchor first, so this test cannot pass vacuously against an EMPTY table — which is
-        // exactly what it did before the fix, and what every negative-only test does.
-        Assert.IsTrue(
-            Obj.Get(Obj.Type::Codeunit, '', 65551),
-            'Object must list codeunit 65551 before any of the negatives below mean anything.');
-
-        // Negative arm 1: 65551 IS a codeunit and is NOT a table. A provider that ignored
-        // Type — or wrote one ordinal for every object — would answer true here.
-        Assert.IsFalse(
-            Obj.Get(Obj.Type::Table, '', 65551),
-            'Object must not list 65551 as a table; it is a codeunit.');
-
-        // Negative arm 2: an id nothing in this run declares, of a kind that does exist.
-        //
-        // 65559 is deliberately the LAST id of this bundle's own idRange (65550-65559) and is
-        // deliberately unused. It has to come from this bundle's range: runner-extras runs 51
-        // bundles in one process and EnumerateKnownAlObjects accumulates the union across all
-        // of them, so an id picked from anywhere else could be claimed by a sibling bundle and
-        // this arm would fail for a reason that has nothing to do with Object.
-        // DO NOT EXTEND THIS BUNDLE'S idRange, OR ADD AN OBJECT 65559, WITHOUT CHANGING THIS TEST.
-        Assert.IsFalse(
-            Obj.Get(Obj.Type::Codeunit, '', 65559),
-            'Object must not list codeunit 65559; no object with that id exists in this run.');
-
-        // Negative arm 3: a non-blank company name. Every row the runner projects is
-        // company-independent, so naming a company must not find one.
-        Assert.IsFalse(
-            Obj.Get(Obj.Type::Codeunit, 'CRONUS', 65551),
-            'Object must not answer a company-qualified key; the rows carry a blank company.');
-    end;
-
-    [Test]
-    procedure KindsTheTypeOptionCannotName_GetNoRow()
-    var
-        Obj: Record "Object";
-    begin
-        // Object's own "Type" option is TableData,Table,,Report,,Codeunit,XMLport,MenuSuite,
-        // Page,Query,System,FieldNumber — there is no Enum member. Enum 65552 is in the same
-        // inventory AllObj is answered from, so a mapping that matched by NAME skips it and a
-        // mapping that invented an ordinal (0, or "the next one") would emit a row.
-        //
-        // Anchored on a neighbouring id from the SAME id range and the same bundle, so an
-        // empty table fails this test rather than passing it: 65551 is a codeunit Object can
-        // name, 65552 is an enum it cannot, and both were compiled by the same run.
-        Obj.SetRange(ID, 65551);
-        Assert.AreEqual(1, Obj.Count(), 'Object must list codeunit 65551 exactly once.');
-
-        Obj.SetRange(ID, 65552);
-        Assert.AreEqual(
-            0, Obj.Count(),
-            'Object must not list enum 65552 under any Type; its "Type" option cannot name an enum.');
-    end;
-
-    [Test]
-    procedure ObjectAndAllObj_AgreeOnTheKindsBothCanName()
+    procedure Object_IsEmpty_WhileAllObj_StillListsTheSameObjects()
     var
         Obj: Record "Object";
         AllObj: Record AllObj;
     begin
-        // NOT "the two tables list the same objects" — they deliberately do not. Object's
-        // "Type" option cannot name an enum, an interface, a permission set or any *extension
-        // kind, so it lists strictly fewer KINDS than AllObj, which KindsTheTypeOptionCannotName
-        // pins from the other side.
-        //
-        // The claim here is the narrower one the shared inventory actually buys: for a kind
-        // BOTH tables can name, neither can list an object the other does not, and neither can
-        // give it a different id or name, because there is only one place the answer comes
-        // from. Checked in both directions on the same concrete ids.
+        // ── The control arm comes FIRST, for the same reason 61202's does. ────────────────
+        // AllObj is projected from EnumerateKnownAlObjects — the inventory Object's rows used
+        // to be projected from too. If this arm fails, the run has no object inventory at all
+        // and the emptiness below would prove nothing.
         Assert.IsTrue(
             AllObj.Get(AllObj."Object Type"::Codeunit, 65551),
-            'AllObj must list codeunit 65551.');
-        Assert.IsTrue(
-            Obj.Get(Obj.Type::Codeunit, '', 65551),
-            'Object must list every codeunit AllObj lists.');
+            'CONTROL ARM: AllObj must list codeunit 65551, the test codeunit running this line.');
         Assert.AreEqual(
-            AllObj."Object Name", Obj.Name,
-            'Object and AllObj must report the same name for the same object.');
+            'OST Tests', AllObj."Object Name",
+            'CONTROL ARM: AllObj must carry this codeunit''s real name, not a placeholder.');
 
-        // 65559: the unused last id of this bundle's own range — see the note in
-        // Key_TypeIsPartOfTheKey_AndUnknownObjectsAreAbsent for why it must come from there.
+        // ── The claim: the same object, named the same way, is absent from Object. ────────
+        // Concrete ids of three different kinds, so a partial reinstatement of the projection
+        // (one kind, or one ordinal for everything) fails here rather than passing.
         Assert.IsFalse(
-            AllObj.Get(AllObj."Object Type"::Codeunit, 65559),
-            'AllObj must not list codeunit 65559.');
+            Obj.Get(Obj.Type::Codeunit, '', 65551),
+            'Object must not list codeunit 65551; the runner synthesises no rows for 2000000001.');
         Assert.IsFalse(
-            Obj.Get(Obj.Type::Codeunit, '', 65559),
-            'Object must not list a codeunit AllObj does not list.');
+            Obj.Get(Obj.Type::Table, '', 2000000001),
+            'Object must not list table 2000000001, its own table id.');
+        Assert.IsFalse(
+            Obj.Get(Obj.Type::Table, '', 18),
+            'Object must not list table 18 (Customer); the emptiness is not only about this bundle.');
     end;
 
     [Test]
-    procedure ColumnsWithNoRunnerSource_ReadBlank_DeclaredDivergence()
+    procedure EmptyObject_StillAnswersOnAllFourRequestPaths()
+    var
+        Obj: Record "Object";
+        AllObj: Record AllObj;
+    begin
+        // Every line below would ERROR rather than FAIL if the table had been made empty by
+        // refusing at row-build time (#2519) instead of by having nothing to build. That is the
+        // whole point of naming all four paths: they are four different DataAccess entry
+        // points, and #2519 took out all four at once.
+
+        // ── count (CountAsync) ────────────────────────────────────────────────────────────
+        Assert.AreEqual(0, Obj.Count(), 'Object.Count must answer 0 on the unfiltered table.');
+
+        // ── IsEmpty (ExistsAsync — a fourth path, not a spelling of Count) ────────────────
+        Assert.IsTrue(Obj.IsEmpty(), 'Object.IsEmpty must answer true, not raise.');
+
+        // ── find (InnerFindAsync), unfiltered and filtered ────────────────────────────────
+        Assert.IsFalse(Obj.FindSet(), 'Object.FindSet must answer false on the unfiltered table.');
+        Obj.SetRange(ID, 65551);
+        Assert.IsFalse(Obj.FindFirst(), 'Object.FindFirst must answer false under a filter too.');
+        Assert.AreEqual(0, Obj.Count(), 'Object.Count must answer 0 under a filter.');
+
+        // ── keyed Get (InternalTryGetByPrimaryKeyAsync) ───────────────────────────────────
+        Obj.Reset();
+        Assert.IsFalse(Obj.Get(Obj.Type::Table, '', 18), 'Object.Get must answer false, not raise.');
+
+        // Control: the SAME four paths on AllObj, in the same session, do find rows. Without
+        // this, every assertion above would also pass against a runner whose record layer had
+        // stopped answering anything at all.
+        Assert.IsFalse(AllObj.IsEmpty(), 'CONTROL ARM: AllObj.IsEmpty must be false.');
+        Assert.IsTrue(AllObj.FindSet(), 'CONTROL ARM: AllObj.FindSet must find rows.');
+        Assert.IsTrue(AllObj.Count() > 0, 'CONTROL ARM: AllObj.Count must be positive.');
+        Assert.IsTrue(
+            AllObj.Get(AllObj."Object Type"::Codeunit, 65551),
+            'CONTROL ARM: AllObj.Get must still find codeunit 65551.');
+    end;
+
+    [Test]
+    procedure OemTextColumns_ReadAsEmptyText_RatherThanRaising()
     var
         Obj: Record "Object";
     begin
-        // On a real tier these carry what the object registry stored: the object's compiled
-        // BLOB, its date/time stamp, its version list, its caption, its lock state. The runner
-        // has no such registry, so it leaves them at BC's own default rather than fabricating
-        // one. Asserting the exact blanks is what makes that a DECLARED divergence rather than
-        // a silent one — see docs/limitations.md and issue #2771.
-        Assert.IsTrue(Obj.Get(Obj.Type::Codeunit, '', 65551), 'Object must have a row for codeunit 65551.');
+        // Field numbers 2, 4, 12 and 50 — "Company Name", "Name", "Version List", "Locked By".
+        // The table declares them Text[n]; Microsoft's AL compiler emits
+        // ValidateExpectedType(fieldNo, NavType.OemText) for reads of them, because
+        // CodeGenerator.IsOemTextFieldOnObjectTable substitutes NavTypeKind.OemText for this one
+        // table id. If the runner's metatable took SymbolReference.json's Text[30] at face
+        // value, each of these lines would raise NavObjectDefinitionChangedException — "old
+        // type: OemText, new type: Text" — and NOT return a wrong value.
+        //
+        // The read happens on an un-found record, which is the only kind there is here. That
+        // still exercises the compiled read path: ValidateExpectedType runs on the field access,
+        // not on the row lookup.
+        Assert.IsFalse(Obj.Get(Obj.Type::Codeunit, '', 65551), 'precondition: no row for 65551.');
 
-        Assert.IsFalse(Obj.Modified, '"Modified" must read false.');
-        Assert.IsFalse(Obj.Compiled, '"Compiled" must read false.');
-        Assert.AreEqual(0, Obj."BLOB Size", '"BLOB Size" must read 0.');
-        Assert.AreEqual(0, Obj."DBM Table No.", '"DBM Table No." must read 0.');
-        Assert.AreEqual(0D, Obj.Date, '"Date" must read 0D.');
-        Assert.AreEqual(0T, Obj.Time, '"Time" must read 0T.');
-        Assert.AreEqual('', Obj."Version List", '"Version List" must read empty.');
-        Assert.AreEqual('', Obj.Caption, '"Caption" must read empty.');
-        Assert.IsFalse(Obj.Locked, '"Locked" must read false.');
-        Assert.AreEqual('', Obj."Locked By", '"Locked By" must read empty.');
+        Assert.AreEqual('', Obj.Name, 'field 4 "Name" must read as empty text, not raise.');
+        Assert.AreEqual('', Obj."Company Name", 'field 2 "Company Name" must read as empty text, not raise.');
+        Assert.AreEqual('', Obj."Version List", 'field 12 "Version List" must read as empty text, not raise.');
+        Assert.AreEqual('', Obj."Locked By", 'field 50 "Locked By" must read as empty text, not raise.');
 
-        Obj.CalcFields("BLOB Reference");
-        Assert.IsFalse(Obj."BLOB Reference".HasValue(), '"BLOB Reference" must carry no payload.');
+        // A non-OemText column of the same table, so this test cannot pass merely because every
+        // read of anything returns the empty string.
+        Assert.AreEqual(0, Obj.ID, 'field 3 "ID" is an Integer and must read 0.');
+        Assert.IsFalse(Obj.Compiled, 'field 6 "Compiled" is a Boolean and must read false.');
     end;
 }

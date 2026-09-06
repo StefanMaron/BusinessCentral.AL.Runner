@@ -27,19 +27,29 @@
 //   and it knows exactly what it loaded, so it says so: one call per table that actually got
 //   rows out of the backup. Everything downstream then asks a fact instead of a symptom.
 //
-//   Two consumers, and they are two halves of one answer:
-//     * PopulateObjectSystemTable defers to the backup when, and only when, the backup
-//       contributed rows to 2000000001.
-//     * CaptureInstallBaselineSnapshot leaves 2000000001 out of the baseline entirely when the
-//       projection owns it — the #2272 treatment, for the same reason: the branch in
-//       GetDataAccessForTableCore re-derives the projection on every access, so carrying it
-//       across a boundary buys nothing and costs the ambiguity above. With the projection never
-//       captured, the only rows a restored provider can hold for this table are a backup's, so
-//       the confusion is gone by construction rather than by a better guess.
+// WHAT HAPPENED TO ITS TWO ORIGINAL CONSUMERS (#3071)
+//   Both were about Object (2000000001), and both are gone — not because the question got
+//   easier, but because the projection that raised it turned out to be wrong. Corpus codeunit
+//   61202 (StefanMaron/BusinessCentral.AL.Language.Tests#197) asked a real service tier what
+//   the legacy registry holds and got "present, readable and EMPTY" on seven BC OnPrem legs.
+//   The runner therefore synthesises no rows for that table at all, so:
+//     * PopulateObjectSystemTable no longer exists, and
+//     * CaptureInstallBaselineSnapshot no longer has to leave 2000000001 out — the only rows
+//       it can hold are a backup's, which a baseline SHOULD carry.
+//   IsProjectionOwnedSystemTableId went with them; it was defined as "2000000001 and no backup
+//   behind it", which now describes an empty table rather than a projection.
+//
+// WHY THE RECORDER STAYS
+//   What it records is still true, still cheap, and still the only place the fact exists:
+//   TestDataProvisioner.LoadOnDemand is the one writer that can put rows into these tables, and
+//   nothing downstream of a store can reconstruct that afterwards. Issue #3236 is the named
+//   consumer — the SAME wrong-shaped question, ProviderHasAnyRow, still decides whether Object
+//   Metadata's (2000000071) #2771 payload refusal is armed, and an install-baseline restore
+//   replaying that table's synthesised rows disarms it. #3236 has the table and the reason
+//   BackupOwnsRowsFor alone is not the whole fix there.
 //
 //   It deliberately does NOT weaken #2272's loud refusal. The self-populating virtual tables
-//   are refused by AppendBaselineTable whatever this file says; provenance only ever decides
-//   the question for a table that has both possible writers.
+//   are refused by AppendBaselineTable whatever this file says.
 //
 // LIFETIME
 //   Process-wide and monotonic within a run, which matches what it records: "this run's armed
@@ -57,9 +67,7 @@ public static partial class RecordPatches
     private static readonly ConcurrentDictionary<int, byte> _backupContributedRows = new();
 
     /// <summary>Called by <c>TestDataProvisioner.LoadOnDemand</c> for every table it loaded at
-    /// least one row into, BEFORE it appends that table to the install baselines — so
-    /// <see cref="IsProjectionOwnedSystemTableId"/> is already false by the time
-    /// <see cref="AppendBaselineTable"/> checks it.</summary>
+    /// least one row into, before it appends that table to the install baselines.</summary>
     internal static void NoteBackupContributedRows(int tableId) => _backupContributedRows[tableId] = 0;
 
     /// <summary>True when a --test-data backup put rows into <paramref name="tableId"/> in this
@@ -72,25 +80,4 @@ public static partial class RecordPatches
     /// provenance record outliving the loader that produced it would let one run's backup
     /// speak for the next.</summary>
     internal static void ResetBackupRowProvenance() => _backupContributedRows.Clear();
-
-    /// <summary>
-    /// True when <paramref name="tableId"/>'s rows in this run are a projection this runner
-    /// synthesised, rather than anything a backup or an install trigger wrote.
-    ///
-    /// <para>Only Object (2000000001) can answer true. It is the one table that is BOTH
-    /// projected from the loaded-object inventory on every access — the
-    /// <see cref="IsSelfPopulatingVirtualTableId"/> description, word for word — and reachable
-    /// by the --test-data on-demand loader, because its dispatch branch calls the loader
-    /// explicitly instead of falling through. That combination is why it could not simply be
-    /// added to that list.</para>
-    ///
-    /// <para>Object Metadata (2000000071) is deliberately NOT here. It is the same shape of
-    /// table, but its synthesised row set is the fixed BC-declared application-database id list
-    /// plus one process-constant emit version, so a replay of it is byte-identical to a fresh
-    /// projection and there is nothing for a restore to get wrong. Object's row set is this
-    /// run's object inventory, which is what makes the distinction load-bearing for it and not
-    /// for its sibling.</para>
-    /// </summary>
-    internal static bool IsProjectionOwnedSystemTableId(int tableId)
-        => tableId == ObjectSystemTableId && !BackupOwnsRowsFor(tableId);
 }
