@@ -125,6 +125,16 @@ codeunit 61240 "XMI Main Tests"
     /// wrong answer loud-failures.md is about.
     /// </summary>
     [Test]
+    // UPSTREAM FOLLOW-UP — #3293. This one test is NOT runner-specific and does not belong
+    // here on the merits: "an app id that is not installed raises, and the message names it"
+    // is plain BC behaviour that a service tier can adjudicate with any random GUID. The rest
+    // of this suite genuinely is runner-specific (it asserts the runner's loaded-app closure
+    // is what answers, and that PackageId matches the derived identity the runner stamps —
+    // real BC has a publish step and the runner does not), so "the suite already sits in
+    // runner-extras" is a precedent, not the structural reason bc-behavior-tests-go-upstream.md
+    // asks for. The corpus covers only the POSITIVE by-id case today (TestNavApp.al:70,
+    // TestNavAppExtended.al:95). #3293 tracks writing the negative case upstream and deleting
+    // this one when the pin moves.
     procedure GetModuleInfo_ByUnknownAppId_StatementForm_RaisesNamingTheId()
     var
         Info: ModuleInfo;

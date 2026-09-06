@@ -426,7 +426,8 @@ public static partial class BcRuntime
     /// here where BC raises one. That is an argument-validation divergence on a value the
     /// runner then ignores, not a wrong ANSWER to anything AL can observe about the session,
     /// so it is recorded rather than converted into a refusal that would break every ordinary
-    /// caller passing a sane timeout. Tracked as follow-up rather than widened into this fix.</para>
+    /// caller passing a sane timeout. Tracked as <b>#3291</b>, which stays open after this
+    /// merges — the divergence is real and is not fixed here.</para>
     ///
     /// <para>2. BC REFUSES StartSession outright during an install or upgrade. Its body has,
     /// before any of the work above:</para>
@@ -447,10 +448,13 @@ public static partial class BcRuntime
     /// consequence is real and observable: the very call this patch was written for
     /// (<c>Codeunit8705.UpdateFeatureUptakeStatus</c>, reached from a Base App install trigger)
     /// runs its worker here where a real tier would skip it and return false. Modelling the
-    /// install context faithfully is a separate piece of work; it is filed rather than guessed
-    /// at, because "run the worker" and "skip the worker" are different answers to an AL-visible
-    /// question and picking one by assumption is what .claude/rules/no-assumption-fixes.md
-    /// rules out.</para>
+    /// install context faithfully is a separate piece of work; it is filed as <b>#3292</b>
+    /// rather than guessed at, because "run the worker" and "skip the worker" are different
+    /// answers to an AL-visible question and picking one by assumption is what
+    /// .claude/rules/no-assumption-fixes.md rules out. #3292 stays open after this merges, and
+    /// it is related to #3268 (install-trigger ordering) by the same missing state: the runner's
+    /// install pass does not record that an install is in progress, which is what both would
+    /// read.</para>
     /// </summary>
     public static System.Threading.Tasks.ValueTask<bool> ALSession_ALStartSessionAsyncImpl(
         Microsoft.Dynamics.Nav.Runtime.NavSession session,
