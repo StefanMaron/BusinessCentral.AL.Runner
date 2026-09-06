@@ -31,6 +31,18 @@ namespace AlRunner.Patches;
 
 public static partial class RecordPatches
 {
+    // KNOWN GAP — #3172. Nothing clears either of these sets, on any path: they appear
+    // nowhere else in the runner. RecordPatches.ResetForReload discards every
+    // NCLMetaXmlPort via _metaXmlPortCache.Clear() without discarding the bookkeeping that
+    // describes them, so from the second --watch cycle / --server request onward the
+    // success set short-circuits a brand-new, never-loaded skeleton as "already loaded" —
+    // the page-side defect #1957 fixed with ResetPageMetadataForReload, never mirrored
+    // here. Left out of #3011's PR because neither set can be populated from a test host
+    // without the BC engine loaded in-process, so the fix could not be proved there; see
+    // the issue for what a proving test has to look like. The GROW direction #3011 fixed on
+    // the page side is a SEPARATE and unverified question here — this file's gate reads
+    // AlXmlPortMetadataRegistry and _parsedXmlPorts, neither of which is derived from the
+    // registered .app set.
     private static readonly HashSet<int> _xmlPortsWithRealMetadata = new();
     private static readonly HashSet<int> _xmlPortsRealMetadataFailed = new();
     private static readonly object _realXmlPortMetadataLock = new();
