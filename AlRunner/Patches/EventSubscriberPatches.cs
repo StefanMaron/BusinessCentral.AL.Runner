@@ -1250,8 +1250,12 @@ public static class EventSubscriberPatches
 
     private static object? BuildSubscription(SubscriberHandle sub)
     {
-        // NavEventSubscriberMethodInfo(MethodInfo)
-        var methodInfoObj = _ciNavEventSubscriberMethodInfo!.Invoke(new object?[] { sub.Method });
+        // NavEventSubscriberMethodInfo(MethodInfo) — wrapped so the ValueTask a precompiled
+        // (async-state-machine) AL subscriber returns is OBSERVED. BC's
+        // CallEventSubscriberInternalAsync discards it on the memberId==0 branch this path
+        // always takes, which silently swallowed every error such a subscriber raised (#2932).
+        var methodInfoObj = _ciNavEventSubscriberMethodInfo!.Invoke(
+            new object?[] { new ObservingSubscriberMethodInfo(sub.Method) });
         // Replace the captured NavEventSubscriberAttribute with a zeroed copy (no
         // SkipOnMissing{License,Permission}) so BC's SkipCallDueToLackOfPermissions
         // short-circuits — accessing subscriberInstance.Session.Permissions / Company
