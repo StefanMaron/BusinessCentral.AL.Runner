@@ -1,0 +1,10 @@
+[
+  {
+    "codeunitId": 60276,
+    "CodeunitName": "MQC Tests",
+    "Method": "PlainModal_HasNoBuiltInCancelAction",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3059",
+    "Note": "Pulled in by this PR's submodule pin bump, NOT caused by it. The pin had to advance to b0c6248a to consume StefanMaron/BusinessCentral.AL.Language.Tests#199 (the upstream half of #3121), and corpus master had meanwhile merged six other PRs on top of the previous pin -- corpus history is linear, so #199 cannot be taken without them; this test arrived with #192. Real BC refuses `Modal.Cancel().Invoke()` on page 60273 \"MQC Trace Modal\" run modal in NON-lookup mode with 'The built-in action = Cancel is not found on the page', so the corpus asserts that error; the runner offers Cancel there and closes the page, so the asserterror sees no error at all ('NavNCLAssertErrorException: An error was expected inside an ASSERTERROR statement'). LiveNavTestPage.Offers decides which built-ins a page has from lookup mode alone, where real BC also reads the page's PageType. Measured failing on all eight legs of run 34044204484 (27.0, 27.3, 27.5, 28.0, 28.1, 28.2, 28.3, 28.4). Tracked as #3059 -- which names this exact page and mode, is open and labelled 'status: ready', and is NOT closed by this PR; the fix for it removes this entry."
+  }
+]
