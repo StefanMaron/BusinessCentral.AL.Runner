@@ -185,6 +185,10 @@ public static partial class BcRuntime
         }
         catch (Exception ex)
         {
+            // FIRST, before the NavBaseException clause below: a BC shape gap is never
+            // trappable, and BC's own RemapToALExceptionAndThrow can hand it back wrapped in a
+            // NavBaseException that the next clause would swallow. See BcShapeGapException.cs.
+            if (AlRunner.Infrastructure.BcShapeGapException.Find(ex) != null) throw;
             // Rethrow untrappable errors; swallow trappable NavBaseExceptions.
             if (ex is Microsoft.Dynamics.Nav.Types.Exceptions.NavBaseException nbe && !nbe.UntrappableError)
                 return false;
@@ -205,6 +209,16 @@ public static partial class BcRuntime
     /// it reproduces the observable BC outcome. A "not-yet-implemented" surface is the
     /// opposite — it is a runner gap, and swallowing it would turn the gap into a green
     /// test that lies (see .claude/rules/loud-failures.md), so it keeps propagating.
+    ///
+    /// <para>THERE IS A THIRD CASE AND IT IS NOT HANDLED HERE, deliberately (#2946).
+    /// <see cref="AlRunner.Infrastructure.BcShapeGapException"/> — "the runner could not read
+    /// BC's internals" — is not a RunnerOutOfScopeException at all, so it can never reach this
+    /// method's `true` branch however the reason string is spelled. That is the point of it
+    /// being a type: this classification is a STRING PREFIX test, and a prefix gets mis-spelled
+    /// silently (RecordPatches.QueryProjection.cs's
+    /// "query-join-synthesized-subquery-not-implemented" says not-implemented in words while
+    /// not STARTING with the token, so a [TryFunction] swallows it today — #2966). The callers
+    /// above ask <c>BcShapeGapException.Find</c> before anything else instead.</para>
     /// </summary>
     private static bool IsPermanentOutOfScope(Exception ex, out AlRunner.Infrastructure.RunnerOutOfScopeException? oos)
     {
@@ -250,6 +264,8 @@ public static partial class BcRuntime
         }
         catch (Exception ex)
         {
+            // Same ordering as TryInvoke, and for the same reason — see there.
+            if (AlRunner.Infrastructure.BcShapeGapException.Find(ex) != null) throw;
             if (ex is Microsoft.Dynamics.Nav.Types.Exceptions.NavBaseException nbe && !nbe.UntrappableError)
                 return new System.Threading.Tasks.ValueTask<bool>(false);
             // Same permanent-OOS trap as TryInvoke — see IsPermanentOutOfScope.

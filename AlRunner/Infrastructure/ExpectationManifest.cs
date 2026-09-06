@@ -278,6 +278,17 @@ public static class ExpectationClassifier
         // an OOS signal and must never be absorbed as one.
         var signal = outcome.Passed ? null : OutOfScopeMessage.FromException(outcome.Exception);
 
+        // A BC shape gap is NOT an out-of-scope signal and must never be absorbed as one
+        // (#2946). It says the runner could not READ BC's internals — a property of which BC
+        // build is on disk, not of the runner — so it can be true on one BC leg and false on
+        // another in the same run, and "expected" is never an honest thing to call it.
+        // Structurally it is already unabsorbable: it is not a RunnerOutOfScopeException and
+        // its message does not carry the out-of-scope prefix, so `signal` is null above. What
+        // is added here is the DIAGNOSTIC — without it, an expect-oos entry lands in the
+        // no-signal branch below, whose advice ("make the throw site raise
+        // RunnerOutOfScopeException") is exactly wrong for a layout gap.
+        var shapeGap = outcome.Passed ? null : BcShapeGapException.Find(outcome.Exception);
+
         if (entry == null)
         {
             // No manifest entry — normal pass/fail. Unexpected OOS surfaces as a
@@ -298,6 +309,14 @@ public static class ExpectationClassifier
                 return new Classification(ExpectationResult.Skipped, null);
 
             case ExpectationMode.ExpectOos:
+                if (shapeGap != null)
+                    return new Classification(
+                        ExpectationResult.FailManifestDrift,
+                        $"Manifest declares expect-oos (reason: {entry.Reason}) but the runner raised a "
+                        + $"{nameof(BcShapeGapException)}: {shapeGap.Surface} — {shapeGap.Member}. "
+                        + "That is not a scope boundary, it is the runner failing to read BC's internals "
+                        + "on this build, so it must not be declared expected. Fix the reflection target, "
+                        + $"or declare it expect-fail-known-gap in {entry.SourceFile} with an open issue.");
                 if (outcome.Passed)
                     return new Classification(
                         ExpectationResult.FailManifestDrift,
@@ -341,6 +360,14 @@ public static class ExpectationClassifier
                 // out-of-scope throw is a different claim with its own mode, and
                 // conflating them would let expect-divergence quietly absorb new OOS
                 // surfaces that expect-oos is supposed to declare.
+                if (shapeGap != null)
+                    return new Classification(
+                        ExpectationResult.FailManifestDrift,
+                        $"Manifest declares expect-divergence (reason: {entry.Reason}) but the runner raised "
+                        + $"a {nameof(BcShapeGapException)}: {shapeGap.Surface} — {shapeGap.Member}. A "
+                        + "divergence is an answer the runner gives on purpose; a shape gap is no answer at "
+                        + $"all. Fix the reflection target, or declare it expect-fail-known-gap in "
+                        + $"{entry.SourceFile} with an open issue.");
                 if (signal is { } divergedButOos)
                     return new Classification(
                         ExpectationResult.FailManifestDrift,

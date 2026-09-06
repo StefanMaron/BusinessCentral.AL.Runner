@@ -24,7 +24,15 @@ the BC runtime environment:
   not currently configurable via a CLI flag or an AL-callable API. Code that
   only branches on whether the name is empty still takes the "empty" branch by
   default. If your workflow needs a different value, open an issue describing
-  the use case.
+  the use case. Both identities are also written to the table that holds them,
+  so AL's own referential checks resolve them: one row in Company (2000000006)
+  for `CompanyName()` and one in User (2000000120) for `UserId()` /
+  `UserSecurityId()`, with the User Property (2000000121) companion row BC
+  creates alongside every user. One consequence worth knowing: Microsoft AL that
+  skips a check while the User table is entirely empty — `User Selection
+  .ValidateUserName` is the common one — now runs that check, so a made-up user
+  name is refused the way real BC refuses it. The Session virtual table
+  (2000000009) is still empty; that gap is tracked separately.
 - **Base app data** — no standard BC tables are populated. Code that reads
   `G/L Account`, `Customer`, `Vendor`, or any other base app table finds them empty
   unless your test inserts data.
@@ -821,6 +829,60 @@ the *first* failure past compilation, not necessarily the last — the pass abor
 there, so everything behind it is unmeasured.
 
 ---
+
+<a id="bc-shape-gaps"></a>
+
+## BC shape gaps — the runner could not read BC's internals
+
+A **shape gap** is not a limitation of the runner's scope, and it is not a feature nobody has
+built. It is a bug report: the runner reflects on a private field, a static type or an internal
+property inside BC's own assemblies, and on the BC build in front of it that member is not
+there, or holds something the runner cannot interpret. The surface is in scope, the code that
+serves it is written, and the read failed.
+
+The runner raises `AlRunner.Infrastructure.BcShapeGapException` for exactly that, and the
+message names the surface, the member and why the read mattered:
+
+```
+bc-shape-gap: Object Metadata (system table 2000000071) — TempTableDataProvider.primaryTree:
+field not found — the runner cannot tell a store BC never inserted into from one --test-data
+already filled, and synthesising rows would silently shadow the restored ones —
+see docs/limitations.md#bc-shape-gaps
+```
+
+**If you see one, the first question is which BC version produced it.** A shape gap is a
+property of the build on disk rather than of the runner, so it can fire on one BC minor and not
+another in the same matrix run. Report it with the BC version, the member named in the message
+and the AL that reached it.
+
+### Three refusals, three different meanings
+
+| the runner says | means | AL `[TryFunction]` | AL `asserterror` | can an `expect-oos` entry declare it expected? |
+|---|---|---|---|---|
+| `out-of-scope:` + a `docs/scope.md` anchor | permanently out of scope — SMTP, HTTP egress, printing | traps it into `false` | catches it | yes |
+| `out-of-scope:` + `not-yet-implemented` | in scope, not built yet | tears through | catches it | yes |
+| `bc-shape-gap:` | the runner could not read BC's internals | tears through | **tears through** | **no** |
+
+The first row traps because it is faithful: real BC, in an environment that also lacks the
+surface, raises a trappable error there, so `false` is BC's own answer. Neither of the other two
+has a BC outcome to be faithful to — real BC answers, and the runner does not — so trapping
+either would turn a gap into a green test that lies.
+
+A shape gap goes one step further than `not-yet-implemented` and escapes `asserterror` as well,
+because catching it does not merely hide the gap, it **inverts a result**: on real BC the
+statement inside the `asserterror` succeeds, so the `asserterror` fails; a runner that swallows
+the gap makes it pass.
+
+And it can never be absorbed by an `expect-oos` entry. That mode declares a permanent scope
+boundary, and a BC-layout regression is not one — see [docs/expectations.md](expectations.md).
+`expect-fail-known-gap` still applies, with an open issue, once someone has written the gap
+down.
+
+The convention was settled in
+[#2946](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2946), which was filed
+because four readers of one private BC structure raised three different exception types between
+them. `AlRunner/Infrastructure/BcShapeGapException.cs` carries the full derivation, including
+why it is a separate type rather than a third reason anchor.
 
 ## Known gaps — in scope but not yet implemented
 

@@ -371,15 +371,20 @@ public static partial class RecordPatches
                         + "boundary. See docs/scope.md");
 
                 var providerType = provider.GetType();
-                var metaTable = RequiredField(providerType, "table").GetValue(provider)
+                var metaTable = RequiredField(providerType, "table", InstallBaselineSurface).GetValue(provider)
                     ?? throw new InvalidOperationException("TempTableDataProvider.table is null");
                 // A null primaryTree is simply "no rows were ever inserted into this table" —
                 // nothing to snapshot, and the restore starts from an empty store anyway.
-                var primaryTreeValue = RequiredField(providerType, "primaryTree").GetValue(provider);
+                var primaryTreeValue = RequiredField(providerType, "primaryTree", InstallBaselineSurface)
+                    .GetValue(provider);
                 if (primaryTreeValue == null)
                     continue;
-                if (primaryTreeValue is not IEnumerable primaryTree)
-                    throw new InvalidOperationException("TempTableDataProvider.primaryTree is not enumerable");
+                // Present but uninterpretable is the SAME "BC's layout moved" case as absent —
+                // #2946 gave it the same type rather than a second convention.
+                var primaryTree = AlRunner.Infrastructure.BcShape.RequiredEnumerable(
+                    primaryTreeValue, $"{providerType.Name}.primaryTree", InstallBaselineSurface,
+                    $"the install baseline for table {tableId} cannot be captured, so its "
+                    + "install-seeded rows would silently vanish at the next codeunit boundary");
 
                 var rows = new List<NavValue[]>();
                 foreach (var row in primaryTree)
@@ -547,9 +552,50 @@ public static partial class RecordPatches
         .GetProperty("DataProvider", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
         ?.GetValue(dataAccess);
 
-    private static FieldInfo RequiredField(Type type, string name) => type
-        .GetField(name, BindingFlags.NonPublic | BindingFlags.Instance)
-        ?? throw new MissingFieldException(type.FullName, name);
+    /// <summary>
+    /// A private instance field of BC's in-memory provider that the runner must be able to
+    /// read, or a <see cref="AlRunner.Infrastructure.BcShapeGapException"/> naming it.
+    ///
+    /// <para>TWO THINGS CHANGED HERE UNDER #2946, both of them defects rather than polish.</para>
+    ///
+    /// <para>The exception TYPE. This helper used to raise
+    /// <see cref="MissingFieldException"/> while RowVersionPatches.SystemIdIntegrity.cs threw
+    /// an <see cref="InvalidOperationException"/> and
+    /// RecordPatches.ObjectMetadataSystemTable.cs raised a
+    /// <see cref="AlRunner.Infrastructure.RunnerOutOfScopeException"/> — three conventions for
+    /// one private structure, so what a caller could catch depended on which reader it reached.
+    /// None of the three said the true thing, which is that the runner could not READ BC's
+    /// internals; the two RunnerOutOfScopeException flavours are both claims about SCOPE, and
+    /// this surface is in scope and implemented. See
+    /// AlRunner/Infrastructure/BcShapeGapException.cs for the whole derivation.</para>
+    ///
+    /// <para>The RESOLUTION. <c>GetField(NonPublic)</c> does not return a BASE class's private
+    /// field, and BC's own <c>CrmTableConnection.CrmTestDataProvider</c> derives from
+    /// <c>TempTableDataProvider</c> (#2725) — so this helper called an inherited, perfectly
+    /// readable field absent, exactly the bug <see cref="PrivateMemberLookup"/> was written to
+    /// fix and which the two readers that use it directly do not have. Today a
+    /// <c>GetType().Name != "TempTableDataProvider"</c> gate upstream of every caller means no
+    /// derived provider reaches here, so the old resolution was not observably wrong; it was
+    /// wrong the moment that gate moved, and it made "the four readers agree" false in a way a
+    /// reader had to check three files to notice.</para>
+    /// </summary>
+    private static FieldInfo RequiredField(Type type, string name, string surface = ProviderStoreSurface)
+        => AlRunner.Infrastructure.BcShape.RequiredField(
+            type, name, surface,
+            "the runner reflects on BC's in-memory provider to read this table's stored rows, "
+            + "and cannot tell an empty store from an unreadable one without it");
+
+    /// <summary>
+    /// Default surface name for a refusal raised while reading BC's in-memory provider. Callers
+    /// that serve a narrower AL-visible operation (a rollback, a SystemId check) pass their own.
+    /// </summary>
+    internal const string ProviderStoreSurface = "in-memory table store (TempTableDataProvider)";
+
+    /// <summary>Surface name for the per-codeunit install-baseline capture/restore.</summary>
+    private const string InstallBaselineSurface = "install-baseline snapshot";
+
+    /// <summary>Surface name for the AL write-transaction rollback (see RecordPatches.TransactionSnapshot.cs).</summary>
+    internal const string TransactionRollbackSurface = "AL write-transaction rollback";
 
     private static NavValue[] CloneValues(NavValue[] values)
     {

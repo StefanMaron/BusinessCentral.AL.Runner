@@ -13,11 +13,12 @@
 //                                      silently shadow real --test-data rows, disabling the
 //                                      #2519 precedence rule with no diagnostic anywhere.
 //
-// Four sibling readers of the SAME private field already fail loud on the second case
-// (RecordPatches.StoredTableCensus.cs x2 and RecordPatches.TransactionSnapshot.cs /
-// RecordPatches.InstallBaseline.cs via RequiredField -> MissingFieldException;
-// RowVersionPatches.SystemIdIntegrity.cs via PrivateMemberLookup -> InvalidOperationException
-// naming the member). This one did not. See .claude/rules/loud-failures.md.
+// Four sibling readers of the SAME private field already failed loud on the second case, and
+// they did it with three different exception types between them — MissingFieldException via
+// RequiredField, an InvalidOperationException naming the member, and this file's own
+// RunnerOutOfScopeException. #2946 made all of them one: BcShapeGapException, which says the
+// thing none of the three said, that the runner could not READ BC's internals. See
+// AlRunner/Infrastructure/BcShapeGapException.cs and .claude/rules/loud-failures.md.
 //
 // WHY THESE LIVE HERE AND NOT IN THE UPSTREAM CORPUS
 //   The claim is about how the RUNNER reflects on a BC private field, not about anything AL
@@ -80,19 +81,20 @@ public sealed class ObjectMetadataProviderRowProbeTests
     [Fact]
     public void MissingPrimaryTreeField_ThrowsNamingTheFieldAndTheTable()
     {
-        var ex = Assert.Throws<RunnerOutOfScopeException>(
+        var ex = Assert.Throws<BcShapeGapException>(
             () => ProviderHasAnyRow(new ProviderWithoutPrimaryTree()));
 
         // Names the member that moved, so a BC layout change points at its own fix.
         Assert.Contains("primaryTree", ex.Message);
         Assert.Contains(nameof(ProviderWithoutPrimaryTree), ex.Message);
-        // Names the surface, and claims a gap rather than a scope boundary (#2894): this table
-        // IS in scope, so the anchor is "not-yet-implemented" and the doc link points at
-        // docs/limitations.md, which is where the table is written up.
-        Assert.Equal("Object Metadata (system table 2000000071)", ex.Api);
-        Assert.StartsWith("not-yet-implemented", ex.Reason);
-        Assert.Contains("object-metadata-system-table", ex.Reason);
-        Assert.EndsWith(" — see docs/limitations.md#object-metadata-system-table", ex.Message);
+        // Names the surface. #2894 moved this off the "permanently out of scope" claim; #2946
+        // moved it off RunnerOutOfScopeException entirely, because BOTH of that type's flavours
+        // are claims about scope and this one is a claim about the runner's ability to read
+        // BC's internals. BcShapeGapConventionTests holds the behavioural half of that
+        // (untrappable from AL, unabsorbable by an expect-oos entry).
+        Assert.Equal("Object Metadata (system table 2000000071)", ex.Surface);
+        Assert.StartsWith("bc-shape-gap: ", ex.Message, StringComparison.Ordinal);
+        Assert.EndsWith(" — see docs/limitations.md#bc-shape-gaps", ex.Message);
         // Says WHY it refuses rather than guessing, so the message is actionable.
         Assert.Contains("--test-data", ex.Message);
     }
@@ -102,13 +104,12 @@ public sealed class ObjectMetadataProviderRowProbeTests
     [Fact]
     public void NonEnumerablePrimaryTree_ThrowsNamingTheFieldAndTheTable()
     {
-        var ex = Assert.Throws<RunnerOutOfScopeException>(
+        var ex = Assert.Throws<BcShapeGapException>(
             () => ProviderHasAnyRow(new ProviderWithNonEnumerablePrimaryTree()));
 
         Assert.Contains("primaryTree", ex.Message);
-        Assert.Equal("Object Metadata (system table 2000000071)", ex.Api);
-        Assert.StartsWith("not-yet-implemented", ex.Reason);
-        Assert.Contains("object-metadata-system-table", ex.Reason);
+        Assert.Equal("Object Metadata (system table 2000000071)", ex.Surface);
+        Assert.Contains("cannot be enumerated", ex.Detail, StringComparison.Ordinal);
     }
 
     // ── The positive arms: BC's genuine answers still come back, unchanged ───────────
@@ -213,8 +214,8 @@ public sealed class ObjectMetadataProviderRowProbeTests
             rowsSynthesised++;
         }
 
-        Assert.Throws<RunnerOutOfScopeException>(() => RunObjectMetadataPopulateOnce(provider, Body));
-        Assert.Throws<RunnerOutOfScopeException>(() => RunObjectMetadataPopulateOnce(provider, Body));
+        Assert.Throws<BcShapeGapException>(() => RunObjectMetadataPopulateOnce(provider, Body));
+        Assert.Throws<BcShapeGapException>(() => RunObjectMetadataPopulateOnce(provider, Body));
 
         Assert.Equal(0, rowsSynthesised);
     }

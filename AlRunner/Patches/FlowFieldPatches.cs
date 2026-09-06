@@ -886,16 +886,7 @@ public static class FlowFieldPatches
             // (ExecuteAggregateAsync's CreateNavValueFromReader(SourceField, i)), or only
             // handles Count/Sum/Average, so the types agree there by construction.
             if (negate && result != null && !Equals(calcMethod, _cmExist))
-            {
-                if (_mCalcFormulaNegateValue == null)
-                    // Writing the POSITIVE aggregate instead would be the exact silent
-                    // wrong value #1708 is about, so this is loud rather than best-effort.
-                    AlRunner.Infrastructure.RunnerScope.ThrowNotYetImplemented(
-                        "CalcFormula = -sum(...) (NCLMetaCalculationFormula.NegateValue)",
-                        "BC's own value negation is not present on this build, so a signed " +
-                        "FlowField cannot be computed faithfully — issue #1708");
-                result = (NavValue?)_mCalcFormulaNegateValue.Invoke(formula, new object?[] { result });
-            }
+                result = NegateAggregateResult(formula!, result, "Record.CalcFields");
 
             if (result != null)
                 results.Add(Tuple.Create((INavFieldMetadata)(NCLMetaField)fieldObj, result));
@@ -1204,6 +1195,33 @@ public static class FlowFieldPatches
         {
             return string.Compare(a.ToString(), b.ToString(), StringComparison.OrdinalIgnoreCase);
         }
+    }
+
+    /// <summary>
+    /// Applies BC's own <c>NCLMetaCalculationFormula.NegateValue</c> — the leading minus in
+    /// <c>CalcFormula = -sum(...)</c> (#1708). BC's method switches on the SOURCE field's type,
+    /// not the value's, which is why exist FlowFields must never be routed through it (#2323);
+    /// the callers make that call, not this helper.
+    /// <para>internal (not private): shared with
+    /// <c>RecordPatches.TempTableDataProvider_CalcNumeric</c> (#2937), which negates at the same
+    /// point BC's own provider does — NavSqlAggregateCommand's aggregate reader negates every
+    /// aggregated FlowField value whose formula has NegateResult, inside the provider, before
+    /// the FieldDictionary goes back to FlowFieldsHelper. One owner rather than two copies of
+    /// the "how is a signed FlowField negated" answer.</para>
+    /// </summary>
+    /// <param name="formula">the field's <c>NCLMetaCalculationFormula</c></param>
+    /// <param name="value">the aggregate as computed, unsigned</param>
+    /// <param name="surface">the calling surface, for the not-yet-implemented message</param>
+    internal static NavValue NegateAggregateResult(object formula, NavValue value, string surface)
+    {
+        if (_mCalcFormulaNegateValue == null)
+            // Writing the POSITIVE aggregate instead would be the exact silent
+            // wrong value #1708 is about, so this is loud rather than best-effort.
+            AlRunner.Infrastructure.RunnerScope.ThrowNotYetImplemented(
+                $"{surface} — CalcFormula = -sum(...) (NCLMetaCalculationFormula.NegateValue)",
+                "BC's own value negation is not present on this build, so a signed " +
+                "FlowField cannot be computed faithfully — issue #1708");
+        return (NavValue)_mCalcFormulaNegateValue!.Invoke(formula, new object?[] { value })!;
     }
 
     private static NavValue? ReadBufferFieldValue(object buffer, PropertyInfo bufferIndexer, int columnIndex, NCLMetaField? fieldMeta)
