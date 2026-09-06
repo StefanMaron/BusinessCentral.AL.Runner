@@ -80,12 +80,26 @@ assert_exit "runner-extras AL is skipped" 0 "tests/runner-extras/foo/Foo.Codeuni
 assert_exit "top-level docs are skipped" 0 "README.md" ""
 assert_exit "an empty diff is skipped" 0 "" ""
 
-# Infrastructure/ is deliberately NOT wholesale in scope: it is a mixed
-# directory, ~100 files, most of them plumbing. Only the Cecil rewrites are in.
+# The guard's soft edge, asserted where it actually is rather than where it is
+# easiest to describe. In scope is Patches/, Rewriters/, the NclCecilRewrite*
+# files and the compile path -- so what is OUT is everything else under
+# AlRunner/: 91 of the 100 files in Infrastructure/, all of ProgramSupport/ and
+# Win32Stubs/, and 31 of the 34 top-level AlRunner/*.cs including TestExecutor,
+# DependencyLoader, AppLoader, InstallTriggerRunner and SymbolJson. Some of
+# those genuinely can change what AL observes. Missing them is the accepted
+# trade -- a guard that nags on every PR gets pasted past, and then it protects
+# nothing -- but it is a decision, so it is pinned here. Widening it is a change
+# to the case list above plus a moved assertion here.
 assert_exit "Infrastructure plumbing is deliberately out of scope" 0 \
   "AlRunner/Infrastructure/PhaseLog.cs" ""
 assert_exit "Infrastructure sharding is deliberately out of scope" 0 \
   "AlRunner/Infrastructure/ShardPlanner.cs" ""
+assert_exit "a top-level AlRunner/*.cs is out of scope (TestExecutor)" 0 \
+  "AlRunner/TestExecutor.cs" ""
+assert_exit "a top-level AlRunner/*.cs is out of scope (DependencyLoader)" 0 \
+  "AlRunner/DependencyLoader.cs" ""
+assert_exit "ProgramSupport/ is out of scope" 0 \
+  "AlRunner/ProgramSupport/CliOptions.cs" ""
 
 # A doc file inside an in-scope directory is still a doc file. require-tests.yml
 # draws the same .md line for the same reason.
@@ -188,6 +202,36 @@ assert_extract "extracts nothing when nothing is declared" "" "Corpus-NA: some r
 assert_extract "extracts nothing from a malformed URL" "" "Corpus-PR: #211"
 assert_extract "does not extract a URL buried in prose" "" \
   "I think Corpus-PR: $CORPUS_URL might be right."
+# The gate accepts a trailing slash, so extraction must hand the advisory job a
+# URL it can actually use. It derives the number with ${url##*/}, which on a
+# trailing slash is empty, and `gh pr view ""` fails -- a red advisory check for
+# a declaration the gate called well-formed. Verified against the pre-fix script:
+# the gate passed (exit 0) and extraction emitted the URL WITH the slash.
+assert_extract "a trailing slash is stripped, so \${url##*/} yields the PR number" \
+  "$CORPUS_URL" "Corpus-PR: $CORPUS_URL/"
+
+# The assertion the one above exists for, spelled out: what the advisory job in
+# pr-check.yml actually does with the extracted line.
+extracted=$(PR_BODY="Corpus-PR: $CORPUS_URL/" "$SCRIPT" --print-corpus-pr-urls 2>/dev/null)
+num="${extracted##*/}"
+if [ "$num" = "211" ]; then
+  echo "ok   - the advisory job's \${url##*/} resolves to a PR number"
+  pass=$((pass + 1))
+else
+  echo "FAIL - the advisory job's \${url##*/} gave '$num', not 211"
+  fail=$((fail + 1))
+fi
+
+# ... and the same for a URL declared without one, which must not lose a digit.
+assert_extract "a URL with no trailing slash is unchanged" \
+  "$CORPUS_URL" "Corpus-PR: $CORPUS_URL"
+
+# A trailing slash is still a well-formed declaration for the GATE. This pins
+# the behaviour the normalisation exists to serve rather than quietly narrowing
+# it: the fix belongs in what is emitted, not in what is accepted.
+assert_exit "a trailing slash still satisfies the gate" 0 \
+  "AlRunner/Patches/MockTestPage.cs" "Corpus-PR: $CORPUS_URL/"
+
 assert_extract "extracts both when two are declared" \
   "$(printf '%s\n%s' "$CORPUS_URL" "https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests/pull/212")" \
   "Corpus-PR: $CORPUS_URL

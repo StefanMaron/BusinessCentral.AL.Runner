@@ -169,24 +169,32 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          fetch-depth: 0   # the three-dot diff below needs the merge base
+          # Both endpoints of the diff below must be present as objects. The PR
+          # head is a parent of the merge commit checked out here, so it is
+          # reachable, but only with the full history fetched.
+          fetch-depth: 0
 
       - name: Collect the PR's changed files
         id: changed
+        # BOTH endpoints come from the event payload; neither is the checked-out
+        # HEAD. actions/checkout leaves refs/pull/N/merge checked out -- a merge
+        # commit whose first parent is the base branch -- so base.sha is an
+        # ancestor of HEAD, `base...HEAD` collapses to `base..HEAD`, and every
+        # commit that landed on main meanwhile is attributed to this PR. That is
+        # what this job did until #3261 was reviewed; measured on #3261 itself it
+        # turned a 15-file diff into 20, two of the extras being
+        # AlRunner/Patches/ files the PR never touched, which flipped this gate's
+        # verdict from skip to fail. The logic lives in a script so the endpoints
+        # are under test: test_pr_changed_files.sh rebuilds this exact layout and
+        # asserts both that the collapse happens and that this form avoids it.
+        # require-tests.yml and the scripts-changed job below use the same
+        # BASE...HEAD form inline.
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
-          base="${{ github.event.pull_request.base.sha }}"
-          # Three dots: changes introduced BY this PR, measured from the merge
-          # base, so commits that landed on main meanwhile are not attributed
-          # to it.
-          files=$(git diff --name-only "$base"...HEAD)
-          # A PR always changes at least one file, so an empty list here means
-          # the diff failed rather than that nothing changed -- and a guard
-          # handed an empty list checks nothing and passes.
-          if [ -z "${files//[[:space:]]/}" ]; then
-            echo "::error::Could not determine any changed file for this PR (base $base). Refusing to report a pass without having read the diff."
-            exit 1
-          fi
+          files=$(bash .github/scripts/pr_changed_files.sh)
           {
             echo "files<<CHANGED_FILES_EOF"
             printf '%s\n' "$files"

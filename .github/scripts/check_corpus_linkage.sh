@@ -74,6 +74,16 @@
 # gh call that resolves the URL -- stays in the workflow. Only PR_BODY is read
 # in this mode.
 #
+# The URL is printed CANONICALLY, without a trailing slash. The gate accepts
+# .../pull/211/ -- a trailing slash is what you get by copying the address bar,
+# and refusing it would be pedantry for its own sake -- but the advisory job
+# derives the PR number with ${url##*/}, which on a trailing slash yields the
+# empty string. `gh pr view ""` then fails and the advisory job goes red for a
+# declaration this gate called well-formed: the author is told the URL is fine
+# and shown a red check about it in the same run. Normalising here rather than
+# in the workflow keeps it under these unit tests, which is the whole reason
+# this mode exists.
+#
 # Exit codes
 #   0  in scope and declared, or out of scope entirely (or extraction mode)
 #   1  in scope and the declaration is missing or malformed
@@ -103,7 +113,8 @@ CORPUS_PR_MARKER_RE='^[[:space:]]*Corpus-PR:'
 if [ "${1:-}" = "--print-corpus-pr-urls" ]; then
   while IFS= read -r line; do
     if printf '%s' "$line" | command grep -qiP "$CORPUS_PR_LINE_RE"; then
-      printf '%s' "$line" | command grep -oiP "$CORPUS_REPO_URL"
+      url="$(printf '%s' "$line" | command grep -oiP "$CORPUS_REPO_URL")"
+      printf '%s\n' "${url%/}"
     fi
   done <<< "$PR_BODY"
   exit 0
@@ -137,13 +148,21 @@ fi
 #
 # Deliberately OUT, with reasons:
 #
-#   the rest of AlRunner/Infrastructure/  -- a genuinely mixed directory of ~100
-#       files. PhaseLog, ShardPlanner, ParallelFanOut, the backup tooling and the
-#       cache layer are plumbing that cannot change an AL-visible answer, and a
-#       few files in it (FieldPoke, AlValueCapture) can. A per-file allowlist
-#       inside a directory that size would rot silently, and rot in the noisy
-#       direction, so the whole directory stays out except the Cecil rewrites.
-#       This is the known soft edge of this guard -- see the PR that added it.
+#   everything else under AlRunner/  -- and that is more than it sounds, so it is
+#       spelled out rather than left to "the rest of Infrastructure": 91 of the
+#       100 files in AlRunner/Infrastructure/, all of AlRunner/ProgramSupport/
+#       and AlRunner/Win32Stubs/, and 31 of the 34 top-level AlRunner/*.cs --
+#       among them TestExecutor.cs, DependencyLoader.cs, AppLoader.cs,
+#       InstallTriggerRunner.cs and SymbolJson.cs. Some of those genuinely can
+#       change what AL observes. Infrastructure/ alone is a mixed directory:
+#       PhaseLog, ShardPlanner, ParallelFanOut, the backup tooling and the cache
+#       layer are plumbing that cannot change an AL-visible answer, while
+#       FieldPoke and AlValueCapture can. A per-file allowlist across a surface
+#       that size would rot silently, and rot in the NOISY direction -- a guard
+#       that fires on plumbing PRs gets pasted past, and then it protects
+#       nothing. So this guard deliberately MISSES rather than nags, and that is
+#       its known soft edge. test_check_corpus_linkage.sh pins the misses as
+#       decisions; widening it is a line here plus a moved assertion there.
 #   AlRunner.Tests/, tests/  -- tests and fixtures, including the corpus pin and
 #       the expectations manifests. These record behaviour, they do not change it.
 #   .github/, tools/, scripts/, docs/, .claude/, top-level docs -- CI, tooling and

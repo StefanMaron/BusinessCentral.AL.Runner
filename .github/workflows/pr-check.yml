@@ -110,7 +110,19 @@ jobs:
           rc=0
           while IFS= read -r url; do
             [ -z "$url" ] && continue
+            # check_corpus_linkage.sh already emits these without a trailing
+            # slash -- the gate accepts .../pull/211/, which is what copying the
+            # address bar gives you, and ${url##*/} on that is the empty string,
+            # so `gh pr view ""` would fail this job for a declaration the gate
+            # called well-formed. Stripped again here so this loop cannot be
+            # broken from a distance by a change to the extractor.
+            url="${url%/}"
             num="${url##*/}"
+            if ! printf '%s' "$num" | command grep -qE '^[0-9]+$'; then
+              echo "::warning::Could not read a pull request number out of '$url'; skipping it."
+              rc=1
+              continue
+            fi
             echo "Resolving corpus PR #$num ($url)"
             if ! out=$(gh pr view "$num" \
                          --repo StefanMaron/BusinessCentral.AL.Language.Tests \
