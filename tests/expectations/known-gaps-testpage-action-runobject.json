@@ -1,0 +1,42 @@
+[
+  {
+    "codeunitId": 60455,
+    "CodeunitName": "TPARO Tests",
+    "Method": "RunObjectActionOpensTheTargetOnTheHostsCurrentRow",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2931",
+    "Note": "An action whose only effect is RunObject is refused with 'out-of-scope: TestPage action ... testpage-action', because the page declares no OnAction trigger for it. #2931 records that this is a GAP, not a boundary, and is in progress; the refusal cites docs/scope.md today, which is why the entry is expect-fail-known-gap rather than expect-oos. Green on real BC 27.0 through 28.4 -- StefanMaron/BusinessCentral.AL.Language.Tests#186's merge base. Arrived with the pin bump in AlRunner#3061 and reproduces on unmodified main at that pin, so it is not that PR's change."
+  },
+  {
+    "codeunitId": 60455,
+    "CodeunitName": "TPARO Tests",
+    "Method": "RunObjectActionToAStandardDialogTargetIsAnsweredByTheModalHandler",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2931",
+    "Note": "An action whose only effect is RunObject is refused with 'out-of-scope: TestPage action ... testpage-action', because the page declares no OnAction trigger for it. #2931 records that this is a GAP, not a boundary, and is in progress; the refusal cites docs/scope.md today, which is why the entry is expect-fail-known-gap rather than expect-oos. Green on real BC 27.0 through 28.4 -- StefanMaron/BusinessCentral.AL.Language.Tests#186's merge base. Arrived with the pin bump in AlRunner#3061 and reproduces on unmodified main at that pin, so it is not that PR's change."
+  },
+  {
+    "codeunitId": 60455,
+    "CodeunitName": "TPARO Tests",
+    "Method": "ActionrefToARunObjectActionOpensTheSameTarget",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2931",
+    "Note": "An action whose only effect is RunObject is refused with 'out-of-scope: TestPage action ... testpage-action', because the page declares no OnAction trigger for it. #2931 records that this is a GAP, not a boundary, and is in progress; the refusal cites docs/scope.md today, which is why the entry is expect-fail-known-gap rather than expect-oos. Green on real BC 27.0 through 28.4 -- StefanMaron/BusinessCentral.AL.Language.Tests#186's merge base. Arrived with the pin bump in AlRunner#3061 and reproduces on unmodified main at that pin, so it is not that PR's change."
+  },
+  {
+    "codeunitId": 60455,
+    "CodeunitName": "TPARO Tests",
+    "Method": "RunObjectFromACardHostProcessingArea",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2931",
+    "Note": "An action whose only effect is RunObject is refused with 'out-of-scope: TestPage action ... testpage-action', because the page declares no OnAction trigger for it. #2931 records that this is a GAP, not a boundary, and is in progress; the refusal cites docs/scope.md today, which is why the entry is expect-fail-known-gap rather than expect-oos. Green on real BC 27.0 through 28.4 -- StefanMaron/BusinessCentral.AL.Language.Tests#186's merge base. Arrived with the pin bump in AlRunner#3061 and reproduces on unmodified main at that pin, so it is not that PR's change."
+  },
+  {
+    "codeunitId": 60455,
+    "CodeunitName": "TPARO Tests",
+    "Method": "RunObjectFromACardHostNavigationGroup",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2931",
+    "Note": "An action whose only effect is RunObject is refused with 'out-of-scope: TestPage action ... testpage-action', because the page declares no OnAction trigger for it. #2931 records that this is a GAP, not a boundary, and is in progress; the refusal cites docs/scope.md today, which is why the entry is expect-fail-known-gap rather than expect-oos. Green on real BC 27.0 through 28.4 -- StefanMaron/BusinessCentral.AL.Language.Tests#186's merge base. Arrived with the pin bump in AlRunner#3061 and reproduces on unmodified main at that pin, so it is not that PR's change."
+  }
+]

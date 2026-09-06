@@ -628,3 +628,31 @@ column a SubPageLink constrains, and run 33997895349 answered `NEWREC` where it 
 the page's OnNewRecord had not yet run for that line. Both are now asserted at the measured
 value. The runner change in this PR follows those measurements rather than the other way
 round.
+
+The al-language number moves 2610 -> 2645 with the submodule pin bump to corpus `0309cec6`,
+which takes seven corpus merges rather than one. Eight of the thirty-five are codeunit 60276
+"MQC Tests" (corpus PR #186), pinning the close lifecycle of a page the platform closes for a
+`[ModalPageHandler]` / `[PageHandler]` -- the upstream half of issue #3050, whose runner fix is
+folded into this same PR. 2645 is measured from an actual run against the new pin, not counted
+off the source. appGroups is unchanged at 1.
+
+The other twenty-seven arrived because the maintainer's pin sat at `9ba6f581` while six further
+corpus PRs merged on top of it, and a pin can only move forward as a whole. Twenty of them pass
+against this branch as-is. Seven do not, and they are NOT this PR's change: measured on an
+unmodified `origin/main` checkout carrying the identical `0309cec6` pin, the corpus reports
+**2631P/14F** -- the same seven, plus the seven "MQC Tests" failures this PR fixes. On this
+branch the same pin reports **2638P/7F**. Each of the seven gets an `expect-fail-known-gap`
+entry pointing at an issue that stays open after this PR merges:
+
+- codeunit 60455 "Test Page Action RunObject Tests", five tests -> #2931 (an action whose only
+  effect is `RunObject` is refused as out-of-scope; #2931 already records that this is a gap
+  rather than a boundary, and is in progress).
+- codeunit 60405 "Test Module Owns Own Table", `AppCanRegisterItsOwnTableOnTheAllowedList` ->
+  #3049. Its sibling negative in the same codeunit passes, so the ownership check answers no for
+  everything rather than being absent.
+- codeunit 60490 "Test Tbl Evt Async Sub Error",
+  `TableEventSubscriberInAnotherApp_ErrorReachesTheCaller` -> #2932. The System Application's
+  `OnBeforeInsertEvent` subscriber on "Retention Policy Setup" does not refuse the row and its
+  error never reaches the caller; the positive control in the same codeunit passes.
+
+Written by agent fbk-1 (automated implementation agent).
