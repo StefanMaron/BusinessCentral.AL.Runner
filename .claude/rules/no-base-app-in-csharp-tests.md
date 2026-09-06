@@ -41,17 +41,25 @@ unnoticed. Add to the allowlist only with the reason the floor is genuinely the 
   `Fixtures/RecordTriggerXRec`, shared with 13 other classes — so it got a fixture of its own
   and the floor is paid once per CI leg instead of 28 times.
 
-**Outstanding violations, tracked in #2364 — debt, not permission:**
+**There are no outstanding violations.** #2364 discharged the last three, and none of them
+turned out to need the floor — each needed one specific thing the floor happened to supply:
 
-- `InstallBaselineDiskCacheTests`, `InstallSeedDepCompanyCacheTests` — they test #1867
-  install-baseline caching and need a closure whose install triggers WRITE ROWS; without one
-  the runner logs `not persisting: snapshot has 0 DataAccessSource(s)` and the assertions have
-  nothing to observe, so they would pass vacuously.
-- `MissingTestDataDiagnosisTests` — resolves "Source Code Setup" (table 242) against real
-  metadata, asserting BC's own table id so the diagnosis cannot pass by echoing a name back.
+- `InstallBaselineDiskCacheTests`, `InstallSeedDepCompanyCacheTests` test #1867
+  install-baseline caching, and needed a dependency closure whose install triggers WRITE ROWS
+  (without one the runner logs `not persisting: snapshot has 0 DataAccessSource(s)`, nothing is
+  persisted, and the assertions pass vacuously). They now use `AlRunner.Tests/InstallSeedClosure.cs`
+  — a dependency app with one table and one `OnInstallAppPerCompany` trigger that inserts two
+  rows, read back by value in AL. Measured on that fixture with two bundles in both arms so only
+  the floor differs (BC 28.1, `perf stat` instructions-retired): **249.6e9 → 63.7e9 cold
+  (-74.5%)** and **47.9e9 → 14.9e9 warm (-68.9%)**; wall 33.9 s → 10.9 s and 6.9 s → 2.8 s.
+- `MissingTestDataDiagnosisTests` resolved "Source Code Setup" (table 242) against real
+  metadata, asserting a table id so the diagnosis could not pass by echoing a name back. It now
+  declares three tables of its own and asserts **two different** empty tables are each explained
+  with their own id — a stronger claim than one hardcoded id could make.
 
-None is a precedent to cite. Do not add another. When #2364 lands, this section shrinks to the
-legitimate cases.
+So the pattern for the next class that looks like it needs the floor: work out which single
+property of Base Application it is actually leaning on, and supply that. In three out of three
+cases it was cheaper to supply than to load.
 
 The violation the class list missed was a checked-in fixture rather than a class-generated
 manifest: `AlRunner.Tests/Fixtures/RecordTriggerXRec/app.json`, a bundle with

@@ -26,23 +26,40 @@ using Xunit;
 
 namespace AlRunner.Tests;
 
-// #2364 -- the "application" floor in this file's fixtures is an OUTSTANDING VIOLATION of
-// .claude/rules/no-base-app-in-csharp-tests.md, not an exception to it. Every other fixture
-// dropped it (#2358). These tests keep it only because they resolve "Source Code Setup"
-// (table 242) against REAL metadata -- the assertion is on BC's own table id precisely so
-// the diagnosis cannot pass by echoing a name back out of the message. A fixture table
-// carrying its own metadata would serve the same claim without the closure; until someone
-// does that, this stays and is tracked in #2364. Do not copy this floor into a new test.
+// #2364 -- WHY THE TABLES ARE THIS FIXTURE'S OWN
+//   These tests used to name "Source Code Setup" (242) and "Payment Method", which meant
+//   declaring the Base Application floor and loading its whole closure on every one of the
+//   four runner invocations below (.claude/rules/no-base-app-in-csharp-tests.md: ~70 s cold,
+//   ~6 s warm each). The claim was never about those tables. It is that the diagnosis
+//   RESOLVED the table against real metadata rather than echoing a name back out of BC's
+//   message -- and an id is what proves that, because no message here contains one.
+//
+//   A fixture table's id proves it exactly as well: 62441 is produced only by looking the
+//   name up through the same NCLMetaTable the runner records on the exception
+//   (MissingTestDataDiagnosis.TagTable) or resolves from NavTestFieldException.TableName
+//   (RecordPatches.TryCensusTableByName). Two DIFFERENT empty tables are asserted below, each
+//   explained with its own id, so a diagnosis that hardcoded or mis-attributed an id fails --
+//   a guard the single-table Base App version did not have.
+//
+//   It also removed a hazard rather than only cost: "Source Code Setup" stopped being
+//   guaranteed empty once #2348 fixed the install-time bug that had been keeping it empty by
+//   accident, so both "empty" tests needed a DeleteAll() to re-establish the precondition
+//   they used to inherit. A table only this fixture declares is empty by construction.
 public sealed class MissingTestDataDiagnosisTests : IDisposable
 {
     private static readonly string RepoRoot = Path.GetFullPath(
         Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
     private static readonly string ProjectPath = Path.Combine(RepoRoot, "AlRunner");
 
-    /// <summary>BC's own id for "Source Code Setup". Asserted literally so the diagnosis has to
-    /// have RESOLVED the table against real metadata; echoing a name back out of the message
-    /// would not produce it.</summary>
-    private const int SourceCodeSetupTableId = 242;
+    /// <summary>This fixture's own empty setup table. Asserted literally so the diagnosis has
+    /// to have RESOLVED the table against real metadata; no message below contains an id, so
+    /// echoing a name back could not produce it.</summary>
+    private const int DiagSetupTableId = 62441;
+
+    /// <summary>A SECOND empty table, so the id in the message is shown to track the table
+    /// rather than being a constant the diagnosis could carry. This is what the Base App
+    /// version could not assert with only one empty table in play.</summary>
+    private const int DiagOtherSetupTableId = 62443;
 
     private readonly string _root;
 
@@ -61,25 +78,26 @@ public sealed class MissingTestDataDiagnosisTests : IDisposable
     // ────────────────────────────────────────────────────────── the fixture ──
 
     /// <summary>
-    /// Four failures, chosen so that the two that must be explained and the two that must not
+    /// Six failures, chosen so that the ones that must be explained and the ones that must not
     /// are indistinguishable by exception type or message shape:
     ///
-    ///   EmptySetupTable_Get       — record-not-found on a table with NO rows        → explained
-    ///   PopulatedTable_Get        — record-not-found on a table WITH a row          → not explained
-    ///   EmptySetupTable_TestField — TestField on a table with NO rows               → explained
-    ///   PopulatedTable_TestField  — TestField on a table WITH a row                 → not explained
-    ///   PlainError                — an ordinary AL Error naming no table            → not explained
+    ///   EmptySetupTable_Get        — record-not-found on a table with NO rows       → explained
+    ///   PopulatedTable_Get         — record-not-found on a table WITH a row         → not explained
+    ///   EmptySetupTable_TestField  — TestField on a table with NO rows              → explained
+    ///   PopulatedTable_TestField   — TestField on a table WITH a row                → not explained
+    ///   OtherEmptyTable_Get        — record-not-found on a DIFFERENT empty table    → explained, own id
+    ///   PlainError                 — an ordinary AL Error naming no table           → not explained
     ///
-    /// "Source Code Setup" is the table #2240 measured 12 of its 16 failures on. "Payment
-    /// Method" is a Base App table the runner starts empty and this fixture inserts into, so
-    /// "populated" is a fact the test creates rather than one it inherits.
+    /// Every table here is declared by this fixture (#2364), so "empty" and "populated" are
+    /// both facts THIS TEST establishes: the empty ones are empty because nothing ever writes
+    /// to them, and the populated one is populated because the test inserts into it. The Base
+    /// App version of this fixture could say that only of the populated half — it had to call
+    /// DeleteAll() on "Source Code Setup" first, because a correct runner may seed it during
+    /// install (#2348).
     ///
-    /// "Source Code Setup" itself is NOT guaranteed empty by construction any more (#2348):
-    /// fixing IncludeSender sender-position dispatch also fixed a latent install-time bug that
-    /// used to leave Codeunit2's OnBeforeSourceCodeSetupInsert NRE-ing silently, which — before
-    /// that fix — happened to keep this table permanently empty as a side effect. A correct
-    /// runner may now legitimately seed it during install, so the two "EmptySetupTable_*"
-    /// procedures below call DeleteAll() first to make "no rows" a fact THIS TEST guarantees.
+    /// "Sales Journal" keeps its name from the real failure #2240 measured
+    /// (`Invoice Nos. must have a value in Purchases &amp; Payables Setup`), so the
+    /// NavTestFieldException route is exercised on the message shape that route actually sees.
     /// </summary>
     private static void WriteFixture(string dir)
     {
@@ -91,10 +109,43 @@ public sealed class MissingTestDataDiagnosisTests : IDisposable
           "version": "1.0.0.0",
           "dependencies": [],
           "platform": "27.0.0.0",
-          "application": "27.0.0.0",
           "idRanges": [ { "from": 62440, "to": 62449 } ],
           "runtime": "17.0",
           "target": "Cloud"
+        }
+        """);
+
+        File.WriteAllText(Path.Combine(dir, "DiagTables.al"), """
+        table 62441 "Diag Setup"
+        {
+            DataClassification = SystemMetadata;
+            fields
+            {
+                field(1; "Primary Key"; Code[10]) { }
+                field(2; "Sales Journal"; Code[10]) { }
+            }
+            keys { key(PK; "Primary Key") { Clustered = true; } }
+        }
+
+        table 62442 "Diag Populated"
+        {
+            DataClassification = SystemMetadata;
+            fields
+            {
+                field(1; "Code"; Code[10]) { }
+                field(2; "Description"; Text[50]) { }
+            }
+            keys { key(PK; "Code") { Clustered = true; } }
+        }
+
+        table 62443 "Diag Other Setup"
+        {
+            DataClassification = SystemMetadata;
+            fields
+            {
+                field(1; "Primary Key"; Code[10]) { }
+            }
+            keys { key(PK; "Primary Key") { Clustered = true; } }
         }
         """);
 
@@ -106,50 +157,49 @@ public sealed class MissingTestDataDiagnosisTests : IDisposable
             [Test]
             procedure EmptySetupTable_Get()
             var
-                SourceCodeSetup: Record "Source Code Setup";
+                DiagSetup: Record "Diag Setup";
             begin
-                // #2348: fixing IncludeSender sender-position dispatch also fixed a latent
-                // install-time bug that used to leave this table's own default-row insert
-                // silently broken, so a fresh company may now legitimately arrive with a row
-                // already in it (Codeunit2's OnBeforeSourceCodeSetupInsert firing correctly).
-                // DeleteAll() first so "no rows" is still a fact this test GUARANTEES, not one
-                // it merely used to inherit from a broken install.
-                SourceCodeSetup.DeleteAll();
-                SourceCodeSetup.Get();
+                DiagSetup.Get();
             end;
 
             [Test]
             procedure PopulatedTable_Get()
             var
-                PaymentMethod: Record "Payment Method";
+                DiagPopulated: Record "Diag Populated";
             begin
-                PaymentMethod.Init();
-                PaymentMethod.Code := 'DIAG-A';
-                PaymentMethod.Description := 'populated on purpose';
-                PaymentMethod.Insert(true);
-                PaymentMethod.Get('NOPE');
+                DiagPopulated.Init();
+                DiagPopulated.Code := 'DIAG-A';
+                DiagPopulated.Description := 'populated on purpose';
+                DiagPopulated.Insert(true);
+                DiagPopulated.Get('NOPE');
             end;
 
             [Test]
             procedure EmptySetupTable_TestField()
             var
-                SourceCodeSetup: Record "Source Code Setup";
+                DiagSetup: Record "Diag Setup";
             begin
-                // Same #2348 guarantee as EmptySetupTable_Get above — DeleteAll() first.
-                SourceCodeSetup.DeleteAll();
-                SourceCodeSetup.Init();
-                SourceCodeSetup.TestField("Sales Journal");
+                DiagSetup.Init();
+                DiagSetup.TestField("Sales Journal");
             end;
 
             [Test]
             procedure PopulatedTable_TestField()
             var
-                PaymentMethod: Record "Payment Method";
+                DiagPopulated: Record "Diag Populated";
             begin
-                PaymentMethod.Init();
-                PaymentMethod.Code := 'DIAG-B';
-                PaymentMethod.Insert(true);
-                PaymentMethod.TestField(Description);
+                DiagPopulated.Init();
+                DiagPopulated.Code := 'DIAG-B';
+                DiagPopulated.Insert(true);
+                DiagPopulated.TestField(Description);
+            end;
+
+            [Test]
+            procedure OtherEmptyTable_Get()
+            var
+                DiagOtherSetup: Record "Diag Other Setup";
+            begin
+                DiagOtherSetup.Get();
             end;
 
             [Test]
@@ -240,16 +290,26 @@ public sealed class MissingTestDataDiagnosisTests : IDisposable
         var emptyGet = BlockFor(output, "EmptySetupTable_Get");
         // BC's own failure, untouched. If this line ever changes shape the diagnosis is
         // replacing the failure instead of sitting next to it, which #2240 forbids.
-        Assert.Contains("NavCSideRecordNotFoundException: The Source Code Setup does not exist.",
+        Assert.Contains("NavCSideRecordNotFoundException: The Diag Setup does not exist.",
             emptyGet, StringComparison.Ordinal);
-        Assert.Contains($"[test-data] 'Source Code Setup' (table {SourceCodeSetupTableId}) has no rows in this run",
+        Assert.Contains($"[test-data] 'Diag Setup' (table {DiagSetupTableId}) has no rows in this run",
             emptyGet, StringComparison.Ordinal);
         // It must say what to do, not merely what happened.
         Assert.Contains("--test-data", emptyGet, StringComparison.Ordinal);
 
+        // ── explained, with ITS OWN id: a second empty table, same failure shape. Together
+        // with the block above this is what makes "the diagnosis resolved the table" a claim
+        // rather than a coincidence — one hardcoded or mis-attributed id cannot satisfy both.
+        var otherGet = BlockFor(output, "OtherEmptyTable_Get");
+        Assert.Contains("NavCSideRecordNotFoundException: The Diag Other Setup does not exist.",
+            otherGet, StringComparison.Ordinal);
+        Assert.Contains($"[test-data] 'Diag Other Setup' (table {DiagOtherSetupTableId}) has no rows in this run",
+            otherGet, StringComparison.Ordinal);
+        Assert.DoesNotContain($"table {DiagSetupTableId}", otherGet, StringComparison.Ordinal);
+
         // ── NOT explained: same exception type, same message shape, table has a row ──
         var populatedGet = BlockFor(output, "PopulatedTable_Get");
-        Assert.Contains("NavCSideRecordNotFoundException: The Payment Method does not exist.",
+        Assert.Contains("NavCSideRecordNotFoundException: The Diag Populated does not exist.",
             populatedGet, StringComparison.Ordinal);
         Assert.DoesNotContain("[test-data]", populatedGet, StringComparison.Ordinal);
     }
@@ -269,13 +329,13 @@ public sealed class MissingTestDataDiagnosisTests : IDisposable
         var (output, _) = RunRunner();
 
         var emptyTestField = BlockFor(output, "EmptySetupTable_TestField");
-        Assert.Contains("NavTestFieldException: Sales Journal must have a value in Source Code Setup",
+        Assert.Contains("NavTestFieldException: Sales Journal must have a value in Diag Setup",
             emptyTestField, StringComparison.Ordinal);
-        Assert.Contains($"[test-data] 'Source Code Setup' (table {SourceCodeSetupTableId}) has no rows in this run",
+        Assert.Contains($"[test-data] 'Diag Setup' (table {DiagSetupTableId}) has no rows in this run",
             emptyTestField, StringComparison.Ordinal);
 
         var populatedTestField = BlockFor(output, "PopulatedTable_TestField");
-        Assert.Contains("NavTestFieldException: Description must have a value in Payment Method",
+        Assert.Contains("NavTestFieldException: Description must have a value in Diag Populated",
             populatedTestField, StringComparison.Ordinal);
         Assert.DoesNotContain("[test-data]", populatedTestField, StringComparison.Ordinal);
     }
@@ -329,10 +389,10 @@ public sealed class MissingTestDataDiagnosisTests : IDisposable
 
         var emptyGet = BlockFor(output, "EmptySetupTable_Get");
         // Still BC's own failure, still untouched.
-        Assert.Contains("NavCSideRecordNotFoundException: The Source Code Setup does not exist.",
+        Assert.Contains("NavCSideRecordNotFoundException: The Diag Setup does not exist.",
             emptyGet, StringComparison.Ordinal);
         // And a DIFFERENT sentence from the flag-off one — this is the whole claim.
-        Assert.Contains($"[test-data] 'Source Code Setup' (table {SourceCodeSetupTableId}) still has no rows although --test-data is on",
+        Assert.Contains($"[test-data] 'Diag Setup' (table {DiagSetupTableId}) still has no rows although --test-data is on",
             emptyGet, StringComparison.Ordinal);
         Assert.Contains("refused", emptyGet, StringComparison.Ordinal);
         // The flag-off wording must NOT appear: telling a user who already passed --test-data
@@ -344,17 +404,21 @@ public sealed class MissingTestDataDiagnosisTests : IDisposable
     }
 
     /// <summary>
-    /// A `bcbak` stand-in: one company, one table in scope ("Source Code Setup", AL id 242,
-    /// non-zero row count so BuildPlan keeps it), and a read that hands back a column the AL
-    /// table has no field for so the hydration refuses it and the table stays empty.
-    /// No `$ext` companion, so the once-per-run merge probe does not run.
+    /// A `bcbak` stand-in: one company, one table in scope ("Diag Setup", non-zero row count
+    /// so BuildPlan keeps it), and a read that hands back a column the AL table has no field
+    /// for so the hydration refuses it and the table stays empty. No `$ext` companion, so the
+    /// once-per-run merge probe does not run.
+    ///
+    /// #2364: the app name in the resolution column is free text as far as BackupCatalog is
+    /// concerned — nothing keys on "Base Application" — so naming this fixture's own app here
+    /// exercises the same parse and the same plan.
     /// </summary>
     private static string FakeReaderScript() =>
         "#!/bin/sh\n"
         + "cmd=\"$1\"\n"
         + "case \"$cmd\" in\n"
         + "  companies) echo 'CRONUS' ;;\n"
-        + $"  tables) printf '%s\\n' '   4 Table\tCRONUS\tSource Code Setup\t{SourceCodeSetupTableId} \"Source Code Setup\" (Base Application)' ;;\n"
+        + $"  tables) printf '%s\\n' '   4 Table\tCRONUS\tDiag Setup\t{DiagSetupTableId} \"Diag Setup\" (Missing Test Data Diagnosis Fixture)' ;;\n"
         + "  read) echo '[{\"Not An AL Field Of This Table\": 1}]' ;;\n"
         + "esac\n";
 }
