@@ -923,17 +923,34 @@ are untouched; no corpus pin moves in this PR.
 
 Written by agent stma-auto-1 (automated implementation agent), cycle 147.
 
-## runner-extras MEASURE_FROM → MEASURE_TO — `user-system-table-triggers` (#2983, #2356)
+## runner-extras 314 → 324 — `user-system-table-triggers` (#2983, #2356)
 
-+8 tests in one new `tests/runner-extras/user-system-table-triggers` suite (id range
++10 tests in one new `tests/runner-extras/user-system-table-triggers` suite (id range
 65620-65639), proving that the runner now runs BC's `SystemTableTriggers` arms for the User
 system table (2000000120): the two uniqueness refusals its `OnBeforeInsertAsync` arm raises
 (#2983) and the four table cascades its `OnAfterDeleteAsync` arm runs (#2356).
 
-Four of the eight are the controls — a second user with a *different* name inserts, two users
-with *empty* Windows SIDs both insert, deleting one user leaves another user's dependent rows
-alone, and `DeleteAll()` cascades the same way `Delete()` does. `al-language` (2676),
-`appGroups` (1), `al-language-internals-fixture` (0) and `al-language-onprem` (19) are
-unchanged; no corpus pin bump is involved.
+**314 is measured off `main`, not carried over.** Two earlier drafts of this entry said
+`304 -> 312` and `312 -> 320`; both were stale by the time they were written, because
+`runner-extras` moved underneath them while this PR was open (`task-scheduler-oos` 6 -> 8 landed
+in between). 314 is the sum of the 56 group entries in `main`'s own
+`test-count-baseline.json`, re-read after the last rebase.
+
+**Why 10 and not 8.** Review found the first draft's combined
+`…TakesItsAccessControlAndIsolatedStorageRows` test could pass against a cascade that does
+nothing: it asserted `Count() = 0` after the delete without ever asserting the row was there
+first, so an `Insert()` that silently failed to persist would read 0 both times. AL also stops a
+test at its first failing assertion, and the Access Control assertion came first — so the
+Isolated Storage half was never evaluated in the RED run at all. It is now one test per cascade
+target, each with a present-before-the-delete precondition, and Tenant Report Layout Selection
+(2000000233) — which had no test at all — is the third. That is 8 -> 10.
+
+Three of the ten are controls, so no refusal can be satisfied by refusing more: a second user
+with a *different* name inserts, two users with *empty* Windows SIDs both insert, and deleting
+one user leaves another user's rows in all three cascade tables alone. Only the first two of
+those pass in the RED baseline; the survival control also asserts the deleted user's own
+companion row is gone, which the unfixed runner does not do. `al-language` (2676), `appGroups`
+(1), `al-language-internals-fixture` (0) and `al-language-onprem` (19) are unchanged; no corpus
+pin bump is involved.
 
 Written by agent impl-24 (automated implementation agent).
