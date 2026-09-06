@@ -960,3 +960,51 @@ companion row is gone, which the unfixed runner does not do. `al-language` (2676
 pin bump is involved.
 
 Written by agent impl-24 (automated implementation agent).
+
+## al-language 2681 -> 2807, al-language-onprem 19 -> 25 — corpus pin b0c6248a -> 5684b36d (#218 and 16 others)
+
+The pin advanced to consume StefanMaron/BusinessCentral.AL.Language.Tests#218, the upstream half
+of #3283 / #3284 / #3131 (which built-in OK/Cancel each dialog page type has, and what
+`RunModal()` reports when a `[ModalPageHandler]` invokes nothing). Corpus history is linear, so
+sixteen other merged corpus PRs came with it:
+
+| corpus PR | what it pins |
+|---|---|
+| #196 | the ordinal Page Metadata reports for a PageType its column does not name |
+| #197 | what the legacy Object (2000000001) table holds |
+| #200 | a refusal raised in a table subscriber below a control write |
+| #202 | what an error raised in OnQueryClosePage does |
+| #203 | what a list page's built-in View and Edit actions do |
+| #204 | a user's SUPER status is backed by an Access Control row |
+| #206 | what a `Database::<Object>` const in a `where()` clause resolves to |
+| #207 | a tableextension-contributed TableRelation is enforced by Validate |
+| #208 | a tableextension adds keys and field properties, not just columns |
+| #209 | a second control over one page binding resolves |
+| #210 | what the Session virtual table (2000000009) holds for the reading session |
+| #211 | what an action's RunPageLink does to its RunObject target |
+| #212 | whether AL short-circuits `and`/`or` |
+| #215 | the SecretText runtime surface |
+| #216 | a CalcFormula and a TableRelation that name a system field |
+| #219 | the SessionSettings surface |
+| #218 | the dialog page types' built-in OK/Cancel and unattended close (this PR's own upstream test) |
+
+**2807 and 25 are the numbers the guard itself reported**, not totals computed from the old
+counts plus a count of added tests. Measured by running all three corpus apps — the shape
+`.github/workflows/bc-tests.yml` uses, enumerated by `scripts/corpus-app-dirs.py` — with
+`--count-baseline`; the run printed
+
+```
+[count-baseline] GROWTH: suite 'al-language' tests count: expected 2681, actual 2807 (BC 28.1)
+[count-baseline] GROWTH: suite 'al-language-onprem' tests count: expected 19, actual 25 (BC 28.1)
+```
+
+and 2807 / 25 are those two `actual`s. `al-language-internals-fixture` (0) and every
+`appGroups` count are unchanged.
+
+Nine tests from the newly-pulled-in corpus PRs FAIL against this pin and are deliberately left
+undeclared here — no known-gap entry is added by this PR, because each already has an open
+runner PR fixing it rather than classifying it: 60677 (#202) is PR #3181, 60818 (#216) is
+PR #3289, 60827 (#207) is PR #3197 / #3289, 60889 (#204) is PR #3287. Codeunit 60338, this PR's
+own upstream test, is 13/13 green.
+
+Written by agent fbk-1 (automated implementation agent).
