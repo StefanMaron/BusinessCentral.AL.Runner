@@ -43,10 +43,11 @@ public static class RunnerModalDispatch
     public static void FormRunModal(object testExecution, object runRequest)
     {
         if (testExecution == null || runRequest == null)
-            throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+            throw RunnerShapeGap.ModalDispatchContext(
                 "TestPage modal dispatch",
-                "testpage-modal — the runner was asked to run a modal page with no test-execution "
-                + "context or no request. See docs/scope.md");
+                "testpage-modal-dispatch-context",
+                "the runner was asked to run a modal page with no test-execution context or no "
+                + "request");
 
         var handle = FormHandleOf(runRequest);
         var type = testExecution.GetType();
@@ -105,10 +106,10 @@ public static class RunnerModalDispatch
     public static void FormRun(object testExecution, object runRequest)
     {
         if (testExecution == null || runRequest == null)
-            throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+            throw RunnerShapeGap.ModalDispatchContext(
                 "TestPage page dispatch",
-                "testpage-page — the runner was asked to run a page with no test-execution "
-                + "context or no request. See docs/scope.md");
+                "testpage-page-dispatch-context",
+                "the runner was asked to run a page with no test-execution context or no request");
 
         var handle = FormHandleOf(runRequest);
         var type = testExecution.GetType();
