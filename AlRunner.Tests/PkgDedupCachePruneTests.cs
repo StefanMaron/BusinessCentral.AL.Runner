@@ -230,15 +230,73 @@ public sealed class PkgDedupCachePruneTests : IDisposable
     }
 
     [Fact]
-    public void Prune_KeepsOrphanMarkerOfALiveProcess()
+    public void Prune_KeepsOrphanMarkerOfALiveProcess_AndReapsADeadOnesInTheSamePass()
     {
         // A live process claims the stage a moment before creating it. Deleting the claim
         // here would leave its directory unprotected for the rest of its run.
-        var marker = PkgDedupCache.MarkInUse(Path.Combine(_root, KeyA));
+        //
+        // The original of this test asserted only `File.Exists(marker)`, which passes against
+        // a pruner that does nothing at all — the one survival case in this file that did not
+        // clear the bar its siblings set with `Kept == 1` (#3038).
+        //
+        // `Assert.Equal(0, result.MarkersRemoved)`, the fix #3038 proposed, does NOT close
+        // that: zero is also what a do-nothing pruner reports, so the pair of assertions is
+        // still satisfied by an empty pass. A negative counter cannot carry this weight; only
+        // positive evidence that the pass ran and drew the distinction can. So the fixture
+        // carries a DEAD claimant's orphan marker beside the live one, and the pass must
+        // remove exactly that one — `MarkersRemoved == 0` now means "the pruner did nothing"
+        // and fails, and `== 2` means "it ignored liveness" and fails.
+        var live = PkgDedupCache.MarkInUse(Path.Combine(_root, KeyA));
+        var dead = WriteMarker(KeyB, DeadPid, startJiffies: 0, age: TimeSpan.FromDays(30));
 
-        PkgDedupCache.Prune(_root, MaxAge, Now);
+        var result = PkgDedupCache.Prune(_root, MaxAge, Now);
 
-        Assert.True(File.Exists(marker), "a live process's claim must survive even with no directory yet");
+        Assert.True(File.Exists(live), "a live process's claim must survive even with no directory yet");
+        Assert.False(File.Exists(dead), "and a dead one's must not — same pass, same root");
+        Assert.Equal(1, result.MarkersRemoved);
+    }
+
+    [Theory]
+    [InlineData("not-a-stage")]                       // someone else's file
+    [InlineData("0123456789ABCDEF")]                  // uppercase: never a name BcCompiler writes
+    [InlineData("0123456789abcdef0")]                 // 17 hex digits
+    [InlineData("0123456789abcdef.tmp")]              // no random suffix
+    [InlineData("0123456789abcdef.pruning-1a2b3c4d")] // a name MarkInUse never targets
+    public void Prune_NeverJudgesAMarkerWhoseTargetIsNotAStageName(string target)
+    {
+        // Condition 1 — "a name the runner provably writes, or we do not judge it" — governs
+        // the ORPHAN-MARKER loop as well as the stage loop (#3038). It did not: any file
+        // shaped `<anything>.inuse-<n>` whose target directory was absent and whose sidecar
+        // parsed with a dead pid was deleted, without the target's name ever being tested.
+        //
+        // MarkInUse only ever produces stage keys as targets, so no loss was constructible —
+        // but the header and #3024's PR body both state the rule without that caveat, and a
+        // shared temp root is exactly where the code and its documentation must not diverge.
+        var foreign = WriteMarker(target, DeadPid, startJiffies: 0, age: TimeSpan.FromDays(30));
+
+        var result = PkgDedupCache.Prune(_root, MaxAge, Now);
+
+        Assert.True(File.Exists(foreign),
+            $"'{target}' is not a stage name the runner writes, so its sidecar is not ours to delete");
+        Assert.Equal(0, result.MarkersRemoved);
+        Assert.Equal(1, result.Skipped);   // refused to judge, not silently swallowed
+        Assert.Empty(result.Removed);
+    }
+
+    [Fact]
+    public void Prune_StillRemovesTheOrphanMarkerOfADeadProcessesTmpStagingDir()
+    {
+        // The counterpart that keeps the rule above from being over-broad. `<key>.tmp-<rand>`
+        // IS a name the runner writes, and PkgDedupStaging.Publish falls back to it, so
+        // MarkInUse really does target one — its orphan claim must still be reclaimed.
+        var marker = WriteMarker(KeyA + ".tmp-0a1b2c3d", DeadPid, startJiffies: 0,
+                                 age: TimeSpan.FromDays(30));
+
+        var result = PkgDedupCache.Prune(_root, MaxAge, Now);
+
+        Assert.False(File.Exists(marker),
+            "a dead process's claim on a vanished .tmp- staging dir is exactly what this loop is for");
+        Assert.Equal(1, result.MarkersRemoved);
     }
 
     [Theory]
@@ -334,6 +392,33 @@ public sealed class PkgDedupCachePruneTests : IDisposable
     public void MaxAgeFromEnvironment_HonoursAFractionalOverride()
     {
         Assert.Equal(TimeSpan.FromDays(0.5), PkgDedupCache.MaxAgeFrom("0.5"));
+    }
+
+    [Theory]
+    [InlineData("0.00001")]   // 0.86 seconds
+    [InlineData("0.0001")]    // 8.6 seconds
+    [InlineData("0.001")]     // 1.4 minutes
+    [InlineData("0.04")]      // 57.6 minutes — just under the floor
+    public void MaxAgeFromEnvironment_RaisesAnImplausiblyShortThresholdToTheFloor(string raw)
+    {
+        // MaxAgeFrom rejects zero and negatives because "delete a stage the moment it is
+        // written" is the failure this class exists to avoid — but it honoured ANY positive
+        // fraction, so `0.00001` asked for a 0.86-second threshold and got it (#3038).
+        //
+        // That is not merely a fast prune. It collapses condition 3, and condition 3 is the
+        // ONLY protection a directory carrying no claim has: a `<key>.tmp-<rand>` staging dir
+        // gets no claim until Publish returns, and a run from a build predating #2990 writes
+        // no claim at all. A sub-minute threshold makes both reachable at once.
+        Assert.Equal(PkgDedupCache.MinMaxAge, PkgDedupCache.MaxAgeFrom(raw));
+    }
+
+    [Fact]
+    public void MaxAgeFromEnvironment_HonoursAnythingAtOrAboveTheFloor()
+    {
+        // The floor raises, it does not clamp everything to itself.
+        Assert.Equal(TimeSpan.FromHours(1), PkgDedupCache.MaxAgeFrom("0.0416666666666667"));
+        Assert.Equal(TimeSpan.FromHours(3), PkgDedupCache.MaxAgeFrom("0.125"));
+        Assert.Equal(TimeSpan.FromDays(30), PkgDedupCache.MaxAgeFrom("30"));
     }
 
     // ── Helpers ────────────────────────────────────────────────────────────────────────
