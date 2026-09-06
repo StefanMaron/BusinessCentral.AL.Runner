@@ -206,11 +206,14 @@ public static partial class RecordPatches
         var session = AlRunner.BcRuntime.SkeletonSession;
         if (session == null)
         {
+            // #3068: `[warn]`, not `[UserSystemTable]` — Log.cs suppresses component tags at
+            // default verbosity, which made "loud, never silent" untrue here for as long as this
+            // carried one. Same for the two sibling branches below.
             // Loud, never silent: without this row every Validate of a field relating to
             // User."User Security ID" refuses the id the runner itself reports, and the failure
             // surfaces layers up inside Microsoft AL where it reads as an application bug.
             Console.Error.WriteLine(
-                "[UserSystemTable] there is no skeleton session, so the User row (2000000120) was "
+                "[warn] UserSystemTable: there is no skeleton session, so the User row (2000000120) was "
                 + "not seeded — every TableRelation to User.\"User Security ID\" will refuse "
                 + "UserSecurityId(). See AlRunner#2296.");
             return UserRowSeedOutcome.NoSessionIdentity;
@@ -220,7 +223,7 @@ public static partial class RecordPatches
         if (userSid == null || userName == null)
         {
             Console.Error.WriteLine(
-                "[UserSystemTable] the skeleton session exposes no user identity "
+                "[warn] UserSystemTable: the skeleton session exposes no user identity "
                 + $"(name={userName ?? "<null>"}, sid={(userSid == null ? "<null>" : "set")}), so the "
                 + "User row (2000000120) was not seeded — every TableRelation to "
                 + "User.\"User Security ID\" will refuse UserSecurityId(). See AlRunner#2296.");
@@ -298,7 +301,7 @@ public static partial class RecordPatches
                 // _userRowSeededForThisBundle is deliberately NOT set: no row was seeded, and a
                 // flag claiming otherwise is the defect this branch exists to remove.
                 Console.Error.WriteLine(
-                    $"[UserSystemTable] the User row (2000000120) for the session user "
+                    $"[warn] UserSystemTable: the User row (2000000120) for the session user "
                     + $"'{userName}' ({userSid}) was REFUSED and is NOT present — {refusalDetail}. "
                     + "Every TableRelation to User.\"User Security ID\" will refuse the id "
                     + "UserSecurityId() itself returns, and Microsoft AL guarded by "
