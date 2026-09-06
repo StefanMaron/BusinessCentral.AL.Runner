@@ -208,6 +208,21 @@ public sealed class ReflectionDrivenHelperLivenessTests
     // ── what a test file names ───────────────────────────────────────────────────────────
 
     /// <summary>
+    /// The source of a file with whole-line comments removed. A doc comment is prose, and prose
+    /// must not vote: <c>&lt;see cref="SetProperty"/&gt;</c> looks exactly like a quoted member
+    /// name to a regex, and counting it would have made this guard's liveness root set — and its
+    /// own anti-vacuity control — satisfiable by a sentence about the code.
+    /// </summary>
+    private static string CodeLinesOf(string path) => string.Join(Environment.NewLine,
+        File.ReadAllLines(path).Where(l =>
+        {
+            var t = l.TrimStart();
+            return !t.StartsWith("//", StringComparison.Ordinal)
+                   && !t.StartsWith("/*", StringComparison.Ordinal)
+                   && !t.StartsWith("*", StringComparison.Ordinal);
+        }));
+
+    /// <summary>
     /// Member names production itself spells out — <c>nameof(X)</c> (which compiles to a plain
     /// string, leaving no call edge) or a quoted <c>"X"</c> handed to a reflection lookup. Every
     /// one is an entry point a call graph cannot see, so every one is a root.
@@ -221,7 +236,7 @@ public sealed class ReflectionDrivenHelperLivenessTests
 
         foreach (var file in Directory.GetFiles(root, "*.cs", SearchOption.AllDirectories))
         {
-            var src = File.ReadAllText(file);
+            var src = CodeLinesOf(file);
             foreach (Match m in Regex.Matches(src, "\"([A-Za-z_][A-Za-z0-9_]*)\""))
                 if (known.Contains(m.Groups[1].Value)) named.Add(m.Groups[1].Value);
             foreach (Match m in Regex.Matches(src, @"\bnameof\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)"))
@@ -238,8 +253,7 @@ public sealed class ReflectionDrivenHelperLivenessTests
     private static IEnumerable<string> MemberNamesQuotedIn(string path, IEnumerable<string> candidates)
     {
         var known = new HashSet<string>(candidates, StringComparer.Ordinal);
-        var src = File.ReadAllText(path);
-        foreach (Match m in Regex.Matches(src, "\"([A-Za-z_][A-Za-z0-9_]*)\""))
+        foreach (Match m in Regex.Matches(CodeLinesOf(path), "\"([A-Za-z_][A-Za-z0-9_]*)\""))
             if (known.Contains(m.Groups[1].Value)) yield return m.Groups[1].Value;
     }
 }
