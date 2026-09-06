@@ -86,8 +86,7 @@ public sealed class DateVirtualTableLazyWindowTests
     [Fact]
     public void DateWindow_IsMaterialisedPerRequest_NotWholesaleOnFirstTouch()
     {
-        var cacheDir = Path.Combine(
-            Path.GetTempPath(), "al-runner-date-lazy-tests", "cache-" + Guid.NewGuid().ToString("N"));
+        var cacheDir = TestScratch.Dir("al-runner-date-lazy-tests");
         try
         {
             var (exit, stdout, stderr) = Run(cacheDir);
