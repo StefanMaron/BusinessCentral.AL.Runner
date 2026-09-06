@@ -145,6 +145,60 @@ jobs:
           PR_COMMITS: ${{ steps.commits.outputs.messages }}
         run: bash .github/scripts/check_closing_reference.sh
 
+  require-corpus-linkage:
+    name: AL-observable changes must declare corpus linkage
+    runs-on: ubuntu-latest
+    # #3255. .claude/rules/bc-behavior-tests-go-upstream.md requires a test
+    # asserting plain BC behaviour to live upstream in the al-language corpus,
+    # where a real service tier adjudicates it, or the PR to name a structural
+    # reason why it cannot. Nothing enforced any part of that, so whether a PR
+    # honoured the rule was visible only if a reviewer read the whole body.
+    #
+    # This job checks that a DECLARATION exists, never whether the PR really
+    # asserts BC behaviour -- that is a judgement CI gets wrong in both
+    # directions, and getting it wrong in the noisy direction trains everyone to
+    # paste past it. See the header of check_corpus_linkage.sh for the scoping
+    # and the trailer design.
+    #
+    # It gates, so by the rule of thumb at the top of this file it must not be
+    # able to fail for an environmental reason. The changed-file list is
+    # therefore computed from the local checkout with git rather than asked of
+    # api.github.com, which makes the whole job offline. The half that DOES need
+    # the network -- resolving the declared corpus PR URL -- is advisory and
+    # lives in pr-check.yml.
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0   # the three-dot diff below needs the merge base
+
+      - name: Collect the PR's changed files
+        id: changed
+        run: |
+          set -euo pipefail
+          base="${{ github.event.pull_request.base.sha }}"
+          # Three dots: changes introduced BY this PR, measured from the merge
+          # base, so commits that landed on main meanwhile are not attributed
+          # to it.
+          files=$(git diff --name-only "$base"...HEAD)
+          # A PR always changes at least one file, so an empty list here means
+          # the diff failed rather than that nothing changed -- and a guard
+          # handed an empty list checks nothing and passes.
+          if [ -z "${files//[[:space:]]/}" ]; then
+            echo "::error::Could not determine any changed file for this PR (base $base). Refusing to report a pass without having read the diff."
+            exit 1
+          fi
+          {
+            echo "files<<CHANGED_FILES_EOF"
+            printf '%s\n' "$files"
+            echo "CHANGED_FILES_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Check the PR body declares corpus linkage
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          CHANGED_FILES: ${{ steps.changed.outputs.files }}
+        run: bash .github/scripts/check_corpus_linkage.sh
+
   verify-trigger-list:
     name: pull_request trigger lists must keep their load-bearing event types
     runs-on: ubuntu-latest

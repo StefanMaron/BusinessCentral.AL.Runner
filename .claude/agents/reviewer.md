@@ -60,8 +60,10 @@ outright, such as one in `SystemTables.InternalTables`, is another. Accept that 
 the reason and puts its proving test in `tests/runner-extras/`. Do not accept it as a way to skip
 writing the upstream test.
 
-Check the pin too: a submodule bump belongs **folded into the fix PR** once the corpus PR has
-merged, never as its own PR, and never before.
+Check the pin too, against the three cases in `al-language-submodule.md`. Folded into the fix
+PR when the corpus test and the fix are both new, and never before the corpus PR has merged. But a
+bump **alone is legitimate** when the fix has already merged (catch-up), or when it advances the pin
+only as far as the open work allows — do not reject those as unaccompanied.
 
 ## 3. Is the measurement sound?
 

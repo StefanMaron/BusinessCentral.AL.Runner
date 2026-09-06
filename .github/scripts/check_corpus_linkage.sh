@@ -64,8 +64,18 @@
 #   PR_BODY        - the pull request's body/description
 #   CHANGED_FILES  - the PR's changed paths, one per line
 #
+# Second mode, for the ADVISORY half in pr-check.yml:
+#
+#   check_corpus_linkage.sh --print-corpus-pr-urls
+#
+# prints every well-formed Corpus-PR URL declared in PR_BODY, one per line, and
+# exits 0 whether or not it found any. It exists so the parsing stays in this
+# file, under the unit tests, while the part that cannot be unit-tested -- the
+# gh call that resolves the URL -- stays in the workflow. Only PR_BODY is read
+# in this mode.
+#
 # Exit codes
-#   0  in scope and declared, or out of scope entirely
+#   0  in scope and declared, or out of scope entirely (or extraction mode)
 #   1  in scope and the declaration is missing or malformed
 #   2  the check could not run (a required input was not passed at all)
 
@@ -79,10 +89,6 @@ if [ -z "${PR_BODY+set}" ]; then
   echo "::error::check_corpus_linkage.sh: PR_BODY is required (it may be empty, but it must be passed)." >&2
   exit 2
 fi
-if [ -z "${CHANGED_FILES+set}" ]; then
-  echo "::error::check_corpus_linkage.sh: CHANGED_FILES is required (it may be empty, but it must be passed)." >&2
-  exit 2
-fi
 
 CORPUS_REPO_URL='https?://github\.com/StefanMaron/BusinessCentral\.AL\.Language\.Tests/pull/[0-9]+/?'
 
@@ -91,6 +97,22 @@ CORPUS_NA_LINE_RE='^[[:space:]]*Corpus-NA:[[:space:]]*(.*)$'
 # Matches the marker whatever follows it, so a malformed Corpus-PR can be
 # reported as malformed rather than as absent -- those need different remedies.
 CORPUS_PR_MARKER_RE='^[[:space:]]*Corpus-PR:'
+
+# --- Extraction mode (advisory half) -----------------------------------------
+
+if [ "${1:-}" = "--print-corpus-pr-urls" ]; then
+  while IFS= read -r line; do
+    if printf '%s' "$line" | command grep -qiP "$CORPUS_PR_LINE_RE"; then
+      printf '%s' "$line" | command grep -oiP "$CORPUS_REPO_URL"
+    fi
+  done <<< "$PR_BODY"
+  exit 0
+fi
+
+if [ -z "${CHANGED_FILES+set}" ]; then
+  echo "::error::check_corpus_linkage.sh: CHANGED_FILES is required (it may be empty, but it must be passed)." >&2
+  exit 2
+fi
 
 # --- Is this diff in scope? --------------------------------------------------
 #

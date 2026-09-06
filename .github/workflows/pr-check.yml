@@ -70,6 +70,66 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python3 .github/scripts/check_required_contexts.py
 
+  corpus-pr-resolves:
+    name: A declared corpus PR URL should resolve
+    runs-on: ubuntu-latest
+    # The ONLINE half of the corpus-linkage guard (#3255). The offline half --
+    # that a Corpus-PR or Corpus-NA trailer is present and well-formed on an
+    # AL-observable diff -- gates from pr-gate.yml. This half resolves the
+    # declared URL against the corpus repository, so by the rule of thumb at the
+    # top of pr-gate.yml it stays advisory: it talks to api.github.com, and a
+    # required context that can go red because that was unreachable blocks a
+    # merge for something the author did not do.
+    #
+    # It reports the corpus PR's STATE; it deliberately does NOT require that
+    # state to be MERGED. On the normal path described in
+    # .claude/rules/bc-behavior-tests-go-upstream.md the corpus PR is still OPEN
+    # while the runner PR is in review -- the orchestrator merges it once the BC
+    # legs are green, and only then does the pin bump land. A check demanding
+    # `merged` here would therefore be red on every correctly executed fold-case
+    # PR, which is the opposite of the behaviour the rule asks for.
+    #
+    # What it is actually good for: catching a URL that points at nothing, at
+    # the AL.Runner repository instead of the corpus, or at a PR that was
+    # CLOSED WITHOUT MERGING -- the last one being the case where a runner PR
+    # cites upstream verification that never happened.
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Resolve any declared corpus PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -uo pipefail
+          urls=$(bash .github/scripts/check_corpus_linkage.sh --print-corpus-pr-urls)
+          if [ -z "${urls//[[:space:]]/}" ]; then
+            echo "No Corpus-PR URL declared in this PR body; nothing to resolve."
+            exit 0
+          fi
+          rc=0
+          while IFS= read -r url; do
+            [ -z "$url" ] && continue
+            num="${url##*/}"
+            echo "Resolving corpus PR #$num ($url)"
+            if ! out=$(gh pr view "$num" \
+                         --repo StefanMaron/BusinessCentral.AL.Language.Tests \
+                         --json state,isDraft,title,mergedAt 2>&1); then
+              echo "::warning::Could not resolve $url against the corpus repository: $out"
+              rc=1
+              continue
+            fi
+            state=$(printf '%s' "$out" | python3 -c 'import json,sys;print(json.load(sys.stdin)["state"])')
+            title=$(printf '%s' "$out" | python3 -c 'import json,sys;print(json.load(sys.stdin)["title"])')
+            echo "  state=$state  title=$title"
+            case "$state" in
+              MERGED) echo "  the corpus test has merged; a real service tier has adjudicated it." ;;
+              OPEN)   echo "::notice::Corpus PR #$num is still open. That is the normal state while this PR is in review -- it must merge upstream before the submodule pin can move." ;;
+              CLOSED) echo "::warning::Corpus PR #$num was CLOSED WITHOUT MERGING. This PR cites upstream verification that did not happen -- check whether the BC-behaviour claim was ever adjudicated."; rc=1 ;;
+            esac
+          done <<< "$urls"
+          exit $rc
+
   # validate-coverage (docs/coverage.yaml) removed at the v1->v2 cutover: v1 tracked
   # AL-language coverage in a hand-curated YAML the orchestrator validated on every PR.
   # v2's spec is the tests/al-language/ corpus itself -- every AL surface that needs

@@ -48,7 +48,7 @@ For each PR:
    > Please revert all changes to CHANGELOG.md — it is generated from commit messages post-merge and must not be edited in PRs.
 
    Do **not** merge until CHANGELOG.md is gone.
-5. **`tests/al-language/` in diff** → the submodule content is read-only. The only legitimate change is the gitlink line a pin bump produces, and only when this PR is the fix PR the bump is folded into (`al-language-submodule.md` — a pin bump can never be its own PR, it is red by construction until the accompanying fix lands). If the diff edits a file *inside* the submodule, or bumps the pin with no accompanying fix in the same PR, and this hasn't been flagged yet:
+5. **`tests/al-language/` in diff** → the submodule content is read-only. The only legitimate change is the gitlink line a pin bump produces, and only when this PR is the fix PR the bump is folded into (`al-language-submodule.md` — that is the *fold* case, red by construction until the accompanying fix lands; a *catch-up* bump, whose fix already merged, is legitimately its own PR and must not be flagged). If the diff edits a file *inside* the submodule, or bumps the pin with no accompanying fix in the same PR **and the newly pulled-in tests need one**, and this hasn't been flagged yet:
    > `tests/al-language/` is a read-only submodule — please revert any change to files inside it. A pin bump belongs in the same PR as the runner fix it enables, not on its own.
 
    Do **not** merge until it's resolved. (No `docs/coverage.yaml` to check for — retired at the v1→v2 cutover, see `al-runner-tests` skill.)

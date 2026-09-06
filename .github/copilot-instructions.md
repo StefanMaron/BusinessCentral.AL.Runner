@@ -20,7 +20,7 @@ When you receive a **PR review request**, you are a **code reviewer**. Apply the
 **Hard rules:**
 - Never push directly to `main`.
 - Never edit `CHANGELOG.md` (auto-generated from squash-commit messages post-merge).
-- Never edit a file under `tests/al-language/` — that submodule is read-only. A pin bump is folded into the fix PR it enables, never its own PR (`.claude/rules/al-language-submodule.md`).
+- Never edit a file under `tests/al-language/` — that submodule is read-only. A pin bump is folded into the fix PR it enables when that fix is new; a catch-up bump, whose fix already merged, is its own PR (`.claude/rules/al-language-submodule.md`).
 - Honour the precompiled-DLL contract: do not rewrite method bodies or rename types in MS / ISV business-logic DLLs (`.claude/rules/precompiled-dll-respect.md`).
 - Every unsupported surface must throw `RunnerOutOfScopeException` with a named API and reason from `docs/scope.md`. Never silently return a default (`.claude/rules/loud-failures.md`).
 
@@ -135,7 +135,7 @@ Flag any patch that silently returns a default value for an unsupported surface.
 
 `tests/al-language/` is read-only. Flag any PR that:
 - Edits files under `tests/al-language/` directly.
-- Bumps the submodule pin with no accompanying fix in the same PR — a pin bump alone is red by construction and belongs folded into the fix PR it enables.
+- Bumps the submodule pin with no accompanying fix in the same PR, **where the newly pulled-in tests need one** — that is red by construction and belongs folded into the fix PR it enables. A catch-up bump, whose fix already merged, is fine alone.
 
 ## Code quality
 

@@ -166,6 +166,45 @@ assert_exit "prose merely mentioning the corpus does not count" 1 \
   "AlRunner/Patches/MockTestPage.cs" \
   "This matches what the corpus asserts upstream, see the al-language tests."
 
+# --- Extraction mode, used by the advisory half in pr-check.yml --------------
+# The parsing lives here, under test; only the gh call that resolves the URL is
+# in the workflow, where it cannot be unit-tested.
+
+assert_extract() {
+  local desc="$1" expected="$2" body="$3"
+  local got
+  got=$(PR_BODY="$body" "$SCRIPT" --print-corpus-pr-urls 2>/dev/null)
+  if [ "$got" = "$expected" ]; then
+    echo "ok   - $desc"
+    pass=$((pass + 1))
+  else
+    echo "FAIL - $desc: expected '$expected', got '$got'"
+    fail=$((fail + 1))
+  fi
+}
+
+assert_extract "extracts a declared corpus PR URL" "$CORPUS_URL" "Corpus-PR: $CORPUS_URL"
+assert_extract "extracts nothing when nothing is declared" "" "Corpus-NA: some reason here"
+assert_extract "extracts nothing from a malformed URL" "" "Corpus-PR: #211"
+assert_extract "does not extract a URL buried in prose" "" \
+  "I think Corpus-PR: $CORPUS_URL might be right."
+assert_extract "extracts both when two are declared" \
+  "$(printf '%s\n%s' "$CORPUS_URL" "https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests/pull/212")" \
+  "Corpus-PR: $CORPUS_URL
+Corpus-PR: https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests/pull/212"
+
+# Extraction mode reads only PR_BODY -- it must not demand CHANGED_FILES, which
+# the advisory job has no reason to compute.
+rc=0
+env -u CHANGED_FILES PR_BODY="Corpus-PR: $CORPUS_URL" "$SCRIPT" --print-corpus-pr-urls >/dev/null 2>&1 || rc=$?
+if [ "$rc" = "0" ]; then
+  echo "ok   - extraction mode does not require CHANGED_FILES"
+  pass=$((pass + 1))
+else
+  echo "FAIL - extraction mode should not require CHANGED_FILES, got exit $rc"
+  fail=$((fail + 1))
+fi
+
 # --- Usage -------------------------------------------------------------------
 
 rc=0
