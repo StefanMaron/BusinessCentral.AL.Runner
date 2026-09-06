@@ -185,7 +185,17 @@ internal static partial class BcAppSymbolCache
     // structural hash can see. Without the key changing, a stale payload would answer
     // DeclaredRunPageLinkEntries = 0 — which RunnerPageInstance.ResolveRunTargetFromSymbols
     // reads as "this action declares no link", opening the target on its WHOLE table.
-    private const int CacheVersion = 32;
+    // v33: two parse changes in this file that a structural hash cannot see, plus one record
+    // shape change that it can (#3267). #3248 taught SplitPropertyEntries to strip AL
+    // preprocessor directives and both link/view parsers to KEEP what they could not read,
+    // which changes the VALUES parsed out of unchanged bytes without changing any record's
+    // shape — a payload written before it replays the old, wider answer from a warm cache for
+    // as long as the .app's content hash holds. This change then fixed the action path's
+    // declared-entry count to use that same directive-aware splitter, which likewise changes a
+    // parsed value only. ActionRunObjectSymbol also gained UnreadableRunPageLinkEntries, and
+    // that half PayloadShape would have keyed on by itself; the bump is the explicit statement
+    // of the two halves it would not.
+    private const int CacheVersion = 33;
     private static readonly ConcurrentDictionary<string, AppSymbols> ProcessCache = new(StringComparer.OrdinalIgnoreCase);
     // Issue #1820's path -> content-hash memo now lives in
     // RunnerFingerprint._fileContentHashes (#2955), because AppLoader's persisted r2r-chunks
@@ -420,15 +430,30 @@ internal static partial class BcAppSymbolCache
     ///
     /// <para><c>DeclaredRunPageLinkEntries</c> is how many top-level entries the property text
     /// actually declared, which is NOT always <c>RunPageLink.Count</c>: an entry the parser does
-    /// not understand is dropped with a note on stderr. The consumer compares the two and
-    /// refuses when they differ, because a link applied with one entry missing selects MORE rows
-    /// than BC would — a silent wrong answer, not a smaller one.</para>
+    /// not understand is not applied. The consumer compares the two and refuses when they
+    /// differ, because a link applied with one entry missing selects MORE rows than BC would —
+    /// a silent wrong answer, not a smaller one. It is counted with the directive-aware
+    /// splitter the parse itself uses, so a chunk that is nothing but an AL preprocessor
+    /// directive is not miscounted as a declared entry (#3267).</para>
+    ///
+    /// <para><c>UnreadableRunPageLinkEntries</c> is the raw text of every entry
+    /// <c>ParseSubPageLink</c> could NOT read, null when there were none. The count above
+    /// already makes such a link refuse, so this does not change WHETHER it refuses — it
+    /// makes the refusal name the text that could not be read instead of only a number, which
+    /// is the difference between a message a developer can act on and one that sends them
+    /// back to the symbol file. It rides in the PAYLOAD for the reason
+    /// <see cref="PagePartSymbol.UnreadableSubPageLinkEntries"/> spells out: parsing sits
+    /// behind a content-addressed on-disk cache, so anything written to stderr at parse time
+    /// is emitted on a cache MISS and silently lost on every warm run after.</para>
     /// </summary>
     internal sealed record ActionRunObjectSymbol(
         string ObjectName,
         bool RunPageOnRec,
         int DeclaredRunPageLinkEntries,
-        List<PageSubFormLinkSymbol>? RunPageLink = null)
+        List<PageSubFormLinkSymbol>? RunPageLink = null,
+        // Trailing + optional so the record still deserialises positionally; guarded by the
+        // v33 CacheVersion bump, so null here only ever means "every entry was readable".
+        List<string>? UnreadableRunPageLinkEntries = null)
     {
         internal bool HasRunPageLink => DeclaredRunPageLinkEntries > 0;
     }
@@ -1310,18 +1335,34 @@ internal static partial class BcAppSymbolCache
         var hasLink = props.TryGetValue("RunPageLink", out var link) && !string.IsNullOrWhiteSpace(link);
         var declaredEntries = 0;
         List<PageSubFormLinkSymbol>? parsedLink = null;
+        List<string>? unreadableLink = null;
         if (hasLink)
         {
-            foreach (var entry in SplitTopLevelCommas(link!))
-                if (entry.Trim().Length > 0) declaredEntries++;
+            // Counted with the SAME directive-aware splitter the parser uses, NOT a bare
+            // SplitTopLevelCommas (#3267). The compiler records a property's SOURCE text with
+            // its AL preprocessor directives in it, and a comma-split chunk can then be
+            // directives and whitespace only -- `"A" = field("B"), #if X "C" = field("D"),
+            // #endif` splits into three chunks of which the third is just `#endif`. Counting
+            // that as a DECLARED entry made declaredEntries 3 against a correctly-read
+            // parsed.Count of 2, and LinksFromSymbols refuses on that difference -- so a link
+            // this parser read completely was refused for being incomplete. Directives inside
+            // a RunPageLink are the same shipping shape #2978 measured on BC 27.5's part
+            // SubPageLinks, read by the same grammar, so the count has to be blind to them the
+            // same way the parse is.
+            declaredEntries = SplitPropertyEntries(link!).Count;
             // Same grammar as a part's SubPageLink -- `"Field" = field("Other")`, `= const(X)`,
             // `= filter(A|B)`, comma-separated -- so the same parser reads it (issue #2942).
-            // The unreadable list is discarded here, and only here: an unreadable entry is
-            // counted in declaredEntries but never reaches the result, so this path already
-            // refuses through DeclaredRunPageLinkEntries != RunPageLink.Count (applied in
-            // RunnerPageInstance.ActionRunObject.cs). PagePartSymbol carries the list instead
-            // because a part has no such count to compare against.
-            parsedLink = ParseSubPageLink(link, out _);
+            // The list IS carried here, not discarded. #3270 discarded it on the reasoning
+            // that "an unreadable entry is counted in declaredEntries but never reaches the
+            // result, so this path already refuses through DeclaredRunPageLinkEntries !=
+            // RunPageLink.Count". The first half is true and the conclusion does not follow,
+            // because that comparison was not sound: the two sides were computed by two
+            // splitters that disagree about AL preprocessor directives (see the count above).
+            // A count that can be wrong in the FALSE-REFUSAL direction is not a channel to
+            // rest a fail-closed decision on alone, so the refusal now has two independent
+            // signals, and the one made of text can say WHICH entry defeated the parser
+            // instead of only how many did.
+            parsedLink = ParseSubPageLink(link, out unreadableLink);
         }
         return new ActionRunObjectSymbol(
             runObject!,
@@ -1329,7 +1370,8 @@ internal static partial class BcAppSymbolCache
             // writes RunPageOnRec = "1" for `RunPageOnRec = true`.
             SymbolBool(props, "RunPageOnRec"),
             declaredEntries,
-            parsedLink);
+            parsedLink,
+            unreadableLink);
     }
 
     /// <summary>

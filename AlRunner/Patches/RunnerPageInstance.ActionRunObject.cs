@@ -486,8 +486,13 @@ internal sealed partial class RunnerPageInstance
     /// the same thing whichever route recovered it.</para>
     ///
     /// <para>Refuses rather than returning a partial link, in both directions: a target page
-    /// with no resolvable source table has no rowset to filter, and an entry the parser dropped
-    /// would leave the target showing MORE rows than BC does.</para>
+    /// with no resolvable source table has no rowset to filter, and an entry the parser could
+    /// not read would leave the target showing MORE rows than BC does. The refusal fires on the
+    /// entry count AND on the unreadable entries the parse now carries alongside it (#3267) —
+    /// the count alone was load-bearing while it was also being computed by a splitter that
+    /// disagreed with the parse about AL preprocessor directives, and two independent signals
+    /// for one fail-closed decision is the cheaper arrangement than one that has to stay
+    /// exactly right.</para>
     /// </summary>
     private IReadOnlyList<ActionRunLink> LinksFromSymbols(
         int actionId, BcAppSymbolCache.ActionRunObjectSymbol spec, int targetPageId)
@@ -495,13 +500,24 @@ internal sealed partial class RunnerPageInstance
         if (!spec.HasRunPageLink) return NoLinks;
 
         var parsed = spec.RunPageLink;
-        if (parsed == null || parsed.Count != spec.DeclaredRunPageLinkEntries)
+        var unreadable = spec.UnreadableRunPageLinkEntries;
+        if (parsed == null || parsed.Count != spec.DeclaredRunPageLinkEntries
+            || unreadable is { Count: > 0 })
             throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
                 $"TestPage action {actionId} on page {_pageId}",
                 $"not-yet-implemented — the action declares RunObject = '{spec.ObjectName}' with a "
                 + $"RunPageLink of {spec.DeclaredRunPageLinkEntries} entr(ies), and this run "
                 + $"could read {parsed?.Count ?? 0} of them out of the symbol file. Applying the "
-                + "rest alone would show MORE rows than real BC, so it is refused instead");
+                + "rest alone would show MORE rows than real BC, so it is refused instead"
+                // The entry TEXT, not just the shortfall. The count says how many were lost and
+                // the developer still has to open SymbolReference.json to find out which; the
+                // text is the thing that says whether this is AL grammar the parser has never
+                // seen or a link that was never going to work. Carried through the payload
+                // (#3267) so a warm content-addressed cache hit replays it -- the same reason
+                // PagePartSymbol.UnreadableSubPageLinkEntries exists rather than a stderr line.
+                + (unreadable is { Count: > 0 }
+                    ? $". The entr(ies) it could not read: {string.Join(" | ", unreadable)}"
+                    : string.Empty));
 
         var targetTableId = RecordPatches.ResolveSourceTableIdForAnyPage(targetPageId);
         var hostTableId = RecordPatches.ResolveSourceTableIdForAnyPage(_pageId);
