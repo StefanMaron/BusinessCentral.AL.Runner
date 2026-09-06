@@ -737,24 +737,16 @@ public static partial class RecordPatches
     /// exercising <see cref="ScanReportIdsFromPeFile"/> directly.</summary>
     internal static int[] ReadReportIdsFromPeFileForTest(string path) => ScanReportIdsFromPeFile(path) ?? Array.Empty<int>();
 
+    /// <summary>
+    /// #3143: NOT swallowed — an unreadable dependency used to leave every report it declares
+    /// out of Report Metadata (2000000139) and out of the ProcessingOnly id set built from
+    /// this same walk. See RecordPatches.DependencyAppSymbolWalk.cs.
+    /// </summary>
     private static IEnumerable<BcAppSymbolCache.ReportSymbol> EnumerateBcAppReportSymbols()
     {
-        foreach (var appPath in _bcAppPaths.ToArray())
-        {
-            List<BcAppSymbolCache.ReportSymbol> reports;
-            try
-            {
-                reports = BcAppSymbolCache.Get(appPath).Reports;
-            }
-            catch (Exception ex)
-            {
-                Console.Error.WriteLine(
-                    $"[RecordPatches] Report Metadata: SymbolReference read failed for {Path.GetFileName(appPath)}: {ex.Message}");
-                continue;
-            }
-            foreach (var r in reports)
+        foreach (var (_, symbols) in EnumerateRegisteredBcAppSymbols("reports (Report Metadata)"))
+            foreach (var r in symbols.Reports)
                 yield return r;
-        }
     }
 
     private static MethodInfo? _rmvNavBooleanCreate;

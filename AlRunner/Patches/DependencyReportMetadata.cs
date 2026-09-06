@@ -85,26 +85,19 @@ public static partial class RecordPatches
         return xml;
     }
 
+    /// <summary>
+    /// #3143: NOT swallowed. Returning null here means "no loaded dependency declares report
+    /// N", and the caller turns that into a not-yet-implemented refusal naming the report —
+    /// so a read failure used to blame the AL author for a report that is right there in a
+    /// package the runner could not parse. See RecordPatches.DependencyAppSymbolWalk.cs.
+    /// </summary>
     private static (string AppPath, BcAppSymbolCache.ReportSymbol Report)? FindDependencyReportSymbol(int reportId)
     {
-        foreach (var appPath in _bcAppPaths.ToArray())
-        {
-            List<BcAppSymbolCache.ReportSymbol> reports;
-            try
-            {
-                reports = BcAppSymbolCache.Get(appPath).Reports;
-            }
-            catch (Exception ex)
-            {
-                Console.Error.WriteLine(
-                    $"[RecordPatches] dependency report metadata: SymbolReference read failed for "
-                    + $"{Path.GetFileName(appPath)}: {ex.Message}");
-                continue;
-            }
-            foreach (var r in reports)
+        foreach (var (appPath, symbols) in
+                 EnumerateRegisteredBcAppSymbols("reports (dependency report metadata)"))
+            foreach (var r in symbols.Reports)
                 if (r.Id == reportId)
                     return (appPath, r);
-        }
         return null;
     }
 

@@ -226,24 +226,18 @@ public static partial class RecordPatches
             yield return o;
     }
 
+    /// <summary>
+    /// #3143: NOT swallowed. This used to `continue` past any read failure behind a
+    /// `[RecordPatches]`-tagged line that Log's default filter drops, so an unreadable
+    /// dependency simply had none of its objects in AllObj — a table AL enumerates to
+    /// discover what exists, answered short. Walk and failure policy now come from
+    /// EnumerateRegisteredBcAppSymbols; see RecordPatches.DependencyAppSymbolWalk.cs.
+    /// </summary>
     private static IEnumerable<(string Kind, int Id, string Name, string? Caption)> EnumerateBcAppObjects()
     {
-        foreach (var appPath in _bcAppPaths.ToArray())
-        {
-            List<BcAppSymbolCache.ObjectSymbol> objects;
-            try
-            {
-                objects = BcAppSymbolCache.Get(appPath).Objects;
-            }
-            catch (Exception ex)
-            {
-                Console.Error.WriteLine(
-                    $"[RecordPatches] AllObj: SymbolReference read failed for {Path.GetFileName(appPath)}: {ex.Message}");
-                continue;
-            }
-            foreach (var o in objects)
+        foreach (var (_, symbols) in EnumerateRegisteredBcAppSymbols("objects (AllObj)"))
+            foreach (var o in symbols.Objects)
                 yield return (o.Kind, o.Id, o.Name, o.Caption);
-        }
     }
 
     /// <summary>
@@ -365,6 +359,23 @@ public static partial class RecordPatches
         var index = new Dictionary<(string Kind, int Id), Guid>();
         foreach (var appPath in _bcAppPaths.ToArray())
         {
+            // #3143: VANISHED is the one tolerated condition, and #3133 did not have it.
+            // Without this skip a --watch iteration that removed a dependency, or a --server
+            // process outliving a rebuild, ABORTS AllObj outright — while EnumerateBcAppObjects
+            // twenty lines up skips the same .app and carries on, so one table's two walks
+            // disagreed about whether a vanished dependency is survivable. Every other
+            // dependency-symbol read in the runner treats it as survivable (#2712, #3031), and
+            // the answer it produces is honest: the app contributes no AllObj rows AND no
+            // ownership entries, so nothing is stamped with a guessed owner. PRESENT BUT
+            // UNREADABLE keeps #3133's refusal below, unchanged.
+            if (!File.Exists(appPath))
+            {
+                Console.Error.WriteLine(
+                    "[warn] registered dependency .app is no longer on disk; its objects "
+                    + $"(AllObj object ownership) are not available to this run: {appPath}");
+                continue;
+            }
+
             BcAppSymbolCache.AppSymbols symbols;
             // #3117: NOT swallowed. This used to `catch { continue; }` on the reasoning that
             // "the AllObj row itself is built either way" — true, but it is then built with
