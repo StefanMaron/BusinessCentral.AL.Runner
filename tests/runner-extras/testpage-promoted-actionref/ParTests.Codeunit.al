@@ -19,9 +19,9 @@
 /// a RunObject, and the runner now PERFORMS a RunObject that names a page, so the two arms that
 /// used to assert a runner refusal for `RunObject = page ...` would have kept a fixed defect
 /// pinned as correct. They now assert the opposite -- that no runner refusal is raised and BC's
-/// own unhandled-UI error comes through instead -- and the refusal claim moved onto the three
-/// shapes the runner genuinely still declines: a RunObject naming a REPORT, one carrying a
-/// RunPageLink, and an action declaring no effect at all.
+/// own unhandled-UI error comes through instead -- and the refusal claim moved onto the shapes
+/// the runner genuinely still declines: a RunObject naming a REPORT, and an action declaring no
+/// effect at all. #2942 moved the RunPageLink arm across the same way, for the same reason.
 ///
 /// The plain-BC half of the first eight arms is covered upstream in the al-language corpus:
 /// StefanMaron/BusinessCentral.AL.Language.Tests#79, commit c98be548, green on real BC 27.5
@@ -217,12 +217,18 @@ codeunit 64545 "Par Tests"
             'the runner must no longer raise a refusal of its own for an actionref to a RunObject page action');
     end;
 
-    // Runner-specific, #2931: RunPageLink is not applied yet. Opening the page WITHOUT its link
-    // filters would show a different rowset than real BC — a silent wrong answer — so it is
-    // refused instead, and the reason anchor says "not-yet-implemented" so an expectations entry
-    // can track it as a gap against an open issue rather than as a permanent boundary.
+    // #2942 changed what this arm proves, the same way #2931 changed the two above it. The
+    // runner used to refuse a RunObject action carrying a RunPageLink, because opening the page
+    // without its link filters would have shown a different rowset than real BC. It now APPLIES
+    // the link, so this arm asserts the opposite: no runner refusal of its own, and BC's own
+    // unhandled-UI error comes through exactly as it does for the unlinked TriggerlessAction.
+    //
+    // What the link SELECTS is plain BC behaviour, so it is proven upstream rather than here --
+    // StefanMaron/BusinessCentral.AL.Language.Tests, handlers/TestPageActionRunPageLink.al,
+    // six arms over field / const / filter links, an unlinked control and an empty rowset. The
+    // claim that stays runner-specific is this one: that the runner raises nothing itself.
     [Test]
-    procedure RunObjectWithRunPageLinkRefusesAsANotYetImplementedGap()
+    procedure RunObjectWithRunPageLinkIsPerformedWithoutARunnerRefusal()
     var
         HostPage: TestPage "Par Host Page";
     begin
@@ -231,12 +237,12 @@ codeunit 64545 "Par Tests"
         HostPage.OpenEdit();
         asserterror HostPage.LinkedPageAction.Invoke();
 
-        Assert.Contains(GetLastErrorText(), 'not-yet-implemented',
-            'an unapplied RunPageLink must be refused with a gap anchor, not a permanent-boundary one');
-        Assert.Contains(GetLastErrorText(), 'RunPageLink',
-            'the refusal must name RunPageLink as the reason, so the reader knows what is missing');
-        Assert.Contains(GetLastErrorText(), '2942',
-            'the refusal must cite the OPEN issue tracking the gap, not the one whose fix closed');
+        Assert.Contains(GetLastErrorText(), 'Unhandled UI',
+            'a RunObject action carrying a RunPageLink must reach BC''s own page dispatch');
+        Assert.NotContains(GetLastErrorText(), 'out-of-scope',
+            'the runner must no longer raise a refusal of its own for an action''s RunPageLink');
+        Assert.NotContains(GetLastErrorText(), 'not-yet-implemented',
+            'the RunPageLink gap is closed, so nothing may still be anchored as one');
     end;
 
     // Runner-specific, #2931: only a RunObject naming a PAGE is performed so far. A report

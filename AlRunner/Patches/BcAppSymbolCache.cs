@@ -176,11 +176,15 @@ internal static partial class BcAppSymbolCache
     // effect at all, the exact pre-fix behaviour replayed from cache rather than a cache miss.
     // That is a wrong ANSWER, so it needs the bump.
     // v32: ActionRunObjectSymbol gained the PARSED RunPageLink and its declared entry count
-    // (#2942) — it used to record only that a link was present, which was enough to refuse the
-    // action and is not enough to apply it. A v31 payload deserialises RunPageLink as null and
-    // DeclaredRunPageLinkEntries as 0, which RunnerPageInstance.ResolveRunTargetFromSymbols
-    // reads as "this action declares no link" — so a linked action would open its target on the
-    // WHOLE table, replayed from cache. That is a wrong answer, so it needs the bump.
+    // (#2942) — it used to record only that a link was PRESENT, which was enough to refuse the
+    // action and is not enough to apply it. Both halves of the rule above are true of this one
+    // at once. The record's SHAPE changed and ActionRunObjectSymbol is reachable from
+    // CachePayload, so PayloadShape already gives it a different key on its own; and the PARSE
+    // changed too, because the RunPageLink property text was read for presence only and is now
+    // read for content. The bump is the explicit statement of the second half, which no
+    // structural hash can see. Without the key changing, a stale payload would answer
+    // DeclaredRunPageLinkEntries = 0 — which RunnerPageInstance.ResolveRunTargetFromSymbols
+    // reads as "this action declares no link", opening the target on its WHOLE table.
     private const int CacheVersion = 32;
     private static readonly ConcurrentDictionary<string, AppSymbols> ProcessCache = new(StringComparer.OrdinalIgnoreCase);
     // Issue #1820's path -> content-hash memo now lives in

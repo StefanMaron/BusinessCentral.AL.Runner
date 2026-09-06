@@ -8,10 +8,13 @@
 ///                                       PERFORMS this rather than refusing it, so with no
 ///                                       [PageHandler] declared it must fail with BC's own
 ///                                       unhandled-UI error and NOT with a runner refusal.
-///   LinkedPageAction                    the same, plus RunPageLink. The runner does not apply
-///                                       an action's link filters yet, and opening the page
-///                                       WITHOUT them would show a different rowset than real
-///                                       BC, so it refuses -- with a gap anchor.
+///   LinkedPageAction                    the same, plus RunPageLink. Since #2942 the runner
+///                                       applies the link and opens the target on the rowset it
+///                                       selects, so with no [PageHandler] declared this too
+///                                       must reach BC's own unhandled-UI error and not a
+///                                       runner refusal. What the link SELECTS is pinned
+///                                       upstream in the al-language corpus
+///                                       (handlers/TestPageActionRunPageLink.al).
 ///   ReportRunObjectAction               a RunObject naming a REPORT: in scope, not implemented.
 ///   NoEffectAction / NoEffectRef        neither a trigger nor a RunObject, so genuinely
 ///                                       nothing to run; the refusal that names the actionref's
