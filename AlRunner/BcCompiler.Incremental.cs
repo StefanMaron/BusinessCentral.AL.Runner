@@ -230,6 +230,26 @@ public sealed partial class BcCompiler
     private readonly Dictionary<string, Dictionary<int, string>> _radXmlPortMetadataByModule =
         new(StringComparer.Ordinal);
 
+    // #2939, and the same mechanism as the two dictionaries above. RecordPatches'
+    // _bcQuerySymbolJsonPaths — the loose SymbolReference.json files a bundle's own compiled
+    // queries are read from — is a REGISTERED list, and since #2939 the per-bundle reload path
+    // clears it. That clear is correct (bundle 2 was being served bundle 1's column ids by a
+    // first-wins merge) but on its own it is a --watch regression, because these same RAD fast
+    // paths hand a result back without ever calling Emit, and Emit is the only thing that calls
+    // EmitAndRegisterBundleQuerySymbols. Measured on tests/runner-extras/query-join-aggregation-oos
+    // driven through four --watch cycles: 4 PASS on every cycle before the clear, 4 PASS on
+    // cycle 1 and 4 FAIL from cycle 2 onward with the clear and no replay.
+    //
+    // So the registration is shadowed here exactly like the page/xmlport metadata: captured
+    // after the full Emit that produced the file, replayed at every fast-path return. The
+    // VALUE is the path rather than the parsed symbols because the file is per-process and
+    // per-module (PerProcessScratch, #2967) and is rewritten in place by each full Emit of this
+    // module — so replaying the path re-registers whatever that module's most recent real
+    // compile wrote, which is the same content the accumulating list used to hand back, minus
+    // the other bundles' files that were the actual defect.
+    private readonly Dictionary<string, string> _radQuerySymbolsPathByModule =
+        new(StringComparer.Ordinal);
+
     /// <summary>Full (re)capture — called after a clean full Emit, when every object this app
     /// declares is known and the live registries already hold its current metadata.</summary>
     private void CaptureRadMetadataSnapshotFull(
@@ -248,6 +268,17 @@ public sealed partial class BcCompiler
         }
         _radPageMetadataByModule[moduleName] = pages;
         _radXmlPortMetadataByModule[moduleName] = xmlPorts;
+
+        // #2939: the query-symbol source file this same Emit just wrote, if this module
+        // declares a query at all. LastBundleQuerySymbolsPath is set (or nulled) at the top of
+        // every Emit and this method is called from RecordIncrementalBaseline, i.e. from INSIDE
+        // that same Emit, so it names this module and no other even in a bundled multi-group
+        // run. A module that declares no query records nothing and replays nothing.
+        var querySymbolsPath = LastBundleQuerySymbolsPath;
+        if (querySymbolsPath != null && File.Exists(querySymbolsPath))
+            _radQuerySymbolsPathByModule[moduleName] = querySymbolsPath;
+        else
+            _radQuerySymbolsPathByModule.Remove(moduleName);
     }
 
     /// <summary>Incremental update — called after a successful RAD delta. Drops vacated
@@ -286,6 +317,11 @@ public sealed partial class BcCompiler
             foreach (var (id, xml) in pages) AlPageMetadataRegistry.Register(id, xml);
         if (_radXmlPortMetadataByModule.TryGetValue(moduleName, out var xmlPorts))
             foreach (var (id, xml) in xmlPorts) AlXmlPortMetadataRegistry.Register(id, xml);
+        // #2939. RegisterBundleQuerySymbolsJson is itself idempotent AND always invalidates the
+        // derived index (the file is rewritten in place by each full Emit), so replaying an
+        // already-registered path is correct rather than merely harmless.
+        if (_radQuerySymbolsPathByModule.TryGetValue(moduleName, out var querySymbolsPath))
+            AlRunner.Patches.RecordPatches.RegisterBundleQuerySymbolsJson(querySymbolsPath);
     }
 
     /// <summary>
