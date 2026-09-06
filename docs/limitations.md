@@ -294,6 +294,43 @@ runs. AL that needs the target codeunit's logic to actually execute should call 
 - `System.GetDotNetType(Joker)` — resolves the `.NET` type for an arbitrary AL value; no `.NET` type resolution without BC service tier.
 - `assembly_declaration`, `dotnet_declaration`, `type_declaration` — object types that wrap .NET assemblies; not compiled in standalone mode.
 
+### `System.Drawing` — Windows-only in .NET 8, so it never runs on a Linux or macOS host
+
+<a id="system-drawing"></a>
+
+Precompiled Microsoft code does reach .NET interop, and some of what it reaches is
+Windows-only. Base Application table 2121 `"O365 Brand Color"`.`MakePicture` builds a
+`System.Drawing.Bitmap` to draw a colour swatch, which is why eleven `O365 Brand Color Tests`
+fail on a Linux host.
+
+The runner names the surface instead of letting BC's wrapper bury it. Before
+[#3212](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3212):
+
+```
+NavNCLDotNetInvokeException: A call to System.Drawing.Bitmap failed with this message:
+The type initializer for 'Gdip' threw an exception.
+```
+
+After:
+
+```
+out-of-scope: NavDotNet.CreateDotNet(System.Drawing.Bitmap) — dotnet-platform-unsupported —
+System.Drawing.Common refuses every entry point on this operating system (Linux …). …
+.NET reported: System.Drawing.Common is not supported on non-Windows platforms. …
+```
+
+**There is no workaround on the host side.** `System.Drawing.Common` 8.0 — the copy BC itself
+ships — throws `PlatformNotSupportedException` from its `Gdip` class initializer whenever
+`OperatingSystem.IsWindows()` is false, before any native library is consulted; it carries no
+`libgdiplus` reference at all, and the .NET 6 `System.Drawing.EnableUnixSupport` switch was
+removed in .NET 7. Installing a system package changes nothing.
+
+**What to do with AL that needs it.** Either run that test against a real BC service tier, or
+inject the image work behind an AL interface and pass a test double. The runner will not
+substitute a different imaging library: the pixels would not be GDI+'s, so the test would be
+asserting against the runner rather than against BC — see "Why no real SA implementations"
+below and `docs/scope.md#dotnet-platform`.
+
 ### Query — joins and dataset export work; aggregation does not
 
 <a id="query-shape-gaps"></a>

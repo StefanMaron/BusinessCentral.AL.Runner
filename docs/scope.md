@@ -261,6 +261,42 @@ Reason token: `table-connections`. The test-connection path is §1.
 
 ---
 
+### §3.16. .NET libraries that refuse a non-Windows host <a id="dotnet-platform"></a>
+
+In-process .NET interop is in scope (§1) and runs as real code. A handful of .NET libraries
+are **Windows-only in modern .NET**, so on a Linux or macOS host there is no configuration in
+which they run at all — the boundary is the host, not the runner's design.
+
+| API | Reason |
+|---|---|
+| `System.Drawing` (`Bitmap`, `Graphics`, `Image`, …) constructed through BC's .NET interop | `System.Drawing.Common` 8.0 — the copy BC itself ships — throws `PlatformNotSupportedException` from its `Gdip` class initializer on every non-Windows OS. |
+| Any other .NET type whose constructor raises `PlatformNotSupportedException` | Same shape; the refusal reports whichever .NET library raised it, so it does not need a per-type list here. |
+
+Reason token: `dotnet-platform-unsupported`. The refusal names the AL-visible type, the .NET
+library that refused, this host's OS, and .NET's own message.
+
+**Installing a native package does not help, and no runtime switch exists.** Decompiled from
+the artifact BC ships, `SafeNativeMethods.Gdip..cctor` reads
+`if (!OperatingSystem.IsWindows()) NativeLibrary.SetDllImportResolver(…, delegate { throw new
+PlatformNotSupportedException(…); });` before it calls `GdiplusStartup`, and the assembly
+carries no `libgdiplus` string — only `gdiplus.dll`. The .NET 6
+`System.Drawing.EnableUnixSupport` `AppContext` switch was removed in .NET 7.
+
+**Why the runner does not substitute an imaging library.** Redirecting BC's `System.Drawing`
+calls onto SkiaSharp or ImageSharp would produce different bytes from GDI+, so an AL test
+asserting on a stored image would be asserting against the runner's imaging stack rather than
+against BC — the failure mode that got `MockImage` reverted in
+[#1502](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/1502), and the reason
+`docs/limitations.md` forbids shipping an `Image` implementation. Media content that is *not*
+an image stores normally; see `AlRunner/Patches/MediaPatches.cs`, whose `media-image-decode`
+refusal is the same boundary reached from the Media/MediaSet side.
+
+**Running the affected AL on a Windows host works**, because the refusal fires on the
+exception .NET actually raised rather than on a list of type names — there is nothing to
+disable.
+
+---
+
 ## §4. In scope, not yet implemented (TODO)
 
 These are surfaces we intend to support but haven't built yet. They throw

@@ -130,7 +130,23 @@ public static class RunnerTestPageState
         // NON-NavBaseException (a runner-internal/reflection failure — the ORIGINAL reason
         // this catch exists, per the type comment above) still means "a page that cannot be
         // marked simply behaves as it did before".
-        catch (Exception ex) when (ex is not NavBaseException)
+        //
+        // Issue #3212: RunnerOutOfScopeException has to escape for the same reason a
+        // NavBaseException does, and the NavBaseException test alone could not let it — a
+        // refusal is deliberately a plain System.Exception, precisely so that no BC error path
+        // can produce one (see RunnerOutOfScopeException's type comment). So every refusal
+        // raised from an OnOpenPage was discarded here: the page opened as though the trigger
+        // had succeeded, and the test failed later on whatever the trigger had not done, with
+        // the surface and the reason gone. Found on Base Application page 2158
+        // "O365 Brand Colors", whose OnOpenPage reaches System.Drawing — the one of #3212's
+        // eleven failures that goes through a page kept reporting a downstream row count while
+        // the other ten named the surface. Nothing about it is specific to that surface: the
+        // media, table-connection and report-rendering refusals were swallowed here
+        // identically. Pinned by tests/runner-extras/task-scheduler-oos
+        // (TskPageOpen.Page.al), whose scoping control holds the other half — an ordinary
+        // OnOpenPage still runs, and a runner-internal failure is still absorbed.
+        catch (Exception ex) when (ex is not NavBaseException
+                                   && ex is not AlRunner.Infrastructure.RunnerOutOfScopeException)
         {
         }
     }

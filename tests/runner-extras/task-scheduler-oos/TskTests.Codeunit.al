@@ -122,4 +122,35 @@ codeunit 65603 "Tsk Tests"
         Assert.ExpectedError(NotAllowedErr);
         Assert.NotExpectedError('out-of-scope:');
     end;
+
+    [Test]
+    procedure PageOnOpenPage_Refusal_ReachesTheCaller()
+    var
+        RefusingPage: TestPage "Tsk Refusing Page";
+    begin
+        // #3212. The page-open path drives OnOpenPage from inside BC's rewritten
+        // NavTestPage.Open, behind a catch-all that must not eat a refusal. Before the fix
+        // this asserterror saw NO error at all: the page opened as though the trigger had
+        // succeeded, and an AL author lost every word of the diagnosis.
+        asserterror RefusingPage.OpenView();
+
+        Assert.ExpectedError('out-of-scope: TaskScheduler.TaskExists');
+        Assert.ExpectedError('docs/scope.md#jobs');
+        Assert.ErrorContainsExactlyOnce('see docs/scope.md');
+    end;
+
+    [Test]
+    procedure PageOnOpenPage_WithoutARefusal_StillRunsAndThePageOpens()
+    var
+        QuietPage: TestPage "Tsk Quiet Page";
+    begin
+        // Scoping control for the test above. Letting a refusal escape the open path must not
+        // turn into letting anything escape it: an ordinary OnOpenPage still runs, and what it
+        // wrote is what the opened page shows.
+        QuietPage.OpenView();
+
+        Assert.AreEqualText('opened', QuietPage.Marker.Value(),
+            'OnOpenPage must still run, and the page must still open on the row it wrote');
+        QuietPage.Close();
+    end;
 }

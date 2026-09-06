@@ -55,7 +55,7 @@
         "tableext-eviction-field-trigger-timing-dep": { "tests": 0 },
         "tableext-eviction-subscriber-timing": { "tests": 2 },
         "tableext-eviction-subscriber-timing-dep": { "tests": 0 },
-        "task-scheduler-oos": { "tests": 6 },
+        "task-scheduler-oos": { "tests": 8 },
         "temporary-virtual-table-isolation": { "tests": 6 },
         "testpage-lookup-tablerelation-oos": { "tests": 3 },
         "testpage-precompiled-dep-control": { "tests": 2 },
