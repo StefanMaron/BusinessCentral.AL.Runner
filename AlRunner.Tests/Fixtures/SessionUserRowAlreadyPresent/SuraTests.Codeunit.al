@@ -5,6 +5,32 @@ codeunit 70501 "SURA Tests"
 
     var
         InstalledByFixtureTok: Label 'INSTALLED-BY-FIXTURE', Locked = true;
+        // What BcRuntime generates for the skeleton session. Nothing here is adopted, so this
+        // is what UserSecurityId() must answer.
+        GeneratedSidTok: Label '{C0A1BDFA-0000-0000-0000-545553545553}', Locked = true;
+
+    [Test]
+    procedure SuraUserSecurityIdIsTheRunnerGeneratedOneWhenNothingIsAdopted()
+    var
+        GeneratedSid: Guid;
+    begin
+        // THE NEGATIVE DIRECTION for #2983's adoption, and it is why an implementation that
+        // simply returned some existing row's id cannot pass both fixtures.
+        //
+        // Here the row already in User carries the session user's OWN security id, so the seed's
+        // insert is refused by the PRIMARY KEY -- the benign AlreadyPresent path -- and there is
+        // nothing to adopt. UserSecurityId() must therefore still be the value BcRuntime
+        // generated, asserted as a concrete constant rather than as "not empty".
+        //
+        // The sibling fixture SessionUserRowNameCollision asserts the OTHER concrete value,
+        // {A17E9C42-5B08-4D6F-9E31-0C7A2F84B155}, adopted from the data. One implementation
+        // cannot satisfy both by returning a constant.
+        Evaluate(GeneratedSid, GeneratedSidTok);
+        if UserSecurityId() <> GeneratedSid then
+            Error(
+              'with no row to adopt, UserSecurityId() must be the runner-generated %1, but it is %2',
+              GeneratedSidTok, Format(UserSecurityId()));
+    end;
 
     [Test]
     procedure SuraSeedLeftTheAlreadyPresentRowExactlyAsItWas()

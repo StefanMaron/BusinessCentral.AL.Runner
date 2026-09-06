@@ -1,0 +1,18 @@
+{
+  "id": "c4f18b62-9e07-4a35-bd21-5f83c0e7a914",
+  "name": "Runner Extras - User System Table Triggers",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Issues #2983 and #2356: the runner must run BC's SystemTableTriggers arms for the User system table (2000000120) -- the uniqueness refusals its insert arm raises, and the four table cascades its delete arm runs.",
+  "description": "This suite is here rather than in the al-language corpus for a reason that is measured, not preferred. Every claim below is about a real BC service tier, and the natural home for it is upstream -- but making the claim requires INSERTING INTO THE USER TABLE, and Microsoft's own shipped test code says what that costs on a live tier. BaseApp/Test/Tests-SINGLESERVER/TestAppPermissions.Codeunit.al (codeunit 134614, CleanupData) states it in as many words: 'When we add any user into User table Server switches authentication mode and further tests fail with permission error until Server is restarted. Automatic rollback in test isolation does not revert Server's authentication mode.' A corpus test that inserted a user and then failed before its own cleanup would poison every remaining test on that leg, across sixteen legs. So the BC-behaviour claim here rests on BC's own shipped IL instead: SystemTableTriggers.OnBeforeInsertAsync's case 2000000120: arm calls IsUserFieldUniqueAsync(recordBuffer, 2, insert: true) and throws NavNCLUserTableUserNameMustBeUniqueException.Create() when it fails, and OnAfterDeleteAsync's case 2000000120: arm cascades into 2000000053, 2000000121, 2000000107 and 2000000233. The runner raises BC's OWN exception types through BC's own factories, so the message these tests assert is BC's message and not a runner paraphrase. Every refusal is paired with the control that stops it from passing as 'refuse everything': a second user with a DIFFERENT name inserts, two users with EMPTY Windows SIDs both insert, and a delete leaves another user's dependent rows alone.",
+  "dependencies": [],
+  "idRanges": [
+    {
+      "from": 65620,
+      "to": 65639
+    }
+  ],
+  "platform": "27.0.0.0",
+  "runtime": "15.0",
+  "target": "OnPrem"
+}
