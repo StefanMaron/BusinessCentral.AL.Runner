@@ -322,7 +322,15 @@ public sealed class VirtualTableRefusalClaimTests
         // ordinal 0 would assert "Normal" about a table that declared something else, which is
         // the same silent wrong answer the issue is about. Going UP is the expected direction
         // here; this assertion exists to catch the count going down.
-        Assert.Equal(67, total);
+        //
+        // 67 -> 68 (#3019): the same populator's UNDECLARED branch stopped hardcoding ordinal
+        // 0 and now resolves AL's default member by name against the column's own option set,
+        // so it gained the matching refusal — an artifact whose option set does not carry that
+        // member at all. The declared and undeclared misses say different things and are
+        // deliberately two sites, not one: "this table declared something the column does not
+        // list" and "this artifact's column does not list the default" point at different
+        // causes. TableMetadataOptionDefaultOrdinalTests pins both messages.
+        Assert.Equal(68, total);
     }
 
 

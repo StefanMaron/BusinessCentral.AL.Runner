@@ -147,9 +147,18 @@ public class BcAppSymbolCacheTableMetadataPropertiesTests
             var bare = Assert.Single(tables, t => t.TableId == 60903);
             // The negative half. "Declares none" must stay distinguishable from "declares the
             // default" all the way through: the parser records null, and the row builder
-            // applies AL's own defaults (TableType = Normal, DataClassification =
-            // CustomerContent, ExternalName = blank). A parser that substituted those strings
-            // here would make the two cases indistinguishable downstream.
+            // applies the defaults (TableType = Normal, DataClassification = CustomerContent,
+            // ExternalName = blank). A parser that substituted those strings here would make
+            // the two cases indistinguishable downstream.
+            //
+            // CustomerContent there was reasoning when this comment was written, and is now a
+            // measurement: Microsoft documents the DataClassification default as
+            // ToBeClassified, and corpus fixture ALT Unclassified (60837) put the question to a
+            // real service tier in StefanMaron/BusinessCentral.AL.Language.Tests#191, which
+            // answered CustomerContent on the eight Cloud legs of run 34026600861 (BC 27.0
+            // through 28.4) — the legs that actually execute codeunit 60801. See
+            // RecordPatches.TableMetadataVirtualTable.cs's AlDefaultDataClassification, which
+            // records why eight is the number and why it is enough (#3019).
             Assert.Null(bare.TableTypeName);
             Assert.Null(bare.DataClassificationName);
             Assert.Null(bare.ExternalName);
