@@ -185,7 +185,7 @@ public static class ALDatabasePatches
     /// here to a plain InvalidOperationException carrying the right text but the wrong type.
     /// Scan for either spelling across whatever is loaded instead.
     /// </summary>
-    private static Type? ResolveNavCSideExceptionType()
+    internal static Type? ResolveNavCSideExceptionType()
     {
         foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
         {
@@ -206,7 +206,7 @@ public static class ALDatabasePatches
     /// matched, and every caller silently shipped its runner paraphrase instead of BC's
     /// text. Scan the loaded assemblies for the real class instead.
     /// </summary>
-    private static string? LangString(string name)
+    internal static string? LangString(string name)
     {
         foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
         {
