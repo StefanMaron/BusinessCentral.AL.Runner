@@ -461,12 +461,24 @@ public static class FlowFieldPatches
             // entry point where `self` is available — the shared core below has no `self`.
             foreach (var fieldObj in blobFields)
             {
-                // #2771: a BLOB the runner has no source for refuses HERE, by name, before
-                // anything is loaded. This is the runner's own blob-load site and therefore
-                // the only one AL can reach — the replacement above means BC's
+                // #2771: a BLOB the runner has no source for refuses HERE, by name, before its
+                // content is loaded. This is the runner's own blob-load site and therefore the
+                // only one AL can reach — the replacement above means BC's
                 // DataAccess.GetBlobContentAsync never runs. Handing back the 0-byte
                 // placeholder instead reads as a legitimately empty BLOB (HasValue() false,
                 // CreateInStream empty), which is the silent default loud-failures.md forbids.
+                //
+                // AFTER ClassifyCalcFieldsRequest, deliberately. Two refusals now live in this
+                // one call and the order decides which message a caller sees, so it is a choice
+                // rather than an accident of where the line was pasted. #3012's classification
+                // reproduces errors REAL BC RAISES — CalcFields of a non-FlowField, or of a
+                // FlowField with no CalcFormula — and BC raises them before it loads anything.
+                // This one says the RUNNER cannot answer. Put it first and
+                // `CalcFields("No.", Metadata)` would report a runner limitation where a real
+                // tier reports an AL authoring error: a divergence invented purely by ordering.
+                // Classification first also keeps #3012's own invariant intact — a refused call
+                // computes nothing and loads nothing, rather than leaving the acceptable part of
+                // the list applied.
                 RecordPatches.ThrowIfColumnHasNoSource(fieldObj as NCLMetaField);
                 int blobColumn = -1;
                 try { blobColumn = (int)_pNclMetaFieldColumnIndex!.GetValue(fieldObj)!; } catch { }
