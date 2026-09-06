@@ -139,15 +139,37 @@ Arm **only** when all of these hold. Any one missing means report it to the coor
 auto-merge armed against the new head, which nobody has reviewed; the coordinator needs the SHA
 to notice.
 
-**Arming is refused on a PR that is already mergeable** — GitHub answers `Pull request is in
-clean status`, because there is nothing left to wait for. That is not an error to retry or
-report as a failure: it means the PR can merge now, so say so and let the coordinator merge it
-directly. Check the exit code; a loop that printed "armed" regardless of it once left four green
-PRs sitting unarmed.
+**One command, two outcomes — and on a green PR it MERGES.** `--auto` is not "queue it for
+later":
 
-Arming is not merging, and it does not replace the merge bar — it is the bar expressed as a
-standing instruction to GitHub, so a PR lands the moment its checks go green instead of at the
-coordinator's next sweep.
+- required checks **not yet green** → auto-merge is armed, and the PR lands when they pass;
+- required checks **already green** → the PR **merges on the spot**.
+
+`gh` picks between the two itself, before calling anything — its merge command carries a
+function named `isImmediatelyMergeable` for exactly this. Both outcomes are intended: if review
+approves and CI is green, the PR should merge.
+
+**So on a green PR, the approval decision IS the merge decision.** There is no coordinator
+checkpoint after it, and nobody looks again. This matters more in an unattended loop than
+anywhere else: every condition in the list above has to hold at the moment you run the command,
+because running it is the merge — not a request for one.
+
+An earlier version of this section claimed the opposite: that GitHub *refuses* to arm an
+already-mergeable PR, answering `Pull request is in clean status`, and that the coordinator
+would merge it by hand. That was wrong, and a reviewer following it would report "it refused,
+please merge it yourself" about a PR that had already merged. It was falsified on PR #3095 —
+the documented command returned rc=0 and merged it immediately at the reviewed SHA. `gh` never
+produces that message at all; the phrase does not occur anywhere in the binary. It appears to be
+a GitHub API error from the `enablePullRequestAutoMerge` mutation, which is the call `gh` skips
+when the PR is already mergeable — so it is not something this command can produce. See #3127.
+
+**Check the exit code either way.** It is not decoration: `gh pr merge` exits non-zero for real
+reasons (`Pull request #N is not mergeable: ...`), and a loop that printed "armed" regardless of
+it once left four green PRs sitting unarmed.
+
+When it arms rather than merges, arming is still not merging, and it does not replace the merge
+bar — it is the bar expressed as a standing instruction to GitHub, so a PR lands the moment its
+checks go green instead of at the coordinator's next sweep.
 
 **Keep one reviewer continuously alive rather than spawning one when a queue becomes visible.**
 Reactive spawning is what produces the pile-up: by the time the queue is obvious it is already
