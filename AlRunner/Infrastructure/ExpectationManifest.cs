@@ -354,9 +354,10 @@ public static class ExpectationClassifier
         }
     }
 
-    // Manifest entries hold the bare docs/scope.md anchor ("query-join-rightouterjoin-
-    // not-implemented"), while throw sites append free-text detail after an em-dash
-    // ("<anchor> — only InnerJoin and …"). Reasons match on the anchor.
+    // Manifest entries hold the bare reason anchor — a docs/scope.md section for a permanent
+    // refusal, or "not-yet-implemented" for an in-scope surface the runner cannot answer for
+    // yet — while throw sites append free-text detail after an em-dash ("<anchor> — only
+    // InnerJoin and …"). Reasons match on the anchor.
     private static string ReasonAnchor(string reason)
     {
         int sep = reason.IndexOf(" — ", StringComparison.Ordinal);

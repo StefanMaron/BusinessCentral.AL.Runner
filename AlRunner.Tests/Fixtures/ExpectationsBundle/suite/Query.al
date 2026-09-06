@@ -1,5 +1,5 @@
-// RightOuterJoin: the runner's in-memory nested-loop join executor cannot
-// faithfully reproduce it, so opening this query throws a typed
+// RightOuterJoin: the runner's in-memory nested-loop join executor does not take
+// this shape yet, so opening this query throws a typed
 // RunnerOutOfScopeException (see AlRunner.QueryJoin/JoinExecutor.cs). The
 // fixture tests below open it WITHOUT asserterror so the throw reaches the
 // test executor and can be classified against the manifest.
