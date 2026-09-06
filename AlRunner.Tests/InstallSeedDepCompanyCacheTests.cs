@@ -200,7 +200,7 @@ public class InstallSeedDepCompanyCacheTests
         // in-memory HIT. A cache keyed so that these two closures collide would show one
         // resolution and one HIT; this shows two resolutions and no HIT.
         //
-        // WHAT THIS DOES AND DOES NOT PIN, measured by mutation (#2364, follow-up filed):
+        // WHAT THIS DOES AND DOES NOT PIN, measured by mutation (#2364; gap tracked in #3254):
         // TestExecutor.CurrentInstallBaselineCacheKey() concatenates three components, and the
         // first two — InstallTriggerRunner.CurrentDependencySetKey() and
         // RecordPatches.RegisteredBcAppSymbolStateKey() — are REDUNDANT for this scenario:
