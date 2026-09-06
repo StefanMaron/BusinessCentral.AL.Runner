@@ -17,6 +17,7 @@
 // builder + precompiled-query support in later tasks.
 using System.Collections;
 using System.Reflection;
+using AlRunner.Infrastructure;
 
 namespace AlRunner.Patches;
 
@@ -71,7 +72,8 @@ public static partial class RecordPatches
     }
 
     private static IList GetList(object obj, string name)
-        => (IList)obj.GetType().GetProperty(name, BindingFlags.Public | BindingFlags.Instance)!.GetValue(obj)!;
+        => (IList)BcShape.Property(
+            obj.GetType(), name, BindingFlags.Public | BindingFlags.Instance, "AL query metadata construction").GetValue(obj)!;
 
     /// <summary>
     /// Build (and cache) a real NCLMetaQuery for the given query id, or null if it

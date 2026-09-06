@@ -287,15 +287,26 @@ public sealed class BcShapeMethodLookupTests
     // failure, so a new name-only BC-typed lookup anywhere in AlRunner/ is caught the moment it
     // is written. It does not pin the per-file distribution, so moving one site out of file A
     // and into file B nets to zero and passes; the per-file breakdown is printed on failure for
-    // whoever has to update the number. Deliberately a ratchet rather than a zero: 76 sites
+    // whoever has to update the number. Deliberately a ratchet rather than a zero: 72 sites
     // remain, and #3069 asks for them file by file so the guard never has to be weakened.
+    //
+    // 76 -> 72 by #3051, which converted the null-forgiving BC-internals lookups repo-wide.
+    // The net is not the gross, so the arithmetic is worth writing down. Six counted sites went
+    // away -- NavSymRef.ModuleDefinition.Clone in BcCompiler.Incremental.cs, LoadMetadata in
+    // RecordPatches.RealPageMetadata.cs and RecordPatches.RealXmlPortMetadata.cs, and
+    // CreateFromMetaTable / CreateForTempTable / CreateTempDataAccess in RecordPatches.cs -- and
+    // two arrived, both inside BcShapeGapException.cs itself: BcShape.Method's name-only and
+    // name-plus-flags overloads each call the reflection API once. That is exactly where a
+    // name-only lookup belongs, in the one helper that refuses by name when it misses.
+    // (#3051's other 67 conversions are GetProperty / GetField / GetConstructor, or pass an
+    // explicit signature, so this scan never counted them.)
 
     /// <summary>
     /// Every remaining name-only method lookup that could reach a Microsoft-shipped type. Lower
     /// it as sites are converted; it may never rise. On a mismatch the assertion prints the
     /// per-file breakdown, which is the number to put here.
     /// </summary>
-    private const int NameOnlyBcTypedMethodLookups = 76;
+    private const int NameOnlyBcTypedMethodLookups = 72;
 
     /// <summary>The floor is not cosmetic: a scan that silently narrowed to a handful of files
     /// would report a small number and read as progress. AlRunner/ holds ~195 sources.</summary>

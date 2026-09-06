@@ -13,6 +13,7 @@ using System.Globalization;
 using System.Linq;
 using System.Reflection;
 using Microsoft.Dynamics.Nav.Runtime;
+using AlRunner.Infrastructure;
 
 namespace AlRunner.Patches;
 
@@ -407,7 +408,8 @@ public static partial class RecordPatches
                     var kvpCtor = kvpType.GetConstructor(new[] { typeof(int), _tMetaField! })!;
                     for (int j = 0; j < fields.Length; j++)
                     {
-                        var fid = (int)_tMetaField!.GetProperty("Id")!.GetValue(fields[j])!;
+                        var fid = (int)BcShape.Property(
+                            _tMetaField!, "Id", "AL table metadata construction").GetValue(fields[j])!;
                         kvpArray.SetValue(kvpCtor.Invoke(new[] { (object)fid, fields[j] }), j);
                     }
                     args[i] = createRangeMethod.Invoke(null, new object[] { kvpArray })!;
@@ -1520,8 +1522,10 @@ public static partial class RecordPatches
                 if (attrs.Length == 0) continue;
                 foreach (var a in attrs)
                 {
-                    var fieldNo = (int)attrType.GetProperty("FieldNo")!.GetValue(a)!;
-                    var ttObj = attrType.GetProperty("TriggerType")!.GetValue(a)!;
+                    var fieldNo = (int)BcShape.Property(
+                        attrType, "FieldNo", "AL table metadata construction").GetValue(a)!;
+                    var ttObj = BcShape.Property(
+                        attrType, "TriggerType", "AL table metadata construction").GetValue(a)!;
                     var ttName = Enum.GetName(triggerTypeEnum, ttObj);
                     byField.TryGetValue(fieldNo, out var pair);
                     if (ttName == "OnValidate") pair.validate = mi;
@@ -1666,8 +1670,10 @@ public static partial class RecordPatches
                 if (attrs.Length == 0) continue;
                 foreach (var a in attrs)
                 {
-                    var fieldNo = (int)_tFieldTriggerHandlerAttr!.GetProperty("FieldNo")!.GetValue(a)!;
-                    var ttObj = _tFieldTriggerHandlerAttr.GetProperty("TriggerType")!.GetValue(a)!;
+                    var fieldNo = (int)BcShape.Property(
+                        _tFieldTriggerHandlerAttr!, "FieldNo", "AL table metadata construction").GetValue(a)!;
+                    var ttObj = BcShape.Property(
+                        _tFieldTriggerHandlerAttr, "TriggerType", "AL table metadata construction").GetValue(a)!;
                     var ttName = Enum.GetName(_tFieldTriggerType!, ttObj);
                     if (ttName == "OnValidate" || ttName == "OnLookup")
                     {

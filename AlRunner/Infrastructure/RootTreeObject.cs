@@ -1,6 +1,7 @@
 // RootTreeObject — concrete ITreeObject used as the parent of the skeleton root scope.
 // Its TreeHandler.hostObject must be non-null so TreeHandler.IsDisposed returns false.
 using System.Reflection;
+using AlRunner.Infrastructure;
 
 namespace AlRunner.Infrastructure;
 
@@ -16,8 +17,9 @@ internal sealed class RootTreeObject : Microsoft.Dynamics.Nav.Runtime.ITreeObjec
 internal sealed class RootHandler : Microsoft.Dynamics.Nav.Runtime.TreeHandler
 {
     private static readonly FieldInfo _fHost =
-        typeof(Microsoft.Dynamics.Nav.Runtime.TreeHandler)
-            .GetField("hostObject", BindingFlags.NonPublic | BindingFlags.Instance)!;
+        BcShape.Field(
+            typeof(Microsoft.Dynamics.Nav.Runtime.TreeHandler), "hostObject",
+            BindingFlags.NonPublic | BindingFlags.Instance, "tree-object host binding");
     public RootHandler(Microsoft.Dynamics.Nav.Runtime.ITreeObject host) : base()
     {
         // IsDisposed = (hostObject == null) — flip it.

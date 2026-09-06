@@ -109,10 +109,16 @@ public static partial class RecordPatches
             ?? throw new InvalidOperationException("ReadOnlyRecordBuffer(NCLMetaApplicationObject, NavValue[]) ctor not found");
 
         var reqBase = nclAsm.GetType("Microsoft.Dynamics.Nav.Runtime.DataProviderRequest")!;
-        _pReqMetaAppObj = reqBase.GetProperty("MetaApplicationObject", BindingFlags.Public | BindingFlags.Instance)!;
+        _pReqMetaAppObj = BcShape.Property(
+            reqBase, "MetaApplicationObject", BindingFlags.Public | BindingFlags.Instance,
+            "AL query execution (projection and filter push-down)");
         var findReq = nclAsm.GetType("Microsoft.Dynamics.Nav.Runtime.FindProviderRequest")!;
-        _pReqFindType = findReq.GetProperty("FindType", BindingFlags.Public | BindingFlags.Instance)!;
-        _pReqTopNumberOfRows = findReq.GetProperty("TopNumberOfRowsToReturn", BindingFlags.Public | BindingFlags.Instance)!;
+        _pReqFindType = BcShape.Property(
+            findReq, "FindType", BindingFlags.Public | BindingFlags.Instance,
+            "AL query execution (projection and filter push-down)");
+        _pReqTopNumberOfRows = BcShape.Property(
+            findReq, "TopNumberOfRowsToReturn", BindingFlags.Public | BindingFlags.Instance,
+            "AL query execution (projection and filter push-down)");
     }
 
     /// <summary>
@@ -426,7 +432,10 @@ public static partial class RecordPatches
             foreach (var col in cols)
             {
                 if (IsFilterOnlyColumnQ(col)) continue;
-                _pColColumnIndexQ2 ??= _tNCLMetaQueryColumn!.GetProperty("ColumnIndex", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)!;
+                _pColColumnIndexQ2 ??= BcShape.Property(
+                    _tNCLMetaQueryColumn!, "ColumnIndex",
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+                    "AL query execution (projection and filter push-down)");
                 var idx = (int)_pColColumnIndexQ2.GetValue(col)!;
                 if (idx < 0) continue;
                 map[col] = idx;
@@ -489,11 +498,15 @@ public static partial class RecordPatches
             return request; // ordinary table read — nothing to translate.
 
         EnsureFilterReflection();
-        var filtersAndMarks = request.GetType().GetProperty("FiltersAndMarks", BindingFlags.Public | BindingFlags.Instance)!
+        var filtersAndMarks = BcShape.Property(
+            request.GetType(), "FiltersAndMarks", BindingFlags.Public | BindingFlags.Instance,
+            "AL query execution (projection and filter push-down)")
             .GetValue(request);
         object? filters = null;
         if (filtersAndMarks != null)
-            filters = _tFiltersAndMarks!.GetProperty("Filters", BindingFlags.Public | BindingFlags.Instance)!
+            filters = BcShape.Property(
+                _tFiltersAndMarks!, "Filters", BindingFlags.Public | BindingFlags.Instance,
+                "AL query execution (projection and filter push-down)")
                 .GetValue(filtersAndMarks);
 
         // FilterFieldDictionary.Items : Tuple<INavFieldMetadata, FilterExpression>[]
@@ -535,10 +548,14 @@ public static partial class RecordPatches
                         continue;
                     }
 
-                    var srcField = key.GetType().GetProperty("SourceTableField", BindingFlags.Public | BindingFlags.Instance)!.GetValue(key);
+                    var srcField = BcShape.Property(
+                        key.GetType(), "SourceTableField", BindingFlags.Public | BindingFlags.Instance,
+                        "AL query execution (projection and filter push-down)").GetValue(key);
                     if (srcField != null && expr != null)
                     {
-                        var srcCtx = srcField.GetType().GetProperty("ExpressionContext", BindingFlags.Public | BindingFlags.Instance)!.GetValue(srcField);
+                        var srcCtx = BcShape.Property(
+                            srcField.GetType(), "ExpressionContext", BindingFlags.Public | BindingFlags.Instance,
+                            "AL query execution (projection and filter push-down)").GetValue(srcField);
                         var retargeted = RetargetFilterExpression(expr, srcCtx!);
                         translatedTuples.Add(MakeFieldTuple(srcField, retargeted));
                         anyTranslated = true;
@@ -588,7 +605,9 @@ public static partial class RecordPatches
         // Build FilterFieldDictionary(IEnumerable<Tuple<INavFieldMetadata, FilterExpression>>)
         var newFilters = BuildFilterFieldDictionary(translatedTuples);
         var markedRecords = filtersAndMarks == null ? null
-            : _tFiltersAndMarks!.GetProperty("MarkedRecords", BindingFlags.Public | BindingFlags.Instance)!.GetValue(filtersAndMarks);
+            : BcShape.Property(
+                _tFiltersAndMarks!, "MarkedRecords", BindingFlags.Public | BindingFlags.Instance,
+                "AL query execution (projection and filter push-down)").GetValue(filtersAndMarks);
         var newFam = Activator.CreateInstance(_tFiltersAndMarks!, newFilters, markedRecords)!;
         return CloneRequestWithFilters(request, newFam);
     }
@@ -685,8 +704,12 @@ public static partial class RecordPatches
         if (_tUnaryFilterExpr!.IsInstanceOfType(expr))
         {
             // new UnaryFilterExpression(FilterExpressionType, NavValue, FilterExpressionContext, valueToken, isConstInMetadata)
-            var exprType = _tFilterExpr!.GetProperty("ExpressionType", BindingFlags.Public | BindingFlags.Instance)!.GetValue(expr);
-            var value = t.GetProperty("Value", BindingFlags.Public | BindingFlags.Instance)!.GetValue(expr);
+            var exprType = BcShape.Property(
+                _tFilterExpr!, "ExpressionType", BindingFlags.Public | BindingFlags.Instance,
+                "AL query execution (projection and filter push-down)").GetValue(expr);
+            var value = BcShape.Property(
+                t, "Value", BindingFlags.Public | BindingFlags.Instance,
+                "AL query execution (projection and filter push-down)").GetValue(expr);
             var ctor = _tUnaryFilterExpr.GetConstructors()
                 .First(c => c.GetParameters().Length >= 3
                     && c.GetParameters()[0].ParameterType.Name == "FilterExpressionType");
@@ -698,9 +721,15 @@ public static partial class RecordPatches
         }
         if (_tBinaryFilterExpr!.IsInstanceOfType(expr))
         {
-            var exprType = _tFilterExpr!.GetProperty("ExpressionType", BindingFlags.Public | BindingFlags.Instance)!.GetValue(expr);
-            var left = t.GetProperty("Left", BindingFlags.Public | BindingFlags.Instance)!.GetValue(expr);
-            var right = t.GetProperty("Right", BindingFlags.Public | BindingFlags.Instance)!.GetValue(expr);
+            var exprType = BcShape.Property(
+                _tFilterExpr!, "ExpressionType", BindingFlags.Public | BindingFlags.Instance,
+                "AL query execution (projection and filter push-down)").GetValue(expr);
+            var left = BcShape.Property(
+                t, "Left", BindingFlags.Public | BindingFlags.Instance,
+                "AL query execution (projection and filter push-down)").GetValue(expr);
+            var right = BcShape.Property(
+                t, "Right", BindingFlags.Public | BindingFlags.Instance,
+                "AL query execution (projection and filter push-down)").GetValue(expr);
             var newLeft = RetargetFilterExpression(left!, targetCtx);
             var newRight = RetargetFilterExpression(right!, targetCtx);
             var ctor = _tBinaryFilterExpr.GetConstructors()
@@ -718,9 +747,15 @@ public static partial class RecordPatches
         if (_tWildcardFilterExpr!.IsInstanceOfType(expr))
         {
             // public WildcardFilterExpression(bool isNegated, string pattern, bool isCaseAndAccentInsensitive, FilterExpressionContext expressionContext)
-            var isNegated = t.GetProperty("IsNegated", BindingFlags.Public | BindingFlags.Instance)!.GetValue(expr);
-            var pattern = t.GetProperty("Pattern", BindingFlags.Public | BindingFlags.Instance)!.GetValue(expr);
-            var isCaseAndAccentInsensitive = t.GetProperty("IsCaseAndAccentInsensitive", BindingFlags.Public | BindingFlags.Instance)!.GetValue(expr);
+            var isNegated = BcShape.Property(
+                t, "IsNegated", BindingFlags.Public | BindingFlags.Instance,
+                "AL query execution (projection and filter push-down)").GetValue(expr);
+            var pattern = BcShape.Property(
+                t, "Pattern", BindingFlags.Public | BindingFlags.Instance,
+                "AL query execution (projection and filter push-down)").GetValue(expr);
+            var isCaseAndAccentInsensitive = BcShape.Property(
+                t, "IsCaseAndAccentInsensitive", BindingFlags.Public | BindingFlags.Instance,
+                "AL query execution (projection and filter push-down)").GetValue(expr);
             var ctor = _tWildcardFilterExpr.GetConstructors()
                 .First(c => c.GetParameters().Length == 4 && c.GetParameters()[0].ParameterType == typeof(bool));
             return ctor.Invoke(new object?[] { isNegated, pattern, isCaseAndAccentInsensitive, targetCtx });
@@ -736,7 +771,8 @@ public static partial class RecordPatches
         // Both FindProviderRequest and PositionedFindProviderRequest share the same field
         // set; reconstruct via the full ctor pulling every other field off the original.
         var t = request.GetType();
-        object Get(string n) => t.GetProperty(n, BindingFlags.Public | BindingFlags.Instance)!.GetValue(request)!;
+        object Get(string n) => BcShape.Property(
+            t, n, BindingFlags.Public | BindingFlags.Instance, "AL query execution (projection and filter push-down)").GetValue(request)!;
         var isPositioned = t.Name == "PositionedFindProviderRequest";
         var ctor = t.GetConstructors().First(c =>
         {
@@ -800,7 +836,9 @@ public static partial class RecordPatches
         // Multi-dataitem JOIN: ignore the single-table `rows` (the root scan the engine
         // requested) and produce the joined+projected result set ourselves by reading
         // every dataitem's table. See RecordPatches.QueryJoin.cs.
-        var queryDef = _tNCLMetaQuery.GetProperty("QueryDefinition", BindingFlags.Public | BindingFlags.Instance)!
+        var queryDef = BcShape.Property(
+            _tNCLMetaQuery, "QueryDefinition", BindingFlags.Public | BindingFlags.Instance,
+            "AL query execution (projection and filter push-down)")
             .GetValue(metaAppObj);
         if (queryDef != null && IsMultiDataItemQuery(queryDef))
         {
@@ -902,7 +940,9 @@ public static partial class RecordPatches
             .GetValue(request);
         object? filters = null;
         if (fam != null)
-            filters = _tFiltersAndMarks!.GetProperty("Filters", BindingFlags.Public | BindingFlags.Instance)!
+            filters = BcShape.Property(
+                _tFiltersAndMarks!, "Filters", BindingFlags.Public | BindingFlags.Instance,
+                "AL query execution (projection and filter push-down)")
                 .GetValue(fam);
         var items = filters == null ? null : (Array?)_tFilterFieldDictionary!.GetProperty("Items", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?
             .GetValue(filters);
@@ -1375,7 +1415,9 @@ public static partial class RecordPatches
 
     private static ProjectionPlan BuildProjectionPlan(object nclMetaQuery)
     {
-        var queryDef = (NCLMetaQueryDefinition)_tNCLMetaQuery!.GetProperty("QueryDefinition", BindingFlags.Public | BindingFlags.Instance)!
+        var queryDef = (NCLMetaQueryDefinition)BcShape.Property(
+            _tNCLMetaQuery!, "QueryDefinition", BindingFlags.Public | BindingFlags.Instance,
+            "AL query execution (projection and filter push-down)")
             .GetValue(nclMetaQuery)!;
 
         var columnPlans = new List<ColumnPlan>();

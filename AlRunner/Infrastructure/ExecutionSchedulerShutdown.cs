@@ -14,6 +14,7 @@
 // LazyEx field and its IsValueCreated flag.
 
 using System.Reflection;
+using AlRunner.Infrastructure;
 
 namespace AlRunner.Infrastructure;
 
@@ -63,7 +64,8 @@ public static class ExecutionSchedulerShutdown
             ?? throw new InvalidOperationException($"{lazyType.FullName} has no IsValueCreated — BC LazyEx shape changed");
         if (!(bool)isCreated.GetValue(lazyScheduler)!) return Outcome.NotRealized;
 
-        var value = lazyType.GetProperty("Value", BindingFlags.Public | BindingFlags.Instance)!.GetValue(lazyScheduler);
+        var value = BcShape.Property(
+            lazyType, "Value", BindingFlags.Public | BindingFlags.Instance, "task-scheduler shutdown").GetValue(lazyScheduler);
         if (value is IDisposable disposable) disposable.Dispose();
         return Outcome.Disposed;
     }

@@ -1289,18 +1289,21 @@ public static class EventSubscriberPatches
         var original = attrProp?.GetValue(methodInfoObj);
         if (original == null) return;
         var oType = original.GetType();
-        var targetObjectId = oType.GetProperty("TargetObjectId")!.GetValue(original)!;
+        var targetObjectId = BcShape.Property(
+            oType, "TargetObjectId", "event-subscriber inventory").GetValue(original)!;
         var oidT = targetObjectId.GetType();
-        var ot = (int)oidT.GetProperty("ObjectType")!.GetValue(targetObjectId)!;
-        var on = (int)oidT.GetProperty("ObjectNumber")!.GetValue(targetObjectId)!;
-        var methodName = (string)oType.GetProperty("TargetMethodName")!.GetValue(original)!;
-        var memberId = (int)oType.GetProperty("MemberId")!.GetValue(original)!;
+        var ot = (int)BcShape.Property(oidT, "ObjectType", "event-subscriber inventory").GetValue(targetObjectId)!;
+        var on = (int)BcShape.Property(oidT, "ObjectNumber", "event-subscriber inventory").GetValue(targetObjectId)!;
+        var methodName = (string)BcShape.Property(
+            oType, "TargetMethodName", "event-subscriber inventory").GetValue(original)!;
+        var memberId = (int)BcShape.Property(oType, "MemberId", "event-subscriber inventory").GetValue(original)!;
         // Preserve the field target — for field-based events (OnBefore/OnAfterValidateEvent) the
         // NavEventSubscription ctor resolves the publisher field from these and, if it can't,
         // returns early with ErrorFieldNotFound leaving SubscriberParameters null → an NRE later
         // in TriggerPrepareParametersCallBack. Zeroing the field name (as the original code did)
         // was harmless for table-level Insert/Modify/… events but broke validate-event dispatch.
-        var fieldName = (string?)oType.GetProperty("TargetFieldName")!.GetValue(original) ?? "";
+        var fieldName = (string?)BcShape.Property(
+            oType, "TargetFieldName", "event-subscriber inventory").GetValue(original) ?? "";
         var fieldId = (int)(oType.GetProperty("TargetFieldId")?.GetValue(original) ?? 0);
         object? replacement = null;
         if (!string.IsNullOrEmpty(fieldName))
