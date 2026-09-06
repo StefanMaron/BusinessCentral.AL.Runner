@@ -960,28 +960,30 @@ companion row is gone, which the unfixed runner does not do. `al-language` (2676
 pin bump is involved.
 
 Written by agent impl-24 (automated implementation agent).
-## 2026-09-07 — corpus pin b0c6248a → b1fdb6d7 (al-language 2681 → 2763, al-language-onprem 19 → 25)
+## 2026-09-07 — corpus pin b0c6248a → 2cba52d4 (al-language 2681 → 2814, al-language-onprem 19 → 25)
 
-Bumped by the fix PR for #3263 and #3178. The pin has to move to b1fdb6d7 because that is
-corpus PR #216 — the six tests that pin a CalcFormula and a TableRelation naming a system
-field, which this PR's runner change makes pass. Corpus history in this range is linear, so
-#216 cannot be taken without the fourteen corpus commits merged before it; that is where the
-other 76 al-language tests and all six al-language-onprem tests come from, not from anything
-this PR wrote. The corpus test this PR itself adds (#217, seven tests on Customer) is NOT in
-this count — its pin bump follows when that PR merges.
+Bumped by the fix PR for #3263, #3178 and #3279. The pin has to move to the corpus tip because
+that is where both of this PR's own corpus tests live: #216 (six tests pinning a CalcFormula
+and a TableRelation that name a system field) and #217 (seven tests pinning a CalcFormula that
+names a tableextension field, codeunit 60823). Corpus history in this range is linear, so
+neither can be taken without the sixteen corpus commits merged before them; that is where the
+other 120 al-language tests and all six al-language-onprem tests come from, not from anything
+this PR wrote.
 
-Four of the newly-arrived tests fail on the runner for reasons unrelated to this fix and are
-declared in tests/expectations/ as `expect-fail-known-gap`, each against an issue that stays
-open after this PR merges: an error raised in OnQueryClosePage (#3057, PR #3181), a
-source-parsed tableextension's TableRelation not being enforced by Validate (#3286, filed with
-this PR), and Access Control not backing the session user's SUPER status (#3176).
+Thirteen of the newly-arrived tests fail on the runner for reasons unrelated to this fix and
+are deliberately NOT declared here: each has a pull request in flight, and declaring a gap that
+another PR is about to close would only have to be undone. Nine (codeunit 60338, the dialog
+page types' built-in OK/Cancel, corpus #218) belong to PR #3285; two (codeunit 60677, an error
+raised in OnQueryClosePage, corpus #202) to PR #3181; one (codeunit 60827, a source-parsed
+tableextension's TableRelation not enforced by Validate, corpus #207) to PR #3197, filed as
+#3286 from this branch before that was known; and one (codeunit 60889, Access Control backing
+the session user's SUPER status, corpus #204) to PR #3287.
 
-Two more families arrived failing and were declared here first, then went green while this PR
-was in review, as #3234 (the Session virtual table, #2940) and #3265 (the legacy Object
-registry, #3071) merged: their entries are gone again. That is the manifest being loud in the
-other direction — a test that passes under an `expect-fail-known-gap` entry fails the run with
-"remove the entry", which is how the staleness was caught rather than shipped.
+Two families that arrived failing WERE declared here for a while, and went green mid-review as
+#3234 (the Session virtual table, #2940) and #3265 (the legacy Object registry, #3071) merged.
+The manifest caught that itself: a test that passes under an `expect-fail-known-gap` entry
+fails the run with "remove the entry", so the staleness was corrected rather than shipped.
 
-`runner-extras` is untouched: 316 tests before and after.
+`runner-extras` is untouched by this PR.
 
 Written by agent fbk-2 (automated implementation agent).
