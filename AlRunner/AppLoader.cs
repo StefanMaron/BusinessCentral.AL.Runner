@@ -168,6 +168,9 @@ public static class AppLoader
         _manifestParseInvocationCountByPath.AddOrUpdate(fullPath, 1, static (_, c) => c + 1);
         var parsed = ReadManifestUncached(fullPath);
         PerfTrace.Log($"app-manifests MISS {Path.GetFileName(fullPath)}");
+        // No identity AND no parse means the bytes are unreadable — say so, or the package
+        // vanishes from the scan set without explanation. See ReportUnreadablePackage.
+        if (parsed == null && identity == null) ReportUnreadablePackage(fullPath);
         _manifestMemo[memoKey] = parsed;
         if (parsed != null && identity != null)
             TryWriteManifestIndex(identity, parsed);
@@ -197,6 +200,40 @@ public static class AppLoader
         }
         return string.IsNullOrEmpty(hash) || hash == RunnerFingerprint.UnknownContentHash ? null : hash;
     }
+
+    // Packages already reported as unreadable, so a path scanned by several layers within one
+    // process says it once rather than once per scan.
+    private static readonly ConcurrentDictionary<string, byte> _unreadablePackagesReported =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Says, once per package per process, that a <c>.app</c> was skipped because its bytes
+    /// could not be read — on stderr, not through PerfTrace, because it is off by default.
+    ///
+    /// <para>This is the diagnosis #2987 owes the user. Before #2987 a package that became
+    /// unreadable AFTER its manifest was indexed still resolved, because the index was keyed on
+    /// a stat and a stat survives <c>chmod 000</c>. Now the index is keyed on the package's
+    /// content, so a package we cannot read is a package we cannot identify, and it drops out
+    /// of the scan set. Refusing is the right answer — serving an identity we cannot tie to the
+    /// bytes on disk is the whole defect — but dropping out SILENTLY is not: the run would then
+    /// fail with "a required dependency package is missing" naming the dependency, while the
+    /// package sits right there in the cache directory, unreadable. That is the
+    /// mysterious-missing-dependency shape #2206 is about, and this line is what keeps it from
+    /// recurring in a new form.</para>
+    /// </summary>
+    private static void ReportUnreadablePackage(string fullPath)
+    {
+        if (!_unreadablePackagesReported.TryAdd(fullPath, 0)) return;
+        Console.Error.WriteLine(
+            $"  [packages] cannot read '{fullPath}' — skipping it. Its bytes could not be read, "
+            + "so it cannot be identified or parsed, and a package the runner cannot identify is "
+            + "not indexed. If a dependency is reported missing below, this is why. Check the "
+            + "file's permissions and that it is a complete .app.");
+    }
+
+    /// <summary>Test-only: forget which packages have been reported, so an arm that expects the
+    /// line can run after one that already triggered it for the same path.</summary>
+    internal static void ResetUnreadablePackageReportsForTests() => _unreadablePackagesReported.Clear();
 
     /// <summary>The actual parse, with no caching — streams the .app straight off disk via
     /// <see cref="OpenAppZip"/> rather than reading the whole file into memory first (the
@@ -393,6 +430,7 @@ public static class AppLoader
         _manifestParseInvocationCountByPath.AddOrUpdate(fullPath, 1, static (_, c) => c + 1);
         var read = ReadPackageMetaUncached(fullPath);
         PerfTrace.Log($"app-manifests MISS {Path.GetFileName(fullPath)}");
+        if (read.Manifest == null && identity == null) ReportUnreadablePackage(fullPath);
         _manifestMemo[memoKey] = read.Manifest;
         _symbolReferenceMemo[memoKey] = read.HasSymbolReference;
         if (read.Manifest != null && identity != null)
