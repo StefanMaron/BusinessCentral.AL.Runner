@@ -47,7 +47,10 @@
 //      answer from, so the table and the session surfaces cannot disagree.
 //   3. Four columns come from Active Session (2000000110), a tenant-database table the runner
 //      does not maintain. Two of them the runner can answer from state it genuinely holds
-//      (the user, and the login instant); two it cannot — see the next section.
+//      (the user, and the login instant); two it cannot — see the next section. That empty
+//      table is a gap of its own, filed as #3233: it is ordinary tenant storage rather than a
+//      virtual table, AL reads it directly (session-count checks, "User Login Time Tracker"),
+//      and seeding it is what would give the two columns below a source.
 //
 // THE COLUMNS
 //   Answered:
