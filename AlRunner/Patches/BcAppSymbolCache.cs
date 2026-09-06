@@ -542,7 +542,7 @@ internal static partial class BcAppSymbolCache
     /// the view SET it (<c>AscendingSetByView</c>).</para>
     /// </summary>
     internal sealed record PageTableViewSymbol(
-        List<string> SortingFieldNames, bool? Ascending, List<PageViewFilterSymbol> Filters,
+        List<PageViewSortFieldSymbol> SortingFields, bool? Ascending, List<PageViewFilterSymbol> Filters,
         // The raw text of every where(...) entry — and every clause whose parenthesis never
         // closed — ParseSourceTableView could NOT read (#2978). Null when there were none,
         // which is the case for all 255 where-entries across the 417 SourceTableView pages of
@@ -567,6 +567,36 @@ internal static partial class BcAppSymbolCache
         // — but the property text comes from the same compiler and through the same splitter,
         // so the two paths answer it the same way rather than one of them being surprised.
         bool Conditional = false);
+
+    /// <summary>
+    /// One <c>sorting(...)</c> field of a <c>SourceTableView</c>: the page's own source-table
+    /// field name, in the order the view declares it.
+    ///
+    /// <para>This used to be a bare <c>string</c>, and the <c>sorting</c> arm used to be split
+    /// by the bare <see cref="SplitTopLevelCommas"/> while the <c>where</c> arm beside it went
+    /// through <see cref="SplitPropertyEntries"/> (#3271). The bare splitter does not strip the
+    /// AL preprocessor directive LINES the compiler records verbatim inside a property's source
+    /// text (#2978) — and, called without <c>preserveNewlines</c>, it flattens them into the
+    /// entry beside them first. So <c>sorting(Bucket, #if not CLEAN25 "Zone Code", #endif
+    /// "No.")</c> did not merely MISCOUNT: it produced the literal field names
+    /// <c>#if not CLEAN25 "Zone Code</c> and <c>#endif "No.</c>, destroying a real name in
+    /// the process.</para>
+    ///
+    /// <para><paramref name="Conditional"/> has the same meaning as on
+    /// <see cref="PageViewFilterSymbol"/>: the entry sat inside an <c>#if</c> block, so nothing
+    /// in the symbol file records whether the compiler kept it, and
+    /// <c>DependencyPageMetadataXml.EmitSourceTableViewXml</c> resolves it against the app's own
+    /// field inventory — applied when the name resolves, OMITTED when it does not.</para>
+    ///
+    /// <para>Omitting is a deliberate decision here and not an analogy to the filter arm, since
+    /// a key is not a filter: dropping one field changes the ORDER rather than widening the
+    /// rowset. It is still the right answer, because a guarded entry the app does not contain
+    /// is not in the compiled page either — the compiled page really does declare the shorter
+    /// key, so the shorter key is a reconstruction rather than an approximation. The
+    /// alternative, refusing the whole key, leaves the page on the table's DEFAULT order, which
+    /// is further from what BC does, not closer.</para>
+    /// </summary>
+    internal sealed record PageViewSortFieldSymbol(string FieldName, bool Conditional = false);
 
     /// <summary>
     /// One field control of a precompiled dependency page, as SymbolReference.json states
@@ -1615,7 +1645,7 @@ internal static partial class BcAppSymbolCache
     {
         if (string.IsNullOrWhiteSpace(text)) return null;
 
-        var sorting = new List<string>();
+        var sorting = new List<PageViewSortFieldSymbol>();
         bool? ascending = null;
         var filters = new List<PageViewFilterSymbol>();
         List<string>? unreadable = null;
@@ -1641,10 +1671,19 @@ internal static partial class BcAppSymbolCache
             switch (m.Groups["clause"].Value.ToLowerInvariant())
             {
                 case "sorting":
-                    foreach (var f in SplitTopLevelCommas(inner))
+                    // SplitPropertyEntries, not the bare SplitTopLevelCommas (#3271). Both arms
+                    // of this switch read text the SAME compiler wrote, so both must strip the
+                    // AL preprocessor directive lines it records verbatim inside a property's
+                    // source (#2978). The bare splitter did not, AND it flattened the newlines
+                    // that make a directive a LINE — so a guarded sorting() did not produce a
+                    // short field list, it produced field names with directive text glued onto
+                    // them (`#if not CLEAN25 "Zone Code`), which is also how it destroyed the
+                    // real name on the line after the #endif.
+                    foreach (var (entry, conditional) in SplitPropertyEntries(inner))
                     {
-                        var fieldName = f.Trim().Trim('"');
-                        if (fieldName.Length > 0) sorting.Add(fieldName);
+                        var fieldName = entry.Trim().Trim('"');
+                        if (fieldName.Length > 0)
+                            sorting.Add(new PageViewSortFieldSymbol(fieldName, conditional));
                     }
                     break;
                 case "order":
