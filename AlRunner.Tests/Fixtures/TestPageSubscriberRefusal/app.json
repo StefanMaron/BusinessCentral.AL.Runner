@@ -1,0 +1,24 @@
+{
+  "id": "0c4d9a71-6b52-4e18-9f3a-2d8c7b1e5406",
+  "name": "Runner Tests Fixture - TestPage Subscriber Refusal",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Issue #3105: a refusal raised inside a TABLE EVENT SUBSCRIBER, several frames below a TestPage page-global control write, must reach the asserterror that wraps SetValue and be recorded once on that control's validation-error ledger.",
+  "description": "Runner-mechanism fixture. The existing coverage raises the refusal in the control's OWN OnValidate body (corpus codeunits 60808, 60820, 60836); this one raises it in a subscriber the platform's table-event dispatch invokes underneath Delete(true), which is how Microsoft's Codeunit134614.TestRemoveSUPERPermissionsByUserAll refuses -- the System Application's Access Control OnBeforeDeleteEvent subscriber, four frames below the control write. A regression in the runner's own dispatch-under-a-control-write path would leave every existing test green, so it is pinned here. Declares no application floor: everything it needs is its own.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "platform": "1.0.0.0",
+  "idRanges": [
+    {
+      "from": 70600,
+      "to": 70619
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}
