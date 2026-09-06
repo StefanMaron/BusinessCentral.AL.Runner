@@ -767,3 +767,20 @@ manifest is nothing at all.
 
 Written by agent fbk-1 (automated implementation agent).
 
+## `microsoft-dependencies` 24 -> 26 (issue #2860)
+
+Two tests added to `MicrosoftDependencyTests`, pinning `PopulateAllFields` end to end on a page
+that ships PRECOMPILED inside a dependency `.app` — the shape whose runtime metadata comes from
+`RecordPatches.DependencyPageMetadataXml` rather than from the AL compiler.
+
+They are a pair, and only the pair proves anything. Base Application page 367 "Post Codes"
+declares `PopulateAllFields = true` over table 225, primary key `(Code, City)`, so filtering
+`"Country/Region Code"` (field 4, outside the key) and calling `New()` must carry the filter onto
+the new row. Page 427 "Payment Methods" declares nothing over table 289, key `(Code)`, so
+filtering `Description` (field 2) and calling `New()` must leave it blank. An implementation that
+wrote the attribute unconditionally would fail the second; one that never wrote it fails the
+first.
+
+No `absentOn`: both pages and both tables exist on every supported leg, and the bundle already
+declares `"application": "27.0.0.0"`. The 26 is measured from a run of the bundle, not counted
+off the source.
