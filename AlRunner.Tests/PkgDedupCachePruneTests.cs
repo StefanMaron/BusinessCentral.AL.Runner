@@ -112,6 +112,42 @@ public sealed class PkgDedupCachePruneTests : IDisposable
     }
 
     [Fact]
+    public void Prune_RemovesLeftoverStaleDirectoryFromAReplacedStage()
+    {
+        // PkgDedupStaging.TryMoveAside renames a stage whose entries no longer resolve to
+        // `<key>.stale-<rand>` and then deletes it best-effort, swallowing every failure
+        // (#2989). A tree that could not be deleted then sits there forever — the same leak
+        // this class closes, reached through a sibling function. Note there is no age or
+        // liveness test here and there should not be: the rename already made it unreachable
+        // under the stage name, so no compile can adopt it, and the renamer had already
+        // decided it was garbage.
+        var aside = Path.Combine(_root, KeyA + ".stale-1a2b3c4d");
+        Directory.CreateDirectory(aside);
+        File.WriteAllText(Path.Combine(aside, "dangling.app"), "NAVX");
+        Directory.SetLastWriteTimeUtc(aside, Now);   // brand new: still goes
+
+        var result = PkgDedupCache.Prune(_root, MaxAge, Now);
+
+        Assert.False(Directory.Exists(aside), "a leftover .stale- tree must be finished off");
+        Assert.Contains(aside, result.Removed);
+    }
+
+    [Theory]
+    [InlineData(".stale-1a2b3c4d")]
+    [InlineData(".pruning-1a2b3c4d")]
+    public void Prune_NeverTreatsAForeignNameAsARenamedAsideLeftover(string suffix)
+    {
+        // The stage-key half still has to check out. `something.stale-1a2b3c4d` is not ours.
+        var foreign = Stage("something" + suffix, TimeSpan.FromDays(3650));
+
+        var result = PkgDedupCache.Prune(_root, MaxAge, Now);
+
+        Assert.True(Directory.Exists(foreign), "only a leftover of a REAL stage key is ours to finish");
+        Assert.Empty(result.Removed);
+        Assert.Equal(1, result.Skipped);
+    }
+
+    [Fact]
     public void Prune_RemovesLeftoverPruningDirectoryFromAnEarlierPass()
     {
         // Prune renames a doomed stage aside before deleting it, so no other process can

@@ -57,6 +57,12 @@
 //   restages correctly. A crash between the rename and the delete leaves the aside tree,
 //   which the next pass finishes.
 //
+//   The same finishing applies to `<name>.stale-<rand>`, which PkgDedupStaging.TryMoveAside
+//   leaves when it replaces a stage whose entries no longer resolve (#2989). Its delete is
+//   best-effort and swallows every failure, so a tree that could not be removed stays under
+//   that name with nothing else in the root to reclaim it — the same unbounded growth this
+//   class closes, reached through a sibling function rather than through the stage itself.
+//
 //   RESIDUAL RACE, stated rather than papered over: another process can pass
 //   `Directory.Exists(stage)` in the instant between this pass reading the markers and
 //   renaming the directory aside. It needs a stage nobody has used for seven days to be
@@ -80,9 +86,16 @@ internal static class PkgDedupCache
     /// <see cref="ScratchDirs.OwnerMarkerSuffix"/> — see this file's header.</summary>
     internal const string InUseInfix = ".inuse-";
 
-    /// <summary>Marks a tree renamed aside for deletion. Recognised on a later pass so a prune
-    /// interrupted between the rename and the delete is finished rather than leaked.</summary>
+    /// <summary>Marks a tree THIS class renamed aside for deletion. Recognised on a later pass so
+    /// a prune interrupted between the rename and the delete is finished rather than leaked.</summary>
     internal const string PruningInfix = ".pruning-";
+
+    /// <summary>What PkgDedupStaging.TryMoveAside renames a stale stage to before replacing it
+    /// (#2989). Its delete is best-effort and swallows every failure, so a held or unreadable
+    /// tree stays under this name forever with nothing else in the tree to reclaim it — the same
+    /// leak this class exists to close, arrived at from a sibling function. Recognised here for
+    /// the same reason and on the same terms as PruningInfix.</summary>
+    internal const string StaleInfix = ".stale-";
 
     /// <summary>Far longer than any plausible run. The claim in condition 2 is what actually
     /// protects a live stage; this covers a claim that was never written (a pre-#2990 build)
@@ -213,12 +226,24 @@ internal static class PkgDedupCache
         return rest.StartsWith(".tmp-", StringComparison.Ordinal) && IsLowerHex(rest[5..], 8);
     }
 
-    /// <summary>True for a tree an earlier pass renamed aside and did not finish deleting.</summary>
-    internal static bool IsPruningLeftoverName(string name)
+    /// <summary>
+    /// True for a stage tree that has already been renamed out from under its real name and
+    /// whose deletion did not finish — either by this class (<see cref="PruningInfix"/>) or by
+    /// PkgDedupStaging replacing a stale stage (<see cref="StaleInfix"/>).
+    ///
+    /// <para>These need no liveness or age test, and get none. The rename is what makes them
+    /// unreachable: no lookup resolves a stage under one of these names, so no compile can adopt
+    /// one, and the process that renamed it had already decided to delete it. Finishing that
+    /// delete is strictly what the renamer intended.</para>
+    /// </summary>
+    internal static bool IsRenamedAsideLeftoverName(string name)
+        => IsLeftoverWithInfix(name, PruningInfix) || IsLeftoverWithInfix(name, StaleInfix);
+
+    private static bool IsLeftoverWithInfix(string name, string infix)
     {
-        var idx = name.IndexOf(PruningInfix, StringComparison.Ordinal);
+        var idx = name.IndexOf(infix, StringComparison.Ordinal);
         if (idx <= 0) return false;
-        return IsStageDirName(name[..idx]) && IsLowerHex(name[(idx + PruningInfix.Length)..], 8);
+        return IsStageDirName(name[..idx]) && IsLowerHex(name[(idx + infix.Length)..], 8);
     }
 
     private static bool IsLowerHex(string s, int length)
@@ -292,15 +317,16 @@ internal static class PkgDedupCache
                     continue;
                 }
                 if (!Directory.Exists(entry)) { result.Skipped++; continue; }
-                if (IsPruningLeftoverName(name)) { leftovers.Add(entry); continue; }
+                if (IsRenamedAsideLeftoverName(name)) { leftovers.Add(entry); continue; }
                 stages.Add(entry);
             }
             catch (IOException) { result.Skipped++; }
             catch (UnauthorizedAccessException) { result.Skipped++; }
         }
 
-        // Trees a previous pass renamed aside. Already unreachable under their real names, so
-        // nobody can be reading them by the argument above: finish the job unconditionally.
+        // Trees renamed aside by an earlier prune, or by PkgDedupStaging replacing a stale
+        // stage. Already unreachable under their real names, so nobody can adopt one: finish
+        // the job the renamer started. See IsRenamedAsideLeftoverName.
         foreach (var leftover in leftovers)
         {
             if (TryDeleteTree(leftover)) result.Removed.Add(leftover);
