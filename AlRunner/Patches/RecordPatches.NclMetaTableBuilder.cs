@@ -1355,10 +1355,17 @@ public static partial class RecordPatches
         try
         {
             EnsureFieldTriggerReflection();
-            if (_tFieldTriggerHandlerAttr == null || _tFieldTriggerType == null
-                || _tFieldTriggerHandler1 == null || _tEventTriggerData == null
-                || _fEventTriggerDataValueBacking == null)
-                return false;
+            // The SCAN's own two types. #3026: these cannot be made proportional — without
+            // them the runner cannot determine whether this table declares a field trigger at
+            // all, so there is no "nothing to install" answer to give, and on a build missing
+            // them EVERY AL field trigger in the bundle would silently never fire. The other
+            // three members this used to demand up front are required at the install sites
+            // below instead, so a table with no triggers is not refused for a member it never
+            // needed. See FieldTriggerShapeGaps.cs.
+            var attrType = FieldTriggerShapeGap.RequireScanType(
+                _tFieldTriggerHandlerAttr, "FieldTriggerHandlerAttribute", tableId);
+            var triggerTypeEnum = FieldTriggerShapeGap.RequireScanType(
+                _tFieldTriggerType, "FieldTriggerType", tableId);
 
             var recordType = FindRecordType(tableId);
             if (recordType == null) return false;
@@ -1369,13 +1376,13 @@ public static partial class RecordPatches
                                                      | BindingFlags.Instance | BindingFlags.Static
                                                      | BindingFlags.DeclaredOnly))
             {
-                var attrs = mi.GetCustomAttributes(_tFieldTriggerHandlerAttr, inherit: false);
+                var attrs = mi.GetCustomAttributes(attrType, inherit: false);
                 if (attrs.Length == 0) continue;
                 foreach (var a in attrs)
                 {
-                    var fieldNo = (int)_tFieldTriggerHandlerAttr.GetProperty("FieldNo")!.GetValue(a)!;
-                    var ttObj = _tFieldTriggerHandlerAttr.GetProperty("TriggerType")!.GetValue(a)!;
-                    var ttName = Enum.GetName(_tFieldTriggerType, ttObj);
+                    var fieldNo = (int)attrType.GetProperty("FieldNo")!.GetValue(a)!;
+                    var ttObj = attrType.GetProperty("TriggerType")!.GetValue(a)!;
+                    var ttName = Enum.GetName(triggerTypeEnum, ttObj);
                     byField.TryGetValue(fieldNo, out var pair);
                     if (ttName == "OnValidate") pair.validate = mi;
                     else if (ttName == "OnLookup") pair.lookup = mi;
@@ -1405,6 +1412,13 @@ public static partial class RecordPatches
 
             // For each field with handler(s): build EventTriggerData, set ValidateHandler/LookupHandler,
             // poke onto NCLMetaField.EventTriggerDataValue backing field.
+            //
+            // #3026: required HERE rather than in the method-top guard, because reaching this
+            // line is what establishes that there IS something to install.
+            var etdType = FieldTriggerShapeGap.RequireEventTriggerDataType(_tEventTriggerData, tableId);
+            var etdValueBacking = FieldTriggerShapeGap.RequireEventTriggerDataValueBacking(
+                _fEventTriggerDataValueBacking, tableId);
+
             foreach (var kvp in byField)
             {
                 var fieldNo = kvp.Key;
@@ -1413,28 +1427,42 @@ public static partial class RecordPatches
                 catch { continue; }
                 if (metaField == null) continue;
 
-                var existing = _fEventTriggerDataValueBacking.GetValue(metaField);
-                var etd = existing ?? Activator.CreateInstance(_tEventTriggerData)!;
+                var existing = etdValueBacking.GetValue(metaField);
+                var etd = existing ?? Activator.CreateInstance(etdType)!;
 
-                if (kvp.Value.validate != null && _fValidateHandlerBacking != null)
+                if (kvp.Value.validate != null)
                 {
+                    // #3026: `&& _fValidateHandlerBacking != null` here USED to skip the
+                    // install silently — the AL field OnValidate trigger was never installed,
+                    // nothing was printed, and this method still returned true.
+                    var backing = FieldTriggerShapeGap.RequireHandlerBacking(
+                        _fValidateHandlerBacking, "ValidateHandler", tableId, fieldNo);
                     var handler = BuildFieldTriggerHandler(kvp.Value.validate, recordType);
                     if (handler != null)
-                        AlRunner.Infrastructure.FieldPoke.SetInstance(_fValidateHandlerBacking, etd, handler);
+                        AlRunner.Infrastructure.FieldPoke.SetInstance(backing, etd, handler);
                 }
-                if (kvp.Value.lookup != null && _fLookupHandlerBacking != null)
+                if (kvp.Value.lookup != null)
                 {
+                    var backing = FieldTriggerShapeGap.RequireHandlerBacking(
+                        _fLookupHandlerBacking, "LookupHandler", tableId, fieldNo);
                     var handler = BuildFieldTriggerHandler(kvp.Value.lookup, recordType);
                     if (handler != null)
-                        AlRunner.Infrastructure.FieldPoke.SetInstance(_fLookupHandlerBacking, etd, handler);
+                        AlRunner.Infrastructure.FieldPoke.SetInstance(backing, etd, handler);
                 }
-                AlRunner.Infrastructure.FieldPoke.SetInstance(_fEventTriggerDataValueBacking, metaField, etd);
+                AlRunner.Infrastructure.FieldPoke.SetInstance(etdValueBacking, metaField, etd);
             }
 
             WireExtensionValidateHandlers(built, tableId);
             return true;
         }
-        catch (Exception ex)
+        // #3026: the filter is load-bearing. Without it this catch converts every refusal
+        // raised above into a stderr line plus the same not-installed outcome the refusals
+        // exist to stop — still green, still no trigger. A BcShapeGapException tears through
+        // both of AL's trapping seams by contract (see BcShapeGapException.cs), and it cannot
+        // do that if this frame swallows it first. Everything else — notably Ncl not being
+        // loaded yet, which makes EnsureFieldTriggerReflection's First() throw — keeps its
+        // old behaviour.
+        catch (Exception ex) when (AlRunner.Infrastructure.BcShapeGapException.Find(ex) is null)
         {
             Console.Error.WriteLine($"[RecordPatches] WireFieldTriggerHandlers({tableId}) failed: {ex.GetType().Name}: {ex.Message}");
             return false;
@@ -1459,10 +1487,13 @@ public static partial class RecordPatches
     /// </summary>
     private static void WireExtensionValidateHandlers(NCLMetaTable built, int tableId)
     {
-        if (_pOnBeforeValidateHandlers == null || _pOnAfterValidateHandlers == null
-            || _tFieldTriggerHandlerListClosed == null || _fEventTriggerDataValueBacking == null
-            || _tEventTriggerData == null)
-            return;
+        // #3026: the five-member guard that used to stand here returned silently for EVERY
+        // table on a moved-layout build, including the overwhelming majority that have no
+        // tableextension field trigger to install at all. Each member is now demanded at the
+        // point of use, once the runner knows it has a handler in hand — see
+        // FieldTriggerShapeGaps.cs. Only the callers' own precondition survives here:
+        // WireFieldTriggerHandlers is the sole caller and has already refused if the scan
+        // types are absent.
         if (!_parsedTables.TryGetValue(tableId, out var parsed)) return;
         if (!_extensionIdsByBaseTable.TryGetValue(parsed.TableName.ToLowerInvariant(), out var extIds)
             || extIds.Count == 0)
@@ -1515,6 +1546,12 @@ public static partial class RecordPatches
         fieldsToWire.UnionWith(afterByField.Keys);
         fieldsToWire.UnionWith(validateByField.Keys);
         fieldsToWire.UnionWith(lookupByField.Keys);
+        if (fieldsToWire.Count == 0) return;   // nothing to install: nothing to refuse over
+
+        var etdType = FieldTriggerShapeGap.RequireEventTriggerDataType(_tEventTriggerData, tableId);
+        var etdValueBacking = FieldTriggerShapeGap.RequireEventTriggerDataValueBacking(
+            _fEventTriggerDataValueBacking, tableId);
+
         foreach (var fieldNo in fieldsToWire)
         {
             NCLMetaField? metaField;
@@ -1522,25 +1559,40 @@ public static partial class RecordPatches
             catch { continue; }
             if (metaField == null) continue;
 
-            var etd = _fEventTriggerDataValueBacking.GetValue(metaField)
-                      ?? Activator.CreateInstance(_tEventTriggerData)!;
+            var etd = etdValueBacking.GetValue(metaField)
+                      ?? Activator.CreateInstance(etdType)!;
             if (beforeByField.TryGetValue(fieldNo, out var before))
-                _pOnBeforeValidateHandlers.SetValue(etd, ToHandlerList(before));
+                FieldTriggerShapeGap.RequireHandlerListProperty(
+                        _pOnBeforeValidateHandlers, "OnBeforeValidateHandlers", tableId, fieldNo)
+                    .SetValue(etd, ToHandlerList(before, tableId, fieldNo));
             if (afterByField.TryGetValue(fieldNo, out var after))
-                _pOnAfterValidateHandlers.SetValue(etd, ToHandlerList(after));
-            if (validateByField.TryGetValue(fieldNo, out var extValidate) && _fValidateHandlerBacking != null)
-                AlRunner.Infrastructure.FieldPoke.SetInstance(_fValidateHandlerBacking, etd, extValidate);
-            if (lookupByField.TryGetValue(fieldNo, out var extLookup) && _fLookupHandlerBacking != null)
-                AlRunner.Infrastructure.FieldPoke.SetInstance(_fLookupHandlerBacking, etd, extLookup);
-            AlRunner.Infrastructure.FieldPoke.SetInstance(_fEventTriggerDataValueBacking, metaField, etd);
+                FieldTriggerShapeGap.RequireHandlerListProperty(
+                        _pOnAfterValidateHandlers, "OnAfterValidateHandlers", tableId, fieldNo)
+                    .SetValue(etd, ToHandlerList(after, tableId, fieldNo));
+            // #3026: `&& _fValidateHandlerBacking != null` here silently dropped the OnValidate
+            // / OnLookup trigger of a field a TABLEEXTENSION adds (issue #1835's shape), with
+            // the same "returned normally, installed nothing" outcome as the base-table path.
+            if (validateByField.TryGetValue(fieldNo, out var extValidate))
+                AlRunner.Infrastructure.FieldPoke.SetInstance(
+                    FieldTriggerShapeGap.RequireHandlerBacking(
+                        _fValidateHandlerBacking, "ValidateHandler", tableId, fieldNo),
+                    etd, extValidate);
+            if (lookupByField.TryGetValue(fieldNo, out var extLookup))
+                AlRunner.Infrastructure.FieldPoke.SetInstance(
+                    FieldTriggerShapeGap.RequireHandlerBacking(
+                        _fLookupHandlerBacking, "LookupHandler", tableId, fieldNo),
+                    etd, extLookup);
+            AlRunner.Infrastructure.FieldPoke.SetInstance(etdValueBacking, metaField, etd);
         }
     }
 
     // Box a List<object> of FieldTriggerHandler<NavApplicationObjectBase> into the strongly
     // typed List<FieldTriggerHandler<NavApplicationObjectBase>> the EventTriggerData expects.
-    private static object ToHandlerList(List<object> handlers)
+    private static object ToHandlerList(List<object> handlers, int tableId, int fieldNo)
     {
-        var list = (System.Collections.IList)Activator.CreateInstance(_tFieldTriggerHandlerListClosed!)!;
+        var listType = FieldTriggerShapeGap.RequireHandlerListType(
+            _tFieldTriggerHandlerListClosed, tableId, fieldNo);
+        var list = (System.Collections.IList)Activator.CreateInstance(listType)!;
         foreach (var h in handlers) list.Add(h);
         return list;
     }
@@ -1561,9 +1613,21 @@ public static partial class RecordPatches
                 .First(a => a.GetName().Name == "Microsoft.Dynamics.Nav.Ncl");
             _tNavApplicationObjectBase = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NavApplicationObjectBase");
         }
-        if (_tNavApplicationObjectBase == null) return null;
+        // #3026: both of these used to return null, which every install site then skipped
+        // silently — the trigger was not installed and the caller was told the table was
+        // wired. Neither is reachable on a supported build; both mean BC's own layout moved.
+        if (_tNavApplicationObjectBase == null)
+            throw FieldTriggerShapeGap.HandlerConstruction(
+                "Microsoft.Dynamics.Nav.Runtime.NavApplicationObjectBase", target,
+                "type not found on this BC build, so the AL trigger method cannot be wrapped in a "
+                + "FieldTriggerHandler and the trigger would never fire");
+        if (_tFieldTriggerHandler1 == null)
+            throw FieldTriggerShapeGap.HandlerConstruction(
+                "Microsoft.Dynamics.Nav.Runtime.FieldTriggerHandler`1", target,
+                "type not found on this BC build, so the AL trigger method cannot be wrapped and "
+                + "the trigger would never fire");
 
-        var ftHandler = _tFieldTriggerHandler1!.MakeGenericType(_tNavApplicationObjectBase);
+        var ftHandler = _tFieldTriggerHandler1.MakeGenericType(_tNavApplicationObjectBase);
         var ret = target.ReturnType;
 
         // We can't Delegate.CreateDelegate directly for an Action<NavApplicationObjectBase>
@@ -1578,8 +1642,13 @@ public static partial class RecordPatches
             // del is Func<TConcrete, ValueTask>; we need Func<NavApplicationObjectBase, ValueTask>.
             // Build via a small wrapper closure.
             var wrapper = BuildAsyncWrapper(del, _tNavApplicationObjectBase, recordType);
-            var ctor = ftHandler.GetConstructor(new[] { typeof(Type), funcT });
-            return ctor?.Invoke(new object[] { recordType, wrapper });
+            var ctor = ftHandler.GetConstructor(new[] { typeof(Type), funcT })
+                ?? throw FieldTriggerShapeGap.HandlerConstruction(
+                    "FieldTriggerHandler<NavApplicationObjectBase>..ctor(Type, Func<T, ValueTask>)",
+                    target,
+                    "constructor not found on this BC build, so the async AL trigger method cannot "
+                    + "be wrapped and the trigger would never fire");
+            return ctor.Invoke(new object[] { recordType, wrapper });
         }
         else if (ret == typeof(void))
         {
@@ -1588,8 +1657,12 @@ public static partial class RecordPatches
                 BindingFlags.NonPublic | BindingFlags.Static)!.MakeGenericMethod(recordType);
             var del = (Delegate)helper.Invoke(null, new object?[] { target })!;
             var wrapper = BuildSyncWrapper(del, _tNavApplicationObjectBase, recordType);
-            var ctor = ftHandler.GetConstructor(new[] { typeof(Type), actT });
-            return ctor?.Invoke(new object[] { recordType, wrapper });
+            var ctor = ftHandler.GetConstructor(new[] { typeof(Type), actT })
+                ?? throw FieldTriggerShapeGap.HandlerConstruction(
+                    "FieldTriggerHandler<NavApplicationObjectBase>..ctor(Type, Action<T>)", target,
+                    "constructor not found on this BC build, so the AL trigger method cannot be "
+                    + "wrapped and the trigger would never fire");
+            return ctor.Invoke(new object[] { recordType, wrapper });
         }
         Console.Error.WriteLine($"[RecordPatches] WireFieldTriggerHandlers: skip {target.DeclaringType?.Name}.{target.Name} — unsupported return type {ret.Name}");
         return null;
