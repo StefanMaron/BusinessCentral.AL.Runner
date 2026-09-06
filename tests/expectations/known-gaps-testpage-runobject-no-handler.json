@@ -1,0 +1,18 @@
+[
+  {
+    "codeunitId": 60285,
+    "CodeunitName": "TPARONH Tests",
+    "Method": "RunObjectActionWithoutAHandlerOpensItsTargetUnattended",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2975",
+    "Note": "A page action's RunObject invoked with NO handler bound: real BC opens the target anyway, runs its OnOpenPage, and raises nothing AL can see -- measured on 27.0, 27.3, 27.5, 28.0, 28.1, 28.2, 28.3 and 28.4 (StefanMaron/BusinessCentral.AL.Language.Tests#185). The runner refuses instead, with NavNCLMissingUIHandlerException 'Unhandled UI: Page 60282'. #2951 made an action's RunObject perform its target, which is why the sibling eight-test suite (codeunit 60455 'TPARO Tests') passes here; the no-handler arm was deliberately held out of that suite while the question was open and is what #2975 still tracks. The three control arms in THIS codeunit pass on the runner -- a plain Page.Run on the same target IS refused, an OnAction trigger calling Page.Run on the same host and row IS refused, and the logging target does record its own opening when a handler is bound -- so the fixture, the target page and the action-invoke path are all ruled out, and the RunObject declaration is the only thing left."
+  },
+  {
+    "codeunitId": 60285,
+    "CodeunitName": "TPARONH Tests",
+    "Method": "RunObjectActionOnTheControlsTargetWithoutAHandler_NoThrow",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2975",
+    "Note": "The same gap as the entry above, aimed at the clean Card target rather than the logging one, so the comparison has a RunObject side on exactly the page the two Page.Run controls refuse. Its whole claim is that the statement completes; the runner raises NavNCLMissingUIHandlerException 'Unhandled UI: Page 60281' instead."
+  }
+]
