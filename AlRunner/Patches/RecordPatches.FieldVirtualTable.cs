@@ -303,8 +303,12 @@ public static partial class RecordPatches
         _tFieldDataProvider = nclAsm.GetType(rt + "FieldDataProvider")
             ?? throw new InvalidOperationException("FieldDataProvider type not found");
 
-        _mGetFieldRecordBuffer = _tFieldDataProvider.GetMethod("GetFieldRecordBuffer",
-            BindingFlags.NonPublic | BindingFlags.Instance)
+        // Enumerated rather than Type.GetMethod(name, flags) — see BcShape.FindMethod and #3069.
+        _mGetFieldRecordBuffer = BcShape.FindMethod(
+            _tFieldDataProvider, "GetFieldRecordBuffer", BindingFlags.NonPublic | BindingFlags.Instance,
+            "Field virtual table (system table 2000000041)",
+            "FieldDataProvider.GetFieldRecordBuffer",
+            "the Field virtual table cannot be served")
             ?? throw new InvalidOperationException("FieldDataProvider.GetFieldRecordBuffer not found");
 
         var tVdp = nclAsm.GetType(rt + "VirtualDataProvider");

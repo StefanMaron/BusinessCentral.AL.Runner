@@ -96,6 +96,7 @@
 
 using System;
 using System.Collections;
+using System.Linq;
 using System.Reflection;
 
 namespace AlRunner.Infrastructure;
@@ -195,6 +196,75 @@ internal static class BcShape
     public static FieldInfo RequiredField(Type type, string member, string surface, string detail)
         => PrivateMemberLookup.Field(type, member)
            ?? throw new BcShapeGapException(surface, $"{type.Name}.{member}", $"field not found — {detail}");
+
+    /// <summary>
+    /// The one method named <paramref name="name"/> that <paramref name="declaring"/> exposes
+    /// under <paramref name="flags"/>, or <c>null</c> when BC declares NONE.
+    ///
+    /// <para>What this is for: <see cref="Type.GetMethod(string, BindingFlags)"/> throws
+    /// <see cref="AmbiguousMatchException"/> the moment Microsoft ships a second method of that
+    /// name. That is a bare framework exception carrying no member name, and
+    /// <c>MethodScopePatches.NavMethodScope_AssertError</c> rethrows only
+    /// <see cref="BcShapeGapException"/> — so under an AL <c>asserterror</c> it is ABSORBED and
+    /// the asserterror PASSES, on a call real BC performs fine. Enumerating cannot throw, so
+    /// every outcome here is the method, <c>null</c>, or a refusal that names the member
+    /// (#3069, and #3062 for the same repair inside the permission slice).</para>
+    ///
+    /// <para><b>Absence still answers <c>null</c>, deliberately.</b> A member that MOVED is the
+    /// null-forgiving shape #3051 tracks, and converting it here would change what every call
+    /// site does on a build where the member is simply gone. This helper changes exactly one
+    /// outcome — ambiguity — and leaves absence to the call site, which is why it can be dropped
+    /// into a site that tolerates null and a site that throws on null without reading either
+    /// differently. Use <see cref="RequiredMethod"/> where absence must refuse too.</para>
+    ///
+    /// <para><paramref name="types"/> pins the signature the call site's <c>Invoke</c> argument
+    /// array is built for; pass it wherever the types are derivable from something already in
+    /// hand, and an added overload is then RESOLVED rather than merely reported. Where it is
+    /// null the method must be unique by name, and a second declaration is refused BY NAME.</para>
+    ///
+    /// <para>Two survivors are refused rather than guessed. With distinct signatures that is a
+    /// real overload the call site cannot choose between; with identical ones it is a
+    /// <c>new</c>-hidden member, where <see cref="Type.GetMethod(string, BindingFlags)"/> would
+    /// silently hand back the most-derived declaration and could drive the wrong one. This is
+    /// therefore STRICTER than what it replaces in that one case — measured on Ncl
+    /// 27.5.46862.48827 and 28.1.49838.50621, every call site converted to it resolves to
+    /// exactly one candidate, so neither refusal fires on a BC build the runner has seen.</para>
+    /// </summary>
+    public static MethodInfo? FindMethod(
+        Type declaring, string name, BindingFlags flags,
+        string surface, string member, string detail, Type[]? types = null)
+    {
+        var candidates = declaring.GetMethods(flags)
+            .Where(m => string.Equals(m.Name, name, StringComparison.Ordinal))
+            .Where(m => types == null
+                        || m.GetParameters().Select(pp => pp.ParameterType).SequenceEqual(types))
+            .ToArray();
+
+        if (candidates.Length == 1) return candidates[0];
+        if (candidates.Length == 0) return null;
+
+        throw new BcShapeGapException(
+            surface, member,
+            $"BC declares {candidates.Length} methods named {name}{Signature(types)}"
+            + $" on {declaring.Name}, so the runner cannot tell which one its call site means"
+            + $" — {detail}");
+    }
+
+    /// <summary>
+    /// <see cref="FindMethod"/> for a call site that cannot proceed without the method: absence
+    /// refuses too, naming what was looked for instead of handing back a null whose
+    /// <see cref="NullReferenceException"/> lands somewhere that names nothing.
+    /// </summary>
+    public static MethodInfo RequiredMethod(
+        Type declaring, string name, BindingFlags flags,
+        string surface, string member, string detail, Type[]? types = null)
+        => FindMethod(declaring, name, flags, surface, member, detail, types)
+           ?? throw new BcShapeGapException(
+               surface, member,
+               $"method not found{Signature(types)} on {declaring.Name} — {detail}");
+
+    private static string Signature(Type[]? types)
+        => types == null ? string.Empty : $" with signature ({string.Join(", ", types.Select(t => t.Name))})";
 
     /// <summary>
     /// <paramref name="value"/> as an <see cref="IEnumerable"/>, or a
