@@ -197,7 +197,11 @@ Measured by running the group, not computed: `9P/0F/0E across 9 tests`, cold and
 
 Five tests added to an existing app group, so no new group line and no app-group count change.
 The group has no `absentOn`, so the same +5 lands on every BC version: runner-extras goes
-301 -> 306 on 27.0/27.3/27.5 and 312 -> 317 on 28.0-28.4.
+305 -> 310 on 27.0/27.3/27.5 and 316 -> 321 on 28.0-28.4. (Re-measured after rebasing onto
+`origin/main` at 598f628a. An earlier revision of this entry said 301 -> 306 and 312 -> 317,
+read off the base this branch was originally cut from; #3101 has since added +2 to
+`object-metadata-system-table` on `main`, which moves both ends by two and changes nothing
+about this group's own +5.)
 
 Three came with the by-id `NavApp.GetModuleInfo` fix, which the two stack-walk patches did not
 cover — the boolean/statement not-found arms and the derived PackageId. Two more came out of
@@ -215,7 +219,8 @@ the review of that PR and are worth naming, because neither is about the reporte
   branch. Now it refuses loudly.
 
 Measured by running the group, not computed: `15P/0F/0E across 15 tests`, cold and warm; and
-the whole suite under `--count-baseline` on BC 28.x, `317 total / 317 pass`, exit 0.
+the whole suite under `--count-baseline` on BC 28.x, re-run on the rebased tree:
+`321 total / 321 pass / 0 fail / 0 error`, exit 0.
 
 ## Migrated log (everything above 2026-09-05, verbatim)
 
