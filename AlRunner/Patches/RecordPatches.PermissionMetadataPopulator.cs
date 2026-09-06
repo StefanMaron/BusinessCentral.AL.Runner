@@ -473,26 +473,6 @@ public static partial class RecordPatches
         return meta;
     }
 
-    private static void SetBackingField(Type declaring, object target, string propertyName, object? value)
-    {
-        var f = declaring.GetField($"<{propertyName}>k__BackingField",
-            BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public)
-            ?? throw PermissionMetadataBcShapeGap(
-                $"NCLMetaPermissionSet.{propertyName}",
-                "has no backing field — BC's permission-set metadata inventory cannot be populated");
-        FieldPoke.SetInstance(f, target, value);
-    }
-
-    private static void SetEmptyListBackingField(Type declaring, object target, string propertyName)
-    {
-        var prop = RequireBcProperty(declaring, propertyName);
-        var element = prop.PropertyType.IsGenericType
-            ? prop.PropertyType.GetGenericArguments()[0]
-            : typeof(object);
-        SetBackingField(declaring, target, propertyName,
-            Activator.CreateInstance(typeof(List<>).MakeGenericType(element)));
-    }
-
     // ── source-declared permissions: names in, ids out (#2910) ──────────────────────────
 
     /// <summary>

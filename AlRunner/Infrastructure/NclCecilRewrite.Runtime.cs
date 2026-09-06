@@ -784,6 +784,15 @@ public static partial class NclCecilRewrite
             // Date store and is a ConditionalWeakTable miss for every other table. CalcNumeric is
             // not in this list because Cecil REPLACES its body above; the same call sits at the
             // top of the replacement instead.
+            //
+            // It takes the PROVIDER REQUEST as well as the provider (#3044). Every one of these
+            // three reads carries a DataProviderRequest, and a DataProviderRequest carries the
+            // same FiltersAndMarks a DataCacheRequest does — on the Exists path it is literally
+            // the same object, since DataAccess.ExistsAsync passes request.FiltersAndMarks
+            // straight through. That lets the net tell "nothing has narrowed this request" from
+            // "a DataAccess-level guard already materialised every row this request can select",
+            // which is what Record.IsEmpty() over a closed range hits: the ExistsAsync guard
+            // materialises 25 rows and the net used to materialise 86,885 more behind it.
             foreach (var providerRead in new[]
                      {
                          ("Exists", "ExistsProviderRequest"),
@@ -793,8 +802,8 @@ public static partial class NclCecilRewrite
             {
                 PrependStaticCall(nclMod,
                     ByParams(Rt + "TempTableDataProvider", providerRead.Item1, providerRead.Item2),
-                    H(recordPatches, "EnsureDateStoreFullyMaterialised"),
-                    argSlots: 1); // `this` — the provider — is all the helper needs
+                    H(recordPatches, "EnsureDateStoreCoversProviderRequest"),
+                    argSlots: 2); // `this` — the provider — and the provider request
             }
 
             // ── BLOB store isolation for database-backed tables (issue #1751) ──────

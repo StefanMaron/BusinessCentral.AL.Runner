@@ -117,6 +117,7 @@ using System;
 using System.Collections;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.IO;
 using System.Reflection;
 using System.Runtime.ExceptionServices;
 using AlRunner.Infrastructure;
@@ -299,9 +300,39 @@ public static partial class RecordPatches
             if (p.AppId != Guid.Empty) names.TryAdd(p.AppId, p.AppName);
         foreach (var appPath in _bcAppPaths.ToArray())
         {
+            // #3031: "the .app is gone" and "the .app is here but unreadable" are different
+            // failures and no longer get the same answer. The split is the one #2712 settled
+            // for the table-symbol read in EnsureBcSymbolTableIndex; the permission slice now
+            // answers it identically rather than inventing a second policy.
+            //
+            // VANISHED — legitimate and expected: a --watch dependency removed between
+            // iterations, a --server process outliving a rebuild, a test fixture's temp dir
+            // deleted. Skip the .app and SAY SO, on `[warn]` — Log's default-verbosity filter
+            // exempts that tag and drops `[Component]`-tagged lines, so the sibling site's
+            // `[RecordPatches]` warning never reached a terminal at all.
+            if (!File.Exists(appPath))
+            {
+                Console.Error.WriteLine(
+                    "[warn] Aggregate Permission Set: registered dependency .app is no longer on "
+                    + $"disk; its App Name is not available to this run: {appPath}");
+                continue;
+            }
+
+            // PRESENT BUT UNREADABLE — never legitimate. Every path in _bcAppPaths already
+            // passed AddBcAppPath's eager read (#2712), so a failure here means the bytes
+            // changed into something unparseable, or the symbol parser is defective. Both are
+            // runner defects. The old `catch { continue; }` left this app out of the index,
+            // and every Aggregate Permission Set row it owns then reported App Name = "" —
+            // which AL reads as "this app has no name", not as "the runner could not find
+            // out". That return value is NOT observably equivalent to real BC (which answers
+            // from installed-app metadata that is always present), so per
+            // .claude/rules/loud-failures.md it refuses instead of defaulting.
             BcAppSymbolCache.AppSymbols symbols;
             try { symbols = BcAppSymbolCache.Get(appPath); }
-            catch { continue; }
+            catch (Exception ex) when (ex is not BcAppSymbolReadException)
+            {
+                throw new BcAppSymbolReadException(appPath, "permission-set app identity", ex);
+            }
             if (Guid.TryParse(symbols.AppId, out var appId) && appId != Guid.Empty)
                 names.TryAdd(appId, symbols.AppName ?? string.Empty);
         }

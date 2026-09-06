@@ -168,6 +168,30 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             // UnmeasuredWeightSeconds, which is the single-threaded tail #1887 exists to
             // prevent.
             ["BcVersionDefaultDocumentationTests"] = 62,
+            // #2801/#3082: this PR's own new collection. Measured 60.1s on the BC 28.4 leg
+            // of run 34028084404, where it was absent from this table and tripped
+            // check-collection-weights.py; every other leg of that run stayed under 60s,
+            // since the gate lists any absent collection at or above the threshold and
+            // named no other leg. Same straddling shape as the two entries above, so the
+            // observed MAXIMUM is what goes in rather than a rounded-down low end.
+            ["TestCodeunitExecutionOrderTests"] = 60,
+            // #2801/#3083: NOT introduced by the PR that tripped on it — this collection is
+            // untouched by #3083, and it failed there only because its wall time crossed the
+            // threshold on that leg. Measured 63.7s on the BC 27.5 leg of run 34030851146,
+            // while staying under 60s on every leg of run 34028084404 (#3082), which is a
+            // measured straddle rather than an inferred one: two independent runs of the
+            // same untouched collection landed on opposite sides of the line. Carries the
+            // observed MAXIMUM for the same reason as the entries above. Added here rather
+            // than on #3083 because #3082 is the PR that changes this suite's dispatch
+            // behaviour anyway.
+            //
+            // The threshold is 2x UnmeasuredWeightSeconds = 60s of summed wall time on a
+            // shared GitHub runner, so a collection sitting near it makes a REQUIRED check
+            // depend on how loaded the runner was. That put an unrelated red on two PRs in
+            // one batch. Adding these two entries fixes today; the shape recurs with the
+            // next collection that lands near 60s, and that is tracked separately rather
+            // than papered over here.
+            ["SuiteAbortOnTimeoutTests"] = 63,
             // #2178: 3 tests, each spawning a real runner subprocess over a three-app source
             // chain (two of them compile all three apps cold). Measured 53.3s (28.3) to
             // 90.5s (27.5) across the eight legs of its first CI run, where it was absent

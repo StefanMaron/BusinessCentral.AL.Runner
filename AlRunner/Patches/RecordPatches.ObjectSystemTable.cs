@@ -66,9 +66,29 @@
 //
 //   Corpus #179 and #187 have since put two other Scope = OnPrem system tables in front of a
 //   real tier from that app, green on all eight OnPrem legs, and #187 contradicted two
-//   runner-local assertions in the process (AlRunner#3066). This one has not been asked yet.
-//   Leaving the old wording in place is how those two survived, so it is corrected rather than
-//   kept: the work is available, not impossible.
+//   runner-local assertions in the process (AlRunner#3066). Leaving the old wording in place is
+//   how those two survived, so it is corrected rather than kept: the work is available, not
+//   impossible.
+//
+//   AND IT HAS NOW BEEN ASKED. Corpus PR StefanMaron/BusinessCentral.AL.Language.Tests#197
+//   carries tests/al-language-onprem/record/TestObjectSystemTable.al, which puts this table's
+//   row set in front of a real tier on the eight OnPrem legs (BC 27.0-28.4). The verdict is not
+//   in as this comment is written, so nothing below has been changed to anticipate it.
+//
+//   WHAT #197 EXPECTS, AND WHY IT MATTERS TO THIS FILE. It asserts the table is present,
+//   readable and EMPTY — on the reading that the classic object registry has no writer left,
+//   since the modern publish path fills 2000000071 and 2000000207 instead and nothing in the
+//   shipped runtime assemblies was found writing 2000000001. If the tier agrees, THIS
+//   PROJECTION IS A DIVERGENCE from real BC rather than a faithful reconstruction, and #3071
+//   owns deciding what to do about that — the projection still has a job (it is what makes
+//   `Record "Object"` answer anything at all for a run with no application database), but it
+//   would need declaring as a divergence rather than described as an inventory BC also keeps.
+//   Do not pre-empt that decision here.
+//
+//   The one sub-claim that IS now settled by measurement rather than inference: that a
+//   Cloud-target caller is refused for THIS id. It used to follow from 2000000001 sharing a
+//   FrozenSet with 2000000071, which was measured; AlRunner.Tests/RecordRefCompilationTargetScopeTests
+//   now runs BC's own CheckIsOpenAllowed against 2000000001 itself, in both target directions.
 //
 //   So what this file answers is deliberately the part that needs no tier verdict: the rows
 //   are the runner's OWN object inventory, and the claim "Object lists the objects this run

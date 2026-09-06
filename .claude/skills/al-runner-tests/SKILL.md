@@ -129,6 +129,37 @@ an exit code.
 
 Read one with `dotnet-dump analyze <file>` (`clrstack`, `clrmodules`, `eeversion`).
 
+## `dotnet test` skips the BC-engine tests locally unless you bootstrap first
+
+The ~28 rows in AlRunner.Tests' **`bc-engine-serial`** collection load the BC engine
+in-process. On a local box they **skip** unless two things are set up, and at `dotnet test`'s
+default verbosity a skip prints no reason at all — measured 2026-09-06: five of five rows
+`[SKIP]`, no reason shown, `Skipped! - Failed: 0, Passed: 0, Skipped: 5`, **exit code 0**. A
+RED baseline taken in that state is worthless: revert the fix, see "passed", and you have
+concluded the opposite of the truth.
+
+```bash
+dotnet build AlRunner.Tests/AlRunner.Tests.csproj -c Release
+tools/engine-test-bootstrap.sh                       # idempotent; converges in 2 passes
+dotnet test AlRunner.Tests/AlRunner.Tests.csproj -c Release --no-build \
+    --settings engine.runsettings --filter FullyQualifiedName~YourTestClass
+```
+
+**Re-run `tools/engine-test-bootstrap.sh` after EVERY build.** A build restores a pristine
+`bin/Microsoft.Dynamics.Nav.Ncl.dll`, and rows that had been running go back to skipping.
+`tools/engine-test-bootstrap.sh --verify` answers "would they run right now?" — exit 0 yes,
+exit 1 no with the reason printed.
+
+Since #3078 the skip reason itself names the collection, the unwrapped cause and the remedy
+(`AlRunner.Tests/BcEngineSkipReason.cs`), but you only see it at
+`--logger "console;verbosity=normal"` or higher. **`Skipped: N` in a summary is not a pass** —
+if N is non-zero on a suite you are using as a baseline, find out which rows and why before
+believing the run.
+
+CI does this bootstrap itself (`.github/workflows/bc-tests.yml`, the "Warm the Ncl Cecil
+rewrite cache" and "Generate .runsettings" steps), so the rows execute there. The gap is
+purely local, which is exactly why nothing catches it for you.
+
 ## Proving-test rules
 
 A skeptic must be able to read any test and say: "yes, if this passes, feature X works correctly." Every test satisfies all four:

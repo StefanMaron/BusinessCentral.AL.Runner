@@ -20,15 +20,28 @@
 // The two fixtures below are byte-identical AL except for `target` in app.json and the
 // object ids, and BOTH must exit 0:
 //
-//   * Cloud   — Open(2000000071) must RAISE, with BC's own sentence naming both the table
-//               id and the target; Open(2000000026), Open(2000000187), Open(2000000188)
-//               and Open(<own table>) must still succeed.
-//   * OnPrem  — every one of those five, INCLUDING 2000000071, must succeed.
+//   * Cloud   — Open(2000000071) and Open(2000000001) must RAISE, with BC's own sentence
+//               naming both the table id and the target; Open(2000000026), Open(2000000187),
+//               Open(2000000188) and Open(<own table>) must still succeed.
+//   * OnPrem  — every one of those six, INCLUDING 2000000071 and 2000000001, must succeed.
 //
 // That pins the gate from three sides at once. Reverting the fix breaks the Cloud
-// asserterror test; a gate that refuses every system table breaks the Cloud
+// asserterror tests; a gate that refuses every system table breaks the Cloud
 // 2000000026/187/188 tests; a gate that forgets to exempt OnPrem breaks the whole OnPrem
 // fixture.
+//
+// ── WHY 2000000001 IS ASKED ABOUT SEPARATELY (issues #2774, #3071) ───────────────────────
+// It would be natural to treat 2000000071's answer as covering 2000000001, since both sit in
+// SystemTables.InternalTables — and that is exactly what this repository did. #2774 recorded
+// the refusal of 2000000001 as following BY SET MEMBERSHIP from a measurement taken on
+// 2000000071, and said so honestly rather than overstating it. This file now asks about the
+// id itself, in both directions, so the inference is replaced by an execution of BC's own
+// unreplaced CheckIsOpenAllowed body.
+//
+// The OnPrem arm carries the load beyond this file: it pins the IsOnPremTarget()
+// short-circuit that the corpus's Target = OnPrem app depends on, and therefore the premise
+// of corpus PR #197, which asks a real service tier what rows 2000000001 actually holds.
+// That row-set question is NOT answerable here — see AlRunner/Patches/RecordPatches.ObjectSystemTable.cs.
 
 using System.Diagnostics;
 using System.Text;
@@ -45,6 +58,26 @@ public sealed class RecordRefCompilationTargetScopeTests : IDisposable
     /// <summary>BC's own message, from Lang.NotAllowedRecordRefCompilationTarget.</summary>
     private const string BcRefusal =
         "You cannot open record 2000000071 from a RecordRef data type when you are using target Cloud.";
+
+    /// <summary>
+    /// The same refusal for 2000000001 ("Object"), the legacy object registry — issues #2774
+    /// and #3071.
+    ///
+    /// <para>WHY A SECOND ID RATHER THAN "2000000071 COVERS IT". #2774 recorded 2000000001's
+    /// refusal as following from MEMBERSHIP IN THE SAME <c>SystemTables.InternalTables</c>
+    /// set as 2000000071 — an inference from a measurement taken on a DIFFERENT id, and
+    /// labelled as one. Corpus PR #153 measured 2000000071 on eight real BC legs; nothing
+    /// ever put 2000000001 itself in front of anything. This arm executes BC's own unreplaced
+    /// <c>CheckIsOpenAllowed</c> body against 2000000001 directly, so the id under discussion
+    /// is the id being asked about.</para>
+    ///
+    /// <para>WHAT IT IS STILL NOT: a service tier. It is BC's shipped <c>Ncl.dll</c> body
+    /// consulting BC's shipped id sets, in-process — strictly better than reasoning about set
+    /// membership, strictly weaker than the corpus legs. The row-set question that actually
+    /// needs a tier is upstream in corpus PR #197.</para>
+    /// </summary>
+    private const string BcRefusalObject =
+        "You cannot open record 2000000001 from a RecordRef data type when you are using target Cloud.";
 
     private readonly string _root;
     private readonly string _cloudDir;
@@ -161,6 +194,39 @@ public sealed class RecordRefCompilationTargetScopeTests : IDisposable
                 end;
                 """;
 
+        // Same shape, for 2000000001 ("Object") — see BcRefusalObject for why the id is asked
+        // about directly instead of being inferred from 2000000071's answer.
+        var legacyObjectTest = target == "Cloud"
+            ? $$"""
+                /// Cloud target: 2000000001 is refused for the same reason 2000000071 is, and
+                /// BC's sentence names THIS id. Asserting the full sentence is what makes the
+                /// arm specific — a refusal that named the neighbouring id, which is exactly
+                /// the substitution #2774 had to make on paper, fails here.
+                [Test]
+                procedure LegacyObjectRegistry_IsRefused()
+                var
+                    RecRef: RecordRef;
+                begin
+                    asserterror RecRef.Open(2000000001);
+                    Assert.ExpectedError('{{BcRefusalObject}}');
+                end;
+                """
+            : """
+                /// OnPrem target: the identical open must succeed, because BC's IsOpenAllowed
+                /// short-circuits on IsOnPremTarget() BEFORE the InternalTables membership
+                /// test. That short-circuit is the whole premise of corpus PR #197 and of the
+                /// OnPrem corpus app, so it is pinned here rather than assumed.
+                [Test]
+                procedure LegacyObjectRegistry_IsAllowed()
+                var
+                    RecRef: RecordRef;
+                begin
+                    RecRef.Open(2000000001);
+                    Assert.AreEqual(2000000001, RecRef.Number, 'RecordRef.Open(2000000001) must succeed for an OnPrem-target app');
+                    RecRef.Close();
+                end;
+                """;
+
         File.WriteAllText(Path.Combine(dir, "Tests.Codeunit.al"), $$"""
         codeunit {{idBase + 2}} "RRTS Tests {{target}}"
         {
@@ -170,6 +236,8 @@ public sealed class RecordRefCompilationTargetScopeTests : IDisposable
                 Assert: Codeunit "RRTS Assert {{target}}";
 
         {{internalTableTest}}
+
+        {{legacyObjectTest}}
 
             /// A system table that is NOT internal and NOT OnPrem-scoped (2000000026
             /// "Integer"). BC allows it from every target; a gate that blanket-refuses
@@ -275,6 +343,7 @@ public sealed class RecordRefCompilationTargetScopeTests : IDisposable
 
         // Cloud: refused for the internal system table, allowed for everything else.
         Assert.Contains("PASS  Codeunit62662.InternalSystemTable_IsRefused", output);
+        Assert.Contains("PASS  Codeunit62662.LegacyObjectRegistry_IsRefused", output);
         Assert.Contains("PASS  Codeunit62662.NonScopedSystemTable_IsAllowed", output);
         Assert.Contains("PASS  Codeunit62662.AllowListedOnPremSystemTable187_IsAllowed", output);
         Assert.Contains("PASS  Codeunit62662.AllowListedOnPremSystemTable188_IsAllowed", output);
@@ -282,6 +351,7 @@ public sealed class RecordRefCompilationTargetScopeTests : IDisposable
 
         // OnPrem: the identical opens all succeed, 2000000071 included.
         Assert.Contains("PASS  Codeunit62672.InternalSystemTable_IsAllowed", output);
+        Assert.Contains("PASS  Codeunit62672.LegacyObjectRegistry_IsAllowed", output);
         Assert.Contains("PASS  Codeunit62672.NonScopedSystemTable_IsAllowed", output);
         Assert.Contains("PASS  Codeunit62672.AllowListedOnPremSystemTable187_IsAllowed", output);
         Assert.Contains("PASS  Codeunit62672.AllowListedOnPremSystemTable188_IsAllowed", output);

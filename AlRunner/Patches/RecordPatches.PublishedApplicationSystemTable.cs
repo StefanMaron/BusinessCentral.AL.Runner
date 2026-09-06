@@ -158,8 +158,11 @@ public static partial class RecordPatches
         var source = ResolveSkeletonDataAccessSource();
         if (source == null)
         {
+            // #3068: `[warn]`, not `[PublishedApplication]` — Log.cs drops component-tagged lines
+            // at default verbosity, so this explanation for a whole run's worth of declined
+            // module-ownership checks was reaching nobody unless --verbose was set.
             Console.Error.WriteLine(
-                "[PublishedApplication] the skeleton session has no DataAccessSource yet, so no "
+                "[warn] PublishedApplication: the skeleton session has no DataAccessSource yet, so no "
                 + "Published Application rows (2000000206) were seeded — System Application "
                 + "module-ownership checks will decline. See AlRunner#2963.");
             return;

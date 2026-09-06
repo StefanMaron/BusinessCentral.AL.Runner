@@ -635,6 +635,61 @@ codeunit 61001 "Microsoft Dependency Tests"
             'the isolation guard runs before the codeunit lookup, so it reports first.');
     end;
 
+    // Issue #2860 — PopulateAllFields on a page that ships PRECOMPILED inside a dependency
+    // .app, so its runtime metadata is not the AL compiler's own but the document
+    // RecordPatches.DependencyPageMetadataXml reconstructs from SymbolReference.json.
+    //
+    // BC's NavForm.NewRecordAsync passes
+    // MasterPage.PageProperties.SourceObject.PopulateAllFields as the
+    // includeNonPrimaryKeyFields argument to NavRecord.InitializeFieldsFromFilters, so with
+    // it true a new row picks up a filter on a NON-primary-key field, and with it false (BC's
+    // own default, and what SourceObjectDefinition's XmlNode constructor initialises the
+    // field to) it picks up only primary-key filters. The dropped attribute was therefore not
+    // a missing value but a wrong one.
+    //
+    // The pair below is what makes this prove something rather than pass: page 367
+    // "Post Codes" declares PopulateAllFields = true and page 427 "Payment Methods" declares
+    // nothing, and both are read out of the SAME reconstructed-metadata path. An
+    // implementation that wrote the attribute unconditionally would fail the second test; one
+    // that never wrote it fails the first.
+    //
+    // The BC-behaviour half of this claim — that PopulateAllFields governs which filtered
+    // fields a new row is initialised from — is plain BC behaviour for a service tier to
+    // adjudicate. What is runner-specific, and is what this suite pins, is that a page
+    // reached only through a precompiled dependency's symbol file answers the same as one the
+    // runner compiled itself.
+    [Test]
+    procedure PopulateAllFieldsTrue_OnPrecompiledDependencyPage_InitialisesNonPrimaryKeyFilterOnNew()
+    var
+        PostCodes: TestPage "Post Codes";
+    begin
+        // Table 225 "Post Code" has primary key (Code, City); "Country/Region Code" is field
+        // 4 and is NOT part of it.
+        PostCodes.OpenEdit();
+        PostCodes.Filter.SetFilter("Country/Region Code", 'ZZ');
+        PostCodes.New();
+
+        Assert.AreEqualText('ZZ', PostCodes."Country/Region Code".Value(),
+            'page 367 declares PopulateAllFields = true, so a new row must take the non-primary-key filter too.');
+        PostCodes.Close();
+    end;
+
+    [Test]
+    procedure PopulateAllFieldsUnstated_OnPrecompiledDependencyPage_LeavesNonPrimaryKeyFilterAlone()
+    var
+        PaymentMethods: TestPage "Payment Methods";
+    begin
+        // Table 289 "Payment Method" has primary key (Code); Description is field 2 and is
+        // NOT part of it. Page 427 states no PopulateAllFields at all.
+        PaymentMethods.OpenEdit();
+        PaymentMethods.Filter.SetFilter(Description, 'ZZ');
+        PaymentMethods.New();
+
+        Assert.AreEqualText('', PaymentMethods.Description.Value(),
+            'page 427 states no PopulateAllFields, so BC''s own false applies and a new row must NOT take the non-primary-key filter.');
+        PaymentMethods.Close();
+    end;
+
     local procedure EnsureGeneralLedgerSetupExists()
     var
         GeneralLedgerSetup: Record "General Ledger Setup";

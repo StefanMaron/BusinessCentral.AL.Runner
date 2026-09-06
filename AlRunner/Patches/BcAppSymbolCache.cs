@@ -347,7 +347,46 @@ internal static partial class BcAppSymbolCache
         PageTableViewSymbol? TableView = null,
         // Member id of every action that declares a RunObject -> what it declares (#2931).
         // See ActionRunObjectSymbol for why this is a NAME and not a resolved object id.
-        Dictionary<int, ActionRunObjectSymbol>? MemberIdToRunObject = null);
+        Dictionary<int, ActionRunObjectSymbol>? MemberIdToRunObject = null,
+        // The five further <SourceObject> properties the symbol file states (#2860), all
+        // NULLABLE rather than defaulted, because for these five "the AL declares nothing"
+        // and "the AL declares the default" are DIFFERENT documents and BC can tell them
+        // apart. Measured on BC 28.1 by reading back the metadata the real AL compiler
+        // captured for a page declaring each as its own AL default: it writes
+        // LinksAllowed="1" PopulateAllFields="0" SaveValues="0" ShowFilter="1" — the
+        // attribute is present precisely when the AL states the property, whatever the
+        // value. The ShowFilter/SaveValues setters on BC's SourceObjectDefinition also raise
+        // a Specified bit that Equals() compares and Freeze() clones, so collapsing the two
+        // states is observable, not cosmetic.
+        //
+        // Counts on Base Application 28.1's own SymbolReference.json (2610 pages):
+        // LinksAllowed 550 (548 "0", 2 "1"), DataCaptionFields 381, SaveValues 201
+        // (196 "1", 5 "0"), ShowFilter 117 (115 "0", 2 "1"), PopulateAllFields 49
+        // (46 "1", 3 "0"). 30 of those pages declare one of them with NO SourceTable at all.
+        //
+        // DataCaptionFields is a comma-separated list of FIELD NUMBERS, not names — the
+        // symbol file and the compiled metadata share that representation (all 381 Base
+        // Application values are numeric), so it needs no name resolution, only a shape
+        // check. See RecordPatches.EmitSourceObjectPropertiesXml.
+        bool? LinksAllowed = null, bool? ShowFilter = null, bool? SaveValues = null,
+        bool? PopulateAllFields = null, string? DataCaptionFields = null,
+        // Names of the booleans above the symbol file STATED but this could not read as a
+        // boolean, with the value it stated ("PopulateAllFields=yes"). Null when there were
+        // none, which is the case for every Microsoft-produced symbol file measured.
+        //
+        // It lives in the PAYLOAD rather than being written to stderr where it is detected,
+        // and that is the whole point. Parsing sits behind a content-addressed on-disk cache,
+        // so a Console.Error line written by the parser is emitted on a cache MISS and
+        // silently lost on every warm run after — the failure mode AlPageMetadataRegistry's
+        // header calls "the trap this whole class exists to avoid". Carrying it here means a
+        // cache HIT replays it, which is also the truthful answer: the same bytes carry the
+        // same unreadable value. RecordPatches.EmitSourceObjectPropertiesXml reports it.
+        //
+        // Why it is reported at all: an unreadable value and an absent property both produce
+        // the same missing attribute, so absence cannot distinguish them, and silently
+        // treating "I could not read this" as "the AL declares nothing" is the exact shape of
+        // the defect #2860 is about, one level up.
+        List<string>? UnreadableBooleanProperties = null);
 
     /// <summary>
     /// One action's <c>RunObject</c> declaration as SymbolReference.json states it.
@@ -1099,13 +1138,26 @@ internal static partial class BcAppSymbolCache
 
         props.TryGetValue("SourceTableView", out var sourceTableView);
 
+        // #2860's five. SymbolBoolOrNull, not SymbolBool/SymbolBoolFalse: for these the
+        // absence of the property is itself information BC acts on, so it must survive as
+        // null rather than be folded into an AL default here. See PageSymbol's own note.
+        List<string>? unreadableBooleans = null;
+        var linksAllowed = SymbolBoolOrNull(props, "LinksAllowed", ref unreadableBooleans);
+        var showFilter = SymbolBoolOrNull(props, "ShowFilter", ref unreadableBooleans);
+        var saveValues = SymbolBoolOrNull(props, "SaveValues", ref unreadableBooleans);
+        var populateAllFields = SymbolBoolOrNull(props, "PopulateAllFields", ref unreadableBooleans);
+        props.TryGetValue("DataCaptionFields", out var dataCaptionFields);
+
         return new PageSymbol(pageId, name!, sourceTableId, sourceTableTemporary,
             string.IsNullOrWhiteSpace(pageType) ? "Card" : pageType!, caption,
             editable, insertAllowed, modifyAllowed, deleteAllowed, controls,
             string.IsNullOrWhiteSpace(cardPageName) ? null : cardPageName,
             autoSplitKey, multipleNewLines, delayedInsert, parts,
             memberNames, actionRefTargets,
-            ParseSourceTableView(pageId, sourceTableView), runObjects);
+            ParseSourceTableView(pageId, sourceTableView), runObjects,
+            linksAllowed, showFilter, saveValues, populateAllFields,
+            string.IsNullOrWhiteSpace(dataCaptionFields) ? null : dataCaptionFields,
+            unreadableBooleans);
     }
 
     /// <summary>
@@ -1444,6 +1496,35 @@ internal static partial class BcAppSymbolCache
 
     private static bool SymbolBoolFalse(Dictionary<string, string> props, string name)
         => props.TryGetValue(name, out var v) && (v == "0" || string.Equals(v, "false", StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// The three-state form of <see cref="SymbolBool"/> for a property whose ABSENCE is
+    /// itself information: null when the symbol file states nothing, otherwise the stated
+    /// value. Both spellings the file uses are accepted ("1"/"0" in practice, "true"/"false"
+    /// tolerated), matching SymbolBool/SymbolBoolFalse.
+    ///
+    /// <para>A value the file STATES but this cannot read as a boolean also answers null — the
+    /// "state what the file states, never invent" rule, since inventing a default would be
+    /// indistinguishable from the file stating that default. But the two nulls are different
+    /// facts, and returning them identically with nothing said is the very shape of defect
+    /// #2860 fixes one level up, so the unreadable one is recorded in
+    /// <paramref name="unreadable"/> for the caller to carry into
+    /// <see cref="PageSymbol.UnreadableBooleanProperties"/> and report. It is recorded rather
+    /// than written here because this runs behind a content-addressed on-disk cache, where a
+    /// stderr line survives only until the first warm run.</para>
+    ///
+    /// <para>The two-state siblings above have the same blind spot and are deliberately left
+    /// alone: they cannot express it without changing what every existing caller sees, and no
+    /// Microsoft-produced symbol file measured states a boolean in any form but "1"/"0".</para>
+    /// </summary>
+    private static bool? SymbolBoolOrNull(Dictionary<string, string> props, string name, ref List<string>? unreadable)
+    {
+        if (!props.TryGetValue(name, out var v) || string.IsNullOrWhiteSpace(v)) return null;
+        if (v == "1" || string.Equals(v, "true", StringComparison.OrdinalIgnoreCase)) return true;
+        if (v == "0" || string.Equals(v, "false", StringComparison.OrdinalIgnoreCase)) return false;
+        (unreadable ??= new List<string>()).Add($"{name}={v}");
+        return null;
+    }
 
     /// <summary>
     /// Parse one entry of a SymbolReference.json <c>Reports</c> array into the subset the

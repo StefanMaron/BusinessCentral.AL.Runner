@@ -101,11 +101,17 @@ was refused, because a superseded PR Check run had left the required
 green tool and a refused merge is to assume branch protection is broken and
 reach for --admin, which bypasses the ruleset to work around a phantom.
 
-This is the one case in this repository where `gh run rerun` is the right call:
-a cancelled run has no failure log to overwrite, so re-running it destroys no
-evidence, and it re-reports the context as success within a minute. The workflow
-side of #2726 stops required contexts being cancellable in the first place; this
-verdict exists for anything that still gets there.
+This is the one case in this repository where `gh run rerun` can be the right
+call, and it is CONDITIONAL: only while nothing on the commit concluded `failure`
+before the cancellation. A check run can fail on its merits and have its parent
+workflow run cancelled only afterwards, and a re-run destroys that log exactly as
+it destroys any other. `.claude/rules/ci-verdicts.md` section 3 is the normative
+statement and carries the check to run first -- correct it there, not here.
+
+Where the condition holds, re-running re-reports the context as success within a
+minute. The workflow side of #2726 stops required contexts being cancellable in
+the first place; this verdict exists for anything that still gets there, and the
+exit-4 output names any entry that fails the condition.
 """
 from __future__ import annotations
 
@@ -582,6 +588,44 @@ def supersession(newest: dict[str, dict],
     return superseded, killed
 
 
+def discount_reason(name: str, superseded: set[str], killed: set[str]) -> str | None:
+    """Why a non-passing conclusion is NOT this commit's word on `name`, or None.
+
+    THE INVARIANT, and the only place it is decided:
+
+        A `failure` may be discounted ONLY when the workflow run that PRODUCED
+        it is itself cancelled, or is being replaced by a newer run of the same
+        workflow that is still in flight. NEVER on the strength of some OTHER
+        check run carrying the same context name.
+
+    Both admissible reasons are properties of the *producing run*, which is why
+    both sets arrive from supersession() keyed on the run behind the check run.
+    "Some other entry for this name was cancelled" is not on the list, and #3142
+    is what happens when it is used as though it were: on PR #3112's head
+    c6377b30 a GREEN verdict listed `preflight.py unit tests` under
+    "Superseded ... Harmless" because a *sibling* entry for that name was
+    cancelled, while its newest check run had concluded `failure` inside a run
+    that was itself `failure` -- neither cancelled nor superseded. Nothing in
+    the output said anything had failed.
+
+    That misreport could not change the merge decision on #3112 only because the
+    absorbed context was not a ruleset context. One ruleset edit -- exactly what
+    resolve_required_contexts() reads live, with nobody editing this file -- is
+    all that separates the two payloads, and #3002 exists because three wrong
+    verdicts in one night were caught by a human rather than by this tool.
+
+    Returning None means "this is a real verdict on the merits". Callers must
+    treat that as undiscountable in EVERY direction: it cannot be dropped from
+    the failing list, and it cannot be printed as harmless noise.
+    """
+    if name in superseded:
+        return ("the run that produced it is being replaced by a newer run of "
+                "the same workflow, still in flight")
+    if name in killed:
+        return "the workflow run that produced it was cancelled"
+    return None
+
+
 def classify(runs: list[dict],
              contexts: tuple[str, ...] = RULESET_CONTEXTS,
              workflow_runs: list[dict] | None = None) -> Verdict:
@@ -638,8 +682,14 @@ def classify(runs: list[dict],
     # is judged, so every downstream branch -- failure, block, green -- sees the
     # same truth: that run was stopped, its word is not a verdict on its merits.
     newest: dict[str, dict] = {}
+    # What a reclassified check run actually said, kept so the exit-4 advice can
+    # tell "nobody ever ran this to completion" (re-running destroys no log) from
+    # "this job failed on its merits inside a run somebody then cancelled" (it
+    # has a real failing log, and `gh run rerun` would overwrite it permanently).
+    killed_originals: dict[str, str] = {}
     for n, r in raw_newest.items():
         if n in killed and r.get("conclusion") != "cancelled":
+            killed_originals[n] = r.get("conclusion") or "?"
             r = dict(r)
             r["conclusion"] = "cancelled"
         newest[n] = r
@@ -653,7 +703,7 @@ def classify(runs: list[dict],
     # #2922, now closed in the one direction that was actually misreporting).
     bad = [r for r in done if r.get("conclusion") not in NOT_FAILURES
            and r.get("conclusion") != "cancelled"
-           and (r.get("name") or "") not in superseded]
+           and discount_reason(r.get("name") or "", superseded, killed) is None]
     missing = [c for c in contexts if c not in newest]
     final = rollup_is_final(workflow_runs)
     inflight = superseding_runs(newest, contexts, workflow_runs)
@@ -743,10 +793,31 @@ def classify(runs: list[dict],
          if r.get("conclusion") == "cancelled" and is_required(r.get("name"), contexts)),
         key=lambda r: r.get("name") or "",
     )
-    superseded = sorted(
+    # DELIBERATELY not the verdict-path `superseded` -- this used to shadow that
+    # name with a far weaker rule and is #3142. A cancelled entry is "harmlessly
+    # superseded" only when the newer run that replaced it actually re-reported
+    # the context as PASSING. If the newer run said `failure`, the failure is the
+    # commit's word on that name (discount_reason() returns None for it) and it
+    # belongs in `undiscounted` below, not under the heading "Harmless".
+    resolved_cancellations = sorted(
         {(r.get("name") or "") for r in runs
          if r.get("conclusion") == "cancelled"
-         and newest.get(r.get("name") or "", {}).get("id") != r.get("id")}
+         and newest.get(r.get("name") or "", {}).get("id") != r.get("id")
+         and newest.get(r.get("name") or "", {}).get("conclusion") in NOT_FAILURES}
+    )
+    # Real failures on this commit that nothing legitimately discounts. Every
+    # REQUIRED one is already gone -- it would have returned exit 1 above -- so
+    # what is left is non-required, gates no merge, and is exactly the red X a
+    # reader has to be told about rather than left to find. #3137 has had one of
+    # these red on every PR for days, which is how a tool got a real failure to
+    # absorb in the first place.
+    undiscounted = sorted(
+        (r for r in newest.values()
+         if r.get("status") == "completed"
+         and r.get("conclusion") not in NOT_FAILURES
+         and r.get("conclusion") != "cancelled"
+         and discount_reason(r.get("name") or "", superseded, killed) is None),
+        key=lambda r: r.get("name") or "",
     )
     cosmetic = sorted(
         {(r.get("name") or "") for r in newest.values()
@@ -765,11 +836,32 @@ def classify(runs: list[dict],
             "context name, and 'cancelled' does not satisfy a required check, so the",
             "merge is refused while `gh pr checks` still reads SUCCESS (#2726).",
             "",
-            "Re-run the cancelled run -- this is the ONE case where `gh run rerun` is",
-            "correct: a cancelled run has no failure log to overwrite. Do NOT reach",
-            "for --admin; branch protection is working, the context genuinely is not",
-            "satisfied.",
+            "Re-run the cancelled run -- this is the ONE case where `gh run rerun`",
+            "can be correct, and only while nothing on this commit concluded",
+            "`failure` before the cancellation: a check run that concluded",
+            "`failure` on its merits has a real log, and a re-run destroys it",
+            "like any other. The check to run first is in",
+            ".claude/rules/ci-verdicts.md section 3.",
+            "Do NOT reach for --admin; branch protection is working, the context",
+            "genuinely is not satisfied.",
         ]
+        # ...with one exception, and it is the expensive one to get wrong. A
+        # check run that concluded `failure` on its merits inside a run somebody
+        # then cancelled is reported as blocked rather than failed (the
+        # deliberate trade-off in supersession(), which errs away from green).
+        # It DOES have a failing log, so the blanket advice above would send a
+        # reader to overwrite the one piece of evidence permanently.
+        real = [r for r in blocking if (r.get("name") or "") in killed_originals]
+        if real:
+            lines += [
+                "",
+                "CAREFUL -- these were NOT merely stopped. Their check run concluded",
+                "on its merits inside a workflow run that was cancelled afterwards,",
+                "so a real log exists and `gh run rerun` WOULD overwrite it:",
+            ]
+            lines += [f"  {r['name']}: {killed_originals[r['name']]} "
+                      f"(inside a cancelled run)" for r in real]
+            lines.append("Read those logs BEFORE re-running anything.")
         for r in blocking:
             if r.get("details_url"):
                 lines.append(f"  {r['details_url']}")
@@ -807,20 +899,44 @@ def classify(runs: list[dict],
         # that night named nine or ten, and that asymmetry is the only reason a
         # human caught them.
         return Verdict(None, progress=progress)
+    if any(is_required(r.get("name"), contexts)
+           and r.get("conclusion") not in NOT_FAILURES
+           for r in newest.values()):
+        # Unreachable: a required failure returned exit 1 and a required
+        # cancellation returned exit 4 above. Kept as a hard invariant, because
+        # what it forbids is the exact thing #3142 did in the printed output --
+        # a green standing over a required context that is not passing. If a
+        # future discount rule ever lets one through, this says "cannot tell"
+        # rather than green.
+        return Verdict(None, progress=progress)
+
     lines = [f"all {len(pool)} required checks passed "
              f"({len(accounted)}/{len(uniq)} ruleset context(s) accounted for)."]
     lines.append("Ruleset contexts confirmed present and passing on this commit: "
                  + ", ".join(uniq) + ".")
+    if undiscounted:
+        # Printed BEFORE the two "this is noise" sections, and never merged into
+        # them: these are genuine failures that happen not to gate the merge, and
+        # a reader who learns to skim past red is how the next real one is missed.
+        lines.append("")
+        lines.append(f"NOT required, but genuinely FAILING on this commit -- "
+                     f"{len(undiscounted)} check(s). The merge is not gated on "
+                     f"them, and they are NOT superseded noise:")
+        for r in undiscounted:
+            rid = run_id_from(r.get("details_url"))
+            lines.append(f"  {r['name']}: {r.get('conclusion')}"
+                         + (f"   (workflow run {rid})" if rid else ""))
     if cosmetic:
         lines.append("")
         lines.append("Cosmetic: these NON-required contexts are 'cancelled' on this "
                      "commit and do not block a merge:")
         lines += [f"  {n}" for n in cosmetic]
-    if superseded:
+    if resolved_cancellations:
         lines.append("")
         lines.append("Superseded: these contexts have a 'cancelled' entry on this "
-                     "commit that a newer run already re-reported. Harmless.")
-        lines += [f"  {n}" for n in superseded]
+                     "commit that a newer run already re-reported as passing. "
+                     "Harmless.")
+        lines += [f"  {n}" for n in resolved_cancellations]
     return Verdict(0, lines, progress=progress)
 
 

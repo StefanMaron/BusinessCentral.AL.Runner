@@ -407,6 +407,9 @@ public sealed class TestExecutor
                 Console.Error.WriteLine($"    {r}");
         }
         typeSw.Stop();
+        // #2801: Assembly.GetTypes() has no defined order, and this loop's order IS the
+        // test-execution order. Pin it before anything reads `types`.
+        types = OrderTestCodeunitsByObjectId(types);
         PerfTrace.Log($"TestExecutor.GetTypes {types.Length} type(s) {typeSw.ElapsedMilliseconds}ms");
         // #1861: reflecting over the freshly-loaded module's types is one of the issue's
         // named candidates for the flat per-app-group tax. Marked directly (not via
@@ -741,6 +744,17 @@ public sealed class TestExecutor
 
             var loopSw = System.Diagnostics.Stopwatch.StartNew();
             var orderedMethods = OrderTestMethodsBySourceDeclaration(t);
+
+            // #3123: record what this run actually loaded, so an expectations entry that
+            // could never have matched anything can be REPORTED rather than silently doing
+            // nothing. Deliberately the UNFILTERED test-method list and deliberately here,
+            // before --test/--exclude narrow what runs: the audit asks "does this entry name
+            // something that exists", not "did this entry get consulted".
+            Expectations?.NoteDiscoveredTestCodeunit(new Infrastructure.DiscoveredTestCodeunit(
+                ParseAlObjectId(t.Name),
+                displayName,
+                t.Name,
+                orderedMethods.Where(IsTestMethod).Select(m => m.Name).ToArray()));
             try
             {
                 for (int mi = 0; mi < orderedMethods.Length; mi++)
@@ -909,7 +923,13 @@ public sealed class TestExecutor
     {
         var filter = NormaliseFilter(TestFilter);
         var tests = new List<string>();
-        foreach (var t in assembly.GetTypes())
+        // #2801: the same unordered Assembly.GetTypes() walk Run() had. Discovery must report
+        // the order execution will actually use, or "the tests in this bundle" is a different
+        // list from "the order they run in". Today's only caller (--server's runtests handler)
+        // puts the result straight into a HashSet, so this changes nothing observable yet; it
+        // is here so a later order-sensitive consumer inherits the guarantee rather than
+        // rediscovering that discovery never had one.
+        foreach (var t in OrderTestCodeunitsByObjectId(assembly.GetTypes()))
         {
             if (!IsTestCodeunit(t)) continue;
             if (filter != null && !CodeunitMatchesFilter(t, filter)) continue;
@@ -998,6 +1018,19 @@ public sealed class TestExecutor
         return qualified.Contains(filterLower) || method.ToLowerInvariant().Contains(filterLower);
     }
 
+    /// <summary>
+    /// The AL object id carried by an emitted test codeunit's CLR type name
+    /// ("Codeunit60810" → 60810). Null when the name does not carry one — the audit in
+    /// <see cref="Infrastructure.ExpectationManifest.FindUnmatchedEntries"/> then simply
+    /// has one fewer clue to offer, and never guesses.
+    /// </summary>
+    internal static int? ParseAlObjectId(string typeName)
+    {
+        const string prefix = "Codeunit";
+        if (!typeName.StartsWith(prefix, StringComparison.Ordinal)) return null;
+        return int.TryParse(typeName.AsSpan(prefix.Length), out var id) ? id : null;
+    }
+
     private static bool IsTestCodeunit(Type t)
     {
         if (!t.Name.StartsWith("Codeunit")) return false;
@@ -1053,6 +1086,93 @@ public sealed class TestExecutor
     /// whose scope type or span attribute can't be found — never worse than the previous
     /// (pure-reflection) behaviour, only ever more faithful to real BC.
     /// </summary>
+    /// <summary>
+    /// Order a freshly-loaded test assembly's types by ascending AL object ID — the order a
+    /// real BC test suite runs its codeunits in (#2801).
+    ///
+    /// <para><b>Why this exists.</b> <see cref="Run"/> and <see cref="DiscoverTests"/> both
+    /// walk <c>Assembly.GetTypes()</c>, and the CLR does not define that array's order. It is
+    /// therefore whatever BC's AL compiler laid the TypeDefs out as, which is not stable: on
+    /// CI run 34016494342 (BC 28.4.53241.54318) the two codeunits of the
+    /// <c>SuiteAbortOnTimeoutTests</c> resume fixture executed Second-then-First, so the
+    /// fixture's hang ran LAST, the watchdog abort had nothing left to abandon, no resume was
+    /// triggered, and three tests failed — while the same commit's 27.5 leg passed. Sorting
+    /// the compiler's *input* files (#2892) does not reach this: measured against the
+    /// three-codeunit fixture in <c>TestCodeunitExecutionOrderTests</c>, whose file order is
+    /// 62295, 62290, 62285, <c>GetTypes()</c> returned 62295, 62285, 62290 — neither file
+    /// order nor id order.</para>
+    ///
+    /// <para><b>Why ascending object ID</b> rather than name or file order. It is Microsoft's
+    /// order, read out of the shipped Test Runner app rather than chosen here.
+    /// <c>TestSuiteMgt.GetTestMethods</c> walks the codeunit inventory with a bare
+    /// <c>FindSet()</c>/<c>Next()</c> and no <c>SetCurrentKey</c> — so, primary-key order —
+    /// giving each row a monotonically increasing <c>Line No.</c>, and every consumer reads
+    /// the lines back with <c>SetCurrentKey("Line No."); Ascending(true)</c>. The inventory is
+    /// <c>CodeUnit Metadata</c> (keyed on <c>ID</c>) since v27 and <c>AllObjWithCaption</c>
+    /// (keyed on "Object Type", "Object ID") before it; both are keyed on the object ID.</para>
+    ///
+    /// <para><b>Stable, and total.</b> A type whose object ID cannot be read — every
+    /// non-codeunit type in the assembly, plus BC's compiler-generated nested types — keeps
+    /// its relative <c>GetTypes()</c> position and sorts after everything that resolved. Only
+    /// test codeunits are ever executed (<c>IsTestCodeunit</c>), so this changes the order
+    /// tests run in and nothing else. Deliberately does NOT touch method order inside a
+    /// codeunit: <see cref="OrderTestMethodsBySourceDeclaration"/> already pins that to source
+    /// declaration order, which is a different rule and stays.</para>
+    /// </summary>
+    private static Type[] OrderTestCodeunitsByObjectId(Type[] types) =>
+        types
+            .Select((t, i) => (t, i, id: TryReadAlObjectId(t)))
+            .OrderBy(x => x.id ?? int.MaxValue)
+            .ThenBy(x => x.i)
+            .Select(x => x.t)
+            .ToArray();
+
+    /// <summary>
+    /// The AL object ID an emitted type carries, or null when it is not an AL object type.
+    ///
+    /// Reads BC's <c>[ApplicationObjectId]</c> through <see cref="CustomAttributeData"/>
+    /// (metadata only — materialising the attribute can throw
+    /// <c>CustomAttributeFormatException</c> on types whose IL references attribute properties
+    /// we do not carry), and falls back to the <c>Codeunit&lt;N&gt;</c> type-name shape the AL
+    /// compiler emits. Same two-step, same order, as
+    /// <c>EventSubscriberPatches.TryReadCodeunitId</c> / <c>ExtractCodeunitIdFromTypeName</c>,
+    /// which have resolved codeunit identity this way since #1794.
+    /// </summary>
+    private static int? TryReadAlObjectId(Type t) =>
+        _objectIdCache.GetOrAdd(t, static type =>
+        {
+            IList<CustomAttributeData> attrs;
+            try { attrs = CustomAttributeData.GetCustomAttributes(type); }
+            catch { attrs = Array.Empty<CustomAttributeData>(); }
+            foreach (var ad in attrs)
+            {
+                if (ad.AttributeType.Name != "ApplicationObjectIdAttribute") continue;
+                try
+                {
+                    var attr = type.GetCustomAttributes(ad.AttributeType, inherit: false).FirstOrDefault();
+                    var aoid = attr?.GetType()
+                        .GetProperty("ApplicationObjectId", BindingFlags.Public | BindingFlags.Instance)
+                        ?.GetValue(attr);
+                    var num = aoid?.GetType()
+                        .GetProperty("ObjectNumber", BindingFlags.Public | BindingFlags.Instance)
+                        ?.GetValue(aoid);
+                    if (num is int n && n != 0) return n;
+                }
+                catch { /* fall through to the name shape */ }
+                break;
+            }
+            // "Codeunit62295" -> 62295. Not a general "strip the prefix" parse: the suffix must
+            // be entirely digits, so a hand-written `CodeunitHelpers` class cannot be mistaken
+            // for object 0 and sorted to the front.
+            var name = type.Name;
+            if (name.StartsWith("Codeunit", StringComparison.Ordinal)
+                && int.TryParse(name.AsSpan("Codeunit".Length), out var id))
+                return id;
+            return null;
+        });
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<Type, int?> _objectIdCache = new();
+
     private static MethodInfo[] OrderTestMethodsBySourceDeclaration(Type t) =>
         _sourceOrderCache.GetOrAdd(t, static type =>
         {

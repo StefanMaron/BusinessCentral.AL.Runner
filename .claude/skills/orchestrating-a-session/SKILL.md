@@ -154,15 +154,37 @@ Arm **only** when all of these hold. Any one missing means report it to the coor
 auto-merge armed against the new head, which nobody has reviewed; the coordinator needs the SHA
 to notice.
 
-**Arming is refused on a PR that is already mergeable** — GitHub answers `Pull request is in
-clean status`, because there is nothing left to wait for. That is not an error to retry or
-report as a failure: it means the PR can merge now, so say so and let the coordinator merge it
-directly. Check the exit code; a loop that printed "armed" regardless of it once left four green
-PRs sitting unarmed.
+**One command, two outcomes — and on a green PR it MERGES.** `--auto` is not "queue it for
+later":
 
-Arming is not merging, and it does not replace the merge bar — it is the bar expressed as a
-standing instruction to GitHub, so a PR lands the moment its checks go green instead of at the
-coordinator's next sweep.
+- required checks **not yet green** → auto-merge is armed, and the PR lands when they pass;
+- required checks **already green** → the PR **merges on the spot**.
+
+`gh` picks between the two itself, before calling anything — its merge command carries a
+function named `isImmediatelyMergeable` for exactly this. Both outcomes are intended: if review
+approves and CI is green, the PR should merge.
+
+**So on a green PR, the approval decision IS the merge decision.** There is no coordinator
+checkpoint after it, and nobody looks again. Every condition in the list above has to hold at
+the moment you run the command, because running it is the merge — not a request for one. Weigh
+the verdict accordingly rather than assuming a later sweep will catch a mistake.
+
+An earlier version of this section claimed the opposite: that GitHub *refuses* to arm an
+already-mergeable PR, answering `Pull request is in clean status`, and that the coordinator
+would merge it by hand. That was wrong, and a reviewer following it would report "it refused,
+please merge it yourself" about a PR that had already merged. It was falsified on PR #3095 —
+the documented command returned rc=0 and merged it immediately at the reviewed SHA. `gh` never
+produces that message at all; the phrase does not occur anywhere in the binary. It appears to be
+a GitHub API error from the `enablePullRequestAutoMerge` mutation, which is the call `gh` skips
+when the PR is already mergeable — so it is not something this command can produce. See #3127.
+
+**Check the exit code either way.** It is not decoration: `gh pr merge` exits non-zero for real
+reasons (`Pull request #N is not mergeable: ...`), and a loop that printed "armed" regardless of
+it once left four green PRs sitting unarmed.
+
+When it arms rather than merges, arming is still not merging, and it does not replace the merge
+bar — it is the bar expressed as a standing instruction to GitHub, so a PR lands the moment its
+checks go green instead of at the coordinator's next sweep.
 
 **Start the next reviewer when one returns**, not when a queue becomes visible. By the time a
 pile-up is obvious it is already too deep to clear in one fresh batch.
@@ -226,10 +248,13 @@ required context is cancellable on its own commit any more; `check_required_cont
 CI if one becomes so again. And `ci-wait.py` now returns **exit 4** naming the cancelled
 context instead of reporting GREEN.
 
-If you still land in this state, re-run just the cancelled run — it clears in under a minute,
-and that is NOT the forbidden `gh run rerun`, because a cancelled run has no failure log to
-destroy. Do not reach for `--admin`: protection is working, the context genuinely is not
-satisfied.
+If you still land in this state, re-run just the cancelled run — it clears in under a minute.
+That is NOT the forbidden `gh run rerun`, **provided nothing on that commit concluded
+`failure` before the cancellation**: a check run can fail on its merits and only then have its
+run cancelled, and re-running destroys that log like any other. Check the commit's check runs
+first and, if one failed, read its log or take a second run by another route
+(`ci-verdicts.md` §3, §5). Do not reach for `--admin`: protection is working, the context
+genuinely is not satisfied.
 
 **Auto-merge drains the queue — but a drained queue is not a verified one.** The
 "branches must be up to date" protection rule was removed, so arming several PRs lets them

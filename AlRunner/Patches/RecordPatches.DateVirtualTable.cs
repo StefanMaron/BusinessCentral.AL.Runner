@@ -392,6 +392,123 @@ public static partial class RecordPatches
     }
 
     /// <summary>
+    /// The request-carrying form of <see cref="EnsureDateStoreFullyMaterialised"/>, prepended to
+    /// TempTableDataProvider.{Exists, CalcMinMax, CalcSums} and called at the top of the
+    /// CalcNumeric replacement — every provider read that DOES hold a
+    /// <c>DataProviderRequest</c>. Issue #3044.
+    ///
+    /// <para>THE PROBLEM. Two guards, both correct, stacked on <c>Record.IsEmpty()</c>.
+    /// <see cref="DataAccess_DateWindowGuardForExists"/> materialises exactly what the request
+    /// can select — 25 rows for a closed week — and then <c>DataAccess.ExistsAsync</c> calls
+    /// <c>provider.Exists</c>, where the net materialised the whole 86,885-row default window
+    /// behind it. Measured on main, warm, one test per process, BC 28.1: a closed week answered
+    /// by <c>Count()</c> + <c>FindFirst()</c> cost 57-107 ms, the same shape answered by
+    /// <c>IsEmpty()</c> cost 494-568 ms. Under
+    /// <c>AL_RUNNER_DATE_WINDOW_MAX_ROWS=2000</c> the second one does not merely cost more, it
+    /// REFUSES, naming "about 86,885 rows for 86,910 in all … (currently 25 rows in 1 span(s),
+    /// [1820-01-01..1820-01-07])" — the two guards visible in one diagnostic.</para>
+    ///
+    /// <para>THE RULE, and why it changes no answer. This skips the window ONLY when the store
+    /// already holds every row this request can select: every non-empty range of its
+    /// "Period Start" filter is closed at both ends, and <see cref="DateMissingSpans"/> reports
+    /// nothing missing between the lowest low and the highest high. That is the same safety
+    /// argument <see cref="EnsureDateWindowCoversRequest"/> rests on — BC's own filter engine
+    /// excludes everything outside those bounds regardless of what the store holds — applied to
+    /// the request the provider is about to answer rather than to the one DataAccess saw. In
+    /// every other case, including every one of #2988's measured arms, it falls through to the
+    /// whole window exactly as before:
+    /// a <c>count(Date where …)</c> or <c>exist(Date where …)</c> FlowField and a TableRelation
+    /// check name no closed "Period Start" bound (or name one nothing has materialised), so
+    /// nothing is skipped. It never materialises LESS than the previous code did for a request
+    /// that needed it — it only declines to do work already done.</para>
+    ///
+    /// <para>The coverage question is asked only once a DataAccess-level Date guard has bound
+    /// the filter reflection in this process (<c>_dvtGuardReady</c>). Before that there is by
+    /// construction no narrowed span to have covered anything, and the fall-through is the old
+    /// behaviour.</para>
+    ///
+    /// <para>For every table but 2000000007 this is one ConditionalWeakTable miss and a
+    /// return — the same cost as the request-less form.</para>
+    /// </summary>
+    public static void EnsureDateStoreCoversProviderRequest(object provider, object providerRequest)
+    {
+        if (!_dvtSpanByProvider.TryGetValue(provider, out var span)) return;   // not the Date store
+        NCLMetaTable meta;
+        object session;
+        lock (span)
+        {
+            if (span.WholeWindow) return;
+            if (span.Meta is not NCLMetaTable m || span.Session is not object s) return;
+            meta = m;
+            session = s;
+        }
+
+        if (DateProviderRequestAlreadyCovered(span, providerRequest, session)) return;
+
+        PopulateDateSpanIntoProvider(provider, meta, session,
+            new DateTime(DateWindowMinYear, 1, 1), new DateTime(DateWindowMaxYear, 12, 31));
+    }
+
+    /// <summary>
+    /// True when <paramref name="providerRequest"/>'s "Period Start" filter is closed at both
+    /// ends of every non-empty range AND the provider already holds every period in
+    /// [lowest low .. highest high]. False for anything else — an unreadable request, a shape
+    /// with an open bound, a bounded request over periods nothing has materialised — so the
+    /// caller falls back to the whole window, which is what it did before #3044.
+    /// </summary>
+    private static bool DateProviderRequestAlreadyCovered(
+        DatePopulatedSpan span, object providerRequest, object session)
+    {
+        // No DataAccess-level Date guard has run in this process, so nothing has narrowed
+        // anything and the filter accessors this needs are not bound yet.
+        if (!_dvtGuardReady) return false;
+
+        object? filter;
+        DateTime? low, high;
+        try
+        {
+            var fam = ProviderRequestFiltersAndMarks(providerRequest);
+            if (fam == null) return false;
+            filter = PeriodStartFilterIn(fam);
+            if (filter == null) return false;
+            if (!TryReadClosedBoundsOfFilter(filter, session, out low, out high)) return false;
+        }
+        catch (RunnerOutOfScopeException) { throw; }
+        catch
+        {
+            // Reading the filter is best-effort, exactly as it is one layer up: a shape we
+            // cannot parse falls back to the whole window, never to a narrower store.
+            return false;
+        }
+
+        if (low is not DateTime lo || high is not DateTime hi) return false;
+
+        lock (span)
+            return DateMissingSpans(span.Covered, lo, hi).Count == 0;
+    }
+
+    private static PropertyInfo? _dvtProviderReqFiltersAndMarks;
+
+    /// <summary>
+    /// <c>DataProviderRequest.FiltersAndMarks</c>. Bound separately from the DataCacheRequest
+    /// property of the same name because the two are different declaring types — passing a
+    /// provider request to the DataCacheRequest accessor throws rather than returning null.
+    /// </summary>
+    private static object? ProviderRequestFiltersAndMarks(object providerRequest)
+    {
+        if (_dvtProviderReqFiltersAndMarks == null)
+        {
+            var tProviderRequest = providerRequest.GetType().Assembly
+                .GetType("Microsoft.Dynamics.Nav.Runtime.DataProviderRequest");
+            if (tProviderRequest == null) return null;
+            _dvtProviderReqFiltersAndMarks = tProviderRequest.GetProperty(
+                "FiltersAndMarks", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            if (_dvtProviderReqFiltersAndMarks == null) return null;
+        }
+        return _dvtProviderReqFiltersAndMarks.GetValue(providerRequest);
+    }
+
+    /// <summary>
     /// Materialise the whole configured window (default 1900-01-01 .. 2099-12-31, 86,885 rows).
     /// This is what answers a request that does NOT name a closed bound on both ends of
     /// "Period Start" — an unfiltered read, an open bound, or a filter shape the runner cannot
@@ -768,6 +885,20 @@ public static partial class RecordPatches
 
         var filter = FindPeriodStartFilter(cacheRequest);
         if (filter == null) return false;
+        return TryReadClosedBoundsOfFilter(filter, session, out low, out high);
+    }
+
+    /// <summary>
+    /// The closed-bounds half of <see cref="TryReadClosedPeriodStartBounds"/>, split out so the
+    /// provider-level net (#3044) can ask the same question of a request it reaches WITHOUT a
+    /// DataCacheRequest — a <c>DataProviderRequest</c> carries its own <c>FiltersAndMarks</c>,
+    /// and the bound-reading rules must not fork between the two layers.
+    /// </summary>
+    private static bool TryReadClosedBoundsOfFilter(
+        object filter, object session, out DateTime? low, out DateTime? high)
+    {
+        low = null;
+        high = null;
 
         var rangeList = _dvtToRangeList!.Invoke(filter, new[] { session });
         if (rangeList == null) return false;
@@ -999,9 +1130,17 @@ public static partial class RecordPatches
 
     /// <summary>The "Period Start" (field 2) FilterExpression on this find request, if any.</summary>
     private static object? FindPeriodStartFilter(object cacheRequest)
+        => _pFiltersAndMarks!.GetValue(cacheRequest) is object fam ? PeriodStartFilterIn(fam) : null;
+
+    /// <summary>
+    /// The "Period Start" (field 2) FilterExpression inside a <c>FiltersAndMarks</c>, if any.
+    /// Reached from both layers: a DataCacheRequest's FiltersAndMarks (the DataAccess guards)
+    /// and a DataProviderRequest's (the provider-level net, #3044) are the same type — indeed
+    /// on the Exists path they are the same OBJECT, since DataAccess.ExistsAsync passes
+    /// <c>request.FiltersAndMarks</c> straight into the ExistsProviderRequest it builds.
+    /// </summary>
+    private static object? PeriodStartFilterIn(object fam)
     {
-        var fam = _pFiltersAndMarks!.GetValue(cacheRequest);
-        if (fam == null) return null;
         var filters = _pFamFilters!.GetValue(fam);
         if (filters == null) return null;
         if (_pFfdItems!.GetValue(filters) is not Array items) return null;

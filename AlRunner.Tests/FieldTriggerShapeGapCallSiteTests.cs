@@ -62,6 +62,18 @@
 // difference between "one test names the moved member" and "the whole bundle fails to load".
 // ScanTypeGap_AbortsBundleLoad_NamingTheMember pins it, and docs/limitations.md now says it.
 //
+// THE GUARD COUNT IS SCANNED REPO-WIDE (#3092)
+// -------------------------------------------
+// DocsCountOfRuntimeShapeGapGuards counted over a hard-coded five-FILENAME list, so a guard added
+// to any sixth file left it green while docs/limitations.md went stale — the exact drift it was
+// written to catch, and unfalsifiable in the one direction that matters. Measured: a
+// `throw RunnerShapeGap.ReportConstruction(...)` added to RecordPatches.cs took the real count to
+// 10 and the test still passed. The scan is now discovered rather than listed, it refuses a root
+// it finds nothing in (a scan with nothing to scan reports zero violations and reads as success),
+// and both counting helpers strip comments so prose cannot move a number that tracks code. The
+// number did not change: the five happened to hold all nine runtime sites, so this closes a hole
+// rather than correcting a count.
+//
 // WHY A RUNNER-SIDE MECHANISM TEST AND NOT AN AL BUNDLE OR A CORPUS TEST
 // ----------------------------------------------------------------------
 // No AL statement can move a private BC field, and no statement about Business Central is being
@@ -191,6 +203,89 @@ public sealed class FieldTriggerShapeGapCallSiteTests : IDisposable
     {
         try { Directory.Delete(_root, recursive: true); } catch { /* best-effort cleanup */ }
     }
+
+    // ── the repo-wide guard scan (#3092) ────────────────────────────────────────────────
+    //
+    // DocsCountOfRuntimeShapeGapGuards used to count over a hard-coded five-FILENAME list, so a
+    // guard added to any other file left it green while docs/limitations.md went stale — the
+    // exact drift it was written to catch. Measured on the merged tree: adding a
+    // `throw RunnerShapeGap.ReportConstruction(...)` to RecordPatches.cs, which is not one of the
+    // five, moved the real count to 10 and the test still passed.
+    //
+    // The scan below is discovered rather than listed, so a new file is covered the moment it
+    // exists. Three properties keep it honest, each pinned by its own test:
+    //
+    //   * it CANNOT PASS VACUOUSLY. A scan that finds nothing reports zero mismatches and reads
+    //     as success, which is the worst thing a guard can do. ProductionSources throws when a
+    //     root yields no sources, and the real scan additionally asserts a floor on the file
+    //     count, so a glob that silently narrows to a handful of files fails rather than passes.
+    //   * it EXCLUDES .claude, and that is load-bearing rather than tidiness. Agent worktrees
+    //     live in .claude/worktrees/, each a full checkout of this repository: 9,078 further .cs
+    //     files in the main checkout at the time of writing. Walking into them would count every
+    //     other branch's guards, so the number would be wrong locally and right in CI, where the
+    //     directory does not exist. That divergence is worse than the bug being fixed.
+    //   * it EXCLUDES test projects (any *.Tests directory). Guards are production call sites;
+    //     a `throw RunnerShapeGap.` written in a fixture or an expected-value string is not one,
+    //     and counting them would let a test move the number the docs are held to.
+
+    private static readonly string[] SkippedDirectories =
+    {
+        "bin", "obj", ".git", ".claude", ".vs", "node_modules", "packages",
+        "tests",   // the al-language submodule and the AL corpora — no production C# lives here
+    };
+
+    /// <summary>
+    /// Every production C# source under <paramref name="root"/>, discovered by walking rather
+    /// than by a maintained list. Throws when the walk finds nothing, so "the directory moved"
+    /// can never be mistaken for "no violations found".
+    /// </summary>
+    private static IReadOnlyList<string> ProductionSources(string root)
+    {
+        var found = new List<string>();
+        var pending = new Stack<string>();
+        pending.Push(root);
+
+        while (pending.Count > 0)
+        {
+            var dir = pending.Pop();
+            foreach (var sub in Directory.EnumerateDirectories(dir))
+            {
+                var name = Path.GetFileName(sub);
+                if (SkippedDirectories.Contains(name, StringComparer.Ordinal)) continue;
+                if (name.EndsWith(".Tests", StringComparison.Ordinal)) continue;
+                pending.Push(sub);
+            }
+
+            found.AddRange(Directory.EnumerateFiles(dir, "*.cs"));
+        }
+
+        if (found.Count == 0)
+            throw new InvalidOperationException(
+                $"The guard scan found no C# sources under '{root}'. A scan with nothing to scan " +
+                "reports zero violations and reads as success, so it fails here instead (#3092).");
+
+        found.Sort(StringComparer.Ordinal);
+        return found;
+    }
+
+    /// <summary>
+    /// The source of <paramref name="path"/> with whole-line <c>//</c> comments removed. Both
+    /// counting helpers strip comments, for the reason VirtualTableRefusalClaimTests already
+    /// documents: headers in this repository quote old wordings on purpose, and the claim under
+    /// test is about CODE. Measured before this was shared: a commented-out
+    /// <c>throw RunnerShapeGap.</c> in NavReportSync.cs turned the count red, so prose could
+    /// move a number that is supposed to track code (#3092).
+    /// </summary>
+    private static string CodeOf(string path)
+    {
+        Assert.True(File.Exists(path), $"{path} not found — was it renamed?");
+        return string.Join('\n', File.ReadAllLines(path)
+            .Where(l => !l.TrimStart().StartsWith("//", StringComparison.Ordinal)));
+    }
+
+    /// <summary>Total matches of <paramref name="pattern"/> across <paramref name="files"/>, comments stripped.</summary>
+    private static int CountAcross(IEnumerable<string> files, string pattern) =>
+        files.Sum(f => Regex.Matches(CodeOf(f), pattern).Count);
 
     // ── plumbing (same shape as FieldTriggerHandlerBackingShapeGapTests) ────────────────
 
@@ -648,15 +743,16 @@ public sealed class FieldTriggerShapeGapCallSiteTests : IDisposable
         ["HandlerConstruction"] = 4,                   // 2 absent types + 2 absent constructors
     };
 
-    private static string InstallPathCode()
-    {
-        var path = Path.Combine(RepoRoot, "AlRunner", "Patches", "RecordPatches.NclMetaTableBuilder.cs");
-        Assert.True(File.Exists(path), $"{path} not found — was it renamed?");
-        // Comments are stripped first: the file's headers quote the OLD `&& _fXxx != null`
-        // wording on purpose, and the claim under test is about CODE.
-        return string.Join('\n', File.ReadAllLines(path)
-            .Where(l => !l.TrimStart().StartsWith("//", StringComparison.Ordinal)));
-    }
+    private static readonly string InstallPathFile =
+        Path.Combine(RepoRoot, "AlRunner", "Patches", "RecordPatches.NclMetaTableBuilder.cs");
+
+    // The census below and TheTwoUninjectableSites read ONE file on purpose: they assert
+    // per-helper call-site counts on the field-trigger install path, and that path is this file.
+    // That is the same narrowing #3092 removed from the runtime-guard count, so it is not left
+    // to a comment — EveryFieldTriggerShapeGapSiteIsOnTheInstallPath asserts repo-wide that no
+    // FieldTriggerShapeGap call site exists anywhere else, which is what makes reading one file
+    // complete rather than merely convenient.
+    private static string InstallPathCode() => CodeOf(InstallPathFile);
 
     [Fact]
     public void AllSeventeenCallSitesStillStand_SoNoneDriftedBackToASilentNullCheck()
@@ -840,6 +936,42 @@ public sealed class FieldTriggerShapeGapCallSiteTests : IDisposable
 
     // ── 7. THE DOCS COUNT THAT WENT STALE ─────────────────────────────────────────────
 
+    /// <summary>
+    /// Every <c>throw RunnerShapeGap.&lt;Factory&gt;</c> in production code, keyed by factory.
+    /// Repo-wide (#3092) rather than over a five-filename list.
+    /// </summary>
+    private static Dictionary<string, int> RunnerShapeGapSitesByFactory()
+    {
+        var sources = ProductionSources(RepoRoot);
+
+        // Anti-vacuous floor. ProductionSources already refuses an empty walk; this catches the
+        // subtler version, where an exclusion or a moved directory quietly narrows the scan to a
+        // handful of files and every count below still "matches".
+        Assert.True(sources.Count >= 150,
+            $"The guard scan found only {sources.Count} production C# sources under {RepoRoot}. " +
+            "That is far below this repository's size, so an exclusion or a renamed directory has " +
+            "narrowed the scan and the counts below would be measuring almost nothing (#3092).");
+
+        var byFactory = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (var file in sources)
+            foreach (Match m in Regex.Matches(CodeOf(file), @"throw (?:AlRunner\.Patches\.)?RunnerShapeGap\.([A-Za-z]+)"))
+            {
+                var factory = m.Groups[1].Value;
+                byFactory[factory] = byFactory.TryGetValue(factory, out var n) ? n + 1 : 1;
+            }
+
+        return byFactory;
+    }
+
+    /// <summary>
+    /// RunnerShapeGap.Query routes to <c>docs/limitations.md#query-shape-gaps</c>, a DIFFERENT
+    /// section with its own prose, so it is not one of the runtime guards this count is about.
+    /// It is excluded by name rather than by file, because the query sites live in files
+    /// (RecordPatches.QueryProjection.cs, RecordPatches.QueryJoin.cs) that a filename-based scan
+    /// would have had to know about in advance — the failure mode #3092 is removing.
+    /// </summary>
+    private const string QueryFactory = "Query";
+
     [Fact]
     public void DocsCountOfRuntimeShapeGapGuards_MatchesTheCallSitesThatExist()
     {
@@ -848,20 +980,19 @@ public sealed class FieldTriggerShapeGapCallSiteTests : IDisposable
         // which is how an unpinned count in prose goes stale. The counting rule is CALL SITES,
         // the same rule the original nine were counted under, and it is asserted here so the
         // next addition cannot leave the prose behind.
-        var guardFiles = new[]
-        {
-            "UserTableTriggerPatches.cs",            // 3 — no session, no metadata, no such field
-            "RecordPatches.InstallBaseline.cs",      // 1 — table not backed by TempTableDataProvider
-            "RunnerTestClientSession.cs",            // 1 — modal handler asked for an unknown form handle
-            "RunnerModalDispatch.cs",                // 2 — null test-execution context, null request
-            "NavReportSync.cs",                      // 2 — report object, request page
-        };
+        //
+        // #3092 widened this from five hard-coded filenames to a repo-wide scan. The number did
+        // not move — the five happened to hold all nine runtime sites on the day — so this is a
+        // hole closed, not a count corrected.
+        var byFactory = RunnerShapeGapSitesByFactory();
 
-        var runnerShapeGapSites = guardFiles.Sum(f => Regex.Matches(
-            File.ReadAllText(Path.Combine(RepoRoot, "AlRunner", "Patches", f)),
-            @"throw (?:AlRunner\.Patches\.)?RunnerShapeGap\.").Count);
+        var runnerShapeGapSites = byFactory
+            .Where(kv => kv.Key != QueryFactory)
+            .Sum(kv => kv.Value);
 
-        var installGapSites = Regex.Matches(InstallPathCode(), @"throw FieldTriggerInstallGap\.").Count;
+        var installGapSites = CountAcross(
+            ProductionSources(RepoRoot), @"throw (?:AlRunner\.Patches\.)?FieldTriggerInstallGap\.");
+
         var total = runnerShapeGapSites + installGapSites;
 
         Assert.Equal(9, runnerShapeGapSites);
@@ -871,6 +1002,137 @@ public sealed class FieldTriggerShapeGapCallSiteTests : IDisposable
         var limitations = File.ReadAllText(Path.Combine(RepoRoot, "docs", "limitations.md"));
         Assert.Contains($"{total} further guards raise `RunnerOutOfScopeException`", limitations,
             StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheScanReachesTheFilesTheHardCodedListMissed_AndStillReachesTheFiveItHad()
+    {
+        // The five filenames that WERE the whole scan before #3092.
+        var oldList = new[]
+        {
+            "UserTableTriggerPatches.cs",
+            "RecordPatches.InstallBaseline.cs",
+            "RunnerTestClientSession.cs",
+            "RunnerModalDispatch.cs",
+            "NavReportSync.cs",
+        };
+
+        var scanned = ProductionSources(RepoRoot)
+            .Select(Path.GetFileName)
+            .ToHashSet(StringComparer.Ordinal);
+
+        // Nothing was lost widening it.
+        foreach (var file in oldList)
+            Assert.Contains(file, scanned);
+
+        // RecordPatches.cs is the file #3092 measured the miss on: a guard added there left the
+        // old scan green. It is in the set now, and so is every other production source.
+        Assert.Contains("RecordPatches.cs", scanned);
+
+        // Files that hold RunnerShapeGap sites today and were NOT on the old list. Had a runtime
+        // guard rather than a Query one landed in either, the docs would have gone stale silently.
+        Assert.Contains("RecordPatches.QueryProjection.cs", scanned);
+        Assert.Contains("RecordPatches.QueryJoin.cs", scanned);
+
+        // Projects other than AlRunner are production too, and the old list could not see them.
+        Assert.Contains("JoinExecutor.cs", scanned);
+
+        Assert.True(scanned.Count > oldList.Length,
+            "The widened scan must be a strict superset of the five filenames it replaced.");
+    }
+
+    [Fact]
+    public void AGuardInANewlyScannedFileIsCounted_AndACommentedOutOneIsNot()
+    {
+        // The negative control the finding came from, run through the SAME counting code that
+        // produces the number above: a guard in a file no list mentions must move the count.
+        var dir = Path.Combine(TestScratch.Dir("al-runner-3092-scan"), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+
+        var real = Path.Combine(dir, "NewlyAddedPatches.cs");
+        File.WriteAllText(real,
+            "internal static class NewlyAddedPatches\n{\n" +
+            "    internal static void Guard()\n" +
+            "        => throw RunnerShapeGap.ReportConstruction(\"Probe.Api\", \"probe\");\n}\n");
+
+        const string pattern = @"throw (?:AlRunner\.Patches\.)?RunnerShapeGap\.([A-Za-z]+)";
+        Assert.Equal(1, CountAcross(new[] { real }, pattern));
+
+        // ...and the mirror: a count that a COMMENT can move is a count that will eventually be
+        // "fixed" by editing prose. Both counting helpers strip comments, so this reads zero.
+        var commented = Path.Combine(dir, "CommentedOutPatches.cs");
+        File.WriteAllText(commented,
+            "internal static class CommentedOutPatches\n{\n" +
+            "    // was: throw RunnerShapeGap.ReportConstruction(\"Probe.Api\", \"probe\");\n" +
+            "    internal static void Guard() { }\n}\n");
+
+        Assert.Equal(0, CountAcross(new[] { commented }, pattern));
+
+        // The install-path counter strips comments too — it always did, and now both share one
+        // implementation so they cannot drift apart again.
+        var installish = Path.Combine(dir, "InstallishPatches.cs");
+        File.WriteAllText(installish,
+            "internal static class InstallishPatches\n{\n" +
+            "    // throw FieldTriggerInstallGap.FieldUnresolvable(target, 42);\n" +
+            "    internal static void Live()\n" +
+            "        => throw FieldTriggerInstallGap.UnsupportedTriggerReturnType(\"t\", \"r\");\n}\n");
+
+        Assert.Equal(1, CountAcross(new[] { installish },
+            @"throw (?:AlRunner\.Patches\.)?FieldTriggerInstallGap\."));
+    }
+
+    [Fact]
+    public void TheScanRefusesARootWithNothingInIt_SoItCannotReportSuccessByFindingNothing()
+    {
+        // The failure this guard must not have: a renamed directory or a changed exclusion leaves
+        // the walk empty, zero mismatches are found, and the test passes. Constructed on purpose.
+        var root = Path.Combine(TestScratch.Dir("al-runner-3092-empty"), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+
+        var empty = Assert.Throws<InvalidOperationException>(() => ProductionSources(root));
+        Assert.Contains("found no C# sources", empty.Message, StringComparison.Ordinal);
+
+        // A root holding ONLY excluded content is just as empty, and must fail the same way
+        // rather than silently counting zero. One entry per exclusion, so a dropped exclusion
+        // shows up here as a test that stops throwing.
+        foreach (var excluded in SkippedDirectories.Concat(new[] { "Some.Tests" }))
+        {
+            var sub = Path.Combine(root, excluded);
+            Directory.CreateDirectory(sub);
+            File.WriteAllText(Path.Combine(sub, "Generated.cs"),
+                "internal static class G { internal static void X() => throw RunnerShapeGap.Query(\"a\", \"b\", \"c\"); }");
+        }
+
+        var stillEmpty = Assert.Throws<InvalidOperationException>(() => ProductionSources(root));
+        Assert.Contains("found no C# sources", stillEmpty.Message, StringComparison.Ordinal);
+
+        // ...and one real file in the same root is found, so the exclusions are not simply
+        // swallowing everything.
+        File.WriteAllText(Path.Combine(root, "Real.cs"), "internal static class R { }");
+        Assert.Single(ProductionSources(root));
+    }
+
+    [Fact]
+    public void EveryFieldTriggerShapeGapSiteIsOnTheInstallPath_SoReadingOneFileIsComplete()
+    {
+        // AllSeventeenCallSitesStillStand and TheTwoUninjectableSites read
+        // RecordPatches.NclMetaTableBuilder.cs alone. That is correct only while the install path
+        // IS that file; #3092 flagged it as the same narrowing rather than leaving it to a
+        // comment. If a FieldTriggerShapeGap site ever lands elsewhere, the census above would go
+        // blind to it exactly the way the runtime count did — so it fails here first.
+        var strays = ProductionSources(RepoRoot)
+            .Where(f => !string.Equals(f, InstallPathFile, StringComparison.Ordinal))
+            .Select(f => (File: f, Hits: Regex.Matches(CodeOf(f), @"FieldTriggerShapeGap\.[A-Za-z]+\(").Count))
+            .Where(x => x.Hits > 0)
+            .ToList();
+
+        Assert.True(strays.Count == 0,
+            "FieldTriggerShapeGap call sites exist outside the install-path file, which the " +
+            "seventeen-site census cannot see: " +
+            string.Join(", ", strays.Select(x => $"{x.File} ({x.Hits})")));
+
+        // ...and the install path really does hold them, so the assertion above is not vacuous.
+        Assert.Equal(17, Regex.Matches(InstallPathCode(), @"FieldTriggerShapeGap\.[A-Za-z]+\(").Count);
     }
 
     [Fact]

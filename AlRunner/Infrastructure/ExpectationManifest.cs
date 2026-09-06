@@ -60,6 +60,26 @@ public sealed record ExpectationEntry(
 }
 
 /// <summary>
+/// A test codeunit a run actually loaded, as the match audit sees it (#3123).
+/// <paramref name="ObjectId"/> is the AL object id parsed from the emitted CLR type
+/// name ("Codeunit60810"); null when the type name does not carry one.
+/// <paramref name="TestMethods"/> is the UNFILTERED set of [Test] methods the type
+/// declares, so a <c>--test</c> filter narrowing what RUNS cannot make an entry look
+/// orphaned.
+/// </summary>
+public sealed record DiscoveredTestCodeunit(
+    int? ObjectId,
+    string Name,
+    string TypeName,
+    IReadOnlyCollection<string> TestMethods);
+
+/// <summary>
+/// An entry the run loaded but could not attach to any discovered test, with a
+/// diagnostic saying what WAS found instead (#3123).
+/// </summary>
+public sealed record UnmatchedExpectation(ExpectationEntry Entry, string Diagnostic);
+
+/// <summary>
 /// Loaded view of all expectation files under a directory (default
 /// <c>tests/expectations/</c>). Use <see cref="Lookup"/> to query expectations
 /// at result-classification time.
@@ -71,10 +91,92 @@ public sealed class ExpectationManifest
 
     public IReadOnlyList<ExpectationEntry> Entries { get; }
 
+    // #3123: what this run actually loaded. The manifest instance is created once per
+    // process and shared across every bundle, so accumulating here — rather than per
+    // TestExecutor.Run — is what makes the audit whole-run rather than per-bundle.
+    private readonly List<DiscoveredTestCodeunit> _discovered = new();
+    private readonly object _discoveredLock = new();
+
     private ExpectationManifest(IReadOnlyList<ExpectationEntry> entries)
     {
         Entries = entries;
         _byName = entries.ToDictionary(e => (e.CodeunitName, e.Method), e => e);
+    }
+
+    /// <summary>
+    /// Record a test codeunit this run loaded. Called from the executor at discovery
+    /// time, BEFORE any filter narrows which methods run.
+    /// </summary>
+    public void NoteDiscoveredTestCodeunit(DiscoveredTestCodeunit codeunit)
+    {
+        lock (_discoveredLock) _discovered.Add(codeunit);
+    }
+
+    /// <summary>
+    /// Entries that no discovered test could ever have consulted (#3123).
+    ///
+    /// The manifest is loud in both directions for a test it MATCHED — a pass against a
+    /// known-gap entry says "remove the entry", an undeclared OOS throw says "add an
+    /// entry". An entry that matches NOTHING was the one hole: <see cref="Lookup"/>
+    /// returns null for a name it does not hold, the classifier takes its no-entry
+    /// branch, and the result is a plain pass or a plain fail. One wrong letter in
+    /// <c>CodeunitName</c> or <c>Method</c> therefore converted a declared, tracked gap
+    /// into an undeclared one with nothing said anywhere.
+    ///
+    /// This is deliberately NOT a verdict on its own: an entry naming a corpus codeunit
+    /// is legitimately unmatched in a run over a different bundle, which is most runs.
+    /// The caller decides what an unmatched entry means — see
+    /// <c>--expectations-require-match</c>, which is opted into only by an invocation
+    /// that really is expected to cover every entry.
+    /// </summary>
+    public IReadOnlyList<UnmatchedExpectation> FindUnmatchedEntries()
+    {
+        DiscoveredTestCodeunit[] discovered;
+        lock (_discoveredLock) discovered = _discovered.ToArray();
+
+        var unmatched = new List<UnmatchedExpectation>();
+        foreach (var entry in Entries)
+        {
+            // Mirrors LookupExpectation: entries may be written against the AL object
+            // name OR the CLR type name, and "*" matches every test method.
+            var named = discovered
+                .Where(d => d.Name == entry.CodeunitName || d.TypeName == entry.CodeunitName)
+                .ToList();
+            if (named.Any(d => entry.MatchesAll || d.TestMethods.Contains(entry.Method)))
+                continue;
+
+            unmatched.Add(new UnmatchedExpectation(entry, Explain(entry, named, discovered)));
+        }
+        return unmatched;
+    }
+
+    private static string Explain(
+        ExpectationEntry entry,
+        IReadOnlyList<DiscoveredTestCodeunit> named,
+        IReadOnlyList<DiscoveredTestCodeunit> discovered)
+    {
+        // Most specific first: the codeunit IS here, the method name is the problem.
+        if (named.Count > 0)
+        {
+            var methods = named.SelectMany(d => d.TestMethods).Distinct().OrderBy(m => m, StringComparer.Ordinal).ToList();
+            var shown = methods.Count <= 12
+                ? string.Join(", ", methods)
+                : string.Join(", ", methods.Take(12)) + $", … ({methods.Count} total)";
+            return $"codeunit \"{entry.CodeunitName}\" was loaded but declares no test method "
+                 + $"'{entry.Method}'. Its test methods: {shown}";
+        }
+
+        // Next: the object id IS here under a different name — the shape a one-letter
+        // CodeunitName typo produces.
+        var byId = discovered.Where(d => d.ObjectId == entry.CodeunitId).ToList();
+        if (byId.Count > 0)
+        {
+            var names = string.Join(", ", byId.Select(d => $"\"{d.Name}\"").Distinct());
+            return $"no codeunit named \"{entry.CodeunitName}\" was loaded; object id "
+                 + $"{entry.CodeunitId} was loaded as {names}. Check CodeunitName for a typo";
+        }
+
+        return $"no codeunit named \"{entry.CodeunitName}\" (id {entry.CodeunitId}) was loaded in this run";
     }
 
     /// <summary>

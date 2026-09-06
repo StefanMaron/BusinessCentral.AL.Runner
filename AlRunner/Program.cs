@@ -399,6 +399,19 @@ var extraPreprocessorSymbols = new List<string>();
 // directory activates classification, so ordinary runs outside this repo are
 // untouched.
 string? expectationsDirArg = null;
+// --expectations-require-match: opt-in assertion that THIS invocation is expected to
+// discover a test for every entry in the active expectations manifest, so an entry that
+// matches nothing is a failure (issue #3123, exit code 5).
+//
+// Opt-in, and it has to be. The expectations directory is auto-probed and shared by every
+// invocation in this repo: the corpus leg runs the three tests/al-language apps, while the
+// runner-extras leg, the --test Codeunit6020 xmlport slice and AlRunner.Tests' own fixture
+// bundles run against the SAME manifest, where those entries legitimately match nothing.
+// Anchoring on the entry's codeunitId instead of a flag was tried and rejected: AL object
+// ids are namespaced per app.json, so ids really are reused across bundles here (60820 is
+// a corpus test codeunit AND AlRunner.Tests/Fixtures/BcFloorSkip's "BC Floor Skip Future"),
+// which makes "id loaded under a different name" indistinguishable from a typo.
+bool expectationsRequireMatch = false;
 // --count-baseline PATH: opt-in test/app-group expected-count manifest (issue #1880;
 // see AlRunner/Infrastructure/CountBaseline.cs for the schema and rationale). Unlike
 // --expectations there is NO auto-probed default — a baseline built for a full-corpus
@@ -502,6 +515,7 @@ for (int i = 0; i < args.Length; i++)
     if (args[i] == "--per-suite") { bundledMode = false; continue; }
     if (args[i] == "--bundled") { bundledMode = true; continue; }
     if (args[i] == "--expectations" && i + 1 < args.Length) { expectationsDirArg = args[++i]; continue; }
+    if (args[i] == "--expectations-require-match") { expectationsRequireMatch = true; continue; }
     if (args[i] == "--count-baseline" && i + 1 < args.Length) { countBaselinePath = args[++i]; continue; }
     // #1821: the SAME --cache value also becomes the isolation root for every other
     // cache CacheRoots redirects (compiled-deps/workspace-deps/ncl-cecil/bc-symbols/
@@ -523,8 +537,10 @@ for (int i = 0; i < args.Length; i++)
         try { alCacheDir = Path.GetFullPath(rawCacheDir); }
         catch (Exception ex)
         {
-            Console.Error.WriteLine(
-                $"--cache '{rawCacheDir}' is not a usable directory path: {ex.Message}");
+            // #3111: one wording, shared with the two other startup writers of a cache
+            // root below, so they cannot drift apart again.
+            Console.Error.WriteLine(AlRunner.Infrastructure.CacheRoots.BuildUnusableCacheRootMessage(
+                "--cache", rawCacheDir, ex.Message));
             return 2;
         }
         cacheRootOverride = alCacheDir; noCacheRequested = false; continue;
@@ -1349,7 +1365,31 @@ string? variantSwapDir = null;
     }
 }
 
-if (alCacheDir != null) Directory.CreateDirectory(alCacheDir);
+if (alCacheDir != null)
+{
+    // #3111: alCacheDir is the ONE cache root that deliberately never goes through
+    // CacheRoots.Resolve (exact-directory semantics — see that class's "Deliberately NOT
+    // wired into alCacheDir" note), so #3084's rootedness guard did not cover it: the
+    // caches derived from a --cache value were guarded and the al-out half of the SAME
+    // value was not. Same invariant, same wording, asserted here instead.
+    //
+    // Wrapped, like the --cache parse above, so a root this process cannot use returns the
+    // documented exit 2 rather than aborting out of top-level statements with an unhandled
+    // exception — which is what CreateDirectory alone did for a permission/ENOTDIR failure
+    // too, not just for the new guard.
+    try
+    {
+        AlRunner.Infrastructure.CacheRoots.RequireRooted(alCacheDir, "al-out");
+        Directory.CreateDirectory(alCacheDir);
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine(AlRunner.Infrastructure.CacheRoots.BuildUnusableCacheRootMessage(
+            cacheRootOverride != null ? "--cache" : "the default AL-output cache directory",
+            alCacheDir, ex.Message));
+        return 2;
+    }
+}
 // #1821/#2555: must run before the Cecil rewrite below (first ncl-cecil consumer), the
 // shadow-hop re-exec decision right after it (first ncl-shadow consumer), and well
 // before any DependencyLoader/BcAppSymbolCache/workspace-deps/AppLoader call — every one
@@ -1359,15 +1399,56 @@ if (alCacheDir != null) Directory.CreateDirectory(alCacheDir);
 // directory is minted (or, on a re-exec'd child, adopted from CacheRoots.NoCacheRootEnvVar
 // — see that constant's doc) before either re-exec decision point can hand off to a child
 // that would otherwise mint its own.
-if (noCacheRequested)
+//
+// #3111: wrapped. Both calls below root what they store (#3084), and Path.GetFullPath can
+// throw — DisableForRun adopts a RAW AL_RUNNER_NO_CACHE_ROOT value that nothing validates,
+// so the throw is reachable from outside the process (measured on Linux: a relative value
+// plus an unlinked working directory makes getcwd fail, and GetFullPath surfaces that as
+// FileNotFoundException). Unwrapped, that aborted out of top-level statements with an
+// unhandled exception and exit 134, while the --cache flag three hundred lines up returned
+// the documented exit 2 for the identical failure — the two writers of one field
+// disagreeing about their own error contract, which is the shape #2114 is about.
+try
 {
-    AlRunner.Infrastructure.CacheRoots.DisableForRun();
-    AppDomain.CurrentDomain.ProcessExit += (_, _) =>
-        AlRunner.Infrastructure.CacheRoots.CleanupThrowawayRoot();
+    if (noCacheRequested)
+    {
+        AlRunner.Infrastructure.CacheRoots.DisableForRun();
+        AppDomain.CurrentDomain.ProcessExit += (_, _) =>
+            AlRunner.Infrastructure.CacheRoots.CleanupThrowawayRoot();
+    }
+    else
+    {
+        AlRunner.Infrastructure.CacheRoots.SetOverride(cacheRootOverride);
+    }
 }
-else
+catch (Exception ex)
 {
-    AlRunner.Infrastructure.CacheRoots.SetOverride(cacheRootOverride);
+    // Read back rather than remembered: DisableForRun republishes the ROOTED form on
+    // success, but it throws before that, so the variable still holds exactly the value
+    // the user (or their shell) exported and the message names it verbatim.
+    var badRoot = noCacheRequested
+        ? Environment.GetEnvironmentVariable(AlRunner.Infrastructure.CacheRoots.NoCacheRootEnvVar)
+        : cacheRootOverride;
+
+    // …but only ONE of DisableForRun's two branches has a value to name. It adopts
+    // AL_RUNNER_NO_CACHE_ROOT when that is set, and otherwise MINTS a root through
+    // ScratchDirs.Reserve, publishing it to the variable only after that succeeds — so a
+    // throw from the mint branch leaves the variable unset and the read-back above
+    // returns null. Attributing that to `AL_RUNNER_NO_CACHE_ROOT ''` blames an input the
+    // user never gave and points them at a variable that is already unset, which is worse
+    // than saying nothing. Narrow the attribution to what is actually known instead.
+    //
+    // The `--cache` arm needs no such split: SetOverride's null/empty passthrough cannot
+    // throw, so reaching this catch with !noCacheRequested means cacheRootOverride held a
+    // real value the user typed.
+    Console.Error.WriteLine(
+        noCacheRequested && string.IsNullOrEmpty(badRoot)
+            ? AlRunner.Infrastructure.CacheRoots.BuildUnreservableThrowawayRootMessage(
+                AlRunner.Infrastructure.CacheRoots.ThrowawayRootParent, ex.Message)
+            : AlRunner.Infrastructure.CacheRoots.BuildUnusableCacheRootMessage(
+                noCacheRequested ? AlRunner.Infrastructure.CacheRoots.NoCacheRootEnvVar : "--cache",
+                badRoot ?? "", ex.Message));
+    return 2;
 }
 // #2041/#2066: deferred — see `deferredStartupLines`' declaration above. This generation
 // may still hand off via either re-exec decision below, and touches no bundle work at all
@@ -3924,6 +4005,72 @@ if (countBaseline != null)
     }
 }
 
+// ── Expectations match audit (issue #3123) ───────────────────────────────────────
+//
+// tests/expectations is loud in both directions for a test it MATCHED. An entry that
+// matched NOTHING was the hole: ExpectationManifest.Lookup returns null for a name it
+// does not hold, the classifier takes its no-entry branch, and one wrong letter in
+// CodeunitName or Method silently converts a declared, tracked gap into an undeclared
+// one — a red run indistinguishable from a gap nobody declared.
+//
+// Opt-in on purpose; see --expectations-require-match's declaration for why anchoring
+// on codeunitId instead would produce false positives on this repo's own fixtures.
+bool expectationsMatchFailure = false;
+if (expectationsRequireMatch)
+{
+    if (expectations == null)
+    {
+        // The flag asserts every entry matched. With no manifest active there are no
+        // entries to match, and reporting that as satisfied would be a vacuous green.
+        Console.Error.WriteLine(
+            "[expectations] --expectations-require-match was given but no expectations "
+            + "manifest is active — nothing to require a match against. Pass --expectations DIR, "
+            + "or drop the flag.");
+        expectationsMatchFailure = true;
+    }
+    else if (expectations.Entries.Count == 0)
+    {
+        Console.Error.WriteLine(
+            "[expectations] --expectations-require-match was given but the active manifest "
+            + "declares 0 entries — the flag would pass without checking anything. Check the "
+            + "--expectations path.");
+        expectationsMatchFailure = true;
+    }
+    else if (willResume)
+    {
+        // Same reasoning as --count-baseline above: this attempt ran a slice and hands
+        // the rest to a fresh process, so its discovery set is not the run's.
+        Console.Error.WriteLine(
+            "[expectations] match audit skipped: this attempt is resuming in a fresh process; "
+            + "the final attempt audits the whole run.");
+    }
+    else
+    {
+        var unmatched = expectations.FindUnmatchedEntries();
+        if (unmatched.Count > 0)
+        {
+            expectationsMatchFailure = true;
+            foreach (var u in unmatched)
+                Console.Error.WriteLine(
+                    $"[expectations] UNMATCHED: {u.Entry.SourceFile}: "
+                    + $"{u.Entry.CodeunitName}.{u.Entry.Method} ({u.Entry.Mode}) matched no test "
+                    + $"in this run — {u.Diagnostic}.");
+            Console.Error.WriteLine(
+                $"[expectations] {unmatched.Count} of {expectations.Entries.Count} entr"
+                + $"{(unmatched.Count == 1 ? "y" : "ies")} matched no test. An entry that matches "
+                + "nothing declares nothing: the test it names still fails as if undeclared. Fix "
+                + "the CodeunitName/Method, or remove the entry.");
+        }
+        else
+        {
+            // Never mute about its scope: a green audit says how much it accounted for.
+            Console.Error.WriteLine(
+                $"[expectations] match audit: all {expectations.Entries.Count} entries matched a "
+                + "discovered test.");
+        }
+    }
+}
+
 // Computed once regardless of --no-strict-exit: needed both as the process exit code
 // and as the "exitCode" field in --output-json, which reports the real outcome even
 // when the process itself exits 0 for JSON-only consumers.
@@ -3959,7 +4106,8 @@ int computedExitCode = 0;
         // "some tests failed". Below a compile failure, which is the more fundamental problem.
         : (execFail > 0 || carryIncomplete) ? 2  // bucket-level execution error, or a lost attempt
         : (failed + errored > 0 ? 1               // at least one test failed
-        : (countBaselineMismatch ? 4 : 0));      // #1880: suite's count didn't exactly match its baseline
+        : (countBaselineMismatch ? 4                    // #1880: suite's count didn't exactly match its baseline
+        : (expectationsMatchFailure ? 5 : 0)));  // #3123: an expectations entry matched no test
 }
 
 if (outputJson && willResume)

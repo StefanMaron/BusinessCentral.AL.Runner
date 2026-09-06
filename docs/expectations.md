@@ -20,6 +20,56 @@ outside this repo behaves exactly as if the mechanism did not exist. Pass
 directory must exist). A malformed manifest aborts the invocation with exit
 code 2 before a single test runs.
 
+### `--expectations-require-match`: an entry that matches nothing (#3123)
+
+Drift is loud in both directions for a test the manifest **matched**: a test that
+passes against an entry fails with "remove the entry", a test that raises an
+undeclared out-of-scope signal fails with "add an entry". An entry that matches
+**nothing at all** was the one hole. `Lookup` returns null for a name it does not
+hold, the classifier takes its no-entry branch, and the result is a plain pass or a
+plain fail — so one wrong letter in `CodeunitName` or `Method` silently converts a
+declared, tracked gap into an undeclared one, and the run goes red in a way
+indistinguishable from a gap nobody declared.
+
+Measured on `AlRunner.Tests/Fixtures/ExpectationsBundle` (codeunit 60810
+`"Expct Fixture Tests"`), one entry per run, only the quoted field differing:
+
+| entry | result | exit |
+|---|---|---|
+| `"CodeunitName": "Expct Fixture Tests"` | `PASS (known-gap)`, `pass-known-gap: 1` | 0 |
+| `"CodeunitName": "Expct Fixture Test"` | `FAIL`, `fail: 1`, no diagnostic anywhere | 1 |
+| `"Method": "GreenPath_KnownGapDeclare"` | `FAIL`, `fail: 1`, no diagnostic anywhere | 1 |
+
+All three printed `[expectations] loaded 1 entry from <dir>` first. `loaded` is true
+and says nothing about `matched`.
+
+`--expectations-require-match` asserts that **this invocation discovers a test for
+every entry in the active manifest**, and fails with exit code 5 on any that matched
+nothing, naming the file, the codeunit, the method, and what was found instead — the
+object id loaded under a different name, or the test methods that do exist. A green
+audit says how much it accounted for (`match audit: all 17 entries matched a
+discovered test`), so it is never mute about its scope, and it refuses to run against
+an inactive or empty manifest rather than passing vacuously.
+
+It is **opt-in**, for the same reason `--count-baseline` is. The expectations
+directory is auto-probed and shared by every invocation in this repo: the corpus leg
+runs the three `tests/al-language` apps, while the runner-extras leg, the
+`--test Codeunit6020` xmlport slice and `AlRunner.Tests`' own fixture bundles run
+against the same manifest, where those entries legitimately match nothing. Only
+`.github/workflows/bc-tests.yml`'s full-corpus step passes the flag, because only
+there is "every entry is covered" true.
+
+Anchoring on the entry's `codeunitId` instead of a flag was tried and rejected. AL
+object ids are namespaced per `app.json`, so ids really are reused across bundles
+here — 60820 is a corpus test codeunit **and**
+`AlRunner.Tests/Fixtures/BcFloorSkip`'s `"BC Floor Skip Future"` — which makes "the
+id was loaded under a different name" indistinguishable from a typo.
+
+The residual, deliberately: an entry with **both** a wrong `CodeunitName` and a wrong
+`codeunitId` is still reported, but the diagnostic can only say the codeunit was not
+loaded. And an entry naming a codeunit no run covers is never audited at all, because
+no invocation can honestly assert it should have been.
+
 ## Layout
 
 ```
@@ -236,3 +286,8 @@ a clean run does not hide manifested deviations from the corpus.
 6. **Schema validation.** The loader (`ExpectationManifest.cs`) rejects
    unknown `Mode` values and missing required fields. Runner startup fails
    loudly if any expectation file is malformed.
+7. **`CodeunitName` and `Method` must name something that exists.** The schema
+   cannot check this — it is a join against the tests, not a property of the
+   file — so the full-corpus CI leg runs with `--expectations-require-match`
+   and fails on an entry that matched no test. See the section above; a typo
+   here does not make the entry invalid, it makes it inert.

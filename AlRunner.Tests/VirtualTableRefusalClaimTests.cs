@@ -330,7 +330,18 @@ public sealed class VirtualTableRefusalClaimTests
         // deliberately two sites, not one: "this table declared something the column does not
         // list" and "this artifact's column does not list the default" point at different
         // causes. TableMetadataOptionDefaultOrdinalTests pins both messages.
-        Assert.Equal(68, total);
+        //
+        // 68 -> 71 (#3117): BuildObjectOwnerIndex's three bare `catch { continue; }` blocks
+        // became AllObjShapeGap refusals. Each one had been unowning every object of the
+        // package or assembly it could not read, which PopulateAllObjVirtualTable then wrote
+        // out as Guid.Empty -- indistinguishable from "this app does not own it".
+        //
+        // NOTE TO WHOEVER REBASES THIS NEXT: more than one open PR moves this number at a
+        // time (#3128 moves it too, by a different amount). Do NOT add your delta to whatever
+        // is on main -- run the test, read the "Actual:" value out of the failure message, and
+        // write that. An arithmetic guess here is how the assertion silently stopped meaning
+        // what it says once before.
+        Assert.Equal(71, total);
     }
 
 
