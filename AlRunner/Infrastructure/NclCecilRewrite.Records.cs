@@ -1279,14 +1279,15 @@ public static partial class NclCecilRewrite
             Console.Error.WriteLine("[Cecil] Prepended StampSystemFieldsOnInsert → NavRecord.ALInsertAsync(DataError,bool,bool)");
         }
 
-        // ── NavRecord.ALInsertAsync(DataError, bool, bool) — User Property companion row ──
+        // ── NavRecord.ALInsertAsync(DataError, bool, bool) — User system-table insert arm ──
         // On a real tier, SystemTableTriggers.OnBeforeInsertAsync's `case 2000000120:` arm
-        // inserts the matching User Property (2000000121) row for every User it accepts, and
-        // BC's own UserManagement.DirectSetUserFieldValue then Gets that row with the RAISING
-        // error level. The runner bypasses BC's trigger dispatch on insert, so the row was
-        // never created. Same prepend shape as AssignAutoIncrement / StampSystemFieldsOnInsert
-        // above; a no-op for every table but User. See AlRunner/Patches/UserTableTriggerPatches.cs
-        // and issue #2355.
+        // refuses a duplicate user name / Windows SID (#2983) and then inserts the matching
+        // User Property (2000000121) row for every User it accepts — and BC's own
+        // UserManagement.DirectSetUserFieldValue then Gets that row with the RAISING error
+        // level. The runner bypasses BC's trigger dispatch on insert, so none of it ran. Same
+        // prepend shape as AssignAutoIncrement / StampSystemFieldsOnInsert above; a no-op for
+        // every table but User. See AlRunner/Patches/UserTableTriggerPatches.cs and issues
+        // #2355 / #2983.
         {
             var navRecord = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.NavRecord")
                 ?? throw new InvalidOperationException("NavRecord type not found in Ncl");
@@ -1299,9 +1300,9 @@ public static partial class NclCecilRewrite
                 ?? throw new InvalidOperationException("NavRecord.ALInsertAsync(DataError,bool,bool) not found");
 
             var helperMi = typeof(AlRunner.Patches.UserTableTriggerPatches).GetMethod(
-                nameof(AlRunner.Patches.UserTableTriggerPatches.CreateUserPropertyOnUserInsert),
+                nameof(AlRunner.Patches.UserTableTriggerPatches.OnBeforeUserInsert),
                 BindingFlags.Public | BindingFlags.Static)
-                ?? throw new InvalidOperationException("UserTableTriggerPatches.CreateUserPropertyOnUserInsert not found");
+                ?? throw new InvalidOperationException("UserTableTriggerPatches.OnBeforeUserInsert not found");
             var helperRef = asm.MainModule.ImportReference(helperMi);
 
             var body = alInsert3.Body;
@@ -1310,7 +1311,45 @@ public static partial class NclCecilRewrite
             il.InsertBefore(firstOriginal, il.Create(OpCodes.Ldarg_0));
             il.InsertBefore(firstOriginal, il.Create(OpCodes.Call, helperRef));
             if (body.MaxStackSize < 1) body.MaxStackSize = 1;
-            Console.Error.WriteLine("[Cecil] Prepended CreateUserPropertyOnUserInsert → NavRecord.ALInsertAsync(DataError,bool,bool)");
+            Console.Error.WriteLine("[Cecil] Prepended OnBeforeUserInsert → NavRecord.ALInsertAsync(DataError,bool,bool)");
+        }
+
+        // ── NavRecord.ALDeleteAsync(DataError, bool, bool) — User system-table delete arm ──
+        // SystemTableTriggers.OnAfterDeleteAsync's `case 2000000120:` arm cascades a User
+        // delete into Access Control (2000000053), User Property (2000000121), Isolated
+        // Storage (2000000107) and Tenant Report Layout Selection (2000000233). The runner
+        // bypasses BC's trigger dispatch on writes, so every one of those rows was orphaned
+        // (#2356) — including the very User Property row the insert prepend above creates.
+        //
+        // ALDeleteAsync(DataError,bool,bool) is the single funnel for BOTH `Delete()` and
+        // `DeleteAll()` on this table: DeleteAllAsync's bulk path is gated on
+        // CanUseBulkDeleteAll, which ends in !SystemTableTriggers.TableHasSystemDeleteTrigger,
+        // and that method's static switch lists 2000000120 — so User always falls to the row
+        // loop, which calls ALDeleteAsync per row.
+        {
+            var navRecord = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.NavRecord")
+                ?? throw new InvalidOperationException("NavRecord type not found in Ncl");
+            var alDelete3 = navRecord.Methods.FirstOrDefault(m =>
+                m.Name == "ALDeleteAsync"
+                && m.Parameters.Count == 3
+                && m.Parameters[0].ParameterType.Name == "DataError"
+                && m.Parameters[1].ParameterType.MetadataType == Mono.Cecil.MetadataType.Boolean
+                && m.Parameters[2].ParameterType.MetadataType == Mono.Cecil.MetadataType.Boolean)
+                ?? throw new InvalidOperationException("NavRecord.ALDeleteAsync(DataError,bool,bool) not found");
+
+            var helperMi = typeof(AlRunner.Patches.UserTableTriggerPatches).GetMethod(
+                nameof(AlRunner.Patches.UserTableTriggerPatches.OnAfterUserDelete),
+                BindingFlags.Public | BindingFlags.Static)
+                ?? throw new InvalidOperationException("UserTableTriggerPatches.OnAfterUserDelete not found");
+            var helperRef = asm.MainModule.ImportReference(helperMi);
+
+            var body = alDelete3.Body;
+            var il = body.GetILProcessor();
+            var firstOriginal = body.Instructions[0];
+            il.InsertBefore(firstOriginal, il.Create(OpCodes.Ldarg_0));
+            il.InsertBefore(firstOriginal, il.Create(OpCodes.Call, helperRef));
+            if (body.MaxStackSize < 1) body.MaxStackSize = 1;
+            Console.Error.WriteLine("[Cecil] Prepended OnAfterUserDelete → NavRecord.ALDeleteAsync(DataError,bool,bool)");
         }
 
         // ── NavRecord.ALModifyAsync — SystemModified stamp prepend ──────────────────

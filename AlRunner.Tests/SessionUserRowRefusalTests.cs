@@ -21,25 +21,25 @@
 //   SeedOnAnAlreadyPresentRow_SaysAlreadyPresent_NotSeeded asserts, and it fails against the
 //   pre-fix runner.
 //
-// WHAT THE REVIEW PREDICTED, AND WHAT WAS MEASURED
+// WHAT THE REVIEW PREDICTED, AND WHERE IT LANDED (#2983)
 //   The review named a concrete bite: a unique key on User."User Name" would make a --test-data
-//   backup containing a TESTUSER refuse the seed and silently defeat #2296. MEASURED on
-//   BC 28.1.49838.53910 (SessionUserRowNameCollision, below) the seed lands anyway, and the
-//   mechanism is an index on neither side. The runner's store for this table is BC's own
-//   CreateTempDataAccess, which enforces the PRIMARY key on "User Security ID" and nothing
-//   else; and real BC refuses a duplicate user name from a TRIGGER, not an index —
-//   SystemTableTriggers.OnBeforeInsertAsync's `case 2000000120:` arm validates a unique user
-//   name before writing, and AlRunner/Patches/UserTableTriggerPatches.cs's own header states
-//   that the runner reproduces only that arm's User Property companion insert and that "None of
-//   that [validation] is reproduced here". The run is therefore left holding two rows with the
-//   same user name, which real BC would refuse — filed as AlRunner#2983 rather than fixed here,
-//   and NOT asserted by the fixture, which would be writing a wrong number into a test.
+//   backup containing a TESTUSER refuse the seed and silently defeat #2296. When it was first
+//   measured on BC 28.1.49838.53910 the seed landed anyway, because the mechanism is an index
+//   on neither side: the runner's store for this table is BC's own CreateTempDataAccess, which
+//   enforces the PRIMARY key on "User Security ID" and nothing else, and real BC refuses a
+//   duplicate user name from a TRIGGER —
+//   SystemTableTriggers.OnBeforeInsertAsync's `case 2000000120:` arm calls
+//   IsUserFieldUniqueAsync(recordBuffer, 2, insert: true) and throws
+//   NavNCLUserTableUserNameMustBeUniqueException.Create() before writing. The runner did not
+//   reproduce that arm, so it held two rows sharing a user name where BC would hold one.
 //
-//   Consequence worth stating plainly: the Refused branch is correct and is what the review
-//   asked for, but nothing reachable from AL can trigger it today. It is exercised by the
-//   exception path only. The name-collision fixture is the canary — whichever way #2983 is
-//   closed, its "the session user still gets its own row" test fails, which is exactly when
-//   someone must decide what the seed does about a genuine refusal.
+//   AlRunner/Patches/UserTableTriggerPatches.cs reproduces it now, and the review's prediction
+//   is therefore the LIVE behaviour rather than a hypothetical: the seed IS refused over a
+//   same-named foreign user, and the Refused branch #2941 built — until now reachable only from
+//   the exception path — is reached from AL for the first time.
+//   SeedWithASameNamedForeignUserPresent_IsRefusedAndSaysSo below asserts exactly that, naming
+//   BC's own exception text, and it is the RED→GREEN for #2983 on the runner side: against the
+//   pre-fix runner it fails, because the seed reported "seeded User row 'TESTUSER'".
 using System.Diagnostics;
 using System.Text;
 using Xunit;
@@ -139,7 +139,7 @@ public sealed class SessionUserRowRefusalTests
     }
 
     [Fact]
-    public void SeedWithASameNamedForeignUserPresent_StillWritesTheSessionUsersOwnRow()
+    public void SeedWithASameNamedForeignUserPresent_IsRefusedAndSaysSo()
     {
         var cacheDir = TempCache("collision");
         try
@@ -149,17 +149,25 @@ public sealed class SessionUserRowRefusalTests
             Assert.True(exit == 0,
                 $"expected a clean run. exit={exit}\nstdout:\n{stdout}\nstderr:\n{stderr}");
 
-            // Measured: the insert genuinely happens, so the seed reports the outcome it
-            // actually reached. This is the assertion that flips when #2983 is closed — whether
-            // by reproducing BC's OnBeforeInsertAsync validation for table 2000000120 or by
-            // enforcing uniqueness in the store — at which point the line becomes the REFUSED
-            // one and the fixture's AL test fails too, which is the intended alarm.
-            Assert.Contains("UserSystemTable: seeded User row 'TESTUSER'", stderr);
+            // THE #2983 DISCRIMINATOR. Against the pre-fix runner this line reads
+            // "UserSystemTable: seeded User row 'TESTUSER'", because nothing refused the
+            // duplicate name. It now reads the Refused one, and it names BC's OWN exception —
+            // the runner raises NavNCLUserTableUserNameMustBeUniqueException through BC's own
+            // static factory, so the text below is BC's, not a runner paraphrase.
+            Assert.Contains("was REFUSED and is NOT present", stderr);
+            Assert.Contains("NavNCLUserTableUserNameMustBeUniqueException", stderr);
+            Assert.Contains("The user name must be unique.", stderr);
+            Assert.DoesNotContain("UserSystemTable: seeded User row", stderr);
             Assert.DoesNotContain("was already present", stderr);
-            Assert.DoesNotContain("REFUSED", stderr);
+
+            // The refusal is REPORTED, not merely acted on: #2941's whole finding was that the
+            // seed could reach an outcome and say nothing about it.
+            Assert.Contains("See AlRunner#2296", stderr);
 
             Assert.Contains("PASS  Codeunit70521.SurcTheSameNamedForeignUserIsInTheTable", stdout);
-            Assert.Contains("PASS  Codeunit70521.SurcTheSessionUserStillGetsItsOwnRow", stdout);
+            Assert.Contains(
+                "PASS  Codeunit70521.SurcTheSessionUserIsRefusedItsOwnRowOverTheDuplicateName",
+                stdout);
             Assert.DoesNotContain("FAIL", stdout);
         }
         finally

@@ -33,6 +33,20 @@ the BC runtime environment:
   .ValidateUserName` is the common one — now runs that check, so a made-up user
   name is refused the way real BC refuses it. The Session virtual table
   (2000000009) is still empty; that gap is tracked separately.
+  Writes to the User table now go through BC's own system-table trigger arms:
+  an insert is refused with BC's own
+  `NavNCLUserTableUserNameMustBeUniqueException` ("The user name must be
+  unique.") when another user already carries that name, and with
+  `NavNCLUserTableUserWindowsSidMustBeUniqueException` when a non-empty Windows
+  Security ID is already taken; a delete cascades into Access Control
+  (2000000053), User Property (2000000121), Isolated Storage (2000000107) and
+  Tenant Report Layout Selection (2000000233), through `Delete()` and
+  `DeleteAll()` alike. One consequence to know about when running with
+  `--test-data`: a backup that already holds a user named `TESTUSER` under some
+  other security id now refuses the runner's own session-user row, exactly as a
+  real tier would refuse it. The seed says so loudly on stderr rather than
+  claiming a row it did not write, and every relation to
+  `User."User Security ID"` will then refuse `UserSecurityId()`.
 - **Base app data** — no standard BC tables are populated. Code that reads
   `G/L Account`, `Customer`, `Vendor`, or any other base app table finds them empty
   unless your test inserts data.

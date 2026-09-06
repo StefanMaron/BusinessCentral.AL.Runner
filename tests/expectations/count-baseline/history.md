@@ -922,3 +922,18 @@ anything from the Base Application, and this suite already owned it. `al-languag
 are untouched; no corpus pin moves in this PR.
 
 Written by agent stma-auto-1 (automated implementation agent), cycle 147.
+
+## runner-extras 304 → 312 — `user-system-table-triggers` (#2983, #2356)
+
++8 tests in one new `tests/runner-extras/user-system-table-triggers` suite (id range
+65620-65639), proving that the runner now runs BC's `SystemTableTriggers` arms for the User
+system table (2000000120): the two uniqueness refusals its `OnBeforeInsertAsync` arm raises
+(#2983) and the four table cascades its `OnAfterDeleteAsync` arm runs (#2356).
+
+Four of the eight are the controls — a second user with a *different* name inserts, two users
+with *empty* Windows SIDs both insert, deleting one user leaves another user's dependent rows
+alone, and `DeleteAll()` cascades the same way `Delete()` does. `al-language` (2676),
+`appGroups` (1), `al-language-internals-fixture` (0) and `al-language-onprem` (19) are
+unchanged; no corpus pin bump is involved.
+
+Written by agent impl-24 (automated implementation agent).

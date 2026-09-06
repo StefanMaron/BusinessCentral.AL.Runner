@@ -14,18 +14,19 @@
 //   companion insert, and states in as many words that "None of that [validation] is reproduced
 //   here".
 //
-//   So the runner does not refuse this collision at all: the store behind the User table is
-//   BC's own CreateTempDataAccess, which enforces the primary key and nothing else. MEASURED --
-//   SurcTheSessionUserStillGetsItsOwnRow next door observes the seed landing anyway, and the run
-//   is left holding two rows that share a user name where BC would hold one. That divergence is
-//   AlRunner#2983.
+//   UserTableTriggerPatches REPRODUCES that arm now (#2983), so the runner refuses this
+//   collision the way BC does. Until it did, the store behind the User table -- BC's own
+//   CreateTempDataAccess -- enforced the primary key and nothing else, the seed landed anyway,
+//   and the run was left holding two rows that share a user name where BC would hold one.
 //
 // WHAT THIS FIXTURE IS FOR
-//   It measures the hazard the #2941 review predicted, end to end, and shows the fix survives
-//   it. It is also the canary for #2983: whichever way that gets closed -- reproducing the
-//   trigger's validation, or enforcing uniqueness in the store -- the seed starts being refused
-//   here, SurcTheSessionUserStillGetsItsOwnRow fails, and RecordPatches' Refused branch becomes
-//   reachable from AL for the first time.
+//   It measures the hazard the #2941 review predicted, end to end. It was the canary for #2983,
+//   and the canary fired: SurcTheSessionUserStillGetsItsOwnRow -- which asserted the seed
+//   landing -- was replaced by SurcTheSessionUserIsRefusedItsOwnRowOverTheDuplicateName, and
+//   RecordPatches.EnsureUserSystemTableRowSeeded's Refused branch is now reachable from AL for
+//   the first time. What the fixture pins from here on is that the refusal is CLEAN: one row
+//   under the name, the stand-in's, and a seed that reports what it did rather than claiming
+//   the row is there.
 codeunit 70520 "SURC Installer"
 {
     Subtype = Install;
