@@ -881,12 +881,15 @@ public static partial class NclCecilRewrite
                 H(recordPatches, "DataAccess_FieldFindManaged"));
 
             // ── DataAccess.CountAsync — Date virtual table (2000000007) window guard ─────
-            // Record.Count() / IsEmpty() reach a CountCacheRequest, not a FindCacheRequest, so
-            // the find guard above never sees them. Without this prepend a Count over a range
-            // outside the materialised Date window would answer with however many rows the
-            // window happens to hold — the silent short answer the window guard exists to
-            // prevent. The helper widens the window (or throws past the row cap) and returns;
-            // the original CountAsync body then runs unchanged, for this and every other table.
+            // Record.Count() reaches a CountCacheRequest, not a FindCacheRequest, so the find
+            // guard above never sees it. Without this prepend a Count over a range outside the
+            // materialised Date window would answer with however many rows the window happens
+            // to hold — the silent short answer the window guard exists to prevent. The helper
+            // widens the window (or throws past the row cap) and returns; the original
+            // CountAsync body then runs unchanged, for this and every other table.
+            //
+            // This comment used to read "Record.Count() / IsEmpty()". IsEmpty() has never
+            // reached CountAsync — see the ExistsAsync prepend below (#3006).
             PrependStaticCall(nclMod,
                 ByParams(Rt + "DataAccess", "CountAsync", "CountCacheRequest"),
                 H(recordPatches, "DataAccess_DateWindowGuardForCount"),
@@ -951,11 +954,32 @@ public static partial class NclCecilRewrite
                 H(recordPatches, "DataAccess_FieldGuardForGet"),
                 argSlots: 2); // `this` — the DataAccess — and the primary-key request
 
+            // ── DataAccess.ExistsAsync — Date virtual table (2000000007), the FOURTH path ───
+            // Record.IsEmpty() does not take the count path. RecordImplementation.IsEmptyAsync
+            // calls its OWN ExistsAsync, which builds an ExistsCacheRequest and reaches
+            // DataAccess.ExistsAsync — decompiled from Ncl.dll 28.1, and not what the count
+            // guard's comment claimed for a whole release. Measured on main, one process, one
+            // record variable, on consecutive lines:
+            //
+            //   Date.SetRange("Period Start", 18500101D..18500107D);
+            //   IsEmpty() -> TRUE      Count() -> 7
+            //
+            // A service tier computes this table across years 1..9999 and answers 7 both ways,
+            // so TRUE is a wrong answer, not a missing feature — and the quiet kind, because
+            // "this range holds no periods" is what IsEmpty() returning true normally means.
+            // ExistsAsync is a large async state machine, so unlike the tiny FindAsync it is
+            // not R2R-inlined past the prepend.
+            PrependStaticCall(nclMod,
+                ByParams(Rt + "DataAccess", "ExistsAsync", "ExistsCacheRequest"),
+                H(recordPatches, "DataAccess_DateWindowGuardForExists"),
+                argSlots: 2); // `this` — the DataAccess — and the exists request
+
             // ── DataAccess.ExistsAsync — virtual Field table (2000000041), the FOURTH path ────
             // Record.IsEmpty() does not take the count path. RecordImplementation.IsEmptyAsync
             // calls its own ExistsAsync, which builds an ExistsCacheRequest and reaches
-            // DataAccess.ExistsAsync — decompiled from Ncl.dll, and not what the Date count
-            // guard's comment above claims. With the count and Get guards in place but not this
+            // DataAccess.ExistsAsync — decompiled from Ncl.dll. The Date count guard's comment
+            // used to claim otherwise; #3006 corrected it and added the Date half of this same
+            // prepend directly above. With the count and Get guards in place but not this
             // one, Field.SetRange(TableNo, 270); IsEmpty() still answered TRUE while Count()
             // over the same filter answered 2. ExistsAsync is a large async state machine, so
             // unlike the tiny FindAsync it is not R2R-inlined past the prepend.

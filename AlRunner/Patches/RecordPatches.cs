@@ -1944,11 +1944,15 @@ public static partial class RecordPatches
                     var createdDate = _mCreateTempDataAccess!.Invoke(self, new object[] { table })!;
                     dateDa = perTable.GetOrAdd(tableId, createdDate);
                 }
+                // The ninth Date refusal, and the only one outside
+                // RecordPatches.DateVirtualTable.cs. It routes through that file's factory
+                // rather than spelling the anchor itself, so the table cannot claim one thing
+                // from the populator and another from this dispatch chain — the sibling defect
+                // #2945 found for Field, Aggregate Permission Set and All Profile (#2965).
                 var dateSession = _fDasSession?.GetValue(self)
-                    ?? throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
-                        "Date (virtual table 2000000007)",
-                        "date-virtual-table — DataAccessSource has no skeleton session, so BC's own "
-                        + "DateDataProvider.GetPeriodName cannot name a period; see docs/scope.md");
+                    ?? throw DateShapeGap(
+                        "the DataAccessSource has no skeleton session, so BC's own "
+                        + "DateDataProvider.GetPeriodName cannot name a period");
                 PopulateDateVirtualTable(dateDa, table, dateSession);
                 return dateDa;
             }

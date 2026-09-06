@@ -529,9 +529,22 @@ What it does instead:
 - It materialises a window of whole years, **1900-01-01 to 2099-12-31** by default
   (about 87,000 rows across all five period types).
 - Whenever an AL `"Period Start"` filter names a **closed** bound outside that window,
-  the window widens to cover it before the read runs. This happens on both request
-  paths — `FindFirst` / `FindSet` / `FindLast` / `Get`, and `Count` / `IsEmpty` — so a
-  filter naming 1850 or 2300 gets real rows.
+  the window widens to cover it before the read runs. This happens on all **four**
+  request paths a `Record Date` read can take, so a filter naming 1850 or 2300 gets
+  real rows whichever one AL uses:
+
+  | AL | `DataAccess` method | request type |
+  |---|---|---|
+  | `Find` / `FindSet` / `FindFirst` / `FindLast` | `InnerFindAsync` | `FindCacheRequest` |
+  | `Count` | `CountAsync` | `CountCacheRequest` |
+  | `IsEmpty` | `ExistsAsync` | `ExistsCacheRequest` |
+  | `Get(Period Type, Period Start)` | `InternalTryGetByPrimaryKeyAsync` | `PrimaryKeyCacheRequest` |
+
+  This list said "both request paths — find, and `Count` / `IsEmpty`" until #3006.
+  `IsEmpty()` has never taken the count path: `RecordImplementation.IsEmptyAsync` calls
+  its own `ExistsAsync`, which builds an `ExistsCacheRequest`. Until that fourth guard
+  existed, `IsEmpty()` answered `true` for a 1850 range that `Count()` answered `7` for
+  on the very next line.
 - Widening past **500,000 rows** raises `RunnerOutOfScopeException`, naming the
   requested bounds, the current window and the cap. It never answers a wider request
   with fewer rows.

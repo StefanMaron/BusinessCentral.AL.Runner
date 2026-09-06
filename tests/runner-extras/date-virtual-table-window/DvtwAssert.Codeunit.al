@@ -14,6 +14,12 @@ codeunit 64560 "Dvtw Assert"
             Error('Expected true: %1', Msg);
     end;
 
+    procedure IsFalse(Condition: Boolean; Msg: Text)
+    begin
+        if Condition then
+            Error('Expected false: %1', Msg);
+    end;
+
     procedure ExpectedError(Fragment: Text)
     begin
         if StrPos(GetLastErrorText(), Fragment) = 0 then

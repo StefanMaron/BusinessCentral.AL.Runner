@@ -72,6 +72,22 @@ move whatever that number is. The fixture app is still a separate, test-free app
 
 ## runner-extras
 
+### date-virtual-table-window 5 -> 9 (PRs for #3006 and #2965)
+
+Four tests added to an existing app group, so no new group line. Written down because two of
+the four assert something the group's name does not suggest and the reason is worth keeping:
+
+- `Date_IsEmptyBeforeTheWindow_WidensTheWindowLikeCountDoes` and
+  `Date_ClosedRangePastTheRowCap_ThrowsOnTheIsEmptyPathToo` cover `IsEmpty()`, which is a
+  FOURTH `DataAccess` request path (`ExistsAsync`/`ExistsCacheRequest`) and not a spelling of
+  `Count()` — the assumption that let #3006 sit unnoticed.
+- `Date_IsEmptyInsideTheWindow_StillAnswersTrueWhenNothingMatches` is its negative arm: a
+  materialised range that genuinely holds no Week period must still answer `true`.
+- `Date_RowCapRefusal_TearsThroughATryFunction_InsteadOfReadingAsFalse` is #2965's: it asserts
+  the runtime consequence of the refusal's claim, not its wording.
+
+Measured by running the group, not computed: `9P/0F/0E across 9 tests`, cold and warm.
+
 ## Migrated log (everything above 2026-09-05, verbatim)
 
 This is the `_comment` string `test-count-baseline.json` used to carry: 40,178 characters on
