@@ -568,7 +568,35 @@ internal static partial class ProgramSupport
         return null;
     }
 
+    /// <summary>
+    /// The resolved dependency terms for one bundle's AL-output cache key, together with the
+    /// reason — when there is one — that this run may claim NO cache identity at all (#2954).
+    ///
+    /// <para><see cref="UncacheableReason"/> non-null means every term in
+    /// <see cref="Terms"/> is present only so callers that need SOMETHING (diagnostics) still
+    /// have it. It must never be hashed into a persisted key: see
+    /// <see cref="ProgramSupport.AlOutputCacheBlocker"/>.</para>
+    /// </summary>
+    internal readonly record struct OrderedDependencyIds(
+        IReadOnlyList<string> Terms, string? UncacheableReason);
+
+    /// <summary>
+    /// Back-compat shape for callers that only want the terms (the source-workspace key, which
+    /// answers the do-not-cache question for itself — see ComputeSourceWorkspaceKey).
+    /// </summary>
     internal static IReadOnlyList<string> GetOrderedDepIds(
+        string? bucketRoot, IReadOnlyList<string> packageCacheDirs, string? bundleAbs = null)
+        => ResolveOrderedDepIds(bucketRoot, packageCacheDirs, bundleAbs).Terms;
+
+    /// <summary>
+    /// The blocker for the AL-output cache: the first reason this run cannot compute a cache
+    /// identity, or null when it can. One place, so the CLI gate, the server-mode gate and
+    /// <c>--print-cache-key</c> cannot drift apart on what "uncacheable" means.
+    /// </summary>
+    internal static string? AlOutputCacheBlocker(OrderedDependencyIds ordered)
+        => AlRunner.Infrastructure.RunnerFingerprint.UncacheableReason ?? ordered.UncacheableReason;
+
+    internal static OrderedDependencyIds ResolveOrderedDepIds(
         string? bucketRoot, IReadOnlyList<string> packageCacheDirs, string? bundleAbs = null)
     {
         // Same closure the emit actually compiles against — a parent-of-many-apps bundle has no
@@ -576,9 +604,13 @@ internal static partial class ProgramSupport
         // Keying on a DIFFERENT closure than the one used to compile would let two bundles that
         // resolve differently share a cache entry.
         var depRootDir = bucketRoot ?? bundleAbs;
-        if (depRootDir == null) return Array.Empty<string>();
+        if (depRootDir == null) return new OrderedDependencyIds(Array.Empty<string>(), null);
         var manifests = CollectBundleManifests(bucketRoot, bundleAbs ?? depRootDir);
-        if (manifests.Count == 0) return Array.Empty<string>();
+        if (manifests.Count == 0) return new OrderedDependencyIds(Array.Empty<string>(), null);
+        // Reasons ONE dependency term could not be computed from the package's content. A
+        // degraded term is not a weaker key, it is a key that describes an input the run never
+        // read — so it disqualifies the whole run from the cache rather than being hashed.
+        var degraded = new List<string>();
         try
         {
             var roots = ReadBundleDependencyRoots(manifests);
@@ -586,8 +618,8 @@ internal static partial class ProgramSupport
                 .ToList();
             var resolver = new AlRunner.DependencyResolver(
                 bundlePkgDirs.Concat(packageCacheDirs).Distinct().ToList());
-            var ordered = resolver.Resolve(roots);
-            return ordered
+            var resolvedDeps = resolver.Resolve(roots);
+            var ordered = resolvedDeps
                 // Id:Version alone is NOT a content identity: a sibling source app keeps
                 // its app.json version while its schema evolves during development, so a
                 // key without the winning .app's own identity served the test bundle a
@@ -630,9 +662,12 @@ internal static partial class ProgramSupport
                 // finding #1815/#1820 made one cache layer over: a byte-identical package
                 // re-downloaded or re-copied with a fresh mtime used to MISS
                 // unconditionally, and now HITs.
-                .Select(d => $"{d.Manifest.AppId:N}:{d.Manifest.Version}:{DependencyContentTerm(d.AppPath)}")
+                .Select(d => $"{d.Manifest.AppId:N}:{d.Manifest.Version}:{DependencyContentTerm(d.AppPath, degraded.Add)}")
                 .OrderBy(s => s, StringComparer.Ordinal)
                 .ToList();
+            return new OrderedDependencyIds(
+                ordered,
+                degraded.Count == 0 ? null : string.Join("; ", degraded));
         }
         catch (Exception ex)
         {
@@ -644,14 +679,32 @@ internal static partial class ProgramSupport
             //
             // Never collapse to "no deps": an empty list is indistinguishable from a bundle
             // that genuinely has none, so two different closures would share a key and the
-            // cache would hand back the wrong DLL. Fold the failure itself into the key
-            // instead — an unresolvable closure is its own cache identity, and it changes
-            // again as soon as the reason changes.
+            // cache would hand back the wrong DLL.
+            //
+            // #2954: folding the FAILURE into the key instead is the same defect one step
+            // removed, and it was measured rather than argued. An exception type and message
+            // are deterministic across runs, so `unresolved:JsonReaderException:<msg>` is one
+            // fixed string standing in for "the closure is unknown" — and the run does not
+            // abort. Measured on a two-suite bundle whose second suite has a malformed
+            // app.json: the run passes 2/2, writes two cache entries, and produces the SAME
+            // 64-char key for a dependency package rewritten with different bytes at the same
+            // declared identity (and the same key again with that dependency removed
+            // entirely). A warm cache then serves the DLL compiled against the other closure,
+            // green, with an unchanged exit code.
+            //
+            // The honest statement is "this run cannot compute a cache identity", and the
+            // honest consequence is not to consult or write the AL-output cache for it. The
+            // terms are still returned so a caller with a different question (diagnostics) has
+            // something to read; the blocker is what the cache gates honour.
             Console.Error.WriteLine(
                 $"  [cache] dependency resolution failed while computing the cache key for " +
-                $"{depRootDir}: {ex.GetType().Name}: {ex.Message}. Keying on the failure so this " +
-                $"bundle cannot share a cache entry with a resolvable one.");
-            return new[] { $"unresolved:{ex.GetType().Name}:{ex.Message}" };
+                $"{depRootDir}: {ex.GetType().Name}: {ex.Message}. This run cannot claim a cache " +
+                $"identity — the AL-output cache will be neither consulted nor written for it.");
+            return new OrderedDependencyIds(
+                new[] { $"unresolved:{ex.GetType().Name}:{ex.Message}" },
+                $"the dependency closure of '{depRootDir}' could not be resolved "
+                + $"({ex.GetType().Name}: {ex.Message}), so no cache key can describe the "
+                + "packages this run actually compiled against");
         }
     }
 
@@ -686,20 +739,18 @@ internal static partial class ProgramSupport
     /// makes the degraded term no less discriminating than the pre-#2754 stamp was for EVERY
     /// dependency.</para>
     ///
-    /// <para><b>Residual, stated rather than papered over.</b> A package that is unhashable on
-    /// two consecutive runs AND whose content changes between them without changing path, size
-    /// or mtime is still not distinguished — the pre-#2754 exposure, now narrowed to packages
-    /// the runner could not read at all. Closing it means not claiming a cache identity for such
-    /// a run at all (a "do not cache this run" signal threaded out to the cache gate), which is
-    /// a wider change than this one and is tracked on #2954 (carried out of #2846 when its other
-    /// two cases were fixed). It is not closed by anything
-    /// cheaper here: a per-run nonce would force a MISS, but it would also be a code path no
-    /// test in this repo can construct, and an untestable branch is what this method exists to
-    /// stop shipping.</para>
+    /// <para><b>The residual is now signalled, not absorbed (#2954).</b> A package that is
+    /// unhashable on two consecutive runs AND whose content changes between them without
+    /// changing path, size or mtime is still not distinguished by the TERM — that is what
+    /// path+mtime+size can do and no more. So the term no longer has to carry that weight
+    /// alone: <paramref name="onDegraded"/> reports the degradation to the caller, and the
+    /// AL-output cache gate answers it by claiming no cache identity for the run at all rather
+    /// than hashing a term that describes an input nothing read. The term itself is unchanged,
+    /// because the source-workspace key still needs a per-package, non-collapsing answer.</para>
     /// </summary>
     // internal, not private: #2987 made this branch unreachable end-to-end (see the
     // paragraph above), so a direct unit test is the only thing that still exercises it.
-    internal static string DependencyContentTerm(string appPath)
+    internal static string DependencyContentTerm(string appPath, Action<string>? onDegraded = null)
     {
         // #2987 — READ THIS BEFORE CHANGING THE DEGRADED PATH BELOW.
         //
@@ -713,11 +764,17 @@ internal static partial class ProgramSupport
         // the same (path, length, mtime) key this call will use. The degraded term therefore
         // cannot be reached for a resolved dependency.
         //
-        // That is also what closes #2954's residue — "unhashable on two consecutive runs while
-        // the content changes between them" — without a "do not cache this run" signal: the
-        // state it needed no longer exists. Kept rather than deleted because the reachability
-        // argument is about the CALLER, and a future caller that resolves a dependency some
-        // other way would land here; it must degrade one term, never collapse the list.
+        // Kept rather than deleted because the reachability argument is about the CALLER, and a
+        // future caller that resolves a dependency some other way would land here; it must
+        // degrade one term, never collapse the list.
+        //
+        // #2954 read that reachability argument as closing the issue. It closes only the half
+        // of it that lives in THIS method. The other half — the outer catch in
+        // ResolveOrderedDepIds, where a resolution failure becomes one deterministic
+        // `unresolved:<type>:<message>` string in the key — was reachable all along, measured
+        // end-to-end (a two-suite bundle with one malformed app.json passes green while writing
+        // cache entries under a key blind to its entire dependency closure). Both halves now
+        // report a do-not-cache signal; this one is still the defensive half.
         string failure;
         try
         {
@@ -748,6 +805,16 @@ internal static partial class ProgramSupport
             $"  [cache] could not hash dependency package '{fullPath}' for the AL-output cache " +
             $"key ({failure}) — keying it on path+stat instead. Every OTHER dependency keeps its "
             + "content hash; this one is only as precise as its mtime and size.");
+
+        // #2954. The term below is still per-package and still non-collapsing, because a caller
+        // that has no better option (the source-workspace key) must not lose every other
+        // dependency's identity. But a caller that CAN decline — the AL-output cache gate —
+        // should: path+mtime+size cannot distinguish a package rewritten in place, which is the
+        // pre-#2754 exposure this narrows rather than removes. Reporting the degradation lets
+        // that caller refuse a cache identity instead of accepting a weaker one.
+        onDegraded?.Invoke(
+            $"dependency package '{fullPath}' could not be hashed ({failure}), so its cache-key "
+            + "term describes only a path, an mtime and a size — not the bytes compiled against");
 
         return $"unhashable:{fullPath}:{stamp}";
     }

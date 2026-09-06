@@ -96,6 +96,51 @@ internal static class RunnerFingerprint
     /// </summary>
     internal const string UnknownContentHash = "unknown";
 
+    /// <summary>
+    /// Non-null when the runner cannot identify ITSELF — the reason the AL-output cache may
+    /// claim no identity at all this run (#2954). See the SCOPE paragraph below for what that
+    /// does and does not cover.
+    ///
+    /// <para><see cref="ContentHash"/> answers <see cref="UnknownContentHash"/> for an
+    /// assembly with no readable on-disk location (a single-file publish, an in-memory host,
+    /// the DLL unlinked underneath a running process). Every key that calls
+    /// <see cref="WriteKeyLines(Action{string})"/> then writes the literal line
+    /// <c>runner:unknown</c>, which is the SAME line for every runner build that ever lands
+    /// in that state. That is one
+    /// shared cache identity standing in for an input the runner could not read, so a warm
+    /// entry written by one runner build is served to a different one: different rewriters,
+    /// different patches, different emit, and nothing in the run says so.</para>
+    ///
+    /// <para>The answer is not a better term — there is no term, the input is unknown — it is
+    /// to claim no cache identity at all. <see cref="AppLoader"/>'s manifest index (#2987) and
+    /// its r2r-chunk cache (#2955) already refuse the sentinel for exactly this reason.</para>
+    ///
+    /// <para>SCOPE — this property does not govern every persisted key, and reading it as
+    /// though it did would be the same defect #2954 is about, one level up: a name standing in
+    /// for coverage it does not have. Measured, it has exactly ONE consumer,
+    /// <see cref="ProgramSupport.AlOutputCacheBlocker"/>, which gates the AL-output cache
+    /// (the CLI gate and the server-mode gate both reach it through there) whose key is
+    /// <c>ProgramSupport.ComputeAlCacheKey</c>. The other three
+    /// <see cref="WriteKeyLines(Action{string})"/> call sites still write
+    /// <c>runner:unknown</c> into a persisted key with nothing consulting this property:
+    /// <c>DependencyLoader.ComputeSourceDependencyCacheKeyCore</c>,
+    /// <c>SiblingCompile.ComputeSourceWorkspaceKey</c> and
+    /// <c>InstallBaselineDiskCache.BuildKeyText</c>. Extending the gate to those is a real
+    /// behaviour change needing its own proof, not something #2954 did.</para>
+    /// </summary>
+    internal static string? UncacheableReason => UncacheableReasonFor(ContentHash);
+
+    /// <summary>
+    /// Testable core of <see cref="UncacheableReason"/>: takes the hash explicitly, because a
+    /// test cannot make the RUNNING assembly location-less without unloading itself.
+    /// </summary>
+    internal static string? UncacheableReasonFor(string? contentHash) =>
+        string.IsNullOrEmpty(contentHash) || contentHash == UnknownContentHash
+            ? "the running al-runner assembly has no readable on-disk location, so every cache "
+              + $"key this process computes would carry 'runner:{UnknownContentHash}' — one "
+              + "shared identity for every runner build at once"
+            : null;
+
     // Path -> content hash memo. Moved down here from BcAppSymbolCache (#1820) so every
     // layer that needs "which bytes is this file?" as a cache-key term shares ONE memo
     // instead of each growing its own (#2955): AppLoader.ExtractAllDllPaths hashes the same
