@@ -437,6 +437,146 @@ public sealed class ExpectationManifestWiringTests : IDisposable
         Assert.True(exit == 1, $"expected the pre-#3123 behaviour, exit 1. exit={exit}\n{output}");
     }
 
+    // ── A resumed run's final attempt (#3168) ────────────────────────────────────
+    //
+    // The stand-down message for a non-final attempt promises "the final attempt audits
+    // the whole run". It did not: the discovery set is filled by TestExecutor in THIS
+    // process, and nothing folded in the attempts carried on the command line. An entry
+    // whose test ran in an earlier attempt was reported as matching nothing, and the leg
+    // exited 5 telling the reader to check CodeunitName for a typo.
+    //
+    // Measured on the fixture below before the fix (BC 28.1, Release):
+    //   entry "Ghost Resume Tests"."RanInAnEarlierAttempt", carried, --merge-results
+    //     → exit 5, "no codeunit named ... was loaded in this run"
+    // and after:
+    //     → exit 0, "all 1 entries matched a discovered test"
+    //
+    // The codeunit is deliberately one the run's OWN bundle does not contain, so the
+    // test cannot pass on the final attempt's own discovery — which is what a version of
+    // this test driven by --exclude-test alone would have done (TestExclusionFilter is
+    // consulted per METHOD, after discovery is recorded, so an excluded codeunit is still
+    // loaded and still discovered).
+
+    /// <summary>
+    /// Writes a one-attempt --merge-results carry file naming one test that ran, and
+    /// returns its path. Shape mirrors Infrastructure.ResumeCarry's payload exactly.
+    /// </summary>
+    private string CarryFile(string name, string typeName, string displayName, string method)
+    {
+        var dir = Path.Combine(_scratchRoot, name);
+        Directory.CreateDirectory(dir);
+        var path = Path.Combine(dir, "attempt-results.json");
+        File.WriteAllText(path, $$"""
+        [{"BucketPath":"/nonexistent/earlier-attempt/suite","Stage":"Ran","CompileErrors":[],
+          "ProcessError":null,
+          "Tests":[{"Codeunit":"{{typeName}}","Method":"{{method}}","Outcome":"Pass",
+            "Message":null,"FullException":null,"DurationTicks":10000,"AlCallStack":null,
+            "CodeunitDisplayName":"{{displayName}}","Expectation":null,"InsideTestProc":false,
+            "TimedOut":false,"Diagnosis":null}],
+          "EmitTicks":0,"CompileTicks":0,"RunTicks":10000,"RanGroupCount":1,"ProvisionGaps":null}]
+        """);
+        return path;
+    }
+
+    /// <summary>Writes a one-entry manifest for an arbitrary codeunit/method pair.</summary>
+    private string OneEntryManifest(string name, int codeunitId, string codeunitName, string method)
+    {
+        var dir = Path.Combine(_scratchRoot, name);
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Combine(dir, "known-gaps-fixture.json"), $$"""
+        [
+          {
+            "codeunitId": {{codeunitId}},
+            "CodeunitName": "{{codeunitName}}",
+            "Method": "{{method}}",
+            "Mode": "expect-fail-known-gap",
+            "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3168"
+          }
+        ]
+        """);
+        return dir;
+    }
+
+    /// <summary>
+    /// The final attempt of a resumed run must audit the RUN, not its own slice: an entry
+    /// whose test ran in an earlier attempt matched nothing and failed the leg with exit 5.
+    /// </summary>
+    [SkippableFact]
+    public void RequireMatch_AnEntryMatchedOnlyByACarriedAttempt_StaysGreen()
+    {
+        TestArtifacts.SkipIfMissing();
+        var manifest = OneEntryManifest(
+            "match-resumed", 60899, "Ghost Resume Tests", "RanInAnEarlierAttempt");
+        var carry = CarryFile(
+            "carry-resumed", "Codeunit60899", "Ghost Resume Tests", "RanInAnEarlierAttempt");
+
+        var (output, exit) = RunRunner(
+            $"--expectations \"{manifest}\" --expectations-require-match "
+            + $"--merge-results \"{carry}\" --test GreenPath_PlainPass \"{SuitePath}\"");
+
+        // The run's own bundle passed one test and failed none, so a non-zero exit here
+        // could only come from the audit.
+        AssertCount(output, "  pass:", 1);
+        AssertCount(output, "  fail:", 0);
+        Assert.DoesNotContain("UNMATCHED", output, StringComparison.Ordinal);
+        Assert.Contains("all 1 entries matched a discovered test", output, StringComparison.Ordinal);
+        Assert.True(exit == 0,
+            $"an entry whose test ran in an earlier resume attempt must not fail the run. "
+            + $"exit={exit}\n{output}");
+    }
+
+    /// <summary>
+    /// The control that keeps the test above from being a rubber stamp: a carried attempt
+    /// satisfies only the methods it actually ran. A method no attempt ever ran must still
+    /// reach exit 5 — and the diagnostic must not claim the codeunit "declares" no such
+    /// method, which a carry file cannot know.
+    /// </summary>
+    [SkippableFact]
+    public void RequireMatch_AMethodNoAttemptEverRan_StillFails_EvenWithACarriedAttempt()
+    {
+        TestArtifacts.SkipIfMissing();
+        var manifest = OneEntryManifest(
+            "match-resumed-typo", 60899, "Ghost Resume Tests", "NeverRanAnywhere");
+        var carry = CarryFile(
+            "carry-resumed-typo", "Codeunit60899", "Ghost Resume Tests", "RanInAnEarlierAttempt");
+
+        var (output, exit) = RunRunner(
+            $"--expectations \"{manifest}\" --expectations-require-match "
+            + $"--merge-results \"{carry}\" --test GreenPath_PlainPass \"{SuitePath}\"");
+
+        Assert.Contains("UNMATCHED", output, StringComparison.Ordinal);
+        Assert.Contains("reached only by an earlier resume attempt", output, StringComparison.Ordinal);
+        Assert.Contains("The methods it ran: RanInAnEarlierAttempt", output, StringComparison.Ordinal);
+        Assert.DoesNotContain("declares no test method", output, StringComparison.Ordinal);
+        Assert.True(exit == 5, $"expected exit 5, got {exit}\n{output}");
+    }
+
+    /// <summary>
+    /// A carried attempt file that was named and cannot be read leaves the discovery set
+    /// knowably short by a whole attempt (#2747), so the audit must stand down rather than
+    /// accuse a correct entry. The run still refuses to report as complete — exit 2 — so
+    /// nothing is suppressed by standing down.
+    /// </summary>
+    [SkippableFact]
+    public void RequireMatch_WithALostCarriedAttempt_StandsDown_RatherThanAccusingTheEntry()
+    {
+        TestArtifacts.SkipIfMissing();
+        var manifest = OneEntryManifest(
+            "match-lost-carry", 60899, "Ghost Resume Tests", "RanInAnEarlierAttempt");
+        var missing = Path.Combine(_scratchRoot, "carry-lost", "attempt-results.json");
+
+        var (output, exit) = RunRunner(
+            $"--expectations \"{manifest}\" --expectations-require-match "
+            + $"--merge-results \"{missing}\" --test GreenPath_PlainPass \"{SuitePath}\"");
+
+        Assert.DoesNotContain("UNMATCHED", output, StringComparison.Ordinal);
+        Assert.Contains("match audit skipped: a carried attempt file could not be read",
+            output, StringComparison.Ordinal);
+        Assert.True(exit == 2,
+            $"a lost carried attempt must still refuse to report the run as complete. "
+            + $"exit={exit}\n{output}");
+    }
+
     /// <summary>
     /// The flag must not be satisfiable by having nothing to check. Pointed at a
     /// directory with no entries it fails rather than reporting a vacuous match.
