@@ -75,9 +75,21 @@ public sealed class SessionUserRowRefusalTests
     /// "already present", which is why the pre-fix code could get this wrong unnoticed.
     /// </summary>
     private static (int ExitCode, string StdOut, string StdErr) Run(string fixtureName, string cacheDir)
+        => RunBundles(cacheDir, fixtureName);
+
+    /// <summary>
+    /// The same invocation over SEVERAL bundle directories in ONE process, in the order given.
+    /// That is the shape <c>--watch</c>, <c>--server</c> and a plain multi-bundle command line
+    /// all reduce to, and it is the only way to observe per-process state leaking across the
+    /// per-bundle reset — see
+    /// <see cref="AnAdoptionInOneBundleDoesNotLeakIntoTheNextBundlesSessionIdentity"/>.
+    /// </summary>
+    private static (int ExitCode, string StdOut, string StdErr) RunBundles(
+        string cacheDir, params string[] fixtureNames)
     {
         var sb = new StringBuilder(TestBuildConfig.RunArgs(Path.Combine(RepoRoot, "AlRunner")));
-        sb.Append(' ').Append($"\"{FixtureDir(fixtureName)}\"");
+        foreach (var fixtureName in fixtureNames)
+            sb.Append(' ').Append($"\"{FixtureDir(fixtureName)}\"");
         sb.Append(' ').Append($"--cache \"{cacheDir}\"");
 
         var psi = new ProcessStartInfo
@@ -102,7 +114,8 @@ public sealed class SessionUserRowRefusalTests
         if (!proc.WaitForExit(180_000))
         {
             try { proc.Kill(entireProcessTree: true); } catch { }
-            throw new TimeoutException($"al-runner did not exit within 180s for '{fixtureName}'.");
+            throw new TimeoutException(
+                $"al-runner did not exit within 180s for '{string.Join("', '", fixtureNames)}'.");
         }
         // WaitForExit(int) returns on process exit WITHOUT draining the async read callbacks;
         // only the parameterless overload waits for those. Skipping it makes assertions on the
@@ -207,6 +220,84 @@ public sealed class SessionUserRowRefusalTests
                 "PASS  Codeunit70521.SurcAdoptionAddedNoSecondRowAndLeftUserIdAlone", stdout);
             Assert.Contains(
                 "PASS  Codeunit70521.SurcTheAdoptedUserHasItsUserPropertyRow", stdout);
+            Assert.DoesNotContain("FAIL", stdout);
+        }
+        finally
+        {
+            try { Directory.Delete(cacheDir, recursive: true); } catch { /* best-effort */ }
+        }
+    }
+
+    /// <summary>
+    /// THE CROSS-BUNDLE LEAK. Two bundles, one process, in that order: the first adopts a
+    /// security id out of its own data, the second must not inherit it.
+    ///
+    /// <para>WHY A SECOND BUNDLE IS THE ONLY WAY TO SEE THIS. The seed's per-bundle flag is
+    /// reset by <c>ResetUserSystemTableForNewBundle()</c>, but the skeleton <c>NavUser</c> that
+    /// adoption pokes the security id into is built ONCE PER PROCESS, in
+    /// <c>BcRuntime.ApplyAllPatches</c>. So an adoption is a process-wide write behind a
+    /// per-bundle decision, and nothing inside a single-bundle run can observe the difference —
+    /// delete the four-line restore block from that reset and every other test in this file
+    /// still passes.</para>
+    ///
+    /// <para>THE RED. <c>SuraUserSecurityIdIsTheRunnerGeneratedOneWhenNothingIsAdopted</c>
+    /// asserts the concrete generated id <c>{C0A1BDFA-…}</c>. Without the restore, bundle B
+    /// starts with bundle A's adopted <c>{A17E9C42-…}</c> still on the session — its own Install
+    /// trigger writes a row under that id (it inserts <c>UserSecurityId()</c>), the seed then
+    /// takes the benign already-present path, and that test fails naming the leaked value. Run
+    /// against the restore removed, it does.</para>
+    ///
+    /// <para>The two fixtures can share a process at all because their object id ranges do not
+    /// overlap — 70520-70539 against 70500-70519 — and neither declares a dependency.</para>
+    ///
+    /// <para>--watch and --server are the two other multi-bundle modes and reduce to the same
+    /// per-bundle reset; this asserts the mechanism through the cheapest of the three. Note that
+    /// under <c>--watch</c> the adoption's own [warn] line is NOT visible: Program.cs sets both
+    /// Console.Out and Console.Error to TextWriter.Null when the watch UI is on without
+    /// --verbose. That is pre-existing and applies equally to every other line the seed writes,
+    /// but it means "loud, never silent" is a claim about a normal run, not about the watch UI.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void AnAdoptionInOneBundleDoesNotLeakIntoTheNextBundlesSessionIdentity()
+    {
+        var cacheDir = TempCache("crossbundle");
+        try
+        {
+            var (exit, stdout, stderr) = RunBundles(
+                cacheDir, "SessionUserRowNameCollision", "SessionUserRowAlreadyPresent");
+
+            Assert.True(exit == 0,
+                $"expected a clean run over both bundles. exit={exit}\nstdout:\n{stdout}\nstderr:\n{stderr}");
+
+            // BUNDLE A DID ADOPT. Without this the test would pass vacuously on a run where the
+            // collision never happened, and would then say nothing about leaking.
+            Assert.Contains("ADOPTED the security id", stderr);
+            Assert.Contains("A17E9C42-5B08-4D6F-9E31-0C7A2F84B155", stderr);
+            Assert.Contains(
+                "PASS  Codeunit70521.SurcTheSessionAdoptedTheExistingRowsSecurityId", stdout);
+
+            // THE RESTORE RAN, between the two bundles. This is the line the four-line block in
+            // ResetUserSystemTableForNewBundle emits, and nothing else in the suite reaches it.
+            Assert.Contains(
+                "UserSystemTable: restored the generated session security id for the next bundle",
+                stderr);
+
+            // THE CONSEQUENCE, asserted as a concrete id by the AL itself: bundle B's session is
+            // the runner-generated {C0A1BDFA-…} again, not bundle A's {A17E9C42-…}.
+            Assert.Contains(
+                "PASS  Codeunit70501.SuraUserSecurityIdIsTheRunnerGeneratedOneWhenNothingIsAdopted",
+                stdout);
+            Assert.Contains("PASS  Codeunit70501.SuraSeedLeftTheAlreadyPresentRowExactlyAsItWas", stdout);
+            Assert.Contains("PASS  Codeunit70501.SuraSeedAddedNoSecondRowForTheSessionUser", stdout);
+
+            // EXACTLY ONE adoption in the process. Bundle B has nothing to adopt — its Install
+            // trigger writes the session user's own security id — so a second adoption line here
+            // would mean the restore had handed bundle B an identity that then collided again.
+            var adoptions = stderr.Split("ADOPTED the security id").Length - 1;
+            Assert.True(adoptions == 1,
+                $"expected exactly one adoption across both bundles, saw {adoptions}\nstderr:\n{stderr}");
+
             Assert.DoesNotContain("FAIL", stdout);
         }
         finally

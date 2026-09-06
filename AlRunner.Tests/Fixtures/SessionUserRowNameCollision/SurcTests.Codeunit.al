@@ -125,10 +125,11 @@ codeunit 70521 "SURC Tests"
         // (#2355). An adopted row reached the table without passing through the runner's insert
         // prepend, so the seed re-establishes that invariant for the id it adopted.
         //
-        // LIMITED CLAIM, stated so nobody reads more into a pass: in THIS fixture the row comes
-        // from the Install trigger's own Insert, which does go through the prepend. So what this
-        // pins is that adoption does not LOSE the companion row, not that it can create one from
-        // nothing -- AL has no way to write a User row that bypasses the prepend.
+        // AND IT IS CREATED HERE, not merely kept. The Install trigger DELETES the companion
+        // row after inserting the stand-in User -- the state a backup restored without table
+        // 2000000121 leaves behind -- so at the moment the seed runs there is no row, and the
+        // adoption path's EnsureUserPropertyRow call is the only thing that can produce one.
+        // Remove that call and this test fails.
         if not UserProperty.Get(UserSecurityId()) then
             Error(
               'the adopted session user (%1) must have a User Property row, or Microsoft AL '

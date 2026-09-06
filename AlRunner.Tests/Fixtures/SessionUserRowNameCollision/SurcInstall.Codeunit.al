@@ -38,6 +38,7 @@ codeunit 70520 "SURC Installer"
     trigger OnInstallAppPerCompany()
     var
         UserRec: Record User;
+        UserProperty: Record "User Property";
         CollidingSid: Guid;
     begin
         Evaluate(CollidingSid, CollidingSidTok);
@@ -48,6 +49,27 @@ codeunit 70520 "SURC Installer"
         UserRec."User Name" := CopyStr(UserId(), 1, MaxStrLen(UserRec."User Name"));
         UserRec."Full Name" := BackupUserTok;
         UserRec.Insert();
+
+        // THEN TAKE THE COMPANION ROW BACK OFF, so the adoption path's own
+        // EnsureUserPropertyRow call is the ONLY thing that can put it back.
+        //
+        // Why this is needed at all: AL cannot write a User row that bypasses the runner's
+        // insert prepend, so the Insert above already created the User Property (2000000121)
+        // companion. Leaving it there made SurcTheAdoptedUserHasItsUserPropertyRow pass whether
+        // or not adoption re-establishes the invariant -- it pinned "adoption does not LOSE the
+        // row" and nothing more. Deleting it is the state a backup restored without table
+        // 2000000121 leaves behind, and it turns that test into a real RED -> GREEN: with the
+        // EnsureUserPropertyRow call removed from TryAdoptSessionUserSecurityId, it fails.
+        //
+        // The Get is asserted rather than tested, because a silent miss here would quietly
+        // restore the vacuous version of the test. It also pins the prepend running for an
+        // Install-trigger insert, which is the premise the paragraph above rests on.
+        if not UserProperty.Get(CollidingSid) then
+            Error(
+              'precondition: the User insert above must have created the User Property (2000000121) '
+              + 'companion row for %1 -- without it this fixture cannot tell whether adoption '
+              + 'CREATES that row or merely fails to lose it', CollidingSidTok);
+        UserProperty.Delete();
     end;
 
     var
