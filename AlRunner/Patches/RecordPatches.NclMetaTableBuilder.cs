@@ -488,8 +488,16 @@ public static partial class RecordPatches
         object? calcFormulaObj = (f.IsFlowField && f.CalcFormula != null && parentTable != null)
             ? BuildMetaCalcFormula(f.CalcFormula, parentTable)
             : null;
+        // #3121 — the diagnostic whose absence cost a diagnosis. Every failure INSIDE
+        // BuildMetaCalcFormula already logs, but the three-clause gate above could refuse the
+        // call silently, so a FlowField reaching NCLMetaField with EmptyFormula (which
+        // CalcFields then refuses with BC's "You must define a CalcFormula ...") had no line
+        // naming it. `[RecordPatches]`-tagged, so it is verbose-only.
         if (f.IsFlowField && calcFormulaObj == null)
-            Console.Error.WriteLine($"[RecordPatches] BuildMetaField PROBE: FlowField '{f.FieldName}' (id {f.FieldId}) table '{parentTable?.TableName ?? "<null>"}' hasFormula={f.CalcFormula != null} hasParent={parentTable != null}");
+            Console.Error.WriteLine(
+                $"[RecordPatches] BuildMetaField: FlowField '{f.FieldName}' (id {f.FieldId}) in "
+                + $"'{parentTable?.TableName ?? "<no parent table>"}' built WITHOUT a CalcFormula "
+                + $"(hasFormula={f.CalcFormula != null}, hasParentTable={parentTable != null})");
 
         // TableRelation → ImmutableArray<MetaFieldRelation>, one element per arm. NCLMetaField
         // turns each into the NCLMetaFieldRelation that GetReferencingRelations' reverse
@@ -898,6 +906,10 @@ public static partial class RecordPatches
         if (srcTable == null)
         {
             Console.Error.WriteLine($"[RecordPatches] BuildMetaCalcFormula: source table '{cf.SourceTableName}' not found in parsed tables");
+            // #3121: a .app registered LATER can still declare it — remember the table so its
+            // metadata is rebuilt when the registered set grows, instead of keeping a
+            // permanently formula-less FlowField that CalcFields then refuses.
+            NoteUnresolvedCalcFormulaSourceTable(parentTable.TableId, cf.SourceTableName);
             return null;
         }
 

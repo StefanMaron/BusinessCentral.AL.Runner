@@ -448,6 +448,13 @@ public static partial class RecordPatches
             // Invalidate the indexes so newly-added .app gets picked up on next miss.
             InvalidateBcAppIndexes();
         }
+
+        // #3121: outside the lock. A table already built with a FlowField whose CalcFormula
+        // source table was not registered YET is derived from exactly this set, and it is the
+        // one such memo InvalidateBcAppIndexes does not cover — it lives in _metaTableCache and
+        // in the skeleton NCLMetadata's own dictionary rather than in this class's indexes.
+        // No-op unless a build actually hit that.
+        RetryUnresolvedCalcFormulaTables();
     }
 
     /// <summary>
