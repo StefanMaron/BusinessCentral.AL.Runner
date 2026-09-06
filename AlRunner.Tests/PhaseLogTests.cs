@@ -438,8 +438,8 @@ public sealed class PhaseLogTests : IDisposable
     /// and then releases.
     ///
     /// What it can NOT do is state "a high-water mark is never below the current working
-    /// set" exactly, because the two numbers come from two /proc files read at two instants
-    /// (#3005). That claim moved to LinuxRssSample_PeakIsNotBelowCurrentWithinOneSample,
+    /// set" exactly, because the two numbers come from two reads of /proc/self/status at
+    /// two instants (#3005). That claim moved to LinuxRssSample_PeakIsNotBelowCurrentWithinOneSample,
     /// where one read of one file makes it an invariant; the bound left here is the
     /// order-of-magnitude one the units hazard actually needs.
     /// </summary>
@@ -453,13 +453,15 @@ public sealed class PhaseLogTests : IDisposable
         Assert.True(live > 0, $"the test's own working set should be readable, got {live}");
 
         // BANDED ON PURPOSE, and the band is not a weakening of the units check.
-        // This comparison crosses two sources — VmHWM out of /proc/self/status here
-        // versus /proc/<pid>/stat inside WorkingSet64 — read at two instants, and those
-        // two cannot promise agreement to the page: #3005 saw them 0.13% apart on CI and
-        // the strict >= that used to stand here failed at random. A 1024x units error is
-        // 512x clear of this bound, so the hazard is still caught by an enormous margin,
-        // and the EXACT peak >= current invariant now lives below, where a single read of
-        // a single file makes it true rather than probable.
+        // These two numbers are two reads of the SAME file at two instants — VmHWM out of
+        // /proc/self/status here, and WorkingSet64, which is /proc/self/status VmRSS
+        // (measured: it equalled VmRSS in 35,269 of 37,489 samples under churn and
+        // /proc/<pid>/stat's rss in 0 of them). Two instants cannot promise agreement to
+        // the page: #3005 saw them 0.13% apart on CI and the strict >= that used to stand
+        // here failed at random. A 1024x units error is 512x clear of this bound, so the
+        // hazard is still caught by an enormous margin, and the EXACT peak >= current
+        // invariant now lives below, where a single read makes it true rather than
+        // probable.
         Assert.True(peak * 2 >= live,
             $"peak RSS {peak} is more than 2x below this process's current working set "
             + $"{live}; a high-water mark cannot be, so the value is in the wrong units "

@@ -546,12 +546,17 @@ public static class PhaseLog
 
     /// <summary>
     /// This process's resident-set high-water mark in bytes. Linux reads VmHWM from
-    /// /proc/self/status — the kernel's own high-water mark, which .NET's
-    /// PeakWorkingSet64 does not surface on Unix. macOS reads getrusage's ru_maxrss,
-    /// because .NET does not implement PeakWorkingSet64 there at all: it returns 0,
-    /// and a silent zero is worse than a missing field, since the aggregate built on
-    /// top presents it as a measurement of a run that used no memory. Falls back to
-    /// the framework property elsewhere.
+    /// /proc/self/status. NOT because PeakWorkingSet64 is missing there — that is a
+    /// claim this comment used to make and it is false: measured on net8.0/Linux after
+    /// unmapping 700 MB, PeakWorkingSet64 returns VmHWM to the byte (763,752,448 from
+    /// both). The reason is that the peak has to be read together with VmRSS out of ONE
+    /// sample, which the framework property cannot give — see TryReadLinuxRssSample.
+    /// macOS reads getrusage's ru_maxrss, because .NET does not implement
+    /// PeakWorkingSet64 there at all: it returns 0, and a silent zero is worse than a
+    /// missing field, since the aggregate built on top presents it as a measurement of
+    /// a run that used no memory. Falls back to the framework property elsewhere — and
+    /// on a Linux box whose /proc/self/status cannot be read, where it is the same
+    /// number by the measurement above.
     /// </summary>
     public static long PeakRssBytes()
     {
@@ -563,13 +568,6 @@ public static class PhaseLog
             using var self = System.Diagnostics.Process.GetCurrentProcess();
 
             if (OperatingSystem.IsMacOS()) return ChooseDarwinPeak(DarwinPeakRssBytes(), self.WorkingSet64);
-
-            // Linux only gets here when /proc/self/status was unreadable or carried neither
-            // field, and PeakWorkingSet64 is not implemented on Unix — so taking it would
-            // report 0, which the aggregate presents as a run that used no memory. Report
-            // the live working set instead, the same real-measurement fallback the Darwin
-            // branch above already uses.
-            if (OperatingSystem.IsLinux()) return self.WorkingSet64;
 
             return self.PeakWorkingSet64;
         }
@@ -603,13 +601,16 @@ public static class PhaseLog
     /// One consistent sample of this process's resident-set counters, in bytes, from a
     /// SINGLE read of /proc/self/status.
     ///
-    /// Reading VmHWM here and taking the "current" number from somewhere else — .NET's
-    /// Process.WorkingSet64, which comes off /proc/&lt;pid&gt;/stat — compares two files
-    /// sampled at two instants, and those cannot promise agreement to the page: #3005 saw
-    /// them 0.13% apart on a CI leg, with the supposed high-water mark reading BELOW the
-    /// live working set. Within one read the kernel derives both fields from the same
-    /// counter read inside task_mem(), with the reported hiwater being the larger of
-    /// mm-&gt;hiwater_rss and that same rss, so <paramref name="peakBytes"/> &gt;=
+    /// Reading VmHWM here and taking the "current" number from .NET's Process.WorkingSet64
+    /// is TWO READS OF THIS SAME FILE at two instants — measured, WorkingSet64 equalled
+    /// /proc/self/status VmRSS in 35,269 of 37,489 samples under churn and
+    /// /proc/&lt;pid&gt;/stat's rss in 0 of them — and two instants cannot promise agreement:
+    /// #3005 saw them 0.13% apart on a CI leg, with the supposed high-water mark reading
+    /// BELOW the live working set, and the same shape inverted 5 times in those 37,489
+    /// local samples against 0 for the one-read shape below. Within one read the kernel
+    /// derives both fields from the same counter read inside task_mem()
+    /// (hiwater_rss = total_rss = anon + file + shmem, then raised to mm-&gt;hiwater_rss
+    /// only if that is larger), so <paramref name="peakBytes"/> &gt;=
     /// <paramref name="currentBytes"/> is an invariant of the sample rather than a race.
     ///
     /// Returns false on anything that is not Linux, and on any read or parse failure.
