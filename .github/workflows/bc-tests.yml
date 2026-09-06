@@ -464,10 +464,42 @@ jobs:
           # GROWTH above it — the count must be bumped in
           # tests/expectations/count-baseline/ in the same PR that changed it, or this
           # leg goes red with the exact expected/actual numbers to use.
+          #
+          # The corpus apps are ENUMERATED, never named (#2984). This step used to
+          # pass the single path tests/al-language/tests/al-language, and the corpus
+          # then gained a second test app (tests/al-language-onprem, target OnPrem,
+          # for the Scope = OnPrem system tables a Cloud-target app cannot name at
+          # all). With one path hardcoded here, the submodule pin bump that pulls a
+          # new app in is green BY CONSTRUCTION: the app is checked out, never
+          # executed, and the leg still reports success. Nothing is even visibly
+          # skipped — those tests never enter the run, so neither --strict nor
+          # --count-baseline can see them missing. Adding a test app to the corpus
+          # must be enough to make this leg execute it, with no edit here.
+          #
+          # Each app is a SEPARATE positional bundle root, not one root over their
+          # parent directory. Measured against corpus PR #179: one root over the
+          # parent compiles all three apps into a single bundle, where the OnPrem
+          # app's Record "Object Metadata" fails AL0185 — which drops 55 objects
+          # from the Cloud app too and takes the whole corpus down with EMIT-ZERO.
+          # As separate roots the same three apps ran 2595 tests in 80.8s cold,
+          # against 96.0s for the single-app invocation this replaces, because the
+          # AL-output cache makes the shared dependency compile once.
+          #
+          # mapfile from a process substitution, deliberately: a `while read` loop
+          # fed by a here-string is how the corpus's own runner silently executes
+          # exactly ONE test app however many are listed — the child process drains
+          # the here-string from stdin and the loop ends after one pass, leg still
+          # green (measured on corpus run 33996414648).
+          mapfile -t CORPUS_APPS < <(python3 scripts/corpus-app-dirs.py tests/al-language)
+          if [ "${#CORPUS_APPS[@]}" -eq 0 ]; then
+            echo "::error::scripts/corpus-app-dirs.py produced no corpus app directories — refusing to report a green leg for a run that would execute nothing"
+            exit 1
+          fi
+          printf '[corpus] app to run: %s\n' "${CORPUS_APPS[@]}"
           rc=0
           start=$SECONDS
           dotnet run --no-build --project AlRunner -c Release --framework net8.0 -- \
-              tests/al-language/tests/al-language \
+              "${CORPUS_APPS[@]}" \
               --package-cache "$HOME/.al-runner/platform-apps" \
               --package-cache "$HOME/.al-runner/test-apps" \
               --strict \
@@ -491,6 +523,14 @@ jobs:
         # when none did, landing on a different BC leg each CI run. Running a slice that
         # deliberately excludes the report tests keeps that class of bug from coming back
         # disguised as flakiness.
+        #
+        # This one DOES still name a single app on purpose, and it is not the #2984
+        # defect wearing a second hat: `--test Codeunit6020` narrows the run to one
+        # named codeunit, so this step is not a coverage gate and adding a corpus app
+        # cannot make it miss anything. It also passes only the platform-apps cache,
+        # so pointing it at every corpus app would make it depend on each app's
+        # dependency closure resolving from that one cache. The gate that must
+        # enumerate is the --count-baseline step above.
         if: ${{ always() }}
         run: |
           dotnet run --no-build --project AlRunner -c Release --framework net8.0 -- \

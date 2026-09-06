@@ -1,0 +1,11 @@
+[
+  {
+    "codeunitId": 61200,
+    "CodeunitName": "Test Object Metadata Sys Table",
+    "Method": "ObjectMetadata_CalcFields_Metadata_HasAPayload",
+    "Mode": "expect-divergence",
+    "Reason": "object-metadata-payload-columns",
+    "Doc": "docs/limitations.md#object-metadata-system-table",
+    "Note": "Real BC writes the output of publishing the system app into the application database, so the Metadata BLOB on Object Metadata (2000000071) carries a payload; a real service tier confirmed that on all eight BC legs of StefanMaron/BusinessCentral.AL.Language.Tests#179. The runner has no application database and publishes nothing into one, so the payload columns read blank, deliberately and permanently — docs/limitations.md records the decision and the column-by-column table. Not expect-fail-known-gap: nothing here is owed. (Refusing those nine columns by name instead of reading blank is a separate, narrower want tracked by #2771; that would change HOW the runner answers, not that it answers differently from a tier.) Measured on BC 28.1 against corpus commit c2fdfb5, the head of PR #179 at the time: the OnPrem app runs 10 tests, 9 pass, and this one fails with 'The Metadata BLOB must carry a payload on a real tier' and no out-of-scope signal, which is exactly what expect-divergence reclassifies to pass-divergence. INERT until the submodule pin bumps: PR #179 has not merged, so no test in this tree matches this entry yet, and CountBaselineCheck / the classifier both leave an unmatched entry alone. Filed by an automated agent (impl-26) for issue #2984."
+  }
+]
