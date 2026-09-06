@@ -6229,7 +6229,7 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
         }
     }
 
-    // ── execute: run every requested bundle's first OnRun-bearing codeunit
+    // ── execute: run every requested bundle's lowest-object-id OnRun-bearing codeunit
     // (run-mode), aggregating the results. #1917: v1 also accepted an inline
     // `code` string — a temp single-file bundle is synthesised from it (see
     // SynthesizeInlineCodeBundle) and run through the SAME compile pipeline a
@@ -6341,7 +6341,7 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                     0,
                     Array.Empty<string>(),
                     true,
-                    "affectedOnly selection is applied to runTests; execute always runs the first OnRun codeunit");
+                    "affectedOnly selection is applied to runTests; execute always runs the lowest-object-id OnRun codeunit");
             }
 
             return AlRunner.ServerProtocol.Execute(allTests, exitCode,
