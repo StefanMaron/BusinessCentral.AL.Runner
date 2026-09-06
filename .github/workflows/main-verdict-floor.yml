@@ -1,0 +1,192 @@
+name: Main verdict floor
+
+# Issue #3003. `main`'s post-merge matrix is cancelled far more often than it completes, so
+# `main`'s health is not red — it is UNKNOWN, and unknown is worse than red because nothing
+# signals it. This workflow puts a floor under that: `main` may not go longer than one
+# cadence without a conclusive eight-leg verdict.
+#
+# WHAT IS AND IS NOT BROKEN
+#
+# `All BC versions passed` still gates every pull request targeting `main`, and that is
+# untouched. This is not a hole a red PR can merge through. What the cancellation destroys is
+# the POST-MERGE signal: when a merge breaks `main`, or when two individually-green PRs
+# conflict semantically after landing (#2924, and #2991 for the concrete instance), the run
+# that would have said so is cancelled by the next merge and nobody is notified.
+#
+# THE MEASUREMENT (2026-09-06, 100 most recent Test Matrix runs on `main`, 18.5 h)
+#
+#   conclusion       cancelled 83 | success 13 | failure 3 | in progress 1
+#   merge interval   median 359 s, mean 673 s -> ~130 pushes/day
+#   full matrix run  mean 22.8 min wall, max 26.4 min, 74.6 job-minutes over 12 jobs
+#
+# A 23-minute run against a 6-minute median merge interval essentially never survives.
+# Modelling arrivals as Poisson: P(no merge in 22.8 min) = exp(-1368/673) = 13%, against an
+# observed 16/100. The mechanism is `cancel-in-progress: true` on a group keyed by
+# `github.ref`, which on `main` is the constant `refs/heads/main`.
+#
+# WHY THE FIX IS NOT "STOP CANCELLING"
+#
+# Two measurements rule that out, and both are counter-intuitive enough to be worth stating.
+#
+# 1. `cancel-in-progress: false` on the EXISTING shared per-ref group would be much worse
+#    than the problem. Runs in one concurrency group do not run in parallel when cancellation
+#    is off — they QUEUE. Utilisation is rho = lambda * W = (130/day) * 22.8 min = 2.05 > 1,
+#    an unstable queue that grows without bound. That is precisely the state test-matrix.yml's
+#    header records from 2026-09-03: six `main` runs queued behind hours of backlog, about to
+#    report on commits already six merges stale.
+#
+# 2. Giving each push its OWN group avoids the queue, but the tail is unaffordable. Replaying
+#    the observed arrival times against a 22.8-minute run gives a peak of 11 concurrent `main`
+#    runs — 72 concurrent jobs from `main` alone. GitHub Actions concurrency is scoped per
+#    ACCOUNT, so those slots come out of this repo's pull-request CI and the corpus
+#    repository's, i.e. out of the gate that actually blocks merges.
+#
+# Worth recording because it is the fact that inverts the existing reasoning: cancelling
+# `main` reclaims much less than it looks like it does. The legs start within seconds of each
+# other (job queue delay median 3 s, p99 177 s, max 206 s over 179 jobs in the busiest hour),
+# so a run cancelled at the median 6.5 min has already burned ~53 of its 74.6 job-minutes.
+# Across the 83 cancelled runs, cancelling saves 40% of the cost and 100% of the answer.
+#
+# THE COST OF THIS WORKFLOW, AGAINST THE ALTERNATIVE
+#
+#   never cancel `main`   time-weighted mean +2.2 jobs, p95 21, PEAK 72
+#   this floor            time-weighted mean +2.5 jobs, p95 12, PEAK 12  (bounded by design)
+#
+# Within noise on the average, 6x apart on the tail. The floor's peak is bounded by
+# construction: one run at a time, and a cadence longer than the longest observed run, so a
+# floor run can never be overtaken by its own successor.
+#
+# It does not give every merged commit its own verdict, and that is deliberate — during a
+# burst, verdicts on five superseded trees are the waste the 2026-09-03 measurement correctly
+# objected to. What it gives is a bound on how long `main` can be red without anyone knowing.
+# Bisecting the ~5 merges between two floor runs is what `bc-leg-rerun.yml` is for.
+#
+# This is unrelated to #3141 (cutting the PR matrix from 8 legs to 3). If that lands, runs get
+# faster and the push-triggered run survives more often, which shrinks how often this floor
+# fires — it does not make it unnecessary, and nothing here depends on that decision.
+#
+# NOTE ON publish.yml: the release pushes to `main` as a fast-forward and any merge during its
+# ~40-minute run kills it. This workflow changes nothing about that. It adds no merge, holds
+# no lock on `main`, has its own concurrency group, and never writes to the repository — its
+# only effect on a release is the shared runner pool, at a bounded 12 jobs.
+
+on:
+  schedule:
+    # Derived, not chosen. Cadence must exceed a run's wall time or floor runs overlap, and
+    # with cancellation off, overlap means a queue with rho > 1. Measured mean 22.8 min, max
+    # 26.4 min, so the floor is 27 min; `*/30` is the first cron-expressible value above it.
+    # Re-derive this if the matrix gets materially slower or faster; the guard in
+    # AlRunner.Tests/MainVerdictFloorWorkflowTests.cs holds the relationship, not the number.
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+
+# Read-only. `actions: read` is what lets the guard below ask whether this commit already has
+# a verdict; nothing here needs write access to anything.
+permissions:
+  contents: read
+  actions: read
+
+# One floor run at a time, and never cancelled. A cancelled floor run would reproduce the
+# exact bug this workflow exists to fix. Cancellation is safe to switch off HERE, unlike on
+# the push path, because arrivals are one per cadence rather than one per merge: rho =
+# 22.8/30 = 0.76 < 1, so the queue is stable and at most one run deep.
+concurrency:
+  group: main-verdict-floor
+  cancel-in-progress: false
+
+jobs:
+  verdict-needed:
+    name: Does main HEAD still lack a verdict?
+    runs-on: ubuntu-latest
+    outputs:
+      needed: ${{ steps.check.outputs.needed }}
+    steps:
+      - name: Look for a conclusive verdict on this commit
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          # This is a floor, not a second matrix. When the push-triggered run survived — 16%
+          # of the time in the sample, and most of the time overnight — HEAD's verdict is
+          # already known and re-running buys nothing.
+          #
+          # Keyed on the head SHA because that is what a verdict is ABOUT: a completed run
+          # for an older push is not this commit's result (ci-verdicts.md section 2). Both
+          # producers count, this workflow and the gating one, so a floor run does not
+          # re-verify a commit an earlier floor run already answered for.
+          conclusive=$(gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/runs?head_sha=${SHA}&per_page=100" \
+            --jq '[.workflow_runs[]
+                   | select(.path == ".github/workflows/test-matrix.yml"
+                         or .path == ".github/workflows/main-verdict-floor.yml")
+                   | select(.conclusion == "success" or .conclusion == "failure")]
+                  | length')
+
+          if [ "$conclusive" -gt 0 ]; then
+            echo "needed=false" >> "$GITHUB_OUTPUT"
+            echo "$SHA already has $conclusive conclusive matrix run(s) — nothing to do."
+          else
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+            echo "$SHA has no conclusive matrix run. Establishing one."
+          fi
+
+  floor-matrix:
+    # Deliberately NOT the job id `bc-tests`. A check's context is the leg name qualified by
+    # the CALLING job, so naming it `bc-tests` here would make these legs report the identical
+    # context to the gating path's (`bc-tests / BC <ver> (required)`) on the same head SHA.
+    # Those legs are not required contexts, so it would not gate anything — but it would make
+    # `gh pr checks` ambiguous about which run a verdict came from, which is the stale-verdict
+    # trap ci-verdicts.md section 2 exists for. `bc-leg-rerun.yml` learned this first.
+    #
+    # The matrix itself is bc-tests.yml's, called rather than copied. A second hand-maintained
+    # spelling of these steps drifted four times and failed two releases (#1976).
+    #
+    # No `bc-version-filter`: a floor that ran three of eight legs would re-introduce the
+    # BC-version blindness it exists to remove.
+    #
+    # `ref` is pinned to the SHA the guard above decided about, so the verdict this run
+    # records is unambiguously about that commit even if `main` moved while it was queued.
+    needs: verdict-needed
+    if: needs.verdict-needed.outputs.needed == 'true'
+    uses: ./.github/workflows/bc-tests.yml
+    with:
+      ref: ${{ github.sha }}
+
+  floor-verdict:
+    # Deliberately NOT named `All BC versions passed`. That context is one of main's two
+    # required status checks, declared in test-matrix.yml, and a second workflow reporting it
+    # on the same head SHA would make `gh pr checks` ambiguous about which run a verdict came
+    # from — the stale-verdict trap ci-verdicts.md section 2 exists for.
+    #
+    # It still has to FAIL when the matrix fails: a red scheduled run on the default branch is
+    # what actually notifies the account holder, and that notification is the whole deliverable
+    # of this workflow.
+    name: main verdict (post-merge)
+    needs: [verdict-needed, floor-matrix]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report
+        run: |
+          set -euo pipefail
+          needed='${{ needs.verdict-needed.outputs.needed }}'
+          result='${{ needs.floor-matrix.result }}'
+
+          if [ "$needed" != "true" ]; then
+            echo "main HEAD ${GITHUB_SHA} already had a verdict; floor did not re-run the matrix."
+            exit 0
+          fi
+
+          if [ "$result" != "success" ]; then
+            echo "main is NOT green at ${GITHUB_SHA} (matrix: ${result})."
+            echo ""
+            echo "This is the post-merge signal, not a pull-request gate — every commit since"
+            echo "the last conclusive run is a candidate. Open this run, find the red leg, then"
+            echo "narrow it with .github/workflows/bc-leg-rerun.yml rather than re-running this."
+            exit 1
+          fi
+
+          echo "main is green at ${GITHUB_SHA} across all BC versions."
