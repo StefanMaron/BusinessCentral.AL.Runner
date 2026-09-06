@@ -347,8 +347,8 @@ public static class JoinExecutor
             "LeftOuterJoin" => JoinKind.LeftOuter,
             _ => throw ctx.OutOfScope(
                 "NavQuery (multi-dataitem join)",
-                $"query-join-{lt?.ToLowerInvariant() ?? "unknown"}-not-implemented — only InnerJoin and " +
-                "LeftOuterJoin are supported in-memory; see docs/scope.md")
+                $"query-join-{lt?.ToLowerInvariant() ?? "unknown"}-link-type",
+                "only InnerJoin and LeftOuterJoin are executed in-memory")
         };
     }
 
@@ -368,8 +368,9 @@ public static class JoinExecutor
         if (links.Count == 0)
             throw ctx.OutOfScope(
                 "NavQuery (multi-dataitem join)",
-                "query-join-no-link — a non-root dataitem has no DataItemLink; only equi-linked " +
-                "joins are supported in-memory; see docs/scope.md");
+                "query-join-no-link",
+                "a non-root dataitem has no DataItemLink; only equi-linked joins are executed " +
+                "in-memory");
 
         var plan = new List<LinkCond>(links.Count);
         foreach (var link in links)
@@ -378,8 +379,9 @@ public static class JoinExecutor
             if (linkType != "Field")
                 throw ctx.OutOfScope(
                     "NavQuery (multi-dataitem join)",
-                    $"query-join-nonfield-link — DataItemLink of type '{linkType}' (Const/Expression) " +
-                    "is not supported in-memory; only field=field equi-links are; see docs/scope.md");
+                    "query-join-nonfield-link",
+                    $"DataItemLink of type '{linkType}' (Const/Expression) is not executed in-memory; " +
+                    "only field=field equi-links are");
 
             var srcCol = _pLinkSourceColumn!.GetValue(link)!;       // parent column
             var dstCol = _pLinkDestinationColumn!.GetValue(link)!;  // child column
@@ -388,8 +390,8 @@ public static class JoinExecutor
             if (srcField == null || dstField == null)
                 throw ctx.OutOfScope(
                     "NavQuery (multi-dataitem join)",
-                    "query-join-link-no-source-field — a DataItemLink column has no backing table " +
-                    "field; see docs/scope.md");
+                    "query-join-link-no-source-field",
+                    "a DataItemLink column has no backing table field");
             EnsureNotFlowField(ctx, srcField);
             EnsureNotFlowField(ctx, dstField);
 
@@ -408,8 +410,9 @@ public static class JoinExecutor
         if (fc == "FlowField")
             throw ctx.OutOfScope(
                 "NavQuery (multi-dataitem join)",
-                "query-join-flowfield-link — a DataItemLink references a FlowField; in-memory join " +
-                "only supports links on stored (non-FlowField) fields; see docs/scope.md");
+                "query-join-flowfield-link",
+                "a DataItemLink references a FlowField; the in-memory join links only on stored " +
+                "(non-FlowField) fields");
     }
 
     private static bool LinksHold(List<LinkCond> links, Dictionary<string, object?> combo, object childRow)
@@ -639,8 +642,9 @@ public static class JoinExecutor
         if (_mNegateValue == null)
             throw ctx.OutOfScope(
                 "Query column ReverseSign (JOIN)",
-                "query-reversesign-negatevalue-missing — Microsoft.Dynamics.Nav.Runtime." +
-                "FlowFieldsHelper.NegateValue(NavValue,NavType) not found on this BC build; see docs/scope.md");
+                "query-reversesign-negatevalue-missing",
+                "Microsoft.Dynamics.Nav.Runtime.FlowFieldsHelper.NegateValue(NavValue,NavType) " +
+                "not found on this BC build");
         var navType = _pColNavType?.GetValue(columnObj);
         return _mNegateValue.Invoke(null, new object?[] { value, navType });
     }
@@ -675,9 +679,10 @@ public static class JoinExecutor
             var subDataItemName = (string)_pDataItemName!.GetValue(di)!;
             throw ctx.OutOfScope(
                 "NavQuery (multi-dataitem join with a synthesized sub-dataitem)",
-                $"query-join-synthesized-subquery-not-implemented -- dataitem '{subDataItemName}' is a " +
-                "synthesized sub-dataitem (SubQueryDefinition != null) that is not a FlowField-calculation " +
-                "sub-query; this runner does not support this join sub-shape in-memory; see docs/scope.md");
+                "query-join-synthesized-subquery",
+                $"dataitem '{subDataItemName}' is a synthesized sub-dataitem (SubQueryDefinition != null) " +
+                "that is not a FlowField-calculation sub-query; the in-memory join executor does not take " +
+                "this sub-shape yet");
         }
 
         // Pass 1: genuinely-projected (non-filter-only) columns get their real ColumnIndex slot.
@@ -765,8 +770,9 @@ public static class JoinExecutor
         if (owningTable == null)
             throw ctx.OutOfScope(
                 "NavQuery (multi-dataitem join with a FlowField column)",
-                "query-join-flowfield-owner-unresolved -- NCLMetaField.Parent did not resolve a table " +
-                "for the FlowField column; cannot locate its owning dataitem in the join; see docs/scope.md");
+                "query-join-flowfield-owner-unresolved",
+                "NCLMetaField.Parent did not resolve a table for the FlowField column, so its owning " +
+                "dataitem in the join cannot be located");
         _pTableTableId ??= owningTable.GetType().GetProperty("TableId", F);
         var ownerTableId = _pTableTableId?.GetValue(owningTable);
 
@@ -783,9 +789,10 @@ public static class JoinExecutor
         if (matches != 1)
             throw ctx.OutOfScope(
                 "NavQuery (multi-dataitem join with a FlowField column)",
-                $"query-join-flowfield-owner-ambiguous -- found {matches} real dataitem(s) whose table " +
-                "matches the FlowField's owning table (0 = not in this join; >1 = a self-join on that " +
-                "table); cannot unambiguously pick the FlowField's owner row; see docs/scope.md");
+                "query-join-flowfield-owner-ambiguous",
+                $"found {matches} real dataitem(s) whose table matches the FlowField's owning table " +
+                "(0 = not in this join; >1 = a self-join on that table), so the FlowField's owner row " +
+                "cannot be picked unambiguously");
         return matchName!;
     }
 

@@ -55,8 +55,14 @@ public static partial class RecordPatches
 
     /// <summary>
     /// Runtime metadata XML for a report declared by a precompiled dependency, or null when
-    /// no dependency .app describes that report. Result cached per id (including the null),
-    /// since the answer is a property of the loaded dependency set.
+    /// no dependency .app describes that report.
+    ///
+    /// <para>Result cached per id, INCLUDING the null, and dropped by
+    /// <see cref="InvalidateBcAppIndexes"/> whenever the registered .app set changes — same
+    /// memo shape, same reasoning and the same issue (#2889) as
+    /// <see cref="TryBuildDependencyPageMetadata"/> one file over; see its doc comment for
+    /// the full argument. #2889 reported only the page memo; this one is its twin and was
+    /// fixed with it rather than left to be re-found.</para>
     /// </summary>
     internal static string? TryBuildDependencyReportMetadata(int reportId)
         => _depReportMetadataXml.GetOrAdd(reportId, BuildDependencyReportMetadata);

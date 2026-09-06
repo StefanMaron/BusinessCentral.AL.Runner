@@ -616,6 +616,226 @@ check("...and is BLOCKED once no newer run of that workflow is coming",
       v.code == 4, f"(code={v.code}) {v.lines}")
 
 
+
+# ===========================================================================
+# #3002 -- three false verdicts in one night, one shape: a verdict resolved
+#          from evidence that is not the current head's LIVE run
+# ===========================================================================
+# Every payload below is RECORDED, not hand-built: fetched back out of the
+# GitHub API for the exact head SHAs that produced the wrong answers, so the
+# cases cannot drift into a reconstruction that agrees with the code.
+#
+#   PR #2842  head e0841eed  GREEN, "all 1 required checks passed"  (matrix job
+#                            had not been created)
+#   PR #2971  head 47f30db4  GREEN, "all 1 required checks passed"  (8 legs
+#                            still pending)
+#   PR #3010  head 95c16b20  FAILURE, read off a superseded CANCELLED run while
+#                            the live run was green
+
+# ---------------------------------------------------------------------------
+# #3010, the RED direction. Recorded from
+#   GET /commits/95c16b20a500f638fbbe7eeb14f78545c22f92ee/check-runs
+#   GET /actions/runs?head_sha=95c16b20a500f638fbbe7eeb14f78545c22f92ee
+#
+# Test Matrix run 34002828792 has RUN-LEVEL conclusion `cancelled`, and its
+# aggregate job "All BC versions passed" concluded `failure` -- the aggregate
+# runs `if: always()` over `needs` that were killed, so a cancelled run reports
+# a FAILING required context. Seven of its eight legs are `cancelled`; leg 27.3
+# had already finished `success`.
+#
+# Test Matrix run 34004261321 replaced it and was green throughout, but its
+# aggregate job starts LAST, so for several minutes the newest check run named
+# "All BC versions passed" on this commit was the failure from the run that had
+# been abandoned. classify() put it in `bad` and returned exit 1 -- and `bad`
+# short-circuits BEFORE the in-flight guard, which is why the guard that exists
+# for exactly this shape never got consulted.
+PR3010_TM_CANCELLED = 34002828792   # run-level conclusion: cancelled
+PR3010_TM_LIVE = 34004261321        # the superseding run, green
+PR3010_RT = 34002828699             # Require Tests -> "Tests updated"
+
+PR3010_LEGS = ["bc-tests / BC 27.0.38460.53934 (required)",
+               "bc-tests / BC 27.5.46862.53931 (required)",
+               "bc-tests / BC 28.4.53241.54318 (required)"]
+
+
+def pr3010_rollup(with_live_legs: bool = False):
+    """The rollup while the live Test Matrix run's aggregate job had not started."""
+    runs = [cr("All BC versions passed", "failure", PR3010_TM_CANCELLED, 101405801410)]
+    for i, n in enumerate(PR3010_LEGS):
+        runs.append(cr(n, "cancelled", PR3010_TM_CANCELLED, 101404706127 + i))
+    runs.append(cr("bc-tests / BC 27.3.44313.53909 (required)", "success",
+                   PR3010_TM_CANCELLED, 101404706089))
+    runs.append(cr("Tests updated", "success", PR3010_RT, 101404642460))
+    if with_live_legs:
+        for i, n in enumerate(PR3010_LEGS):
+            runs.append(cr(n, "success", PR3010_TM_LIVE, 101408579871 + i))
+    return runs
+
+
+PR3010_WF_LIVE_IN_FLIGHT = [
+    {"id": PR3010_RT, "name": "Require Tests", "status": "completed",
+     "conclusion": "success"},
+    {"id": PR3010_TM_CANCELLED, "name": "Test Matrix", "status": "completed",
+     "conclusion": "cancelled"},
+    {"id": PR3010_TM_LIVE, "name": "Test Matrix", "status": "in_progress",
+     "conclusion": None},
+]
+
+v = cw.classify(pr3010_rollup(), workflow_runs=PR3010_WF_LIVE_IN_FLIGHT)
+check("#3010: a `failure` inherited from a CANCELLED workflow run is not a FAILED "
+      "verdict while a newer run of the same workflow is in flight",
+      v.code is None, f"(code={v.code}) {v.lines}")
+check("...and no killed job is offered up for a log fetch",
+      v.log_target is None, str(v.log_target))
+
+v = cw.classify(pr3010_rollup(with_live_legs=True),
+                workflow_runs=PR3010_WF_LIVE_IN_FLIGHT)
+check("...still not FAILED once the live run's LEGS have reported green but its "
+      "aggregate job has not",
+      v.code is None, f"(code={v.code}) {v.lines}")
+
+# Same commit, one instant earlier: the replacement run has not registered yet.
+# The answer is still not "FAILED" -- the job did not fail on its merits, the run
+# was killed -- but it is not "wait" either once nothing further is coming. That
+# is exactly the #2726 shape, and exit 4 already says it.
+PR3010_WF_NO_REPLACEMENT = [
+    {"id": PR3010_RT, "name": "Require Tests", "status": "completed",
+     "conclusion": "success"},
+    {"id": PR3010_TM_CANCELLED, "name": "Test Matrix", "status": "completed",
+     "conclusion": "cancelled"},
+]
+v = cw.classify(pr3010_rollup(), workflow_runs=PR3010_WF_NO_REPLACEMENT)
+check("#3010: a cancelled Test Matrix run with no replacement is BLOCKED, not FAILED",
+      v.code == 4, f"(code={v.code}) {v.lines}")
+check("...and names the required context it is blocked on",
+      any("All BC versions passed" in l for l in v.lines), v.lines)
+check("...and never tells the caller something failed",
+      not any("failed" in l.lower() for l in v.lines), v.lines)
+
+# The guard must not swallow a REAL failure. Same rollup, but the Test Matrix run
+# that produced the failing aggregate ran to completion on its own merits.
+PR3010_WF_GENUINE = [
+    {"id": PR3010_RT, "name": "Require Tests", "status": "completed",
+     "conclusion": "success"},
+    {"id": PR3010_TM_CANCELLED, "name": "Test Matrix", "status": "completed",
+     "conclusion": "failure"},
+]
+v = cw.classify(pr3010_rollup(), workflow_runs=PR3010_WF_GENUINE)
+check("a failing required context from a run that was NOT cancelled is still FAILED",
+      v.code == 1, f"(code={v.code}) {v.lines}")
+check("...and still offers the failing job for the log fetch",
+      (v.log_target or {}).get("name") == "All BC versions passed", str(v.log_target))
+
+# ---------------------------------------------------------------------------
+# #2971 / #2842, the GREEN direction. Recorded from
+#   GET /commits/47f30db4d37415378f227b62e9f6d38433166f17/check-runs
+#   GET /actions/runs?head_sha=47f30db4d37415378f227b62e9f6d38433166f17
+#
+# All three workflow runs were created within one second of the push
+# (00:09:25-26Z), so "All BC versions passed" was always COMING. Exhaustively:
+# with the real two-context ruleset this rollup cannot produce a 1-count green
+# under post-#2882 code -- either the context is in the rollup (pool >= 2) or it
+# is `missing` and the Test Matrix run is in flight, so `final is not True` and
+# the verdict is withheld. The only reachable route to the printed line is a
+# `contexts` of length ONE: a required-context set that got NARROWED.
+PR2971_RT, PR2971_PRC, PR2971_TM = 34000544365, 34000544377, 34000544502
+
+PR2971_JUST_PUSHED = [
+    cr("Tests updated", "success", PR2971_RT, 101398501503),
+    cr("ci-wait.py unit tests", "success", PR2971_PRC, 101398501751),
+    cr("scripts/ unit tests", "success", PR2971_PRC, 101398501706),
+]
+PR2971_WF = [
+    {"id": PR2971_RT, "name": "Require Tests", "status": "completed",
+     "conclusion": "success"},
+    {"id": PR2971_PRC, "name": "PR Check", "status": "completed",
+     "conclusion": "success"},
+    {"id": PR2971_TM, "name": "Test Matrix", "status": "in_progress",
+     "conclusion": None},
+]
+
+# The control: with the real ruleset this is already withheld (#2882 did that).
+v = cw.classify(PR2971_JUST_PUSHED, workflow_runs=PR2971_WF)
+check("#2971 control: the recorded rollup is withheld under the real two-context "
+      "ruleset", v.code is None, f"(code={v.code}) {v.lines}")
+
+# The defect: hand a NARROWED context set to the same rollup. Nothing else about
+# the commit changed, and the verdict flips to a green naming ONE check.
+v = cw.classify(PR2971_JUST_PUSHED, contexts=("Tests updated",),
+                workflow_runs=PR2971_WF)
+check("#3002: a NARROWED required-context set is refused, not answered",
+      v.code != 0, f"(code={v.code}) {v.lines}")
+check("...and it is undetermined (3), not a failure and not a block",
+      v.code == 3, f"(code={v.code}) {v.lines}")
+check("...and says which required context went missing from the set",
+      any("All BC versions passed" in l for l in v.lines), v.lines)
+check("...and never prints the false-green line",
+      not any("all 1 required checks passed" in l for l in v.lines), v.lines)
+
+v = cw.classify(PR2971_JUST_PUSHED, contexts=(), workflow_runs=PR2971_WF)
+check("an EMPTY required-context set is refused too", v.code == 3,
+      f"(code={v.code}) {v.lines}")
+
+# A green must be able to account for every ruleset context BY NAME, and say so.
+# Every real green that night named 9 or 10 checks; both false greens named 1.
+v = cw.classify(green_set())
+check("a green names how many ruleset contexts it accounted for",
+      any("2/2 ruleset context(s)" in l for l in v.lines), v.lines)
+check("...and names them",
+      all(any(c in l for l in v.lines) for c in cw.RULESET_CONTEXTS), v.lines)
+
+# ---------------------------------------------------------------------------
+# Where a narrowed set comes from: the ruleset read itself. The test INJECTS the
+# recorded API response rather than hand-building a tuple, because a hand-built
+# tuple cannot reproduce a degraded read -- the defect is in what the fetch
+# returns, not in what the caller passes.
+#
+# Recorded verbatim from GET /repos/.../rules/branches/main on 2026-09-06.
+RECORDED_BRANCH_RULES = [
+    {"type": "deletion", "ruleset_id": 15001420},
+    {"type": "non_fast_forward", "ruleset_id": 15001420},
+    {"type": "pull_request", "ruleset_id": 15001420},
+    {"type": "required_status_checks", "ruleset_id": 15001420, "parameters": {
+        "strict_required_status_checks_policy": False,
+        "do_not_enforce_on_create": False,
+        "required_status_checks": [{"context": "All BC versions passed"},
+                                   {"context": "Tests updated"}]}},
+]
+DEGRADED_BRANCH_RULES = [
+    r for r in RECORDED_BRANCH_RULES if r["type"] != "required_status_checks"
+] + [{"type": "required_status_checks", "ruleset_id": 15001420, "parameters": {
+        "strict_required_status_checks_policy": False,
+        "do_not_enforce_on_create": False,
+        "required_status_checks": [{"context": "Tests updated"}]}}]
+
+ctx, status, notes = cw.resolve_required_contexts(fetch=lambda b: RECORDED_BRANCH_RULES)
+check("the recorded live ruleset resolves to both required contexts",
+      sorted(ctx) == sorted(cw.RULESET_CONTEXTS) and status == "live",
+      f"{ctx} {status}")
+
+ctx, status, notes = cw.resolve_required_contexts(fetch=lambda b: DEGRADED_BRANCH_RULES)
+check("a ruleset read that drops a known required context is DEGRADED",
+      status == "degraded", f"{ctx} {status}")
+check("...and the degraded set is never handed on as the required set",
+      sorted(ctx) == sorted(cw.RULESET_CONTEXTS), f"{ctx}")
+check("...and the note names the context that went missing",
+      any("All BC versions passed" in n for n in notes), notes)
+
+ctx, status, notes = cw.resolve_required_contexts(fetch=lambda b: None)
+check("an UNREADABLE ruleset falls back to the full built-in set, never a subset",
+      sorted(ctx) == sorted(cw.RULESET_CONTEXTS) and status == "fallback",
+      f"{ctx} {status}")
+
+EXTRA = RECORDED_BRANCH_RULES[:3] + [
+    {"type": "required_status_checks", "ruleset_id": 15001420, "parameters": {
+        "required_status_checks": [{"context": "All BC versions passed"},
+                                   {"context": "Tests updated"},
+                                   {"context": "Some new gate"}]}}]
+ctx, status, notes = cw.resolve_required_contexts(fetch=lambda b: EXTRA)
+check("a context ADDED in the UI is picked up and waited for",
+      sorted(ctx) == ["All BC versions passed", "Some new gate", "Tests updated"]
+      and status == "live", f"{ctx} {status}")
+
 print()
 if FAILURES:
     print(f"FAILED: {len(FAILURES)} check(s): {', '.join(FAILURES)}")

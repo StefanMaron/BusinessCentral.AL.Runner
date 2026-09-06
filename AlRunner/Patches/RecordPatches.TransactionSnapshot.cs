@@ -188,13 +188,14 @@ public static partial class RecordPatches
             if (provider == null || provider.GetType().Name != "TempTableDataProvider") continue;
 
             var providerType = provider.GetType();
-            var metaTable = RequiredField(providerType, "table").GetValue(provider);
+            var metaTable = RequiredField(providerType, "table", TransactionRollbackSurface).GetValue(provider);
             if (metaTable == null) continue;
 
             // A null primaryTree simply means no row was ever inserted — the pre-write image
             // of this table is "empty", which is exactly what an empty row array restores to.
             var rows = new List<NavValue[]>();
-            if (RequiredField(providerType, "primaryTree").GetValue(provider) is IEnumerable primaryTree)
+            if (RequiredField(providerType, "primaryTree", TransactionRollbackSurface)
+                    .GetValue(provider) is IEnumerable primaryTree)
                 foreach (var row in primaryTree)
                     if (row is TempTableRecordBuffer buffer)
                         rows.Add(CloneValues(buffer.ToArray()));
@@ -314,7 +315,8 @@ public static partial class RecordPatches
     {
         var t = provider.GetType();
         foreach (var name in new[] { "trees", "primaryTree", "uniqueIndexes" })
-            AlRunner.Infrastructure.FieldPoke.SetInstance(RequiredField(t, name), provider, null);
+            AlRunner.Infrastructure.FieldPoke.SetInstance(
+                RequiredField(t, name, TransactionRollbackSurface), provider, null);
     }
 
     /// <summary>

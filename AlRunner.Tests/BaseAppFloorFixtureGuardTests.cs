@@ -51,6 +51,21 @@ public sealed class BaseAppFloorFixtureGuardTests
 
     private static string TestsDir => Path.Combine(RepoRoot, "AlRunner.Tests");
 
+    /// <summary>An allowlist key: the path relative to AlRunner.Tests/, '/' separated.</summary>
+    private static string Rel(string path) =>
+        Path.GetRelativePath(TestsDir, path).Replace(Path.DirectorySeparatorChar, '/');
+
+    /// <summary>
+    /// Every <c>.cs</c> source in the project, at ANY depth, minus build output (the SDK
+    /// generates sources under <c>obj/</c>). #3000: the source scan below enumerated
+    /// <c>SearchOption.TopDirectoryOnly</c> while the fixture scan in the same class already
+    /// walked <c>Fixtures/</c> recursively — so a .cs file below the top level was invisible
+    /// to one half of a guard whose whole value is that it fails automatically.
+    /// </summary>
+    private static IEnumerable<string> TestSourcePaths() =>
+        Directory.EnumerateFiles(TestsDir, "*.cs", SearchOption.AllDirectories)
+            .Where(p => !Rel(p).Split('/').Any(seg => seg is "bin" or "obj"));
+
     // A JSON "application" property, in a .json file or embedded in a C# string —
     // including the escaped \"application\" form used in concatenated manifests.
     private static readonly Regex ApplicationProperty = new(
@@ -76,9 +91,12 @@ public sealed class BaseAppFloorFixtureGuardTests
     };
 
     /// <summary>
-    /// C# test classes permitted to write the floor into a manifest they generate. Three
+    /// C# test sources permitted to write the floor into a manifest they generate. Three
     /// are debt tracked in #2364, not permission; two are legitimate. Keep the reasons —
-    /// the rule was ignored once already because it read as advice.
+    /// the rule was ignored once already because it read as advice. Paths are relative to
+    /// AlRunner.Tests/ with '/' separators, exactly like <see cref="AllowedFixtures"/>; for a
+    /// top-level file that is just the file name, which is why widening the scan (#3000) left
+    /// every entry below unchanged.
     /// </summary>
     private static readonly Dictionary<string, string> AllowedSources = new()
     {
@@ -118,11 +136,11 @@ public sealed class BaseAppFloorFixtureGuardTests
     public void NoTestSource_WritesTheBaseApplicationFloor_ExceptTheAllowlistedFive()
     {
         var offenders = new List<string>();
-        foreach (var path in Directory.EnumerateFiles(TestsDir, "*.cs", SearchOption.TopDirectoryOnly))
+        foreach (var path in TestSourcePaths())
         {
             if (!ApplicationProperty.IsMatch(File.ReadAllText(path))) continue;
-            var name = Path.GetFileName(path);
-            if (!AllowedSources.ContainsKey(name)) offenders.Add(name);
+            var rel = Rel(path);
+            if (!AllowedSources.ContainsKey(rel)) offenders.Add(rel);
         }
 
         Assert.True(offenders.Count == 0,
@@ -149,11 +167,11 @@ public sealed class BaseAppFloorFixtureGuardTests
                 stale.Add($"{rel} ({why})");
         }
 
-        foreach (var (name, why) in AllowedSources)
+        foreach (var (rel, why) in AllowedSources)
         {
-            var path = Path.Combine(TestsDir, name);
+            var path = Path.Combine(TestsDir, rel.Replace('/', Path.DirectorySeparatorChar));
             if (!File.Exists(path) || !ApplicationProperty.IsMatch(File.ReadAllText(path)))
-                stale.Add($"{name} ({why})");
+                stale.Add($"{rel} ({why})");
         }
 
         Assert.True(stale.Count == 0,
