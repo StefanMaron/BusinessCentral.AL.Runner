@@ -133,7 +133,9 @@ public sealed class CacheRootStartupFailureTests
         // --expectations is passed explicitly, at an empty directory, only to get PAST
         // Program.cs's expectations auto-probe: that probe reads Environment.CurrentDirectory,
         // whose getter throws for the same unlinked-cwd reason, and would abort earlier than
-        // the line under test (measured: Program.cs:843). It is scaffolding for reaching the
+        // the line under test (measured: Program.cs:843, exit 134 — filed as its own defect,
+        // issue #3120, since deciding what the runner should DO with an unreadable working
+        // directory is a different question from this one). Scaffolding for reaching the
         // cache-root block, not part of the claim.
         var emptyExpectations = TestScratch.Dir("al-runner-no-cache-root-expectations");
         Directory.CreateDirectory(emptyExpectations);
