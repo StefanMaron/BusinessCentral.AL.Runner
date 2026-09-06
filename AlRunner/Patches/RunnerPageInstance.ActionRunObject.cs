@@ -320,8 +320,19 @@ internal sealed partial class RunnerPageInstance
             "HasTrap",
             BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
             binder: null, types: new[] { typeof(int) }, modifiers: null)
-            ?? throw new InvalidOperationException(
-                "NavTestExecution.HasTrap(int) not found — Ncl shape changed; do not commit");
+            // A BC SHAPE GAP, not a plain InvalidOperationException (#2946). This read happens
+            // during Invoke(), on AL's own call stack, so an asserterror around the invoke
+            // would CATCH an InvalidOperationException and PASS — the inverted result
+            // BcShapeGapException exists to prevent. The "Ncl shape changed; do not commit"
+            // guards this was modelled on all live in AlRunner/Infrastructure/NclCecilRewrite.*,
+            // which runs at bootstrap with no asserterror in scope; that precedent does not
+            // reach here. See RunnerPageInstance.cs's lookup-trigger guard for the same shape.
+            ?? throw new AlRunner.Infrastructure.BcShapeGapException(
+                $"TestPage action target page {form.ObjectId.ObjectNumber}",
+                "NavTestExecution.HasTrap(int)",
+                "method not found on this BC build, so the runner cannot ask BC whether the "
+                + "test has an outstanding TestPage.Trap() for this RunObject target — and "
+                + "without that answer it cannot tell a trapped open from an unattended one");
 
         return hasTrap.Invoke(session.TestExecution, new object?[] { form.ObjectId.ObjectNumber }) is true;
     }
@@ -360,15 +371,27 @@ internal sealed partial class RunnerPageInstance
             binder: null,
             types: new[] { typeof(NavHandlerType), typeof(NavApplicationObjectBase), typeof(bool), typeof(string) },
             modifiers: null)
-            ?? throw new InvalidOperationException(
-                "NavTestExecution.FindHandler(NavHandlerType, NavApplicationObjectBase, bool, string) "
-                + "not found — Ncl shape changed; do not commit");
+            // Same reasoning as HasTrap above: raised on AL's call stack, so it must be the
+            // type an asserterror cannot swallow (#2946).
+            ?? throw new AlRunner.Infrastructure.BcShapeGapException(
+                $"TestPage action target page {form.ObjectId.ObjectNumber}",
+                "NavTestExecution.FindHandler(NavHandlerType, NavApplicationObjectBase, bool, string)",
+                "method not found on this BC build, so the runner cannot ask BC's own matcher "
+                + "whether a [PageHandler] is bound for this RunObject target, and would have "
+                + "to reimplement handler matching to answer it");
 
         var worklist = testExecution.GetType().GetField(
             "executingHandlers",
             BindingFlags.NonPublic | BindingFlags.Instance)
-            ?? throw new InvalidOperationException(
-                "NavTestExecution.executingHandlers not found — Ncl shape changed; do not commit");
+            // Refusing rather than probing without it is the whole point of this guard: without
+            // the worklist there is nothing to restore, so the probe would silently consume a
+            // handler entry. Raised as a shape gap for the same call-stack reason as above.
+            ?? throw new AlRunner.Infrastructure.BcShapeGapException(
+                $"TestPage action target page {form.ObjectId.ObjectNumber}",
+                "NavTestExecution.executingHandlers",
+                "field not found on this BC build, so the runner cannot snapshot and restore "
+                + "the handler worklist that FindHandler mutates, and asking whether a handler "
+                + "is bound would consume one [HandlerFunctions] entry as a side effect");
 
         var before = worklist.GetValue(testExecution);
         try
