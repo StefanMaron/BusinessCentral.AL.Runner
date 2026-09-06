@@ -316,7 +316,12 @@ public sealed class RowVersionPatchesTests
         var metaTable = new FakeMetaTable(timestampField: null, systemIdField: new FakeMetaField(0));
         var buffer = new FakeBuffer(metaTable, slotCount: 1) { [0] = NavGuid.NewGuid() };
 
-        var ex = Assert.Throws<InvalidOperationException>(
+        // BcShapeGapException, not InvalidOperationException, since #2946: this is the runner
+        // failing to read a BC internal, and it has to tear through AL's asserterror as well as
+        // through a [TryFunction]. An InvalidOperationException is caught by asserterror, which
+        // would make `asserterror <insert>` pass where real BC's insert succeeds and the
+        // asserterror fails. See AlRunner.Tests/BcShapeGapConventionTests.cs.
+        var ex = Assert.Throws<AlRunner.Infrastructure.BcShapeGapException>(
             () => RowVersionPatches.OnBeforeInsert(provider, CompanyToken, buffer));
 
         Assert.Contains("primaryTree", ex.Message);
@@ -336,7 +341,7 @@ public sealed class RowVersionPatchesTests
         var metaTable = new FakeMetaTable(timestampField: null, systemIdField: new FakeMetaField(0));
         var buffer = new FakeBuffer(metaTable, slotCount: 1) { [0] = NavGuid.NewGuid() };
 
-        var ex = Assert.Throws<InvalidOperationException>(
+        var ex = Assert.Throws<AlRunner.Infrastructure.BcShapeGapException>(
             () => RowVersionPatches.OnBeforeInsert(provider, CompanyToken, buffer));
 
         Assert.Contains("primaryTree", ex.Message);
