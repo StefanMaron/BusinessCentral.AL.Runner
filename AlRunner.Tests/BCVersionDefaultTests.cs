@@ -175,7 +175,7 @@ public class BCVersionDefaultTests
     [Fact]
     public void ProjectWalk_IgnoresADeclarationInsideAnAgentWorktree()
     {
-        var root = Path.Combine(Path.GetTempPath(), "bcver-" + Guid.NewGuid().ToString("N"));
+        var root = TestScratch.Dir("bcver");
         try
         {
             WriteProject(root, "AlRunner/AlRunner.csproj", "<PropertyGroup></PropertyGroup>");
@@ -205,7 +205,7 @@ public class BCVersionDefaultTests
     [Fact]
     public void ProjectWalk_StillCatchesADeclarationInTheRepositorysOwnProject()
     {
-        var root = Path.Combine(Path.GetTempPath(), "bcver-" + Guid.NewGuid().ToString("N"));
+        var root = TestScratch.Dir("bcver");
         try
         {
             WriteProject(root, "AlRunner/AlRunner.csproj",
@@ -236,7 +236,7 @@ public class BCVersionDefaultTests
     [Fact]
     public void ProjectWalk_ThrowsWhenItFindsNoProjectsAtAll()
     {
-        var root = Path.Combine(Path.GetTempPath(), "bcver-" + Guid.NewGuid().ToString("N"));
+        var root = TestScratch.Dir("bcver");
         try
         {
             Directory.CreateDirectory(Path.Combine(root, ".claude", "worktrees", "other-agent"));
