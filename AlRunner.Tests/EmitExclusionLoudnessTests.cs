@@ -118,13 +118,26 @@ public sealed class EmitExclusionLoudnessTests
     }
 
     /// <summary>
-    /// Negative direction for the test above: at DEFAULT verbosity the diagnostic must stay
-    /// out of the output (the summary line alone is the promise; printing it unconditionally
-    /// would defeat the point of gating it behind --verbose at all), while the object name
-    /// and "MISSING" framing from the non-verbose test still show up.
+    /// REVERSED by #2949, deliberately. This test used to assert the opposite — that at
+    /// default verbosity the identifying diagnostic must stay OUT of the output, because
+    /// "the summary line alone is the promise". That decision made the runner unusable on
+    /// malformed AL: a syntactically broken table produced, at default verbosity, an
+    /// emitter NullReferenceException, an AL0185 raised against a blameless sibling file,
+    /// and an instruction to re-run with a flag. The one accurate account of the failure
+    /// was the thing being withheld.
+    ///
+    /// An exclusion that is NOT all-profiles fails the run outright (`sources` is cleared,
+    /// the bundle reports COMPILE FAIL). The AL errors of a failed compile already print at
+    /// default verbosity everywhere else in this runner — EMIT-ZERO does it immediately
+    /// below this branch, and the --server path does it too — so withholding these was the
+    /// odd one out, not the rule. --verbose still adds the [Component]-tagged detail around
+    /// them; it is no longer what decides whether the cause is stated at all.
+    ///
+    /// The profile-only exclusion keeps the --verbose gate, because that run CONTINUES and
+    /// is not a failure. See BcCompilerProfileEmitCrashTests for that path.
     /// </summary>
     [SkippableFact]
-    public void ExcludedObject_DefaultVerbosity_OmitsTheAlDiagnostic()
+    public void ExcludedObject_DefaultVerbosity_StatesTheCauseBecauseTheRunFailed()
     {
         TestArtifacts.SkipIfMissing();
 
@@ -132,7 +145,11 @@ public sealed class EmitExclusionLoudnessTests
 
         Assert.True(exit != 0, $"exit={exit}\n{output}");
         Assert.Contains("EMIT-EXCLUDED", output, StringComparison.Ordinal);
-        Assert.DoesNotContain("AL0185", output, StringComparison.Ordinal);
+        Assert.Contains("AL0185", output, StringComparison.Ordinal);
+        Assert.Contains("This Codeunit Does Not Exist At All", output, StringComparison.Ordinal);
+
+        // And, having printed them, it must not also tell the reader to go and fetch them.
+        Assert.DoesNotContain("Re-run with --verbose", output, StringComparison.Ordinal);
     }
 
     /// <summary>

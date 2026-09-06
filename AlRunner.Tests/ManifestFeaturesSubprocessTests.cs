@@ -140,10 +140,13 @@ public sealed class ManifestFeaturesSubprocessTests : IClassFixture<SharedCliSer
             RedirectStandardOutput = true, RedirectStandardError = true,
             UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
         };
-        // Without these, an EMIT-EXCLUDED bundle's default (non-diag) output names only
-        // the excluded OBJECT ("Re-run with --verbose for the AL diagnostics that
-        // identified them") — it never prints the AL0129/AL0135 diagnostic IDs themselves.
-        // Matches the exact env vars #1941's own reproduction command used.
+        // Historically these were required: an EMIT-EXCLUDED bundle's default (non-diag)
+        // output named only the excluded OBJECT and told the reader to re-run with
+        // --verbose, never printing the AL0129/AL0135 diagnostic IDs themselves. #2949
+        // changed that — a failing exclusion now states its AL diagnostics at default
+        // verbosity — so these are no longer load-bearing for this assertion. Kept because
+        // they are the exact env vars #1941's own reproduction command used, and this test
+        // exists to reproduce #1941.
         psi.EnvironmentVariables["AL_RUNNER_DIAG_EMITRETRY"] = "1";
         psi.EnvironmentVariables["BCCOMPILER_DIAG"] = "1";
         var sb = new StringBuilder();

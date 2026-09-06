@@ -674,7 +674,11 @@ public static partial class RecordPatches
         }
         catch (TargetInvocationException tie) when (tie.InnerException is ArgumentOutOfRangeException inner)
         {
-            throw inner;   // the caller treats this exactly as BC's EnumeratePeriods does
+            // The caller treats this exactly as BC's EnumeratePeriods does. Rethrown via
+            // ExceptionDispatchInfo, not `throw inner` (#2948), so BC's own frames inside
+            // ToNextPeriodStart survive instead of the trace starting here.
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(inner).Throw();
+            throw; // unreachable
         }
     }
 

@@ -2075,6 +2075,21 @@ List<string> RenderDashboardLines(WatchStatus status, DateTime ts, TimeSpan dur)
     return sw.ToString().Replace("\r\n", "\n").TrimEnd('\n').Split('\n').ToList();
 }
 
+// #2949: the trailing sentence of an EMIT-EXCLUDED / TDD-EXCLUDED report.
+//
+// It used to be the constant "Re-run with --verbose for the AL diagnostics that
+// identified them" — printed even when the run already HAD --verbose, and even when no
+// diagnostic existed to be found under any verbosity. Both readings are worse than
+// silence: they say "there is more, go get it" and send the reader somewhere that has
+// nothing. Three cases, three sentences, each decided by what the runner actually holds.
+static string ExclusionDiagnosticAdvice(IReadOnlyList<string> diagnostics, bool printedAlongside) =>
+    diagnostics.Count == 0
+        ? " No AL diagnostic was produced for them — BC's compiler failed without attributing " +
+          "an error to a source line, so re-running changes nothing. Please report this bundle."
+        : printedAlongside
+            ? " The AL diagnostics that identified them follow."
+            : " Re-run with --verbose for the AL diagnostics that identified them.";
+
 // Console.KeyAvailable can still throw on some terminals even when stdin isn't
 // flagged redirected; treat any failure as "no key" so the watch loop never crashes.
 static bool SafeKeyAvailable()
@@ -2961,17 +2976,21 @@ foreach (var bundle in bundles)
                             // 1), not a compile failure.
                             var synthetic = TddSupport.BuildFailedTests(
                                 emitOutput.TddExcludedDetails ?? Array.Empty<TddExcludedObjectDetail>());
-                            Console.Error.WriteLine(
-                                $"<bundled>: TDD-EXCLUDED — {moduleName}: {emitOutput.ExcludedObjects.Count} " +
-                                $"object(s) could not be compiled: [{names}]. {synthetic.Count} [Test] " +
-                                $"procedure(s) they declare report as FAILED instead of vanishing from the run. " +
-                                $"Re-run with --verbose for the AL diagnostics that identified them.");
                             // #2207: same fix as the non-tdd branch below — actually print
                             // them under --verbose. Each synthetic FAILED test already carries
                             // its own object's diagnostic in its failure message, but that
                             // requires reading the per-test result; this gives the same
                             // information right at the summary line the message above points at.
                             var tddExclDiags = emitOutput.ExcludedObjectDiagnostics ?? Array.Empty<string>();
+                            // #2949: --tdd keeps the run alive and reports the excluded objects'
+                            // tests as RED, so the diagnostics stay behind --verbose here (they
+                            // are also on each synthetic failure). The advice sentence still has
+                            // to describe what will actually happen if it is followed.
+                            Console.Error.WriteLine(
+                                $"<bundled>: TDD-EXCLUDED — {moduleName}: {emitOutput.ExcludedObjects.Count} " +
+                                $"object(s) could not be compiled: [{names}]. {synthetic.Count} [Test] " +
+                                $"procedure(s) they declare report as FAILED instead of vanishing from the run." +
+                                ExclusionDiagnosticAdvice(tddExclDiags, AlRunner.Log.Verbose));
                             if (AlRunner.Log.Verbose && tddExclDiags.Count > 0)
                             {
                                 Console.Error.WriteLine(
@@ -3008,30 +3027,40 @@ foreach (var bundle in bundles)
                             var allProfiles = emitOutput.ExcludedObjects.All(
                                 o => o.StartsWith("Profile ", StringComparison.Ordinal));
 
-                            // Untagged on purpose: a `[Component]` prefix would be swallowed by
-                            // Log's filter at default verbosity, which is the original defect.
-                            Console.Error.WriteLine(allProfiles
-                                ? $"<bundled>: EMIT-EXCLUDED — {moduleName}: {emitOutput.ExcludedObjects.Count} " +
-                                  $"profile object(s) could not be compiled and were dropped from the module: " +
-                                  $"[{names}]. A profile declares no executable AL and no [Test] procedures, so " +
-                                  $"the module compiles and runs without it. Re-run with --verbose for the AL " +
-                                  $"diagnostics that identified them."
-                                : $"<bundled>: EMIT-EXCLUDED — {moduleName}: {emitOutput.ExcludedObjects.Count} object(s) " +
-                                  $"could not be compiled and were dropped from the module, so any tests they declare " +
-                                  $"are MISSING from this run: [{names}]. Re-run with --verbose for the AL diagnostics " +
-                                  $"that identified them.");
-                            // #2207: the message above promises the AL diagnostics under
-                            // --verbose — actually print them, gated on Log.Verbose directly
-                            // (not Console.Error.WriteLine's usual [Component] path) so a
-                            // developer following the instruction gets something, not another
-                            // copy of the same summary line. Deliberately reads
+                            // #2207: the message below promises the AL diagnostics — actually
+                            // print them, gated on Log.Verbose directly (not
+                            // Console.Error.WriteLine's usual [Component] path) so a developer
+                            // following the instruction gets something, not another copy of the
+                            // same summary line. Deliberately reads
                             // emitOutput.ExcludedObjectDiagnostics, NOT `alDiagnostics` — the
                             // latter reflects only the final (recovered) compile round and
                             // backs the EMIT-ZERO / AL-DIAGNOSTIC-FAIL guards below; it is
                             // formatted alc-style with no leading `[Tag]`, so it is never eaten
                             // by Log's filter either way.
                             var exclDiags = emitOutput.ExcludedObjectDiagnostics ?? Array.Empty<string>();
-                            if (AlRunner.Log.Verbose && exclDiags.Count > 0)
+                            // #2949: when the exclusion FAILS the run (everything but the
+                            // all-profiles case below), these diagnostics are the only account
+                            // of why, so they print at default verbosity — the same choice the
+                            // EMIT-ZERO guard below and the --server path already make for a
+                            // compile failure's AL errors. Hiding the cause of a hard failure
+                            // behind a flag left the default-verbosity reader with an emitter
+                            // NRE and an AL0185 in a file that had nothing wrong with it.
+                            // Profiles keep the --verbose gate: that run continues and is not
+                            // a failure, so the same output would be noise.
+                            var printExclDiagsNow = (!allProfiles || AlRunner.Log.Verbose) && exclDiags.Count > 0;
+
+                            // Untagged on purpose: a `[Component]` prefix would be swallowed by
+                            // Log's filter at default verbosity, which is the original defect.
+                            Console.Error.WriteLine((allProfiles
+                                ? $"<bundled>: EMIT-EXCLUDED — {moduleName}: {emitOutput.ExcludedObjects.Count} " +
+                                  $"profile object(s) could not be compiled and were dropped from the module: " +
+                                  $"[{names}]. A profile declares no executable AL and no [Test] procedures, so " +
+                                  $"the module compiles and runs without it."
+                                : $"<bundled>: EMIT-EXCLUDED — {moduleName}: {emitOutput.ExcludedObjects.Count} object(s) " +
+                                  $"could not be compiled and were dropped from the module, so any tests they declare " +
+                                  $"are MISSING from this run: [{names}].")
+                                + ExclusionDiagnosticAdvice(exclDiags, printExclDiagsNow));
+                            if (printExclDiagsNow)
                             {
                                 Console.Error.WriteLine(
                                     $"<bundled>: AL diagnostics that identified the excluded object(s):");
@@ -4781,12 +4810,13 @@ return strictExitCode ? computedExitCode : 0;
                     // `alDiagnostics` — the latter reflects only the final (recovered)
                     // compile round, which by construction has none of its own left once
                     // BcCompiler's retry against the surviving objects has succeeded.
+                    // #2949: the empty case used to say "re-run with --verbose", which over
+                    // JSON-RPC is doubly wrong — the server has no such re-run, and there were
+                    // no diagnostics to find either way. Shared with the CLI's wording.
                     compileErrors.Add(
                         $"EMIT-EXCLUDED: {excludedObjects.Count} object(s) dropped from the module — " +
                         $"tests they declare are missing: [{names}]." +
-                        (excludedObjectDiagnostics.Count > 0
-                            ? " The AL diagnostics that identified them follow."
-                            : " Re-run with --verbose for the AL diagnostics that identified them."));
+                        ExclusionDiagnosticAdvice(excludedObjectDiagnostics, printedAlongside: true));
                     foreach (var d in excludedObjectDiagnostics) compileErrors.Add(d);
                     return new ServerRunResult(Array.Empty<TestResult>(), 3, false,
                         new List<CompilationErrorGroup> { new(moduleName, compileErrors) }, fileHashes);

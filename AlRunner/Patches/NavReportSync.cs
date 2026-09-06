@@ -856,7 +856,11 @@ public static partial class NavReportSync
             }
             catch (TargetInvocationException tie) when (tie.InnerException != null)
             {
-                throw tie.InnerException;
+                // Not `throw tie.InnerException` (#2948): a bare rethrow RESETS the stack
+                // trace to this line, erasing every BC frame that says where the failure
+                // actually came from. Same form as Invoke() above.
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw();
+                throw; // unreachable
             }
             // RDLCLayout returning normally would mean we somehow found a
             // layout — defensive throw in case Cecil rewrite didn't apply.
@@ -1496,7 +1500,11 @@ public static partial class NavReportSync
             }
             catch (TargetInvocationException tie) when (tie.InnerException != null)
             {
-                throw tie.InnerException;
+                // Not `throw tie.InnerException` (#2948): a bare rethrow RESETS the stack
+                // trace to this line, erasing every BC frame that says where the failure
+                // actually came from. Same form as Invoke() above.
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw();
+                throw; // unreachable
             }
         }
 
@@ -1646,7 +1654,10 @@ public static partial class NavReportSync
         }
         catch (TargetInvocationException tie) when (tie.InnerException != null)
         {
-            throw tie.InnerException;
+            // Not `throw tie.InnerException` (#2948): a bare rethrow RESETS the stack trace
+            // to this line, erasing every BC frame below it. Same form as Invoke() above.
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw();
+            throw; // unreachable
         }
 
         CompleteReportConstruction(instance, parent, id);
@@ -1708,7 +1719,10 @@ public static partial class NavReportSync
         }
         catch (TargetInvocationException tie) when (tie.InnerException != null)
         {
-            throw tie.InnerException;
+            // Not `throw tie.InnerException` (#2948): a bare rethrow RESETS the stack trace
+            // to this line, erasing every BC frame below it. Same form as Invoke() above.
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw();
+            throw; // unreachable
         }
     }
 
