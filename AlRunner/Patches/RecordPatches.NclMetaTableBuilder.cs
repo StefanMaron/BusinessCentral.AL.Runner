@@ -143,11 +143,6 @@ public static partial class RecordPatches
             // SystemCreatedBy (2000000002), SystemModifiedAt (2000000003), SystemModifiedBy
             // (2000000004). These are required for system-field access via FieldRef and RecordRef.
             var timestampParsed       = new ParsedField(0,          "timestamp",         "BigInteger", 0);
-            var systemIdParsed        = new ParsedField(2000000000, "SystemId",          "Guid",       0);
-            var systemCreatedAtParsed = new ParsedField(2000000001, "SystemCreatedAt",   "DateTime",   0);
-            var systemCreatedByParsed = new ParsedField(2000000002, "SystemCreatedBy",   "Guid",       0);
-            var systemModifiedAtParsed= new ParsedField(2000000003, "SystemModifiedAt",  "DateTime",   0);
-            var systemModifiedByParsed= new ParsedField(2000000004, "SystemModifiedBy",  "Guid",       0);
             // Merge any tableextension fields for this base table.
             // De-duplicate by field id: precompiled .app SymbolReference.json sometimes lists
             // extension fields both in the base table's Tables[].Fields entry AND in
@@ -161,8 +156,7 @@ public static partial class RecordPatches
             var extFieldsNew = extFields.Where(f => !baseFieldIds.Contains(f.FieldId));
             var allParsed = new[] { timestampParsed }.Concat(parsed.Fields)
                 .Concat(extFieldsNew)
-                .Concat(new[] { systemIdParsed, systemCreatedAtParsed, systemCreatedByParsed,
-                                systemModifiedAtParsed, systemModifiedByParsed }).ToArray();
+                .Concat(SystemFields).ToArray();
             var fields = allParsed.Select((f, idx) =>
                 BuildMetaField(f, idx, parsed.PkFieldIds.Contains(f.FieldId), parsed)).ToArray();
 
@@ -1012,6 +1006,33 @@ public static partial class RecordPatches
     }
 
     /// <summary>
+    /// The five BC system fields every table carries. They are appended to every metatable the
+    /// runner builds (see the field list in <c>BuildNclMetaTable</c>) but are NOT part of
+    /// <c>ParsedTable.Fields</c>, because no AL source declares them — the platform does.
+    ///
+    /// <para>Hoisted to a single definition so <see cref="BuildMetaCalcFormula"/> resolves the
+    /// same set of fields the metatable actually has: Base Application FlowFields do filter on
+    /// them (<c>Purchase Line."Matched Order Lines"</c> is
+    /// <c>where("Purchase Line SystemId" = field(SystemId))</c>), and a lookup that could not
+    /// see them dropped the arm and summed every row — issue #3178.</para>
+    ///
+    /// <para>Deliberately NOT folded into <see cref="GetAllFieldsIncludingExtensions"/>: its
+    /// other callers bind page controls and SubPageLinks by name, where a control named
+    /// <c>SystemId</c> should keep resolving exactly as it does now.</para>
+    ///
+    /// <para><c>timestamp</c> (id 0) is not here. It is a synthetic column the runner adds for
+    /// RecordRef access, not a field AL can name in a CalcFormula.</para>
+    /// </summary>
+    private static readonly ParsedField[] SystemFields =
+    {
+        new ParsedField(2000000000, "SystemId",         "Guid",     0),
+        new ParsedField(2000000001, "SystemCreatedAt",  "DateTime", 0),
+        new ParsedField(2000000002, "SystemCreatedBy",  "Guid",     0),
+        new ParsedField(2000000003, "SystemModifiedAt", "DateTime", 0),
+        new ParsedField(2000000004, "SystemModifiedBy", "Guid",     0),
+    };
+
+    /// <summary>
     /// Build the <c>MetaCalcFormula</c> for one FlowField.
     ///
     /// <para>Every field name in the formula — the source field, each where-arm's own field on
@@ -1063,8 +1084,10 @@ public static partial class RecordPatches
         // Resolve source field (for Sum/Lookup/Average/Min/Max)
         // Materialised once each: the helper allocates a HashSet whenever the table carries
         // extension fields, and the where-arm loop below would otherwise pay for that per arm.
-        var srcFields = GetAllFieldsIncludingExtensions(srcTable).ToList();
-        var parentFields = GetAllFieldsIncludingExtensions(parentTable).ToList();
+        // SystemFields as well as the extension fields: the metatable carries both, and a
+        // CalcFormula may name either (#3263 for the extension half, #3178 for the system half).
+        var srcFields = GetAllFieldsIncludingExtensions(srcTable).Concat(SystemFields).ToList();
+        var parentFields = GetAllFieldsIncludingExtensions(parentTable).Concat(SystemFields).ToList();
 
         int srcFieldId = 0;
         if (cf.SourceFieldName != null)
