@@ -101,8 +101,10 @@
 //   change: RecordPatches.UserSystemTable.cs's header records a deliberate decision not to seed
 //   Access Control alongside the User row, and a seed would alter table state for every test in
 //   every bundle, whereas stating the fact here can only change an answer that throws today.
-//   AlRunner#3040 tracks the seed as the alternative, and docs/limitations.md records the
-//   divergence.
+//   AlRunner#3176 tracks the seed as the alternative, and docs/limitations.md records the
+//   divergence. AlRunner#3174 tracks the one reader this fix cannot reach:
+//   NavUserAccountHelper.IsUserSuperInAllCompanies is `Session.Permissions.IsSuperForAllCompanies`
+//   with no Ncl hop in it at all, so no rewrite of Ncl can answer it.
 //
 // PRECOMPILED-DLL RESPECT
 //   `PermissionManagement` is in Ncl.dll — the runtime engine, ours to rewrite per
