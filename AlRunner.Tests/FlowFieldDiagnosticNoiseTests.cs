@@ -163,9 +163,15 @@ public sealed class FlowFieldDiagnosticNoiseTests
     public void NoPatchWritesABareStackTraceAsItsOwnConsoleErrorCall()
     {
         var patchesDir = Path.Combine(RepoRoot, "AlRunner", "Patches");
+        var patchSources = Directory.EnumerateFiles(patchesDir, "*.cs", SearchOption.AllDirectories).ToList();
         var offenders = new List<string>();
 
-        foreach (var file in Directory.EnumerateFiles(patchesDir, "*.cs", SearchOption.AllDirectories))
+        // #3021 — non-vacuity: a scan that finds nothing must fail, not report a clean tree.
+        Assert.True(patchSources.Count > 0,
+            $"expected patch sources under {patchesDir}, found none — the guard is not looking "
+            + "at anything.");
+
+        foreach (var file in patchSources)
         {
             var lines = File.ReadAllLines(file);
             for (int i = 0; i < lines.Length; i++)
