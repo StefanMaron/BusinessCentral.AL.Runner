@@ -1,5 +1,5 @@
 // TestPageRefusalClaimTests — what the sixteen corrected TestPage refusals claim, what an AL
-// [TryFunction] does with one, and which fourteen in the same two files must keep claiming
+// [TryFunction] does with one, and which nine in the same two files must keep claiming
 // permanence (#2999).
 //
 // WHY THIS IS A RUNNER-SIDE MECHANISM TEST AND NOT AN AL BUNDLE
@@ -41,9 +41,12 @@
 //     still absorbed into `false`.
 //   * PermanentTestPageRefusal_IsStillCatchableByAssertError — the same, on AL's other seam,
 //     so the BcShapeGapException tear-through cannot pass by "anything unusual tears through".
-//   * KeptRefusals_StillClaimPermanence — the fourteen sites #2999 deliberately excluded were
-//     read and LEFT ALONE. If a later sweep deletes their citation the classification was
-//     wrong, and this fails rather than silently widening the change.
+//   * KeptRefusals_StillClaimPermanence — the sites #2999 deliberately excluded were read and
+//     LEFT ALONE. If a later sweep deletes their citation the classification was wrong, and
+//     this fails rather than silently widening the change. NINE citations, not the fourteen
+//     #2999's prose claims: 25 measured on origin/main minus the 16 gaps it lists by line, and
+//     the issue's own enumeration of the permanent ones lists nine. WHICH sites are permanent
+//     is what matters and the issue has that right; only its total is off.
 
 using System;
 using System.Collections.Generic;
@@ -187,7 +190,7 @@ public sealed class TestPageRefusalClaimTests
 
     /// <summary>
     /// A page with no <c>SourceTable</c> — MockTestPage.RequireRecord. #2999 lists it among the
-    /// fourteen genuinely permanent: BC itself has no record-backed rowset for such a page, so
+    /// genuinely permanent ones: BC itself has no record-backed rowset for such a page, so
     /// an AL [TryFunction] reading `false` is the OBSERVABLE BC OUTCOME rather than a gap.
     /// </summary>
     private static RunnerOutOfScopeException PermanentNoSourceTable() =>
@@ -438,7 +441,12 @@ public sealed class TestPageRefusalClaimTests
         new object[] { "RunnerPageInstance.cs", "the runner cannot tell which trigger belongs to it" },
     };
 
-    /// <summary>The fourteen #2999 named as permanent, by the sentence each one renders.</summary>
+    /// <summary>
+    /// The eight permanent THROWS (nine citations — the option-value refusal spells the pointer
+    /// on both branches of one ternary), by the sentence each one renders. The RunObject action
+    /// is the ninth throw and is deliberately absent: see
+    /// <see cref="RunnerPageInstance_KeepsItsTwoUncontestedPermanentCitations"/>.
+    /// </summary>
     public static IEnumerable<object[]> KeptMarkers() => new[]
     {
         new object[] { "MockTestPage.cs", "this page has no SourceTable" },
@@ -465,8 +473,8 @@ public sealed class TestPageRefusalClaimTests
     [MemberData(nameof(KeptMarkers))]
     public void KeptRefusal_StillClaimsPermanence_SoTheClassificationWasNotQuietlyWidened(string file, string marker)
     {
-        // CONTROL ARM THREE. #2999 lists the fourteen citations in these same two files that
-        // are genuinely permanent and says explicitly not to sweep them. For these, an AL
+        // CONTROL ARM THREE. #2999 lists the citations in these same two files that are
+        // genuinely permanent and says explicitly not to sweep them. For these, an AL
         // [TryFunction] reading `false` IS the observable BC outcome, which is the whole test
         // for the bucket. A sweep that "fixed" them too fails here.
         Assert.Contains("docs/scope.md", ThrowStatementContaining(file, marker), StringComparison.Ordinal);

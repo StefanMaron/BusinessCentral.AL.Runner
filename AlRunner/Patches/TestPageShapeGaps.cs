@@ -8,8 +8,8 @@
 //   elsewhere under AlRunner/ and corrected 27. It deliberately left these two files alone,
 //   because in-flight TestPage work was editing both and a factory sweep would have collided.
 //   #2999 is that deferral coming due, and it is deliberately narrow: it lists the sixteen
-//   gaps by line AND the fourteen citations in the same two files that are genuinely
-//   permanent, so the follow-up cannot over-sweep.
+//   gaps by line AND the citations in the same two files that are genuinely permanent, so the
+//   follow-up cannot over-sweep.
 //
 //   docs/scope.md is the manifest of what is PERMANENTLY out of scope. Citing it for a surface
 //   the runner intends to support tells the next developer to stop looking, and it has a
@@ -32,15 +32,20 @@
 //   cannot answer, so that an AL [TryFunction] reading `false` is the OBSERVABLE BC OUTCOME
 //   rather than a runner gap quietly absorbed.
 //
-//     (1) genuinely out of scope — keep the refusal and the scope.md link .......... 14
+//     (1) genuinely out of scope — keep the refusal and the scope.md link ..........  9
 //     (2) in scope, not yet answerable — needs the "not-yet-implemented" anchor .... 14
-//     (2b) in scope, implemented, but BC's own internals could not be READ ......... 2
-//     (3) deliberate divergence — the runner answers on purpose, never throws ...... 0
-//                                                                                  ----
-//                                                                                    30
+//     (2b) in scope, implemented, but BC's own internals could not be READ .........  2
+//     (3) deliberate divergence — the runner answers on purpose, never throws ......  0
+//                                                                                   ----
+//                                                                                     25
 //
-//   Thirty citations, not twenty-five, because two of the fourteen kept ones are the two
-//   branches of a single ternary and are counted here per claim rather than per string.
+//   NINE KEPT, NOT FOURTEEN. #2999's prose says "the other fourteen citations", but its own
+//   enumeration of them lists nine, and nine is what the files hold: 25 citations measured on
+//   origin/main (17 in MockTestPage.cs, 8 in RunnerPageInstance.cs) minus the 16 gaps it lists
+//   by line. The number used here is the measured one; the issue's list of WHICH sites are
+//   permanent is correct and is what this change respects. Those nine citations sit on eight
+//   throws, because the option-value refusal spells the pointer on both branches of one
+//   ternary.
 //
 //   NOTHING landed in (3), and that is structural rather than an oversight — #3001 found zero
 //   for the same reason. An expect-divergence surface RETURNS AN ANSWER rather than throwing
@@ -115,7 +120,7 @@
 //     already said "This is a runner/BC-shape problem, not a problem with the AL under test" —
 //     it was describing a BcShapeGapException while raising a scope claim.
 //
-// ── (1), LEFT ALONE: fourteen citations that really are permanent ────────────────────────
+// ── (1), LEFT ALONE: nine citations that really are permanent ────────────────────────────
 //   Read and kept, exactly as #2999 requires. Per file, so the next reader does not re-derive:
 //
 //     MockTestPage.cs (6 citations / 5 throws)
@@ -127,11 +132,11 @@
 //         member nor a caption (two branches of one ternary, hence 6 citations over 5 throws),
 //         and a date spelling TestPage SetValue never produces.
 //
-//     RunnerPageInstance.cs (3 citations, of which 2 are #2999's and the third is contested)
+//     RunnerPageInstance.cs (3 citations, of which 2 are uncontested and the third is not)
 //       * two lookups that come from a TableRelation and would open the related table's list
 //         page — §3.11 client interaction, and pinned from AL by
 //         tests/runner-extras/testpage-lookup-tablerelation-oos;
-//       * an action whose effect is RunObject. #2999 lists this among the permanent fourteen,
+//       * an action whose effect is RunObject. #2999 lists this among the permanent ones,
 //         but #2931 (PR #2951, in flight) RECLASSIFIES it as not-yet-implemented on the
 //         strength of a real-service-tier measurement — corpus PR
 //         StefanMaron/BusinessCentral.AL.Language.Tests#172 invoked a RunObject action on a
@@ -147,9 +152,10 @@
 //   RecordPatches.NclMetaTableBuilder.cs guards every handler install with
 //   `&& _fValidateHandlerBacking != null` (and the lookup equivalent), so on a BC build whose
 //   layout moved the field trigger is SILENTLY NEVER INSTALLED and the AL that depends on it
-//   runs with no trigger at all. Two code paths over one piece of state, one refusing and one
-//   defaulting. Filed rather than folded in, because it changes trigger installation and needs
-//   its own RED → GREEN — see the issue linked from the PR that landed this file.
+//   runs with no trigger at all — and WireFieldTriggerHandlers still returns true. Two code
+//   paths over one piece of state, one refusing and one defaulting. Filed as #3026 rather than
+//   folded in, because it changes trigger INSTALLATION rather than refusal wording and needs
+//   its own RED → GREEN. Not reachable on 27.0–28.4, where both members resolve.
 //
 // ── WHY THE DOC LINK MOVED ───────────────────────────────────────────────────────────────
 //   docs/limitations.md#testpage-shape-gaps, not docs/scope.md. scope.md documents permanent

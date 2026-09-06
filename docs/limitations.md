@@ -962,7 +962,7 @@ https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
 
   Real BC drives every one of these, so each is the runner failing to keep up rather than a
   surface BC also lacks — which is the test for whether a refusal may cite `docs/scope.md` at
-  all. Fourteen further refusals in those same two files genuinely are permanent and keep their
+  all. Eight further refusals in those same two files genuinely are permanent and keep their
   `docs/scope.md` citation: a page with no `SourceTable`, an `OnQueryClosePage` veto, a lookup
   that could only come from a `TableRelation`, and the AL-authoring errors real BC also raises.
 
