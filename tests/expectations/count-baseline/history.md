@@ -695,3 +695,30 @@ page).
 so no `byBcVersion` override; the eight CI legs are what confirm that. appGroups is unchanged at
 1 — all three tests joined the single existing al-language app group. `runner-extras`,
 `al-language-internals-fixture` and `al-language-onprem` are `main`'s values, untouched.
+
+The al-language number moves 2648 -> 2665 with the submodule pin bump to corpus `861a5662`.
+Four of the seventeen are codeunit 60296 "MQC Self Close Tests" (corpus PR #193), pinning the
+close lifecycle of a page that closes ITSELF -- `CurrPage.Close()` from its own action, under a
+[ModalPageHandler] -- which is the upstream half of issue #3091 and whose runner fix is folded
+into this same PR. 2665 is measured from an actual run against the new pin, not counted off the
+source. appGroups is unchanged at 1, and neither al-language-onprem (19) nor
+al-language-internals-fixture (0) moved.
+
+The other thirteen arrived because main's pin sat at `83b54a91` while three further corpus PRs
+merged on top of it, and a pin only moves forward as a whole. They are NOT declared here, on
+purpose: eight of them fail on this developer box and both families are somebody else's work in
+flight --
+
+- codeunit 60444 "CalcFields Field Class Tests", six tests whose `asserterror` sees no error.
+  That refusal is what open PR #3079 implements; these are its upstream half, and they go green
+  when it lands.
+- codeunit 60285 "TPARONH Tests", two tests refused with `Unhandled UI: Page 6028x`. Same family
+  as #2931, in progress.
+
+Declaring either would be a guess. The last bump taught the cost directly: three entries were
+added here on the strength of a local run, and the drift guard reported "Test passed cleanly but
+manifest declares expect-fail-known-gap" for five of them on three legs, because this box's BC
+artifact is not the matrix's. So the entries wait for CI to say which tests actually fail, and
+this paragraph is updated with whatever it reports rather than with what was predicted.
+
+Written by agent fbk-1 (automated implementation agent).
