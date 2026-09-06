@@ -960,6 +960,25 @@ v = cw.classify(runs, workflow_runs=C6377B30_RUNS)
 check("a genuinely cancelled required context is blocked with no such warning",
       v.code == 4 and not any("WOULD overwrite" in l for l in v.lines),
       f"(code={v.code}) " + "\n".join(v.lines))
+# ...but the advice it DOES print may never restate the falsified claim. The
+# exemption is a narrowing, not a reversal: re-running is still right in the
+# #2726 case, conditional on nothing having failed before the cancellation.
+advice = "\n".join(v.lines)
+check("the exit-4 advice no longer claims a cancelled run has no log to lose",
+      "no failure log" not in advice, advice)
+check("...states the condition instead of exempting cancellations outright",
+      "only while nothing on this commit concluded" in advice, advice)
+check("...and points at the rule file rather than restating the reasoning",
+      "ci-verdicts.md" in advice, advice)
+check("...while still calling the re-run correct where the condition holds",
+      "gh run rerun" in advice and "--admin" in advice, advice)
+
+# The same claim lived twice; the docstring copy is pinned too, so a reader who
+# opens the file instead of running it gets the narrowed version.
+check("the module docstring does not carry the falsified claim either",
+      "no failure log" not in (cw.__doc__ or ""), (cw.__doc__ or "")[:0])
+check("...and defers to the rule file as the normative statement",
+      "ci-verdicts.md" in (cw.__doc__ or ""), "")
 
 print()
 if FAILURES:

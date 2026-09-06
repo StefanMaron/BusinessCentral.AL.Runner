@@ -101,11 +101,17 @@ was refused, because a superseded PR Check run had left the required
 green tool and a refused merge is to assume branch protection is broken and
 reach for --admin, which bypasses the ruleset to work around a phantom.
 
-This is the one case in this repository where `gh run rerun` is the right call:
-a cancelled run has no failure log to overwrite, so re-running it destroys no
-evidence, and it re-reports the context as success within a minute. The workflow
-side of #2726 stops required contexts being cancellable in the first place; this
-verdict exists for anything that still gets there.
+This is the one case in this repository where `gh run rerun` can be the right
+call, and it is CONDITIONAL: only while nothing on the commit concluded `failure`
+before the cancellation. A check run can fail on its merits and have its parent
+workflow run cancelled only afterwards, and a re-run destroys that log exactly as
+it destroys any other. `.claude/rules/ci-verdicts.md` section 3 is the normative
+statement and carries the check to run first -- correct it there, not here.
+
+Where the condition holds, re-running re-reports the context as success within a
+minute. The workflow side of #2726 stops required contexts being cancellable in
+the first place; this verdict exists for anything that still gets there, and the
+exit-4 output names any entry that fails the condition.
 """
 from __future__ import annotations
 
@@ -830,10 +836,14 @@ def classify(runs: list[dict],
             "context name, and 'cancelled' does not satisfy a required check, so the",
             "merge is refused while `gh pr checks` still reads SUCCESS (#2726).",
             "",
-            "Re-run the cancelled run -- this is the ONE case where `gh run rerun` is",
-            "correct: a cancelled run has no failure log to overwrite. Do NOT reach",
-            "for --admin; branch protection is working, the context genuinely is not",
-            "satisfied.",
+            "Re-run the cancelled run -- this is the ONE case where `gh run rerun`",
+            "can be correct, and only while nothing on this commit concluded",
+            "`failure` before the cancellation: a check run that concluded",
+            "`failure` on its merits has a real log, and a re-run destroys it",
+            "like any other. The check to run first is in",
+            ".claude/rules/ci-verdicts.md section 3.",
+            "Do NOT reach for --admin; branch protection is working, the context",
+            "genuinely is not satisfied.",
         ]
         # ...with one exception, and it is the expensive one to get wrong. A
         # check run that concluded `failure` on its merits inside a run somebody
