@@ -758,19 +758,36 @@ carve-out; without it every AL read of `"Company Name"` / `Name` / `"Version Lis
 `"Locked By"` throws `NavObjectDefinitionChangedException` ("old type: OemText, new type: Text")
 instead of returning anything.
 
-**No service tier has adjudicated the row set, and none can through the corpus.** Both routes a
-Cloud-target app has are closed: `Record "Object"` fails `AL0296` because the table is
+**No service tier has adjudicated the row set yet — but one now can, and is being asked.** Both
+routes a *Cloud-target* app has are closed: `Record "Object"` fails `AL0296` because the table is
 `Scope = OnPrem`, and the `RecordRef` route is refused at runtime by
 `NavRecordRef.CheckIsOpenAllowed`, because 2000000001 is in `SystemTables.InternalTables` (100
 ids on BC 28.1) and the escape hatch `SystemTables.OnPremSystemTableRecordRefAllowed` is only
-`{ 2000000187, 2000000188 }`. That refusal was measured on the sibling id: corpus PR
-[#153](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests/pull/153) was withdrawn
-after all 8 BC legs of
+`{ 2000000187, 2000000188 }`.
+
+Both closures are decided by the **calling app's compilation target and nothing else** —
+`NavRecordRef.IsOpenAllowed` returns `true` outright for an OnPrem target without consulting
+`InternalTables` at all — so an OnPrem-target app is refused neither, and needs no `RecordRef`
+in the first place. The corpus gained exactly such an app in corpus PR
+[#179](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests/pull/179)
+(`tests/al-language-onprem`), and corpus PRs #179 and #187 have since adjudicated two other
+`Scope = OnPrem` system tables on all eight **OnPrem** legs. Corpus PR
+[#197](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests/pull/197) asks the same
+question for this table; **issue #3071** tracks reconciling the runner with whatever comes back.
+
+Two measurements to keep apart, because this repository conflated them for a while. The
+*refusal* of a Cloud-target `RecordRef.Open` was originally measured on the **sibling** id —
+corpus PR [#153](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests/pull/153) was
+withdrawn after all 8 BC legs of
 [run 33968379281](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests/actions/runs/33968379281)
-refused 2000000071 on that message, and the mechanism is membership in the same set. What the
-runner-extras suite therefore asserts is the *projection* — a claim about the runner — not what
-a tier's `Object` table holds. **issue #2834** tracks the missing upstream coverage for this
-whole area; settling it needs an OnPrem-target app in the corpus.
+refused 2000000071, and 2000000001 followed by *membership in the same set*, not by its own
+measurement. `AlRunner.Tests/RecordRefCompilationTargetScopeTests` now exercises BC's own
+unreplaced `CheckIsOpenAllowed` body against 2000000001 directly, in both target directions, so
+that inference is retired. The *row set* is the separate question, and only a tier answers it.
+
+Until it does, what the runner-extras suite asserts is the *projection* — a claim about the
+runner — not what a tier's `Object` table holds. **issue #2834** tracks the missing upstream
+coverage for this whole area.
 
 The blank columns are a **declared divergence** for the same reason Object Metadata's payload
 columns are: there is no registry behind them to reproduce. Per

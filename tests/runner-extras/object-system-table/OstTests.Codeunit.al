@@ -26,10 +26,18 @@
 //   tests/al-language-onprem (Target = OnPrem), and NavRecordRef.IsOpenAllowed returns true
 //   outright for an OnPrem target without consulting InternalTables at all — so the table is
 //   reachable from there, and corpus #179 and #187 have since adjudicated two other
-//   Scope = OnPrem system tables on all eight OnPrem legs. Nobody has written the test for
-//   THIS table yet. That is a piece of open work (#3071), not an impossibility, and saying so
-//   matters: #3066 found two runner-local assertions a real tier contradicted, and a stale
-//   "no tier can see this" is how both survived.
+//   Scope = OnPrem system tables on all eight OnPrem legs.
+//
+//   THE TEST FOR THIS TABLE NOW EXISTS: corpus PR #197 puts 2000000001's row set in front of a
+//   real tier from that app, and AlRunner#3071 tracks reconciling the runner with the verdict.
+//   Until it merges, everything below remains a claim about the RUNNER — and one of them is
+//   already known to be contested, because #197 asks whether a modern tier's Object table is
+//   EMPTY, where the runner projects its own object inventory into it. Whichever way that
+//   comes back, the answer belongs upstream and the reconciliation belongs in #3071; do not
+//   pre-emptively change these assertions to match a guess.
+//
+//   Saying this precisely matters: #3066 found two runner-local assertions a real tier
+//   contradicted, and a stale "no tier can see this" is how both survived.
 //
 //   What IS runner-specific, and what these tests actually pin: on a real tier these rows
 //   exist because something wrote them into a SQL table in the application database. The
