@@ -41,12 +41,23 @@ the BC runtime environment:
   Security ID is already taken; a delete cascades into Access Control
   (2000000053), User Property (2000000121), Isolated Storage (2000000107) and
   Tenant Report Layout Selection (2000000233), through `Delete()` and
-  `DeleteAll()` alike. One consequence to know about when running with
-  `--test-data`: a backup that already holds a user named `TESTUSER` under some
-  other security id now refuses the runner's own session-user row, exactly as a
-  real tier would refuse it. The seed says so loudly on stderr rather than
-  claiming a row it did not write, and every relation to
-  `User."User Security ID"` will then refuse `UserSecurityId()`.
+  `DeleteAll()` alike.
+- **The session user's security id can come from your data.** With
+  `--test-data`, if the backup already holds a user whose name matches the
+  runner's session user (`TESTUSER` by default), the session **adopts that
+  row's** `User Security ID`: `UserSecurityId()` returns the backup's value for
+  the rest of the run, and the runner writes no User row of its own. This is
+  deliberate — BC will not hold two users with the same name, so the
+  alternative is a session whose user exists in no row at all, and a real tier
+  gives a session the security id of the user it authenticated as. The
+  consequence to plan for is that `UserSecurityId()` is then **data-dependent**:
+  AL that asserts a specific session identity sees one value with `--test-data`
+  and another without it. Every adoption prints a `[warn]` line on stderr naming
+  the user, the adopted id and the generated id it replaced, so the value is
+  never unexplained. Two cases still refuse loudly instead of adopting: no row
+  carries the session user's name (so the refusal was not a name collision), and
+  more than one row carries it (a state real BC cannot hold, so the data is
+  inconsistent and picking one would be arbitrary).
 - **Base app data** — no standard BC tables are populated. Code that reads
   `G/L Account`, `Customer`, `Vendor`, or any other base app table finds them empty
   unless your test inserts data.

@@ -9,24 +9,28 @@
 //   On a real tier it is BC's system-table TRIGGER, not an index. Ncl's
 //   SystemTableTriggers.OnBeforeInsertAsync has a `case 2000000120:` arm that validates a unique
 //   user name -- along with the Windows SID, authentication email and application id -- before
-//   the row is written. AlRunner/Patches/UserTableTriggerPatches.cs's own header records that
-//   the runner reproduces exactly one thing from that arm, its User Property (2000000121)
-//   companion insert, and states in as many words that "None of that [validation] is reproduced
-//   here".
+//   the row is written. AlRunner/Patches/UserTableTriggerPatches.cs reproduces that arm (#2983),
+//   so the runner refuses this collision the way BC does. Until it did, the store behind the
+//   User table -- BC's own CreateTempDataAccess -- enforced the primary key and nothing else,
+//   the seed landed anyway, and the run was left holding two rows that share a user name where
+//   BC would hold one.
 //
-//   UserTableTriggerPatches REPRODUCES that arm now (#2983), so the runner refuses this
-//   collision the way BC does. Until it did, the store behind the User table -- BC's own
-//   CreateTempDataAccess -- enforced the primary key and nothing else, the seed landed anyway,
-//   and the run was left holding two rows that share a user name where BC would hold one.
+// WHAT THE SEED DOES ABOUT IT: ADOPT (maintainer decision, 2026-09-06)
+//   BC's refusal is right about the ROW, and it leaves open what the SESSION should be. The
+//   runner ADOPTS: it takes this stand-in row's security id as the session's own, so
+//   UserSecurityId() answers {A17E9C42-5B08-4D6F-9E31-0C7A2F84B155} for the rest of the run and
+//   no row is written. The alternative -- refuse, and run as a user present in no row -- is the
+//   state AlRunner#2296 exists to remove, and it was this fixture that measured it.
 //
 // WHAT THIS FIXTURE IS FOR
-//   It measures the hazard the #2941 review predicted, end to end. It was the canary for #2983,
-//   and the canary fired: SurcTheSessionUserStillGetsItsOwnRow -- which asserted the seed
-//   landing -- was replaced by SurcTheSessionUserIsRefusedItsOwnRowOverTheDuplicateName, and
-//   RecordPatches.EnsureUserSystemTableRowSeeded's Refused branch is now reachable from AL for
-//   the first time. What the fixture pins from here on is that the refusal is CLEAN: one row
-//   under the name, the stand-in's, and a seed that reports what it did rather than claiming
-//   the row is there.
+//   It measures the hazard the #2941 review predicted, end to end, and it has now flipped twice.
+//   SurcTheSessionUserStillGetsItsOwnRow (the seed landing) became
+//   SurcTheSessionUserIsRefusedItsOwnRowOverTheDuplicateName when #2983 added the uniqueness
+//   arm, and that became SurcTheSessionAdoptedTheExistingRowsSecurityId when the maintainer
+//   chose adoption. What it pins from here on is the ADOPTION being complete and loud: the
+//   session resolves to THIS row, no second row is written, UserId() is untouched, the adopted
+//   user keeps its User Property companion row, and the seed says on stderr where the id came
+//   from.
 codeunit 70520 "SURC Installer"
 {
     Subtype = Install;

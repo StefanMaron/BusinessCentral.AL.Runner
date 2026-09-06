@@ -177,12 +177,32 @@ public static class UserTableTriggerPatches
                 "the User record under insert has no session, so the User Property row BC creates "
                 + "alongside it cannot be written");
 
+        EnsureUserPropertyRow(session, sid, "User (2000000120) insert");
+    }
+
+    /// <summary>
+    /// Write the User Property (2000000121) row BC's <c>case 2000000120:</c> insert arm writes
+    /// alongside every User, keyed on <paramref name="sid"/>. Idempotent: the insert uses
+    /// <c>DataError.TrapError</c>, exactly as BC's own trigger does, so an existing row for this
+    /// security id is left alone rather than turned into a duplicate-key error.
+    ///
+    /// <para>EXTRACTED from <see cref="OnBeforeUserInsert"/> because a SECOND path now has to
+    /// maintain the same invariant. When the session-user seed adopts an existing User row's
+    /// security id instead of writing its own row (see
+    /// <c>RecordPatches.TryAdoptSessionUserSecurityId</c>), no insert happens, so this prepend
+    /// never fires for the adopted sid — and the invariant #2355 established, that every User the
+    /// session can be has a User Property row, would hold for every user the runner creates and
+    /// not for the one the session actually IS. Two code paths writing the same state must
+    /// maintain the same invariant; this is the shared half.</para>
+    /// </summary>
+    internal static void EnsureUserPropertyRow(NavSession session, NavValue sid, string origin)
+    {
         using var property = new NavRecord(session, UserPropertyTableId, SecurityFiltering.Ignored);
         var propertyMeta = property.MetaTable
             ?? throw RunnerShapeGap.UserPropertyCompanionRow(
                 "User Property (2000000121)",
                 "the User Property table has no metadata in this run, so the row BC creates alongside "
-                + "every User cannot be written");
+                + $"every User cannot be written (origin: {origin})");
 
         property.SetFieldValue(FieldNoByName(propertyMeta, UserSecurityIdFieldName), sid);
         property.SetFieldValue(FieldNoByName(propertyMeta, TelemetryUserIdFieldName), NavGuid.NewGuid());

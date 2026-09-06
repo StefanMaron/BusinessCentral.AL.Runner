@@ -3,7 +3,7 @@
 // RUNNER-MECHANISM tests. That BC's session user is a row in the User table is plain BC
 // behaviour and is adjudicated upstream by a real service tier (corpus codeunit 60991). What
 // these pin is the runner's own seed: RecordPatches.EnsureUserSystemTableRowSeeded must be able
-// to tell its three outcomes apart, and must not claim to have written a row it did not write.
+// to tell its outcomes apart, and must not claim to have written a row it did not write.
 //
 // THE DEFECT
 //   The seed inserted through ALInsert(DataError.TrapError, …) and DISCARDED the bool. TrapError
@@ -27,19 +27,33 @@
 //   measured on BC 28.1.49838.53910 the seed landed anyway, because the mechanism is an index
 //   on neither side: the runner's store for this table is BC's own CreateTempDataAccess, which
 //   enforces the PRIMARY key on "User Security ID" and nothing else, and real BC refuses a
-//   duplicate user name from a TRIGGER —
+//   duplicate user name from a TRIGGER --
 //   SystemTableTriggers.OnBeforeInsertAsync's `case 2000000120:` arm calls
 //   IsUserFieldUniqueAsync(recordBuffer, 2, insert: true) and throws
 //   NavNCLUserTableUserNameMustBeUniqueException.Create() before writing. The runner did not
 //   reproduce that arm, so it held two rows sharing a user name where BC would hold one.
 //
-//   AlRunner/Patches/UserTableTriggerPatches.cs reproduces it now, and the review's prediction
-//   is therefore the LIVE behaviour rather than a hypothetical: the seed IS refused over a
-//   same-named foreign user, and the Refused branch #2941 built — until now reachable only from
-//   the exception path — is reached from AL for the first time.
-//   SeedWithASameNamedForeignUserPresent_IsRefusedAndSaysSo below asserts exactly that, naming
-//   BC's own exception text, and it is the RED→GREEN for #2983 on the runner side: against the
-//   pre-fix runner it fails, because the seed reported "seeded User row 'TESTUSER'".
+//   AlRunner/Patches/UserTableTriggerPatches.cs reproduces it now, so the seed IS refused over a
+//   same-named foreign user.
+//
+// WHAT THE SEED DOES WITH THAT REFUSAL: ADOPT (maintainer decision, 2026-09-06)
+//   BC's refusal settles the ROW and not the SESSION. The first implementation of #2983 answered
+//   "the session is a user in no row", which is the state #2296 exists to remove; the maintainer
+//   chose ADOPTION instead. The session takes the colliding row's security id as its own, so
+//   UserSecurityId() returns a value that came out of the data.
+//
+//   The objection that survived that decision is about SILENCE, not adoption: UserSecurityId()
+//   now depends on the contents of a backup file, and AL asserting session identity sees a
+//   different value with and without --test-data. So the seed prints a [warn] line naming the
+//   user, the adopted id, the generated id it replaced and where it came from -- and
+//   SeedWithASameNamedForeignUserPresent_AdoptsThatRowsSecurityIdAndSaysSo asserts every part of
+//   it, including the "[warn] " prefix, because a "[Component]"-tagged line is suppressed at
+//   default verbosity (#3068) and would make "loud, never silent" untrue.
+//
+//   THE TWO DIRECTIONS. This fixture asserts the ADOPTED concrete id
+//   {A17E9C42-5B08-4D6F-9E31-0C7A2F84B155}; SessionUserRowAlreadyPresent asserts the
+//   runner-GENERATED {C0A1BDFA-0000-0000-0000-545553545553} for the case where there is nothing
+//   to adopt. One implementation cannot satisfy both by returning a constant.
 using System.Diagnostics;
 using System.Text;
 using Xunit;
@@ -127,6 +141,13 @@ public sealed class SessionUserRowRefusalTests
 
             // And the AL-visible state: the row the Install trigger wrote is untouched, there is
             // exactly one of it, and Get still consults the key.
+            // NEGATIVE DIRECTION for the adoption in the sibling test below: nothing here is
+            // adopted, so no adoption line may appear at all.
+            Assert.DoesNotContain("ADOPTED the security id", stderr);
+
+            Assert.Contains(
+                "PASS  Codeunit70501.SuraUserSecurityIdIsTheRunnerGeneratedOneWhenNothingIsAdopted",
+                stdout);
             Assert.Contains("PASS  Codeunit70501.SuraSeedLeftTheAlreadyPresentRowExactlyAsItWas", stdout);
             Assert.Contains("PASS  Codeunit70501.SuraSeedAddedNoSecondRowForTheSessionUser", stdout);
             Assert.Contains("PASS  Codeunit70501.SuraAUserSecurityIdBelongingToNobodyIsStillNotFound", stdout);
@@ -139,7 +160,7 @@ public sealed class SessionUserRowRefusalTests
     }
 
     [Fact]
-    public void SeedWithASameNamedForeignUserPresent_IsRefusedAndSaysSo()
+    public void SeedWithASameNamedForeignUserPresent_AdoptsThatRowsSecurityIdAndSaysSo()
     {
         var cacheDir = TempCache("collision");
         try
@@ -149,25 +170,43 @@ public sealed class SessionUserRowRefusalTests
             Assert.True(exit == 0,
                 $"expected a clean run. exit={exit}\nstdout:\n{stdout}\nstderr:\n{stderr}");
 
-            // THE #2983 DISCRIMINATOR. Against the pre-fix runner this line reads
-            // "UserSystemTable: seeded User row 'TESTUSER'", because nothing refused the
-            // duplicate name. It now reads the Refused one, and it names BC's OWN exception —
-            // the runner raises NavNCLUserTableUserNameMustBeUniqueException through BC's own
-            // static factory, so the text below is BC's, not a runner paraphrase.
-            Assert.Contains("was REFUSED and is NOT present", stderr);
-            Assert.Contains("NavNCLUserTableUserNameMustBeUniqueException", stderr);
-            Assert.Contains("The user name must be unique.", stderr);
+            // THE #2983 DISCRIMINATOR, after the maintainer's decision to ADOPT.
+            //
+            // Three implementations are distinguishable here and only one passes. The pre-#2983
+            // runner printed "UserSystemTable: seeded User row 'TESTUSER'" — it wrote a second row
+            // under a name real BC keeps unique. The first #2983 implementation printed
+            // "was REFUSED and is NOT present" — correct about the row, and it left the session as
+            // a user in no row at all. This one adopts, and the line below is the whole reason
+            // adopting is allowed to be silent about nothing.
+            Assert.Contains("ADOPTED the security id", stderr);
+            Assert.DoesNotContain("was REFUSED and is NOT present", stderr);
             Assert.DoesNotContain("UserSystemTable: seeded User row", stderr);
-            Assert.DoesNotContain("was already present", stderr);
 
-            // The refusal is REPORTED, not merely acted on: #2941's whole finding was that the
-            // seed could reach an outcome and say nothing about it.
-            Assert.Contains("See AlRunner#2296", stderr);
+            // THE ADOPTION IS VISIBLE, in the terms the objection to adopting demanded: the
+            // user, the id taken, the id it replaced, and that it came from the data. A reader
+            // of the log must never have to wonder why UserSecurityId() answered what it did.
+            Assert.Contains("'TESTUSER'", stderr);
+            Assert.Contains("A17E9C42-5B08-4D6F-9E31-0C7A2F84B155", stderr);   // adopted
+            Assert.Contains("C0A1BDFA-0000-0000-0000-545553545553", stderr);   // replaced
+            Assert.Contains("came from your data", stderr);
+            Assert.Contains("See AlRunner#2983", stderr);
+
+            // AND IT SURVIVES THE DEFAULT LOG COMPONENT FILTER. #3068 / the 42-test precedent:
+            // a "[Component]"-tagged line is suppressed at default verbosity, which would make
+            // "loud, never silent" untrue. This run sets no verbosity flag, so seeing the text
+            // at all is the assertion — but pin the prefix too, so a later refactor cannot move
+            // it behind a tag without failing here.
+            Assert.Contains("[warn] UserSystemTable: the session user", stderr);
 
             Assert.Contains("PASS  Codeunit70521.SurcTheSameNamedForeignUserIsInTheTable", stdout);
             Assert.Contains(
-                "PASS  Codeunit70521.SurcTheSessionUserIsRefusedItsOwnRowOverTheDuplicateName",
-                stdout);
+                "PASS  Codeunit70521.SurcTheSessionAdoptedTheExistingRowsSecurityId", stdout);
+            Assert.Contains(
+                "PASS  Codeunit70521.SurcTheSessionUserResolvesToTheRowTheDataProvided", stdout);
+            Assert.Contains(
+                "PASS  Codeunit70521.SurcAdoptionAddedNoSecondRowAndLeftUserIdAlone", stdout);
+            Assert.Contains(
+                "PASS  Codeunit70521.SurcTheAdoptedUserHasItsUserPropertyRow", stdout);
             Assert.DoesNotContain("FAIL", stdout);
         }
         finally

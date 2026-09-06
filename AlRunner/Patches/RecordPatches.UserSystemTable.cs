@@ -96,6 +96,39 @@
 //   Still NOT reproduced from the same arm: ValidateAuthenticationEmailAsync and
 //   ValidateApplicationIdAsync (#2363's subject) — see UserTableTriggerPatches's header.
 //
+// WHAT THE SEED DOES WITH THAT REFUSAL — ADOPT (maintainer decision, 2026-09-06)
+//   Refusing is right about the ROW: BC will not hold two users of one name, so the seed cannot
+//   write its own. It left open what the SESSION should be, and the first implementation of
+//   #2983 answered "a user that is in no row" — which is the state #2296 exists to remove.
+//
+//   The decision is to ADOPT. When exactly one existing User row carries this session's user
+//   NAME, the session takes that row's security id as its own: UserSecurityId() returns it for
+//   the rest of the run, and the seed writes nothing. That is what someone pointing --test-data
+//   at a backup containing their own TESTUSER is asking for, and it is what a real tier does —
+//   an authenticated session gets the security id of the user it authenticated AS, never a
+//   synthetic one.
+//
+//   THE COST, WHICH IS WHY IT IS LOUD. UserSecurityId() now depends on the contents of a backup
+//   file. AL asserting session identity sees one value with --test-data and another without it,
+//   and nothing in the AL says why. That is the data-dependent-behaviour shape loud-failures.md
+//   is about, so every adoption prints a [warn] line naming the user, the adopted id, the
+//   generated id it replaced, and where it came from. [warn] and not a [Component] tag: Log.cs
+//   suppresses component tags at default verbosity (#3068).
+//
+//   WHAT STILL REFUSES, LOUDLY. No row under that name (the refusal was not a name collision, so
+//   there is nothing to adopt), and MORE THAN ONE row under it (real BC cannot hold that, so the
+//   data is inconsistent and choosing between them would be a coin toss inside UserSecurityId()).
+//   None of UserTableTriggerPatches's BC-faithful refusals is softened — an AL Insert of a
+//   duplicate user name or Windows SID still raises BC's own exception, unchanged.
+//
+//   ORDERING CONSEQUENCE, NOT FIXED HERE. This runs AFTER the bundle's install triggers, so AL
+//   that called UserSecurityId() during install saw the generated id, and any row it keyed on
+//   that id keeps pointing at a user the session no longer is. Nothing in the runner's own seeds
+//   does this, and nothing measured has hit it, but it is a real window and it is named rather
+//   than papered over. Closing it means adopting before install triggers run, which forces the
+//   User table's on-demand backup load earlier — inside the install-baseline caching window —
+//   and that is a larger change than this one. See AlRunner#2983.
+//
 // PRECOMPILED-DLL RESPECT
 //   No AL business-logic body is touched. NavRecord, NCLMetaTable, NCLMetaField and NavValue are
 //   runtime-engine types, and the row is inserted through BC's own AL insert entry point exactly
@@ -149,6 +182,13 @@ public static partial class RecordPatches
         Inserted,
         /// <summary>A row for the session user's own security id was already in the table.</summary>
         AlreadyPresent,
+        /// <summary>
+        /// The insert was refused by a NAME collision, and the session took the colliding row's
+        /// security id as its own instead of going without a row. See
+        /// <see cref="TryAdoptSessionUserSecurityId"/> for why this is an adoption rather than a
+        /// refusal, and what it is deliberately NOT extended to.
+        /// </summary>
+        AdoptedExistingRow,
         /// <summary>The insert was refused AND no row for the session user's security id exists.</summary>
         Refused,
     }
@@ -156,7 +196,37 @@ public static partial class RecordPatches
     private static bool _userRowSeededForThisBundle;
     private static bool _userRowSeedInProgress;
 
-    internal static void ResetUserSystemTableForNewBundle() => _userRowSeededForThisBundle = false;
+    /// <summary>
+    /// The security id BcRuntime generated for the skeleton session, saved the first time an
+    /// adoption overwrites it so the next bundle can be given it back. Null until then.
+    ///
+    /// <para>WHY THIS EXISTS. The seed's bundle flag resets per bundle
+    /// (<see cref="ResetUserSystemTableForNewBundle"/>), but the skeleton NavUser adoption pokes
+    /// is built ONCE PER PROCESS — in <c>BcRuntime.ApplyAllPatches</c>, on the BC load path.
+    /// Without this, an adoption made for bundle A would still be the session identity when
+    /// bundle B ran: multi-bundle runs, <c>--watch</c> and <c>--server</c> all execute several
+    /// bundles in one process, so bundle B would silently inherit a security id that came out of
+    /// bundle A's data and matches nothing in its own. A wrong answer with nothing to notice it
+    /// by, which is precisely what adoption is not allowed to introduce.</para>
+    /// </summary>
+    private static NavGuid? _generatedSessionUserSid;
+
+    internal static void ResetUserSystemTableForNewBundle()
+    {
+        _userRowSeededForThisBundle = false;
+
+        // Put the generated identity back before the next bundle seeds, so each bundle decides
+        // adoption against its OWN data from the same starting point. Idempotent and free when
+        // nothing was ever adopted.
+        if (_generatedSessionUserSid != null)
+        {
+            var session = AlRunner.BcRuntime.SkeletonSession;
+            if (session != null && TryPokeSessionUserSecurityId(session, _generatedSessionUserSid))
+                PerfTrace.Log(
+                    "UserSystemTable: restored the generated session security id for the next bundle");
+            _generatedSessionUserSid = null;
+        }
+    }
 
     /// <summary>
     /// True only when the User table actually holds a row for the session user's security id.
@@ -269,11 +339,47 @@ public static partial class RecordPatches
             }
         }
 
+        // #2983, MAINTAINER DECISION 2026-09-06 — ADOPT, do not refuse.
+        //
+        // The refusal above is correct about BC: two users cannot share a name, so the seed
+        // genuinely cannot write its row. What was left open was what the SESSION should then be.
+        // Refusing leaves the run with a session user that exists nowhere in the User table,
+        // which is the state #2296 was filed to remove; adopting makes the session BE the user
+        // the data already describes, which is what a person pointing --test-data at a backup
+        // containing their own TESTUSER is asking for. The maintainer chose adoption.
+        //
+        // The objection that survives the decision is about SILENCE, not about adopting:
+        // UserSecurityId() now returns a value that came out of a backup file, and test code
+        // asserting session identity sees a different answer with and without --test-data. So
+        // TryAdoptSessionUserSecurityId reports every adoption on stderr at [warn], naming the
+        // user, the adopted id, the generated id it replaced and where it came from. Nothing
+        // about this may be quiet.
+        //
+        // Placed here rather than inside InsertSessionUserRow because BOTH refusal paths have to
+        // reach it: the `inserted == false` return AND the catch above, which is where BC's own
+        // NavNCLUserTableUserNameMustBeUniqueException actually arrives (TrapError converts data
+        // errors, not a system-table trigger's raise).
+        if (outcome == UserRowSeedOutcome.Refused)
+        {
+            if (TryAdoptSessionUserSecurityId(session, meta, userName, userSid, out var whyNotAdopted))
+                outcome = UserRowSeedOutcome.AdoptedExistingRow;
+            else
+                refusalDetail = $"{refusalDetail}. It was not adopted either: {whyNotAdopted}";
+        }
+
         switch (outcome)
         {
             case UserRowSeedOutcome.Inserted:
                 _userRowSeededForThisBundle = true;
                 PerfTrace.Log($"UserSystemTable: seeded User row '{userName}'");
+                break;
+            case UserRowSeedOutcome.AdoptedExistingRow:
+                // The flag's stated invariant — "the User table holds a row for the session
+                // user's security id" — is satisfied, and satisfied more directly than by the
+                // insert: the session user's security id IS that row's, because the session was
+                // moved onto it. Nothing was written.
+                _userRowSeededForThisBundle = true;
+                PerfTrace.Log($"UserSystemTable: adopted the existing User row for '{userName}'");
                 break;
             case UserRowSeedOutcome.AlreadyPresent:
                 _userRowSeededForThisBundle = true;
@@ -379,6 +485,179 @@ public static partial class RecordPatches
     }
 
     /// <summary>
+    /// The session-user seed was refused. If the reason is that the User table already holds
+    /// EXACTLY ONE row carrying this session's user NAME under a different security id, move the
+    /// session onto that row — its security id becomes what <c>UserSecurityId()</c> returns for
+    /// the rest of the run — and report it loudly. Returns false, with a reason, in every other
+    /// case.
+    ///
+    /// <para>WHY ADOPT AT ALL (#2983, maintainer decision 2026-09-06). A <c>--test-data</c>
+    /// backup that carries its own <c>TESTUSER</c> is the common case this arises from, and the
+    /// person who pointed the runner at that backup means for the session to be that user. The
+    /// alternative shipped first — refuse, and run with a session user that exists in no row —
+    /// is exactly the state #2296 was filed to remove, and it re-broke every TableRelation to
+    /// <c>User."User Security ID"</c> for that run. Adopting is also what makes the runner agree
+    /// with BC rather than merely refuse like BC: on a real tier, a session authenticated as a
+    /// user that IS in the table gets that user's security id, and never a synthetic one.</para>
+    ///
+    /// <para>WHY IT IS LOUD, AND WHY THAT IS NOT NEGOTIABLE. Adopting makes
+    /// <c>UserSecurityId()</c> depend on the contents of a backup file: AL asserting session
+    /// identity sees one value with <c>--test-data</c> and another without it. That is the
+    /// data-dependent-behaviour shape <c>.claude/rules/loud-failures.md</c> exists to prevent,
+    /// and the answer is not to refuse the adoption but to make sure nobody has to wonder where
+    /// the value came from. The <c>[warn]</c> line below names the user, the adopted id, the
+    /// generated id it replaced, and the fact that it came from the data. <c>[warn]</c> rather
+    /// than a <c>[Component]</c> tag because <c>Log.cs</c> suppresses component tags at default
+    /// verbosity — #3068, and the precedent where exactly this kind of line was eaten by the
+    /// component filter and cost 42 tests.</para>
+    ///
+    /// <para>WHAT STILL REFUSES, and the distinction is the point of the counting below:</para>
+    /// <list type="bullet">
+    ///   <item>NO row carries the session user's name — the refusal came from somewhere other
+    ///   than a name collision (a Windows SID clash, say), so there is no row to adopt and no
+    ///   basis for guessing one. Loud refusal, unchanged.</item>
+    ///   <item>MORE THAN ONE row carries it. Real BC cannot hold that state at all — its own
+    ///   uniqueness trigger is what this PR reproduces — so a backup holding two is genuinely
+    ///   inconsistent data, and "adopt one of them" would be a coin toss written into
+    ///   <c>UserSecurityId()</c>. Loud refusal, naming the ambiguity.</item>
+    /// </list>
+    ///
+    /// <para>Adoption does not soften any of the BC-faithful refusals in
+    /// <c>UserTableTriggerPatches</c>. Those are unchanged: an AL <c>Insert</c> of a duplicate
+    /// user name or a duplicate non-empty Windows SID still raises BC's own exception. The only
+    /// thing that changed is what the runner's OWN session-user seed does when BC's rule refuses
+    /// its row.</para>
+    /// </summary>
+    private static bool TryAdoptSessionUserSecurityId(
+        object session, NCLMetaTable userMeta, string userName, NavGuid generatedSid,
+        out string whyNot)
+    {
+        NavGuid? adopted;
+        try
+        {
+            using var probe = new NavRecord((NavSession)session, UserSystemTableId, SecurityFiltering.Ignored);
+            var probeMeta = probe.MetaTable ?? userMeta;
+            var nameField = FieldByNameOnUser(probeMeta, UserNameFieldName);
+            probe.ALSetRange(nameField.FieldNo, NavValue.CreateNavValueFromObject(nameField, userName));
+
+            if (!probe.ALFindFirstAsync(DataError.TrapError).GetAwaiter().GetResult())
+            {
+                whyNot = $"no row in the User table carries the name \"{userName}\", so the "
+                    + "refusal was not a name collision and there is no row to adopt";
+                return false;
+            }
+
+            adopted = probe.GetFieldValue(FieldNoByNameOnUser(probeMeta, UserSecurityIdFieldName)) as NavGuid;
+
+            // Read the sid BEFORE stepping the cursor. A second row under one name is a state
+            // real BC refuses to hold, so finding one means the data is inconsistent rather than
+            // merely surprising — and picking either row would be arbitrary.
+            // CS0618: sync-over-async, the same trade the rest of this file makes.
+#pragma warning disable CS0618
+            var moved = probe.ALNext();
+#pragma warning restore CS0618
+            if (moved != 0)
+            {
+                whyNot = $"MORE THAN ONE row in the User table carries the name \"{userName}\". "
+                    + "Real BC cannot hold that state — its own uniqueness trigger refuses it — so "
+                    + "this data is inconsistent, and adopting one of them would make "
+                    + "UserSecurityId() a coin toss";
+                return false;
+            }
+        }
+        catch (Exception ex)
+        {
+            var inner = ex is TargetInvocationException tie && tie.InnerException != null ? tie.InnerException : ex;
+            whyNot = $"the User table could not be searched for a row to adopt "
+                + $"({inner.GetType().Name}: {inner.Message})";
+            return false;
+        }
+
+        if (adopted == null || adopted.IsZeroOrEmpty)
+        {
+            whyNot = $"the row carrying the name \"{userName}\" has no User Security ID, so there "
+                + "is no identity on it to adopt";
+            return false;
+        }
+
+        // Remember what is being overwritten BEFORE overwriting it. The skeleton NavUser is
+        // per-process while this seed is per-bundle, so the next bundle in a --watch / --server /
+        // multi-bundle run has to start from the generated identity again rather than inheriting
+        // this one. Only the FIRST adoption records it; a second in the same process must not
+        // overwrite the original with an already-adopted value.
+        _generatedSessionUserSid ??= generatedSid;
+
+        if (!TryPokeSessionUserSecurityId(session, adopted))
+        {
+            whyNot = "the skeleton session's NavUser does not expose the userGuid field this "
+                + "runner build writes UserSecurityId() through, so the session could not be "
+                + "moved onto the existing row";
+            return false;
+        }
+
+        // Every User BC creates has a User Property (2000000121) row created with it (#2355).
+        // The adopted row got here without passing through UserTableTriggerPatches's insert
+        // prepend — it came out of a backup, or out of install code — so that invariant is not
+        // guaranteed for it, and the session user is precisely the user for whom
+        // UserManagement.DirectSetUserFieldValue does a RAISING Get on that table. Idempotent:
+        // TrapError leaves an existing row alone.
+        try
+        {
+            UserTableTriggerPatches.EnsureUserPropertyRow(
+                (NavSession)session, adopted, $"session-user adoption of '{userName}'");
+        }
+        catch (Exception ex)
+        {
+            // Diagnosis only. The adoption itself has already happened and is sound; a missing
+            // companion row is the older #2355 gap resurfacing for a row the runner did not
+            // write, and it must not turn into a second exception on top of a completed change.
+            var inner = ex is TargetInvocationException tie && tie.InnerException != null ? tie.InnerException : ex;
+            Console.Error.WriteLine(
+                $"[warn] UserSystemTable: the adopted User row for '{userName}' has no User Property "
+                + $"(2000000121) row and one could not be created ({inner.GetType().Name}: {inner.Message}). "
+                + "Microsoft AL reaching NavUserAccountHelper.SetAuthenticationObjectId / "
+                + "SetAuthenticationEmail for this user will fail the way AlRunner#2355 describes.");
+        }
+
+        // LOUD, and on stderr at [warn] so the default Log component filter cannot eat it.
+        // This is the whole mitigation for the one real objection to adopting: a reader must
+        // never have to wonder why UserSecurityId() returned what it did.
+        Console.Error.WriteLine(
+            $"[warn] UserSystemTable: the session user '{userName}' ADOPTED the security id "
+            + $"{adopted} from a User row (2000000120) that was already present, instead of the "
+            + $"{generatedSid} this runner generated. UserSecurityId() returns the ADOPTED value "
+            + "for the rest of this run, so it is a value that came from your data — a --test-data "
+            + "backup, or this bundle's own install code — and not one the runner chose. AL that "
+            + "asserts a session identity will see a different value here than it would without "
+            + "that data. BC refuses two users sharing a name (the runner reproduces that refusal "
+            + "in UserTableTriggerPatches), so the alternative was a session whose user is in no "
+            + "row at all. See AlRunner#2983 and AlRunner#2296.");
+
+        whyNot = string.Empty;
+        return true;
+    }
+
+    /// <summary>
+    /// Point the skeleton session's identity at <paramref name="adopted"/>. Measured against
+    /// BC 28.1's own IL rather than assumed: <c>ALDatabase.ALUserSecurityId()</c> is
+    /// <c>NavCurrentThread.Session.User.Id</c>, <c>NavSession.User</c> is
+    /// <c>Authenticator.User</c>, <c>NavUserAuthentication.User</c> is its <c>navUser</c> field,
+    /// and <c>NavUser.Id</c> is <c>userGuid.Value</c> — with no cached copy anywhere on the
+    /// chain. So one field is the whole of the adoption, and this is the same field
+    /// <c>BcRuntime</c> pokes when it builds the skeleton user in the first place.
+    /// </summary>
+    private static bool TryPokeSessionUserSecurityId(object session, NavGuid adopted)
+    {
+        const BindingFlags F = BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public;
+        var auth = session.GetType().GetProperty("Authenticator", F)?.GetValue(session);
+        var navUser = auth?.GetType().GetField("navUser", F)?.GetValue(auth);
+        var fUserGuid = navUser?.GetType().GetField("userGuid", F);
+        if (navUser == null || fUserGuid == null) return false;
+        AlRunner.Infrastructure.FieldPoke.SetInstance(fUserGuid, navUser, adopted);
+        return true;
+    }
+
+    /// <summary>
     /// Is there a User row whose primary key is <paramref name="userSid"/>? This is the whole
     /// difference between "already present" and "refused": the seed's promise is a row for THIS
     /// security id, not merely that the table is non-empty.
@@ -402,10 +681,14 @@ public static partial class RecordPatches
     /// On a real tier that name collision is refused by BC's system-table TRIGGER, not by an
     /// index: Ncl's <c>SystemTableTriggers.OnBeforeInsertAsync</c> <c>case 2000000120:</c> arm
     /// validates a unique user name (along with the Windows SID, authentication email and
-    /// application id) before writing. <c>UserTableTriggerPatches</c>'s own header records that
-    /// the runner reproduces only that arm's User Property companion insert and none of its
-    /// validation, so the runner does not refuse the duplicate here at all. This text therefore
-    /// describes what BC would do, and says plainly that the runner did something else.
+    /// application id) before writing, and since #2983 <c>UserTableTriggerPatches</c> reproduces
+    /// that refusal here too.
+    ///
+    /// <para>Reaching this text at all now means the single-row name collision was NOT the
+    /// reason, because that one is adopted rather than refused
+    /// (<see cref="TryAdoptSessionUserSecurityId"/>) — so the surviving cases are the ambiguous
+    /// one (several rows share the name, which real BC cannot hold) and a refusal from something
+    /// other than the name.</para>
     /// </summary>
     private static string DescribeUserRowRefusal(object session, NCLMetaTable userMeta, string userName)
     {
@@ -421,11 +704,10 @@ public static partial class RecordPatches
                     + $"User Security ID is {otherSid} (a --test-data backup carrying its own user "
                     + "of this name does exactly this). On a real tier BC refuses that collision in "
                     + "SystemTableTriggers.OnBeforeInsertAsync's case 2000000120: arm, which "
-                    + "validates a unique user name before writing — NOT in a unique index. The "
-                    + "runner reproduces only that arm's User Property companion insert and none of "
-                    + "its validation (see AlRunner/Patches/UserTableTriggerPatches.cs), so if this "
-                    + "line is being printed the refusal came from somewhere else and is worth "
-                    + "reading closely";
+                    + "validates a unique user name before writing — NOT in a unique index, and the "
+                    + "runner reproduces that refusal (see AlRunner/Patches/UserTableTriggerPatches.cs). "
+                    + "A single such row is normally ADOPTED rather than refused, so reaching this "
+                    + "text means the adoption itself declined — its own reason is appended below";
             }
             return "no row holds the session user's security id and no other row holds its user "
                 + "name either, so the refusal came from neither the primary key nor a name "
