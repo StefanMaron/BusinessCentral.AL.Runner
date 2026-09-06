@@ -766,9 +766,13 @@ public static partial class RecordPatches
             var lookupPage = PageRefText(PropValue(table.PropertyList, "LookupPageId"));
             var drillDownPage = PageRefText(PropValue(table.PropertyList, "DrillDownPageId"));
             // DataClassification / ExternalName feed the Table Metadata (2000000136) columns of
-            // the same name (#2938). Both are kept AS WRITTEN and null when undeclared: AL's
-            // own defaults (CustomerContent, blank) are applied at row-build time, so "declares
+            // the same name (#2938). Both are kept AS WRITTEN and null when undeclared: the
+            // defaults (CustomerContent, blank) are applied at row-build time, so "declares
             // none" stays distinguishable from "declares the default" all the way through.
+            // CustomerContent there is a MEASUREMENT, not AL documentation — Microsoft
+            // documents ToBeClassified — settled on sixteen green BC legs by
+            // StefanMaron/BusinessCentral.AL.Language.Tests#191 and cited at
+            // RecordPatches.TableMetadataVirtualTable.cs's AlDefaultDataClassification (#3019).
             var dataClassification = PropValue(table.PropertyList, "DataClassification")?.ToString()?.Trim();
             // AlStringLiteralText, not the raw node text: ExternalName is an AL STRING LITERAL
             // (ExternalName = 'alt_entity'), so the node stringifies WITH its single quotes and a
