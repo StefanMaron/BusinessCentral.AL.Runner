@@ -179,41 +179,91 @@ internal static class TestDataProvisioner
     /// established) — and a read-modify-write from two threads drops counts. Measured: eight
     /// threads doing 10,000 write-offs each landed 79,543 of 80,000.
     ///
-    /// Reads are Volatile.Read. Not for tearing — these are aligned int32s, which the CLI
-    /// guarantees are read and written atomically (ECMA-335 I.12.6.6), so a torn read was never
-    /// possible — but so a reader is not handed a value from before another thread's increment
-    /// that it has no other reason to see.
+    /// #3025: the counts are held as ONE immutable value, swapped by CompareExchange, because
+    /// six individually-atomic counters still cannot be READ as a set. Each field was fresh and
+    /// each was true; the combination was not. A reader that took the table count, lost its
+    /// slice to a thread finishing a table, then took the row count, printed rows belonging to a
+    /// table it had not counted — at worst "loaded 4200 row(s) in 0 table(s)", which is a
+    /// sentence describing no instant that ever existed. This is a diagnostic a person uses to
+    /// decide whether their test data loaded, so a summary that contradicts itself sends them
+    /// hunting a bug that is not there. Note this was never a TORN read in the ECMA-335 sense —
+    /// aligned int32s are read and written atomically (I.12.6.6) — it was a torn SET.
+    ///
+    /// The same argument applies to the write side, which is why one table's hydration is one
+    /// update rather than four: publishing the table count and the row count separately leaves a
+    /// window in which the two disagree, and no reader, however careful, can be prevented from
+    /// landing in it.
+    ///
+    /// Not a lock: readers never block, and a writer's retry loop only spins when it actually
+    /// lost a race, which needs two threads inside LoadOnDemand at the same moment.
     ///
     /// An instance rather than six statics so the concurrency claim is provable on a board no
     /// other test in the assembly can reach; the production board is the static below.
     /// </summary>
     internal sealed class TallyBoard
     {
-        private int _tables, _rows, _refused, _readerRefused, _droppedColumns, _columnsNotInThisBuild;
-
-        /// <summary>One table's successful hydration. A table the backup holds but that has no
-        /// rows is not a table hydrated, yet its dropped columns are still real and counted —
-        /// which is why this takes the row count rather than a "did it work" flag.</summary>
-        internal void NoteHydrated(int rows, int droppedColumns, int columnsNotInThisBuild)
+        /// <summary>All six counts as ONE immutable value. Six separate fields cannot be read
+        /// as a set — see the class comment — and the cheapest thing that can is an object whose
+        /// reference is swapped atomically.</summary>
+        private sealed record Counts(
+            int Tables, int Rows, int Refused, int ReaderRefused,
+            int DroppedColumns, int ColumnsNotInThisBuild)
         {
-            if (rows > 0) Interlocked.Increment(ref _tables);
-            Interlocked.Add(ref _rows, rows);
-            Interlocked.Add(ref _droppedColumns, droppedColumns);
-            Interlocked.Add(ref _columnsNotInThisBuild, columnsNotInThisBuild);
+            internal static readonly Counts Zero = new(0, 0, 0, 0, 0, 0);
         }
 
+        private Counts _counts = Counts.Zero;
+
+        /// <summary>
+        /// Apply one event to the counts. Lock-free: read the current value, derive the next
+        /// one, and publish it only if nothing else got there first — otherwise start again with
+        /// what the winner wrote. Every publication is a whole consistent set, so a reader is
+        /// never handed a state that was half-applied.
+        ///
+        /// The retry loop is unbounded on purpose: it makes progress whenever any thread does,
+        /// and the contention it is written for is two threads, once per table load.
+        /// </summary>
+        private void Update(Func<Counts, Counts> next)
+        {
+            while (true)
+            {
+                var before = Volatile.Read(ref _counts);
+                if (ReferenceEquals(Interlocked.CompareExchange(ref _counts, next(before), before), before))
+                    return;
+            }
+        }
+
+        /// <summary>One table's successful hydration, applied as a SINGLE update. A table the
+        /// backup holds but that has no rows is not a table hydrated, yet its dropped columns
+        /// are still real and counted — which is why this takes the row count rather than a
+        /// "did it work" flag, and why the table count and the row count have to move together:
+        /// "rows counted implies the table that produced them counted" is only an invariant if
+        /// nothing can observe the gap between them.</summary>
+        internal void NoteHydrated(int rows, int droppedColumns, int columnsNotInThisBuild)
+            => Update(c => c with
+            {
+                Tables = c.Tables + (rows > 0 ? 1 : 0),
+                Rows = c.Rows + rows,
+                DroppedColumns = c.DroppedColumns + droppedColumns,
+                ColumnsNotInThisBuild = c.ColumnsNotInThisBuild + columnsNotInThisBuild,
+            });
+
         /// <summary>One table whose rows the hydrator refused to rebuild.</summary>
-        internal void NoteRefused() => Interlocked.Increment(ref _refused);
+        internal void NoteRefused() => Update(c => c with { Refused = c.Refused + 1 });
 
         /// <summary>One table the backup reader itself refused.</summary>
-        internal void NoteReaderRefused() => Interlocked.Increment(ref _readerRefused);
+        internal void NoteReaderRefused() => Update(c => c with { ReaderRefused = c.ReaderRefused + 1 });
 
-        /// <summary>The tallies, read out as the summary a person sees.</summary>
+        /// <summary>The tallies, read out as the summary a person sees. ONE read of ONE
+        /// reference, so the six numbers below are the six numbers that were true together at
+        /// one instant — which is the whole point of #3025.</summary>
         internal Summary Capture(string backupPath, string company, int skippedAmbiguous)
-            => new(backupPath, company,
-                Volatile.Read(ref _tables), Volatile.Read(ref _rows),
-                skippedAmbiguous, Volatile.Read(ref _refused), Volatile.Read(ref _readerRefused),
-                Volatile.Read(ref _droppedColumns), Volatile.Read(ref _columnsNotInThisBuild));
+        {
+            var c = Volatile.Read(ref _counts);
+            return new Summary(backupPath, company, c.Tables, c.Rows,
+                skippedAmbiguous, c.Refused, c.ReaderRefused,
+                c.DroppedColumns, c.ColumnsNotInThisBuild);
+        }
     }
 
     private static TallyBoard _tallies = new();
