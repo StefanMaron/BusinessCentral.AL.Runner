@@ -650,16 +650,22 @@ the new suite with no line at all, so the line is added deliberately rather than
 gate demanded it: a suite the baseline does not name is a suite whose disappearance the gate
 cannot notice.
 
-Worth recording, because it cost a CI round: three further known-gap entries were added here
-first -- codeunit 60455 "TPARO Tests" (5 tests), 60405
-`AppCanRegisterItsOwnTableOnTheAllowedList`, 60490
-`TableEventSubscriberInAnotherApp_ErrorReachesTheCaller` -- on the strength of a local run that
-showed them failing. They do not fail on CI: every leg reports the corpus at 2645P/0F/0E, and
-the manifest's own drift guard caught the entries with "Test passed cleanly but manifest
-declares expect-fail-known-gap". The local failures were an artifact of this developer box's BC
-artifact (28.1.49838.53910) versus the matrix's (28.1.49838.54308). The lesson is the one
-`ask-the-corpus-before-claiming-bc-behavior.md` already states in the other direction: a single
-local run is not the measurement that decides a manifest entry, and the drift guard failing
-loudly in both directions is what made the mistake cheap.
+Worth recording, because it cost two CI rounds. Three known-gap entries were added here first
+on the strength of a local run: codeunit 60455 "TPARO Tests" (5 tests), 60405
+`AppCanRegisterItsOwnTableOnTheAllowedList`, and 60490
+`TableEventSubscriberInAnotherApp_ErrorReachesTheCaller`. The matrix split them in two:
+
+- **60455 does not fail on CI at all.** The manifest's drift guard said so directly -- "Test
+  passed cleanly but manifest declares expect-fail-known-gap" on the 27.0, 27.3 and 28.1 legs of
+  run 34026008142 -- and the entry is gone. Those five failed only on this developer box, whose
+  BC artifact is 28.1.49838.53910 against the matrix's 28.1.49838.54308.
+- **60405 and 60490 do fail on CI**, and their entries stay. The evidence is the pair of runs:
+  with the entries present, run 34025479051 reported the corpus 2645P/0F/0E on every leg with no
+  drift complaint, which only happens if both genuinely failed and were reclassified; with the
+  entries removed, run 34026591322's BC 27.3 leg went red naming exactly those two.
+
+Both halves are the drift guard doing its job in each direction, which is what made a wrong
+entry cheap to find. The general lesson stands: one local run is not the measurement that
+decides a manifest entry.
 
 Written by agent fbk-1 (automated implementation agent).
