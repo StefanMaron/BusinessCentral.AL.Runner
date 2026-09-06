@@ -31,21 +31,71 @@ namespace AlRunner.Patches;
 
 public static partial class RecordPatches
 {
-    // KNOWN GAP — #3172. Nothing clears either of these sets, on any path: they appear
-    // nowhere else in the runner. RecordPatches.ResetForReload discards every
-    // NCLMetaXmlPort via _metaXmlPortCache.Clear() without discarding the bookkeeping that
-    // describes them, so from the second --watch cycle / --server request onward the
-    // success set short-circuits a brand-new, never-loaded skeleton as "already loaded" —
-    // the page-side defect #1957 fixed with ResetPageMetadataForReload, never mirrored
-    // here. Left out of #3011's PR because neither set can be populated from a test host
-    // without the BC engine loaded in-process, so the fix could not be proved there; see
-    // the issue for what a proving test has to look like. The GROW direction #3011 fixed on
-    // the page side is a SEPARATE and unverified question here — this file's gate reads
+    // Both sets are statements about ONE generation of NCLMetaXmlPort instances — the ones
+    // _metaXmlPortCache holds — so ResetXmlPortMetadataForReload discards them alongside it
+    // (#3172; the page-side equivalent is #1957's ResetPageMetadataForReload). The GROW
+    // direction #3011 fixed on the page side is a SEPARATE and still-unverified question
+    // here, and is deliberately NOT addressed: this file's gate reads
     // AlXmlPortMetadataRegistry and _parsedXmlPorts, neither of which is derived from the
-    // registered .app set.
+    // registered .app set, so the page side's epoch argument does not transfer unexamined.
     private static readonly HashSet<int> _xmlPortsWithRealMetadata = new();
     private static readonly HashSet<int> _xmlPortsRealMetadataFailed = new();
     private static readonly object _realXmlPortMetadataLock = new();
+
+    /// <summary>Whether <paramref name="xmlPortId"/> is recorded as having had its REAL
+    /// xmlport metadata successfully loaded — the success set #3172 requires
+    /// <see cref="ResetXmlPortMetadataForReload"/> to discard alongside the
+    /// <c>NCLMetaXmlPort</c> instances it describes.</summary>
+    internal static bool XmlPortHasRealMetadataForTests(int xmlPortId)
+    {
+        lock (_realXmlPortMetadataLock) return _xmlPortsWithRealMetadata.Contains(xmlPortId);
+    }
+
+    /// <summary>Whether <paramref name="xmlPortId"/> is recorded as having FAILED its real
+    /// metadata load. The mirror of <see cref="XmlPortHasRealMetadataForTests"/>, and the
+    /// half that suppresses every later attempt for that id until the next reload.</summary>
+    internal static bool XmlPortRealMetadataFailedForTests(int xmlPortId)
+    {
+        lock (_realXmlPortMetadataLock) return _xmlPortsRealMetadataFailed.Contains(xmlPortId);
+    }
+
+    /// <summary>
+    /// Clear the "already loaded" / "already failed" bookkeeping alongside
+    /// <c>_metaXmlPortCache</c> on a <c>--watch</c> / <c>--server</c> reload (#3172). The
+    /// verbatim mirror of <see cref="ResetPageMetadataForReload"/>, which this file's header
+    /// already declares itself a direct sibling of.
+    /// <para>
+    /// Both sets name ONE specific <c>NCLMetaXmlPort</c> instance — "this object's
+    /// <c>metadataLoaded</c> flag has been cleared and <c>LoadMetadata()</c> has run on it",
+    /// or "was attempted and threw". <see cref="ResetForReload"/> discards exactly those
+    /// instances via <c>_metaXmlPortCache.Clear()</c>, so leaving either set populated makes
+    /// <see cref="EnsureRealXmlPortMetadata"/> answer questions about a generation of objects
+    /// that no longer exists.
+    /// </para>
+    /// <para>
+    /// The success set surviving is the live defect: the next lookup rebuilds a brand-new,
+    /// never-loaded skeleton through <c>_metaXmlPortCache.GetOrAdd(id, BuildNCLMetaXmlPort)</c>
+    /// and then short-circuits it as "already loaded" — and per this file's header, an
+    /// NCLMetaXmlPort with <c>metadataLoaded = true</c> and no schema is exactly what makes
+    /// every real xmlport operation NRE (<c>CreateObjectInstance</c> has no node tree to
+    /// instantiate, <c>GetMetadataFromLoader</c> has nothing to read).
+    /// </para>
+    /// <para>
+    /// The failure set is cleared for the mirror reason, not merely for symmetry: an xmlport
+    /// whose load failed against the previous generation must get a fresh attempt against
+    /// this one, or the edit that fixes the cause could never be observed to have fixed it.
+    /// One retry per cycle, not a retry storm, and every failed attempt still logs loudly
+    /// from <see cref="EnsureRealXmlPortMetadata"/>'s catch block.
+    /// </para>
+    /// </summary>
+    internal static void ResetXmlPortMetadataForReload()
+    {
+        lock (_realXmlPortMetadataLock)
+        {
+            _xmlPortsWithRealMetadata.Clear();
+            _xmlPortsRealMetadataFailed.Clear();
+        }
+    }
 
     /// <summary>
     /// Ensure <paramref name="xmlPortId"/>'s NCLMetaXmlPort carries its real, parsed
