@@ -718,12 +718,20 @@ jobs:
       - name: Run cold-cache binary smoke test
         run: |
           set +e
-          # Point at the canonical corpus app (a real bundle with a proper app.json +
-          # dependency closure), NOT the submodule ROOT — the root sweeps multiple apps
-          # and fixtures into one malformed bundle with no Base Application reference, so
-          # any cross-app tableextension there fails to resolve (AL0185/AL0247) and aborts
-          # the whole emit. The crash-gate purpose (cold Cecil rewrite + emit + run) is
-          # fully exercised by the canonical app. --strict tolerated codes are 0|1|2 below.
+          # Point at the canonical corpus app, NOT the submodule ROOT — one app is all the
+          # crash gate (cold Cecil rewrite + emit + run) needs, and the root would pay for
+          # compiling all three corpus apps to prove the same thing.
+          #
+          # This comment used to give a different reason: that the root "sweeps multiple
+          # apps and fixtures into one malformed bundle with no Base Application
+          # reference", so cross-app references failed AL0185/AL0247 and aborted the emit.
+          # That was a runner defect, not a property of the tree, and #2996 fixed it —
+          # CollectBundleManifests only scanned the bundle root's DIRECT children for
+          # app.json while the corpus apps sit one level further down, so the bundle
+          # resolved no dependencies at all. The submodule root now runs as one bundle and
+          # produces the same result as passing the three apps separately. Staying on the
+          # canonical app here is a cost choice, not a workaround.
+          # --strict tolerated codes are 0|1|2 below.
           #
           # --auto-provision: as of #1678 the platform-app R2R gate also scans the target
           # bundle's OWN .alpackages (not just the home-rooted default caches) — and the
