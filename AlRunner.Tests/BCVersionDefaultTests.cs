@@ -128,12 +128,34 @@ public class BCVersionDefaultTests
     /// declaration is history, not a default.
     /// </summary>
     internal static IReadOnlyList<string> BCVersionDeclarations(string root)
+        => BCVersionDeclarations(root, RepositoryProjectFiles(root));
+
+    /// <summary>
+    /// The reading half, over an ALREADY-DISCOVERED file list — the second window of the same
+    /// #3206 race, and the reason this overload exists rather than the loop being inlined
+    /// above. The walk is eager, so every file is read AFTER it completes; a scratch project
+    /// under the repository root that existed during the walk can be gone by the time it is
+    /// read. Skipping the walk's casualties but then throwing on the read would have moved the
+    /// flake a few milliseconds later, not removed it.
+    /// </summary>
+    internal static IReadOnlyList<string> BCVersionDeclarations(string root, IReadOnlyList<string> files)
     {
         var offenders = new List<string>();
-        foreach (var file in RepositoryProjectFiles(root))
+        foreach (var file in files)
         {
             var rel = Path.GetRelativePath(root, file).Replace('\\', '/');
-            foreach (var line in File.ReadAllLines(file))
+
+            string[] lines;
+            try
+            {
+                lines = File.ReadAllLines(file);
+            }
+            catch (Exception e) when (e is FileNotFoundException or DirectoryNotFoundException)
+            {
+                continue; // deleted by a concurrently running test since the walk found it (#3206)
+            }
+
+            foreach (var line in lines)
             {
                 var trimmed = line.TrimStart();
                 if (trimmed.StartsWith("<!--", StringComparison.Ordinal)) continue; // comment, not a live declaration
@@ -338,6 +360,44 @@ public class BCVersionDefaultTests
 
             seen.Sort(StringComparer.Ordinal);
             Assert.Equal(new[] { "Root.csproj", "keep/Keep.csproj" }, seen);
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// #3206, the second window of the same race: the walk is eager, so every project file is
+    /// READ after the walk has finished. <c>BuildDeterminismTests</c> writes a real
+    /// <c>Probe.csproj</c> into each of its scratch roots and keeps them alive across three
+    /// <c>dotnet build</c> invocations, so one of them can be discovered by the walk and then
+    /// deleted before <c>File.ReadAllLines</c> reaches it. Closing only the walk window would
+    /// have moved that flake a few milliseconds later instead of removing it.
+    ///
+    /// Deterministic by construction: the file list is taken first, the directory is deleted,
+    /// and only then is the reading half called. Asserts the surviving project is still READ —
+    /// its declaration is reported — so a version that skipped everything after the first
+    /// casualty, or stopped reading altogether, fails here.
+    /// </summary>
+    [Fact]
+    public void BCVersionDeclarations_SkipsAProjectFileDeletedAfterTheWalkFoundIt()
+    {
+        var root = TestScratch.Dir("bcver");
+        try
+        {
+            WriteProject(root, "AlRunner/AlRunner.csproj",
+                "<PropertyGroup>\n    <_BCVersion>28.1.49838.53910</_BCVersion>\n  </PropertyGroup>");
+            WriteProject(root, ".build-determinism-probe-1/Probe.csproj", "<PropertyGroup></PropertyGroup>");
+
+            var files = RepositoryProjectFiles(root);
+            Assert.Equal(2, files.Count);
+
+            Directory.Delete(Path.Combine(root, ".build-determinism-probe-1"), recursive: true);
+
+            var offenders = BCVersionDeclarations(root, files);
+            Assert.Single(offenders);
+            Assert.StartsWith("AlRunner/AlRunner.csproj: ", offenders[0]);
         }
         finally
         {
