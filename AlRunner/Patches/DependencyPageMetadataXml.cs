@@ -23,7 +23,10 @@
 //   #1769/#1779 already parse for the Page Metadata virtual table. Nothing here is inferred
 //   from behaviour or defaulted to something convenient: Id / Name / PageType / Caption /
 //   Editable / SourceObject (SourceTable + SourceTableTemporary) come straight off the
-//   symbol file's own Properties array.
+//   symbol file's own Properties array, as do the SourceObject flags added since —
+//   Insert/Modify/DeleteAllowed, AutoSplitKey, MultipleNewLines, DelayedInsert,
+//   SourceTableView (#2820), and LinksAllowed / ShowFilter / SaveValues /
+//   PopulateAllFields / DataCaptionFields (#2860, see EmitSourceObjectPropertiesXml).
 //
 // WHAT IS DELIBERATELY OMITTED, AND WHY THAT IS SAFE HERE
 //   Ordinary field Content/Controls, ActionContainers, ViewContainers,
@@ -183,6 +186,10 @@ public static partial class RecordPatches
             // without one gets the bare element the compiler itself emits — not
             // SourceTable="0", which would answer "table 0" to a question about a table the
             // page does not have.
+            //
+            // The five below are OUTSIDE that branch on purpose — measured, not assumed; see
+            // EmitSourceObjectPropertiesXml.
+            EmitSourceObjectPropertiesXml(w, page);
             w.WriteEndElement(); // SourceObject
             w.WriteEndElement(); // Properties
 
@@ -229,6 +236,113 @@ public static partial class RecordPatches
     }
 
     private const string XsiNs = "http://www.w3.org/2001/XMLSchema-instance";
+
+    /// <summary>
+    /// The five further <c>&lt;SourceObject&gt;</c> properties the symbol file states and this
+    /// synthesizer used to drop (issue #2860): <c>LinksAllowed</c>, <c>ShowFilter</c>,
+    /// <c>SaveValues</c>, <c>PopulateAllFields</c> and <c>DataCaptionFields</c>.
+    ///
+    /// <para>THE RULE, AND WHY IT IS NOT "WRITE THE NON-DEFAULT ONES". Each attribute is
+    /// written if and only if the symbol file states the property, carrying the value the
+    /// symbol file states — including when that value IS the AL default. That is what the
+    /// real AL compiler does, measured on BC 28.1 by compiling pages that declare these and
+    /// reading back the metadata the compiler captured for each
+    /// (<c>AL_RUNNER_TRACE_PAGE_METADATA=2</c>):</para>
+    /// <code>
+    /// // LinksAllowed=false ShowFilter=false SaveValues=true PopulateAllFields=true
+    /// // DataCaptionFields="No.",Descr
+    /// &lt;SourceObject DataCaptionFields="1,3" LinksAllowed="0" PopulateAllFields="1"
+    ///               SaveValues="1" ShowFilter="0" SourceTable="64900" /&gt;
+    ///
+    /// // the same four declared as their AL DEFAULTS — still written
+    /// &lt;SourceObject LinksAllowed="1" PopulateAllFields="0" SaveValues="0"
+    ///               ShowFilter="1" SourceTable="64900" /&gt;
+    ///
+    /// // a page declaring none of them
+    /// &lt;SourceObject SourceTable="64900" /&gt;
+    ///
+    /// // a page with NO SourceTable declaring three of them
+    /// &lt;SourceObject LinksAllowed="0" SaveValues="1" ShowFilter="0" /&gt;
+    /// </code>
+    ///
+    /// <para>WHY NOT INSIDE THE <c>SourceTable</c> BRANCH, unlike InsertAllowed/AutoSplitKey:
+    /// the last measurement above. 30 Base Application 28.1 pages declare one of these five
+    /// with no source table — wizards and NavigatePages declaring <c>LinksAllowed = false</c>
+    /// or <c>ShowFilter = false</c>, and page 9991 "Code Coverage Setup" declaring
+    /// <c>SaveValues = true</c> — and <c>NavForm.InitializeFromMetadata</c> reads
+    /// <c>SourceObject.SaveValues</c> with no SourceTable guard.</para>
+    ///
+    /// <para>WHAT READS THEM. <c>PopulateAllFields</c> is the one with teeth:
+    /// <c>NavForm.NewRecordAsync</c> passes
+    /// <c>MasterPage.PageProperties.SourceObject.PopulateAllFields</c> as
+    /// <c>NavRecord.InitializeFieldsFromFilters</c>' <c>includeNonPrimaryKeyFields</c>
+    /// argument on EVERY new row, and BC's <c>SourceObjectDefinition(XmlNode)</c> constructor
+    /// initialises the field to <c>false</c> before reading attributes — so the dropped
+    /// attribute was not a missing value but a wrong one, <c>false</c> where BC answers
+    /// <c>true</c>, for the 46 Base Application 28.1 pages declaring it.
+    /// <c>SaveValues</c> is read by <c>NavForm.InitializeFromMetadata</c> into
+    /// <c>NavForm.saveValues</c>, which gates
+    /// <c>ApplySourceTableViewAndSavedValuesAsync</c>'s call to <c>ApplyLatestValuesAsync()</c>
+    /// on the <c>NavForm.OpenForm()</c> route <c>RunnerModalDispatch.TryOpenForm</c> takes —
+    /// and carrying it adds no new risk, because a page the runner SOURCE-compiles already
+    /// gets <c>SaveValues="1"</c> from the real compiler and opens and closes through that
+    /// same route today. <c>LinksAllowed</c>, <c>ShowFilter</c> and <c>DataCaptionFields</c>
+    /// are referenced in Ncl only from <c>PageDataProvider</c>, the data provider behind the
+    /// Page Metadata (2000000138) system table, which this runner substitutes wholesale
+    /// (RecordPatches.PageMetadataVirtualTable.cs) — so those three have no reader here yet
+    /// and are carried because the value is the symbol file's own, not because one was found.
+    /// The virtual table's own missing columns are tracked separately.</para>
+    /// </summary>
+    private static void EmitSourceObjectPropertiesXml(XmlWriter w, BcAppSymbolCache.PageSymbol page)
+    {
+        void Flag(string name, bool? stated)
+        {
+            if (stated is { } value) w.WriteAttributeString(name, value ? "1" : "0");
+        }
+
+        Flag("LinksAllowed", page.LinksAllowed);
+        Flag("ShowFilter", page.ShowFilter);
+        Flag("SaveValues", page.SaveValues);
+        Flag("PopulateAllFields", page.PopulateAllFields);
+
+        if (page.DataCaptionFields is not { Length: > 0 } captionFields) return;
+
+        // The only one of the five that is not a boolean, and the only one whose shape has to
+        // be checked rather than passed through: BC reads DataCaptionFields as a
+        // comma-separated list of FIELD NUMBERS. All 381 Base Application 28.1 pages stating
+        // it state numbers, because the same compiler writes both the symbol file and the
+        // compiled metadata — but a value that is not that shape cannot be turned into one
+        // here (resolving field NAMES would need the source table's field inventory, which a
+        // page declaring no source table does not have at all), so it is omitted and SAID.
+        //
+        // Omitting is itself a wrong answer — it reads as "this page declares no data caption
+        // fields" — which is exactly why the diagnostic is not optional. Same choice, same
+        // reason, as the SourceTableView Sorting arm below: nothing downstream can be made to
+        // fail on this value, so the failure has to be reported rather than encoded.
+        if (!IsFieldNumberList(captionFields))
+        {
+            Console.Error.WriteLine(
+                $"[RecordPatches] page {page.Id} \"{page.Name}\": DataCaptionFields "
+                + $"\"{captionFields}\" is not the comma-separated field-number list BC reads "
+                + "— omitted, so the page reads as declaring none");
+            return;
+        }
+        w.WriteAttributeString("DataCaptionFields", captionFields);
+    }
+
+    /// <summary>A non-empty comma-separated list of decimal field numbers, and nothing
+    /// else — the shape BC's <c>DataCaptionFields</c> consumers parse.</summary>
+    private static bool IsFieldNumberList(string value)
+    {
+        foreach (var part in value.Split(','))
+        {
+            var trimmed = part.Trim();
+            if (trimmed.Length == 0) return false;
+            foreach (var c in trimmed)
+                if (c < '0' || c > '9') return false;
+        }
+        return true;
+    }
 
     /// <summary>
     /// One subpage PART control, as an <c>InfopartPageDefinition</c> — the shape the real AL

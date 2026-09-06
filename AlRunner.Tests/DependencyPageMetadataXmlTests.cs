@@ -949,6 +949,298 @@ public class DependencyPageMetadataXmlTests
         }
     }
 
+    // Issue #2860 — the five further <SourceObject> properties the symbol file states and the
+    // synthesized XML dropped. Own app/fixture, because the point of most of these tests is
+    // exactly which attributes are ABSENT, and the shared fixtures above already state
+    // properties of their own.
+    //
+    // WHAT "CORRECT" MEANS HERE, MEASURED
+    //   The rule this fixture pins is not "write the AL default when the file says nothing" —
+    //   it is "write the attribute if and only if the symbol file states it, with the value
+    //   the symbol file states". That is what the real AL compiler does, measured on BC 28.1
+    //   by compiling four pages and reading back the metadata it captured for each
+    //   (AL_RUNNER_TRACE_PAGE_METADATA=2):
+    //
+    //     LinksAllowed = false; ShowFilter = false; SaveValues = true;
+    //     PopulateAllFields = true; DataCaptionFields = "No.", Descr;
+    //       -> <SourceObject DataCaptionFields="1,3" LinksAllowed="0" PopulateAllFields="1"
+    //                        SaveValues="1" ShowFilter="0" SourceTable="64900" />
+    //
+    //     LinksAllowed = true; ShowFilter = true; SaveValues = false; PopulateAllFields = false;
+    //       -> <SourceObject LinksAllowed="1" PopulateAllFields="0" SaveValues="0"
+    //                        ShowFilter="1" SourceTable="64900" />      // AL DEFAULTS, still written
+    //
+    //     (declares none of them)
+    //       -> <SourceObject SourceTable="64900" />
+    //
+    //     no SourceTable at all; LinksAllowed = false; ShowFilter = false; SaveValues = true;
+    //       -> <SourceObject LinksAllowed="0" SaveValues="1" ShowFilter="0" />
+    //
+    //   The second and fourth lines are the two an "obvious" implementation gets wrong: a
+    //   plain bool defaulting to the AL default cannot tell "declared as the default" from
+    //   "not declared", and nesting the attributes alongside SourceTable drops them for the
+    //   30 Base Application 28.1 pages that declare one of the five without a source table.
+    //   DataCaptionFields is already FIELD NUMBERS in the symbol file (measured: all 381
+    //   Base Application 28.1 pages stating it state a comma-separated numeric list), which
+    //   is the same representation the compiler writes.
+    private const int SodAllStatedPageId = 88123701;
+    private const int SodAlDefaultsPageId = 88123702;
+    private const int SodStatesNonePageId = 88123703;
+    private const int SodNoSourceTablePageId = 88123704;
+    private const int SodBadCaptionFieldsPageId = 88123705;
+
+    private const string SourceObjectPropsSymbolReference = """
+        {
+          "RuntimeVersion": "15.1",
+          "Pages": [
+            {
+              "Id": 88123701,
+              "Name": "DPX SOD All Stated",
+              "Properties": [
+                { "Name": "PageType", "Value": "List" },
+                { "Name": "SourceTable", "Value": "88123620" },
+                { "Name": "LinksAllowed", "Value": "0" },
+                { "Name": "ShowFilter", "Value": "0" },
+                { "Name": "SaveValues", "Value": "1" },
+                { "Name": "PopulateAllFields", "Value": "1" },
+                { "Name": "DataCaptionFields", "Value": "1,3" }
+              ]
+            },
+            {
+              "Id": 88123702,
+              "Name": "DPX SOD AL Defaults",
+              "Properties": [
+                { "Name": "PageType", "Value": "List" },
+                { "Name": "SourceTable", "Value": "88123620" },
+                { "Name": "LinksAllowed", "Value": "1" },
+                { "Name": "ShowFilter", "Value": "1" },
+                { "Name": "SaveValues", "Value": "0" },
+                { "Name": "PopulateAllFields", "Value": "0" }
+              ]
+            },
+            {
+              "Id": 88123703,
+              "Name": "DPX SOD States None",
+              "Properties": [
+                { "Name": "PageType", "Value": "List" },
+                { "Name": "SourceTable", "Value": "88123620" }
+              ]
+            },
+            {
+              "Id": 88123704,
+              "Name": "DPX SOD No Source Table",
+              "Properties": [
+                { "Name": "PageType", "Value": "NavigatePage" },
+                { "Name": "LinksAllowed", "Value": "0" },
+                { "Name": "ShowFilter", "Value": "0" },
+                { "Name": "SaveValues", "Value": "1" }
+              ]
+            },
+            {
+              "Id": 88123705,
+              "Name": "DPX SOD Bad Caption Fields",
+              "Properties": [
+                { "Name": "PageType", "Value": "List" },
+                { "Name": "SourceTable", "Value": "88123620" },
+                { "Name": "DataCaptionFields", "Value": "\"No.\",Descr" }
+              ]
+            }
+          ]
+        }
+        """;
+
+    private static readonly string[] SodProperties =
+        { "LinksAllowed", "ShowFilter", "SaveValues", "PopulateAllFields", "DataCaptionFields" };
+
+    /// <summary>
+    /// The core #2860 claim: every one of the five properties the symbol file states reaches
+    /// the synthesized <c>&lt;SourceObject&gt;</c> verbatim.
+    ///
+    /// <para><c>PopulateAllFields</c> is the one with teeth. BC's own
+    /// <c>SourceObjectDefinition(XmlNode)</c> constructor initialises it to <c>false</c>
+    /// before reading attributes, so a dropped attribute is indistinguishable from a declared
+    /// <c>PopulateAllFields = false</c> — and <c>NavForm.NewRecordAsync</c> reads
+    /// <c>MasterPage.PageProperties.SourceObject.PopulateAllFields</c> on EVERY new row, as
+    /// the <c>includeNonPrimaryKeyFields</c> argument to
+    /// <c>NavRecord.InitializeFieldsFromFilters</c>. For the 46 Base Application 28.1 pages
+    /// that declare it true, the runner answered <c>false</c>, and a new row was initialised
+    /// from primary-key filters only where BC initialises it from all of them.</para>
+    ///
+    /// <para><c>SaveValues</c> has a live reader too — <c>NavForm.InitializeFromMetadata</c>
+    /// assigns <c>saveValues = masterPage.PageProperties.SourceObject.SaveValues</c>, which
+    /// gates <c>ApplySourceTableViewAndSavedValuesAsync</c>'s call to
+    /// <c>ApplyLatestValuesAsync()</c> on the <c>NavForm.OpenForm()</c> route
+    /// RunnerModalDispatch takes. Carrying it is not a new risk: a page the runner
+    /// SOURCE-compiles already gets <c>SaveValues="1"</c> from the real compiler and opens
+    /// and closes through that route today. <c>LinksAllowed</c>, <c>ShowFilter</c> and
+    /// <c>DataCaptionFields</c> are read in Ncl only by <c>PageDataProvider</c>, the data
+    /// provider behind the Page Metadata (2000000138) system table — which this runner
+    /// substitutes wholesale, so they have no reader here YET; they are carried because the
+    /// value is the symbol file's own, not because a reader was found for each.</para>
+    /// </summary>
+    [Fact]
+    public void TryBuildDependencyPageMetadata_SourceObjectPropertiesStatedBySymbolFile_AreCarriedVerbatim()
+    {
+        var dir = TestScratch.Dir("al-runner-dep-pagemeta-xml-tests");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            RecordPatches.AddBcAppPath(WriteApp(dir, SourceObjectPropsSymbolReference));
+
+            var sourceObject = ReadSourceObjectFor(SodAllStatedPageId);
+
+            Assert.Equal("0", sourceObject.GetAttribute("LinksAllowed"));
+            Assert.Equal("0", sourceObject.GetAttribute("ShowFilter"));
+            Assert.Equal("1", sourceObject.GetAttribute("SaveValues"));
+            Assert.Equal("1", sourceObject.GetAttribute("PopulateAllFields"));
+            // Field NUMBERS, exactly as both the symbol file and the compiler state them —
+            // writing the AL source's field NAMES here would be a value BC cannot use.
+            Assert.Equal("1,3", sourceObject.GetAttribute("DataCaptionFields"));
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// The half that a <c>bool</c> field with an AL default silently gets wrong: a page
+    /// STATING the AL default must still carry the attribute, because "stated" and
+    /// "not stated" are different documents to BC — the setters for ShowFilter and SaveValues
+    /// raise a <c>Specified</c> bit that <c>SourceObjectDefinition.Equals</c> compares and
+    /// <c>Freeze()</c> clones, so collapsing the two changes what page-customization merge
+    /// sees. Measured above: the compiler writes <c>LinksAllowed="1" PopulateAllFields="0"
+    /// SaveValues="0" ShowFilter="1"</c> for exactly this AL.
+    /// </summary>
+    [Fact]
+    public void TryBuildDependencyPageMetadata_SourceObjectPropertiesStatedAsTheirAlDefaults_AreStillCarried()
+    {
+        var dir = TestScratch.Dir("al-runner-dep-pagemeta-xml-tests");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            RecordPatches.AddBcAppPath(WriteApp(dir, SourceObjectPropsSymbolReference));
+
+            var sourceObject = ReadSourceObjectFor(SodAlDefaultsPageId);
+
+            Assert.Equal("1", sourceObject.GetAttribute("LinksAllowed"));
+            Assert.Equal("1", sourceObject.GetAttribute("ShowFilter"));
+            Assert.Equal("0", sourceObject.GetAttribute("SaveValues"));
+            Assert.Equal("0", sourceObject.GetAttribute("PopulateAllFields"));
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// The negative direction, and the reason the two tests above cannot be satisfied by
+    /// writing all five unconditionally: a page whose symbol file states none of them must
+    /// carry none of them. Absence is BC's own representation of "the AL declares nothing
+    /// here", and the compiler emits exactly that.
+    /// </summary>
+    [Fact]
+    public void TryBuildDependencyPageMetadata_PageStatingNoneOfTheFive_CarriesNoneOfThem()
+    {
+        var dir = TestScratch.Dir("al-runner-dep-pagemeta-xml-tests");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            RecordPatches.AddBcAppPath(WriteApp(dir, SourceObjectPropsSymbolReference));
+
+            var sourceObject = ReadSourceObjectFor(SodStatesNonePageId);
+
+            foreach (var name in SodProperties)
+                Assert.False(sourceObject.HasAttribute(name),
+                    $"a page whose symbol file states no {name} must not be given the attribute");
+            // …while everything the file DOES state is still there.
+            Assert.Equal("88123620", sourceObject.GetAttribute("SourceTable"));
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// The five do not belong to the SourceTable the way InsertAllowed/AutoSplitKey do: the
+    /// compiler writes them on a <c>&lt;SourceObject&gt;</c> that carries no SourceTable
+    /// attribute at all (measured above), and 30 Base Application 28.1 pages are that shape —
+    /// wizards and NavigatePages declaring <c>LinksAllowed = false</c> / <c>ShowFilter =
+    /// false</c>, and page 9991 "Code Coverage Setup" declaring <c>SaveValues = true</c>.
+    /// Nesting them inside the <c>SourceTable &gt; 0</c> branch would drop all 30 silently.
+    /// </summary>
+    [Fact]
+    public void TryBuildDependencyPageMetadata_SourceObjectPropertiesWithoutASourceTable_AreStillCarried()
+    {
+        var dir = TestScratch.Dir("al-runner-dep-pagemeta-xml-tests");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            RecordPatches.AddBcAppPath(WriteApp(dir, SourceObjectPropsSymbolReference));
+
+            var sourceObject = ReadSourceObjectFor(SodNoSourceTablePageId);
+
+            Assert.False(sourceObject.HasAttribute("SourceTable"));
+            Assert.Equal("0", sourceObject.GetAttribute("LinksAllowed"));
+            Assert.Equal("0", sourceObject.GetAttribute("ShowFilter"));
+            Assert.Equal("1", sourceObject.GetAttribute("SaveValues"));
+            Assert.False(sourceObject.HasAttribute("PopulateAllFields"));
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// <c>DataCaptionFields</c> is the one of the five that is not a boolean, and the only one
+    /// with a shape the runner must check rather than pass through: BC reads it as a
+    /// comma-separated list of FIELD NUMBERS. Every one of the 381 Base Application 28.1
+    /// pages stating it states numbers, because the same compiler produces both the symbol
+    /// file and the metadata — but a value that is not that shape cannot be reconstructed
+    /// into one here (resolving names would need the source table's field inventory, which a
+    /// page with no source table does not have at all), so it is omitted and SAID, never
+    /// written through as text BC would misread as field numbers.
+    ///
+    /// <para>Omitting is itself a wrong answer — it reads as "this page declares no data
+    /// caption fields" — which is exactly why the diagnostic is part of the claim and is
+    /// asserted here. It is the same choice, for the same reason, that the SourceTableView
+    /// <c>Sorting</c> arm already makes: nothing downstream can be made to fail on this
+    /// value, so the failure has to be reported rather than encoded.</para>
+    /// </summary>
+    [Fact]
+    public void TryBuildDependencyPageMetadata_DataCaptionFieldsThatIsNotFieldNumbers_IsRefusedLoudlyNotWrittenAsText()
+    {
+        var dir = TestScratch.Dir("al-runner-dep-pagemeta-xml-tests");
+        Directory.CreateDirectory(dir);
+        var previousError = Console.Error;
+        var captured = new StringWriter();
+        try
+        {
+            RecordPatches.AddBcAppPath(WriteApp(dir, SourceObjectPropsSymbolReference));
+
+            // This test is the only requester of this page id, and the built document is
+            // memoized per id, so the one and only build happens inside the capture.
+            Console.SetError(captured);
+            var sourceObject = ReadSourceObjectFor(SodBadCaptionFieldsPageId);
+            Console.SetError(previousError);
+
+            Assert.False(sourceObject.HasAttribute("DataCaptionFields"),
+                "a DataCaptionFields value that is not a field-number list must not be written through");
+
+            var diagnostic = captured.ToString();
+            Assert.Contains("DataCaptionFields", diagnostic);
+            Assert.Contains(SodBadCaptionFieldsPageId.ToString(), diagnostic);
+        }
+        finally
+        {
+            Console.SetError(previousError);
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
     private static XmlElement ReadSourceObject(int pageId)
     {
         var xml = RecordPatches.TryBuildDependencyPageMetadata(pageId);
