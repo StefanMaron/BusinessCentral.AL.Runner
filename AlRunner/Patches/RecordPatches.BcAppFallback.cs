@@ -212,14 +212,22 @@ public static partial class RecordPatches
         // AlReportMetadataRegistry.Clear(), this memo's OTHER input, which is not derived from
         // _bcAppPaths at all.
         //
-        // The PAGE-side twin of this instance — EnsureRealPageMetadata's _pagesWithRealMetadata
-        // / _pagesRealMetadataFailed plus the _metaFormCache entry a failed load leaves behind
-        // — is deliberately NOT cleared here, and is tracked in #3011. Same asymmetry (shrink
-        // covered by ResetPageMetadataForReload, grow not), but it is latent rather than live:
-        // every EnsureRealPageMetadata caller is on the test-execution path, which runs after
-        // registration completes. And unlike this one line, the fix is not free — clearing
-        // _metaFormCache once per registered .app has a real blast radius, and #1957 requires
-        // the two sets and the NCLMetaForm instances they describe to be discarded together.
+        // The PAGE-side twin of this instance — EnsureRealPageMetadata's negative answers,
+        // plus the _metaFormCache entry a failed load leaves behind — is fixed (#3011) but
+        // NOT here, and the difference is deliberate. Two reasons this method is the wrong
+        // place for it, both absent for every other instance above:
+        //   1. LOCK ORDER. This method runs while HOLDING _bcTableIndexLock.
+        //      EnsureRealPageMetadata holds _realPageMetadataLock across LoadMetadata(),
+        //      which reaches BC code that takes _bcTableIndexLock, so touching the page state
+        //      from here inverts the order against a live load — a deadlock, not a cost.
+        //   2. BLAST RADIUS. AddBcAppPath runs once per dependency .app, so a clear here
+        //      would discard page metadata N times per bundle, and #1957 requires the
+        //      NCLMetaForm instances and the bookkeeping describing them to be discarded
+        //      together — a partial clear is worse than none.
+        // Instead the page-side negative answers carry the epoch below, and are retaken
+        // lazily and once per (page, epoch) — see RecordPatches.RealPageMetadata.cs. The
+        // increment at the end of this method is what drives them, so the funnel is still
+        // the single point of truth; only the eviction moved to the reader.
         NavReportSync.ResetMetadataCache();
         // Bumped LAST, and unconditionally: every cache keyed on the epoch must observe a
         // value it has not built against, and everything above must already be dropped when
