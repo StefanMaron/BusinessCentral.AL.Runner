@@ -353,7 +353,10 @@ public static partial class RecordPatches
         // asymmetry. A column that does not resolve is recorded and raised before the Insert,
         // never skipped: see SeededRowColumns.cs for why refusing beats reporting on this path.
         var columns = new SeededRowColumns<NCLMetaField>(
-            $"table {tableId} \"{meta.TableName}\"", fieldByName,
+            // "<Name> (system table <id>)" — the api half of the refusal, and it may not
+            // contain " — ": OutOfScopeMessage.TryParse cuts the api from the reason at the
+            // first one (#2945).
+            $"{meta.TableName} (system table {tableId})", fieldByName,
             slotOf: f => f.FieldIndex,
             describeField: f => $"{f.FieldNo}:{f.FieldName}",
             slotCount: values.Length);

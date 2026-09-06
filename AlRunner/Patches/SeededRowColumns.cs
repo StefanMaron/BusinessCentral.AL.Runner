@@ -53,10 +53,39 @@
 //   actually states — so a BC rename is a one-line fix rather than an investigation. There is
 //   no correctness-preserving alternative, because the row would otherwise be inserted wrong.
 //
-//   The Company seeder is the one deliberate exception, and its caller — not this type — makes
-//   it: that row is seeded per app group OUTSIDE the persisted cache, so its existing
-//   catch-and-report reaches stderr on every run rather than once. See
-//   RecordPatches.CompanySystemTable.cs.
+// WHICH REFUSAL, AND WHY NOT A BARE InvalidOperationException
+//   RunnerShapeGap.SeededSystemTableRow — RunnerOutOfScopeException carrying the
+//   `not-yet-implemented` anchor, the same type FieldByNameOnUser raises for the same question
+//   on the User row, and routed through the one factory family that documents and counts these
+//   guards (docs/limitations.md#runtime-shape-gaps). The anchor matters at runtime, not only in
+//   prose: ApplicationObjectBasePatches.IsPermanentOutOfScope lets an AL [TryFunction] absorb a
+//   refusal into `false` UNLESS the reason starts with "not-yet-implemented", and a seeding gap
+//   absorbed into `false` is the silent default again.
+//
+//   NOT BcShapeGapException, though it is the type built for "BC's metadata is not the shape we
+//   were written against". Its own header draws the line at whether the runner OBTAINED the
+//   information, and puts this case on the do-not-raise side by name: "a metatable genuinely
+//   has no field 3" is an ANSWER about the artifact, not a failed read of BC's layout. The
+//   metatable was there and it answered.
+//
+//   BE PRECISE ABOUT WHAT THE CACHE ARGUMENT DECIDES, because it does not decide every site.
+//   Published Application is seeded in TWO halves: the dependency rows inside the persisted
+//   MISS branch (TestExecutor.cs:573), and the bundle's own row outside it (TestExecutor.cs:637,
+//   after CaptureInstallBaselineSnapshot and the disk write). Only the first half is subject to
+//   the cache argument. Both refuse anyway, and that is deliberate rather than an oversight in
+//   the rule: splitting the policy WITHIN one table by which half seeded the row would let the
+//   same table abort on one path and continue short on the other, in the same run, for the same
+//   metadata change. One table, one answer.
+//
+//   The Company seeder is the one place that reports instead, and its caller — not this type —
+//   makes that choice. Two things hold it up. Its row is seeded per app group outside the
+//   persisted cache (TestExecutor.cs:606), so the stderr line fires on every run rather than
+//   once on the run that poisons a cache. And, more to the point, stderr is not the only signal
+//   there: a refused Company row is a row that was never inserted, so
+//   `Company.Get(CompanyName())` raises for a company every other surface reports as existing
+//   and the tests that read it go RED. That is the mechanism, and it is worth stating because
+//   Console.Error on its own has repeatedly not been a sufficient signal in this repository.
+//   See RecordPatches.CompanySystemTable.cs.
 //
 // WHY IT IS GENERIC
 //   So it can be unit-tested. The real callers instantiate it over BC's NCLMetaField, which a
@@ -153,17 +182,21 @@ internal sealed class SeededRowColumns<TField>
     /// Raise if any column the caller asked to write could not be. Call after the row is
     /// filled and BEFORE it is inserted — a row that reaches the provider incomplete is
     /// indistinguishable from a correct one at every later read.
+    ///
+    /// Raises <c>RunnerShapeGap.SeededSystemTableRow</c>; see this file's header for why that
+    /// type and that anchor rather than a bare exception or a <c>bc-shape-gap:</c>.
     /// </summary>
     internal void ThrowIfAnyColumnCouldNotBeWritten()
     {
         if (_unwritable.Count == 0) return;
 
-        throw new InvalidOperationException(
-            $"[SeededRow] {_tableLabel}: could not write {_unwritable.Count} of the column(s) this "
-            + "row is built from — " + string.Join("; ", _unwritable)
-            + ". BC metadata shape changed; the row would otherwise be inserted with BC's own "
-            + "default in that column and every later read would look correct. Metatable states "
+        throw RunnerShapeGap.SeededSystemTableRow(
+            _tableLabel,
+            $"could not write {_unwritable.Count} of the column(s) this row is built from — "
+            + string.Join("; ", _unwritable)
+            + ". The row would otherwise be inserted with BC's own default in that column, still "
+            + "be found by its key, and read correct at every later read. Metatable states "
             + $"[fields={string.Join("/", _fieldByName.Values.Select(_describeField))}] "
-            + "— see AlRunner#3015.");
+            + "— see AlRunner#3015");
     }
 }

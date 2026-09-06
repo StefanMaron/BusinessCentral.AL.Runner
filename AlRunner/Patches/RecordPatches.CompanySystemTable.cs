@@ -160,14 +160,25 @@ public static partial class RecordPatches
         // does not resolve is raised before the Insert.
         //
         // WHERE THAT RAISE GOES, and why it is not the refusal the Published Application
-        // seeder makes: this row is seeded per app group, AFTER the dep+company baseline cache
-        // block in TestExecutor, so it is NOT part of the snapshot persisted to disk. The
-        // caller's existing catch therefore reaches stderr on EVERY run rather than once, on
-        // the single run that would have poisoned a cache. Reporting is enough here for
-        // exactly that reason and for no other; the dependency Published Application rows,
-        // which are inside the persisted MISS branch, refuse instead.
+        // seeder makes. Two reasons, and the second is the stronger one:
+        //
+        //   1. This row is seeded per app group, AFTER the dep+company baseline cache block in
+        //      TestExecutor (line 606 — the block ends at 594), so it is NOT part of the
+        //      snapshot persisted to disk. The caller's existing catch therefore reaches stderr
+        //      on EVERY run, rather than once on the single run that would have poisoned a
+        //      cache and then never again.
+        //
+        //   2. Stderr is not the only signal, and it is not the one that stops the run. A
+        //      refused row is a row that was never inserted, so Company.Get(CompanyName())
+        //      raises for a company every other surface reports as existing and the tests that
+        //      read it go RED — which is how #2329 presented in the first place. That is worth
+        //      naming, because Console.Error on its own has repeatedly not been a sufficient
+        //      signal in this repository.
+        //
+        // The dependency Published Application rows are inside the persisted MISS branch and
+        // have neither property, so they refuse.
         var columns = new SeededRowColumns<NCLMetaField>(
-            $"Company ({CompanySystemTableId})", fieldByName,
+            $"{meta.TableName} (system table {CompanySystemTableId})", fieldByName,
             slotOf: f => f.FieldIndex,
             describeField: f => $"{f.FieldNo}:{f.FieldName}",
             slotCount: values.Length);

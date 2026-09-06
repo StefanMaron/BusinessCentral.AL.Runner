@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using AlRunner.Infrastructure;
 using AlRunner.Patches;
 using Xunit;
 
@@ -41,7 +42,7 @@ public sealed class SeededRowColumnsTests
         var byName = new Dictionary<string, (int FieldNo, int Slot)>(StringComparer.OrdinalIgnoreCase);
         foreach (var f in fields) byName[f.Name] = (f.FieldNo, f.Slot);
         return new SeededRowColumns<(int FieldNo, int Slot)>(
-            tableLabel: "Published Application (2000000206)",
+            tableLabel: "Published Application (system table 2000000206)",
             fieldByName: byName,
             slotOf: f => f.Slot,
             describeField: f => $"{f.FieldNo}:?",
@@ -96,17 +97,27 @@ public sealed class SeededRowColumnsTests
         Assert.False(ledger.TryResolve("Runtime Package ID", out _, out var slot));
         Assert.Equal(-1, slot);
 
-        var ex = Assert.Throws<InvalidOperationException>(
+        var ex = Assert.Throws<RunnerOutOfScopeException>(
             () => ledger.ThrowIfAnyColumnCouldNotBeWritten());
 
         // The message has to be actionable on its own: which table, which column, why, and
         // what the metatable actually states instead.
-        Assert.Contains("Published Application (2000000206)", ex.Message);
+        Assert.Contains("Published Application (system table 2000000206)", ex.Message);
         Assert.Contains("\"Runtime Package ID\"", ex.Message);
         Assert.Contains("no field of that name", ex.Message);
         Assert.Contains("3:?", ex.Message);
         Assert.Contains("5:?", ex.Message);
         Assert.Contains("3015", ex.Message);
+
+        // The anchor is load-bearing, not cosmetic. ApplicationObjectBasePatches
+        // .IsPermanentOutOfScope lets an AL [TryFunction] absorb a refusal into `false` unless
+        // the reason STARTS WITH "not-yet-implemented" — so a seeding gap without it would be
+        // swallowed back into the silent default this whole change removes.
+        Assert.StartsWith("not-yet-implemented — seeded-system-table-row:", ex.Reason,
+            StringComparison.Ordinal);
+        Assert.Equal("Published Application (system table 2000000206)", ex.Api);
+        Assert.EndsWith(" — see docs/limitations.md#runtime-shape-gaps", ex.Message,
+            StringComparison.Ordinal);
     }
 
     [Fact]
@@ -120,7 +131,7 @@ public sealed class SeededRowColumnsTests
         Assert.False(ledger.TryResolve("Tenant ID", out _, out var slot));
         Assert.Equal(-1, slot);
 
-        var ex = Assert.Throws<InvalidOperationException>(
+        var ex = Assert.Throws<RunnerOutOfScopeException>(
             () => ledger.ThrowIfAnyColumnCouldNotBeWritten());
         Assert.Contains("\"Tenant ID\"", ex.Message);
         Assert.Contains("slot 7", ex.Message);
@@ -141,7 +152,7 @@ public sealed class SeededRowColumnsTests
         Assert.True(ledger.TryResolve("ID", out _, out _));
 
         Assert.Equal(2, ledger.Unwritable.Count);
-        var ex = Assert.Throws<InvalidOperationException>(
+        var ex = Assert.Throws<RunnerOutOfScopeException>(
             () => ledger.ThrowIfAnyColumnCouldNotBeWritten());
         Assert.Contains("\"Version Major\"", ex.Message);
         Assert.Contains("\"Version Minor\"", ex.Message);
@@ -168,6 +179,14 @@ public sealed class SeededRowColumnsTests
     /// This is the link a unit test over the ledger alone cannot make: neither seeder can be
     /// driven from a test, because both need a real BC <c>NCLMetaTable</c> and a live
     /// DataAccessSource, and neither can be made to lose a column.
+    ///
+    /// IT IS A SOURCE-TEXT GREP AND IT PROVES LESS THAN IT LOOKS: a comment naming the type
+    /// satisfies the first assertion, and the second only rules out the one silent-skip line
+    /// #3015 was filed against, spelled exactly that way. It is a supplementary guard against
+    /// the wiring being reverted, not evidence that the wiring is correct. What actually proves
+    /// that is the runner-extras suite — with this change a required column that does not
+    /// resolve aborts the run, so 306 green AL tests against a real BC metatable are the
+    /// end-to-end half.
     /// </summary>
     [Theory]
     [InlineData("RecordPatches.PublishedApplicationSystemTable.cs")]
