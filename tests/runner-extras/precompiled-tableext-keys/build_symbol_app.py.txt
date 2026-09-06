@@ -1,0 +1,72 @@
+import zipfile, io, struct, uuid, sys, json
+
+APP_ID = "f7a4c2d1-3b6e-4c58-9a71-2d5e8b0c4f93"
+NAME, PUBLISHER, VERSION = "RXK Precompiled Key Dep", "AL Runner Fixtures", "1.0.0.0"
+
+navx_manifest = f'''<?xml version="1.0" encoding="utf-8"?>
+<Package xmlns="http://schemas.microsoft.com/navx/2015/manifest">
+  <App Id="{APP_ID}" Name="{NAME}" Publisher="{PUBLISHER}" Version="{VERSION}"
+       Target="Cloud" ShowMyCode="true" PropagateDependencies="false" />
+  <IdRanges><IdRange MinObjectId="65750" MaxObjectId="65799" /></IdRanges>
+  <Dependencies />
+</Package>
+'''
+
+# NO Platform/Runtime attributes and no top-level RuntimeVersion — #2124: a real value here
+# makes BC 27.0's compiler refuse EVERY OTHER dependency .app in the same combined
+# tests/runner-extras run with AL1153.
+symbol_reference = {
+    "Tables": [{
+        "Id": 65750, "Name": "RXK Key Base Table",
+        "Fields": [
+            {"Id": 1, "Name": "ID", "TypeDefinition": {"Name": "Integer"}, "Properties": []},
+            {"Id": 2, "Name": "Name", "TypeDefinition": {"Name": "Text[50]"}, "Properties": []},
+        ],
+        "Keys": [
+            {"Name": "PK", "FieldNames": ["ID"], "Properties": [{"Name": "Clustered", "Value": "1"}]},
+            {"Name": "BaseName", "FieldNames": ["Name"], "Properties": []},
+        ],
+        "ReferenceSourceFileName": "Table.al",
+        "Properties": [{"Name": "DataClassification", "Value": "ToBeClassified"}],
+    }],
+    "TableExtensions": [{
+        "Id": 65770, "Name": "RXK Key Base Ext",
+        "TargetObject": "RXK Key Base Table",
+        "Fields": [
+            {"Id": 65770, "Name": "Ext Rank", "TypeDefinition": {"Name": "Integer"}, "Properties": []},
+            {"Id": 65771, "Name": "Ext Tag", "TypeDefinition": {"Name": "Text[30]"}, "Properties": []},
+        ],
+        "Keys": [
+            # 1. extension field only
+            {"Name": "ExtRank", "FieldNames": ["Ext Rank"], "Properties": []},
+            # 2. MIXED: a base-table field FIRST, then an extension field. Field order is sort
+            #    order, and the base half only resolves once BuildNCLMetaTable has both parses.
+            {"Name": "ExtMixed", "FieldNames": ["Name", "Ext Tag"], "Properties": []},
+            # 3. NEGATIVE: names a field NOTHING declares. Must be dropped WHOLE, never
+            #    registered with the unresolvable position silently omitted.
+            {"Name": "ExtBroken", "FieldNames": ["Ext Rank", "No Such Field"], "Properties": []},
+        ],
+        "ReferenceSourceFileName": "TableExt.al",
+        "Properties": [],
+    }],
+    "AppId": APP_ID, "Name": NAME, "Publisher": PUBLISHER, "Version": VERSION,
+}
+
+def write_navx(zip_bytes, out_path):
+    header = (b"NAVX" + struct.pack("<I", 40) + struct.pack("<I", 2)
+              + uuid.UUID(APP_ID).bytes_le + struct.pack("<Q", len(zip_bytes)) + b"NAVX")
+    with open(out_path, "wb") as f:
+        f.write(header); f.write(zip_bytes)
+
+buf = io.BytesIO()
+with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+    zf.writestr("NavxManifest.xml", navx_manifest)
+    zf.writestr("SymbolReference.json", json.dumps(symbol_reference))
+    zf.writestr("[Content_Types].xml",
+        '<?xml version="1.0" encoding="utf-8"?>'
+        '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+        '<Default Extension="xml" ContentType="" /><Default Extension="json" ContentType="" />'
+        '<Default Extension="al" ContentType="" /><Default Extension="png" ContentType="" />'
+        '</Types>')
+write_navx(buf.getvalue(), sys.argv[1])
+print("wrote", sys.argv[1])
