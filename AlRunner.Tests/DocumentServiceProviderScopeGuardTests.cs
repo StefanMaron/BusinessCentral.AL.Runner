@@ -42,7 +42,11 @@ public sealed class DocumentServiceProviderScopeGuardTests
     private static readonly string RepoRoot = Path.GetFullPath(
         Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
 
-    private const string SelfFileName = "DocumentServiceProviderScopeGuardTests.cs";
+    /// <summary>
+    /// This file, keyed by its path relative to the repo root — not by its bare name, so a
+    /// same-named file in another directory cannot inherit the exemption (#3021).
+    /// </summary>
+    private const string SelfSourcePath = "AlRunner.Tests/DocumentServiceProviderScopeGuardTests.cs";
 
     /// <summary>MEF's discovery glob, as a regex over a bare file name.</summary>
     private static readonly Regex MefProviderFileName = new(
@@ -65,20 +69,33 @@ public sealed class DocumentServiceProviderScopeGuardTests
         @"DocumentServiceMock says",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
-    private static IEnumerable<string> RunnerSourceFiles()
+    /// <summary>The reporting key: a path relative to the repo root, '/' separated.</summary>
+    private static string Rel(string path) =>
+        Path.GetRelativePath(RepoRoot, path).Replace(Path.DirectorySeparatorChar, '/');
+
+    private static IReadOnlyList<string> RunnerSourceFiles()
     {
+        var paths = new List<string>();
         foreach (var dir in Directory.EnumerateDirectories(RepoRoot, "AlRunner*"))
         {
             foreach (var path in Directory.EnumerateFiles(dir, "*.cs", SearchOption.AllDirectories))
             {
-                // Build intermediates are copies of the sources already scanned.
-                var rel = Path.GetRelativePath(RepoRoot, path)
-                    .Replace(Path.DirectorySeparatorChar, '/');
-                if (rel.Contains("/bin/") || rel.Contains("/obj/")) continue;
-                if (Path.GetFileName(path) == SelfFileName) continue;
-                yield return path;
+                // Build intermediates are copies of the sources already scanned. Segments, not a
+                // substring, so this means the same thing as the other three source guards (#3021).
+                if (Rel(path).Split('/').Any(seg => seg is "bin" or "obj")) continue;
+                if (Rel(path) == SelfSourcePath) continue;
+                paths.Add(path);
             }
         }
+
+        // #3021 — non-vacuity, here rather than only in the first fact below:
+        // NoRunnerSource_CopiesTheMockErrorLiterals reads the same enumeration and had no such
+        // check, so an empty scan left it green while proving nothing.
+        Assert.True(paths.Count > 0,
+            $"expected the runner's C# sources under {RepoRoot}, found none — " +
+            "the guard is not looking at anything.");
+
+        return paths;
     }
 
     [Fact]
@@ -91,8 +108,7 @@ public sealed class DocumentServiceProviderScopeGuardTests
         {
             scanned++;
             if (HandlerContract.IsMatch(File.ReadAllText(path)))
-                offenders.Add(Path.GetRelativePath(RepoRoot, path)
-                    .Replace(Path.DirectorySeparatorChar, '/'));
+                offenders.Add(Rel(path));
         }
 
         // Non-vacuity: a scan that found no files would pass while proving nothing.
@@ -117,8 +133,7 @@ public sealed class DocumentServiceProviderScopeGuardTests
         foreach (var path in RunnerSourceFiles())
         {
             if (CopiedMockLiteral.IsMatch(File.ReadAllText(path)))
-                offenders.Add(Path.GetRelativePath(RepoRoot, path)
-                    .Replace(Path.DirectorySeparatorChar, '/'));
+                offenders.Add(Rel(path));
         }
 
         Assert.True(offenders.Count == 0,

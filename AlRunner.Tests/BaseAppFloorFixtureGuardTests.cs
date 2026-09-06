@@ -62,9 +62,37 @@ public sealed class BaseAppFloorFixtureGuardTests
     /// walked <c>Fixtures/</c> recursively — so a .cs file below the top level was invisible
     /// to one half of a guard whose whole value is that it fails automatically.
     /// </summary>
-    private static IEnumerable<string> TestSourcePaths() =>
-        Directory.EnumerateFiles(TestsDir, "*.cs", SearchOption.AllDirectories)
-            .Where(p => !Rel(p).Split('/').Any(seg => seg is "bin" or "obj"));
+    private static IReadOnlyList<string> TestSourcePaths()
+    {
+        var paths = Directory.EnumerateFiles(TestsDir, "*.cs", SearchOption.AllDirectories)
+            .Where(p => !Rel(p).Split('/').Any(seg => seg is "bin" or "obj"))
+            .ToList();
+
+        // #3021 — non-vacuity. Nothing else in this class notices an empty scan: the
+        // stale-entry fact below probes File.Exists on the allowlist keys directly, so it stays
+        // green while both scanning facts pass having read no file at all.
+        Assert.True(paths.Count > 0,
+            $"expected .cs sources under {TestsDir}, found none — the guard is not looking at "
+            + "anything, so a manifest written with the Base Application floor would pass unseen.");
+
+        return paths;
+    }
+
+    /// <summary>
+    /// Every checked-in fixture manifest, at any depth under <c>Fixtures/</c>. Same non-vacuity
+    /// obligation as <see cref="TestSourcePaths"/>, and for the same reason (#3021).
+    /// </summary>
+    private static IReadOnlyList<string> FixtureManifestPaths()
+    {
+        var fixtures = Path.Combine(TestsDir, "Fixtures");
+        var paths = Directory.EnumerateFiles(fixtures, "app.json", SearchOption.AllDirectories).ToList();
+
+        Assert.True(paths.Count > 0,
+            $"expected app.json fixtures under {fixtures}, found none — "
+            + "the guard is not looking at anything.");
+
+        return paths;
+    }
 
     // A JSON "application" property, in a .json file or embedded in a C# string —
     // including the escaped \"application\" form used in concatenated manifests.
@@ -116,11 +144,10 @@ public sealed class BaseAppFloorFixtureGuardTests
     public void NoFixtureManifest_DeclaresTheBaseApplicationFloor_ExceptTheAllowlistedFour()
     {
         var offenders = new List<string>();
-        foreach (var path in Directory.EnumerateFiles(
-                     Path.Combine(TestsDir, "Fixtures"), "app.json", SearchOption.AllDirectories))
+        foreach (var path in FixtureManifestPaths())
         {
             if (!ApplicationProperty.IsMatch(File.ReadAllText(path))) continue;
-            var rel = Path.GetRelativePath(TestsDir, path).Replace(Path.DirectorySeparatorChar, '/');
+            var rel = Rel(path);
             if (!AllowedFixtures.ContainsKey(rel)) offenders.Add(rel);
         }
 

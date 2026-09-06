@@ -416,8 +416,15 @@ public sealed class CliDocumentationTests
     public void NoRemediationText_NamesTheCheckoutOnlyDownloadArtifactsInvocation()
     {
         var root = Path.Combine(RepoRoot, "AlRunner");
+        var sources = Directory.EnumerateFiles(root, "*.cs", SearchOption.AllDirectories).ToList();
         var offenders = new List<string>();
-        foreach (var file in Directory.EnumerateFiles(root, "*.cs", SearchOption.AllDirectories))
+
+        // #3021 — non-vacuity: a scan that finds nothing must fail, not report a clean tree.
+        Assert.True(sources.Count > 0,
+            $"expected the runner's C# sources under {root}, found none — the guard is not "
+            + "looking at anything.");
+
+        foreach (var file in sources)
         {
             var lines = File.ReadAllLines(file);
             for (int i = 0; i < lines.Length; i++)
