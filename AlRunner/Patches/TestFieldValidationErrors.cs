@@ -112,12 +112,13 @@ internal sealed class TestFieldValidationErrors
     ///
     /// <para>ONLY a <see cref="Microsoft.Dynamics.Nav.Types.Exceptions.NavNCLException"/> is
     /// recorded — that is the base of everything AL's <c>Error()</c>, <c>TestField</c> and
-    /// BC's own validate path raise. Anything else (a
-    /// <see cref="AlRunner.Infrastructure.RunnerOutOfScopeException"/>, a runner
-    /// <c>NullReferenceException</c>, an option-resolution refusal) is NOT a validation error
-    /// and tears straight through: converting a loud refusal into a recorded "validation
-    /// error" would let AL's <c>asserterror</c> absorb it and read as a green test, which is
-    /// exactly what .claude/rules/loud-failures.md forbids.</para>
+    /// BC's own validate path raise. Anything else is NOT a validation error and tears
+    /// straight through: a <see cref="AlRunner.Infrastructure.RunnerOutOfScopeException"/>, a
+    /// <see cref="AlRunner.Infrastructure.BcShapeGapException"/> (both plain
+    /// <c>System.Exception</c>s, so neither can match this catch), an option-resolution
+    /// refusal, or a runner <c>NullReferenceException</c>. Converting a loud refusal into a
+    /// recorded "validation error" would let AL's <c>asserterror</c> absorb it and read as a
+    /// green test, which is exactly what .claude/rules/loud-failures.md forbids.</para>
     ///
     /// <para>Two further exclusions, both for the same reason — they are already the OUTER
     /// layer's own signal, so recording them would wrap a wrapper: a
