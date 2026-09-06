@@ -126,7 +126,24 @@ public static partial class RecordPatches
         var ordinals = EnsureAllObjObjectTypeOrdinals(allObjMetaTable);
         var done = _aovPopulatedByProvider.GetValue(provider, static _ => new ConcurrentDictionary<(int, int), byte>());
 
-        var owners = BuildObjectOwnerIndex();
+        // #3117: built on FIRST ACTUAL INSERT, not on entry. PopulateAllObjVirtualTable runs on
+        // every AllObj data-access handout, but `done` makes all but the first few handouts
+        // insert nothing — and BuildObjectOwnerIndex walks every registered module assembly's
+        // TypeDef name index six times (once per _emittedObjectTypePrefixes entry), Base
+        // Application included, so an eager build paid that price to produce no rows.
+        //
+        // Measured on the al-language corpus (2665 tests, BC 28.1, warm compile cache), which
+        // is what settles the "cost is not the reason for a skip any more" claim #3107's PR
+        // body made with no number behind it:
+        //
+        //   eager (as merged in #3107): 74 calls, 74 builds, 1905.2 ms total
+        //   this shape:                 74 calls,  3 builds,   48.7 ms total
+        //
+        // 71 of the 74 handouts rebuilt a 10,349-entry dictionary and inserted zero rows. For
+        // scale, the rest of this method — EnumerateKnownAlObjects plus the inserts, which is
+        // work that actually has to happen — measured 1119.5 ms over the same 74 calls, so the
+        // redundant build was NOT the same order as the necessary work: it was 1.7x larger.
+        Dictionary<(string Kind, int Id), Guid>? ownerIndex = null;
 
         foreach (var (kind, id, name, _) in EnumerateKnownAlObjects())
         {   // AllObj has no caption column; the shared inventory carries one for
@@ -151,7 +168,8 @@ public static partial class RecordPatches
             // does not know — and answering "the bundle" there would let the bundle own it,
             // which is a permission granted on a guess. An unowned object simply fails the
             // ownership check, which is what a wrong guess should look like.
-            var owningAppId = owners.TryGetValue((normalized, id), out var owner) ? owner : Guid.Empty;
+            ownerIndex ??= BuildObjectOwnerIndex();
+            var owningAppId = ownerIndex.TryGetValue((normalized, id), out var owner) ? owner : Guid.Empty;
             InsertAllObjRow(provider, allObjMetaTable, typeOrdinal, id, name, owningAppId);
         }
     }
@@ -343,8 +361,22 @@ public static partial class RecordPatches
         foreach (var appPath in _bcAppPaths.ToArray())
         {
             BcAppSymbolCache.AppSymbols symbols;
+            // #3117: NOT swallowed. This used to `catch { continue; }` on the reasoning that
+            // "the AllObj row itself is built either way" — true, but it is then built with
+            // Guid.Empty in the two package columns, and an ownership check reading those
+            // cannot tell "this app does not own it" from "we could not find out". That is the
+            // silent default .claude/rules/loud-failures.md exists to prevent, and it is the
+            // same reasoning AllObjShapeGap already applies to an unreadable option ordinal:
+            // the owner is a STORED COLUMN VALUE, so a wrong one mis-keys every row it writes
+            // and no test can see it.
             try { symbols = BcAppSymbolCache.Get(appPath); }
-            catch { continue; }   // the AllObj row itself is built either way; see EnumerateBcAppObjects
+            catch (Exception ex)
+            {
+                throw AllObjShapeGap(
+                    $"the SymbolReference of dependency package '{Path.GetFileName(appPath)}' could not be "
+                    + $"read ({ex.GetType().Name}: {ex.Message}), so every object it declares would be "
+                    + "stamped with no owning app instead of its real one");
+            }
             if (!Guid.TryParse(symbols.AppId, out var appId) || appId == Guid.Empty)
                 // A symbol reference stating no app id leaves its objects unowned rather than
                 // getting an invented owner — Guid.Empty then matches no Published Application
@@ -387,37 +419,102 @@ public static partial class RecordPatches
         //
         // So both sources are read and the SYMBOL answer wins on conflict: it is exact for a
         // precompiled .app, and the assembly pass only fills ids no symbol reference claimed.
-        // Cost is not the reason for a skip any more either — TypeNamesWithPrefix reads the
-        // TypeDef table and resolves no CLR Type at all, where EnumerateWithPrefix
-        // materialised a RuntimeType per match.
+        //
+        // On cost (#3117): #3107 asserted "cost is not the reason for a skip any more" with no
+        // number behind it. Measured since, on the al-language corpus: one build of this index
+        // is ~25 ms with Base Application loaded (10,349 entries), and it is NOT free. What
+        // makes it affordable is that the caller now builds it at most once per handout that
+        // actually inserts a row — see PopulateAllObjVirtualTable — rather than on every
+        // handout. The half of the original claim that does hold is the mechanism:
+        // TypeNamesWithPrefix reads the TypeDef table and resolves no CLR Type at all, where
+        // EnumerateWithPrefix materialised a RuntimeType per match.
         foreach (var (asm, appId) in AlRunner.BcRuntime.RegisteredModuleAssemblies())
         {
+            var asmName = SafeAssemblyName(asm);
             AlRunner.Infrastructure.AssemblyTypeIndex typeIndex;
+            // #3117: NOT swallowed, for the reason on the symbol-reference read above. A throw
+            // here drops EVERY object this assembly declares from the index, and each one then
+            // takes the Guid.Empty branch in PopulateAllObjVirtualTable — silently, with no
+            // message and no exit-code change. AssemblyTypeIndex's own constructor is written
+            // to FALL BACK rather than throw (unreadable metadata degrades to
+            // Assembly.GetTypes()), so an exception escaping For() is genuinely exceptional
+            // rather than routine: measured over the al-language corpus (2665 tests) and
+            // tests/runner-extras (304 tests), neither this site nor the two around it fired
+            // once.
             try { typeIndex = AlRunner.Infrastructure.AssemblyTypeIndex.For(asm); }
-            catch { continue; }
-            foreach (var (prefix, kind) in _emittedObjectTypePrefixes)
+            catch (Exception ex)
             {
-                IEnumerable<string> names;
-                try
-                {
-                    names = typeIndex.IsMetadataBacked
-                        ? typeIndex.TypeNamesWithPrefix(prefix)
-                        // A dynamic (Reflection.Emit) assembly has no TypeDef table to read;
-                        // it has a handful of types, so resolving them is cheap.
-                        : typeIndex.EnumerateWithPrefix(prefix).Select(t => t.Name);
-                }
-                catch { continue; }
-                foreach (var name in names)
-                {
-                    if (!int.TryParse(name.AsSpan(prefix.Length), out var id) || id <= 0) continue;
-                    var key = (NormalizeObjectTypeName(kind), id);
-                    // TryAdd, not an assignment: a symbol reference that named this object
-                    // already answered, and that answer is the authoritative one.
-                    index.TryAdd(key, appId);
-                }
+                throw AllObjShapeGap(
+                    $"the type index of module assembly '{asmName}' could not be read "
+                    + $"({ex.GetType().Name}: {ex.Message}), so every object it declares would be "
+                    + "stamped with no owning app instead of its real one");
             }
+
+            AddEmittedAssemblyOwners(index, asmName, appId, prefix =>
+                typeIndex.IsMetadataBacked
+                    ? typeIndex.TypeNamesWithPrefix(prefix)
+                    // A dynamic (Reflection.Emit) assembly has no TypeDef table to read;
+                    // it has a handful of types, so resolving them is cheap.
+                    : typeIndex.EnumerateWithPrefix(prefix).Select(t => t.Name));
         }
         return index;
+    }
+
+    /// <summary>Assembly name for a diagnostic, without letting the diagnostic itself throw.</summary>
+    private static string SafeAssemblyName(System.Reflection.Assembly asm)
+    {
+        try { return asm.GetName().Name ?? asm.ToString(); }
+        catch { return "<unnamed assembly>"; }
+    }
+
+    /// <summary>
+    /// Fold one registered module assembly's emitted AL object types into
+    /// <paramref name="index"/>, one pass per <see cref="_emittedObjectTypePrefixes"/> entry.
+    ///
+    /// <para><paramref name="typeNamesForPrefix"/> is a parameter rather than a direct
+    /// <c>AssemblyTypeIndex</c> call so the FAILURE path is directly testable — the whole point
+    /// of #3117 is that this method must not answer quietly when it cannot read, and a test
+    /// cannot make a real R2R assembly's TypeDef table unreadable on demand. Same shape as
+    /// <c>Win32Stubs.FindCompiler(Func&lt;string, bool&gt;)</c>, pinned by
+    /// <c>Win32StubsLoudFailureTests</c> for the same reason.</para>
+    /// </summary>
+    internal static void AddEmittedAssemblyOwners(
+        Dictionary<(string Kind, int Id), Guid> index,
+        string assemblyName,
+        Guid appId,
+        Func<string, IEnumerable<string>> typeNamesForPrefix)
+    {
+        foreach (var (prefix, kind) in _emittedObjectTypePrefixes)
+        {
+            var normalizedKind = NormalizeObjectTypeName(kind);
+            // The enumeration runs INSIDE the try, not just the call that produces it. Both
+            // producers are lazy — TypeNamesWithPrefix is a `yield return` iterator and
+            // EnumerateWithPrefix(...).Select(...) is deferred too — so wrapping only the
+            // assignment (as the code this replaces did) caught nothing the enumeration itself
+            // raised; TypeNamesWithPrefix's own "metadata-only" InvalidOperationException would
+            // have sailed straight past it.
+            try
+            {
+                foreach (var name in typeNamesForPrefix(prefix))
+                {
+                    if (!int.TryParse(name.AsSpan(prefix.Length), out var id) || id <= 0) continue;
+                    // TryAdd, not an assignment: a symbol reference that named this object
+                    // already answered, and that answer is the authoritative one (#3049).
+                    index.TryAdd((normalizedKind, id), appId);
+                }
+            }
+            catch (RunnerOutOfScopeException)
+            {
+                throw;   // already named its surface; do not re-wrap
+            }
+            catch (Exception ex)
+            {
+                throw AllObjShapeGap(
+                    $"module assembly '{assemblyName}' could not be scanned for '{prefix}*' object "
+                    + $"types ({ex.GetType().Name}: {ex.Message}), so every {kind} it declares would "
+                    + "be stamped with no owning app instead of its real one");
+            }
+        }
     }
 
     /// <summary>
