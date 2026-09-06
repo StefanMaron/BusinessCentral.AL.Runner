@@ -255,16 +255,16 @@ public sealed class ReleaseTestParityTests
     [Fact]
     public void RequiredStatusCheck_StaysAJobInTestMatrixYml()
     {
-        // "All BC versions passed" is one of the two required checks in main's branch
+        // "BC test matrix passed" is one of the two required checks in main's branch
         // ruleset (the other is "Tests updated", produced by require-tests.yml). A
         // check's context is the job name qualified by the CALLING job, so moving this job
-        // into bc-tests.yml would rename it to "bc-tests / All BC versions passed" and leave
+        // into bc-tests.yml would rename it to "bc-tests / BC test matrix passed" and leave
         // the ruleset requiring a context that never reports again — a permanently pending
         // check that blocks every pull request, or worse, one that is quietly dropped.
         var text = Read("test-matrix.yml");
 
-        Assert.Contains("name: All BC versions passed", text, StringComparison.Ordinal);
-        Assert.DoesNotContain("All BC versions passed", Read(WorkflowParity.SharedWorkflow), StringComparison.Ordinal);
+        Assert.Contains("name: BC test matrix passed", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("BC test matrix passed", Read(WorkflowParity.SharedWorkflow), StringComparison.Ordinal);
     }
 
     // ---- release ordering: tests gate every write (#1978) ---------------------------

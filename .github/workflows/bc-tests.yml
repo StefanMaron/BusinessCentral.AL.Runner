@@ -109,6 +109,12 @@ jobs:
         # but the mitigation costs one line.
         env:
           BC_VERSION_FILTER: ${{ inputs.bc-version-filter }}
+          # The event that triggered the CALLING workflow: `pull_request` for
+          # test-matrix.yml on a PR, `push` / `schedule` for main, `workflow_dispatch`
+          # or `release` for publish.yml, `workflow_dispatch` for bc-leg-rerun.yml.
+          # Only `pull_request` narrows the matrix (#3141); every other path resolves
+          # the full list exactly as before.
+          GATING_EVENT: ${{ github.event_name }}
         run: |
           # Each prefix in bc-versions.txt → one matrix entry {bc-version, required}.
           #
@@ -126,7 +132,7 @@ jobs:
           # mean a BC 27 regression lands silently, which is exactly what this matrix
           # exists to prevent. One prefix is still singled out as `required-version`,
           # for single-build jobs that need to name one version.
-          BC_PREFIXES=$(cat .github/bc-versions.txt | grep -v '^#' | tr '\n' ' ')
+          ALL_PREFIXES=$(cat .github/bc-versions.txt | grep -v '^#' | tr '\n' ' ')
 
           # Both selections below are DERIVED from bc-versions.txt, never hardcoded.
           # A hardcoded pin in a path nobody exercises except during a release is
@@ -145,75 +151,165 @@ jobs:
           # Plain `sort -V` rather than an inline python -c: `python3 -c` with indented
           # source is an IndentationError on some CPython versions and not others, and
           # this block resolves the whole matrix -- if it throws, nothing runs at all.
-          PRIMARY_PREFIX=$(printf '%s\n' $BC_PREFIXES | sort -V | tail -1)
-          UNIT_PREFIXES=$(for major in $(printf '%s\n' $BC_PREFIXES | cut -d. -f1 | sort -u); do
-                            printf '%s\n' $BC_PREFIXES | grep "^${major}\." | sort -V | tail -1
+          #
+          # BOTH are computed from ALL_PREFIXES -- the FULL list -- and BOTH are computed
+          # BEFORE any narrowing below. That ordering is the whole reason a narrowed leg
+          # does exactly the work that leg does on a full run, rather than a subtly
+          # different job (#2674: AlRunner.Tests runs on 2 of the 8 legs, not all 8).
+          PRIMARY_PREFIX=$(printf '%s\n' $ALL_PREFIXES | sort -V | tail -1)
+          UNIT_PREFIXES=$(for major in $(printf '%s\n' $ALL_PREFIXES | cut -d. -f1 | sort -u); do
+                            printf '%s\n' $ALL_PREFIXES | grep "^${major}\." | sort -V | tail -1
                           done | tr '\n' ' ')
+          echo "Full list: $ALL_PREFIXES"
           echo "Primary prefix: $PRIMARY_PREFIX | unit-test prefixes: $UNIT_PREFIXES"
 
-          # Single-leg narrowing for the diagnostic dispatch (bc-leg-rerun.yml). Applied
-          # HERE, after PRIMARY_PREFIX and UNIT_PREFIXES are derived from the FULL list
-          # above and before the resolve loop below — so a dispatched leg carries the same
-          # `required` and `unit-tests` flags it carries on a normal 8-leg run. Narrowing
-          # before those two were computed would silently hand a single-leg run a different
-          # job than the leg it is supposed to be reproducing, which would make it useless
-          # as flake evidence: AlRunner.Tests runs on 2 of the 8 legs, not all 8 (#2674).
+          # GATING_PREFIXES = the legs this run actually EXECUTES. Starts as the full list;
+          # the two narrowings below are the only things that shrink it, and neither can
+          # co-occur (one is a pull_request, the other a workflow_dispatch).
+          GATING_PREFIXES="$ALL_PREFIXES"
+
+          # ---------------------------------------------------------------------------
+          # Narrowing 1 (#3141): a PULL REQUEST runs .github/pr-bc-versions.txt, not all
+          # eight. The measurement is in that file's header and in issue #3141; the short
+          # version is that 28.1, 28.2, 28.3 and 27.3 never once reported a failure a
+          # neighbouring leg on the same commit did not, over 37 days, while 27.0 and 27.5
+          # each caught defects no 28.x leg caught.
+          #
+          # push and schedule (both `main`) and the release path are untouched and still
+          # resolve all eight, so the dropped legs are caught within the schedule interval
+          # rather than never.
+          #
+          # Every failure mode here is validated rather than assumed, because all of them
+          # report GREEN: an unknown prefix, an empty file, a list missing the primary
+          # prefix (smoke would build against an empty version) or missing a unit prefix
+          # (AlRunner.Tests would silently stop running on that major for every PR).
+          # ---------------------------------------------------------------------------
+          if [ "${GATING_EVENT:-}" = "pull_request" ]; then
+            PR_FILE=.github/pr-bc-versions.txt
+            if [ ! -f "$PR_FILE" ]; then
+              echo "::error::$PR_FILE is missing — the pull-request matrix has no version list"
+              exit 1
+            fi
+            PR_PREFIXES=$(cat "$PR_FILE" | grep -v '^#' | tr '\n' ' ')
+            if [ -z "$(printf '%s' "$PR_PREFIXES" | tr -d ' ')" ]; then
+              echo "::error::.github/pr-bc-versions.txt carries no version prefixes — that would resolve to an empty matrix, and a workflow whose only real job never ran still reports success (#1976, #2065)"
+              exit 1
+            fi
+            for p in $PR_PREFIXES; do
+              case " $ALL_PREFIXES " in
+                *" $p "*) ;;
+                *) echo "::error::.github/pr-bc-versions.txt lists '$p', which is not a prefix in .github/bc-versions.txt ($ALL_PREFIXES)"; exit 1 ;;
+              esac
+            done
+            for u in $UNIT_PREFIXES; do
+              case " $PR_PREFIXES " in
+                *" $u "*) ;;
+                *) echo "::error::.github/pr-bc-versions.txt omits '$u', the newest prefix of its major — AlRunner.Tests runs on that leg (see the unit-tests flag below), so omitting it stops the C# suite covering that BC major on every pull request"; exit 1 ;;
+              esac
+            done
+            case " $PR_PREFIXES " in
+              *" $PRIMARY_PREFIX "*) ;;
+              *) echo "::error::.github/pr-bc-versions.txt omits the primary prefix '$PRIMARY_PREFIX' — required-version is emitted only for that prefix, so the smoke job would build against an empty version"; exit 1 ;;
+            esac
+            echo "Pull request: narrowing the matrix to '$PR_PREFIXES' (full list stays: $ALL_PREFIXES)"
+            GATING_PREFIXES="$PR_PREFIXES"
+          fi
+
+          # ---------------------------------------------------------------------------
+          # Narrowing 2: the single-leg diagnostic dispatch (bc-leg-rerun.yml). Membership
+          # is checked against ALL_PREFIXES, not the working list, so a dispatch names a
+          # leg from the real matrix regardless of which path narrowed before it.
           #
           # Unknown prefixes fail the run rather than resolving to an empty matrix. An empty
           # matrix means the `test` job never runs, and a workflow whose only real job never
           # ran still reports success — the silent-no-op shape this repo has been bitten by
           # repeatedly (#1976, #2065).
+          # ---------------------------------------------------------------------------
           if [ -n "${BC_VERSION_FILTER:-}" ]; then
-            case " $BC_PREFIXES " in
+            case " $ALL_PREFIXES " in
               *" $BC_VERSION_FILTER "*)
-                echo "Single-leg run: narrowing to '$BC_VERSION_FILTER' (was: $BC_PREFIXES)"
-                BC_PREFIXES="$BC_VERSION_FILTER"
+                echo "Single-leg run: narrowing to '$BC_VERSION_FILTER' (was: $GATING_PREFIXES)"
+                GATING_PREFIXES="$BC_VERSION_FILTER"
                 ;;
               *)
-                echo "::error::bc-version-filter '$BC_VERSION_FILTER' is not a prefix in .github/bc-versions.txt ($BC_PREFIXES)"
+                echo "::error::bc-version-filter '$BC_VERSION_FILTER' is not a prefix in .github/bc-versions.txt ($ALL_PREFIXES)"
                 exit 1
                 ;;
             esac
           fi
 
+          # The loop resolves the FULL list every time, and the narrowing only decides which
+          # resolved versions become matrix legs. That is deliberate and load-bearing:
+          # `versions-json` feeds the `pack` job, which builds ONE engine variant per entry
+          # and then asserts the packed count equals the number of entries in
+          # bc-versions.txt. A narrowed versions-json would turn every pull request's pack
+          # job red, and relaxing that assertion to match would ship a nupkg missing five
+          # engine variants — #2024 item 3 / #2166 are the record of what that costs.
+          # `required-version` is emitted here for the same reason: it must be the primary
+          # build whether or not the primary leg is in this run's matrix.
           ENTRIES="[]"
-          for prefix in $BC_PREFIXES; do
+          ALL_ENTRIES="[]"
+          for prefix in $ALL_PREFIXES; do
             FULL=$(dotnet run --project tools/DownloadArtifacts -- resolve-version "$prefix" dummy 2>/dev/null || true)
-            if [ -n "$FULL" ]; then
-              REQ=True
-              [ "$prefix" = "$PRIMARY_PREFIX" ] && echo "required-version=$FULL" >> "$GITHUB_OUTPUT"
-              # Issue #2674: AlRunner.Tests runs on TWO legs, not eight. It is 66% of a
-              # leg's wall clock (627s of 942s, run 33826354932) and carries no version
-              # signal: across the 25 most recent red Test Matrix runs it failed 8 times
-              # on a SCATTERED leg set (the load-dependent signature) and 3 times on ALL
-              # EIGHT (a real regression any single leg catches) — and ZERO times on a
-              # version split. On a green run all 1922 tests report an identical outcome
-              # on all 8 legs. The 6 redundant legs therefore add no signal and 6x the
-              # flake surface, which has reddened main repeatedly (#2496, #2653, #2648).
-              #
-              # The contrast is runner-extras, which stays on all 8: it has 6
-              # VERSION-SPLIT failures in the same 25 runs, because some AL surfaces are
-              # gated on preprocessor symbols only defined from 28.0 on. That 27-vs-28
-              # boundary is also why this is two legs and not one, and why they are the
-              # NEWEST minor of each major: the one failure mode that does discriminate
-              # by version shows up on the newest build first. A BC service update once
-              # rerouted callers past a Cecil rewrite and produced 53 failures on the
-              # newer build alone, and a rewrite that stops being reached fails silently
-              # — behaviour just reverts to BC's own, with nothing announcing it.
-              UNIT=False
-              case " $UNIT_PREFIXES " in *" $prefix "*) UNIT=True ;; esac
-              echo "  $prefix -> $FULL (required=$REQ, unit-tests=$UNIT)"
-              ENTRIES=$(echo "$ENTRIES" | python3 -c "import json,sys; v=json.load(sys.stdin); v.append({'bc-version':'$FULL','required':$REQ,'unit-tests':$UNIT}); print(json.dumps(v))")
-            else
+            if [ -z "$FULL" ]; then
               echo "  $prefix -> FAILED (skipping)"
+              continue
             fi
+            [ "$prefix" = "$PRIMARY_PREFIX" ] && echo "required-version=$FULL" >> "$GITHUB_OUTPUT"
+            ALL_ENTRIES=$(echo "$ALL_ENTRIES" | python3 -c "import json,sys; v=json.load(sys.stdin); v.append('$FULL'); print(json.dumps(v))")
+
+            case " $GATING_PREFIXES " in
+              *" $prefix "*) ;;
+              *) echo "  $prefix -> $FULL (resolved, NOT a leg of this run)"; continue ;;
+            esac
+
+            REQ=True
+            # Issue #2674: AlRunner.Tests runs on TWO legs, not eight. It is 66% of a
+            # leg's wall clock (627s of 942s, run 33826354932) and carries no version
+            # signal: across the 25 most recent red Test Matrix runs it failed 8 times
+            # on a SCATTERED leg set (the load-dependent signature) and 3 times on ALL
+            # EIGHT (a real regression any single leg catches) — and ZERO times on a
+            # version split.
+            #
+            # #3141 re-measured that over 288 failed Test Matrix runs (2026-08-02 to
+            # 2026-09-06) and found exactly ONE clean version split, which is why this
+            # is still TWO legs and not one: run 33337113550 (2026-08-30) failed
+            # ProvisionExplicitModesTests.TestApps_BundleDeclaresOlderMajor_StillTargetsEngineMajor
+            # on 27.0, 27.3 AND 27.5 with all four 28.x legs green. The comment inside
+            # that test names the cause — a hardcoded "27" colliding with the engine's
+            # own major only on a 27.x leg. So the 27 copy of the C# suite has caught a
+            # real defect no 28.x leg could catch, and #3141's proposal to run it once on
+            # 28.4 was measured and rejected.
+            #
+            # The contrast is runner-extras, which stays on every leg of whatever matrix
+            # ran: it has 6 VERSION-SPLIT failures in the same 25 runs, because some AL
+            # surfaces are gated on preprocessor symbols only defined from 28.0 on. That
+            # 27-vs-28 boundary is also why this is two legs and not one, and why they are
+            # the NEWEST minor of each major: the one failure mode that does discriminate
+            # by version shows up on the newest build first. A BC service update once
+            # rerouted callers past a Cecil rewrite and produced 53 failures on the
+            # newer build alone, and a rewrite that stops being reached fails silently
+            # — behaviour just reverts to BC's own, with nothing announcing it.
+            UNIT=False
+            case " $UNIT_PREFIXES " in *" $prefix "*) UNIT=True ;; esac
+            echo "  $prefix -> $FULL (required=$REQ, unit-tests=$UNIT)"
+            ENTRIES=$(echo "$ENTRIES" | python3 -c "import json,sys; v=json.load(sys.stdin); v.append({'bc-version':'$FULL','required':$REQ,'unit-tests':$UNIT}); print(json.dumps(v))")
           done
+
+          # A resolve step that produced no legs must fail here rather than hand the `test`
+          # job an empty matrix: GitHub skips a job whose matrix is empty, and the workflow
+          # then reports success having run no tests at all. Newly reachable now that a
+          # second narrowing exists, but it was always the worst outcome of this block.
+          if [ "$ENTRIES" = "[]" ]; then
+            echo "::error::resolved an empty matrix from '$GATING_PREFIXES' — no BC version resolved to a build, so the test job would be skipped and this workflow would report success having run nothing"
+            exit 1
+          fi
+
           echo "matrix={\"target\":$ENTRIES}" >> "$GITHUB_OUTPUT"
           echo "Matrix: $ENTRIES"
 
-          VERSIONS_JSON=$(echo "$ENTRIES" | python3 -c "import json,sys; v=json.load(sys.stdin); print(json.dumps([e['bc-version'] for e in v]))")
-          echo "versions-json=$VERSIONS_JSON" >> "$GITHUB_OUTPUT"
-          echo "Versions: $VERSIONS_JSON"
+          echo "versions-json=$ALL_ENTRIES" >> "$GITHUB_OUTPUT"
+          echo "Versions (full list, NOT narrowed): $ALL_ENTRIES"
 
   test:
     needs: resolve-versions

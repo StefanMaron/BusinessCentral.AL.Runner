@@ -7,6 +7,10 @@ name: BC single-leg re-run (diagnostic)
 #   gh workflow run bc-leg-rerun.yml --repo StefanMaron/BusinessCentral.AL.Runner \
 #     --ref <branch> -f bc-version=28.4
 #
+# Since #3141 it has a second use. A pull request runs .github/pr-bc-versions.txt --
+# 27.0, 27.5 and 28.4 -- so 27.3, 28.0, 28.1, 28.2 and 28.3 are not on the pull-request
+# path at all, and this workflow is how you get one of them to run against a branch.
+#
 # It exists because section 3 bans `gh run rerun` outright — a re-run overwrites the failed
 # run's log in place, and those logs have been the entire evidence base for real
 # investigations. This gives the same repeat measurement while leaving the original run and
@@ -15,10 +19,11 @@ name: BC single-leg re-run (diagnostic)
 # ---------------------------------------------------------------------------------------
 # WHY THIS IS A SEPARATE FILE AND NOT A `workflow_dispatch:` ON test-matrix.yml
 # ---------------------------------------------------------------------------------------
-# `All BC versions passed` is the ONE required status check in main's branch ruleset (the
+# `BC test matrix passed` is the ONE required status check in main's branch ruleset (the
 # other is `Tests updated`; the individual `bc-tests / BC <ver>` legs are NOT required
 # contexts — verified against the live ruleset, not assumed). If a single-leg run could
-# report that context, one leg's green would satisfy a gate that means "all eight passed".
+# report that context, one leg's green would satisfy a gate that means "every leg of this
+# run passed" — three legs on a pull request since #3141, eight on main and on a release.
 # That is far worse than the flake it would be diagnosing.
 #
 # Adding `workflow_dispatch:` to test-matrix.yml could not be made safe by condition alone:

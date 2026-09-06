@@ -1,0 +1,28 @@
+# BC version prefixes the PULL-REQUEST matrix runs. Every prefix here must also
+# appear in .github/bc-versions.txt; bc-tests.yml fails the run if one does not.
+#
+# push, schedule and the release path all still resolve the FULL list in
+# bc-versions.txt. This file narrows one path only: pull requests.
+#
+# Why (issue #3141). Over 37 days of PR and merge history, each leg was asked one
+# question: did it ever report a failure that its neighbours on the same commit did
+# not? 28.1, 28.2, 28.3 and 27.3 never once did. 27.0 and 27.5 each caught defects
+# no 28.x leg caught, and dropping to 28.4 alone would have missed five genuine
+# version-specific defects — two of which made the corpus run ZERO tests on BC 27
+# while still reporting a green leg. So the 27/28 boundary is what discriminates,
+# the minors inside a major are not, and the cheapest set that keeps every defect
+# the history contains is 27.0 + 27.5 + 28.4.
+#
+# The five legs dropped here are not dropped from the project: test-matrix.yml runs
+# the full eight on every push to main and on a daily schedule, so a regression only
+# 28.2 can see is caught within the schedule interval rather than never.
+#
+# Two invariants bc-tests.yml enforces, and AlRunner.Tests/PullRequestMatrixScopeTests.cs
+# holds in place, so this list cannot be edited into something that quietly tests less:
+#   * it must contain the PRIMARY prefix (the newest overall), which the smoke job builds
+#     against and publish.yml reads back as `required-version`;
+#   * it must contain every UNIT prefix (the newest of each major), because AlRunner.Tests
+#     runs on those legs and a 27-only C# regression is not hypothetical — run
+#     33337113550 on 2026-08-30 failed one on 27.0, 27.3 and 27.5 with every 28.x leg
+#     green.
+27.0 27.5 28.4

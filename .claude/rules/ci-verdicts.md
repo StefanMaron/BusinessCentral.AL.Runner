@@ -109,7 +109,7 @@ Two things make it hard to see:
 
 - **A cancelled run does not necessarily report `cancelled`.** Recorded on PR #3010's head
   `95c16b20`: `Test Matrix` run `34002828792` has run-level `conclusion: cancelled`, and its
-  aggregate job **`All BC versions passed` concluded `failure`** — the aggregate runs
+  aggregate job **`BC test matrix passed` concluded `failure`** — the aggregate runs
   `if: always()` over `needs` that were killed. The live run `34004261321` was green
   throughout. Read literally, that leftover is a failing *required* context.
 - **`gh pr checks` shows one row per context name and drops the rest.** Measured on PR #3016's
@@ -165,7 +165,7 @@ reporting green from a stale run has happened at least four times. Confirm the c
 SHA matches local `HEAD` — a mismatch means "not yet reported," not "green." Never report a
 PR as done while its CI is still running.
 
-**Which contexts gate.** Two come from the big workflows: **`All BC versions passed`**
+**Which contexts gate.** Two come from the big workflows: **`BC test matrix passed`**
 (`.github/workflows/test-matrix.yml`) and **`Tests updated`**
 (`.github/workflows/require-tests.yml` — not `pr-check.yml`, which is where it used to live
 before #2726). The matrix legs report as `bc-tests / BC <ver> (required)` — the `(required)`
@@ -195,6 +195,16 @@ gh api repos/StefanMaron/BusinessCentral.AL.Runner/rules/branches/main \
 the two cannot rot apart silently — except for names it lists as `PENDING_REQUIRED_CONTEXTS`,
 which are contexts the ruleset is about to require and tolerates in either state while a
 by-hand ruleset edit catches up with a merged pull request.
+
+**A pull request runs three legs, not eight** (#3141): `.github/pr-bc-versions.txt` — 27.0,
+27.5 and 28.4. `main` still runs all eight on every push, and — the guarantee that holds when
+merges are cancelling each other — every 30 minutes from `main-verdict-floor.yml` (#3003);
+so does the release path. Two consequences for reading a verdict here. A green pull request has not
+been measured on 27.3, 28.0, 28.1, 28.2 or 28.3, so a version-specific regression in one of
+those surfaces on `main` rather than on the PR — which is what `bc-leg-rerun.yml` is for, since
+it can dispatch any of the eight against your branch. And the leg-set evidence in section 5 is
+thinner on a PR: three legs give far fewer distinguishable failing sets than eight, so prefer
+the dispatch or an empty commit over reading a pattern out of three data points.
 
 Wait in the **foreground** — `tools/ci-wait.py`, or `gh run watch <run-id>`. Never end a turn
 while CI you are responsible for is still running (`no-backgrounding-long-commands.md`).
@@ -281,7 +291,9 @@ gh workflow run bc-leg-rerun.yml --repo StefanMaron/BusinessCentral.AL.Runner \
 `bc-version` is a prefix from `.github/bc-versions.txt`; an unknown one fails the run rather
 than resolving to an empty matrix. The leg does exactly the work that leg does on a normal
 run — `required` and `unit-tests` are still computed from the full version list, so a
-dispatched 28.0 leg does not suddenly run `AlRunner.Tests` that the real 28.0 leg skips.
+dispatched 28.0 leg does not suddenly run `AlRunner.Tests` that the real 28.0 leg skips. Since
+#3141 the dispatch has a second use: it is how you get 27.3, 28.0, 28.1, 28.2 or 28.3 to run
+against a branch at all, because the pull-request matrix no longer includes them.
 
 In the AL-language corpus, `.github/workflows/ci.yml` (`bc_version` input):
 
@@ -295,7 +307,7 @@ disturbing the original: run 33962643816, dispatched against the same SHA that h
 failed, came back 2495/2495 clean.
 
 **A single-leg dispatch cannot satisfy this repository's required check**, by construction:
-`All BC versions passed` is declared in `test-matrix.yml`, and `bc-leg-rerun.yml` does not
+`BC test matrix passed` is declared in `test-matrix.yml`, and `bc-leg-rerun.yml` does not
 contain that job at all, so there is no conclusion — not success, not `skipped` — for it to
 report. `AlRunner.Tests/BcLegRerunWorkflowTests.cs` holds that property in place. Treat the
 result as evidence for a human, never as a gate that has been cleared.
