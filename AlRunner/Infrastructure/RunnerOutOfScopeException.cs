@@ -76,12 +76,23 @@ public sealed class RunnerOutOfScopeException : Exception
     /// link does not necessarily repeat, and a pointer in the MIDDLE of a sentence is prose.
     /// <c>Reason</c> keeps its anchor either way — <c>ExpectationManifest.ReasonAnchor</c>
     /// reads the text BEFORE the first em-dash separator, which this never touches.</para>
+    ///
+    /// <para>"Trailing" tolerates the punctuation an author wraps the pointer in — a closing
+    /// bracket, a sentence period, or both: "(see docs/scope.md)", "[see docs/scope.md]",
+    /// "(see docs/scope.md).". #3073 added those. No throw site writes one today, so this is
+    /// closing the hole rather than fixing a live doubling: a form passed through silently
+    /// would contradict the paragraph above, which is what makes it worth handling at all.
+    /// <c>OutOfScopePointerCallSiteGuardTests</c> enforces the other half — that no call site
+    /// defeats this method — by reading the compiled IL.</para>
     /// </summary>
     internal static string TrimTrailingDocPointer(string reason)
     {
         if (string.IsNullOrEmpty(reason)) return reason;
-        var trimmed = reason.TrimEnd();
-        if (trimmed.EndsWith(".")) trimmed = trimmed[..^1].TrimEnd();
+        // Peel a trailing sentence period and/or closing bracket before looking for the
+        // pointer. Safe to over-peel here: the pointer itself ends in a letter, so if what is
+        // underneath is not the pointer we return `reason` UNCHANGED below, never the peeled
+        // text — that early return is what keeps a reason like "… Report 'X' (5)" intact.
+        var trimmed = reason.TrimEnd().TrimEnd(' ', '\t', '.', ')', ']');
         const string Pointer = "docs/scope.md";
         if (!trimmed.EndsWith(Pointer, StringComparison.OrdinalIgnoreCase)) return reason;
 
@@ -89,7 +100,9 @@ public sealed class RunnerOutOfScopeException : Exception
         // "See" / "see" is the only lead-in in use; anything else is prose that happens to end
         // in the file name and is left alone rather than silently truncated.
         if (!head.EndsWith("see", StringComparison.OrdinalIgnoreCase)) return reason;
-        return head[..^3].TrimEnd().TrimEnd('.', ',', ';', ':').TrimEnd();
+        // The opening bracket of a "(see …)" wrapper is dropped with the same pass that drops
+        // the lead-in punctuation, so the sentence in front of it is all that is left.
+        return head[..^3].TrimEnd().TrimEnd('.', ',', ';', ':', '(', '[').TrimEnd();
     }
 
     // Stable contract format. AL tests match with:
