@@ -1000,6 +1000,7 @@ public class DependencyPageMetadataXmlTests
     private const int SodStatesNonePageId = 88123703;
     private const int SodNoSourceTablePageId = 88123704;
     private const int SodBadCaptionFieldsPageId = 88123705;
+    private const int SodUnreadableBoolPageId = 88123706;
 
     private const string SourceObjectPropsSymbolReference = """
         {
@@ -1055,6 +1056,16 @@ public class DependencyPageMetadataXmlTests
                 { "Name": "PageType", "Value": "List" },
                 { "Name": "SourceTable", "Value": "88123620" },
                 { "Name": "DataCaptionFields", "Value": "\"No.\",Descr" }
+              ]
+            },
+            {
+              "Id": 88123706,
+              "Name": "DPX SOD Unreadable Bool",
+              "Properties": [
+                { "Name": "PageType", "Value": "List" },
+                { "Name": "SourceTable", "Value": "88123620" },
+                { "Name": "PopulateAllFields", "Value": "yes" },
+                { "Name": "LinksAllowed", "Value": "0" }
               ]
             }
           ]
@@ -1292,6 +1303,61 @@ public class DependencyPageMetadataXmlTests
         }
         finally
         {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// The boolean counterpart of the <c>DataCaptionFields</c> refusal above, and it is held to
+    /// the same standard: a property the symbol file STATES in a form this cannot read as a
+    /// boolean must not be folded into "the page declares nothing". Both produce the same
+    /// absent attribute, so absence alone cannot tell them apart — which is exactly why the
+    /// diagnostic is part of the claim rather than a nicety.
+    ///
+    /// <para>The report is driven from <c>PageSymbol.UnreadableBooleanProperties</c>, carried in
+    /// the parsed PAYLOAD rather than written at parse time, and that is deliberate. Parsing
+    /// happens behind a content-addressed on-disk cache, so a <c>Console.Error</c> line written
+    /// from the parser is emitted on a cache MISS and silently lost on every warm run after —
+    /// the failure mode <c>AlPageMetadataRegistry</c>'s header calls "the trap this whole class
+    /// exists to avoid". Putting it in the payload means a cache HIT replays it, which is also
+    /// the correct answer: the same bytes carry the same unreadable value.</para>
+    ///
+    /// <para>The page states a second, readable property too, so this cannot pass by the
+    /// synthesizer giving up on the page as a whole.</para>
+    /// </summary>
+    [Fact]
+    public void TryBuildDependencyPageMetadata_BooleanStatedInAFormItCannotRead_IsRefusedLoudlyNotTreatedAsUnstated()
+    {
+        var dir = TestScratch.Dir("al-runner-dep-pagemeta-xml-tests");
+        Directory.CreateDirectory(dir);
+        var previousError = Console.Error;
+        var captured = new StringWriter();
+        try
+        {
+            RecordPatches.AddBcAppPath(WriteApp(dir, SourceObjectPropsSymbolReference));
+
+            // Only this test asks for this page id, and the document is memoized per id, so
+            // the one and only build happens inside the capture.
+            Console.SetError(captured);
+            var sourceObject = ReadSourceObjectFor(SodUnreadableBoolPageId);
+            Console.SetError(previousError);
+
+            Assert.False(sourceObject.HasAttribute("PopulateAllFields"),
+                "an unreadable value must not be invented into a readable one");
+            // …and the rest of the page is unaffected.
+            Assert.Equal("0", sourceObject.GetAttribute("LinksAllowed"));
+
+            var diagnostic = captured.ToString();
+            Assert.Contains("PopulateAllFields", diagnostic);
+            Assert.Contains(SodUnreadableBoolPageId.ToString(), diagnostic);
+            // The unreadable value itself, so the reader can see WHAT the file said.
+            Assert.Contains("yes", diagnostic);
+            // The readable one must not be reported as a problem.
+            Assert.DoesNotContain("LinksAllowed", diagnostic);
+        }
+        finally
+        {
+            Console.SetError(previousError);
             Directory.Delete(dir, recursive: true);
         }
     }

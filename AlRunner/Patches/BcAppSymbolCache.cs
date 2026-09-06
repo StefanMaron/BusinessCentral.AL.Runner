@@ -369,7 +369,24 @@ internal static partial class BcAppSymbolCache
         // Application values are numeric), so it needs no name resolution, only a shape
         // check. See RecordPatches.EmitSourceObjectPropertiesXml.
         bool? LinksAllowed = null, bool? ShowFilter = null, bool? SaveValues = null,
-        bool? PopulateAllFields = null, string? DataCaptionFields = null);
+        bool? PopulateAllFields = null, string? DataCaptionFields = null,
+        // Names of the booleans above the symbol file STATED but this could not read as a
+        // boolean, with the value it stated ("PopulateAllFields=yes"). Null when there were
+        // none, which is the case for every Microsoft-produced symbol file measured.
+        //
+        // It lives in the PAYLOAD rather than being written to stderr where it is detected,
+        // and that is the whole point. Parsing sits behind a content-addressed on-disk cache,
+        // so a Console.Error line written by the parser is emitted on a cache MISS and
+        // silently lost on every warm run after — the failure mode AlPageMetadataRegistry's
+        // header calls "the trap this whole class exists to avoid". Carrying it here means a
+        // cache HIT replays it, which is also the truthful answer: the same bytes carry the
+        // same unreadable value. RecordPatches.EmitSourceObjectPropertiesXml reports it.
+        //
+        // Why it is reported at all: an unreadable value and an absent property both produce
+        // the same missing attribute, so absence cannot distinguish them, and silently
+        // treating "I could not read this" as "the AL declares nothing" is the exact shape of
+        // the defect #2860 is about, one level up.
+        List<string>? UnreadableBooleanProperties = null);
 
     /// <summary>
     /// One action's <c>RunObject</c> declaration as SymbolReference.json states it.
@@ -1124,10 +1141,11 @@ internal static partial class BcAppSymbolCache
         // #2860's five. SymbolBoolOrNull, not SymbolBool/SymbolBoolFalse: for these the
         // absence of the property is itself information BC acts on, so it must survive as
         // null rather than be folded into an AL default here. See PageSymbol's own note.
-        var linksAllowed = SymbolBoolOrNull(props, "LinksAllowed");
-        var showFilter = SymbolBoolOrNull(props, "ShowFilter");
-        var saveValues = SymbolBoolOrNull(props, "SaveValues");
-        var populateAllFields = SymbolBoolOrNull(props, "PopulateAllFields");
+        List<string>? unreadableBooleans = null;
+        var linksAllowed = SymbolBoolOrNull(props, "LinksAllowed", ref unreadableBooleans);
+        var showFilter = SymbolBoolOrNull(props, "ShowFilter", ref unreadableBooleans);
+        var saveValues = SymbolBoolOrNull(props, "SaveValues", ref unreadableBooleans);
+        var populateAllFields = SymbolBoolOrNull(props, "PopulateAllFields", ref unreadableBooleans);
         props.TryGetValue("DataCaptionFields", out var dataCaptionFields);
 
         return new PageSymbol(pageId, name!, sourceTableId, sourceTableTemporary,
@@ -1138,7 +1156,8 @@ internal static partial class BcAppSymbolCache
             memberNames, actionRefTargets,
             ParseSourceTableView(pageId, sourceTableView), runObjects,
             linksAllowed, showFilter, saveValues, populateAllFields,
-            string.IsNullOrWhiteSpace(dataCaptionFields) ? null : dataCaptionFields);
+            string.IsNullOrWhiteSpace(dataCaptionFields) ? null : dataCaptionFields,
+            unreadableBooleans);
     }
 
     /// <summary>
@@ -1481,17 +1500,29 @@ internal static partial class BcAppSymbolCache
     /// <summary>
     /// The three-state form of <see cref="SymbolBool"/> for a property whose ABSENCE is
     /// itself information: null when the symbol file states nothing, otherwise the stated
-    /// value. A value the file states but this cannot read as a boolean also answers null —
-    /// the same "state what the file states, never invent" rule, since inventing a default
-    /// for an unreadable value would be indistinguishable from the file stating that
-    /// default. Both spellings the file uses are accepted ("1"/"0" in practice, "true"/
-    /// "false" tolerated), matching SymbolBool/SymbolBoolFalse.
+    /// value. Both spellings the file uses are accepted ("1"/"0" in practice, "true"/"false"
+    /// tolerated), matching SymbolBool/SymbolBoolFalse.
+    ///
+    /// <para>A value the file STATES but this cannot read as a boolean also answers null — the
+    /// "state what the file states, never invent" rule, since inventing a default would be
+    /// indistinguishable from the file stating that default. But the two nulls are different
+    /// facts, and returning them identically with nothing said is the very shape of defect
+    /// #2860 fixes one level up, so the unreadable one is recorded in
+    /// <paramref name="unreadable"/> for the caller to carry into
+    /// <see cref="PageSymbol.UnreadableBooleanProperties"/> and report. It is recorded rather
+    /// than written here because this runs behind a content-addressed on-disk cache, where a
+    /// stderr line survives only until the first warm run.</para>
+    ///
+    /// <para>The two-state siblings above have the same blind spot and are deliberately left
+    /// alone: they cannot express it without changing what every existing caller sees, and no
+    /// Microsoft-produced symbol file measured states a boolean in any form but "1"/"0".</para>
     /// </summary>
-    private static bool? SymbolBoolOrNull(Dictionary<string, string> props, string name)
+    private static bool? SymbolBoolOrNull(Dictionary<string, string> props, string name, ref List<string>? unreadable)
     {
         if (!props.TryGetValue(name, out var v) || string.IsNullOrWhiteSpace(v)) return null;
         if (v == "1" || string.Equals(v, "true", StringComparison.OrdinalIgnoreCase)) return true;
         if (v == "0" || string.Equals(v, "false", StringComparison.OrdinalIgnoreCase)) return false;
+        (unreadable ??= new List<string>()).Add($"{name}={v}");
         return null;
     }
 

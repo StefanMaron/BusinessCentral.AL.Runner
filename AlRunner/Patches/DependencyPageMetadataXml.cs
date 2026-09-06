@@ -320,6 +320,19 @@ public static partial class RecordPatches
         Flag("SaveValues", page.SaveValues);
         Flag("PopulateAllFields", page.PopulateAllFields);
 
+        // A boolean the symbol file STATED in a form the parser could not read comes through
+        // as the same null as "not stated at all", and therefore as the same absent attribute
+        // — so absence cannot distinguish them and the difference has to be said out loud.
+        // Treating "I could not read this" as "the AL declares nothing" is the shape of the
+        // defect this whole change fixes, and it is not allowed to reappear one level down.
+        // Never observed on a Microsoft-produced symbol file; this fires only if the format
+        // changes under us, which is exactly when silence would cost the most.
+        if (page.UnreadableBooleanProperties is { Count: > 0 } unreadable)
+            Console.Error.WriteLine(
+                $"[RecordPatches] page {page.Id} \"{page.Name}\": SourceObject property value(s) "
+                + string.Join(", ", unreadable)
+                + " not readable as a boolean — omitted, so the page reads as declaring nothing there");
+
         if (page.DataCaptionFields is not { Length: > 0 } captionFields) return;
 
         // The only one of the five that is not a boolean, and the only one whose shape has to
