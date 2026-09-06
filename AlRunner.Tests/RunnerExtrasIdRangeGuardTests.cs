@@ -160,9 +160,9 @@ public sealed class RunnerExtrasIdRangeGuardTests
     ///
     /// Three of them are not merely latent: those app groups ALREADY declare the same object,
     /// which is exactly the #2969 failure sitting dormant because no suite happens to read
-    /// those rows out of the global Object table. Renumbering them is follow-up work and is
-    /// tracked separately; it is deliberately not folded into the PR that adds this guard,
-    /// because moving AL object IDs is a change with its own blast radius.
+    /// those rows out of the global Object table. Renumbering them is tracked in #3160 and is
+    /// deliberately not folded into the PR that adds this guard, because moving AL object IDs
+    /// is a change with its own blast radius.
     /// </summary>
     private static readonly Dictionary<string, string> KnownOverlaps = new(StringComparer.Ordinal)
     {
@@ -181,7 +181,7 @@ public sealed class RunnerExtrasIdRangeGuardTests
 
         ["tests/runner-extras: field-virtual-table-item-tracking | report-precompiled-dep-metadata"] =
             "61100..61199 — LIVE COLLISION: both define codeunit 61100 and codeunit 61101. Dormant "
-            + "only because no suite reads those Object rows. Renumbering tracked separately.",
+            + "only because no suite reads those Object rows. Renumbering tracked in #3160.",
 
         ["tests/runner-extras: field-virtual-table-item-tracking-ext | navapp-moduleinfo-dep"] =
             "61230..61239 — field-virtual-table-item-tracking-ext declares 61200-61249 and uses "
@@ -211,7 +211,7 @@ public sealed class RunnerExtrasIdRangeGuardTests
         ["tests/runner-extras: microsoft-test-library | standalone-suites"] =
             "62200..62209 — LIVE COLLISION: both define codeunit 62200. #1847 folded sixteen "
             + "standalone suites into standalone-suites and it kept a range microsoft-test-library "
-            + "still claims. Renumbering tracked separately.",
+            + "still claims. Renumbering tracked in #3160.",
 
         ["tests/runner-extras: server-multibundle-dep | standalone-suites"] =
             "64300..64309 — both use id 64300, but as table and codeunit respectively, and the Object "
@@ -219,7 +219,7 @@ public sealed class RunnerExtrasIdRangeGuardTests
 
         ["tests/runner-extras: session-user-row | testpage-lookup-tablerelation-oos"] =
             "65560..65569 — LIVE COLLISION: both define codeunit 65560. This is the pair #3040 was "
-            + "filed about. Renumbering tracked separately.",
+            + "filed about. Renumbering tracked in #3160.",
 
         ["tests/runner-extras: testpage-promoted-actionref | windows-language-license-stub"] =
             "64546..64555 — testpage-promoted-actionref has report 64546, "
