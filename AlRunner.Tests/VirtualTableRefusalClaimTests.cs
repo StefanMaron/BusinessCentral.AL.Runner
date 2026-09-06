@@ -341,7 +341,21 @@ public sealed class VirtualTableRefusalClaimTests
         // is on main -- run the test, read the "Actual:" value out of the failure message, and
         // write that. An arithmetic guess here is how the assertion silently stopped meaning
         // what it says once before.
-        Assert.Equal(71, total);
+
+        // 71 -> 72 (#3015): the AllObj populator gained one more. It resolves its columns by
+        // field NUMBER rather than by name, and a number matching nothing was simply never
+        // written — the row still inserted, the column kept BC's own default, and
+        // `AllObj."App Runtime Package ID" <> PublishedApplication."Runtime Package ID"` then
+        // declined for every app while BC logged a warning rather than raising. #3004 shipped
+        // 6/7 for the two package columns, which are 60/61, and the stamp did nothing; it was
+        // caught by checking, not by a failure. Raised once per process from
+        // PopulateAllObjVirtualTable, the ONE call site holding the genuine AllObj metatable —
+        // see EnsureAllObjColumnsExist for why it cannot be raised from
+        // EnsureAllObjSharedReflection.
+        //
+        // Per the note above: this number was READ OUT of the test's own failure message after
+        // rebasing onto #3117, not arrived at by adding 1 to what was on main.
+        Assert.Equal(72, total);
     }
 
 
