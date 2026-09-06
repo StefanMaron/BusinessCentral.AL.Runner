@@ -1,0 +1,50 @@
+[
+  {
+    "codeunitId": 60340,
+    "CodeunitName": "Test Session Virtual Table",
+    "Method": "SessionTable_HasARowForTheReadingSession",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2940",
+    "Note": "The Session virtual table (2000000009) answers zero rows on the runner, so every arm that reads the reading session's own row fails (\"Session must answer at least one row\", and \"There is no Session within the filter\" where the test reads a field off it). Tracked as #2940, with PR #3234 open against it. Pulled in by this PR's submodule pin bump to b1fdb6d7, NOT caused by it: the bump is how corpus #216 (the system-field CalcFormula/TableRelation tests this PR fixes) enters the tree, and corpus history is linear, so #216 cannot be taken without the corpus PRs merged before it. The issue linked here stays open after this PR merges; the fix for it removes this entry."
+  },
+  {
+    "codeunitId": 60340,
+    "CodeunitName": "Test Session Virtual Table",
+    "Method": "SessionTable_MySessionRow_ConnectionIdIsWhatSessionIdReturns",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2940",
+    "Note": "The Session virtual table (2000000009) answers zero rows on the runner, so every arm that reads the reading session's own row fails (\"Session must answer at least one row\", and \"There is no Session within the filter\" where the test reads a field off it). Tracked as #2940, with PR #3234 open against it. Pulled in by this PR's submodule pin bump to b1fdb6d7, NOT caused by it: the bump is how corpus #216 (the system-field CalcFormula/TableRelation tests this PR fixes) enters the tree, and corpus history is linear, so #216 cannot be taken without the corpus PRs merged before it. The issue linked here stays open after this PR merges; the fix for it removes this entry."
+  },
+  {
+    "codeunitId": 60340,
+    "CodeunitName": "Test Session Virtual Table",
+    "Method": "SessionTable_MySessionRow_UserIdIsWhatUserIdReturns",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2940",
+    "Note": "The Session virtual table (2000000009) answers zero rows on the runner, so every arm that reads the reading session's own row fails (\"Session must answer at least one row\", and \"There is no Session within the filter\" where the test reads a field off it). Tracked as #2940, with PR #3234 open against it. Pulled in by this PR's submodule pin bump to b1fdb6d7, NOT caused by it: the bump is how corpus #216 (the system-field CalcFormula/TableRelation tests this PR fixes) enters the tree, and corpus history is linear, so #216 cannot be taken without the corpus PRs merged before it. The issue linked here stays open after this PR merges; the fix for it removes this entry."
+  },
+  {
+    "codeunitId": 60340,
+    "CodeunitName": "Test Session Virtual Table",
+    "Method": "SessionTable_GetByConnectionId_ReachesTheSameRowAsFindFirst",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2940",
+    "Note": "The Session virtual table (2000000009) answers zero rows on the runner, so every arm that reads the reading session's own row fails (\"Session must answer at least one row\", and \"There is no Session within the filter\" where the test reads a field off it). Tracked as #2940, with PR #3234 open against it. Pulled in by this PR's submodule pin bump to b1fdb6d7, NOT caused by it: the bump is how corpus #216 (the system-field CalcFormula/TableRelation tests this PR fixes) enters the tree, and corpus history is linear, so #216 cannot be taken without the corpus PRs merged before it. The issue linked here stays open after this PR merges; the fix for it removes this entry."
+  },
+  {
+    "codeunitId": 60340,
+    "CodeunitName": "Test Session Virtual Table",
+    "Method": "SessionTable_MySessionRow_CarriesALoginDateTimeAndAHostName",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2940",
+    "Note": "The Session virtual table (2000000009) answers zero rows on the runner, so every arm that reads the reading session's own row fails (\"Session must answer at least one row\", and \"There is no Session within the filter\" where the test reads a field off it). Tracked as #2940, with PR #3234 open against it. Pulled in by this PR's submodule pin bump to b1fdb6d7, NOT caused by it: the bump is how corpus #216 (the system-field CalcFormula/TableRelation tests this PR fixes) enters the tree, and corpus history is linear, so #216 cannot be taken without the corpus PRs merged before it. The issue linked here stays open after this PR merges; the fix for it removes this entry."
+  },
+  {
+    "codeunitId": 60340,
+    "CodeunitName": "Test Session Virtual Table",
+    "Method": "SessionTable_HoldsOnlyTheReadingSession",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2940",
+    "Note": "The Session virtual table (2000000009) answers zero rows on the runner, so every arm that reads the reading session's own row fails (\"Session must answer at least one row\", and \"There is no Session within the filter\" where the test reads a field off it). Tracked as #2940, with PR #3234 open against it. Pulled in by this PR's submodule pin bump to b1fdb6d7, NOT caused by it: the bump is how corpus #216 (the system-field CalcFormula/TableRelation tests this PR fixes) enters the tree, and corpus history is linear, so #216 cannot be taken without the corpus PRs merged before it. The issue linked here stays open after this PR merges; the fix for it removes this entry."
+  }
+]

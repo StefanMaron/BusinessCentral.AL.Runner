@@ -1,0 +1,10 @@
+[
+  {
+    "codeunitId": 60889,
+    "CodeunitName": "Test Access Control IsSuper",
+    "Method": "SessionUserIsSuper_AndAccessControlHoldsTheRowThatSaysSo",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3176",
+    "Note": "The runner reports its session user as SUPER but Access Control holds no SUPER row for it, so the two answers disagree. Tracked as #3176, which is the open decision on whether the runner should seed that row. Pulled in by this PR's submodule pin bump to b1fdb6d7, NOT caused by it: the bump is how corpus #216 (the system-field CalcFormula/TableRelation tests this PR fixes) enters the tree, and corpus history is linear, so #216 cannot be taken without the corpus PRs merged before it. The issue linked here stays open after this PR merges; the fix for it removes this entry."
+  }
+]

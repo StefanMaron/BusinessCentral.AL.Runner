@@ -1,0 +1,18 @@
+[
+  {
+    "codeunitId": 60677,
+    "CodeunitName": "QCE Query Close Error Tests",
+    "Method": "ErrorInQueryClosePage_ArrivesAsAnUnhandledMessage",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3057",
+    "Note": "An error raised in OnQueryClosePage reaches AL raw (\"QCE close refused by OnQueryClosePage\") instead of arriving as the unhandled UI a real client shows. Tracked as #3057, with PR #3181 open against it. Pulled in by this PR's submodule pin bump to b1fdb6d7, NOT caused by it: the bump is how corpus #216 (the system-field CalcFormula/TableRelation tests this PR fixes) enters the tree, and corpus history is linear, so #216 cannot be taken without the corpus PRs merged before it. The issue linked here stays open after this PR merges; the fix for it removes this entry."
+  },
+  {
+    "codeunitId": 60677,
+    "CodeunitName": "QCE Query Close Error Tests",
+    "Method": "ErrorInQueryClosePage_TestPageClose_ArrivesAsAnUnhandledMessage",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3057",
+    "Note": "An error raised in OnQueryClosePage reaches AL raw (\"QCE close refused by OnQueryClosePage\") instead of arriving as the unhandled UI a real client shows. Tracked as #3057, with PR #3181 open against it. Pulled in by this PR's submodule pin bump to b1fdb6d7, NOT caused by it: the bump is how corpus #216 (the system-field CalcFormula/TableRelation tests this PR fixes) enters the tree, and corpus history is linear, so #216 cannot be taken without the corpus PRs merged before it. The issue linked here stays open after this PR merges; the fix for it removes this entry."
+  }
+]

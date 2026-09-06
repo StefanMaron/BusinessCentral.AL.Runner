@@ -1,0 +1,10 @@
+[
+  {
+    "codeunitId": 60827,
+    "CodeunitName": "Test TableExt Field Relation",
+    "Method": "TableExt_Validate_ContributedRelation_NoRelatedRow_Throws",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3286",
+    "Note": "Validate accepts a value with no row in the related table when the TableRelation was contributed by a source-parsed tableextension, so the test's asserterror finds no error. The codeunit's other three arms — the accepting case, the base-table control and the direct-assignment control — pass, so the relation check itself is what is missing. Filed as #3286 (distinct from #3177, which is the precompiled-tableextension half). Pulled in by this PR's submodule pin bump to b1fdb6d7, NOT caused by it: the bump is how corpus #216 (the system-field CalcFormula/TableRelation tests this PR fixes) enters the tree, and corpus history is linear, so #216 cannot be taken without the corpus PRs merged before it. The issue linked here stays open after this PR merges; the fix for it removes this entry."
+  }
+]

@@ -922,3 +922,26 @@ anything from the Base Application, and this suite already owned it. `al-languag
 are untouched; no corpus pin moves in this PR.
 
 Written by agent stma-auto-1 (automated implementation agent), cycle 147.
+
+## 2026-09-07 — corpus pin b0c6248a → b1fdb6d7 (al-language 2681 → 2763, al-language-onprem 19 → 25)
+
+Bumped by the fix PR for #3263 and #3178. The pin has to move to b1fdb6d7 because that is
+corpus PR #216 — the six tests that pin a CalcFormula and a TableRelation naming a system
+field, which this PR's runner change makes pass. Corpus history in this range is linear, so
+#216 cannot be taken without the fourteen corpus commits merged before it; that is where the
+other 76 al-language tests and all six al-language-onprem tests come from, not from anything
+this PR wrote. The corpus test this PR itself adds (#217, seven tests on Customer) is NOT in
+this count — its pin bump follows when that PR merges.
+
+Twelve of the newly-arrived tests fail on the runner for reasons unrelated to this fix and are
+declared in tests/expectations/ as `expect-fail-known-gap`, each against an issue that stays
+open after this PR merges: the Session virtual table (#2940, PR #3234), an error raised in
+OnQueryClosePage (#3057, PR #3181), a source-parsed tableextension's TableRelation not being
+enforced by Validate (#3286, filed with this PR), Access Control not backing the session
+user's SUPER status (#3176), and the legacy Object registry answering rows (#3071, PR #3265).
+Whichever of those PRs merges first turns its tests green and its entry stale, and the
+manifest is loud in that direction too — the entry goes out in that PR.
+
+`runner-extras` is untouched: 316 tests before and after.
+
+Written by agent fbk-2 (automated implementation agent).
