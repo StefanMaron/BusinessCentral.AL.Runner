@@ -115,6 +115,13 @@
 //   generated id it replaced, and where it came from. [warn] and not a [Component] tag: Log.cs
 //   suppresses component tags at default verbosity (#3068).
 //
+//   ONE PLACE IT IS STILL QUIET, AND IT IS PRE-EXISTING. Under --watch without --verbose,
+//   Program.cs sets BOTH Console.Out and Console.Error to TextWriter.Null (`if (watchUi &&
+//   !Log.Verbose)`) so the diagnostic streams cannot scroll over the painted frame. The line
+//   below is written to Console.Error, so in the watch UI it is not shown — exactly as the old
+//   refusal line was not, and as nothing else this file writes is. So "loud, never silent" is a
+//   claim about a normal run; --watch users need --verbose to see it.
+//
 //   WHAT STILL REFUSES, LOUDLY. No row under that name (the refusal was not a name collision, so
 //   there is nothing to adopt), and MORE THAN ONE row under it (real BC cannot hold that, so the
 //   data is inconsistent and choosing between them would be a coin toss inside UserSecurityId()).
@@ -127,7 +134,9 @@
 //   does this, and nothing measured has hit it, but it is a real window and it is named rather
 //   than papered over. Closing it means adopting before install triggers run, which forces the
 //   User table's on-demand backup load earlier — inside the install-baseline caching window —
-//   and that is a larger change than this one. See AlRunner#2983.
+//   and that is a larger change than this one. Tracked as AlRunner#3268, which stays OPEN after
+//   #2983 closes — a gap recorded only in prose next to a closed issue number gets
+//   re-discovered.
 //
 // PRECOMPILED-DLL RESPECT
 //   No AL business-logic body is touched. NavRecord, NCLMetaTable, NCLMetaField and NavValue are
@@ -611,6 +620,21 @@ public static partial class RecordPatches
             // Diagnosis only. The adoption itself has already happened and is sound; a missing
             // companion row is the older #2355 gap resurfacing for a row the runner did not
             // write, and it must not turn into a second exception on top of a completed change.
+            //
+            // DELIBERATELY ASYMMETRIC with the INSERT path, where the same EnsureUserPropertyRow
+            // failure propagates and fails the insert (UserTableTriggerPatches's prepend). The
+            // difference is what a throw would undo. On the insert path nothing has been written
+            // yet, so raising leaves a consistent table and is the loud-failures answer. Here the
+            // session identity has ALREADY been moved onto the adopted row and cannot be moved
+            // back — throwing would abandon a completed, correct change and report it as a
+            // failure of the adoption, which it is not. The warn names the surface and the
+            // #2355 consequence instead, so nothing is silent either way.
+            //
+            // A RunnerOutOfScopeException reaching here is downgraded to that same warn. That is
+            // the one case worth calling out, because loud-failures.md wants an out-of-scope
+            // signal to reach the caller: it still does on the insert path, and this path is
+            // reached only for a row the runner did not write, where the alternative is failing
+            // a run over a companion row that was already missing before the seed ran.
             var inner = ex is TargetInvocationException tie && tie.InnerException != null ? tie.InnerException : ex;
             Console.Error.WriteLine(
                 $"[warn] UserSystemTable: the adopted User row for '{userName}' has no User Property "

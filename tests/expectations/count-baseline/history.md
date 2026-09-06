@@ -923,18 +923,24 @@ are untouched; no corpus pin moves in this PR.
 
 Written by agent stma-auto-1 (automated implementation agent), cycle 147.
 
-## runner-extras 314 → 324 — `user-system-table-triggers` (#2983, #2356)
+## runner-extras 316 → 326 — `user-system-table-triggers` (#2983, #2356)
 
 +10 tests in one new `tests/runner-extras/user-system-table-triggers` suite (id range
 65620-65639), proving that the runner now runs BC's `SystemTableTriggers` arms for the User
 system table (2000000120): the two uniqueness refusals its `OnBeforeInsertAsync` arm raises
 (#2983) and the four table cascades its `OnAfterDeleteAsync` arm runs (#2356).
 
-**314 is measured off `main`, not carried over.** Two earlier drafts of this entry said
-`304 -> 312` and `312 -> 320`; both were stale by the time they were written, because
-`runner-extras` moved underneath them while this PR was open (`task-scheduler-oos` 6 -> 8 landed
-in between). 314 is the sum of the 56 group entries in `main`'s own
-`test-count-baseline.json`, re-read after the last rebase.
+**316 is measured off `main`, not carried over.** Three earlier drafts of this entry said
+`304 -> 312`, `312 -> 320` and `314 -> 324`; every one was stale by the time it was written,
+because `runner-extras` keeps moving underneath an open PR (`task-scheduler-oos` 6 -> 8 landed
+in between, and `main` has since taken #3240, #3243 and #3248). 316 is the sum of the 56 group
+entries in `main`'s own `test-count-baseline.json` at the rebase this entry was last written
+against, and 326 is the sum of the 57 entries here. Re-measure both ends from the file rather
+than copying either number forward:
+
+```
+python3 -c "import json;g=json.load(open('tests/expectations/count-baseline/test-count-baseline.json'))['suites']['runner-extras']['groups'];print(len(g),sum(v['tests'] for v in g.values()))"
+```
 
 **Why 10 and not 8.** Review found the first draft's combined
 `…TakesItsAccessControlAndIsolatedStorageRows` test could pass against a cascade that does

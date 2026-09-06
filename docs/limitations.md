@@ -57,7 +57,12 @@ the BC runtime environment:
   never unexplained. Two cases still refuse loudly instead of adopting: no row
   carries the session user's name (so the refusal was not a name collision), and
   more than one row carries it (a state real BC cannot hold, so the data is
-  inconsistent and picking one would be arbitrary).
+  inconsistent and picking one would be arbitrary). Two edges to know about: the
+  adoption is decided **after** your bundle's install triggers run, so install
+  code that stored `UserSecurityId()` stored the pre-adoption value
+  ([#3268](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3268));
+  and under `--watch` without `--verbose` the runner silences both output streams
+  to protect the dashboard, so the `[warn]` line is not shown there.
 - **Base app data** — no standard BC tables are populated. Code that reads
   `G/L Account`, `Customer`, `Vendor`, or any other base app table finds them empty
   unless your test inserts data.
