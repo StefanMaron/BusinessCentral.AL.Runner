@@ -379,9 +379,22 @@ internal static class TestDataProvisioner
     /// "the flag is on but Arm() has not run for this app group yet".</summary>
     internal static bool IsArmed => _armed != null;
 
-    /// <summary>The armed backup/company pair, for a diagnosis that has to name them.</summary>
+    /// <summary>The armed backup/company pair, for a diagnosis that has to name them.
+    ///
+    /// #3025, same shape as the summary: read the field ONCE. `_armed == null ? null :
+    /// (_armed.Backup, _armed.Company)` loads it three times, and the bundle loop re-arms or
+    /// resets it between groups while an abandoned hydration thread is still running (#2914).
+    /// Three loads can therefore null-reference after a null check that just passed, or pair one
+    /// plan's backup with the next plan's company — a diagnosis naming a backup/company
+    /// combination that was never armed.</summary>
     internal static (string Backup, string Company)? ArmedBackup
-        => _armed == null ? null : (_armed.Backup, _armed.Company);
+    {
+        get
+        {
+            var armed = _armed;
+            return armed == null ? null : (armed.Backup, armed.Company);
+        }
+    }
 
     internal static void ResetForTests()
     {
@@ -421,7 +434,10 @@ internal static class TestDataProvisioner
         // which AL table id a backup table maps to is decided by the .app closure the reader
         // was given, so a group with a different closure needs its own plan.
         var symbolKey = string.Join('\n', symbols);
-        if (_armed != null && _armed.SymbolKey == symbolKey && _armed.Backup == backup)
+        // One read, for the reason in ArmedBackup: three loads can test three different plans,
+        // and "already armed for this backup" would then be true of no plan in particular.
+        var armed = _armed;
+        if (armed != null && armed.SymbolKey == symbolKey && armed.Backup == backup)
         {
             // The loader is a static field; re-install it in case something cleared it.
             InstallLoader();

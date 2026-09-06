@@ -223,6 +223,39 @@ public sealed class TestDataProvisionerTallyAtomicityTests
             + "between, which is exactly the skew #3025 removed.");
     }
 
+    /// <summary>
+    /// The same shape one level up, found while fixing #3025: the armed plan is a mutable
+    /// reference field, and a method that loads it more than once in one expression is testing
+    /// or reporting several different plans. The bundle loop re-arms it between app groups and
+    /// ResetForTests nulls it, while an abandoned hydration thread is still reading it (#2914),
+    /// so `_armed == null ? null : (_armed.Backup, _armed.Company)` could null-reference after a
+    /// null check that had just passed, or pair one plan's backup with the next one's company.
+    ///
+    /// Discovered rather than listed by name, so a new reader of the plan is covered the day it
+    /// is written. Assertion is on the field the plan lives in, not on any method list.
+    /// </summary>
+    [Fact]
+    public void NoMethod_ReadsTheArmedPlanMoreThanOnce()
+    {
+        using var asm = Assembly();
+        var provisioner = Provisioner(asm);
+        var armed = provisioner.Fields.SingleOrDefault(f => f.IsStatic && f.FieldType.Name == "ArmedPlan");
+        Assert.True(armed != null, "TestDataProvisioner no longer holds an ArmedPlan field.");
+
+        var offenders = AllMethods(provisioner)
+            .Select(m => (m.FullName, Loads: m.Body.Instructions.Count(i =>
+                (i.OpCode == OpCodes.Ldsfld || i.OpCode == OpCodes.Ldsflda)
+                && i.Operand is FieldReference fr && fr.Name == armed!.Name)))
+            .Where(x => x.Loads > 1)
+            .Select(x => $"{x.FullName} ({x.Loads} loads)")
+            .ToArray();
+
+        Assert.True(offenders.Length == 0,
+            $"{armed!.Name} is loaded more than once by: {string.Join(", ", offenders)}. "
+            + "Copy it to a local first — between two loads it can be re-armed for the next app "
+            + "group or nulled by the reset (#3025).");
+    }
+
     /// <summary>Interlocked.Increment/Add/CompareExchange take a `ref`, which is ldsflda/ldflda,
     /// and no other shape in this type does. Add and CompareExchange push further arguments
     /// first — and those can be calls (a property getter on the hydration result, `c with { … }`)
