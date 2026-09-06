@@ -196,12 +196,15 @@ Measured by running the group, not computed: `9P/0F/0E across 9 tests`, cold and
 ### navapp-moduleinfo-main 10 -> 15 (#2960 / PR #3225)
 
 Five tests added to an existing app group, so no new group line and no app-group count change.
-The group has no `absentOn`, so the same +5 lands on every BC version: runner-extras goes
-321 -> 326 on 27.0/27.3/27.5 and 332 -> 337 on 28.0-28.4. (Re-measured on `origin/main` at
-f020953e. Two earlier revisions of this entry said 301 -> 306 / 312 -> 317 and then
-305 -> 310 / 316 -> 321; both were correct against the base they were measured on and both
-went stale as `main` moved. The endpoints move whenever any other group's count changes;
-this group's own +5 has never changed.)
+The group has no `absentOn`, so the same +5 lands on every BC version. Against `origin/main`
+at c0fda77e that is 319 -> 324 on 27.0/27.3/27.5 and 330 -> 335 on 28.0-28.4.
+
+Those two endpoints are the least durable thing in this entry and have already been rewritten
+four times (301/312, then 305/316, then 321/332, now 319/330) without this group's own number
+ever changing. They move whenever ANY other group's count moves, which on a busy branch is
+every few merges. Read the endpoints off `test-count-baseline.json` at whatever base you are
+on; the durable fact is +5 on every BC version, and `--count-baseline` is what enforces the
+sum rather than this paragraph.
 
 Three came with the by-id `NavApp.GetModuleInfo` fix, which the two stack-walk patches did not
 cover — the boolean/statement not-found arms and the derived PackageId. Two more came out of
@@ -220,7 +223,7 @@ the review of that PR and are worth naming, because neither is about the reporte
 
 Measured by running the group, not computed: `15P/0F/0E across 15 tests`, cold and warm; and
 the whole suite under `--count-baseline` on BC 28.1, re-run on the tree rebased onto
-f020953e: `337 total / 337 pass / 0 fail / 0 error`, exit 0, cold and warm.
+c0fda77e: `335 total / 335 pass / 0 fail / 0 error`, exit 0, cold and warm.
 
 ## Migrated log (everything above 2026-09-05, verbatim)
 
