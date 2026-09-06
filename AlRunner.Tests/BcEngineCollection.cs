@@ -68,7 +68,18 @@ internal static class BcEngineBootstrap
     [ModuleInitializer]
     internal static void Initialize()
     {
-        Probe($"init: nclLoaded={AppDomain.CurrentDomain.GetAssemblies().Any(a => a.GetName().Name == "Microsoft.Dynamics.Nav.Ncl")}");
+        // #3078: captured up front rather than only probed. When Ncl is already loaded by
+        // the time this initializer runs, NclCecilRewrite.RewriteInPlace early-returns
+        // without effect and the failure surfaces far downstream — as a
+        // TargetInvocationException out of BcRuntime.EnsureApplied() whose message names
+        // nothing. Knowing this flag here is what lets the skip reason say
+        // "DOTNET_STARTUP_HOOKS is not wired" instead. It deliberately does NOT change
+        // which runs end up Ready: an already-loaded Ncl that is already REWRITTEN (CI
+        // pre-copies one into the test bin dir) still bootstraps fine and never reaches a
+        // skip reason at all.
+        var nclAlreadyLoaded = AppDomain.CurrentDomain.GetAssemblies()
+            .Any(a => a.GetName().Name == "Microsoft.Dynamics.Nav.Ncl");
+        Probe($"init: nclLoaded={nclAlreadyLoaded}");
 
         string serviceTierDir;
         try
@@ -92,14 +103,19 @@ internal static class BcEngineBootstrap
         }
         catch (Exception ex)
         {
-            SkipReason = $"BC artifacts not provisioned: {ex.Message}";
+            SkipReason = BcEngineSkipReason.Format(
+                BcEngineSkipCause.ArtifactsMissing,
+                $"BC artifacts could not be selected: {BcEngineSkipReason.Describe(ex)}.");
             return;
         }
 
         if (!File.Exists(Path.Combine(serviceTierDir, "Microsoft.Dynamics.Nav.CodeAnalysis.dll"))
             || !File.Exists(Path.Combine(serviceTierDir, "Microsoft.Dynamics.Nav.Ncl.dll")))
         {
-            SkipReason = $"BC artifacts incomplete in '{serviceTierDir}'";
+            SkipReason = BcEngineSkipReason.Format(
+                BcEngineSkipCause.ArtifactsIncomplete,
+                $"'{serviceTierDir}' does not hold both Microsoft.Dynamics.Nav.CodeAnalysis.dll "
+                + "and Microsoft.Dynamics.Nav.Ncl.dll.");
             return;
         }
 
@@ -137,10 +153,10 @@ internal static class BcEngineBootstrap
                 // We just replaced the file this process is about to load. Skip rather than
                 // risk a torn image; the NEXT run finds bin already rewritten, the copy is a
                 // no-op, and these tests execute normally.
-                SkipReason =
-                    "bin/Microsoft.Dynamics.Nav.Ncl.dll was rewritten by this process (first run " +
-                    "after a build), so loading it here risks BadImageFormatException 0x80131124. " +
-                    "Re-run the suite — bin is now rewritten and these tests will execute.";
+                SkipReason = BcEngineSkipReason.Format(
+                    BcEngineSkipCause.BinRewrittenThisProcess,
+                    $"'{binNcl}' was rewritten by this process, so loading it here risks "
+                    + "BadImageFormatException 0x80131124.");
                 return;
             }
 
@@ -155,10 +171,10 @@ internal static class BcEngineBootstrap
                 // CI hits this on every fresh runner (cold ~/.cache/al-runner/ncl-cecil).
                 // The workflow warms the cache with a throwaway runner invocation before
                 // `dotnet test` so these tests really execute there instead of skipping.
-                SkipReason =
-                    "Ncl Cecil cache was cold, so the rewrite happened in this process; " +
-                    "loading it here would risk BadImageFormatException 0x80131124. Warm the " +
-                    "cache with one runner invocation before `dotnet test` to run these tests.";
+                SkipReason = BcEngineSkipReason.Format(
+                    BcEngineSkipCause.CecilCacheCold,
+                    "the Ncl Cecil cache missed, so the rewrite happened in this process; loading "
+                    + "it here would risk BadImageFormatException 0x80131124.");
                 return;
             }
 
@@ -170,7 +186,18 @@ internal static class BcEngineBootstrap
         {
             // Report rather than take the whole assembly down: without artifacts-backed
             // engine state only the two engine tests are affected, and they no-op below.
-            SkipReason = $"BC engine bootstrap failed: {ex.GetType().Name}: {ex.Message}";
+            // #3078: attribute the failure rather than reporting the reflection wrapper.
+            // `nclAlreadyLoaded` is the discriminator: with Ncl already loaded un-rewritten,
+            // BcRuntime.EnsureApplied() is being applied to an image the Cecil rewrite never
+            // touched, and THAT is the diagnosis — not whatever exception it happened to
+            // raise while running against it.
+            var (cause, detail) = nclAlreadyLoaded
+                ? (BcEngineSkipCause.NclPreloaded,
+                   "Microsoft.Dynamics.Nav.Ncl was already loaded before this bootstrap ran, so the "
+                   + "Cecil rewrite had no effect and applying the runtime patches failed with "
+                   + $"{BcEngineSkipReason.Describe(ex)}.")
+                : (BcEngineSkipCause.BootstrapThrew, $"{BcEngineSkipReason.Describe(ex)}.");
+            SkipReason = BcEngineSkipReason.Format(cause, detail);
         }
     }
 }
@@ -189,8 +216,17 @@ public sealed class BcEngineFixture
     /// </summary>
     public bool Ready => BcEngineBootstrap.Ready;
 
-    /// <summary>Why <see cref="Ready"/> is false, for a test that wants to report it.</summary>
-    public string? SkipReason => BcEngineBootstrap.SkipReason;
+    /// <summary>
+    /// Why <see cref="Ready"/> is false, for a test that wants to report it.
+    ///
+    /// #3078: routed through <see cref="BcEngineSkipReason.OrDefault"/> so it is never null
+    /// while the engine is unready. The 132 call sites in this collection all spell
+    /// <c>_engine.SkipReason ?? "the in-process BC engine is not ready (see
+    /// BcEngineCollection)."</c> — a fallback that is accurate and carries neither a cause
+    /// nor a remedy, i.e. the same defect this issue is about, at 132 places. Making the
+    /// property total fixes them all without touching one of them.
+    /// </summary>
+    public string SkipReason => BcEngineSkipReason.OrDefault(BcEngineBootstrap.SkipReason);
 }
 
 [CollectionDefinition(Name, DisableParallelization = true)]

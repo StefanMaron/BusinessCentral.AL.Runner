@@ -1,0 +1,153 @@
+#!/usr/bin/env bash
+# engine-test-bootstrap.sh — make the bc-engine-serial tests actually RUN on a local box,
+# and say so out loud when they still will not. Issue #3078.
+#
+# The problem
+# -----------
+# The tests in AlRunner.Tests' `bc-engine-serial` collection (see
+# AlRunner.Tests/BcEngineCollection.cs) load the BC engine IN-PROCESS. That needs two
+# things a plain `dotnet test` does not set up:
+#
+#   1. bin/Microsoft.Dynamics.Nav.Ncl.dll already Cecil-rewritten. A process that performs
+#      the rewrite and then loads the result dies with BadImageFormatException 0x80131124,
+#      which is why the runner re-execs and why a test host — which cannot re-exec — skips
+#      instead. A BUILD restores the pristine Ncl.dll, so this is needed again after every
+#      build, not once per checkout.
+#   2. DOTNET_STARTUP_HOOKS wired through a .runsettings file. Without it VSTest's own
+#      DiaSession loads Ncl for stack-trace source mapping before any test code runs, the
+#      rewrite becomes a no-op, and the bootstrap fails (issue #1813).
+#
+# Without both, every one of those tests SKIPS. `dotnet test` then exits 0 and prints
+# `Passed!`, and at its default verbosity it does not print skip reasons at all — measured
+# 2026-09-06: 5 of 5 rows `[SKIP]` with no reason shown, exit code 0. A suite read as green
+# had executed none of the tests that mattered, and a RED baseline taken that way is worth
+# nothing.
+#
+# What this script does (idempotent — safe and cheap to re-run at any time)
+# ------------------------------------------------------------------------
+#   1. Writes engine.runsettings at the repo root with the absolute DOTNET_STARTUP_HOOKS
+#      chain for the chosen configuration.
+#   2. Runs the readiness probe repeatedly. Pass 1 lets the bootstrap copy the rewritten
+#      Ncl.dll into the test bin dir (it then skips, by design, rather than load a file it
+#      just wrote); pass 2 finds bin already correct and the engine comes up.
+#   3. Reports success only when the probe actually PASSED. A skip is reported as a
+#      failure of this script, with the skip reason printed, because "it skipped" is the
+#      condition this script exists to remove.
+#
+# Deliberately does NOT copy out of ~/.cache/al-runner/ncl-cecil by hand the way
+# .github/workflows/bc-tests.yml does. That cache is keyed on the runner's own content
+# hash and pruned to the 8 newest entries, so on a machine running several checkouts at
+# once `ls -t | head -1` names another checkout's entry — measured here: a pass picked up a
+# 16-minute-old file, and an entry written by one pass had been evicted by the next.
+# Letting the bootstrap itself do the copy, keyed correctly, has no such race.
+#
+# Usage:
+#   tools/engine-test-bootstrap.sh                 # bootstrap, then verify (Release)
+#   tools/engine-test-bootstrap.sh -c Debug        # same, Debug build output
+#   tools/engine-test-bootstrap.sh --verify        # verify only; no bootstrap passes
+#   tools/engine-test-bootstrap.sh --max-passes 5  # raise the repeat cap
+#
+# Exit codes: 0 the engine collection will run; 1 it will not (reason printed);
+#             2 usage or a missing build.
+
+set -euo pipefail
+
+CONFIG=Release
+TFM=net8.0
+MAX_PASSES=3
+VERIFY_ONLY=0
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -c|--configuration) CONFIG="${2:?-c needs a value}"; shift 2 ;;
+    --verify)           VERIFY_ONLY=1; shift ;;
+    --max-passes)       MAX_PASSES="${2:?--max-passes needs a value}"; shift 2 ;;
+    -h|--help)          sed -n '2,45p' "$0"; exit 0 ;;
+    *) echo "engine-test-bootstrap: unknown argument '$1' (try --help)" >&2; exit 2 ;;
+  esac
+done
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$REPO_ROOT"
+
+BIN="$REPO_ROOT/AlRunner.Tests/bin/$CONFIG/$TFM"
+RUNSETTINGS="$REPO_ROOT/engine.runsettings"
+# One test whose only job is to answer "is the in-process engine ready" — it PASSES when
+# the engine came up and SKIPS (never silently returns) when it did not.
+PROBE_FILTER='FullyQualifiedName~BcEngineReadinessGuardTests.Ready_IsTrue_WhenArtifactsAreProvisioned'
+
+if [ ! -f "$BIN/AlRunner.Tests.dll" ] || [ ! -f "$BIN/al-runner.dll" ]; then
+  cat >&2 <<MSG
+engine-test-bootstrap: '$CONFIG' build output not found under
+  $BIN
+Build it first:
+  dotnet build AlRunner.Tests/AlRunner.Tests.csproj -c $CONFIG
+MSG
+  exit 2
+fi
+
+# Step 1 — the .runsettings. Rewritten every time: it holds absolute paths, so a copy from
+# another checkout (or another configuration) silently points at the wrong bin dir.
+#
+# The hook chain order is load-bearing and must match bc-tests.yml: al-runner.dll installs
+# a same-directory dependency resolver BEFORE AlRunner.Tests.dll is entered
+# (AlRunner/EngineTestBinResolverStartupHook.cs, AlRunner.Tests/EngineStartupHook.cs).
+# BcEngineSkipAttributionTests.BootstrapTool_AndCiWorkflow_AgreeOnTheStartupHookChain
+# fails the build if this file and the workflow ever disagree about it.
+cat > "$RUNSETTINGS" <<XML
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Generated by tools/engine-test-bootstrap.sh. Absolute paths: do not copy between
+     checkouts or configurations; re-run the script instead. -->
+<RunSettings>
+  <RunConfiguration>
+    <EnvironmentVariables>
+      <DOTNET_STARTUP_HOOKS>$BIN/al-runner.dll:$BIN/AlRunner.Tests.dll</DOTNET_STARTUP_HOOKS>
+    </EnvironmentVariables>
+  </RunConfiguration>
+</RunSettings>
+XML
+echo "engine-test-bootstrap: wrote $RUNSETTINGS ($CONFIG)"
+
+# Runs the probe once. Prints nothing on success; on a skip, prints the reason — which is
+# attributable since #3078 (names the collection, the cause and what to do).
+run_probe() {
+  local log="$1"
+  set +e
+  dotnet test AlRunner.Tests/AlRunner.Tests.csproj -c "$CONFIG" --no-build \
+      --settings "$RUNSETTINGS" --filter "$PROBE_FILTER" \
+      --logger "console;verbosity=normal" >"$log" 2>&1
+  set -e
+  # `Passed: 1` in the summary is the only thing that means the engine actually came up.
+  # Deliberately NOT the exit code: `dotnet test` exits 0 for an all-skipped run, which is
+  # the entire defect this script exists to remove.
+  grep -qE '^ *Passed: *[1-9]' "$log"
+}
+
+LOG="$(mktemp -t engine-bootstrap-XXXXXX.log)"
+trap 'rm -f "$LOG"' EXIT
+
+PASSES=$MAX_PASSES
+[ "$VERIFY_ONLY" -eq 1 ] && PASSES=1
+
+for pass in $(seq 1 "$PASSES"); do
+  if run_probe "$LOG"; then
+    echo "engine-test-bootstrap: OK — the 'bc-engine-serial' collection will run (pass $pass/$PASSES)."
+    echo
+    echo "Run the suite with:"
+    echo "  dotnet test AlRunner.Tests/AlRunner.Tests.csproj -c $CONFIG --no-build --settings $RUNSETTINGS"
+    echo
+    echo "Re-run this script after every build: a build restores a pristine"
+    echo "bin/Microsoft.Dynamics.Nav.Ncl.dll and the engine tests go back to skipping."
+    exit 0
+  fi
+  echo "engine-test-bootstrap: pass $pass/$PASSES did not bring the engine up yet."
+done
+
+# Still not ready. Say exactly why, loudly — never exit 0 having proved nothing.
+echo >&2
+echo "engine-test-bootstrap: FAILED — the bc-engine-serial collection would SKIP, so a" >&2
+echo "  \`dotnet test\` run would report green having executed none of those tests." >&2
+echo >&2
+echo "Reason reported by the bootstrap:" >&2
+grep -E 'bc-engine-serial|\[SKIP\]|Cause \(|Remedy:' "$LOG" >&2 || sed -n '1,60p' "$LOG" >&2
+exit 1
