@@ -248,7 +248,7 @@ public class LayeredSourceChainTests
     }
 
     private static string NewScratch(string tag) =>
-        Path.Combine(Path.GetTempPath(), "al-runner-layered-chain", tag, Guid.NewGuid().ToString("N"));
+        TestScratch.Dir(Path.Combine("al-runner-layered-chain", tag));
 
     private static string ServerReq(params string[] bundles) => JsonSerializer.Serialize(new
     {

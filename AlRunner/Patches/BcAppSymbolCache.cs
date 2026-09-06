@@ -131,7 +131,36 @@ internal static partial class BcAppSymbolCache
     // deserialises them as null/true, which reads as "this field has no relation": FieldRef.Relation
     // answers 0 and Validate() accepts a value with no matching related row. That is a wrong ANSWER
     // replayed from cache rather than a cache miss, so it needs the bump.
-    private const int CacheVersion = 27;   // v27: PermissionSetSymbol gained Permissions / IncludedPermissionSets / Access (#2910)
+    // v27: PermissionSetSymbol gained Permissions / IncludedPermissionSets / Access (#2910) —
+    // a v26 payload deserialises them as null, which reads as "this permission set grants
+    // nothing and includes nothing", so BC composes an empty set instead of the real one.
+    // v28: the SAME RelationArms field now carries MORE of what the SAME SymbolReference.json
+    // already said (#2518). Until this bump the parser refused any arm whose where(...) named
+    // a `field(...)` link and dropped the WHOLE relation, so 826 Base Application 28.1
+    // relations — Customer.City among them — were cached as RelationArms = null. That
+    // deserialises as "this field declares no TableRelation": FieldRef.Relation answers 0,
+    // RapidStart's Relation Table ID stays 0, and Validate() skips the relation check. The
+    // schema did not change, so a v27 payload loads without error and replays the pre-fix
+    // wrong answer instead of missing — which is precisely what the bump is for.
+    // v29: the same shape once more, one level up in the name (#2851). RelationArms and
+    // CalcFormula now carry a NAMESPACE-QUALIFIED table name, which the parser refused for
+    // having 3+ parts (relation) or never resolved at all (CalcFormula) — 8 Base Application
+    // 28.1 relations cached as RelationArms = null and 4 FlowFields with a source table that
+    // matches nothing. Same reason for the bump as v28: the schema is unchanged, so a v28
+    // payload loads WITHOUT error and replays those pre-fix wrong answers rather than missing.
+    private const int CacheVersion = 29;
+    // No CacheVersion bump of its own for PageSymbol.TableView (#2820), deliberately — the
+    // numbered bumps above belong to other changes (v28 to #2518, v29 to #2973), and this one
+    // rides whatever the current integer is without moving it. That member is reachable from
+    // CachePayload, so PayloadShape below (issue #2335, merged as #2856) already gives it a
+    // different cache key than any payload written without it — the stale-entry hazard every
+    // note above describes is closed by construction, and bumping as well would only be
+    // ceremony. CacheVersion means what RecordShapeFingerprint's own summary says it means: the
+    // PARSE changed while the SHAPE did not, which no structural hash can see — v28 and v29 are
+    // both exactly that case, and this change is the other one. Verified rather than assumed: a
+    // cold run of this build wrote fresh entries and a warm second run read them back, on the
+    // SHARED ~/.cache/al-runner/bc-symbols with no --cache isolation, and the precompiled-page
+    // corpus arm (Base App page 1710) passed in both.
     private static readonly ConcurrentDictionary<string, AppSymbols> ProcessCache = new(StringComparer.OrdinalIgnoreCase);
     // Issue #1820 — path -> content-hash memo. ComputeAppContentHash needs to read the
     // WHOLE .app to hash it (unlike the FileInfo.Length/LastWriteTimeUtc stat it replaced,
@@ -301,7 +330,10 @@ internal static partial class BcAppSymbolCache
         Dictionary<int, string>? MemberIdToName = null,
         // Member id of every Kind-4 actionref -> the NAME of the action it points at (the
         // file's own TargetName), mirroring ParsedPage.MemberIdToActionRefTarget (#2113).
-        Dictionary<int, string>? MemberIdToActionRefTarget = null);
+        Dictionary<int, string>? MemberIdToActionRefTarget = null,
+        // The page's SourceTableView, parsed out of the symbol file's own AL text (#2820).
+        // Null when the page declares none. See ParseSourceTableView.
+        PageTableViewSymbol? TableView = null);
 
     /// <summary>
     /// A precompiled dependency's <c>pageextension</c>, as far as SymbolReference.json states
@@ -350,6 +382,27 @@ internal static partial class BcAppSymbolCache
     /// EmitSubFormLinkXml, then applied by MockTestPage.SubPageLinks — #2469).
     /// </summary>
     internal sealed record PageSubFormLinkSymbol(string PartFieldName, string Kind, string Value);
+
+    /// <summary>
+    /// A precompiled dependency page's <c>SourceTableView</c>, parsed from the AL text
+    /// SymbolReference.json records for it — <c>sorting(...) order(...) where(...)</c>, each
+    /// clause optional. Field NAMES are still names here for the same reason
+    /// <see cref="PageSubFormLinkSymbol"/> keeps them: resolving one to a field id needs the
+    /// page's SourceTable, which DependencyPageMetadataXml has in scope and this parse does not.
+    /// <para><c>Ascending</c> is null when the view states no <c>order(...)</c> — distinct from
+    /// <c>true</c>, because BC's ApplySourceTableView only touches the record's ALAscending when
+    /// the view SET it (<c>AscendingSetByView</c>).</para>
+    /// </summary>
+    internal sealed record PageTableViewSymbol(
+        List<string> SortingFieldNames, bool? Ascending, List<PageViewFilterSymbol> Filters);
+
+    /// <summary>
+    /// One <c>where(...)</c> entry of a <c>SourceTableView</c>: the page's OWN source-table
+    /// field, the AL keyword (<c>const</c> or <c>filter</c> — a view cannot use
+    /// <c>field(...)</c>, which references a host record a page-level view has none of), and
+    /// the value text verbatim.
+    /// </summary>
+    internal sealed record PageViewFilterSymbol(string FieldName, string Kind, string Value);
 
     /// <summary>
     /// One field control of a precompiled dependency page, as SymbolReference.json states
@@ -1008,12 +1061,15 @@ internal static partial class BcAppSymbolCache
             foreach (var a in actionsArr.EnumerateArray())
                 CollectMemberNames(a, "Actions", memberNames, actionRefTargets);
 
+        props.TryGetValue("SourceTableView", out var sourceTableView);
+
         return new PageSymbol(pageId, name!, sourceTableId, sourceTableTemporary,
             string.IsNullOrWhiteSpace(pageType) ? "Card" : pageType!, caption,
             editable, insertAllowed, modifyAllowed, deleteAllowed, controls,
             string.IsNullOrWhiteSpace(cardPageName) ? null : cardPageName,
             autoSplitKey, multipleNewLines, delayedInsert, parts,
-            memberNames, actionRefTargets);
+            memberNames, actionRefTargets,
+            ParseSourceTableView(pageId, sourceTableView));
     }
 
     /// <summary>
@@ -1189,6 +1245,109 @@ internal static partial class BcAppSymbolCache
             result.Add(new PageSubFormLinkSymbol(partField, kind, value));
         }
         return result;
+    }
+
+    private static readonly System.Text.RegularExpressions.Regex ViewClauseRegex = new(
+        @"\b(?<clause>sorting|order|where)\s*\(",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    /// <summary>
+    /// Parse a page's <c>SourceTableView</c> property text — <c>sorting(f1, f2)
+    /// order(descending) where("A" = const(X), B = filter(&lt;&gt; ''))</c>, every clause
+    /// optional — into the typed shape <c>DependencyPageMetadataXml</c> re-emits as BC's own
+    /// <c>&lt;SourceTableView&gt;</c> metadata element (issue #2820).
+    ///
+    /// <para>Measured across Base Application 28.1's SymbolReference.json: 386 pages declare a
+    /// SourceTableView — 220 carry <c>where(...)</c>, 178 <c>sorting(...)</c> and 99
+    /// <c>order(...)</c>; of the 235 filter entries 171 are <c>const(...)</c> and 64
+    /// <c>filter(...)</c>, and not one is <c>field(...)</c>, which AL does not allow here.</para>
+    ///
+    /// <para>Returns null for a page declaring no view, and for text no clause could be read
+    /// out of (reported on stderr) — the caller then emits no <c>&lt;SourceTableView&gt;</c>
+    /// element at all, which is the same state as before this parse existed.</para>
+    /// </summary>
+    private static PageTableViewSymbol? ParseSourceTableView(int pageId, string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return null;
+
+        var sorting = new List<string>();
+        bool? ascending = null;
+        var filters = new List<PageViewFilterSymbol>();
+        var sawClause = false;
+
+        foreach (System.Text.RegularExpressions.Match m in ViewClauseRegex.Matches(text!))
+        {
+            var open = m.Index + m.Length - 1;           // the '(' itself
+            var close = MatchingCloseParen(text!, open);
+            if (close < 0) continue;                     // unbalanced — reported below
+            var inner = text!.Substring(open + 1, close - open - 1);
+            sawClause = true;
+
+            switch (m.Groups["clause"].Value.ToLowerInvariant())
+            {
+                case "sorting":
+                    foreach (var f in SplitTopLevelCommas(inner))
+                    {
+                        var fieldName = f.Trim().Trim('"');
+                        if (fieldName.Length > 0) sorting.Add(fieldName);
+                    }
+                    break;
+                case "order":
+                    // AL allows exactly `ascending` / `descending` here.
+                    var dir = inner.Trim();
+                    if (string.Equals(dir, "descending", StringComparison.OrdinalIgnoreCase)) ascending = false;
+                    else if (string.Equals(dir, "ascending", StringComparison.OrdinalIgnoreCase)) ascending = true;
+                    else Console.Error.WriteLine(
+                        $"[BcAppSymbolCache] page {pageId} SourceTableView order() not understood, ignored: '{dir}'");
+                    break;
+                default:
+                    foreach (var rawEntry in SplitTopLevelCommas(inner))
+                    {
+                        var entry = rawEntry.Trim();
+                        if (entry.Length == 0) continue;
+                        var em = SubPageLinkEntryRegex.Match(entry);
+                        if (!em.Success)
+                        {
+                            Console.Error.WriteLine(
+                                $"[BcAppSymbolCache] page {pageId} SourceTableView where() entry not understood, dropped: '{entry}'");
+                            continue;
+                        }
+                        filters.Add(new PageViewFilterSymbol(
+                            em.Groups["left"].Value.Trim('"'),
+                            em.Groups["kind"].Value.ToLowerInvariant(),
+                            em.Groups["val"].Value.Trim()));
+                    }
+                    break;
+            }
+        }
+
+        if (!sawClause)
+        {
+            Console.Error.WriteLine(
+                $"[BcAppSymbolCache] page {pageId} SourceTableView not understood, ignored: '{text!.Trim()}'");
+            return null;
+        }
+        if (sorting.Count == 0 && ascending == null && filters.Count == 0) return null;
+        return new PageTableViewSymbol(sorting, ascending, filters);
+    }
+
+    /// <summary>Index of the ')' closing the '(' at <paramref name="open"/>, ignoring
+    /// parentheses inside an AL quoted identifier or a single-quoted literal, or -1.</summary>
+    private static int MatchingCloseParen(string s, int open)
+    {
+        var depth = 0;
+        var inDouble = false;
+        var inSingle = false;
+        for (int i = open; i < s.Length; i++)
+        {
+            var c = s[i];
+            if (c == '"' && !inSingle) { inDouble = !inDouble; continue; }
+            if (c == '\'' && !inDouble) { inSingle = !inSingle; continue; }
+            if (inDouble || inSingle) continue;
+            if (c == '(') depth++;
+            else if (c == ')' && --depth == 0) return i;
+        }
+        return -1;
     }
 
     /// <summary>

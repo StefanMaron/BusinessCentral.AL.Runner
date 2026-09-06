@@ -138,7 +138,7 @@ public class WatchLayeredDependencyStaleTests
     {
         TestArtifacts.SkipIfMissing();
 
-        var root = Path.Combine(Path.GetTempPath(), "al-runner-watch-layered-stale", Guid.NewGuid().ToString("N"));
+        var root = TestScratch.Dir("al-runner-watch-layered-stale");
         Directory.CreateDirectory(root);
         var depDir = WriteDepBundle(root, answer: 42);
         var testDir = WriteTestBundle(root, extraComment: "cycle 1");

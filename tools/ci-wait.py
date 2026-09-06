@@ -40,8 +40,20 @@ Exit codes
     1  at least one required check failed; the failing log is printed
     2  timed out while still running -- NOT a verdict, call again
     3  could not determine state (auth, network, no checks reported)
-    4  everything green, but a REQUIRED context is `cancelled` on this commit --
-       the merge is blocked and nothing else reports why (#2726)
+    4  everything green, but the merge is still blocked and nothing else reports
+       why: a REQUIRED context is `cancelled` on this commit (#2726), or a
+       REQUIRED context produced no check run at all once every workflow run for
+       the commit had finished (#2807)
+
+Exit 1 can be a PARTIAL list
+----------------------------
+A verdict is returned as soon as one exists, so a FAILED verdict names the
+required checks that have failed SO FAR, not necessarily all of them. A
+coordinator read "1 of 9 required checks failed" as "only BC 27.0 is affected"
+and began a version-specific diagnosis; `gh pr checks` after the run finished
+showed eight legs failing. The failure block therefore says how many required
+checks have not reported yet and that the list can still grow. Nothing about the
+verdict changed -- only what it admits it does not know.
 
 Exit 4, and why it is not exit 0
 --------------------------------
@@ -121,17 +133,88 @@ def required_checks(sha: str) -> list[dict] | None:
         return None
 
 
-# The contexts the `main` branch ruleset requires, verbatim. Re-derive with:
-#   gh api repos/StefanMaron/BusinessCentral.AL.Runner/rulesets/15001420 \
-#     --jq '[.rules[]|select(.type=="required_status_checks")
+def workflow_runs_for(sha: str) -> list[dict] | None:
+    """Every workflow run GitHub has registered for this commit, or None.
+
+    This is what distinguishes "a required context has not appeared YET" from
+    "it will never appear" -- a distinction the check-run rollup cannot make on
+    its own, and getting it wrong toward GREEN is #2807.
+    """
+    rc, out = gh(["api",
+                  f"repos/{REPO}/actions/runs?head_sha={sha}&per_page=100",
+                  "--jq", "[.workflow_runs[] | {id, name, status, conclusion}]"])
+    if rc != 0:
+        return None
+    try:
+        got = json.loads(out)
+    except Exception:
+        return None
+    return got if isinstance(got, list) else None
+
+
+def contexts_from_branch_rules(payload) -> tuple[str, ...] | None:
+    """Required status-check contexts out of a `rules/branches/<b>` payload.
+
+    Returns None -- meaning UNKNOWN -- for anything that does not carry a
+    non-empty required_status_checks rule. Never an empty tuple: an empty
+    required set would silently disable every gate this module applies, and
+    #2785 is exactly the story of an empty answer being read as fact. Ruleset
+    15039643 ("Copilot review for default branch") is disabled and has no such
+    rule, so querying it directly answers with an empty list.
+    """
+    if not isinstance(payload, list):
+        return None
+    out: list[str] = []
+    for rule in payload:
+        if not isinstance(rule, dict) or rule.get("type") != "required_status_checks":
+            continue
+        params = rule.get("parameters") or {}
+        for entry in params.get("required_status_checks") or []:
+            ctx = (entry or {}).get("context") if isinstance(entry, dict) else None
+            if ctx:
+                out.append(str(ctx))
+    return tuple(out) or None
+
+
+def live_ruleset_contexts(branch: str = "main") -> tuple[str, ...] | None:
+    """What the branch ruleset requires RIGHT NOW, or None if it cannot be read.
+
+    Uses GET /repos/{owner}/{repo}/rules/branches/{branch}, which returns the
+    EFFECTIVE rules for that branch -- only rulesets whose enforcement is
+    active. That is why it is the right endpoint and /rulesets/<id> is not:
+    there is no ruleset id to get wrong. Measured 2026-09-05, it answers 200
+    even unauthenticated on this public repo, and reports exactly
+    ["All BC versions passed", "Tests updated"] carrying ruleset_id 15001420.
+    """
+    rc, out = gh(["api", f"repos/{REPO}/rules/branches/{branch}"])
+    if rc != 0:
+        return None
+    try:
+        return contexts_from_branch_rules(json.loads(out))
+    except Exception:
+        return None
+
+
+# FALLBACK only. `main()` asks the live ruleset first, via
+# live_ruleset_contexts() above, so a context added to the ruleset by a person in
+# the GitHub UI is waited for on the next invocation rather than ignored until
+# somebody notices this tuple (#2785). This list is what gets used when that call
+# cannot be made -- and the tool says so out loud when it falls back, because a
+# stale list here means a required context is not being judged at all.
+#
+# .github/scripts/check_required_contexts.py fails CI when this tuple and the
+# live ruleset disagree in EITHER direction, so it cannot rot silently.
+#
+# Re-derive by hand with:
+#   gh api repos/StefanMaron/BusinessCentral.AL.Runner/rules/branches/main \
+#     --jq '[.[]|select(.type=="required_status_checks")
 #            |.parameters.required_status_checks[].context]'
-# 15001420 is the ACTIVE "main" ruleset and the only one carrying a
-# required_status_checks rule. Do NOT query 15039643 ("Copilot review for
-# default branch"): it is disabled and has no such rule, so it answers with an
-# empty list, and emptying this list on the strength of that would restore the
-# exact false-green this module exists to prevent.
-# (see .github/scripts/check_required_contexts.py, which carries the exact query
-# and is the CI guard for the same list).
+# That endpoint reports only ACTIVE rulesets, which is why it is preferred over
+# /rulesets/<id>: querying 15039643 ("Copilot review for default branch", which
+# is disabled and has no required_status_checks rule) answers with an empty list,
+# and emptying this list on the strength of that would restore the exact
+# false-green this module exists to prevent. 15001420 is the active "main"
+# ruleset if you do want to name an id.
 #
 # Names containing "(required)" are the bc-tests matrix legs. They are not
 # ruleset contexts themselves, but "All BC versions passed" fails when any of
@@ -141,9 +224,9 @@ RULESET_CONTEXTS = ("All BC versions passed", "Tests updated")
 NOT_FAILURES = ("success", "neutral", "skipped")
 
 
-def is_required(name: str | None) -> bool:
+def is_required(name: str | None, contexts: tuple[str, ...] = RULESET_CONTEXTS) -> bool:
     name = name or ""
-    return "required" in name or name in RULESET_CONTEXTS
+    return "required" in name or name in contexts
 
 
 class Verdict:
@@ -161,32 +244,170 @@ class Verdict:
         self.progress = progress
 
 
+def run_id_from(details_url: str | None) -> int | None:
+    """Actions WORKFLOW RUN id out of a check-run details_url, or None.
+
+    .../actions/runs/<run-id>/job/<job-id> -- the first number, not the second.
+    """
+    if not details_url:
+        return None
+    m = re.search(r"/actions/runs/(\d+)", details_url)
+    return int(m.group(1)) if m else None
+
+
+def recency_key(r: dict) -> tuple[int, int]:
+    """How recent a check run is: (workflow run id, check-run id).
+
+    Workflow run ids are monotonic with run CREATION. Check-run ids are not --
+    a check run is created when its JOB STARTS, so id order follows job start
+    order, which is a different order as soon as two runs overlap. The check-run
+    id is therefore only a tie-break within one workflow run, where it correctly
+    ranks a re-run attempt above the attempt it replaced.
+    """
+    return (run_id_from(r.get("details_url")) or 0, r.get("id") or 0)
+
+
 def newest_per_name(runs: list[dict]) -> dict[str, dict]:
     """The check run a ruleset would read for each context name.
 
-    Check-run ids on a commit increase with creation, so the highest id for a
-    name is the newest attempt at that context. This is what makes a superseded
-    cancellation (harmless) distinguishable from a cancellation that is still the
-    latest word on its context (merge-blocking).
+    Keyed on recency_key, NOT on check-run id alone. Ordering by check-run id
+    inverts whenever two runs of one workflow overlap on a commit, because the
+    id tracks job start rather than run creation. Measured on PR #2742's head
+    22e5c13b: Test Matrix run 33964656436 (created 11:56:25) owns check run
+    101303131614 -- a higher id than every check run of PR Check run 33964852712
+    (created 12:00:55, highest 101303055107).
+
+    Overlapping runs of one workflow on one SHA are not exotic here, they are
+    designed in: require-tests.yml produces the required "Tests updated" context
+    and deliberately carries NO `concurrency` block (#2726), while triggering on
+    'labeled'/'unlabeled'. Reading the older run's conclusion there is #2748, and
+    it is wrong in both directions -- a stale failure reported as the verdict, or
+    worse, a stale success shadowing the newer run's failure.
+
+    A live inversion on that exact required context, PR #2863's head, three
+    concurrent Require Tests runs whose jobs interleaved:
+
+        run 33983248257  check 101352123189
+        run 33983255476  check 101352142567   <- older run, HIGHER check id
+        run 33983255561  check 101352142543   <- newest run, LOWER check id
+
+    All three concluded `success`, so no verdict was wrong that time. That is
+    what this looks like on the day before it matters.
+
+    This is also what makes a superseded cancellation (harmless) distinguishable
+    from a cancellation that is still the latest word on its context
+    (merge-blocking).
     """
     newest: dict[str, dict] = {}
     for r in runs:
         name = r.get("name") or ""
         cur = newest.get(name)
-        if cur is None or (r.get("id") or 0) > (cur.get("id") or 0):
+        if cur is None or recency_key(r) > recency_key(cur):
             newest[name] = r
     return newest
 
 
-def classify(runs: list[dict]) -> Verdict:
+def rollup_is_final(workflow_runs: list[dict] | None) -> bool | None:
+    """Has every workflow run for this commit finished? True / False / None.
+
+    None means "could not tell", and it is deliberately distinct from False:
+    an unknown must never be resolved toward GREEN (#2807).
+    """
+    if workflow_runs is None:
+        return None
+    if not workflow_runs:
+        # Nothing registered for the commit yet. The push is seconds old and the
+        # rollup is at its emptiest, which is precisely when it lies best.
+        return False
+    return all(w.get("status") == "completed" for w in workflow_runs)
+
+
+def superseding_runs(newest: dict[str, dict],
+                     contexts: tuple[str, ...],
+                     workflow_runs: list[dict] | None) -> list[tuple[str, int]]:
+    """Ruleset contexts whose newest check run may already be out of date.
+
+    Returns (context name, in-flight workflow run id) pairs.
+
+    `rollup_is_final` answers "has EVERYTHING for this commit finished", which is
+    the right question only while a context is ABSENT from the rollup. It is the
+    wrong question once the context is present, and that gap was a fourth way to
+    report a false GREEN (#2807 follow-up): a required context sitting in the
+    rollup with a conclusion from workflow run N, while run N+1 of the SAME
+    workflow is queued on the same SHA and has not created its check run yet.
+    `missing` is empty, so `final` was never consulted, and the stale conclusion
+    was returned as the verdict.
+
+    Designed-in, not hypothetical: require-tests.yml produces the required
+    "Tests updated" context, carries NO `concurrency` block (deliberately, #2726)
+    and triggers on 'labeled'/'unlabeled'. Applying a label mid-wait starts a
+    second run on the same commit, and until its job starts the rollup still
+    shows the first run's conclusion.
+
+    Deliberately NOT "any workflow run for this commit is unfinished". Five
+    workflows here can attach to a branch head without producing any required
+    context -- bc-leg-rerun.yml, ms-bucket.yml, ms-bucket-nightly.yml,
+    coverage-demo.yml and publish.yml, all reachable by `workflow_dispatch`.
+    .claude/rules/ci-verdicts.md actively tells agents to dispatch
+    bc-leg-rerun.yml against the branch to get a second opinion on a leg, and the
+    ms-bucket runs are 9,500 tests apiece. Blocking green on those would trade one
+    false GREEN for a class of false "still pending" on the exact diagnostic path
+    the rules recommend. So the in-flight run must be a newer run of the SAME
+    workflow that produced the evidence being read.
+    """
+    if not workflow_runs:
+        return []
+    pending = [w for w in workflow_runs if w.get("status") != "completed"]
+    if not pending:
+        return []
+    by_id = {w.get("id"): w for w in workflow_runs}
+    out: list[tuple[str, int]] = []
+    for c in contexts:
+        r = newest.get(c)
+        if r is None:
+            continue  # absent entirely -- that is `missing`, judged by finality
+        backing = run_id_from(r.get("details_url"))
+        if backing is None:
+            # No run id to compare against, so we cannot rule out that one of the
+            # in-flight runs will re-report this context. Unknown never resolves
+            # toward green (#2807).
+            wid = pending[0].get("id")
+            out.append((c, wid if isinstance(wid, int) else 0))
+            continue
+        owner = by_id.get(backing)
+        wf_name = owner.get("name") if owner else None
+        for w in pending:
+            wid = w.get("id")
+            if not isinstance(wid, int) or wid <= backing:
+                continue
+            # Same workflow => this run re-reports `c` and outranks what we read.
+            # Owner unknown (run list truncated or the id absent) => cannot rule
+            # it out, so assume it does.
+            if wf_name is None or w.get("name") == wf_name:
+                out.append((c, wid))
+                break
+    return out
+
+
+def classify(runs: list[dict],
+             contexts: tuple[str, ...] = RULESET_CONTEXTS,
+             workflow_runs: list[dict] | None = None) -> Verdict:
     """Turn a commit's check runs into one verdict. Pure -- see tools/test_ci_wait.py.
+
+    `contexts` is what the branch ruleset requires; `main()` passes the LIVE set
+    so a context added to the ruleset is judged without anyone editing this file
+    (#2785). `workflow_runs` is every workflow run registered for the commit, and
+    it exists to answer one question the check-run rollup cannot: is a required
+    context that is not in the rollup still coming, or will it never come?
 
     The pool used to be "every check whose name contains 'required'", which is
     the 8 bc-tests legs and nothing else. That silently excluded BOTH ruleset
     contexts: a failing "Tests updated" was reported GREEN. Ruleset contexts are
-    now judged too, but only once they have actually appeared in the rollup --
-    a docs-only PR skips "Tests updated" at job level, and waiting for a context
-    that will never report would turn a green PR into a timeout.
+    judged too -- and, since #2807, waited FOR. Judging only the contexts already
+    in the rollup meant that seconds after a push, when the only completed check
+    was an 8-second "Tests updated", the pool was one item deep, complete and
+    clean, and this returned GREEN saying "all 1 required checks passed" while
+    every BC leg was still queued.
     """
     if not runs:
         return Verdict(None)
@@ -198,15 +419,51 @@ def classify(runs: list[dict]) -> Verdict:
     # was applied. GitHub took the newer `skipped` and the PR merged; scanning
     # every entry instead would report that merged PR as FAILED.
     newest = newest_per_name(runs)
-    pool = [r for n, r in newest.items() if is_required(n)] or list(newest.values())
+    pool = [r for n, r in newest.items() if is_required(n, contexts)] or list(newest.values())
     done = [r for r in pool if r.get("status") == "completed"]
     bad = [r for r in done if r.get("conclusion") not in NOT_FAILURES
            and r.get("conclusion") != "cancelled"]
+    missing = [c for c in contexts if c not in newest]
+    final = rollup_is_final(workflow_runs)
+    inflight = superseding_runs(newest, contexts, workflow_runs)
+
     progress = f"{len(done)}/{len(pool)} complete, {len(bad)} failing"
+    if missing:
+        progress += (f", {len(missing)} ruleset context(s) not in the rollup yet: "
+                     + ", ".join(missing))
+    if inflight:
+        progress += (", superseding run in flight for: "
+                     + ", ".join(f"{c} (run {w})" for c, w in inflight))
 
     if bad:
-        lines = [f"{len(bad)} of {len(pool)} required checks failed:"]
-        lines += [f"  {r['name']}: {r.get('conclusion')}" for r in bad]
+        # This list is what is known SO FAR. Returning it while other required
+        # checks are still running is correct -- a failure is a verdict -- but
+        # reading it as the complete failing set is not, and someone did exactly
+        # that with a single-leg failure that turned out to be eight.
+        # A LOWER BOUND, and it has to say so. `pool` is built from ruleset
+        # contexts plus the rollup entries already present, so a required leg
+        # that has not created its check run yet is counted by neither term. The
+        # #2837 shape printed "1 required check(s) have not reported yet" while
+        # seven bc-tests legs were missing from the rollup entirely.
+        unreported = (len(pool) - len(done)) + len(missing)
+        head = f"{len(bad)} of {len(pool)} required checks failed"
+        if unreported:
+            head += (f" SO FAR (at least {unreported} required check(s) have not "
+                     f"reported yet)")
+        lines = [head + ":"]
+        for r in bad:
+            rid = run_id_from(r.get("details_url"))
+            lines.append(f"  {r['name']}: {r.get('conclusion')}"
+                         + (f"   (workflow run {rid})" if rid else ""))
+        if unreported:
+            lines += [
+                "",
+                "This failing list can still GROW -- it names only the required checks",
+                "that have already reported. The count above is a LOWER BOUND: a leg",
+                "whose check run does not exist yet is not in it at all. Do not scope",
+                "a diagnosis to these names until every check has reported; re-run",
+                "this tool, or read `gh pr checks` once the run finishes.",
+            ]
         return Verdict(1, lines, log_target=bad[0], progress=progress)
 
     if len(done) != len(pool):
@@ -215,9 +472,31 @@ def classify(runs: list[dict]) -> Verdict:
         # reports. Calling that a block here would cry wolf on every push.
         return Verdict(None, progress=progress)
 
+    if missing and final is not True:
+        # #2807: "has not appeared yet" and "will never appear" look identical in
+        # the rollup, and the tie used to be broken toward GREEN -- the one
+        # direction .claude/rules/ci-verdicts.md says a verdict may never go.
+        # Unknown (final is None, the API could not be read) lands here too.
+        return Verdict(None, progress=progress)
+
+    if inflight:
+        # A required context IS in the rollup, but a newer run of the workflow
+        # that produced it is still in flight on this commit, so what we just
+        # read is not necessarily the conclusion a ruleset will read. Applies to
+        # every verdict below: GREEN, and both BLOCKED paths -- a `cancelled`
+        # required context whose replacement run is queued reads as exit 4 here
+        # ("re-run the cancelled run") when the re-run is already on its way.
+        # A FAILURE is deliberately still reported above: a failure is a verdict,
+        # and delaying it costs real time, while the risk of the newer run
+        # overturning it is bounded and visible in the caveat. That residual --
+        # a stale FAILED where a newer run of the same workflow is queued, the
+        # mirror of the false green this guard fixes -- is tracked in #2922
+        # rather than widened into this change.
+        return Verdict(None, progress=progress)
+
     blocking = sorted(
         (r for r in newest.values()
-         if r.get("conclusion") == "cancelled" and is_required(r.get("name"))),
+         if r.get("conclusion") == "cancelled" and is_required(r.get("name"), contexts)),
         key=lambda r: r.get("name") or "",
     )
     superseded = sorted(
@@ -227,7 +506,7 @@ def classify(runs: list[dict]) -> Verdict:
     )
     cosmetic = sorted(
         {(r.get("name") or "") for r in newest.values()
-         if r.get("conclusion") == "cancelled" and not is_required(r.get("name"))}
+         if r.get("conclusion") == "cancelled" and not is_required(r.get("name"), contexts)}
     )
 
     if blocking:
@@ -252,7 +531,32 @@ def classify(runs: list[dict]) -> Verdict:
                 lines.append(f"  {r['details_url']}")
         return Verdict(4, lines, progress=progress)
 
+    if missing:
+        # final is True here: every workflow run for the commit has finished and
+        # these contexts still produced no check run at all. The ruleset has
+        # nothing to read for them, so it refuses the merge and, exactly as with
+        # a cancellation, nothing else says why.
+        lines = [
+            f"BLOCKED, not failing -- {len(missing)} REQUIRED context(s) produced no "
+            f"check run on this commit:",
+        ]
+        lines += [f"  {c}: never reported" for c in missing]
+        lines += [
+            "",
+            "Every check that did report passed, and every workflow run for this",
+            "commit has finished, so nothing further is coming. A ruleset has no",
+            "check run to read for these contexts, so the merge is refused with",
+            "nothing stating the reason (#2807).",
+            "",
+            "Find the workflow that is supposed to produce each name and why it did",
+            "not run for this commit -- a `paths:` filter, a `branches:` filter, or a",
+            "trigger type that did not fire. Do NOT reach for --admin.",
+        ]
+        return Verdict(4, lines, progress=progress)
+
     lines = [f"all {len(pool)} required checks passed."]
+    lines.append("Ruleset contexts confirmed present and passing on this commit: "
+                 + ", ".join(contexts) + ".")
     if cosmetic:
         lines.append("")
         lines.append("Cosmetic: these NON-required contexts are 'cancelled' on this "
@@ -282,14 +586,54 @@ def main() -> int:
     print(f"PR #{args.pr} head {sha[:8]} -- waiting for required checks "
           f"(up to {args.timeout}s, polling internally)")
 
+    # Ask the ruleset what it requires RIGHT NOW rather than trusting a tuple
+    # frozen into this file (#2785). A context added to the ruleset since this
+    # was written must be waited for, not silently ignored.
+    live = live_ruleset_contexts()
+    if live is None:
+        contexts = RULESET_CONTEXTS
+        print("note: could not read the live branch ruleset for 'main'; falling back "
+              f"to the built-in list {list(RULESET_CONTEXTS)}. If a required context "
+              "has been added since, it is NOT being waited for.")
+    else:
+        contexts = live
+        if set(live) != set(RULESET_CONTEXTS):
+            print(f"note: the live ruleset requires {sorted(live)}, which differs from "
+                  f"this script's built-in list {sorted(RULESET_CONTEXTS)}. Using the "
+                  "LIVE set. Update RULESET_CONTEXTS in tools/ci-wait.py and "
+                  "DEFAULT_REQUIRED_CONTEXTS in "
+                  ".github/scripts/check_required_contexts.py (#2785).")
+
     deadline = time.time() + args.timeout
     last = ""
     while time.time() < deadline:
+        # ORDER MATTERS: the workflow-run list is read FIRST, the check-run
+        # rollup second. Read the other way round, a run completing between the
+        # two calls gives a STALE rollup (context still missing) next to a FRESH
+        # run list (final=True), which classify() reads as "every workflow
+        # finished and this context never reported" -- a false exit 4 sending an
+        # agent after a trigger filter that is fine. Run-list-first makes the
+        # skew harmless in both directions: the rollup is then the newer of the
+        # two, so a context it shows as reported really is reported, and a run
+        # the list still calls in-flight has at worst already finished, which
+        # only costs one more poll.
+        #
+        # Fetched unconditionally. It used to be fetched only while a ruleset
+        # context was missing from the rollup, on the reasoning that this was the
+        # only question the run list answered. It was not: a context PRESENT in
+        # the rollup can be carrying a conclusion from a superseded run (see
+        # superseding_runs), and that question has to be asked on every poll.
+        wf_runs = workflow_runs_for(sha)
+        if wf_runs is None:
+            # The run list is load-bearing for the verdict now, so failing to read
+            # it is "no verdict yet", never "green" (#2807).
+            time.sleep(args.interval)
+            continue
         runs = required_checks(sha)
         if runs is None:
             time.sleep(args.interval)
             continue
-        v = classify(runs)
+        v = classify(runs, contexts, wf_runs)
         if v.progress:
             last = v.progress  # only reported at the end; keeps the transcript to one block
 

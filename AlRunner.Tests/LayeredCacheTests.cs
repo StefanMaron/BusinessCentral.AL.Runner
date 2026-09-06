@@ -39,8 +39,7 @@ public class LayeredCacheTests : IClassFixture<SharedCliServer>
     /// for this one — the same guarantee the CLI version got from building its cacheDir
     /// under a fresh scratch root.
     /// </summary>
-    private static readonly string CacheDir = Path.Combine(
-        Path.GetTempPath(), "al-runner-layered-cache", Guid.NewGuid().ToString("N"), "al-out");
+    private static readonly string CacheDir = Path.Combine(TestScratch.Dir("al-runner-layered-cache"), "al-out");
 
     /// <summary>
     /// Emitted by the layered pre-pass AFTER every per-impl WROTE/HIT line, so it is a

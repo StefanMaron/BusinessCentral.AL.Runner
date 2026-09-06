@@ -26,8 +26,7 @@ public sealed class AppLoaderPackageMetaTests
 {
     private static string NewTempDir(string suffix)
     {
-        var dir = Path.Combine(Path.GetTempPath(),
-            "app-loader-package-meta-tests-" + suffix + "-" + Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.FlatDir("app-loader-package-meta-tests-" + suffix + "-");
         Directory.CreateDirectory(dir);
         return dir;
     }

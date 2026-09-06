@@ -1,0 +1,347 @@
+// VirtualTableRefusalClaimTests — what the 48 refusals in the sixteen
+// RecordPatches.*VirtualTable.cs populators actually claim, and what an AL [TryFunction]
+// does with one (#2945).
+//
+// WHY THIS IS A RUNNER-SIDE MECHANISM TEST AND NOT AN AL BUNDLE
+// ------------------------------------------------------------
+// Every one of the 48 fires when something the runner reflects on is absent or the wrong
+// shape: the in-memory data provider behind a DataAccess, an option string on the artifact's
+// own metatable, Microsoft's FeatureKeyDataProvider / WindowsLanguageHelper, or the host's
+// time zone database. No AL statement can make any of those disappear, so no bundle under
+// tests/runner-extras/ can drive one, and the existing virtual-table suites do not try (they
+// assert the rows, which is the in-scope half). The subject here is the C# refusal contract,
+// which .claude/rules/bc-behavior-tests-go-upstream.md classifies as runner-specific — the
+// same shape as TryFunctionOutOfScopeTrapTests and ObjectMetadataProviderRowProbeTests.
+//
+// WHAT WAS WRONG
+// --------------
+// All 48 ended "; see docs/scope.md" (rendered twice, since BuildMessage appends its own
+// link). docs/scope.md is the manifest of what is PERMANENTLY out of scope — SMTP, HTTP
+// egress, printing — and it says nothing about any of these tables, because the files raising
+// these refusals implement them.
+//
+// The claim is load-bearing, not decorative. ApplicationObjectBasePatches.IsPermanentOutOfScope:
+//
+//     return oos != null && !oos.Reason.StartsWith("not-yet-implemented", StringComparison.Ordinal);
+//
+// Under the old anchors that returned TRUE, so an AL [TryFunction] reading any of these
+// tables trapped a runner shape gap into `false` — the silent default
+// .claude/rules/loud-failures.md exists to prevent — and a test could go green having
+// quietly done without the table.
+//
+// HOW THIS TEST AVOIDS BEING A LIST THAT ROTS
+// -------------------------------------------
+// The per-surface facts are asserted against an explicit expected table (so a factory that
+// silently changes its API name or doc link fails), AND every `*ShapeGap` factory discovered
+// by reflection on RecordPatches has to satisfy the shared invariants (so a NEW virtual-table
+// factory added later is covered without anyone remembering to add it here).
+
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Reflection;
+using System.Text.RegularExpressions;
+using Xunit;
+using AlRunner;
+using AlRunner.Infrastructure;
+using AlRunner.Patches;
+
+namespace AlRunner.Tests;
+
+public sealed class VirtualTableRefusalClaimTests
+{
+    private const string GapDoc = "docs/limitations.md#virtual-table-shape-gaps";
+    private const string TimeZoneDoc = "docs/limitations.md#time-zone-virtual-table";
+    private const string WindowsLanguageDoc = "docs/limitations.md#windows-language-virtual-table";
+
+    private static readonly string RepoRoot = Path.GetFullPath(
+        Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
+
+    /// <summary>The sixteen files this issue covers. ObjectMetadataSystemTable is #2894's and
+    /// DateVirtualTable is #2648's — both deliberately outside this change.</summary>
+    private static readonly string[] CoveredFiles =
+    {
+        "RecordPatches.AggregatePermissionSetVirtualTable.cs",
+        "RecordPatches.AllObjVirtualTable.cs",
+        "RecordPatches.AllObjWithCaptionVirtualTable.cs",
+        "RecordPatches.AllProfileVirtualTable.cs",
+        "RecordPatches.CodeunitMetadataVirtualTable.cs",
+        "RecordPatches.FeatureKeyVirtualTable.cs",
+        "RecordPatches.FieldVirtualTable.cs",
+        "RecordPatches.IntegerVirtualTable.cs",
+        "RecordPatches.MetadataPermissionSetVirtualTable.cs",
+        "RecordPatches.PageControlFieldVirtualTable.cs",
+        "RecordPatches.PageMetadataVirtualTable.cs",
+        "RecordPatches.ReportLayoutListVirtualTable.cs",
+        "RecordPatches.ReportMetadataVirtualTable.cs",
+        "RecordPatches.TableMetadataVirtualTable.cs",
+        "RecordPatches.TimeZoneVirtualTable.cs",
+        "RecordPatches.WindowsLanguageVirtualTable.cs",
+    };
+
+    /// <summary>
+    /// Two files OUTSIDE the *VirtualTable.cs set that raise refusals for the same surfaces —
+    /// found by asking question 2 of "fix the shape, not just the reported line", not by the
+    /// issue's own grep. RecordPatches.cs's DataAccess dispatch chain refuses for Field,
+    /// Aggregate Permission Set and Feature Key; AllProfileWritePatches.cs refuses for All
+    /// Profile. Same table, same anchor, so leaving them would have left one table claiming two
+    /// different things depending on which code path reached it. They route through the same
+    /// factories now — but they legitimately carry OTHER, genuinely permanent refusals too, so
+    /// the whole-file guard below does not apply to them.
+    /// </summary>
+    private static readonly string[] SiblingFiles =
+    {
+        "RecordPatches.cs",
+        "AllProfileWritePatches.cs",
+    };
+
+    /// <summary>factory name → (api, surface anchor, doc link). One row per corrected surface.</summary>
+    public static IEnumerable<object[]> Surfaces() => new[]
+    {
+        new object[] { "AggregatePermissionSetShapeGap", "Aggregate Permission Set (virtual table 2000000167)", "aggregate-permission-set-virtual-table", GapDoc },
+        new object[] { "AllObjShapeGap",                 "AllObj (virtual table 2000000038)",                   "allobj-virtual-table",                   GapDoc },
+        new object[] { "AllObjWithCaptionShapeGap",      "AllObjWithCaption (virtual table 2000000058)",        "allobjwithcaption-virtual-table",         GapDoc },
+        new object[] { "AllProfileShapeGap",             "All Profile (virtual table 2000000178)",              "all-profile-virtual-table",              GapDoc },
+        new object[] { "CodeunitMetadataShapeGap",       "CodeUnit Metadata (virtual table 2000000137)",        "codeunit-metadata-virtual-table",         GapDoc },
+        new object[] { "FeatureKeyShapeGap",             "Feature Key (system table 2000000211)",               "feature-key-virtual-table",               GapDoc },
+        new object[] { "FeatureKeyModifyShapeGap",       "Feature Key (system table 2000000211): Modify",       "feature-key-modify",                      GapDoc },
+        new object[] { "FieldVirtualShapeGap",           "Field (virtual table 2000000041)",                    "field-virtual-table",                     GapDoc },
+        new object[] { "IntegerShapeGap",                "Integer (virtual table 2000000026)",                  "integer-virtual-table",                   GapDoc },
+        new object[] { "MetadataPermissionSetShapeGap",  "Metadata Permission Set (virtual table 2000000250)",  "metadata-permission-set-virtual-table",   GapDoc },
+        new object[] { "PageControlFieldShapeGap",       "Page Control Field (virtual table 2000000192)",       "page-control-field-virtual-table",        GapDoc },
+        new object[] { "PageMetadataShapeGap",           "Page Metadata (virtual table 2000000138)",            "page-metadata-virtual-table",             GapDoc },
+        new object[] { "ReportDataItemsShapeGap",        "Report Data Items (virtual table 2000000203)",        "report-data-items-virtual-table",         GapDoc },
+        new object[] { "ReportLayoutListShapeGap",       "Report Layout List (virtual table 2000000234)",       "report-layout-list-virtual-table",        GapDoc },
+        new object[] { "ReportMetadataShapeGap",         "Report Metadata (virtual table 2000000139)",          "report-metadata-virtual-table",           GapDoc },
+        new object[] { "TableMetadataShapeGap",          "Table Metadata (virtual table 2000000136)",           "table-metadata-virtual-table",            GapDoc },
+        new object[] { "TimeZoneShapeGap",               "Time Zone (virtual table 2000000164)",                "time-zone-virtual-table",                 TimeZoneDoc },
+        new object[] { "WindowsLanguageShapeGap",        "Windows Language (virtual table 2000000045)",         "windows-language-virtual-table",          WindowsLanguageDoc },
+    };
+
+    private static RunnerOutOfScopeException Raise(string factory, string detail = "the probe detail")
+    {
+        var m = typeof(RecordPatches).GetMethod(
+            factory, BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public,
+            binder: null, types: new[] { typeof(string) }, modifiers: null);
+        Assert.True(m != null, $"RecordPatches.{factory}(string) not found — the factory was renamed or removed.");
+        return (RunnerOutOfScopeException)m!.Invoke(null, new object?[] { detail })!;
+    }
+
+    /// <summary>Every <c>*ShapeGap(string)</c> factory on RecordPatches, discovered rather than listed.</summary>
+    private static IEnumerable<MethodInfo> AllShapeGapFactories() =>
+        typeof(RecordPatches)
+            .GetMethods(BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public)
+            .Where(m => m.Name.EndsWith("ShapeGap", StringComparison.Ordinal)
+                     && m.ReturnType == typeof(RunnerOutOfScopeException)
+                     && m.GetParameters().Length == 1
+                     && m.GetParameters()[0].ParameterType == typeof(string));
+
+    // ── The claim: in scope, not yet answerable for the shape found ──────────────────────
+
+    [Theory]
+    [MemberData(nameof(Surfaces))]
+    public void Refusal_ClaimsNotYetImplemented_NotAPermanentScopeBoundary(
+        string factory, string api, string surface, string doc)
+    {
+        _ = doc;
+        var ex = Raise(factory);
+
+        Assert.Equal(api, ex.Api);
+        // StartsWith, not Contains: IsPermanentOutOfScope reads the FIRST token, and
+        // ExpectationManifest.ReasonAnchor cuts at the first em-dash separator.
+        Assert.StartsWith("not-yet-implemented", ex.Reason, StringComparison.Ordinal);
+        // The table's own anchor survives as the second token, so the surfaces stay distinct.
+        Assert.Contains(surface + ":", ex.Reason, StringComparison.Ordinal);
+        // And the caller's detail is carried through rather than swallowed.
+        Assert.Contains("the probe detail", ex.Reason, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void EveryDiscoveredFactory_ClaimsNotYetImplemented()
+    {
+        var factories = AllShapeGapFactories().ToList();
+        Assert.True(factories.Count >= 18,
+            $"expected at least the 18 virtual-table factories, found {factories.Count}");
+
+        foreach (var m in factories)
+        {
+            var ex = (RunnerOutOfScopeException)m.Invoke(null, new object?[] { "probe" })!;
+            Assert.StartsWith("not-yet-implemented", ex.Reason, StringComparison.Ordinal);
+            Assert.DoesNotContain("docs/scope.md", ex.Message, StringComparison.Ordinal);
+        }
+    }
+
+    // ── The consequence: an AL [TryFunction] must NOT read a runner gap as `false` ───────
+
+    [Theory]
+    [MemberData(nameof(Surfaces))]
+    public void Refusal_TearsThroughATryFunction_InsteadOfReadingAsFalse(
+        string factory, string api, string surface, string doc)
+    {
+        _ = surface; _ = doc;
+
+        var ex = Assert.Throws<RunnerOutOfScopeException>(
+            () => BcRuntime.NavApplicationObjectBase_TryInvoke(null, () => throw Raise(factory)));
+
+        Assert.Equal(api, ex.Api);
+    }
+
+    [Fact]
+    public void PermanentRefusal_IsStillTrappedByATryFunction_SoTheTestDiscriminatesOnTheClaim()
+    {
+        // The control arm. Same exception TYPE, but a surface that really is out of scope
+        // forever — real BC in an environment that also lacks SMTP answers `false` there, so
+        // trapping it is faithful. Without this arm the theory above could pass by
+        // discriminating on the exception type rather than on what the reason claims.
+        var permanent = new RunnerOutOfScopeException(
+            "NavEmail.Send", "email-smtp — no SMTP transport in the runner", "email");
+
+        Assert.False(BcRuntime.NavApplicationObjectBase_TryInvoke(null, () => throw permanent));
+    }
+
+    // ── The link: one of them, and it points at a section that exists ────────────────────
+
+    [Theory]
+    [MemberData(nameof(Surfaces))]
+    public void Refusal_LinksToTheDocThatActuallyDocumentsTheLimit(
+        string factory, string api, string surface, string doc)
+    {
+        _ = api; _ = surface;
+        var msg = Raise(factory).Message;
+
+        Assert.EndsWith(" — see " + doc, msg, StringComparison.Ordinal);
+        Assert.DoesNotContain("docs/scope.md", msg, StringComparison.Ordinal);
+
+        // Counted on "see docs/", not on the " — see " separator: the old defect was a reason
+        // string ending "; see docs/scope.md" with BuildMessage appending its own link after
+        // it, which leaves the separator count at 1 but renders the link twice.
+        Assert.Equal(1, msg.Split("see docs/").Length - 1);
+    }
+
+    [Fact]
+    public void TheDocAnchorsThesePointAt_Exist_AndScopeMdStillDocumentsNoneOfTheseTables()
+    {
+        var limitations = File.ReadAllText(Path.Combine(RepoRoot, "docs", "limitations.md"));
+        var scope = File.ReadAllText(Path.Combine(RepoRoot, "docs", "scope.md"));
+
+        foreach (var anchor in new[]
+                 { "virtual-table-shape-gaps", "time-zone-virtual-table", "windows-language-virtual-table" })
+            Assert.Contains($"<a id=\"{anchor}\"></a>", limitations, StringComparison.Ordinal);
+
+        // The reason the old link was wrong has to stay true, or this fix is moot: scope.md is
+        // the permanent manifest and names none of these tables.
+        foreach (var table in new[]
+                 { "AllObj", "Time Zone", "Windows Language", "Feature Key", "Page Control Field" })
+            Assert.DoesNotContain(table, scope, StringComparison.OrdinalIgnoreCase);
+    }
+
+    // ── The wire format the reporter and the expectations manifest read ──────────────────
+
+    [Theory]
+    [MemberData(nameof(Surfaces))]
+    public void TypedAndUntypedRecovery_AgreeOnTheApiAndTheReason(
+        string factory, string api, string surface, string doc)
+    {
+        _ = surface; _ = doc;
+        var ex = Raise(factory);
+
+        // Typed path: what tests/expectations/ matches on when the exception object survives.
+        var typed = OutOfScopeMessage.FromException(ex);
+        Assert.NotNull(typed);
+        Assert.True(typed!.Value.Typed);
+        Assert.Equal(api, typed.Value.Api);
+        Assert.Equal(ex.Reason, typed.Value.Reason);
+
+        // Untyped path: message text only, which is all a Cecil-injected throw site and the
+        // TRX reader get. It must recover the SAME pair. It cuts the api from the reason at
+        // the first " — ", which is why no api here may contain that separator — the Feature
+        // Key Modify surface used to, and the two paths silently disagreed (#2945).
+        Assert.True(OutOfScopeMessage.TryParse(ex.Message, out var parsed));
+        Assert.Equal(api, parsed.Api);
+        Assert.Equal(ex.Reason, parsed.Reason);
+        Assert.DoesNotContain("docs/", parsed.Reason, StringComparison.Ordinal);
+    }
+
+    // ── The shape cannot drift back ──────────────────────────────────────────────────────
+
+    [Fact]
+    public void NoCoveredFileStillConstructsTheRefusalDirectly_OrCitesScopeMd()
+    {
+        foreach (var file in CoveredFiles)
+        {
+            var path = Path.Combine(RepoRoot, "AlRunner", "Patches", file);
+            Assert.True(File.Exists(path), $"{file} not found — was it renamed?");
+
+            // Comments are stripped first: the headers explain the history of this defect and
+            // have to be able to quote the old wording. The claim under test is about CODE.
+            var code = string.Join('\n', File.ReadAllLines(path)
+                .Where(l => !l.TrimStart().StartsWith("//", StringComparison.Ordinal)));
+
+            Assert.DoesNotContain("new RunnerOutOfScopeException(", code, StringComparison.Ordinal);
+            Assert.DoesNotContain("new AlRunner.Infrastructure.RunnerOutOfScopeException(", code, StringComparison.Ordinal);
+            Assert.DoesNotContain("docs/scope.md", code, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public void AllFortyEightRefusalsStillExist_SoNoneWasDeletedRatherThanCorrected()
+    {
+        var total = CoveredFiles.Concat(SiblingFiles).Sum(file =>
+        {
+            var src = File.ReadAllText(Path.Combine(RepoRoot, "AlRunner", "Patches", file));
+            return Regex.Matches(src, @"throw (RecordPatches\.)?[A-Za-z]+ShapeGap\(").Count;
+        });
+
+        // 48 in the sixteen populators + 3 in RecordPatches.cs's dispatch chain + 4 in
+        // AllProfileWritePatches.cs. A refusal DELETED rather than corrected would mean a
+        // precondition went back to being read as a default, which is the failure this whole
+        // change is about, so the count is asserted exactly.
+        Assert.Equal(55, total);
+    }
+
+
+    [Fact]
+    public void EachSurfaceAnchorIsSpelledInExactlyOneFile_SoOneTableCannotClaimTwoThings()
+    {
+        // The defect this guards against is what the sibling sweep found: RecordPatches.cs
+        // spelled "field-virtual-table" itself instead of calling the Field factory, so the
+        // same table refused with one claim from the populator and another from the dispatch
+        // chain. One anchor, one file, one claim.
+        var sources = Directory
+            .EnumerateFiles(Path.Combine(RepoRoot, "AlRunner"), "*.cs", SearchOption.AllDirectories)
+            .ToDictionary(
+                path => path,
+                path => string.Join('\n', File.ReadAllLines(path)
+                    .Where(l => !l.TrimStart().StartsWith("//", StringComparison.Ordinal))));
+
+        foreach (var row in Surfaces())
+        {
+            var anchor = (string)row[2];
+            // Whole-token match: "field-virtual-table" is a SUBSTRING of
+            // "page-control-field-virtual-table", so a plain Contains reports a false collision.
+            var whole = new Regex("(?<![a-z-])" + Regex.Escape(anchor) + "(?![a-z-])");
+            var owners = sources.Where(kv => whole.IsMatch(kv.Value))
+                                .Select(kv => Path.GetFileName(kv.Key))
+                                .OrderBy(n => n, StringComparer.Ordinal)
+                                .ToList();
+
+            Assert.True(owners.Count == 1,
+                $"anchor '{anchor}' is spelled in {owners.Count} files: {string.Join(", ", owners)}");
+        }
+    }
+
+    // ── The mechanism: a docAnchor may name its own doc file ─────────────────────────────
+
+    [Theory]
+    [InlineData("email", "docs/scope.md#email")]
+    [InlineData("#email", "docs/scope.md#email")]
+    [InlineData(null, "docs/scope.md")]
+    [InlineData("docs/limitations.md#virtual-table-shape-gaps", "docs/limitations.md#virtual-table-shape-gaps")]
+    public void DocAnchorResolution(string? anchor, string expectedLink)
+    {
+        var ex = new RunnerOutOfScopeException("Some.Api", "some-reason", anchor);
+
+        Assert.EndsWith(" — see " + expectedLink, ex.Message, StringComparison.Ordinal);
+    }
+}

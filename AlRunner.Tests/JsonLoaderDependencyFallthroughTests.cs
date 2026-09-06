@@ -35,7 +35,7 @@ public sealed class JsonLoaderDependencyFallthroughTests : IDisposable
 
     public JsonLoaderDependencyFallthroughTests()
     {
-        _emptyDir = Path.Combine(Path.GetTempPath(), "alrunner-jsonloader-test-" + Guid.NewGuid().ToString("N")[..8]);
+        _emptyDir = TestScratch.FlatDir("alrunner-jsonloader-test-");
         Directory.CreateDirectory(_emptyDir);
     }
 

@@ -116,7 +116,7 @@ public sealed class CleanRunStartupVerbosityTests
     }
 
     private static string NewCacheDir([System.Runtime.CompilerServices.CallerMemberName] string name = "") =>
-        Path.Combine(Path.GetTempPath(), "al-runner-clean-run-verbosity", name, Guid.NewGuid().ToString("N"));
+        TestScratch.Dir(Path.Combine("al-runner-clean-run-verbosity", name));
 
     /// <summary>
     /// RED (pre-fix): every fragment in <see cref="ColdRunBookkeepingLineFragments"/>

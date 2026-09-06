@@ -261,7 +261,7 @@ public sealed class PartialSuiteLossReportingTests
     [Fact]
     public void Classification_RanBucketThatLostASuite_RecordsIt()
     {
-        var path = Path.Combine(Path.GetTempPath(), $"al-runner-cls-{Guid.NewGuid():N}.json");
+        var path = TestScratch.FilePath("al-runner-cls", "classification.json");
         try
         {
             Reporter.WriteClassification(new[] { PartialLossBucket() }, path);
@@ -280,7 +280,7 @@ public sealed class PartialSuiteLossReportingTests
     [Fact]
     public void Classification_CleanRun_RecordsNoFailures()
     {
-        var path = Path.Combine(Path.GetTempPath(), $"al-runner-cls-{Guid.NewGuid():N}.json");
+        var path = TestScratch.FilePath("al-runner-cls", "classification.json");
         try
         {
             Reporter.WriteClassification(new[] { CleanBucket() }, path);

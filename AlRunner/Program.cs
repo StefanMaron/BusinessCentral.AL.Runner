@@ -1093,10 +1093,11 @@ if (bcVersionArg == null && artifactPathArg == null)
                         $"Microsoft.Dynamics.Nav.CodeAnalysis. Fix with: al-runner provision --bc-version {engineVersion}"));
                     break;
                 case "cdn-minor":
-                    Console.Error.WriteLine($"[bc] no --bc-version given and BC {engineVersion} is not published on " +
-                        $"the CDN — provisioning the latest {engineMajorMinor}.x instead (still this binary's own " +
-                        $"engine minor). Build-level skew within a minor can still fail to load " +
-                        $"Microsoft.Dynamics.Nav.CodeAnalysis. Fix with: al-runner provision --bc-version {engineVersion}");
+                    // #2926: wording and the reason it is worded that way live in
+                    // ProgramSupport.CdnMinorProvisionNotice — a failed probe is not a
+                    // statement that Microsoft never published the build.
+                    Console.Error.WriteLine(ProgramSupport.CdnMinorProvisionNotice(
+                        engineVersion.ToString(), engineMajorMinor));
                     break;
                 case "major-fallback-offline":
                     // No network step is coming (--no-auto-provision, or the rare case where
@@ -1110,11 +1111,9 @@ if (bcVersionArg == null && artifactPathArg == null)
                 default: // major-fallback: neither the exact build nor the engine's own minor is
                          // available from cache or the CDN — a genuine degradation (e.g. #2010,
                          // Microsoft withdrew the build), not the default-path norm.
-                    Console.Error.WriteLine($"[bc] warning: BC {engineMajorMinor}.x is not cached and not available " +
-                        $"from the CDN — this binary's engine was built for {engineVersion}, so a different minor is " +
-                        $"a KNOWN-DEGRADED configuration (measured: dozens of extra failures from engine/artifact " +
-                        $"minor skew). Falling back to the latest {engineMajor}.x. Fix with: al-runner provision " +
-                        $"--bc-version {engineMajorMinor}");
+                    // #2926: see ProgramSupport.MajorFallbackWarning.
+                    Console.Error.WriteLine(ProgramSupport.MajorFallbackWarning(
+                        engineVersion.ToString(), engineMajorMinor, engineMajor.ToString()));
                     break;
             }
 
@@ -2616,14 +2615,21 @@ foreach (var bundle in bundles)
         // module's Type at CallEventSubscriberInternalAsync → ValidateInvokeTarget.
         // One AL app identity must resolve to exactly one loaded compilation.
         //
-        // Disabled under --watch: watch mode re-runs this SAME per-AppGroup loop on every
-        // edit cycle for the SAME bundle set, and its whole point is to pick up the edited
-        // source on each iteration. Reusing "the module already loaded for this AppId"
-        // there would mean iteration 2 replays iteration 1's stale pre-edit assembly
-        // forever — ResetForNewBundleReload() does not (and must not, for the unrelated
-        // deps-stay-warm reason documented there) clear DependencyLoader's cross-bundle
-        // cache, so this dedup stays scoped to genuinely distinct bundle args in one
-        // one-shot invocation, never a same-bundle reload.
+        // Applies under --watch too (#2594). It did not until now, and the comment that
+        // disabled it there described a hazard the loader has since stopped having: "watch
+        // mode re-runs this SAME per-AppGroup loop on every edit cycle, so reusing the
+        // module already loaded for this AppId would replay iteration 1's stale pre-edit
+        // assembly forever." DependencyLoader.TryGetByAppId now returns null — deliberately
+        // NOT a reuse — whenever the cached entry's SourcePath equals the one being asked
+        // about, which is exactly the same-bundle reload case (#1892 follow-up, see its doc
+        // comment). So a watch cycle asking about its own SuiteDir gets a fresh compile
+        // regardless, and the gate bought nothing while costing bundle 2 a SECOND module for
+        // an AL identity bundle 1 had already loaded — #1683's TargetException, reproduced
+        // under --watch on a dep-app + test-app pair before this line changed.
+        //
+        // --server's equivalent call site (the per-request bundle loop below) has never been
+        // gated on anything and is the warm edit-and-rerun loop the same-SourcePath rule was
+        // written for, which is the other half of why the rationale no longer held here.
         Assembly? reusedAsm;
         try
         {
@@ -2635,7 +2641,7 @@ foreach (var bundle in bundles)
             // asserts that invariant instead of silently masking a violation of it behind a
             // fallback that would disagree with AppLoader's own default (see IdentityMatches'
             // doc comment) — PR #1862 review.
-            reusedAsm = (!watchMode && appGroup.AppId is { } reuseCheckId)
+            reusedAsm = appGroup.AppId is { } reuseCheckId
                 ? DependencyLoader.TryGetByAppId(
                     reuseCheckId, appGroup.ModuleName, appGroup.Publisher!,
                     appGroup.Version!.ToString(), appGroup.SuiteDir)
@@ -3258,11 +3264,19 @@ foreach (var bundle in bundles)
                 // Register this freshly-loaded module by AppId so a LATER bundle that
                 // resolves the same app as a dependency (via DependencyLoader) reuses this
                 // exact Assembly instead of re-emitting/re-compiling a second module for the
-                // same AL identity — see the dedup comment above (issue #1683). Skipped under
-                // --watch: TryAdd is first-wins, so iteration 2's freshly-edited asm would
-                // never overwrite iteration 1's stale entry, and any sibling bundle that
-                // later resolves this AppId as a real dependency would get the stale copy.
-                if (!watchMode && appGroup.AppId is { } newlyLoadedId)
+                // same AL identity — see the dedup comment above (issue #1683).
+                //
+                // Registers under --watch too (#2594). The gate that used to skip it there
+                // said "TryAdd is first-wins, so iteration 2's freshly-edited asm would never
+                // overwrite iteration 1's stale entry, and any sibling bundle that later
+                // resolves this AppId as a real dependency would get the stale copy."
+                // RegisterLoaded stopped being first-wins in the #1892 follow-up: on a
+                // same-SourcePath re-registration it OVERWRITES, which is precisely a watch
+                // cycle re-registering its own bundle after a fresh compile. So iteration 2's
+                // module is the one a sibling bundle resolves, and skipping the registration
+                // only meant registering nothing at all — leaving the sibling to Tier-3
+                // compile a second module for the identity this one already loaded.
+                if (appGroup.AppId is { } newlyLoadedId)
                 {
                     try
                     {
@@ -3372,8 +3386,10 @@ foreach (var bundle in bundles)
                 // "N suite errors" summary and the exit code (computedExitCode's
                 // CompileErrors check) both reflect the abandoned tests.
                 if (executor.AbortReasons.Count > 0)
+                {
                     bundleErrors.AddRange(executor.AbortReasons.Select(r => $"{rel}: TEST-TIMEOUT-ABORT: {r}"));
                     allAbortReasons.AddRange(executor.AbortReasons);
+                }
             }
             catch (Exception ex)
             {
@@ -3500,8 +3516,10 @@ foreach (var bundle in bundles)
                 // returns normally on a watchdog-timeout abort, so the catch below
                 // never sees it.
                 if (executor.AbortReasons.Count > 0)
+                {
                     bundleErrors.AddRange(executor.AbortReasons.Select(r => $"{suiteName}: TEST-TIMEOUT-ABORT: {r}"));
                     allAbortReasons.AddRange(executor.AbortReasons);
+                }
             }
             catch (Exception ex)
             {

@@ -81,7 +81,7 @@ public sealed class AggregatePermissionSetVirtualTableTests
     [Fact]
     public void AggregatePermissionSet_SourceDeclaredPermissionSet_BothTestsPass()
     {
-        var cacheDir = Path.Combine(Path.GetTempPath(), "al-runner-aps-tests", "cache-" + Guid.NewGuid().ToString("N"));
+        var cacheDir = TestScratch.Dir("al-runner-aps-tests");
         try
         {
             var (exit, stdout, stderr) = Run(cacheDir);

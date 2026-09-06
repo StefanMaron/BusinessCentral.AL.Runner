@@ -210,8 +210,7 @@ public class SiblingSymbolsAppRootManifestTests
 
     private static string NewRoot(string tag)
     {
-        var root = Path.Combine(Path.GetTempPath(), "al-runner-sibling-approot-" + tag,
-            Guid.NewGuid().ToString("N"));
+        var root = TestScratch.Dir("al-runner-sibling-approot-" + tag);
         Directory.CreateDirectory(root);
         return root;
     }

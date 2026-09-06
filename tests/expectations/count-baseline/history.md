@@ -512,3 +512,9 @@ not computed. appGroups is unchanged: every new test joined the single existing 
 group, and al-language carries no byBcVersion override -- CI's eight legs confirm whether one is
 needed. Only the al-language number moved here; the runner-extras values are main's, taken
 unmodified through a rebase conflict in this file.
+
+The runner-extras `testpage-lookup-tablerelation-oos` group (3 tests, issue #2775) is a new app
+group, so it adds a line rather than moving a number: expected tests on every leg go up by 3 and
+expected app groups by 1, both derived from the line and neither written out anywhere. No
+`absentOn` -- the bundle declares `platform`/`application` 27.0.0.0, so it runs on all eight
+legs. The 3 is measured from an actual run of that bundle, not counted off the source.

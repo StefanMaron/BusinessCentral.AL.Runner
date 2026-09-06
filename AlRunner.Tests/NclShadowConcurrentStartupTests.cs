@@ -16,7 +16,7 @@ public sealed class NclShadowConcurrentStartupTests
 {
     private static string NewTempDir(string label)
     {
-        var dir = Path.Combine(Path.GetTempPath(), $"ncl-shadow-race-{label}-" + Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.FlatDir($"ncl-shadow-race-{label}-");
         Directory.CreateDirectory(dir);
         return dir;
     }

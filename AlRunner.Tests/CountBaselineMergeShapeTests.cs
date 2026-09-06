@@ -281,7 +281,7 @@ public sealed class CountBaselineMergeShapeTests
     // ── Merge machinery ────────────────────────────────────────────────────────────────
     private (string Base, string Ours, string Theirs) ThreeCopies()
     {
-        var root = Path.Combine(Path.GetTempPath(), "al-runner-count-baseline-merge-" + Guid.NewGuid().ToString("N"));
+        var root = TestScratch.FlatDir("al-runner-count-baseline-merge-");
         string Copy(string name)
         {
             var dst = Path.Combine(root, name);

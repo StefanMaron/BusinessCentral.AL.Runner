@@ -110,7 +110,7 @@ public class BcAppSymbolCacheReportTests
     [Fact]
     public void Reports_AreReadFromANestedNamespace_WithCaptionAndDataItemTree()
     {
-        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.Dir("al-runner-bcsym-report-tests");
         Directory.CreateDirectory(dir);
         try
         {
@@ -170,7 +170,7 @@ public class BcAppSymbolCacheReportTests
     [Fact]
     public void Reports_ApplyAlPropertyDefaults_AndStatedOverrides()
     {
-        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.Dir("al-runner-bcsym-report-tests");
         Directory.CreateDirectory(dir);
         try
         {
@@ -202,7 +202,7 @@ public class BcAppSymbolCacheReportTests
     [Fact]
     public void Reports_AreEmpty_WhenTheSymbolFileDeclaresNone()
     {
-        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.Dir("al-runner-bcsym-report-tests");
         Directory.CreateDirectory(dir);
         try
         {

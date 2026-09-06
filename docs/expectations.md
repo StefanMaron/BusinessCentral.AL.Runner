@@ -113,6 +113,14 @@ in the reason slot**, and the API name in the API slot. A message shaped
 reason where the API belongs and is undeclarable; fix the throw site rather
 than writing a prose `Reason` into the entry.
 
+The trailing ` — see …` link is **not** part of the signal. `OutOfScopeMessage`
+strips it, so a throw site may point at a file other than `docs/scope.md` when
+that is where the surface is written up — a refusal whose reason anchor is
+`not-yet-implemented` describes an IN-SCOPE surface the runner cannot answer for
+yet, and those belong in `docs/limitations.md`. Pass the full
+`docs/<file>.md#anchor` as the `docAnchor` argument; a bare anchor still resolves
+against `docs/scope.md`. Nothing about the classification changes either way.
+
 `Reason` matches on the anchor: throw sites may append free-text detail after
 an ` — ` (em-dash) separator, while the entry holds only the leading
 `docs/scope.md` anchor (e.g. a throw site's
