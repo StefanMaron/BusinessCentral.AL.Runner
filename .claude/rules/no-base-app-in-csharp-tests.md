@@ -57,6 +57,12 @@ turned out to need the floor — each needed one specific thing the floor happen
   declares three tables of its own and asserts **two different** empty tables are each explained
   with their own id — a stronger claim than one hardcoded id could make.
 
+End to end, the three suites together (11 tests, same 11 before and after), three reps each,
+`dotnet test --no-build` on one loaded box: **191.6 s → 55.3 s, -71%**. The control in the same
+sweep — `PlaceholderFloorProvisioningTests`, untouched and still declaring the floor because the
+floor is its subject — was 10.0 s → 10.2 s, flat. That pairing is what makes the delta a
+measurement rather than a claim about a busy machine.
+
 So the pattern for the next class that looks like it needs the floor: work out which single
 property of Base Application it is actually leaning on, and supply that. In three out of three
 cases it was cheaper to supply than to load.
