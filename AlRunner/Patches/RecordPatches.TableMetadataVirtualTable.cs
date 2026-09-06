@@ -85,9 +85,17 @@ public static partial class RecordPatches
     /// the table genuinely declares none, or when the declared page could not be
     /// resolved — which is reported, never silent).
     /// </summary>
+    /// <param name="TableTypeName">The declared <c>TableType</c> as written, or null for a table
+    /// declaring none (AL's default, <c>Normal</c>). Resolved to the column's own option ordinal
+    /// at row-build time, never to a hardcoded number — see <see cref="EnsureOptionOrdinals"/>.</param>
+    /// <param name="DataClassificationName">Same, for <c>DataClassification</c>; null means AL's
+    /// default <c>CustomerContent</c>.</param>
+    /// <param name="ExternalName">The declared <c>ExternalName</c>, or null for a table declaring
+    /// none — which the column reports as blank.</param>
     private sealed record TableMetadataRow(
         int Id, string Name, string Caption, bool DataPerCompany, bool IsTemporary,
-        int LookupPageId, int DrillDownPageId);
+        int LookupPageId, int DrillDownPageId,
+        string? TableTypeName, string? DataClassificationName, string? ExternalName);
 
     // Cached inventory, rebuilt whenever the runner has learned about more source-parsed
     // tables or registered another dependency .app since the last build. The FIRST handout
@@ -135,6 +143,24 @@ public static partial class RecordPatches
     {
         object? Text(string s) => _aovNavTextCreateTruncated!.Invoke(null, new object?[] { field.FieldDefinedLength, s ?? string.Empty });
 
+        // An option column answered from the DECLARED member name, resolved against this
+        // field's own option set. A table declaring nothing gets ordinal 0, which is what AL's
+        // own default is for both option columns here (TableType = Normal,
+        // DataClassification = CustomerContent) — so the fallback states the truth rather than
+        // hiding a miss. A declared name the option set does not list is a genuine shape
+        // mismatch and is refused, not defaulted: answering 0 there would say "Normal" about a
+        // table that declared something else, the exact silent-default this change removes.
+        object? Option(string? declaredName)
+        {
+            var ordinals = EnsureOptionOrdinals(field);
+            if (string.IsNullOrWhiteSpace(declaredName)) return _aovNavOptionCreate!.Invoke(null, new object?[] { field.FieldOptionMetadata, 0 });
+            if (ordinals.TryGetValue(NormalizeObjectTypeName(declaredName), out var ordinal))
+                return _aovNavOptionCreate!.Invoke(null, new object?[] { field.FieldOptionMetadata, ordinal });
+            throw TableMetadataShapeGap(
+                $"table {row.Id} declares {field.FieldName} = '{declaredName}', which is not a member of "
+                + $"that column's own option set ('{field.FieldOptionMetadata?.OptionString}')");
+        }
+
         switch (NormalizeObjectTypeName(field.FieldName ?? string.Empty))
         {
             case "id":
@@ -149,11 +175,68 @@ public static partial class RecordPatches
                 return _aovNavIntegerCreate!.Invoke(null, new object?[] { row.DrillDownPageId });
             case "datapercompany":
                 return NavBoolean(row.DataPerCompany);
+            // NOTE: BC 28.1's own Table Metadata carries NO "TemporaryTable" column — the
+            // temporary-ness of a table is reported through TableType below. This case is kept
+            // for an artifact that does declare one; it is not the route the corpus exercises.
             case "temporarytable":
                 return NavBoolean(row.IsTemporary);
+            // The three columns of #2938. Each used to fall through to the default branch and
+            // answer its type's zero value — Normal, CustomerContent, blank — for EVERY table,
+            // so a temporary table, a CRM table and a plain one were indistinguishable.
+            case "tabletype":
+                // IsTableTypeTemporary is the older two-valued view of the same AL property and
+                // is the only thing the symbol path recorded before TableTypeName existed; it is
+                // consulted only when no name was captured, so a v29-era cached ParsedTable
+                // still reports Temporary rather than silently reading Normal.
+                return Option(row.TableTypeName ?? (row.IsTemporary ? "Temporary" : null));
+            case "dataclassification":
+                return Option(row.DataClassificationName);
+            case "externalname":
+                return Text(row.ExternalName ?? string.Empty);
             default:
                 return _aovGetDefaultNavValue!.Invoke(null, new object?[] { field, false });
         }
+    }
+
+    // One ordinal map per option COLUMN of this metatable, keyed by the field name. Two columns
+    // need one here (TableType, DataClassification), and the metatable is built once per run.
+    private static readonly ConcurrentDictionary<string, Dictionary<string, int>> _tmvOptionOrdinals = new();
+
+    /// <summary>
+    /// The ordinals of an option column, read out of that field's OWN
+    /// <c>NCLOptionMetadata.OptionString</c> and keyed by normalized member name — never a
+    /// hardcoded table, so the mapping tracks whatever the System package in the resolved
+    /// artifact declares. Mirrors Page Metadata's <c>EnsurePageTypeOrdinals</c> and CodeUnit
+    /// Metadata's <c>EnsureCodeunitSubtypeOrdinals</c>, which answer the same question for their
+    /// own single option column.
+    /// <para>Measured on BC 28.1.49838.53910, this is what those two option strings say — and
+    /// the reason the ordinals are read rather than written down: <c>TableType</c> is
+    /// <c>Normal,CRM,ExternalSQL,Exchange,MicrosoftGraph,Query,Temporary</c>, so Temporary is 6
+    /// and NOT the 5 a reading of AL's documented enum would suggest, and
+    /// <c>DataClassification</c> is
+    /// <c>CustomerContent,ToBeClassified,EndUserIdentifiableInformation,AccountData,EndUserPseudonymousIdentifiers,OrganizationIdentifiableInformation,SystemMetadata</c>,
+    /// which puts <c>ToBeClassified</c> second and SystemMetadata at 6 rather than 5.</para>
+    /// </summary>
+    private static Dictionary<string, int> EnsureOptionOrdinals(NCLMetaField field)
+    {
+        var fieldName = field.FieldName ?? string.Empty;
+        return _tmvOptionOrdinals.GetOrAdd(fieldName, _ =>
+        {
+            var optionMetadata = field.FieldOptionMetadata
+                ?? throw TableMetadataShapeGap($"\"{fieldName}\" carries no option metadata");
+
+            var map = new Dictionary<string, int>(StringComparer.Ordinal);
+            var parts = (optionMetadata.OptionString ?? string.Empty).Split(',');
+            for (int i = 0; i < parts.Length; i++)
+            {
+                var key = NormalizeObjectTypeName(parts[i]);
+                if (key.Length == 0) continue;
+                map.TryAdd(key, i);
+            }
+            if (map.Count == 0)
+                throw TableMetadataShapeGap($"\"{fieldName}\" option string is empty");
+            return map;
+        });
     }
 
     /// <summary>
@@ -201,7 +284,10 @@ public static partial class RecordPatches
                 t.DataPerCompany,
                 t.IsTableTypeTemporary,
                 ResolvePage(t.LookupPageName, t.TableId, "LookupPageId"),
-                ResolvePage(t.DrillDownPageName, t.TableId, "DrillDownPageId"));
+                ResolvePage(t.DrillDownPageName, t.TableId, "DrillDownPageId"),
+                t.TableTypeName,
+                t.DataClassificationName,
+                t.ExternalName);
 
             // 1. Tables the runner source-compiled.
             foreach (var parsed in _parsedTables.Values)

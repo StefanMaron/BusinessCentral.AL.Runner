@@ -148,7 +148,16 @@ internal static partial class BcAppSymbolCache
     // 28.1 relations cached as RelationArms = null and 4 FlowFields with a source table that
     // matches nothing. Same reason for the bump as v28: the schema is unchanged, so a v28
     // payload loads WITHOUT error and replays those pre-fix wrong answers rather than missing.
-    private const int CacheVersion = 29;
+    // v30: TryParseTableSymbol now READS DataPerCompany instead of hardcoding true (#2938).
+    // ParsedTable also gained DataClassificationName / ExternalName in the same change, and
+    // those two are a shape change PayloadShape already keys on — but the DataPerCompany fix
+    // is not: it is the same schema parsed differently, so a v29 payload would load without
+    // error and replay the hardcoded true. That is 41 of Base Application 28.1's 1523 tables
+    // (the symbol file states AL's false as "0") handed to the Table Metadata (2000000136)
+    // DataPerCompany column, and to everything else reading ParsedTable, as per-company when
+    // they are global. A wrong answer replayed from cache rather than a cache miss — the exact
+    // case this integer exists for.
+    private const int CacheVersion = 30;
     // No CacheVersion bump of its own for PageSymbol.TableView (#2820), deliberately — the
     // numbered bumps above belong to other changes (v28 to #2518, v29 to #2973), and this one
     // rides whatever the current integer is without moving it. That member is reachable from
@@ -1696,11 +1705,30 @@ internal static partial class BcAppSymbolCache
         // one lookup covers both spellings; the name is resolved to an id at row-build time.
         tableProps.TryGetValue("LookupPageId", out var lookupPageName);
         tableProps.TryGetValue("DrillDownPageId", out var drillDownPageName);
+        // DataClassification / ExternalName feed the Table Metadata (2000000136) columns of the
+        // same name (#2938). The symbol file is the ONLY route for a precompiled dependency —
+        // an R2R .app ships no metadata XML — and it states both as plain text matching the
+        // column's own option members / the external name verbatim. Measured on Base
+        // Application 28.1: 1510 of its 1523 tables state DataClassification (1447
+        // CustomerContent, 61 SystemMetadata, 2 OrganizationIdentifiableInformation) and 61
+        // state ExternalName ("CDS BC Table Relation" -> dyn365bc_syntheticrelation).
+        tableProps.TryGetValue("DataClassification", out var dataClassification);
+        tableProps.TryGetValue("ExternalName", out var externalName);
+        // DataPerCompany was hardcoded true here while the SOURCE-parsed path read the declared
+        // property — the two paths writing the same column disagreed, so every precompiled table
+        // declaring DataPerCompany = false was handed out as per-company. That is 41 of Base
+        // Application 28.1's tables (the symbol file states the AL false as "0", the same
+        // spelling ReplicateData uses). AL's default is true, so only the explicit opt-out is
+        // read, exactly as TryParseTableFile does it (#2938).
+        var dataPerCompany = !(tableProps.TryGetValue("DataPerCompany", out var dpc)
+            && (dpc == "0" || dpc.Equals("false", StringComparison.OrdinalIgnoreCase)));
         return new ParsedTable(tableId, tableName, fields, pkFieldIds, secondaryKeys, isTemporary,
-            DataPerCompany: true,
+            DataPerCompany: dataPerCompany,
             LookupPageName: string.IsNullOrWhiteSpace(lookupPageName) ? null : lookupPageName,
             DrillDownPageName: string.IsNullOrWhiteSpace(drillDownPageName) ? null : drillDownPageName,
-            TableTypeName: string.IsNullOrWhiteSpace(tableType) ? null : tableType.Trim());
+            TableTypeName: string.IsNullOrWhiteSpace(tableType) ? null : tableType.Trim(),
+            DataClassificationName: string.IsNullOrWhiteSpace(dataClassification) ? null : dataClassification.Trim(),
+            ExternalName: string.IsNullOrWhiteSpace(externalName) ? null : externalName.Trim());
     }
 
     private static EnumSymbol? TryParseEnumSymbol(JsonElement enumType)

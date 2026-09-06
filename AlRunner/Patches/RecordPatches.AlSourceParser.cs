@@ -130,6 +130,26 @@ public static partial class RecordPatches
     }
 
     /// <summary>
+    /// The TEXT of a property whose AL value is a plain string literal — <c>ExternalName</c>,
+    /// <c>ExternalType</c> and friends — with the surrounding single quotes removed and doubled
+    /// quotes unescaped, or null when the property is absent or empty.
+    /// <para>Neither existing helper covers this shape. <see cref="CaptionFrom"/> unwraps only a
+    /// <c>LabelPropertyValueSyntax</c> (a Label/Caption, which may carry Comment/Locked), and
+    /// <see cref="PropertyTextFrom"/> falls back to the node's raw text for anything else — so
+    /// <c>ExternalName = 'alt_entity'</c> came through as the 12-character <c>'alt_entity'</c>,
+    /// quotes included. <c>Unquote</c> in the query builder strips double quotes only, which an
+    /// AL string literal never uses.</para>
+    /// </summary>
+    private static string? AlStringLiteralText(NavSyntax.PropertyValueSyntax? value)
+    {
+        var text = PropertyTextFrom(value)?.Trim();
+        if (string.IsNullOrEmpty(text)) return null;
+        if (text.Length >= 2 && text[0] == '\'' && text[^1] == '\'') text = text[1..^1];
+        text = text.Replace("''", "'");
+        return string.IsNullOrEmpty(text) ? null : text;
+    }
+
+    /// <summary>
     /// The last name segment of a possibly-namespaced object reference:
     /// <c>Microsoft.Sales.History."Sales Invoice Header"</c> → <c>Sales Invoice Header</c>,
     /// <c>Customer</c> → <c>Customer</c>. Quote-aware, so a quoted name that itself contains a
@@ -643,9 +663,24 @@ public static partial class RecordPatches
             // this table in compile order is not in the page inventory yet.
             var lookupPage = PageRefText(PropValue(table.PropertyList, "LookupPageId"));
             var drillDownPage = PageRefText(PropValue(table.PropertyList, "DrillDownPageId"));
+            // DataClassification / ExternalName feed the Table Metadata (2000000136) columns of
+            // the same name (#2938). Both are kept AS WRITTEN and null when undeclared: AL's
+            // own defaults (CustomerContent, blank) are applied at row-build time, so "declares
+            // none" stays distinguishable from "declares the default" all the way through.
+            var dataClassification = PropValue(table.PropertyList, "DataClassification")?.ToString()?.Trim();
+            // AlStringLiteralText, not the raw node text: ExternalName is an AL STRING LITERAL
+            // (ExternalName = 'alt_entity'), so the node stringifies WITH its single quotes and a
+            // raw read hands out "'alt_entity'" — measured, that is exactly what the Table
+            // Metadata column reported before this call was corrected. Unquote() strips only
+            // DOUBLE quotes and PropertyTextFrom only unwraps a LabelPropertyValueSyntax, which
+            // this value is not; neither would have caught it. DataClassification above is an
+            // identifier, not a literal, so it needs none of this.
+            var externalName = AlStringLiteralText(PropValue(table.PropertyList, "ExternalName"));
             _parsedTables[tableId] = new ParsedTable(tableId, tableName, fields, pkFieldIds,
                 secondaryKeys, isTableTypeTemporary, dataPerCompany, lookupPage, drillDownPage,
-                TableTypeName: string.IsNullOrWhiteSpace(tableTypeName) ? null : tableTypeName.Trim());
+                TableTypeName: string.IsNullOrWhiteSpace(tableTypeName) ? null : tableTypeName.Trim(),
+                DataClassificationName: string.IsNullOrWhiteSpace(dataClassification) ? null : dataClassification,
+                ExternalName: string.IsNullOrWhiteSpace(externalName) ? null : externalName);
         }
     }
 
@@ -1300,8 +1335,20 @@ internal record ParsedColumnFilter(string FieldName, ParsedColumnFilterKind Kind
 /// DataAccessSource routes every non-Normal, non-Temporary value through a table connection
 /// rather than SQL, so collapsing them to Normal silently served CRM tables from a plain
 /// temp store (#2725).</param>
+/// <param name="DataClassificationName">The declared <c>DataClassification</c> as written
+/// (<c>SystemMetadata</c>, <c>OrganizationIdentifiableInformation</c>, ...); null when the
+/// table declares none, which AL defaults to <c>CustomerContent</c>. Feeds the Table Metadata
+/// (2000000136) column of the same name (#2938) — before that the column answered a constant
+/// ordinal 0, i.e. CustomerContent for every table including the 61 Base Application 28.1
+/// tables that declare SystemMetadata.</param>
+/// <param name="ExternalName">The declared <c>ExternalName</c> — the name the table carries in
+/// the external system it is bound to, set on CRM/Exchange/Graph tables (61 of Base
+/// Application 28.1's 1523 tables state one, e.g. "CDS BC Table Relation" ->
+/// <c>dyn365bc_syntheticrelation</c>). Null when the table declares none, which is the blank
+/// the Table Metadata column must then report (#2938).</param>
 internal record ParsedTable(int TableId, string TableName,
     List<ParsedField> Fields, List<int> PkFieldIds, List<ParsedKey>? SecondaryKeys = null,
     bool IsTableTypeTemporary = false, bool DataPerCompany = true,
     string? LookupPageName = null, string? DrillDownPageName = null,
-    string? TableTypeName = null);
+    string? TableTypeName = null,
+    string? DataClassificationName = null, string? ExternalName = null);
