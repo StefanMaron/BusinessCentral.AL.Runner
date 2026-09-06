@@ -439,6 +439,7 @@ public sealed class TestExecutor
             CompanyInitializer.ResetForNewBundle();
             AlRunner.Patches.RecordPatches.ResetCompanySystemTableForNewBundle();
             AlRunner.Patches.RecordPatches.ResetUserSystemTableForNewBundle();
+            AlRunner.Patches.RecordPatches.ResetPublishedApplicationSystemTableForNewBundle();
         }
         using (AlRunner.Infrastructure.PhaseLog.AppStage("install-seed-set-test-assembly"))
             InstallTriggerRunner.SetTestAssembly(assembly);
@@ -559,6 +560,14 @@ public sealed class TestExecutor
                     // table loads INSIDE the capture window, so the capture below picks it up
                     // by walking the live store and it is persisted with everything else, no
                     // special handling.
+                    // #2963 — the Published Application rows for the DEPENDENCY apps, before
+                    // their install triggers run. System Application install code calls
+                    // Reten. Pol. Allowed Tables.AddAllowedTable, whose ModuleOwnsTable gate
+                    // looks the calling app up in this table; with no row it declines, and
+                    // codeunit 2 "Company-Initialize" below then dies on the downstream
+                    // "not in the list of allowed tables". Seeded inside this MISS branch so
+                    // the rows are part of the captured snapshot a later cache HIT restores.
+                    AlRunner.Patches.RecordPatches.EnsurePublishedApplicationDependencyRowsSeeded();
                     InstallTriggerRunner.RunDependenciesOnly();
                     CompanyInitializer.EnsureCompanyInitialized();
                     var snapshot = AlRunner.Patches.RecordPatches.CaptureInstallBaselineSnapshot();
@@ -592,6 +601,37 @@ public sealed class TestExecutor
         // added after it would survive only until the first codeunit boundary.
         using (AlRunner.Infrastructure.PhaseLog.AppStage("install-seed-company-row"))
             AlRunner.Patches.RecordPatches.EnsureCompanySystemTableRowSeeded();
+        // #2963 — the bundle's OWN Published Application row, here rather than with the
+        // dependency rows above: this one is per-app-group, and the dependency snapshot is
+        // shared across every app group with the same dependency closure.
+        //
+        // BEFORE the User row below, and DEFENSIVELY so — not because anything requires it.
+        //
+        // This seed and the Company one above build their row from runner state and hand it
+        // straight to the in-memory provider's Insert: no AL runs, and neither reads User. The
+        // User row is the one that differs — #2296 routes it through NavRecord.ALInsert on
+        // purpose, to pick up the User Property companion row UserTableTriggerPatches prepends
+        // — so it does fire the User table's event subscribers.
+        //
+        // An earlier version of this comment claimed those subscribers reach a module-ownership
+        // check and therefore need this table seeded first. BC's own source says otherwise, and
+        // it was measured rather than reasoned about: across the 9,441 .al files in System
+        // Application, Base Application and Business Foundation there are 9 subscribers on
+        // Database::User and exactly ONE on insert —
+        // BaseApp/src/System/User/UserManagement.Codeunit.al:499
+        // ValidateLicenseTypeOnAfterInsertUser → ValidateLicenseTypeOnSaaS →
+        // EnvironmentInformation.IsSaaS(), which reads "Server Setting" and never Published
+        // Application. User Property has no subscribers at all, and every caller of
+        // AddAllowedTable / ModuleOwnsTable sits behind OnRefreshAllowedTables, an install
+        // codeunit, or Company-Initialize.OnBeforeOnRun — none of them reachable from a User
+        // insert.
+        //
+        // So the ordering costs nothing and forecloses a class of surprise; it is not a
+        // dependency. What genuinely constrains all three seeds is being here at all: before
+        // CaptureInstallBaseline, because the per-codeunit restore puts the store back to that
+        // baseline and a row added after it survives only until the first codeunit boundary.
+        using (AlRunner.Infrastructure.PhaseLog.AppStage("install-seed-published-application-row"))
+            AlRunner.Patches.RecordPatches.EnsurePublishedApplicationBundleRowSeeded();
         // #2296 — the session user's own row in the User system table. Same ordering constraint
         // as the Company row above and for the same reason: the per-codeunit restore puts the
         // store back to the baseline captured below, so a row added after it would survive only
