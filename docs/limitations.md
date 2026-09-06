@@ -899,6 +899,19 @@ because four readers of one private BC structure raised three different exceptio
 them. `AlRunner/Infrastructure/BcShapeGapException.cs` carries the full derivation, including
 why it is a separate type rather than a third reason anchor.
 
+Two shape gaps live on the TestPage surface
+([#2999](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2999)), and both are
+reached only when BC's own metadata is not the shape the runner reads:
+
+- a **SubPageLink whose `FilterType`** is outside `FIELD`/`CONST`/`FILTER`. Measured on BC
+  28.1's `Microsoft.Dynamics.Nav.Types.dll`, that enum declares exactly those three, and the
+  runner's own dependency-metadata emitter writes only those three spellings — so a fourth
+  value can only have come from BC's compiled page metadata.
+- **whether a source-table field declares an `OnLookup`**, when reflection cannot resolve
+  `NCLMetaField`'s private `EventTriggerDataValue` / `EventTriggerData.LookupHandler` backing
+  fields. A read that *succeeds* and says the field declares no trigger is a different outcome
+  and stays a permanent refusal, because that lookup would come from a `TableRelation`.
+
 ## Known gaps — in scope but not yet implemented
 
 These are not architectural limits. They can be fixed; report them at
@@ -925,6 +938,33 @@ https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
 
   Real BC does all of these, so each is the runner failing to keep up rather than a surface BC
   also lacks — which is the test for whether a refusal may cite `docs/scope.md` at all.
+
+<a id="testpage-shape-gaps"></a>
+
+- **TestPage shape gaps — the runner refuses rather than driving a page it could not build.**
+  Fourteen guards in `AlRunner/Patches/MockTestPage.cs` and
+  `AlRunner/Patches/RunnerPageInstance.cs` raise `RunnerOutOfScopeException` with the reason
+  anchor `not-yet-implemented`, so neither an AL `[TryFunction]` nor a silent default can
+  absorb one
+  ([#2999](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2999)):
+  - a **subpage part** the runner could not resolve to a part definition, could not own
+    (the hosting page was built without an `ITreeObject` owner), or could not drive live;
+  - a **`SubPageLink`** whose part field or whose `field(...)` parent field the runner's own
+    dependency-metadata reconstruction could not resolve to a field number;
+  - a **control** bound neither to a source-table field nor to a page variable the runner could
+    resolve, and an **Option-bound control** carrying no option metadata;
+  - **`OnLookup` / `OnDrillDown`**, when no AL page object was built for the page at all;
+  - a **`Visible`/`Editable`/`Enabled` expression** that evaluated to a non-Boolean or that the
+    runner's expression evaluator could not evaluate
+    ([#2596](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2596));
+  - two emitted **trigger methods** on one object hashing to the same member id, so the runner
+    cannot tell which one the test asked for.
+
+  Real BC drives every one of these, so each is the runner failing to keep up rather than a
+  surface BC also lacks — which is the test for whether a refusal may cite `docs/scope.md` at
+  all. Eight further refusals in those same two files genuinely are permanent and keep their
+  `docs/scope.md` citation: a page with no `SourceTable`, an `OnQueryClosePage` veto, a lookup
+  that could only come from a `TableRelation`, and the AL-authoring errors real BC also raises.
 
 <a id="virtual-table-shape-gaps"></a>
 
