@@ -2233,6 +2233,29 @@ public static partial class RecordPatches
                 return timeZoneDa;
             }
 
+            // ── Session (2000000009) ─────────────────────────────────────────────────────
+            // Virtual on the service tier too, and SessionDataProvider returns exactly ONE
+            // row — the reading session, My Session = true — not one per logged-on user.
+            // Routed to the same in-memory store as every other virtual table here and
+            // populated with that one row, read back from the skeleton NavSession so the
+            // table cannot disagree with SessionId() / UserId(). An empty store made every
+            // read answer "nobody is logged on", which is a wrong answer rather than a
+            // missing one. See RecordPatches.SessionVirtualTable.cs (#2940).
+            if (IsSessionVirtualTable(table))
+            {
+                if (!perTable.TryGetValue(tableId, out var sessionDa))
+                {
+                    var createdSession = _mCreateTempDataAccess!.Invoke(self, new object[] { table })!;
+                    sessionDa = perTable.GetOrAdd(tableId, createdSession);
+                }
+                var sessionTableSession = _fDasSession?.GetValue(self)
+                    ?? throw SessionVirtualShapeGap(
+                        "DataAccessSource has no skeleton session, so there is no session "
+                        + "identity to read the row back from");
+                PopulateSessionVirtualTable(sessionDa, table, sessionTableSession);
+                return sessionDa;
+            }
+
             // ── Feature Key (2000000211) ─────────────────────────────────────────────────
             // Routed to BC's OWN FeatureKeyDataProvider: its feature list is a hardcoded static
             // in Microsoft.Dynamics.Nav.Types, so the rows are BC's rather than a second copy
