@@ -176,6 +176,18 @@ public static partial class RecordPatches
         // 2. Permission sets declared by precompiled dependency .app packages.
         foreach (var appPath in _bcAppPaths.ToArray())
         {
+            // #3031, same split as BuildKnownAppNameIndex and as #2712's table-symbol read.
+            // VANISHED is the one tolerated condition (--watch removed the dependency, a
+            // --server process outlived a rebuild, a fixture's temp dir went away): skip the
+            // .app and say so on `[warn]`, a tag Log's default-verbosity filter exempts.
+            if (!File.Exists(appPath))
+            {
+                Console.Error.WriteLine(
+                    "[warn] Metadata Permission Set: registered dependency .app is no longer on "
+                    + $"disk; the permission sets it declares are not available to this run: {appPath}");
+                continue;
+            }
+
             List<BcAppSymbolCache.PermissionSetSymbol> permissionSets;
             Guid owningAppId;
             string owningAppName;
@@ -193,11 +205,19 @@ public static partial class RecordPatches
                 // value invented by omission.
                 owningAppName = symbols.AppName ?? string.Empty;
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not BcAppSymbolReadException)
             {
-                Console.Error.WriteLine(
-                    $"[RecordPatches] Metadata Permission Set: SymbolReference read failed for {Path.GetFileName(appPath)}: {ex.Message}");
-                continue;
+                // PRESENT BUT UNREADABLE — a runner defect, not a skippable app. The old
+                // `continue` dropped every permissionset this .app declares from Metadata
+                // Permission Set (2000000250) AND from the NavAppGroup inventory
+                // EnsurePermissionMetadataPopulated builds from this same enumeration, so AL
+                // asking for one of them got "does not exist": a WRONG answer, not a missing
+                // one, and one a test can go green having quietly done without. Its only
+                // trace was a `[RecordPatches]`-tagged stderr line that Log's
+                // default-verbosity filter dropped before it reached a terminal, so at the
+                // verbosity users actually run at the loss was completely silent.
+                // .claude/rules/loud-failures.md: refuse, naming the .app and the surface.
+                throw new BcAppSymbolReadException(appPath, "permission sets", ex);
             }
             foreach (var p in permissionSets)
                 if (seen.Add(p.Name))
