@@ -180,11 +180,14 @@ public sealed class TestFieldValidationErrorsTests
     {
         // A page-global control stages no row edit, so there is nothing for "Refresh to discard"
         // to discard. Microsoft's Tests-SINGLESERVER Codeunit134614 asserts exactly this, with
-        // exact equality, for a control verified to be page-variable-bound on page 9807.
+        // exact equality, for a control verified to be page-variable-bound on page 9816
+        // "Permission Set by User" (an earlier version of this comment said 9807, which is
+        // "User Card").
         //
-        // This half rests on Microsoft's assertion, NOT on a service-tier run in this
-        // repository — corpus PR #184 asks it directly. Pinning it here means a change of mind
-        // has to be deliberate.
+        // This no longer rests on Microsoft's assertion alone: corpus PR #184 asked a real
+        // service tier and merged 2026-09-06 green on all eight BC Cloud legs (run 34016443056),
+        // so corpus codeunit 60808 now states it. Pinning it here means a change of mind has to
+        // be deliberate.
         var errors = new TestFieldValidationErrors();
 
         errors.RunRecordingRefusal(
