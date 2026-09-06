@@ -65,6 +65,22 @@ never to declare a known gap for a test green upstream; that was wrong and contr
 `docs/expectations.md`.) An entry is honest when it says that. It is dishonest when it
 converts a live question, or a self-inflicted regression, into settled classification.
 
+## The tier is patched, so check before quoting it on a UI surface
+
+The corpus CI boots a Linux BC image that installs ~30 numbered patches into BC's own
+assemblies at startup. Most are faithful. One that is not turns a corpus result on that
+surface into a measurement of the patch, and the green direction is the one nobody notices —
+a test asserting "nothing happens" records the patch as BC behaviour. That is not
+hypothetical: Patch #21 no-opped `NavOpenTaskPageAction.ShowForm` and blinded every route
+that opens a page through an action (#2986). It has since been fixed and the surface
+re-measured open on all eight legs, so it is a verdict again.
+
+Before resting a UI-side claim on a corpus result, read `src/StartupHook/StartupHook.cs` in
+`StefanMaron/MsDyn365Bc.On.Linux` for the surface you are asking about.
+`docs/upstream-corpus-workflow.md` § "What the corpus tier can and cannot adjudicate" has the
+worked case, what remains out of reach, and the `SingleInstance`-probe technique for an
+observable a rollback would otherwise destroy.
+
 ## When no verdict is available
 
 Say so plainly, name what would settle it, and land the runner change with whatever coverage
