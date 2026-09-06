@@ -46,18 +46,33 @@ codeunit 60391 "QJ Query Join Tests"
     end;
 
     [Test]
-    procedure RightOuterJoin_IsOutOfScope_ThrowsNamedReason()
+    procedure RightOuterJoin_IsAGap_ThrowsAReasonThatTearsThroughATryFunction()
     var
         Q: Query "QJ Cust Orders Right";
     begin
-        // RightOuterJoin is not faithfully reproducible by the in-memory nested-loop join.
-        // Per loud-failures, opening/reading it must throw RunnerOutOfScopeException naming
-        // the API and a specific reason — never silently return wrong rows.
+        // RightOuterJoin is valid AL and real BC executes it; the in-memory nested-loop join
+        // executor does not take it yet. Per loud-failures, opening/reading it must throw
+        // RunnerOutOfScopeException naming the API and a specific reason — never silently
+        // return wrong rows.
         Seed();
         asserterror begin
             Q.Open();
             Q.Read();
         end;
-        Assert.ExpectedError('query-join-rightouterjoin-not-implemented');
+
+        // Three claims, and each one is load-bearing (#2966).
+        //
+        // 1. The refusal LEADS with "not-yet-implemented". That token is what
+        //    ApplicationObjectBasePatches.IsPermanentOutOfScope reads to decide whether an AL
+        //    [TryFunction] may absorb the refusal into `false`. This is a runner gap, so it
+        //    must tear through instead. Before #2966 the reason led with the surface anchor
+        //    and a [TryFunction] here read `false` with nothing printed.
+        if StrPos(GetLastErrorText(), 'not-yet-implemented') = 0 then
+            Error('Expected the not-yet-implemented anchor, got: %1', GetLastErrorText());
+        // 2. It no longer claims docs/scope.md, the permanently-out-of-scope manifest.
+        if StrPos(GetLastErrorText(), 'docs/scope.md') > 0 then
+            Error('The refusal still cites docs/scope.md: %1', GetLastErrorText());
+        // 3. And it still names WHICH sub-shape was refused, so the message stays actionable.
+        Assert.ExpectedError('query-join-rightouterjoin-link-type');
     end;
 }

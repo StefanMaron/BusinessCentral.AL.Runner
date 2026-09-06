@@ -363,12 +363,11 @@ public static partial class RecordPatches
                 // RunAll()-per-boundary approach reseeded EVERYTHING, so a quiet `continue`
                 // here is a behaviour change disguised as an optimisation. Say so instead.
                 if (provider.GetType().Name != "TempTableDataProvider")
-                    throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+                    throw RunnerShapeGap.InstallBaselineSnapshot(
                         $"install-baseline snapshot (table {tableId})",
-                        $"install-baseline — table {tableId} is backed by {provider.GetType().Name}, "
-                        + "which the per-codeunit baseline snapshot cannot capture or restore; "
-                        + "its install-seeded state would silently vanish at the next codeunit "
-                        + "boundary. See docs/scope.md");
+                        $"table {tableId} is backed by {provider.GetType().Name}, which the per-codeunit "
+                        + "baseline snapshot cannot capture or restore; its install-seeded state would "
+                        + "silently vanish at the next codeunit boundary");
 
                 var providerType = provider.GetType();
                 var metaTable = RequiredField(providerType, "table", InstallBaselineSurface).GetValue(provider)
