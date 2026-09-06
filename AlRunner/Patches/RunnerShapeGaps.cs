@@ -148,10 +148,9 @@
 //     SkeletonPageCustomizationRepository.cs (1)  page personalization has no store (§3.11).
 //
 //   Several of those twenty-eight still render the link twice, because they end their reason
-//   with "See docs/scope.md" and BuildMessage appends its own — #2951 fixed 47 sites but
-//   matched capital-S "See docs/scope.md" in a different set. The CLAIM is right in every one,
-//   so the doubling is #2766's sweep and not this one's. Measured and recorded there rather
-//   than half-swept here.
+//   with "See docs/scope.md" and BuildMessage appends its own. The CLAIM is right in every
+//   one, so the doubling belongs to #2766 (still open) and not to this change — half-sweeping
+//   it here would leave that issue's measurement wrong without closing it.
 //
 // ── (0), NOT REFUSALS: six sites ─────────────────────────────────────────────────────────
 //   CliText.cs (4) is --guide and --help prose pointing readers at docs/scope.md, and it is
@@ -165,7 +164,8 @@
 //   determined on this BC build", "both triggers resolve to member id N". They should tear
 //   through. Not corrected here for the reason the issue itself gives — 25 citations across
 //   two files that in-flight TestPage work is editing, where a factory sweep would collide.
-//   Filed as a follow-up.
+//   Filed as #2999, which lists all sixteen by line AND lists the fourteen in those same two
+//   files that are genuinely permanent, so the follow-up cannot over-sweep them.
 //
 //   RecordPatches.DateVirtualTable.cs (7) and RecordPatches.cs:1773 (1) — the Date virtual
 //   table, including the sibling site that spells "date-virtual-table" itself instead of
