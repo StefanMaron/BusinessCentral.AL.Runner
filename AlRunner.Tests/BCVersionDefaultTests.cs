@@ -60,21 +60,7 @@ public class BCVersionDefaultTests
     /// </summary>
     internal static IReadOnlyList<string> RepositoryProjectFiles(string root)
     {
-        var found = new List<string>();
-        var pending = new Stack<string>();
-        pending.Push(root);
-
-        while (pending.Count > 0)
-        {
-            var dir = pending.Pop();
-            foreach (var sub in Directory.EnumerateDirectories(dir))
-            {
-                if (SkippedDirectories.Contains(Path.GetFileName(sub), StringComparer.Ordinal)) continue;
-                pending.Push(sub);
-            }
-
-            found.AddRange(Directory.EnumerateFiles(dir, "*.csproj"));
-        }
+        var found = EnumerateProjectFiles(root).ToList();
 
         if (found.Count == 0)
             throw new InvalidOperationException(
@@ -83,6 +69,57 @@ public class BCVersionDefaultTests
 
         found.Sort(StringComparer.Ordinal);
         return found;
+    }
+
+    /// <summary>
+    /// The walk itself, lazily, one directory at a time: the root's own project files first,
+    /// then its subdirectories depth-first. Separate from <see cref="RepositoryProjectFiles"/>
+    /// so a test can observe the walk WHILE it runs (#3206) rather than only its result.
+    ///
+    /// #3206: a SUBdirectory that disappears between being listed and being opened is skipped.
+    /// This walk covers the repository root, and other tests in this same assembly legitimately
+    /// create and delete scratch directories there while it runs — <c>BuildDeterminismTests</c>
+    /// needs its probe roots inside the repository tree so they inherit the real
+    /// <c>Directory.Build.props</c>/<c>.targets</c> whose determinism is the thing under test.
+    /// xUnit runs the two classes in parallel, and the loser was this one: PR #3180's BC 28.4
+    /// leg failed here with a <c>DirectoryNotFoundException</c> naming a directory belonging to
+    /// the other class, while an independent re-run of the same commit passed.
+    ///
+    /// The ROOT is deliberately NOT covered: a missing root still throws, because a mistyped or
+    /// moved <c>RepoRoot</c> must be loud rather than quietly scanning nothing (#3139/#3021).
+    /// Only <c>DirectoryNotFoundException</c> is caught — swallowing
+    /// <c>UnauthorizedAccessException</c> or a general <c>IOException</c> would hide a
+    /// permissions or filesystem regression behind the same silence.
+    /// </summary>
+    internal static IEnumerable<string> EnumerateProjectFiles(string root)
+    {
+        var pending = new Stack<string>();
+        pending.Push(root);
+
+        while (pending.Count > 0)
+        {
+            var dir = pending.Pop();
+
+            string[] subs;
+            string[] files;
+            try
+            {
+                subs = Directory.GetDirectories(dir);
+                files = Directory.GetFiles(dir, "*.csproj");
+            }
+            catch (DirectoryNotFoundException) when (!string.Equals(dir, root, StringComparison.Ordinal))
+            {
+                continue; // deleted by a concurrently running test between the listing and here
+            }
+
+            foreach (var sub in subs)
+            {
+                if (SkippedDirectories.Contains(Path.GetFileName(sub), StringComparer.Ordinal)) continue;
+                pending.Push(sub);
+            }
+
+            foreach (var file in files) yield return file;
+        }
     }
 
     /// <summary>
@@ -249,6 +286,79 @@ public class BCVersionDefaultTests
         {
             if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
         }
+    }
+
+    /// <summary>
+    /// #3206: a directory that vanishes between being listed and being opened must be skipped,
+    /// not fail the walk.
+    ///
+    /// This walk is over the repository root, and other tests in this same assembly write
+    /// scratch directories there and delete them again — <c>BuildDeterminismTests</c> creates
+    /// <c>&lt;RepoRoot&gt;/.build-determinism-probe-*</c> and two
+    /// <c>.build-determinism-path-*</c> roots, which have to live inside the repository tree to
+    /// inherit the real <c>Directory.Build.props</c>/<c>.targets</c> the determinism claim is
+    /// about. xUnit runs the two classes in parallel, so the entry can be gone by the time this
+    /// walk opens it. Measured on PR #3180's BC 28.4 leg (run 34046877973): this class failed
+    /// with <c>DirectoryNotFoundException</c> naming a directory belonging to the OTHER class,
+    /// while an independent second run of the same commit passed.
+    ///
+    /// Note this is NOT what <c>SearchOption.AllDirectories</c> does — that recursion opens
+    /// discovered subdirectories with "ignore not found" set, which is why the pre-#3139
+    /// version of this scan never hit it and the manual walk does.
+    ///
+    /// Deletes the victims after the FIRST yielded path, which is deterministic: the walk pops
+    /// the root first and yields the root's own project files before descending, so every
+    /// victim is still unvisited at that point. <c>keep/</c> proves the walk still descends
+    /// afterwards rather than stopping at the first casualty.
+    /// </summary>
+    [Fact]
+    public void ProjectWalk_SkipsADirectoryDeletedWhileTheWalkIsRunning()
+    {
+        var root = TestScratch.Dir("bcver");
+        try
+        {
+            WriteProject(root, "Root.csproj", "<PropertyGroup></PropertyGroup>");
+            WriteProject(root, "keep/Keep.csproj", "<PropertyGroup></PropertyGroup>");
+            var victims = new List<string>();
+            for (var i = 0; i < 20; i++)
+            {
+                WriteProject(root, $".build-determinism-path-{i}/Victim.csproj", "<PropertyGroup></PropertyGroup>");
+                victims.Add(Path.Combine(root, $".build-determinism-path-{i}"));
+            }
+
+            var seen = new List<string>();
+            var deleted = false;
+            foreach (var path in EnumerateProjectFiles(root))
+            {
+                seen.Add(Path.GetRelativePath(root, path).Replace('\\', '/'));
+                if (deleted) continue;
+                foreach (var victim in victims) Directory.Delete(victim, recursive: true);
+                deleted = true;
+            }
+
+            seen.Sort(StringComparer.Ordinal);
+            Assert.Equal(new[] { "Root.csproj", "keep/Keep.csproj" }, seen);
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// The negative direction, and the reason the skip is scoped to SUBdirectories: a ROOT that
+    /// does not exist must still throw. Swallowing that would turn a mistyped or moved
+    /// <c>RepoRoot</c> into a walk that finds nothing and — with the non-vacuity guard gone or
+    /// weakened — reads as a clean tree, which is the #3139/#3021 failure this class already
+    /// refuses.
+    /// </summary>
+    [Fact]
+    public void ProjectWalk_StillThrowsWhenTheRootItselfIsMissing()
+    {
+        var root = Path.Combine(TestScratch.Dir("bcver"), "no-such-directory");
+
+        Assert.Throws<DirectoryNotFoundException>(() => EnumerateProjectFiles(root).ToList());
+        Assert.Throws<DirectoryNotFoundException>(() => RepositoryProjectFiles(root));
     }
 
     private static void WriteProject(string root, string relativePath, string propertyGroup)
