@@ -488,7 +488,7 @@ public static partial class RecordPatches
 
         // Build calcFormula object up-front if needed (FlowField).
         object? calcFormulaObj = (f.IsFlowField && f.CalcFormula != null && parentTable != null)
-            ? BuildMetaCalcFormula(f.CalcFormula, parentTable)
+            ? BuildMetaCalcFormula(f.CalcFormula, parentTable, f.FieldId)
             : null;
         // #3121 — the diagnostic whose absence cost a diagnosis. Every failure INSIDE
         // BuildMetaCalcFormula already logs, but the three-clause gate above could refuse the
@@ -1011,7 +1011,26 @@ public static partial class RecordPatches
         return ctor.Invoke(args)!;
     }
 
-    private static object? BuildMetaCalcFormula(ParsedCalcFormula cf, ParsedTable parentTable)
+    /// <summary>
+    /// Build the <c>MetaCalcFormula</c> for one FlowField.
+    ///
+    /// <para>Every field name in the formula — the source field, each where-arm's own field on
+    /// the source table, and the parent field a <c>field(...)</c> arm names — resolves against
+    /// <see cref="GetAllFieldsIncludingExtensions"/>, NOT against <c>ParsedTable.Fields</c>
+    /// alone. A tableextension's fields live in <c>_parsedExtensionFields</c>
+    /// (<c>MergeExtensionFields</c> is the single writer, for AL-source and precompiled
+    /// extensions alike), so the base-fields-only lookup this used to do could not see a
+    /// FlowFilter or a summed field a tableextension contributed — issue #3263, the same
+    /// omission #2490 fixed for TestPage control binding.</para>
+    ///
+    /// <para>A reference that still does not resolve makes the WHOLE formula fail to build and
+    /// is recorded against <paramref name="flowFieldId"/>, so <c>CalcFields</c> refuses naming
+    /// the table and the field it could not resolve. Dropping just that arm — what this did
+    /// before — returned the number the dropped filter was supposed to narrow, with no
+    /// diagnostic at default verbosity: the silent wrong answer `loud-failures.md` exists to
+    /// prevent.</para>
+    /// </summary>
+    private static object? BuildMetaCalcFormula(ParsedCalcFormula cf, ParsedTable parentTable, int flowFieldId)
     {
         if (_tMetaCalcFormula == null || _tMetaFilter == null || _tFilterType == null) return null;
 
@@ -1034,18 +1053,29 @@ public static partial class RecordPatches
             // metadata is rebuilt when the registered set grows, instead of keeping a
             // permanently formula-less FlowField that CalcFields then refuses.
             NoteUnresolvedCalcFormulaSourceTable(parentTable.TableId, cf.SourceTableName);
+            // #3263: and until that rebuild happens, CalcFields names what was unresolvable
+            // rather than raising BC's "You must define a CalcFormula".
+            NoteUnresolvedCalcFormulaReference(parentTable.TableId, flowFieldId,
+                $"source table '{cf.SourceTableName}' is not registered");
             return null;
         }
 
         // Resolve source field (for Sum/Lookup/Average/Min/Max)
+        // Materialised once each: the helper allocates a HashSet whenever the table carries
+        // extension fields, and the where-arm loop below would otherwise pay for that per arm.
+        var srcFields = GetAllFieldsIncludingExtensions(srcTable).ToList();
+        var parentFields = GetAllFieldsIncludingExtensions(parentTable).ToList();
+
         int srcFieldId = 0;
         if (cf.SourceFieldName != null)
         {
-            var srcField = srcTable.Fields.FirstOrDefault(f =>
+            var srcField = srcFields.FirstOrDefault(f =>
                 string.Equals(f.FieldName, cf.SourceFieldName, StringComparison.OrdinalIgnoreCase));
             if (srcField == null)
             {
                 Console.Error.WriteLine($"[RecordPatches] BuildMetaCalcFormula: source field '{cf.SourceFieldName}' not found in table '{cf.SourceTableName}'");
+                NoteUnresolvedCalcFormulaReference(parentTable.TableId, flowFieldId,
+                    $"field '{cf.SourceFieldName}' was not found on table '{cf.SourceTableName}'");
                 return null;
             }
             srcFieldId = srcField.FieldId;
@@ -1060,23 +1090,27 @@ public static partial class RecordPatches
         var filterObjects = new List<object>();
         foreach (var filter in cf.Filters)
         {
-            var srcFilterField = srcTable.Fields.FirstOrDefault(f =>
+            var srcFilterField = srcFields.FirstOrDefault(f =>
                 string.Equals(f.FieldName, filter.SourceFieldName, StringComparison.OrdinalIgnoreCase));
             if (srcFilterField == null)
             {
                 Console.Error.WriteLine($"[RecordPatches] BuildMetaCalcFormula: filter source field '{filter.SourceFieldName}' not found in '{cf.SourceTableName}'");
-                continue;
+                NoteUnresolvedCalcFormulaReference(parentTable.TableId, flowFieldId,
+                    $"the where-arm field '{filter.SourceFieldName}' was not found on table '{cf.SourceTableName}'");
+                return null;
             }
 
             switch (filter.Kind)
             {
                 case ParsedCalcFilterKind.Field:
-                    var parentFilterField = parentTable.Fields.FirstOrDefault(f =>
+                    var parentFilterField = parentFields.FirstOrDefault(f =>
                         string.Equals(f.FieldName, filter.ParentFieldName, StringComparison.OrdinalIgnoreCase));
                     if (parentFilterField == null)
                     {
                         Console.Error.WriteLine($"[RecordPatches] BuildMetaCalcFormula: filter parent field '{filter.ParentFieldName}' not found in '{parentTable.TableName}'");
-                        continue;
+                        NoteUnresolvedCalcFormulaReference(parentTable.TableId, flowFieldId,
+                            $"the where-arm's parent field '{filter.ParentFieldName}' was not found on table '{parentTable.TableName}'");
+                        return null;
                     }
                     // #1716: the two mode flags ride along on the FIELD filter.
                     // NCLMetaFilterField.CreateFromMetaFilter turns them into
@@ -1126,12 +1160,20 @@ public static partial class RecordPatches
         }
         try
         {
-            return ctor.Invoke(args);
+            var built = ctor.Invoke(args);
+            // A rebuild that succeeds clears a note an earlier build of the same table left:
+            // #3121's late-registration retry rebuilds a table whose source table arrived in a
+            // .app registered afterwards, and a stale note would refuse a FlowField that has a
+            // formula again.
+            ClearUnresolvedCalcFormulaReference(parentTable.TableId, flowFieldId);
+            return built;
         }
         catch (Exception ex)
         {
             var inner = ex is System.Reflection.TargetInvocationException tie ? tie.InnerException ?? ex : ex;
             Console.Error.WriteLine($"[RecordPatches] BuildMetaCalcFormula ctor failed: {inner.GetType().Name}: {inner.Message}");
+            NoteUnresolvedCalcFormulaReference(parentTable.TableId, flowFieldId,
+                $"the formula could not be constructed: {inner.Message}");
             return null;
         }
     }
