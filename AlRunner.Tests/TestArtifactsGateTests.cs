@@ -217,19 +217,47 @@ public class TestArtifactsGateTests
     // ---- 3. drift guards over the suite's own source ----------------------------
 
     /// <summary>
+    /// The key every drift guard below exempts and reports by: the source path relative to
+    /// <see cref="TestsSourceDir"/>, with <c>/</c> separators on every platform. For a
+    /// top-level file that is exactly the file name, which is why the exemptions read
+    /// unchanged — but a file in a subdirectory can no longer alias a same-named top-level
+    /// exemption and disappear from the guard. #3021: the exemptions matched on
+    /// <c>Path.GetFileName</c>, so <c>AliasProbe/TestArtifacts.cs</c> was exempt everywhere
+    /// the real <c>TestArtifacts.cs</c> is, and a violation in it passed silently.
+    /// </summary>
+    private static string Rel(string path) =>
+        Path.GetRelativePath(TestsSourceDir, path).Replace(Path.DirectorySeparatorChar, '/');
+
+    /// <summary>
     /// Every <c>.cs</c> source in the suite, at ANY depth, minus build output. One place, so
-    /// the two facts below cannot disagree about what "the suite's own source" means — #3000:
+    /// the four facts below cannot disagree about what "the suite's own source" means — #3000:
     /// <see cref="EveryTestThatCanSkipIsDeclaredSkippable"/> enumerated
     /// <c>SearchOption.TopDirectoryOnly</c> of its own while this helper already walked the
     /// whole tree, so the same file was in scope for one drift guard and invisible to the other.
+    ///
+    /// <para>#3021: the build-output filter tested the ABSOLUTE path for a <c>/bin/</c> or
+    /// <c>/obj/</c> substring, so a checkout under such a path — <c>~/obj/al-runner</c>, a CI
+    /// workspace named <c>bin</c> — excluded every file in the project and every guard below
+    /// passed having read nothing. It now splits the RELATIVE path into segments, the same way
+    /// <c>ScratchDirOwnershipGuardTests</c> and <c>BaseAppFloorFixtureGuardTests</c> do, so
+    /// "minus build output" has one meaning across all three. The non-vacuity assertion is the
+    /// backstop: an enumeration that finds nothing is a broken guard, not a clean suite.</para>
     /// </summary>
-    private static IEnumerable<string> TestSourcePaths() =>
-        Directory.EnumerateFiles(TestsSourceDir, "*.cs", SearchOption.AllDirectories)
-            .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
-                     && !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal));
+    private static IReadOnlyList<string> TestSourcePaths()
+    {
+        var paths = Directory.EnumerateFiles(TestsSourceDir, "*.cs", SearchOption.AllDirectories)
+            .Where(f => !Rel(f).Split('/').Any(seg => seg is "bin" or "obj"))
+            .ToList();
 
-    private static IEnumerable<(string File, string Text)> TestSources() =>
-        TestSourcePaths().Select(f => (Path.GetFileName(f), File.ReadAllText(f)));
+        Assert.True(paths.Count > 0,
+            $"expected .cs sources under {TestsSourceDir}, found none — the guard is not "
+            + "looking at anything, so every drift guard in this class would pass vacuously.");
+
+        return paths;
+    }
+
+    private static IEnumerable<(string Rel, string Text)> TestSources() =>
+        TestSourcePaths().Select(f => (Rel(f), File.ReadAllText(f)));
 
     /// <summary>
     /// One gate, one place. Twenty-three classes each declared their own
@@ -241,7 +269,7 @@ public class TestArtifactsGateTests
     {
         var offenders = TestSources()
             .Where(s => Regex.IsMatch(s.Text, @"bool\s+ArtifactsPresent\s*\("))
-            .Select(s => s.File)
+            .Select(s => s.Rel)
             .OrderBy(f => f, StringComparer.Ordinal)
             .ToList();
 
@@ -261,16 +289,16 @@ public class TestArtifactsGateTests
     public void OnlyTheSharedHelperNamesTheArtifactCachePathsInCode()
     {
         var offenders = new List<string>();
-        foreach (var (file, text) in TestSources())
+        foreach (var (rel, text) in TestSources())
         {
-            if (file is "TestArtifacts.cs" or "TestArtifactsGateTests.cs") continue;
+            if (rel is "TestArtifacts.cs" or "TestArtifactsGateTests.cs") continue;
             foreach (var line in text.Split('\n'))
             {
                 var trimmed = line.TrimStart();
                 if (trimmed.StartsWith("//", StringComparison.Ordinal)) continue;
                 if (trimmed.Contains(".bcartifacts.cache", StringComparison.Ordinal)
                     || trimmed.Contains("\"al-runner\", \"artifacts\"", StringComparison.Ordinal))
-                    offenders.Add($"{file}: {trimmed.Trim()}");
+                    offenders.Add($"{rel}: {trimmed.Trim()}");
             }
         }
 
@@ -327,13 +355,13 @@ public class TestArtifactsGateTests
     public void NoTestSilentlyReturnsWhenItsEnvironmentIsUnavailable()
     {
         var offenders = new List<string>();
-        foreach (var (file, text) in TestSources())
+        foreach (var (rel, text) in TestSources())
         {
             // The regexes above, and the synthetic offenders SilentSkipDetectorTests feeds them,
             // are literals in these two files.
-            if (file is "TestArtifactsGateTests.cs" or "SilentSkipDetectorTests.cs") continue;
+            if (rel is "TestArtifactsGateTests.cs" or "SilentSkipDetectorTests.cs") continue;
             foreach (var hit in FindSilentSkipReturns(text))
-                offenders.Add($"{file}: {hit}");
+                offenders.Add($"{rel}: {hit}");
         }
 
         Assert.True(offenders.Count == 0,
@@ -357,7 +385,8 @@ public class TestArtifactsGateTests
         var offenders = new List<string>();
         foreach (var file in TestSourcePaths())
         {
-            if (Path.GetFileName(file) is "TestArtifacts.cs" or "TestArtifactsGateTests.cs") continue;
+            var rel = Rel(file);
+            if (rel is "TestArtifacts.cs" or "TestArtifactsGateTests.cs") continue;
             string? attr = null, method = null;
             foreach (var line in File.ReadAllLines(file))
             {
@@ -370,7 +399,7 @@ public class TestArtifactsGateTests
                 }
                 if (attr is "Fact" or "Theory" && method != null && skipCall.IsMatch(line))
                 {
-                    offenders.Add($"{Path.GetFileName(file)}.{method} is [{attr}] but can skip");
+                    offenders.Add($"{rel}.{method} is [{attr}] but can skip");
                     attr = null;
                 }
             }

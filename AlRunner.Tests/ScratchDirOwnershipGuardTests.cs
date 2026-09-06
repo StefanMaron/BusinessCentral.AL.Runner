@@ -115,9 +115,23 @@ public sealed class ScratchDirOwnershipGuardTests
     /// (<c>*.AssemblyInfo.cs</c>, <c>*.GlobalUsings.g.cs</c>); they are not test code, and
     /// whether they exist depends on whether the project has been built.
     /// </summary>
-    private static IEnumerable<string> TestSources() =>
-        Directory.EnumerateFiles(TestsDir, "*.cs", SearchOption.AllDirectories)
-            .Where(p => !Key(p).Split('/').Any(seg => seg is "bin" or "obj"));
+    private static IReadOnlyList<string> TestSources()
+    {
+        var paths = Directory.EnumerateFiles(TestsDir, "*.cs", SearchOption.AllDirectories)
+            .Where(p => !Key(p).Split('/').Any(seg => seg is "bin" or "obj"))
+            .ToList();
+
+        // #3021 — non-vacuity. An enumeration that finds nothing makes
+        // NoTestSource_BuildsAnUnownedTempPath pass having read no source at all. That fact was
+        // protected only by ACCIDENT: EveryAllowlistEntry_MatchesItsRecordedCount reads the same
+        // enumeration and fails when it is empty, so the class went red for a reason that names
+        // the allowlist rather than the scan. Assert the real cause here instead.
+        Assert.True(paths.Count > 0,
+            $"expected .cs sources under {TestsDir}, found none — the guard is not looking at "
+            + "anything, so an unowned scratch path anywhere in the project would pass unseen.");
+
+        return paths;
+    }
 
     /// <summary>Non-comment occurrences of the expression, per source path.</summary>
     private static Dictionary<string, int> Occurrences()
