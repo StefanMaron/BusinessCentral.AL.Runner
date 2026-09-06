@@ -838,31 +838,53 @@ public static partial class NclCecilRewrite
                 + "(the runner's ITestPage is in-process; no client dispatcher exists)");
         }
 
-        // 4. Remove TestClientProxy<T>.Proxy(T) call from all NavTestPageBase methods that use it.
-        //    Removing the call leaves the raw ITest* value on the stack in the right place.
+        // 4. Remove TestClientProxy<T>.Proxy(T) call from EVERY NavTestPageBase method that
+        //    uses it. Removing the call leaves the raw ITest* value on the stack in the right
+        //    place, because the runner's ITestPage is in-process and needs no marshalling.
+        //
+        //    This used to be a hard-coded list of six method names — GetField, GetAction,
+        //    GetDataItem, GetPart, GetBuiltInAction, FindBuiltInAction — and NavTestPageBase
+        //    has EIGHT Proxy call sites, not six. The two it left out are ALView() and
+        //    ALEdit(), i.e. AL's `SomePage.View()` and `SomePage.Edit()`, so both raised
+        //    "The UISessionManager was expected to be initialized." from
+        //    TestPageClientSession.GetTestLogicalDispatcher() before any page could open
+        //    (issue #3185). A list of names cannot notice a call site it does not name, and a
+        //    later Ncl version adding a ninth would reintroduce exactly the same defect, so
+        //    the sweep is over the type — the same shape step 3 above already uses for
+        //    NavTestExecution.
         {
-            var methodsToFix = new[] { "GetField", "GetAction", "GetDataItem", "GetPart", "GetBuiltInAction", "FindBuiltInAction" };
             int removedCount = 0;
-            foreach (var methodName in methodsToFix)
+            var touched = new List<string>();
+            foreach (var method in navTestPageBaseType.Methods.Where(m => m.HasBody))
             {
-                foreach (var method in navTestPageBaseType.Methods
-                    .Where(m => m.Name == methodName && m.HasBody))
+                var il = method.Body.GetILProcessor();
+                var proxyCalls = method.Body.Instructions
+                    .Where(i => i.OpCode == OpCodes.Call &&
+                           i.Operand is MethodReference mr &&
+                           mr.Name == "Proxy" &&
+                           mr.DeclaringType.Name.StartsWith("TestClientProxy", StringComparison.Ordinal))
+                    .ToList();
+                if (proxyCalls.Count == 0) continue;
+                foreach (var instr in proxyCalls)
                 {
-                    var il = method.Body.GetILProcessor();
-                    var proxyCalls = method.Body.Instructions
-                        .Where(i => i.OpCode == OpCodes.Call &&
-                               i.Operand is MethodReference mr &&
-                               mr.Name == "Proxy" &&
-                               mr.DeclaringType.Name.StartsWith("TestClientProxy"))
-                        .ToList();
-                    foreach (var instr in proxyCalls)
-                    {
-                        il.Remove(instr);
-                        removedCount++;
-                    }
+                    il.Remove(instr);
+                    removedCount++;
                 }
+                touched.Add(method.Name);
             }
-            Console.Error.WriteLine($"[Cecil] Removed {removedCount} TestClientProxy.Proxy call(s) from NavTestPageBase");
+
+            // A shape guard, not a formality: if a future Ncl stops routing these through
+            // TestClientProxy the sweep silently removes nothing and every TestPage member
+            // goes back to needing a client dispatcher, which is the failure this step exists
+            // to prevent. Eight call sites across eight methods in BC 28.1.
+            if (removedCount == 0)
+                throw new InvalidOperationException(
+                    "[Cecil] NavTestPageBase has no TestClientProxy.Proxy call sites — Ncl shape "
+                    + "changed; do not commit");
+
+            Console.Error.WriteLine(
+                $"[Cecil] Removed {removedCount} TestClientProxy.Proxy call(s) from NavTestPageBase "
+                + $"({string.Join(", ", touched)})");
         }
 
         // 5. NavTestPageBase.LoadMetadata() — replace body with `ldnull; ret`.

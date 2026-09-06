@@ -295,6 +295,59 @@ public static partial class RecordPatches
         }
     }
 
+    // The same rows EnumerateKnownPageMetadata builds, keyed by page id, so the by-id lookups
+    // below are not a linear scan of every page in the run (Base Application 28.1 alone
+    // contributes several thousand). Rebuilt whenever the row list itself is rebuilt —
+    // reference equality against the cached list is the cheapest correct invalidation, since
+    // EnumerateKnownPageMetadata already owns the generation check.
+    private static List<PageMetaRow>? _pageMetaRowsIndexedFrom;
+    private static Dictionary<int, PageMetaRow>? _pageMetaRowsById;
+    private static readonly object _pageMetaIndexLock = new();
+
+    /// <summary>
+    /// One page's resolved Page Metadata row, or null when neither the runner's own parsed AL
+    /// nor a registered dependency .app's SymbolReference.json declares that page.
+    /// </summary>
+    private static PageMetaRow? TryGetPageMetaRow(int pageId)
+    {
+        var rows = EnumerateKnownPageMetadata();
+        var index = _pageMetaRowsById;
+        if (!ReferenceEquals(_pageMetaRowsIndexedFrom, rows) || index == null)
+            lock (_pageMetaIndexLock)
+            {
+                if (!ReferenceEquals(_pageMetaRowsIndexedFrom, rows) || _pageMetaRowsById == null)
+                {
+                    var built = new Dictionary<int, PageMetaRow>(rows.Count);
+                    foreach (var row in rows) built[row.Id] = row;
+                    _pageMetaRowsById = built;
+                    _pageMetaRowsIndexedFrom = rows;
+                }
+                index = _pageMetaRowsById;
+            }
+        return index.TryGetValue(pageId, out var found) ? found : null;
+    }
+
+    /// <summary>
+    /// <paramref name="pageId"/>'s <c>CardPageId</c>, already resolved from the declared NAME
+    /// to a real page id — 0 when the page declares none, when the declared page is not in this
+    /// run's inventory (reported by <see cref="EnumerateKnownPageMetadata"/>, never silent), or
+    /// when the page itself is unknown here.
+    ///
+    /// <para>Issue #3185's consumer is <c>LiveNavTestPage.View()/Edit()</c>: the built-in
+    /// page-mode actions a client puts on a list open exactly this page, and
+    /// <c>ActionBuilder.ResolveCardFormId</c> (BC 28.1's own UI builder) reads it from the same
+    /// declaration Page Metadata reports here.</para>
+    /// </summary>
+    internal static int TryGetAnyCardPageId(int pageId) => TryGetPageMetaRow(pageId)?.CardPageId ?? 0;
+
+    /// <summary>
+    /// Whether <paramref name="pageId"/> allows modification — its declared
+    /// <c>ModifyAllowed</c> narrowed by its declared <c>Editable</c>. Null when the page is not
+    /// in this run's inventory, which a caller must not read as either answer.
+    /// </summary>
+    internal static bool? TryGetAnyPageModifyAllowed(int pageId)
+        => TryGetPageMetaRow(pageId) is { } row ? row.Editable && row.ModifyAllowed : null;
+
     /// <summary>
     /// #3143: NOT swallowed — an unreadable dependency used to leave every page it declares
     /// out of Page Metadata (2000000138) AND out of Page Control Field, the other consumer of
