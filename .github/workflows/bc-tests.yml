@@ -503,12 +503,13 @@ jobs:
               --package-cache "$HOME/.al-runner/platform-apps" \
               --package-cache "$HOME/.al-runner/test-apps" \
               --strict \
+              --expectations-require-match \
               --count-baseline tests/expectations/count-baseline/test-count-baseline.json \
               --out al-language-results.json || rc=$?
           elapsed=$(( SECONDS - start ))
           echo "elapsed=${elapsed}s" >> "$GITHUB_OUTPUT"
           if [ "$rc" -ne 0 ]; then
-            echo "::error::al-language run failed (exit $rc: 1=test failure, 2=exec fail, 3=compile fail, 4=count-baseline mismatch, 134/139=crash)"
+            echo "::error::al-language run failed (exit $rc: 1=test failure, 2=exec fail, 3=compile fail, 4=count-baseline mismatch, 5=expectations entry matched no test, 134/139=crash)"
             exit "$rc"
           fi
 

@@ -627,6 +627,8 @@ internal static partial class ProgramSupport
         w.WriteLine("                            3  a bundle could not compile");
         w.WriteLine("                            4  --count-baseline: a suite's test or app-group count did");
         w.WriteLine("                               not exactly match its declared baseline (see --count-baseline)");
+        w.WriteLine("                            5  --expectations-require-match: an expectations entry matched");
+        w.WriteLine("                               no test in this run");
         w.WriteLine("  --no-strict-exit        Always exit 0 regardless of test outcome, so callers can");
         w.WriteLine("                          parse the JSON output without the process failing the step.");
         w.WriteLine("  --dump-csharp DIR       Write the intermediate C# emitted by BC's Compilation.Emit");
@@ -641,6 +643,18 @@ internal static partial class ProgramSupport
         w.WriteLine("                          invoked. Manifest drift is loud: an entry whose test now");
         w.WriteLine("                          passes, or an out-of-scope throw with no entry, fails");
         w.WriteLine("                          the run with a diagnostic naming the entry to fix.");
+        w.WriteLine("  --expectations-require-match");
+        w.WriteLine("                          Assert that this invocation discovers a test for EVERY entry");
+        w.WriteLine("                          in the active manifest, and fail (exit 5) on any that");
+        w.WriteLine("                          matched nothing, naming the file, the codeunit and the");
+        w.WriteLine("                          method. Without it such an entry is silently inert: one");
+        w.WriteLine("                          wrong letter in CodeunitName or Method untracks a declared");
+        w.WriteLine("                          gap, and the test it names fails as if undeclared (#3123).");
+        w.WriteLine("                          Off by default, for the same reason as --count-baseline —");
+        w.WriteLine("                          the manifest is shared across invocations, so an entry");
+        w.WriteLine("                          naming a corpus codeunit legitimately matches nothing in a");
+        w.WriteLine("                          run over a different bundle. Only pass it where covering");
+        w.WriteLine("                          every entry is actually true.");
         w.WriteLine("  --count-baseline PATH   Load a per-suite test/app-group expected-count manifest");
         w.WriteLine("                          (schema: AlRunner/Infrastructure/CountBaseline.cs) and");
         w.WriteLine("                          fail the run (exit 4) if a suite's count does not exactly");

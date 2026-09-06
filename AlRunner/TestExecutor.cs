@@ -744,6 +744,17 @@ public sealed class TestExecutor
 
             var loopSw = System.Diagnostics.Stopwatch.StartNew();
             var orderedMethods = OrderTestMethodsBySourceDeclaration(t);
+
+            // #3123: record what this run actually loaded, so an expectations entry that
+            // could never have matched anything can be REPORTED rather than silently doing
+            // nothing. Deliberately the UNFILTERED test-method list and deliberately here,
+            // before --test/--exclude narrow what runs: the audit asks "does this entry name
+            // something that exists", not "did this entry get consulted".
+            Expectations?.NoteDiscoveredTestCodeunit(new Infrastructure.DiscoveredTestCodeunit(
+                ParseAlObjectId(t.Name),
+                displayName,
+                t.Name,
+                orderedMethods.Where(IsTestMethod).Select(m => m.Name).ToArray()));
             try
             {
                 for (int mi = 0; mi < orderedMethods.Length; mi++)
@@ -1005,6 +1016,19 @@ public sealed class TestExecutor
     {
         var qualified = $"{codeunit}.{method}".ToLowerInvariant();
         return qualified.Contains(filterLower) || method.ToLowerInvariant().Contains(filterLower);
+    }
+
+    /// <summary>
+    /// The AL object id carried by an emitted test codeunit's CLR type name
+    /// ("Codeunit60810" → 60810). Null when the name does not carry one — the audit in
+    /// <see cref="Infrastructure.ExpectationManifest.FindUnmatchedEntries"/> then simply
+    /// has one fewer clue to offer, and never guesses.
+    /// </summary>
+    internal static int? ParseAlObjectId(string typeName)
+    {
+        const string prefix = "Codeunit";
+        if (!typeName.StartsWith(prefix, StringComparison.Ordinal)) return null;
+        return int.TryParse(typeName.AsSpan(prefix.Length), out var id) ? id : null;
     }
 
     private static bool IsTestCodeunit(Type t)
