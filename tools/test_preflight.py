@@ -653,6 +653,356 @@ check("--json keeps the machine-readable status", j["checks"][1]["status"] == "F
 check("--json documents what the exit code means",
       "exit_code_meaning" in j and j["exit_code_meaning"], str(j.get("exit_code_meaning")))
 
+
+# -------------------------------------------------- code-navigation tooling (#3087)
+# These three checks exist because each tool fails in a way that produces a
+# confidently wrong answer rather than an error, so the tests below are mostly the
+# NEGATIVE direction: a deliberately broken state must produce a non-PASS with a
+# remedy. A check that only passes when everything is fine has not been tested.
+#
+# The verdicts are pure functions of a state dataclass, so every broken state is
+# constructed here rather than arranged on the box -- the same reason the disk and
+# memory thresholds are proven against captured `df` output.
+
+def nav_states():
+    """A healthy state for each of the three checks, to mutate one field at a time."""
+    lsp = pf.LspState(script=True, server_on_path=True, fixture_ok=True, rc=0,
+                      out=f"{pf.LSP_PROBE_FILE}:79:21  {pf.LSP_PROBE_SYMBOL}\n")
+    graph = pf.GraphifyState(binary="/usr/bin/graphify", graph="/repo/AlRunner/graphify-out/graph.json",
+                             graph_mtime=2000.0, newest_source=1000.0,
+                             newest_source_path="/repo/AlRunner/X.cs",
+                             query_rc=0, query_out=f"NODE {pf.LSP_PROBE_SYMBOL} [src=...]")
+    # Healthy = nothing stray, nothing rebuilt. probe_graphify repairs both before
+    # the classifier ever sees them, so a healthy state carries no trace of either.
+    dec = pf.DecompilerState(config="/repo/.mcp.json", registered=True,
+                             target="/opt/DecompilerServer.dll", target_exists=True,
+                             probe_rc=0, aliases=list(pf.DECOMPILER_ALIASES))
+    return lsp, graph, dec
+
+
+_lsp, _graph, _dec = nav_states()
+
+# ---- the healthy direction, so the broken ones below mean something
+check("nav-lsp passes when the server returns the known-good answer",
+      pf.classify_lsp(_lsp).status == "PASS", pf.classify_lsp(_lsp).summary)
+check("nav-graphify passes on a current graph that resolves the probe node",
+      pf.classify_graphify(_graph).status == "PASS", pf.classify_graphify(_graph).summary)
+check("nav-bc-decompiler passes when the server answers with every BC context",
+      pf.classify_decompiler(_dec).status == "PASS", pf.classify_decompiler(_dec).summary)
+
+# ---- nav-lsp: the ways a language server lies
+import dataclasses as _dc
+
+
+def lsp_with(**kw):
+    return pf.classify_lsp(_dc.replace(_lsp, **kw))
+
+
+r = lsp_with(rc=2, out="csharp-ls: not found")
+check("exit 2 (server never answered) is not reported as PASS", r.status == "WARN", r.summary)
+check("exit 2 is spelled out as NOT a negative result",
+      "NOT a negative" in " ".join(r.detail), str(r.detail))
+
+r = lsp_with(rc=1, out="")
+check("a real not-found for a symbol this checkout DOES declare is reported",
+      r.status == "WARN", r.summary)
+
+# The one that matters most: the server answered, exit 0, and the answer is wrong.
+# Without a known-good expected answer this state is indistinguishable from health.
+r = lsp_with(rc=0, out="SomeOther/File.cs:1:1  Unrelated\n")
+check("exit 0 with the WRONG answer is not reported as PASS", r.status == "WARN", r.summary)
+check("the wrong-answer case names the answer it expected",
+      pf.LSP_PROBE_FILE in " ".join(r.detail), str(r.detail))
+
+r = lsp_with(fixture_ok=False)
+check("a drifted probe fixture blames the probe, not the server", r.status == "WARN", r.summary)
+check("a drifted probe fixture says the server was not tested",
+      "NOT tested" in " ".join(r.detail), str(r.detail))
+check("a drifted probe fixture says which constants to update",
+      "LSP_PROBE_SYMBOL" in r.remedy, r.remedy)
+
+r = lsp_with(server_on_path=False)
+check("a missing csharp-ls is reported with the install command",
+      r.status == "WARN" and "mise use -g dotnet:csharp-ls" in r.remedy, r.remedy)
+
+r = lsp_with(timed_out=True, rc=124)
+check("a language server that never answers is reported as a timeout", r.status == "WARN", r.summary)
+
+r = pf.classify_lsp(pf.LspState(script=False))
+check("a checkout without tools/lsp-query.py is reported", r.status == "WARN", r.summary)
+
+# ---- nav-graphify: the stray copy FAILs, staleness is repaired rather than reported
+def graph_with(**kw):
+    return pf.classify_graphify(_dc.replace(_graph, **kw))
+
+
+# The stray copy is the one navigation condition that can halt a cycle, because it
+# is a tool answering WRONG rather than a tool being absent, and no rebuild fixes it.
+r = graph_with(stray_kept=["/repo/graphify-out"], stray_error="Permission denied")
+check("a stray graph that could NOT be removed is a FAIL", r.status == "FAIL", r.summary)
+check("the un-removable stray is named so it can be deleted by hand",
+      "/repo/graphify-out" in " ".join(r.detail), str(r.detail))
+check("the un-removable stray reports why removal failed",
+      "Permission denied" in " ".join(r.detail), str(r.detail))
+check("the un-removable stray explains the false negative it causes",
+      "No matching nodes found" in " ".join(r.detail), str(r.detail))
+check("a FAILing stray halts the cycle", pf.overall_exit([r], strict=False) == 1)
+
+# Removed: the box is repaired, so it must not halt -- but it must not read as a
+# clean PASS either, or nobody learns the root copy keeps coming back.
+r = graph_with(stray_removed=["/repo/graphify-out"])
+check("a stray graph preflight REMOVED does not halt the cycle",
+      r.status == "WARN" and pf.overall_exit([r], strict=False) == 0, r.status)
+check("the removed stray is named in the report",
+      "/repo/graphify-out" in " ".join(r.detail), str(r.detail))
+
+# Staleness: no longer a verdict at all. probe_graphify rebuilds; this reports it.
+r = graph_with(rebuilt=True, rebuild_rc=0, rebuild_secs=1.9)
+check("a graph preflight rebuilt is a PASS, not a staleness warning",
+      r.status == "PASS", r.summary)
+check("the PASS says it rebuilt rather than hiding the repair",
+      "rebuilt" in r.summary, r.summary)
+check("the rebuild duration is reported",
+      "1.9s" in " ".join(r.detail), str(r.detail))
+check("no verdict mentions the word stale any more - staleness is fixed, not classified",
+      "stale" not in (r.summary + " ".join(r.detail)).lower(), r.summary + str(r.detail))
+
+r = graph_with(rebuilt=True, rebuild_rc=1, rebuild_out="graphify: boom")
+check("a rebuild that FAILED is reported", r.status == "WARN", r.summary)
+check("the failed rebuild shows graphify's output",
+      "boom" in " ".join(r.detail), str(r.detail))
+
+r = graph_with(graph=None, graph_mtime=None)
+check("no graph, and preflight could not build one, is reported",
+      r.status == "WARN" and "graphify update ." in r.remedy, r.remedy)
+
+r = graph_with(query_rc=1, query_out="boom")
+check("a graph that exists but cannot be queried is reported", r.status == "WARN", r.summary)
+
+r = graph_with(query_out="NODE SomethingElse [src=...]")
+check("a query that answers WITHOUT the known-good node is not a PASS",
+      r.status == "WARN", r.summary)
+
+r = graph_with(binary=None)
+check("graphify missing from PATH is reported", r.status == "WARN", r.summary)
+
+check("the passing graphify report warns about English-question queries",
+      "English question" in " ".join(pf.classify_graphify(_graph).detail),
+      str(pf.classify_graphify(_graph).detail))
+
+# stray_graph_dirs: the root copy is a stray, AlRunner/'s own is never one.
+_g = tempfile.mkdtemp(prefix="preflight-stray-")
+os.makedirs(os.path.join(_g, "AlRunner", "graphify-out"), exist_ok=True)
+check("the canonical graph under AlRunner/ is not treated as a stray",
+      pf.stray_graph_dirs(_g) == [], str(pf.stray_graph_dirs(_g)))
+os.makedirs(os.path.join(_g, "graphify-out"), exist_ok=True)
+check("a graphify-out at the repository root IS a stray",
+      pf.stray_graph_dirs(_g) == [os.path.join(_g, "graphify-out")],
+      str(pf.stray_graph_dirs(_g)))
+shutil.rmtree(_g, ignore_errors=True)
+
+# probe_graphify REMOVES a stray rather than reporting it, and only reports the ones
+# it could not remove. Both halves against a real directory, because "did it actually
+# delete the thing" is not a claim a constructed state can make.
+_g = tempfile.mkdtemp(prefix="preflight-stray-rm-")
+os.makedirs(os.path.join(_g, "AlRunner"))
+os.makedirs(os.path.join(_g, "graphify-out"))
+with open(os.path.join(_g, "graphify-out", "graph.json"), "w") as fh:
+    fh.write("{}")
+_st = pf.probe_graphify(_g, timeout=10)
+check("probe_graphify deletes a stray graph directory rather than reporting it",
+      not os.path.exists(os.path.join(_g, "graphify-out")), str(_st.stray_removed))
+check("the deletion is reported, not silent",
+      _st.stray_removed == [os.path.join(_g, "graphify-out")], str(_st.stray_removed))
+shutil.rmtree(_g, ignore_errors=True)
+
+# The FAIL path has to be reachable, not merely classifiable: a directory whose parent
+# denies unlink. Skipped as root, which ignores the permission bits.
+if os.geteuid() != 0:
+    import stat as _stat
+    _g = tempfile.mkdtemp(prefix="preflight-stray-keep-")
+    os.makedirs(os.path.join(_g, "AlRunner"))
+    os.makedirs(os.path.join(_g, "graphify-out"))
+    with open(os.path.join(_g, "graphify-out", "graph.json"), "w") as fh:
+        fh.write("{}")
+    os.chmod(_g, _stat.S_IRUSR | _stat.S_IXUSR)
+    try:
+        _st = pf.probe_graphify(_g, timeout=10)
+        _r = pf.classify_graphify(_st)
+        check("a stray that cannot be deleted is kept and reported",
+              _st.stray_kept == [os.path.join(_g, "graphify-out")], str(_st.stray_kept))
+        check("an un-deletable stray reaches FAIL end to end, not just in a fixture",
+              _r.status == "FAIL", _r.summary)
+        check("and that FAIL is what halts a cycle",
+              pf.overall_exit([_r], strict=False) == 1)
+    finally:
+        os.chmod(_g, _stat.S_IRWXU)
+        shutil.rmtree(_g, ignore_errors=True)
+
+# ---- nav-bc-decompiler: configured is not the same as usable
+def dec_with(**kw):
+    return pf.classify_decompiler(_dc.replace(_dec, **kw))
+
+
+r = pf.classify_decompiler(pf.DecompilerState())
+check("no .mcp.json is reported with the setup script",
+      r.status == "WARN" and "setup-bc-decompiler.sh" in r.remedy, r.remedy)
+
+r = dec_with(registered=False)
+check("an .mcp.json without a bc-decompiler entry is reported", r.status == "WARN", r.summary)
+
+r = dec_with(target_exists=False)
+check("a registered server whose DLL is missing is reported", r.status == "WARN", r.summary)
+
+# Registered and present, but the server does not actually answer. This is the
+# "configured but not usable" state the check exists to separate out.
+r = dec_with(probe_rc=1, error="server did not respond to initialize")
+check("a registered server that does not answer is not reported as PASS",
+      r.status == "WARN", r.summary)
+check("the non-answering server's error is shown",
+      "did not respond" in " ".join(r.detail), str(r.detail))
+
+r = dec_with(aliases=[a for a in pf.DECOMPILER_ALIASES if a != "bc284"])
+check("a missing BC context is reported", r.status == "WARN", r.summary)
+check("the missing BC context is named", "bc284" in r.summary, r.summary)
+
+check("the passing decompiler report says a .mcp.json change needs a session restart",
+      "SESSION RESTART" in " ".join(pf.classify_decompiler(_dec).detail),
+      str(pf.classify_decompiler(_dec).detail))
+
+# ---- the severity policy is a decision, so it is pinned here
+_broken = [
+    pf.classify_lsp(pf.LspState(script=False)),
+    pf.classify_lsp(_dc.replace(_lsp, rc=2)),
+    pf.classify_lsp(_dc.replace(_lsp, fixture_ok=False)),
+    pf.classify_lsp(_dc.replace(_lsp, server_on_path=False)),
+    pf.classify_lsp(_dc.replace(_lsp, timed_out=True, rc=124)),
+    pf.classify_lsp(_dc.replace(_lsp, rc=0, out="nope")),
+    pf.classify_graphify(pf.GraphifyState()),
+    graph_with(stray_removed=["/repo/graphify-out"]),
+    graph_with(rebuilt=True, rebuild_rc=1, rebuild_out="boom"),
+    graph_with(query_rc=1),
+    # Every branch, not every classifier: an earlier version of this list reached
+    # classify_graphify only through GraphifyState() (graphify not on PATH), so a
+    # mutation turning the "no graph" branch into a FAIL slipped past the severity
+    # guard entirely. It was caught by a different test, which is luck, not coverage.
+    graph_with(graph=None, graph_mtime=None),
+    graph_with(query_out="NODE SomethingElse"),
+    pf.classify_lsp(_dc.replace(_lsp, rc=1)),
+    pf.classify_lsp(_dc.replace(_lsp, rc=99)),
+    dec_with(registered=False),
+    pf.classify_decompiler(pf.DecompilerState()),
+    dec_with(probe_rc=1),
+    dec_with(target_exists=False),
+    dec_with(aliases=[]),
+]
+check("a tool being absent or unusable never halts a cycle - only a wrong ANSWER does",
+      all(r.status != "FAIL" for r in _broken),
+      str([(r.name, r.status) for r in _broken if r.status == "FAIL"]))
+# The boundary itself, asserted from both sides in one place so it cannot drift: the
+# un-removable stray graph is the ONLY navigation condition that may halt a cycle.
+# Everything above degrades to rg / tools/context-pack.py and merely slows an agent
+# down; a stray graph makes graphify answer "No matching nodes found." for symbols
+# that exist, which no fallback rescues and no rebuild fixes.
+check("the un-removable stray graph is the one navigation condition that CAN fail",
+      pf.classify_graphify(_dc.replace(_graph, stray_kept=["/x"])).status == "FAIL")
+check("and it is the ONLY one - every other broken state stays advisory",
+      {r.status for r in _broken} == {"WARN"},
+      str(sorted({(r.name, r.status) for r in _broken})))
+check("every broken navigation state still says what to do about it",
+      all(r.remedy for r in _broken),
+      str([r.name for r in _broken if not r.remedy]))
+check("every broken navigation state names the command that produced it",
+      all(r.command for r in _broken),
+      str([r.name for r in _broken if not r.command]))
+check("a warning navigation check leaves the exit code at 0 (advisory, not blocking)",
+      pf.overall_exit(_broken, strict=False) == 0, str(pf.overall_exit(_broken, False)))
+check("--strict still promotes a navigation warning to exit 2",
+      pf.overall_exit(_broken, strict=True) == 2)
+
+# ---- human_age, used in the stale summary
+check("human_age reports seconds", pf.human_age(30) == "30s")
+check("human_age reports minutes", pf.human_age(600) == "10m")
+check("human_age reports hours", pf.human_age(7200) == "2.0h")
+check("human_age reports days", pf.human_age(18 * 86400) == "18.0d")
+
+# ---- newest_source_mtime ignores build output, or every graph looks stale
+_srcdir = tempfile.mkdtemp(prefix="preflight-src-")
+os.makedirs(os.path.join(_srcdir, "obj"), exist_ok=True)
+with open(os.path.join(_srcdir, "Real.cs"), "w") as fh:
+    fh.write("x")
+os.utime(os.path.join(_srcdir, "Real.cs"), (1000, 1000))
+with open(os.path.join(_srcdir, "obj", "Generated.cs"), "w") as fh:
+    fh.write("x")
+os.utime(os.path.join(_srcdir, "obj", "Generated.cs"), (9_000_000, 9_000_000))
+_m, _p = pf.newest_source_mtime(_srcdir)
+check("newest_source_mtime skips obj/ build output", _m == 1000, f"{_m} {_p}")
+check("newest_source_mtime names the file it picked", _p.endswith("Real.cs"), _p)
+shutil.rmtree(_srcdir, ignore_errors=True)
+
+# ---- read_mcp_entry against a real file
+_cfgdir = tempfile.mkdtemp(prefix="preflight-mcp-")
+_path, _entry = pf.read_mcp_entry(_cfgdir, pf.DECOMPILER_SERVER)
+check("a repo with no .mcp.json reports no config", _path is None and _entry is None)
+with open(os.path.join(_cfgdir, ".mcp.json"), "w") as fh:
+    json.dump({"mcpServers": {"bc-decompiler": {"command": "dotnet", "args": ["/x/S.dll"]}}}, fh)
+_path, _entry = pf.read_mcp_entry(_cfgdir, pf.DECOMPILER_SERVER)
+check("the bc-decompiler entry is read out of .mcp.json",
+      _entry is not None and _entry["args"] == ["/x/S.dll"], str(_entry))
+with open(os.path.join(_cfgdir, ".mcp.json"), "w") as fh:
+    fh.write("{ not json")
+_path, _entry = pf.read_mcp_entry(_cfgdir, pf.DECOMPILER_SERVER)
+check("an unparseable .mcp.json is reported as 'no entry', not raised",
+      _path is not None and _entry is None)
+shutil.rmtree(_cfgdir, ignore_errors=True)
+
+# ---- mcp_call must survive mise's banner landing in the JSON-RPC stream
+# `dotnet` is a mise shim on this box, and mise prints its activation banner on
+# STDOUT. In a line-delimited JSON-RPC stream that is not a formatting nuisance --
+# it is a parse error on the first read, which would report a healthy server as
+# broken. Same failure mode strip_shim_banner() exists for, one layer down.
+_fake = tempfile.mkdtemp(prefix="preflight-mcp-srv-")
+_srv = os.path.join(_fake, "srv.py")
+with open(_srv, "w") as fh:
+    fh.write(
+        "import json,sys\n"
+        "sys.stdout.write('mise ~/.config/mise/config.toml tools: dotnet@10.0.0\\n')\n"
+        "sys.stdout.flush()\n"
+        "for line in sys.stdin:\n"
+        "    try: msg=json.loads(line)\n"
+        "    except ValueError: continue\n"
+        "    if msg.get('method')=='initialize':\n"
+        "        print(json.dumps({'jsonrpc':'2.0','id':msg['id'],'result':{}}),flush=True)\n"
+        "    elif msg.get('method')=='tools/call':\n"
+        "        body=json.dumps({'status':'ok','data':{'registeredAliases':['bc281']}})\n"
+        "        print(json.dumps({'jsonrpc':'2.0','id':msg['id'],\n"
+        "            'result':{'content':[{'type':'text','text':body}]}}),flush=True)\n")
+_rc, _payload, _err = pf.mcp_call([sys.executable, _srv], "list_contexts", timeout=30)
+check("mcp_call talks to a server whose stdout starts with a mise banner",
+      _rc == 0, f"rc={_rc} err={_err}")
+check("mcp_call returns the tool payload past the banner",
+      _payload.get("data", {}).get("registeredAliases") == ["bc281"], str(_payload))
+
+_rc, _payload, _err = pf.mcp_call([sys.executable, "-c", "import sys; sys.exit(0)"],
+                                  "list_contexts", timeout=20)
+check("a server that exits without answering is an error, never an empty success",
+      _rc != 0 and _err, f"rc={_rc} err={_err}")
+
+_rc, _payload, _err = pf.mcp_call(["/nonexistent/mcp-server"], "list_contexts", timeout=10)
+check("a server binary that does not exist is an error, never an empty success",
+      _rc != 0 and _err, f"rc={_rc} err={_err}")
+shutil.rmtree(_fake, ignore_errors=True)
+
+# ---- the report a contributor actually reads
+_txt = pf.render_report([pf.classify_lsp(_dc.replace(_lsp, rc=2)),
+                         graph_with(stray_removed=["/repo/graphify-out"]),
+                         dec_with(probe_rc=1, error="no answer")], strict=False)
+check("the navigation warnings render one line each with a name",
+      _txt.count("WARN") >= 3, _txt)
+check("the rendered navigation report tells the reader what to do",
+      _txt.count("-> what to do:") >= 3, _txt)
+
+
 print()
 if FAILURES:
     print(f"FAILED: {len(FAILURES)} check(s): {', '.join(FAILURES)}")

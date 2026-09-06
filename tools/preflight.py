@@ -21,12 +21,27 @@ moment, and that ambiguity is the whole incident.
 
 A check a busy coordinator can decline is not a check.
 
+It also checks the CODE-NAVIGATION tooling -- the C# language server behind
+tools/lsp-query.py, graphify, and the bc-decompiler MCP server (#3087). Those
+three do not affect whether the runner is correct; they affect whether an agent
+gets a confidently wrong answer while reading it, which each of them has already
+produced here. So they are probed for a KNOWN-GOOD ANSWER rather than for
+presence -- an installed-but-broken tool returns nothing, which is what a real
+negative looks like.
+
+The graph is REPAIRED rather than reported: a stale one is rebuilt (~2s) and a
+stray copy outside AlRunner/ is deleted, because telling a human to run a
+two-second command is asking a person to do a script's job and an unattended loop
+has no person to ask. This is the only check in this file that writes anything;
+--no-tools skips it. See the comment on LSP_PROBE_SYMBOL for the severity split.
+
 Usage:
     tools/preflight.py                 # human-readable report
     tools/preflight.py --json          # machine-readable, same verdicts
     tools/preflight.py --strict        # warnings are also non-zero
     tools/preflight.py --reap          # remove worktrees of MERGED PRs, if clean
     tools/preflight.py --with-corpus   # also run the corpus baseline (minutes)
+    tools/preflight.py --no-tools      # skip the code-navigation checks (~10s)
 """
 from __future__ import annotations
 
@@ -38,6 +53,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Optional
 
@@ -64,6 +80,68 @@ BUDGET_WARN_FRACTION = 0.85
 BUDGET_STALE_MINUTES = 60
 
 OMARCHY_USAGE_BIN = "/usr/share/omarchy/bin/omarchy-agent-usage-claude"
+
+# --------------------------------------------------------------------------
+# code-navigation tooling (issue #3087)
+# --------------------------------------------------------------------------
+# WHY THESE ARE CHECKED AT ALL, AND WHY THEY ONLY EVER WARN.
+#
+# The three tools below -- the C# language server behind tools/lsp-query.py,
+# graphify, and the bc-decompiler MCP server -- are how an agent finds code
+# without a grep sweep. None of them affects whether the runner is correct. What
+# they affect is whether an agent gets a *confidently wrong answer*, and each has
+# already produced one here:
+#
+#   * lsp-query.py exits 2 when the server never answered. An agent reading that
+#     as "nothing calls this" has a false negative that looks like a finding.
+#   * `graphify update` and `graphify query` both default to graphify-out/graph.json
+#     RELATIVE TO THE CURRENT DIRECTORY, so a rebuild run from one directory and a
+#     query from another silently use different files. A root-level copy once sat
+#     13 days stale while the documented rebuild appeared to be working.
+#   * .mcp.json changes need a session restart, so "configured" and "usable right
+#     now" are different states, and only the second one is worth anything.
+#
+# So the checks probe for a KNOWN-GOOD ANSWER rather than for the tool's presence:
+# "is it installed" cannot distinguish a working server from one that returns
+# nothing. Each probe additionally validates its own fixture against the checkout,
+# so a probe that has drifted reports itself as drifted instead of blaming the tool.
+#
+# SEVERITY: WARN by default, with exactly one condition that can FAIL. The split
+# is the point, so it is spelled out.
+#   - overall_exit() turns any FAIL into exit 1, and the autonomous cycle treats
+#     that as "do not start". A tool being absent, or a server not answering, does
+#     not earn that: each degrades to a documented fallback that still produces
+#     correct work (ripgrep, tools/context-pack.py, reading the DLL another way),
+#     so it makes an agent slower rather than wrong. `--strict` already turns any
+#     WARN into exit 2 for a caller who wants zero tolerance.
+#   - The exception is a STRAY GRAPH that could not be removed. That one is not
+#     "a tool is missing", it is a tool CONFIDENTLY ANSWERING WRONG: measured, an
+#     18-day-old graph at the repo root returned "No matching nodes found." -- exit
+#     0 -- for a symbol that exists, while the correct graph returned 11 nodes. No
+#     rebuild fixes it, because a rebuild under AlRunner/ never touches it. That is
+#     precisely the class of failure preflight exists to catch, so it can halt.
+#     Preflight deletes it first and only fails if it could not.
+#   - Staleness is not reported at all any more. It is repaired -- see
+#     probe_graphify.
+# Keeping FAIL for "this box produces wrong answers" is what keeps FAIL worth
+# reading; the stray graph is in that category, and nothing else here is.
+LSP_PROBE_SYMBOL = "SafeDirectoryScan"
+# The answer the probe must get back. Checked against the working tree first, so a
+# rename turns into "the probe fixture moved" rather than "the language server is
+# broken" -- a check that cannot tell those apart is worse than no check.
+LSP_PROBE_FILE = "AlRunner/Infrastructure/SafeDirectoryScan.cs"
+LSP_PROBE_DECL = "class SafeDirectoryScan"
+
+# graphify is documented (CLAUDE.md) to be rebuilt AND queried from AlRunner/.
+GRAPHIFY_DIR = "AlRunner"
+GRAPHIFY_REL = os.path.join("graphify-out", "graph.json")
+GRAPHIFY_PROBE_QUERY = f"{LSP_PROBE_SYMBOL} callers"
+
+# The BC contexts CLAUDE.md's table promises. common284/navlang275/... also exist
+# on some boxes; they are extra, not required, so their absence is not a finding.
+DECOMPILER_ALIASES = ["bc260", "bc270", "bc273", "bc275",
+                      "bc280", "bc281", "bc282", "bc283", "bc284"]
+DECOMPILER_SERVER = "bc-decompiler"
 
 EXIT_MEANING = {
     0: "every check passed (warnings may be present; see --strict)",
@@ -1139,6 +1217,495 @@ def check_budget(skip_fallback: bool = False) -> CheckResult:
                               "can be paced against a measured figure rather than a guess.")
 
 
+# --------------------------------------------------------------------------
+# code-navigation tooling: observed state, then pure verdicts
+# --------------------------------------------------------------------------
+# The state each probe observed is captured in a dataclass and the verdict is a
+# pure function of it, for the reason stated at the top of test_preflight.py: a
+# threshold suite that reads the live box passes for the wrong reason on a healthy
+# one and cannot be made to fail on demand. Every negative case below -- server
+# down, graph stale, graph in the wrong directory, MCP server unregistered, a
+# context missing -- is constructed directly in the tests.
+@dataclass
+class LspState:
+    script: bool = False            # tools/lsp-query.py is in this checkout
+    server_on_path: bool = False    # csharp-ls resolves
+    fixture_ok: bool = False        # LSP_PROBE_FILE still declares LSP_PROBE_SYMBOL
+    rc: Optional[int] = None        # lsp-query.py exit: 0 answered, 1 real negative, 2 server failed
+    out: str = ""
+    timed_out: bool = False
+
+
+@dataclass
+class GraphifyState:
+    binary: Optional[str] = None        # graphify on PATH
+    graph: Optional[str] = None         # the canonical AlRunner/graphify-out/graph.json
+    graph_mtime: Optional[float] = None
+    newest_source: Optional[float] = None
+    newest_source_path: str = ""
+    stray_removed: list = field(default_factory=list)   # stray graph dirs preflight deleted
+    stray_kept: list = field(default_factory=list)      # stray graph dirs it could NOT delete
+    stray_error: str = ""
+    rebuilt: bool = False               # preflight ran `graphify update .` itself
+    rebuild_rc: Optional[int] = None
+    rebuild_secs: Optional[float] = None
+    rebuild_out: str = ""
+    query_rc: Optional[int] = None
+    query_out: str = ""
+
+
+@dataclass
+class DecompilerState:
+    config: Optional[str] = None    # path to the .mcp.json that was read
+    registered: bool = False        # it declares a bc-decompiler server
+    target: str = ""                # the .dll/binary the entry points at
+    target_exists: bool = False
+    probe_rc: Optional[int] = None  # 0 = the server answered over stdio
+    aliases: list = field(default_factory=list)
+    error: str = ""
+
+
+def classify_lsp(st: LspState) -> CheckResult:
+    """Verdict on the C# language server, from a probe with a known-good answer."""
+    name, cmd = "nav-lsp", f"tools/lsp-query.py symbol {LSP_PROBE_SYMBOL}"
+    fallback = ("Nothing is blocked: use rg / tools/context-pack.py meanwhile. "
+                "Never read a failed lookup as 'nothing calls this'.")
+    if not st.script:
+        return CheckResult(name=name, status="WARN", command=cmd,
+                           summary="tools/lsp-query.py is not in this checkout",
+                           remedy="Check the repository out fully.\n" + fallback)
+    if not st.fixture_ok:
+        # The probe, not the tool. Say so, or the next reader spends an hour on a
+        # language server that was fine all along.
+        return CheckResult(
+            name=name, status="WARN", command=cmd,
+            summary=f"this check's own probe has drifted: {LSP_PROBE_FILE} no longer "
+                    f"declares '{LSP_PROBE_DECL}'",
+            detail=["The language server was NOT tested -- there is no known-good answer "
+                    "to compare against, so a result either way would mean nothing."],
+            remedy=f"Update LSP_PROBE_SYMBOL / LSP_PROBE_FILE / LSP_PROBE_DECL in "
+                   f"tools/preflight.py to a symbol that still exists.")
+    if not st.server_on_path:
+        return CheckResult(name=name, status="WARN", command="command -v csharp-ls",
+                           summary="csharp-ls is not on PATH, so every lsp-query.py call "
+                                   "will exit 2",
+                           remedy="mise use -g dotnet:csharp-ls\n" + fallback)
+    if st.timed_out:
+        return CheckResult(name=name, status="WARN", command=cmd,
+                           summary="the language server did not answer within the probe timeout",
+                           remedy="Run the command by hand to see where it stops.\n" + fallback)
+    if st.rc == 2:
+        return CheckResult(
+            name=name, status="WARN", command=cmd,
+            summary="the language server could not be started or did not answer (exit 2)",
+            detail=["Exit 2 is NOT a negative result. An empty answer from a broken server "
+                    "looks exactly like 'nothing calls this', which is how a false negative "
+                    "gets acted on as a finding.",
+                    (st.out or "").strip()[:400]],
+            remedy="Check csharp-ls runs: csharp-ls --version. The plugin must be active "
+                   "for .cs.\n" + fallback)
+    if st.rc == 1:
+        return CheckResult(
+            name=name, status="WARN", command=cmd,
+            summary=f"the server answered but did not find {LSP_PROBE_SYMBOL}, which this "
+                    f"checkout does declare",
+            detail=[f"{LSP_PROBE_FILE} contains '{LSP_PROBE_DECL}', so a real negative here "
+                    f"means the server's index does not match the working tree."],
+            remedy="Re-run once (the first call builds the index). If it persists, the "
+                   "solution AlRunner.slnx may not cover the file.\n" + fallback)
+    if st.rc != 0:
+        return CheckResult(name=name, status="WARN", command=cmd,
+                           summary=f"lsp-query.py exited {st.rc}, which is not a documented code",
+                           remedy="Run it by hand and read the output.\n" + fallback)
+    if LSP_PROBE_FILE not in st.out:
+        return CheckResult(
+            name=name, status="WARN", command=cmd,
+            summary="the server answered, but not with the known-good answer",
+            detail=[f"expected the reply to name {LSP_PROBE_FILE}",
+                    (st.out or "").strip()[:400]],
+            remedy="The index is stale or points at a different tree. Re-run; if it "
+                   "persists, restart the server.\n" + fallback)
+    return CheckResult(name=name, status="PASS", command=cmd,
+                       summary=f"answered with the known-good result ({LSP_PROBE_FILE})",
+                       data={"rc": st.rc})
+
+
+def classify_graphify(st: GraphifyState) -> CheckResult:
+    """Verdict on graphify.
+
+    Two failure modes, and they are NOT the same size:
+
+    * A **stray graph outside AlRunner/** makes a query run from the repo root read
+      a different file, indefinitely -- rebuilding the canonical one does not touch
+      it. Measured on the box this was written on: an 18-day-old root copy answered
+      `No matching nodes found.` for a symbol that exists, while the correct graph
+      returned 11 nodes. That is a confident false negative, which is the failure
+      class preflight exists to catch, so it can FAIL. Preflight deletes the stray
+      first (it is gitignored, derived, and rebuilt in two seconds) and only fails
+      if it could not.
+
+    * A **stale graph** is not reported at all any more, because reporting it asked a
+      human to run a two-second command -- and in an unattended loop there is no
+      human to ask. `probe_graphify` rebuilds it and this says that it did. CLAUDE.md
+      already says "rebuild rather than wonder whether it is current".
+    """
+    name = "nav-graphify"
+    cmd = f"cd {GRAPHIFY_DIR} && graphify query \"{GRAPHIFY_PROBE_QUERY}\""
+    rebuild = f"cd {GRAPHIFY_DIR} && graphify update .   # ~2 seconds"
+    stray_why = (
+        "Both `graphify update` and `graphify query` default to graphify-out/graph.json "
+        "relative to the CURRENT directory, so a query run from the repository root "
+        "reads the stray one and a rebuild under AlRunner/ never touches it. A stale "
+        "graph answers `No matching nodes found.` -- and exits 0 -- for symbols that "
+        "exist, which is indistinguishable from a true negative.")
+    if not st.binary:
+        return CheckResult(name=name, status="WARN", command="command -v graphify",
+                           summary="graphify is not on PATH",
+                           remedy="Install it, or use tools/context-pack.py and rg instead. "
+                                  "Nothing is blocked.")
+    # A stray that is still there is the one condition here that can halt a cycle: it
+    # produces wrong answers, silently, and no rebuild fixes it.
+    if st.stray_kept:
+        return CheckResult(
+            name=name, status="FAIL", command=cmd,
+            summary=f"a graph outside {GRAPHIFY_DIR}/ could not be removed and will answer "
+                    f"false negatives",
+            detail=[f"stray: {p}" for p in st.stray_kept]
+                   + ([st.stray_error] if st.stray_error else [])
+                   + [stray_why],
+            remedy="Delete it by hand -- it is gitignored derived data:\n"
+                   + "\n".join(f"  rm -rf {p}" for p in st.stray_kept))
+    if st.rebuilt and st.rebuild_rc not in (0, None):
+        return CheckResult(
+            name=name, status="WARN", command=rebuild,
+            summary=f"the graph needed rebuilding and `graphify update .` exited "
+                    f"{st.rebuild_rc}",
+            detail=[(st.rebuild_out or "").strip()[:400]],
+            remedy="Run it by hand and read the output. Meanwhile use rg / "
+                   "tools/context-pack.py; nothing is blocked.")
+    if not st.graph:
+        return CheckResult(name=name, status="WARN", command=rebuild,
+                           summary=f"no graph at {GRAPHIFY_DIR}/{GRAPHIFY_REL}, and preflight "
+                                   f"could not build one",
+                           remedy=rebuild)
+    if st.query_rc not in (None, 0):
+        return CheckResult(name=name, status="WARN", command=cmd,
+                           summary=f"the graph exists but a query against it exited {st.query_rc}",
+                           detail=[(st.query_out or "").strip()[:400]], remedy=rebuild)
+    if st.query_rc == 0 and LSP_PROBE_SYMBOL not in st.query_out:
+        return CheckResult(
+            name=name, status="WARN", command=cmd,
+            summary="the graph answered, but not with the known-good node",
+            detail=[f"expected a node named {LSP_PROBE_SYMBOL}",
+                    (st.query_out or "").strip()[:400]],
+            remedy=rebuild)
+    # Healthy. Anything preflight had to FIX to get here is said out loud rather than
+    # folded into a silent PASS -- a reader has to be able to tell "it was already
+    # right" from "it was wrong and preflight repaired it".
+    fixed = []
+    if st.stray_removed:
+        fixed += [f"removed a stray graph that would have answered false negatives: {p}"
+                  for p in st.stray_removed] + [stray_why]
+    if st.rebuilt:
+        secs = f" in {st.rebuild_secs:.1f}s" if st.rebuild_secs is not None else ""
+        fixed.append(f"rebuilt the graph{secs} -- it was missing or behind "
+                     f"{os.path.basename(st.newest_source_path) or 'the sources'}")
+    detail = fixed + ["Query with bare symbols or `Symbol callers`. An English question "
+                      "matches on the words you type and silently returns unrelated nodes."]
+    if st.stray_removed:
+        return CheckResult(
+            name=name, status="WARN", command=cmd,
+            summary=f"a stray graph outside {GRAPHIFY_DIR}/ was found and removed; the "
+                    f"graph now resolves {LSP_PROBE_SYMBOL}",
+            detail=detail, remedy="Nothing to do -- preflight removed it. It comes back "
+                                  "if something runs `graphify update` from the repo root.",
+            data={"graph": st.graph, "stray_removed": st.stray_removed})
+    return CheckResult(
+        name=name, status="PASS", command=cmd,
+        summary=("rebuilt, and resolved " + LSP_PROBE_SYMBOL) if st.rebuilt
+                else f"graph is current and resolved {LSP_PROBE_SYMBOL}",
+        detail=detail, data={"graph": st.graph, "rebuilt": st.rebuilt})
+
+
+def classify_decompiler(st: DecompilerState) -> CheckResult:
+    """Verdict on the bc-decompiler MCP server.
+
+    Two states that are easy to conflate: *registered* in .mcp.json, and *usable
+    right now*. Registering a server mid-session does nothing until the session
+    restarts, so the second is the one worth reporting -- and the only way to
+    establish it from outside the session is to speak MCP to the server directly,
+    which is what the probe does.
+    """
+    name = "nav-bc-decompiler"
+    cmd = f"tools/preflight.py  (spawns the {DECOMPILER_SERVER} server and calls list_contexts)"
+    setup = "tools/setup-bc-decompiler.sh   (needs the .NET 10 SDK; the runner stays on net8.0)"
+    if not st.config:
+        return CheckResult(name=name, status="WARN", command="cat .mcp.json",
+                           summary="no .mcp.json in the repository root",
+                           detail=[".mcp.json is gitignored and per-machine, so a fresh "
+                                   "checkout never has one."],
+                           remedy=setup)
+    if not st.registered:
+        return CheckResult(name=name, status="WARN", command=f"cat {st.config}",
+                           summary=f"{st.config} declares no '{DECOMPILER_SERVER}' server",
+                           remedy=setup)
+    if not st.target_exists:
+        return CheckResult(name=name, status="WARN", command=f"cat {st.config}",
+                           summary=f"{DECOMPILER_SERVER} is registered but its target is missing",
+                           detail=[f"target: {st.target or '(none)'}"],
+                           remedy="Re-publish it: " + setup)
+    if st.probe_rc != 0:
+        return CheckResult(
+            name=name, status="WARN", command=cmd,
+            summary="the server is registered but did not answer over stdio",
+            detail=[st.error.strip()[:400] or "no output"],
+            remedy="Run it by hand to see the error:\n"
+                   f"  dotnet {st.target}\n" + setup)
+    missing = [a for a in DECOMPILER_ALIASES if a not in st.aliases]
+    if missing:
+        return CheckResult(
+            name=name, status="WARN", command=cmd,
+            summary=f"the server answers, but {len(missing)} BC context(s) are not registered: "
+                    f"{', '.join(missing)}",
+            detail=[f"present: {', '.join(st.aliases) or '(none)'}",
+                    "A missing alias makes compare_symbols across that version impossible, "
+                    "which is how a Cecil rewrite that stopped being reached goes unnoticed."],
+            remedy="Load the missing versions once (contexts persist across restarts) -- "
+                   "see the end of " + setup)
+    return CheckResult(
+        name=name, status="PASS", command=cmd,
+        summary=f"server answers and all {len(DECOMPILER_ALIASES)} BC contexts are registered",
+        detail=["Registered, and proven to answer -- but a .mcp.json change still needs a "
+                "SESSION RESTART before this session or its subagents can call it. "
+                "In-session, confirm with mcp__bc-decompiler__status."],
+        data={"aliases": st.aliases})
+
+
+def ts(epoch: float) -> str:
+    return dt.datetime.fromtimestamp(epoch).strftime("%Y-%m-%d %H:%M")
+
+
+def human_age(seconds: float) -> str:
+    if seconds < 90:
+        return f"{int(seconds)}s"
+    if seconds < 5400:
+        return f"{seconds / 60:.0f}m"
+    if seconds < 172800:
+        return f"{seconds / 3600:.1f}h"
+    return f"{seconds / 86400:.1f}d"
+
+
+# --------------------------------------------------------------------------
+# code-navigation tooling: the probes themselves
+# --------------------------------------------------------------------------
+def newest_source_mtime(root: str) -> tuple[Optional[float], str]:
+    """Newest .cs under `root`, ignoring build output and the graph itself."""
+    newest, path = None, ""
+    for base, dirs, files in os.walk(root):
+        dirs[:] = [d for d in dirs if d not in ("bin", "obj", "graphify-out", ".git")]
+        for f in files:
+            if not f.endswith(".cs"):
+                continue
+            fp = os.path.join(base, f)
+            try:
+                m = os.path.getmtime(fp)
+            except OSError:
+                continue
+            if newest is None or m > newest:
+                newest, path = m, fp
+    return newest, path
+
+
+def probe_lsp(repo: str, timeout: float = 180) -> LspState:
+    st = LspState()
+    script = os.path.join(repo, "tools", "lsp-query.py")
+    st.script = os.path.exists(script)
+    fixture = os.path.join(repo, LSP_PROBE_FILE)
+    try:
+        with open(fixture, encoding="utf-8", errors="replace") as fh:
+            st.fixture_ok = LSP_PROBE_DECL in fh.read()
+    except OSError:
+        st.fixture_ok = False
+    st.server_on_path = shutil.which("csharp-ls") is not None
+    if not (st.script and st.fixture_ok and st.server_on_path):
+        return st
+    r = run([sys.executable, script, "symbol", LSP_PROBE_SYMBOL], cwd=repo, timeout=timeout)
+    st.rc, st.out, st.timed_out = r.rc, r.out + r.err, r.timed_out
+    return st
+
+
+def stray_graph_dirs(repo: str) -> list:
+    """graphify-out directories that are NOT the canonical one under AlRunner/.
+
+    The documented trap is a rebuild in one directory and a query in another, and the
+    two directories in play are the repo root and AlRunner/ -- so a graph at the root
+    is the stray. A `graphify query` run from there reads it, forever, and a rebuild
+    under AlRunner/ never touches it.
+    """
+    canonical = os.path.abspath(os.path.join(repo, GRAPHIFY_DIR, "graphify-out"))
+    root = os.path.abspath(os.path.join(repo, "graphify-out"))
+    return [root] if os.path.isdir(root) and root != canonical else []
+
+
+def probe_graphify(repo: str, timeout: float = 180) -> GraphifyState:
+    """Measure graphify -- and REPAIR what is cheap and unambiguous to repair.
+
+    This probe is not read-only, unlike every other check in this file, and that is
+    deliberate on two counts:
+
+    * A stray graph is **deleted**. It is gitignored derived data, rebuilt in about two
+      seconds, and while it exists a query from the repo root answers false negatives.
+      Leaving it in place to report it would leave the box broken for the next agent.
+    * A stale or missing graph is **rebuilt** rather than reported. It costs ~2s warm,
+      and CLAUDE.md already says "rebuild rather than wonder whether it is current".
+      Telling a human to run a two-second command is asking a person to do a script's
+      job, and in an unattended loop there is no person to ask.
+
+    Both repairs are reported in the result, never folded into a silent PASS.
+    `--no-tools` skips this check entirely for a caller who wants nothing touched.
+    """
+    st = GraphifyState(binary=shutil.which("graphify"))
+    for stray in stray_graph_dirs(repo):
+        try:
+            shutil.rmtree(stray)
+            st.stray_removed.append(stray)
+        except OSError as exc:
+            st.stray_kept.append(stray)
+            st.stray_error = str(exc)
+
+    graph_dir = os.path.join(repo, GRAPHIFY_DIR)
+    canonical = os.path.join(graph_dir, GRAPHIFY_REL)
+    st.newest_source, st.newest_source_path = newest_source_mtime(graph_dir)
+
+    def graph_mtime() -> Optional[float]:
+        try:
+            return os.path.getmtime(canonical)
+        except OSError:
+            return None
+
+    mtime = graph_mtime()
+    stale = mtime is None or (st.newest_source is not None and mtime < st.newest_source)
+    if st.binary and not st.stray_kept and stale:
+        started = time.monotonic()
+        r = run([st.binary, "update", "."], cwd=graph_dir, timeout=timeout)
+        st.rebuilt = True
+        st.rebuild_rc = 124 if r.timed_out else r.rc
+        st.rebuild_secs = time.monotonic() - started
+        st.rebuild_out = r.out + r.err
+        mtime = graph_mtime()
+
+    if mtime is not None:
+        st.graph, st.graph_mtime = canonical, mtime
+    if st.binary and st.graph and not st.stray_kept:
+        r = run([st.binary, "query", GRAPHIFY_PROBE_QUERY], cwd=graph_dir, timeout=timeout)
+        st.query_rc, st.query_out = r.rc, r.out + r.err
+    return st
+
+
+def read_mcp_entry(repo: str, server: str) -> tuple[Optional[str], Optional[dict]]:
+    """The named server's entry from the repo's .mcp.json, or (path, None)."""
+    path = os.path.join(repo, ".mcp.json")
+    if not os.path.exists(path):
+        return None, None
+    try:
+        with open(path, encoding="utf-8") as fh:
+            doc = json.load(fh)
+    except (OSError, ValueError):
+        return path, None
+    servers = doc.get("mcpServers") or {}
+    entry = servers.get(server)
+    return path, (entry if isinstance(entry, dict) else None)
+
+
+def mcp_call(argv: list[str], tool: str, *, cwd: Optional[str] = None,
+             timeout: float = 90) -> tuple[int, dict, str]:
+    """Speak MCP over stdio to a server and call one tool. Returns (rc, payload, error).
+
+    rc 0 means the server initialized AND answered the call. Anything else is an
+    error string, never an empty success -- the whole point of the check is that
+    "no answer" and "an empty answer" must not look the same.
+
+    mise prints its activation banner on STDOUT for shimmed commands (`dotnet` is
+    one), which would land in the middle of a JSON-RPC stream. Non-JSON lines are
+    skipped rather than parsed, for the same reason strip_shim_banner() exists.
+    """
+    try:
+        p = subprocess.Popen(argv, cwd=cwd, stdin=subprocess.PIPE,
+                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    except (FileNotFoundError, PermissionError, OSError) as exc:
+        return 127, {}, str(exc)
+    deadline = time.time() + timeout
+
+    def send(obj: dict) -> None:
+        assert p.stdin is not None
+        p.stdin.write((json.dumps(obj) + "\n").encode())
+        p.stdin.flush()
+
+    def read_response(want_id: int) -> Optional[dict]:
+        assert p.stdout is not None
+        while time.time() < deadline:
+            line = p.stdout.readline()
+            if not line:
+                return None
+            try:
+                doc = json.loads(line.decode("utf-8", "replace"))
+            except ValueError:
+                continue            # mise banner, or any other non-protocol noise
+            if doc.get("id") == want_id:
+                return doc
+        return None
+
+    try:
+        send({"jsonrpc": "2.0", "id": 1, "method": "initialize",
+              "params": {"protocolVersion": "2024-11-05", "capabilities": {},
+                         "clientInfo": {"name": "al-runner-preflight", "version": "1"}}})
+        if read_response(1) is None:
+            return 1, {}, "server did not respond to initialize"
+        send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+        send({"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+              "params": {"name": tool, "arguments": {}}})
+        doc = read_response(2)
+        if doc is None:
+            return 1, {}, f"server did not respond to {tool}"
+        if "error" in doc:
+            return 1, {}, json.dumps(doc["error"])[:400]
+        try:
+            text = doc["result"]["content"][0]["text"]
+            return 0, json.loads(text), ""
+        except (KeyError, IndexError, TypeError, ValueError) as exc:
+            return 1, {}, f"unreadable {tool} reply: {exc}"
+    except OSError as exc:
+        return 1, {}, str(exc)
+    finally:
+        try:
+            p.kill()
+            p.wait(timeout=5)
+        except Exception:
+            pass
+
+
+def probe_decompiler(repo: str, timeout: float = 90) -> DecompilerState:
+    st = DecompilerState()
+    st.config, entry = read_mcp_entry(repo, DECOMPILER_SERVER)
+    if st.config is None or entry is None:
+        return st
+    st.registered = True
+    argv = [entry.get("command") or ""] + list(entry.get("args") or [])
+    st.target = next((a for a in argv[1:] if a.endswith(".dll")), argv[-1] if argv[1:] else "")
+    st.target_exists = bool(st.target) and os.path.exists(st.target)
+    if not st.target_exists:
+        return st
+    rc, payload, err = mcp_call(argv, "list_contexts", cwd=repo, timeout=timeout)
+    st.probe_rc, st.error = rc, err
+    if rc == 0:
+        data = payload.get("data") or {}
+        aliases = data.get("registeredAliases")
+        if not isinstance(aliases, list):
+            aliases = [i.get("contextAlias") for i in (data.get("items") or [])]
+        st.aliases = [a for a in aliases if isinstance(a, str)]
+    return st
+
+
 def check_corpus(repo: str, enabled: bool) -> CheckResult:
     """The skill's step 1: the corpus is the known-good baseline, and its expected
     count is checked in at tests/expectations/count-baseline/.
@@ -1287,6 +1854,10 @@ def main(argv: Optional[list[str]] = None) -> int:
                          "is missing (it needs the network)")
     ap.add_argument("--no-sizes", action="store_true",
                     help="skip recursive size measurement (faster, less useful)")
+    ap.add_argument("--no-tools", action="store_true",
+                    help="skip the code-navigation checks (C# LSP, graphify, bc-decompiler). "
+                         "They cost about 10s, dominated by the language server's first "
+                         "answer, and only ever WARN")
     args = ap.parse_args(argv)
 
     here = os.path.dirname(os.path.abspath(__file__))
@@ -1333,6 +1904,19 @@ def main(argv: Optional[list[str]] = None) -> int:
         check_github(slug),
         check_corpus(repo, args.with_corpus),
     ]
+    if args.no_tools:
+        # A SKIP, never silence: a reader must be able to tell "these passed" from
+        # "these were not run", which is the same rule check_corpus follows.
+        results += [CheckResult(name=n, status="SKIP",
+                                summary="not run (--no-tools)",
+                                command="tools/preflight.py   # without --no-tools")
+                    for n in ("nav-lsp", "nav-graphify", "nav-bc-decompiler")]
+    else:
+        results += [
+            classify_lsp(probe_lsp(repo)),
+            classify_graphify(probe_graphify(repo)),
+            classify_decompiler(probe_decompiler(repo)),
+        ]
     results.sort(key=lambda r: _ORDER.get(r.status, 9))
 
     reap_log: list[str] = []
