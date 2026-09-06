@@ -241,7 +241,7 @@ public sealed class CollectionCostOrdererTests
     /// #3103 loosened the freshness guard's failing band; it must not have loosened it into
     /// nothing. The step in bc-tests.yml still has to FAIL its leg, because a collection
     /// genuinely missing from the table above the failing band is the #1887 tail — and this
-    /// job rolls up into the `All BC versions passed` required check, so `continue-on-error`
+    /// job rolls up into the `BC test matrix passed` required check, so `continue-on-error`
     /// there would silently retire the whole guard while leaving the step in place.
     /// </summary>
     [Fact]

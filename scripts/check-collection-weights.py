@@ -30,7 +30,11 @@ it is precisely the failure #1887 found.
 Two bands, and a clock that is not the wall clock (#3103)
 --------------------------------------------------------
 This runs in bc-tests.yml WITHOUT continue-on-error, inside the legs that roll up into the
-`All BC versions passed` required check. So every number it compares against decides
+`BC test matrix passed` required check (renamed from `All BC versions passed` by #3200
+when the pull-request matrix narrowed to three legs; the check-collection-weights step is
+unaffected by that narrowing, because it is gated on the matrix's `unit-tests` flag, which
+#3200 still computes from the FULL version list -- 27.5 and 28.4, on a pull request exactly
+as on a push). So every number it compares against decides
 whether somebody's pull request goes red — and until #3103 it compared summed wall-clock
 seconds measured on GitHub's shared runners against one fixed line at 2x
 UnmeasuredWeightSeconds (60s). Wall clock on a shared runner is not a property of the
