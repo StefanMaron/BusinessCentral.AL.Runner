@@ -216,8 +216,17 @@ public sealed class BcEngineFixture
     /// </summary>
     public bool Ready => BcEngineBootstrap.Ready;
 
-    /// <summary>Why <see cref="Ready"/> is false, for a test that wants to report it.</summary>
-    public string? SkipReason => BcEngineBootstrap.SkipReason;
+    /// <summary>
+    /// Why <see cref="Ready"/> is false, for a test that wants to report it.
+    ///
+    /// #3078: routed through <see cref="BcEngineSkipReason.OrDefault"/> so it is never null
+    /// while the engine is unready. The 132 call sites in this collection all spell
+    /// <c>_engine.SkipReason ?? "the in-process BC engine is not ready (see
+    /// BcEngineCollection)."</c> — a fallback that is accurate and carries neither a cause
+    /// nor a remedy, i.e. the same defect this issue is about, at 132 places. Making the
+    /// property total fixes them all without touching one of them.
+    /// </summary>
+    public string SkipReason => BcEngineSkipReason.OrDefault(BcEngineBootstrap.SkipReason);
 }
 
 [CollectionDefinition(Name, DisableParallelization = true)]

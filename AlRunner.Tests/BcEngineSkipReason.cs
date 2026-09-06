@@ -73,6 +73,16 @@ public enum BcEngineSkipCause
 
     /// <summary>The bootstrap threw. The detail carries the unwrapped exception.</summary>
     BootstrapThrew,
+
+    /// <summary>
+    /// <see cref="BcEngineBootstrap.Initialize"/> never ran, so there is no reason recorded
+    /// at all — Ready is false purely by default. Reachable whenever something prevents the
+    /// [ModuleInitializer] from firing, which is the #1813 shape itself. Its own cause
+    /// because the 132 call sites that read the fixture's reason used to fall back to a bare
+    /// "the in-process BC engine is not ready (see BcEngineCollection)." here: accurate,
+    /// and carrying no cause and no remedy — the same defect as the reason it replaces.
+    /// </summary>
+    BootstrapDidNotRun,
 }
 
 internal static class BcEngineSkipReason
@@ -108,6 +118,22 @@ internal static class BcEngineSkipReason
              + $"skipping. Cause ({cause}): {detail} Remedy: {remedy}";
     }
 
+    /// <summary>
+    /// The invariant: <c>!Ready</c> implies an ATTRIBUTABLE reason. Every branch of
+    /// <see cref="BcEngineBootstrap.Initialize"/> records one, but the initializer not
+    /// having run at all records nothing — and the 132 <c>SkipReason ?? "…"</c> call sites
+    /// across the collection then printed a bare fallback with no cause and no remedy.
+    /// Routing the fixture's own accessor through here closes that hole in one place
+    /// instead of at every call site.
+    /// </summary>
+    internal static string OrDefault(string? reason) =>
+        string.IsNullOrWhiteSpace(reason)
+            ? Format(BcEngineSkipCause.BootstrapDidNotRun,
+                     "BcEngineBootstrap.Initialize recorded no reason, which means it never ran — "
+                     + "nothing invoked a member of AlRunner.Tests.dll early enough to trigger its "
+                     + "[ModuleInitializer] before the BC engine was needed.")
+            : reason;
+
     private static string Remedy(BcEngineSkipCause cause) => cause switch
     {
         BcEngineSkipCause.ArtifactsMissing or BcEngineSkipCause.ArtifactsIncomplete =>
@@ -137,6 +163,11 @@ internal static class BcEngineSkipReason
             + "entries, and the key folds the runner's own content hash, so more than 8 "
             + "concurrent runner builds evict each other); re-run it or use --cache to give "
             + "this checkout its own cache root.",
+
+        BcEngineSkipCause.BootstrapDidNotRun =>
+            "run `" + BootstrapTool + "`. It wires DOTNET_STARTUP_HOOKS through "
+            + "engine.runsettings, which is what forces this assembly's [ModuleInitializer] to "
+            + "run before the test host touches any BC type (issue #1813).",
 
         BcEngineSkipCause.BootstrapThrew =>
             "this is not a normal environment gap — the bootstrap raised the exception above. "

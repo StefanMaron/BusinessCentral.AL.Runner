@@ -131,7 +131,7 @@ public sealed class BcEngineSkipAttributionTests
     {
         var causes = Enum.GetValues<BcEngineSkipCause>();
 
-        Assert.True(causes.Length >= 6,
+        Assert.True(causes.Length >= 7,
             $"BcEngineSkipCause declares only {causes.Length} values; the attribution theory needs one per " +
             "branch in BcEngineBootstrap.Initialize that can leave Ready false.");
         Assert.Contains(BcEngineSkipCause.NclPreloaded, causes);
@@ -167,6 +167,57 @@ public sealed class BcEngineSkipAttributionTests
 
         Assert.NotNull(ex);
         Assert.IsType<ArgumentOutOfRangeException>(ex);
+    }
+
+    // ---- OrDefault: !Ready implies an attributable reason, with no exceptions ----
+
+    /// <summary>
+    /// The sibling instance of the reported defect. 132 call sites across the
+    /// bc-engine-serial collection spell
+    /// <c>_engine.SkipReason ?? "the in-process BC engine is not ready (see
+    /// BcEngineCollection)."</c>. That fallback fires whenever the bootstrap recorded no
+    /// reason — the [ModuleInitializer] never having run, which is the #1813 shape itself —
+    /// and it is accurate, remedy-less and therefore exactly as silent as the message this
+    /// issue is about. BcEngineFixture.SkipReason is total now, so the fallback is
+    /// unreachable; this pins the replacement rather than trusting 132 edits nobody made.
+    /// </summary>
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void OrDefault_TurnsAnAbsentReason_IntoAnAttributableOne(string? absent)
+    {
+        var reason = BcEngineSkipReason.OrDefault(absent);
+
+        Assert.Contains(BcEngineCollection.Name, reason, StringComparison.Ordinal);
+        Assert.Contains(nameof(BcEngineSkipCause.BootstrapDidNotRun), reason, StringComparison.Ordinal);
+        Assert.Contains(BcEngineSkipReason.BootstrapTool, reason, StringComparison.Ordinal);
+        Assert.Contains("Remedy", reason, StringComparison.Ordinal);
+    }
+
+    /// <summary>Negative direction: a real reason is passed through untouched.</summary>
+    [Fact]
+    public void OrDefault_LeavesARecordedReasonAlone()
+    {
+        var recorded = BcEngineSkipReason.Format(BcEngineSkipCause.CecilCacheCold, "the cache missed.");
+
+        Assert.Equal(recorded, BcEngineSkipReason.OrDefault(recorded));
+    }
+
+    /// <summary>
+    /// The invariant itself, stated over the type rather than over this box's state:
+    /// BcEngineFixture.SkipReason must be non-nullable, so no caller can reach a null and
+    /// substitute a fallback of its own. Reading the ambient fixture instead would assert
+    /// nothing on a machine where the engine came up.
+    /// </summary>
+    [Fact]
+    public void FixtureSkipReason_IsNotNullable_SoNoCallerCanSubstituteABareFallback()
+    {
+        var property = typeof(BcEngineFixture).GetProperty(nameof(BcEngineFixture.SkipReason));
+        Assert.NotNull(property);
+
+        var nullability = new NullabilityInfoContext().Create(property!);
+        Assert.Equal(NullabilityState.NotNull, nullability.ReadState);
     }
 
     // ---- Guards: the remedy must exist, and nothing may bypass the formatter ----
