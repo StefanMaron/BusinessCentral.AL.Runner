@@ -308,8 +308,15 @@ public class InstallBaselineDiskCacheTests
                 $"expected both main app groups to pass, got:\n{output}");
 
             // [THEN] Two closures that differ by one dependency assembly produced two distinct
-            // cache keys and two distinct files. A key that ignored the dependency set (or a
-            // path that collided) would show one.
+            // cache keys and two distinct files. A key that collapsed these two closures
+            // together (or a path that collided) would show one.
+            //
+            // Measured by mutation (#2364): flattening the WHOLE
+            // TestExecutor.CurrentInstallBaselineCacheKey() to a constant fails this test.
+            // Flattening only its dependency-set component, or only its symbol-state
+            // component, does NOT — the two are redundant here, so this pins the key as a
+            // whole rather than the dependency set specifically. See the longer note in
+            // InstallSeedDepCompanyCacheTests.AppGroupWithOwnDependencyApp_*.
             var written = WriteDigests(output);
             Assert.True(written.Count >= 2,
                 $"expected at least 2 distinct dependency-closure keys to be persisted, got "

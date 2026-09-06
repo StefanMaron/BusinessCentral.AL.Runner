@@ -197,8 +197,20 @@ public class InstallSeedDepCompanyCacheTests
 
         // [THEN] Two DIFFERENT dependency closures (the seed app alone vs. the seed app plus
         // one more dependency assembly) each get their OWN resolution — never a cross-key
-        // in-memory HIT. A cache keyed incorrectly (e.g. ignoring the dependency set entirely)
-        // would show one resolution and one HIT; this shows two resolutions and no HIT.
+        // in-memory HIT. A cache keyed so that these two closures collide would show one
+        // resolution and one HIT; this shows two resolutions and no HIT.
+        //
+        // WHAT THIS DOES AND DOES NOT PIN, measured by mutation (#2364, follow-up filed):
+        // TestExecutor.CurrentInstallBaselineCacheKey() concatenates three components, and the
+        // first two — InstallTriggerRunner.CurrentDependencySetKey() and
+        // RecordPatches.RegisteredBcAppSymbolStateKey() — are REDUNDANT for this scenario:
+        // flattening either one alone to a constant leaves this test (and every other test in
+        // both install-cache suites) green, because the other still separates the two closures.
+        // Flattening BOTH fails this test and
+        // InstallBaselineDiskCacheTests.DifferentDependencyClosures_*. So the claim this
+        // actually establishes is "the key separates these two closures", not "the DEPENDENCY
+        // SET component does". An earlier version of this comment asserted the latter; it was
+        // not true and no test had ever checked it.
         //
         // Exact, for the same reason as the positive test above: both closures are unique to
         // this invocation, so neither can be answered by the on-disk tier.
