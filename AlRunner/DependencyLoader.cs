@@ -730,7 +730,26 @@ public sealed class DependencyLoader
         }
     }
 
+    /// <summary>
+    /// The Tier-3 source-compile cache key for one dependency package — the NAME of
+    /// <c>compiled-deps/&lt;key&gt;.dll</c> and its five metadata sidecars, so this string's
+    /// VALUE is persisted, shared across processes, and read by later runs. Changing what it
+    /// computes for unchanged inputs orphans every existing entry on every machine; #3043's
+    /// whole difficulty is that the obvious refactor does exactly that.
+    /// </summary>
     private static string ComputeSourceDependencyCacheKey(AppManifest manifest, string appPath)
+        => ComputeSourceDependencyCacheKeyCore(
+               manifest, appPath, static p => RunnerFingerprint.ComputeFileContentHashMemoized(p));
+
+    /// <summary>
+    /// Testable core: takes the "which bytes is this package?" answer as a delegate, the same
+    /// seam <see cref="AppLoader.ReadManifestCore"/> and <c>AppLoader.ExtractAllDllPathsCore</c>
+    /// use, so a test can prove this method never opens <paramref name="appPath"/> itself —
+    /// which is the entire claim of #3043 and is not visible in the returned key (a fresh read
+    /// and a memo hit of the same bytes agree by construction).
+    /// </summary>
+    internal static string ComputeSourceDependencyCacheKeyCore(
+        AppManifest manifest, string appPath, Func<string, string> contentHashOf)
     {
         using var sha = SHA256.Create();
         using var ms = new MemoryStream();
@@ -752,11 +771,58 @@ public sealed class DependencyLoader
         WriteLine($"app:{manifest.AppId}:{manifest.Publisher}:{manifest.Name}:{manifest.Version}");
         foreach (var dep in manifest.Dependencies.OrderBy(d => $"{d.Publisher}/{d.Name}/{d.Version}/{d.AppId}", StringComparer.OrdinalIgnoreCase))
             WriteLine($"dep:{dep.AppId}:{dep.Publisher}:{dep.Name}:{dep.Version}");
-        using (var fs = File.OpenRead(appPath))
-            WriteLine($"app-bytes:{Convert.ToHexString(sha.ComputeHash(fs))}");
+        WriteLine($"app-bytes:{AppBytesTerm(appPath, contentHashOf)}");
 
         ms.Position = 0;
         return Convert.ToHexString(sha.ComputeHash(ms)).ToLowerInvariant();
+    }
+
+    /// <summary>
+    /// The value of the key's <c>app-bytes:</c> line. Two hazards live here, both of them
+    /// only hazards BECAUSE the key above is persisted (#3043).
+    ///
+    /// <para><b>Casing.</b> This line used to be
+    /// <c>Convert.ToHexString(SHA256.ComputeHash(File.OpenRead(appPath)))</c>, and
+    /// <see cref="Convert.ToHexString(byte[])"/> is UPPERCASE, where
+    /// <see cref="RunnerFingerprint.ComputeContentHash"/> ends in
+    /// <c>.ToLowerInvariant()</c>. Substituting the memo's answer directly would have changed
+    /// this line's text for identical bytes, so every <c>compiled-deps</c> entry on every
+    /// machine and CI cache would have been orphaned and every dependency recompiled once —
+    /// a silent, invisible-in-review cost. <c>.ToUpperInvariant()</c> here restores the exact
+    /// byte sequence the fresh read produced, so the persisted key value is UNCHANGED.
+    /// Round-tripping is exact because the alphabet is hex.
+    /// <c>DependencyCacheKeyContentHashMemoTests
+    /// .Key_IsUnchangedByTheCasingOfTheHashItIsGiven</c> fails if this call is dropped.</para>
+    ///
+    /// <para><b>The sentinel.</b> <see cref="File.OpenRead"/> THREW for a package it could not
+    /// read; the memo answers <see cref="RunnerFingerprint.UnknownContentHash"/> instead. Passing
+    /// that through would give every unidentifiable package one shared
+    /// <c>app-bytes:UNKNOWN</c> line, so the first such package's compiled DLL and its five
+    /// metadata sidecars would be served for every later one — the wrong-answer shape content
+    /// addressing exists to remove (#2955, #2987), reintroduced one layer down. So it throws,
+    /// exactly as the fresh read did, naming the package. Same guard as
+    /// <c>AppLoader.TryPackageIdentity</c> and <c>RecordPatches.BcAppFallback.SafeContentHash</c>,
+    /// which return null for the same reason; here a cache key has no "no identity" value to
+    /// return, and refusing loudly is what the fresh read already did
+    /// (<c>.claude/rules/loud-failures.md</c>).</para>
+    ///
+    /// <para>Unreachable in a real run for the same reason <c>ProgramSupport
+    /// .DependencyContentTerm</c>'s degraded path is: a package the resolver indexed is one
+    /// whose bytes it read (#2987), and <c>AppLoader.ExtractAl</c> has already opened this one
+    /// a few lines above the call site. Kept and tested anyway — a defensive branch no caller
+    /// can reach still has to behave (#2954).</para>
+    /// </summary>
+    private static string AppBytesTerm(string appPath, Func<string, string> contentHashOf)
+    {
+        var hash = contentHashOf(appPath);
+        if (string.IsNullOrEmpty(hash) || hash == RunnerFingerprint.UnknownContentHash)
+            throw new FileNotFoundException(
+                $"dependency package '{appPath}' could not be identified by content, so it has no " +
+                "compiled-deps cache key. Keying it on the shared 'unknown' sentinel would serve " +
+                "one unidentifiable package's compiled DLL and metadata sidecars for every other " +
+                "unidentifiable package.",
+                appPath);
+        return hash.ToUpperInvariant();
     }
 
     // Cheap source scan for "codeunit <id> ..." declarations → "Codeunit<id>" type names,
