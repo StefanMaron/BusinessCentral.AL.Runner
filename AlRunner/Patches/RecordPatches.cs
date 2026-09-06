@@ -230,6 +230,10 @@ public static partial class RecordPatches
     public static void ResetForReload()
     {
         _metaTableCache.Clear();
+        // #3121: every table is rebuilt from scratch below, so carrying the previous bundle's
+        // pending CalcFormula rebuilds forward only buys a wasted repopulate pass on the next
+        // .app registration.
+        ClearUnresolvedCalcFormulaTables();
         _recordTypeCache.Clear();
         // Sibling of the line above, and it said so in its own comment ("Cached HITS only,
         // mirroring _recordTypeCache") while not being mirrored HERE — nothing cleared it on

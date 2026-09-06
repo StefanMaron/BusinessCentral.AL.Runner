@@ -36,29 +36,8 @@ public static partial class RecordPatches
         TryParseTableFile(tableObjectText);
         _metaTableCache.TryRemove(tableId, out _);
 
-        var skeleton = BcRuntime.SkeletonNCLMetadata;
-        if (skeleton != null)
-        {
-            EnsureCachePopulatorReflection();
-            if (_fNCLMetadataCacheEntries != null)
-            {
-                try
-                {
-                    var arr = _fNCLMetadataCacheEntries.GetValue(skeleton) as Array;
-                    const int objectTypeTable = 1;
-                    if (arr != null && arr.Length > objectTypeTable
-                        && arr.GetValue(objectTypeTable) is System.Collections.IDictionary dict)
-                    {
-                        dict.Remove(tableId);
-                    }
-                }
-                catch
-                {
-                    // Best-effort eviction: worst case the field stays FieldNotFoundException
-                    // (loud, per loud-failures.md) rather than silently serving stale metadata.
-                }
-            }
-        }
+        // Shared with the #3121 CalcFormula rebuild — same eviction, same reason.
+        EvictSkeletonMetadataTableEntry(tableId);
 
         PopulateNclMetadataCache();
     }
