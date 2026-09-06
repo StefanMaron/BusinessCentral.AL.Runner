@@ -11,16 +11,55 @@ entry", and a test that fails without an entry fails with "add an entry".
 That machinery works. What nothing checked is the moment the two get out of
 step: a PR fixes the gap, closes the issue, and forgets to delete the entry.
 Nothing in the PR is wrong on its own, so it merges green -- and the NEXT run of
-`main` is red, on a commit whose author has moved on. This broke `main` twice in
-one hour on 2026-09-05:
+`main` is red, on a commit whose author has moved on. That happened twice in one
+hour on 2026-09-05: #2795 (closed by PR #2809) left an entry in
+known-gaps-testpage-boolean-spelling.json, and #2805 (closed by PR #2825) left
+two in known-gaps-start-session-isolation.json. Reported after the fact as #2844
+and #2858 and fixed by deleting the entries (#2845, #2859); #2858 diagnosed the
+mechanism and closed without a guard.
 
-  | issue | closed by | entry left behind in                        |
-  |-------|-----------|---------------------------------------------|
-  | #2795 | PR #2809  | known-gaps-testpage-boolean-spelling.json    |
-  | #2805 | PR #2825  | known-gaps-start-session-isolation.json (x2) |
+Those two are why the shape is known. They are NOT incidents this gate would
+have prevented -- see the next section, which says so with the measurements,
+because an earlier version of this file claimed otherwise.
 
-Reported as #2844 / #2858 and fixed by deleting the entries (#2845, #2859).
-#2858 diagnosed the mechanism and closed without a guard.
+THE TWO ORDERINGS, AND WHICH ONE THE GATE COVERS
+------------------------------------------------
+
+Manifest/issue drift arrives in one of two orders, and the blocking gate below
+covers exactly one of them.
+
+FORWARD -- the entry is already in the checkout when the closing PR is checked.
+The PR text and the manifest then contradict each other inside a single diff,
+and the gate is red before anyone merges. This is the ordering the gate exists
+for, and the ordinary one: an entry normally predates the fix that closes its
+issue.
+
+INVERSE -- the entry lands after the closing PR's own check has run. Nothing
+evaluated at that PR's check time can see an entry that is not there yet, so the
+gate cannot help. Only the non-gating sweep further down covers it, on some
+LATER PR, and only once the linked issue has actually closed.
+
+Both 2026-09-05 incidents were the inverse ordering. Measured, not reasoned:
+
+  - Both known-gaps files were created by PR #2808's merge at 16:56:43Z, and
+    #2808 closes nothing -- so it declared no closing reference for the gate to
+    compare its own new entries against.
+  - PR #2825 (closes #2805) merged at 16:48:28Z, eight minutes BEFORE the entry
+    existed anywhere.
+  - PR #2809 (closes #2795) had exactly one PR Check, created 16:29:20Z, 27
+    minutes before #2808 merged. `main`'s ruleset sets
+    strict_required_status_checks_policy=false, so the base moving underneath it
+    re-triggered nothing.
+  - Replaying each PR's real title, body and commit messages against the
+    manifest as it stood at its OWN check time (base 43d85ea6, which held 12
+    expect-fail-known-gap entries and neither of the two files) exits 0 for
+    both.
+  - The sweep would not have caught them that hour either: #2808's last PR Check
+    ran at 16:39:50Z, when #2795 and #2805 were both still open -- they closed
+    at 17:29:30Z and 16:48:29Z.
+
+So this gate is not credited with a prevented incident. It closes the forward
+ordering, which nothing checked before, and the sweep reports the inverse one.
 
 WHAT THIS CHECKS, AND WHAT IT DELIBERATELY DOES NOT
 ---------------------------------------------------
@@ -34,8 +73,16 @@ That is not a heuristic. The PR asserts the gap is fixed; the manifest asserts
 it is not. Exactly one of them is right, they are in the same diff, and the
 author is the person who can settle it -- by deleting the entry, by re-targeting
 it at the issue that actually tracks the remaining work, or by dropping the
-closing reference. Both incidents above are exactly this shape and would have
-been caught before merge.
+closing reference.
+
+"Blocking" here means the job goes red, not that the merge is refused. This job
+is not a required status check on `main` -- the ruleset requires only "All BC
+versions passed" and "Tests updated" -- so tools/ci-wait.py's is_required()
+answers False for it, auto-merge ignores it, and it cannot turn a ci-wait
+verdict red. It annotates, and a human reads the annotation. That is
+pre-existing and shared with the sibling closing-reference jobs in the same
+workflow; nothing in this script can change it, and making the job required is a
+separate decision for whoever owns the ruleset.
 
 NOT blocking, and on purpose (`--report-closed-issues`):
 

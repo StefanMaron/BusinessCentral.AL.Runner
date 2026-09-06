@@ -296,9 +296,10 @@ a clean run does not hide manifested deviations from the corpus.
    at a closed issue is the exact bookkeeping lie this mode set exists to avoid.
 
    Since #3089 one half of that *is* checked, in CI rather than in the run:
-   `pr-check.yml`'s `expectation-gap-issue-consistency` job fails a PR that
-   declares `Closes #N` while an entry still links issue N
-   (`.github/scripts/check_expectation_gap_issues.py`). See
+   `pr-check.yml`'s `expectation-gap-issue-consistency` job goes red on a PR
+   that declares `Closes #N` while an entry still links issue N
+   (`.github/scripts/check_expectation_gap_issues.py`). It is an annotation, not
+   a merge block — the job is not a required status check. See
    [the guard](#the-ci-guard-on-issue-links) below for what it does and does not
    cover.
 3. **`expect-divergence` requires `Reason` + `Doc`, and forbids `Issue`.** It
@@ -334,12 +335,50 @@ and the line the reference came from.
 That is not a guess about which one is wrong. The PR asserts the gap is fixed;
 the manifest asserts it is not; both are in the same diff, so the author can
 settle it — delete the entry, re-target it at the open issue tracking what
-remains, or drop the closing reference. Before this existed the disagreement
-merged green and turned up as a red `main` the next morning, twice in one hour on
-2026-09-05: issue #2795 (fixed by PR #2809) left an entry in
-`known-gaps-testpage-boolean-spelling.json`, and issue #2805 (fixed by PR #2825)
-left two in `known-gaps-start-session-isolation.json`. Both were reported after
-the fact, as #2844 and #2858.
+remains, or drop the closing reference.
+
+**"Blocking" means the job goes red, not that the merge is refused.** `main`'s
+ruleset requires exactly two contexts, `All BC versions passed` and
+`Tests updated`; this job is neither, so `tools/ci-wait.py`'s `is_required()`
+answers `False` for it, auto-merge ignores it, and it cannot turn a `ci-wait`
+verdict red. It annotates and a human reads the annotation — the same standing
+as `reject-ci-skip-directives` and `reject-bad-closing-references` in the same
+workflow. Making it required is a ruleset decision, deliberately not taken here.
+
+### The two orderings, and which one this covers
+
+Manifest/issue drift arrives in one of two orders:
+
+- **Forward** — the entry is already in the checkout when the closing PR is
+  checked. The PR text and the manifest contradict each other inside one diff,
+  and the gate is red before anyone merges. This is the ordering the gate is
+  for, and the ordinary one, since an entry normally predates the fix that
+  closes its issue. Nothing checked it before #3089.
+- **Inverse** — the entry lands *after* the closing PR's own check has run.
+  Nothing evaluated at that PR's check time can see an entry that is not there
+  yet, so the gate cannot help. Only the non-blocking sweep below covers it, on
+  a later PR, and only once the linked issue has actually closed.
+
+**The two 2026-09-05 incidents were the inverse ordering, so this gate would not
+have caught either**, and it is not credited with them. What happened, measured
+rather than reasoned: issue #2795 (fixed by PR #2809) left an entry in
+`known-gaps-testpage-boolean-spelling.json` and issue #2805 (fixed by PR #2825)
+left two in `known-gaps-start-session-isolation.json`; both were reported after
+the fact, as #2844 and #2858. But both files were *created* by PR #2808's merge
+at 16:56:43Z, and #2808 closes nothing, so it declared no closing reference for
+the gate to compare its own new entries against. PR #2825 merged at 16:48:28Z,
+eight minutes before the entry existed anywhere. PR #2809's single `PR Check`
+ran at 16:29:20Z, 27 minutes before #2808 merged, and the ruleset sets
+`strict_required_status_checks_policy: false`, so the base moving underneath it
+re-triggered nothing. Replaying each PR's real title, body and commit messages
+against the manifest as it stood at its **own** check time (base `43d85ea6`,
+which held 12 `expect-fail-known-gap` entries and neither of those two files)
+exits 0 for both. The sweep would not have caught them that hour either:
+#2808's last `PR Check` ran at 16:39:50Z, when #2795 and #2805 were both still
+open — they closed at 17:29:30Z and 16:48:29Z.
+
+Those incidents are how the shape became known. They are not evidence of an
+incident prevented, and this page does not claim one.
 
 **Non-blocking, and it is the only half that touches the network.**
 `--report-closed-issues` looks up every linked issue and emits a `::warning::`
