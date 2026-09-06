@@ -695,3 +695,40 @@ page).
 so no `byBcVersion` override; the eight CI legs are what confirm that. appGroups is unchanged at
 1 — all three tests joined the single existing al-language app group. `runner-extras`,
 `al-language-internals-fixture` and `al-language-onprem` are `main`'s values, untouched.
+
+## 2648 -> 2661 — corpus pin 83b54a91 (#188) -> 3268bf1b (#191)
+
+Folded into the fix PR for #3012, which is what the bump exists to enable: corpus #189 added
+`codeunit 60444 "CalcFields Field Class Tests"` (7 tests), the RED -> GREEN for
+`fix(record): refuse a CalcFields field that is not a FlowField or a BLOB`. Three corpus
+commits come in with it, because the corpus history is linear: **#185** (360e1f0, a RunObject
+action with no handler bound), **#189** (3060794, the CalcFields refusals) and **#191**
+(3268bf1, Table Metadata for a table declaring no `DataClassification`).
+
++13 tests, read off the guard's own GROWTH line ("expected 2648, actual 2661") on BC 28.1, not
+counted off the source. No file in the range carries a `#if` version gate, so the count is
+uniform across the eight legs and stays a single `default`; appGroups is unchanged at 1, and
+`runner-extras`, `al-language-internals-fixture` and `al-language-onprem` are `main`'s values,
+untouched.
+
+**Not pinned at corpus master head, deliberately.** Master moved on to 861a566 (#193, the close
+lifecycle of a page that closes itself) while this was in flight. 3268bf1b is the last commit
+this branch has actually measured, and #193 lands in the handlers/close-lifecycle area where
+#3061 has just been fixed and more is open — taking it unverified is how the previous revision
+of this branch ended up carrying #188's failures for a defect (#3054) that belonged to another
+PR. A later bump can take it after measuring it.
+
+Two of the thirteen fail, both from #185, and both get entries in
+`known-gaps-testpage-runobject-no-handler.json` linking **#2975**, which stays open: real BC
+opens a RunObject target with no handler bound and runs its OnOpenPage, and the runner raises
+`NavNCLMissingUIHandlerException`. #2951 made an action's RunObject perform its target, so the
+sibling eight-test suite (codeunit 60455) passes; the no-handler arm was held out of that suite
+deliberately while the question was open.
+
+Those two entries are **confirmed on all eight legs**, not on one local run: at the previous
+revision of this branch (head `ac70dac1`, run 34029802786) no leg reported "Test passed cleanly
+but manifest declares expect-fail-known-gap", including the three legs that were otherwise
+green. That is the drift complaint which retired codeunit 60455's five entries two bumps ago,
+and it settles the caveat this file recorded for them.
+
+Written by agent stma-auto-1 (automated implementation agent).

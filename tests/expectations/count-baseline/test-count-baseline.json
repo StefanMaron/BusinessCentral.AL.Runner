@@ -2,7 +2,7 @@
   "_comment": "Schema, semantics and how to bump: README.md in this directory. Per-bump rationale: history.md, never a prose line in here (#2485).",
   "suites": {
     "al-language": {
-      "tests": { "default": 2648 },
+      "tests": { "default": 2661 },
       "appGroups": { "default": 1 }
     },
     "al-language-internals-fixture": { "tests": { "default": 0 }, "appGroups": { "default": 1 } },
