@@ -112,8 +112,36 @@ REF_HASH='(?:[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)?#[0-9]+'
 REF_URL='https?://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/(?:issues|pull)/[0-9]+'
 REF="(?:${REF_HASH}|${REF_URL})"
 
-CANONICAL_LINE_RE="^[[:space:]]*(?:${KEYWORDS})[[:space:]]+${REF}[[:space:]]*[.]?[[:space:]]*\$"
-STRAY_MATCH_RE="\\b(?:${KEYWORDS})[[:space:]]+${REF}"
+# Separator between the keyword and the reference.
+#
+# This used to be "[[:space:]]+", which REQUIRES whitespace and therefore could
+# not match a colon. GitHub's parser honors "closes: #N"; ours did not see it,
+# in either direction. That closed #2942 by accident when PR #2951 merged --
+# merge commit bb09fa5b carried "which this PR closes: #2942 for RunPageLink"
+# in a commit message, the issue timeline attributes the close to that commit,
+# and this check was green (#3094).
+#
+# DELIBERATELY WIDER than any syntax GitHub documents. The two failure
+# directions do not cost the same:
+#
+#   * a false positive costs the author one reword, or one "No linked issue:"
+#     line -- it is visible and it is cheap;
+#   * a false negative silently closes somebody else's issue, and the only
+#     reason anyone noticed this time is that a human read the merge commit.
+#
+# So the separator matches an optional single punctuation mark with optional
+# whitespace either side, and matching something GitHub would ignore is an
+# acceptable price. It still cannot span WORDS, which is what keeps ordinary
+# prose ("this fixes the regression reported in #456") out -- that case, and
+# the bare-number case the "#" requirement excludes, are both covered in
+# test_check_closing_reference.sh so a future widening cannot quietly eat them.
+#
+# The colon is not first inside the bracket expression on purpose: "[:" opens a
+# POSIX character class, so "[,;:]" is unambiguous where "[:;,]" is not.
+SEP='[[:space:]]*[,;:]?[[:space:]]*'
+
+CANONICAL_LINE_RE="^[[:space:]]*(?:${KEYWORDS})${SEP}${REF}[[:space:]]*[.]?[[:space:]]*\$"
+STRAY_MATCH_RE="\\b(?:${KEYWORDS})${SEP}${REF}"
 ESCAPE_LINE_RE='^[[:space:]]*No linked issue:[[:space:]]*(.*)$'
 
 extract_number() {
@@ -139,7 +167,12 @@ is_declared() {
 
 while IFS= read -r line; do
   if printf '%s' "$line" | command grep -qiP "$CANONICAL_LINE_RE"; then
-    match=$(printf '%s' "$line" | command grep -oiP "(?:${KEYWORDS})[[:space:]]+${REF}")
+    # ${SEP}, not a hardcoded "[[:space:]]+". This extraction is a THIRD copy of
+    # the keyword/reference shape, and when the separator was widened in the two
+    # named constants but not here, CANONICAL_LINE_RE matched the line while this
+    # found nothing -- so "Closes: #123" was silently recorded as declaring no
+    # target, and the PR was told it had no closing reference at all (#3094).
+    match=$(printf '%s' "$line" | command grep -oiP "(?:${KEYWORDS})${SEP}${REF}")
     num=$(extract_number "$match")
     [ -n "$num" ] && declared_targets="$declared_targets $num"
   fi
