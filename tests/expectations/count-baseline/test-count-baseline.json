@@ -64,6 +64,7 @@
         "testpage-promoted-actionref": { "tests": 14 },
         "testpage-trigger-inject-timing": { "tests": 2 },
         "user-system-table-triggers": { "tests": 10 },
+        "user-table-baseapp-subscriber": { "tests": 5 },
         "windows-language-license-stub": { "tests": 4 },
         "xasm-event-dispatch-dep": { "tests": 1 },
         "xasm-event-dispatch-main": { "tests": 1 }
