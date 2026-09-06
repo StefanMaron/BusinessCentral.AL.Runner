@@ -2023,11 +2023,13 @@ internal static class TestPageOptionValue
 /// nothing at all — this is a client/page-layer check, not a table-trigger one, so it must
 /// stay out of NavRecord.ALValidateAsync (which Rec.Validate also calls).
 ///
-/// <para>Since #2900 this raises only the INNER half of that message. The
-/// <c>Validation error for Field: &lt;name&gt;,  Message = '…'</c> wrapper is added by BC's own
-/// <c>NavTestField.CheckError</c> from the refusal <see cref="TestFieldValidationErrors"/>
-/// records, so the AL-visible string is the same one #2490 measured — composed by BC rather
-/// than assembled here.</para>
+/// <para>Since #2900 this raises only the CORE of that message. Two layers are added around it
+/// by code that is not this helper's: <see cref="TestFieldValidationErrors"/> appends
+/// <c>" (Select Refresh to discard errors)"</c> when it records the refusal (BC's client does
+/// that, measured on corpus run 34002487601), and BC's own <c>NavTestField.CheckError</c> then
+/// wraps the result in <c>Validation error for Field: &lt;name&gt;,  Message = '…'</c>. The
+/// AL-visible string is the same one #2490 measured; it is now composed rather than
+/// assembled here, which is what stops the suffix appearing twice.</para>
 ///
 /// <para>Only numeric field types are checked — MinValue/MaxValue is meaningless on Text/Code/
 /// Boolean/etc., and AL does not let those types declare it.</para>
@@ -2085,8 +2087,7 @@ internal static class TestPageMinMaxValue
         // Lang.TestValidationException, so building that wrapper here too would double it
         // (#2900). The AL-visible string is unchanged; it is composed one layer out now.
         var msg = $"The value must be {comparison} "
-            + $"{boundText}. Value: {FormatValue(value, isInteger)}. "
-            + "(Select Refresh to discard errors)";
+            + $"{boundText}. Value: {FormatValue(value, isInteger)}.";
 
         var t = System.Type.GetType(
             "Microsoft.Dynamics.Nav.Types.Exceptions.NavNCLDialogException, Microsoft.Dynamics.Nav.Types");
@@ -2206,19 +2207,20 @@ internal static class TestPageBooleanValue
 
     /// <summary>
     /// BC's own refusal for a value a control will not take:
-    /// <c>Your entry of '{value}' is not an acceptable value for '{caption}'. (Select Refresh
-    /// to discard errors)</c>.
-    /// <para>The <c>Validation error for Field: {name},  Message = '…'</c> wrapper around it —
-    /// including the double space after the comma, which is BC's and not a typo — is added by
-    /// BC's own <c>NavTestField.CheckError</c> once <see cref="TestFieldValidationErrors"/> has
-    /// recorded this message, so it is deliberately absent here (#2900).</para>
+    /// <c>Your entry of '{value}' is not an acceptable value for '{caption}'.</c>
+    /// <para>Two layers are deliberately absent here (#2900), because neither is this helper's
+    /// to add: <see cref="TestFieldValidationErrors"/> appends
+    /// <c>" (Select Refresh to discard errors)"</c> when it records the refusal, and BC's own
+    /// <c>NavTestField.CheckError</c> then wraps it in <c>Validation error for Field: {name},
+    /// Message = '…'</c> — including the double space after the comma, which is BC's and not a
+    /// typo. The composed result is the string corpus PR #163 measured on all eight legs.</para>
     /// </summary>
     private static System.Exception MakeNotAcceptableError(string value, string caption)
     {
         // The BARE message only — see TestPageMinMaxValue.MakeError for why the
         // "Validation error for Field: ..." wrapper is BC's to add and no longer ours (#2900).
         var msg = $"Your entry of '{value}' "
-            + $"is not an acceptable value for '{caption}'. (Select Refresh to discard errors)";
+            + $"is not an acceptable value for '{caption}'.";
 
         var t = System.Type.GetType(
             "Microsoft.Dynamics.Nav.Types.Exceptions.NavNCLDialogException, Microsoft.Dynamics.Nav.Types");
@@ -2312,7 +2314,10 @@ internal sealed class LiveNavTestField : ITestField
                ?? TestPageBooleanValue.Format(_record.GetFieldValue(_fieldNo) as NavValue)
                ?? Convert.ToString(ObjectValue, CultureInfo.InvariantCulture)
                ?? string.Empty;
-        set => _validationErrors.RunRecordingRefusal(() => Write(value));
+        // appendRefreshSuffix: true — a Rec-bound control stages a row edit, and real BC's
+        // client decorates its recorded validation error with the offer to discard it. Measured
+        // on corpus run 34002487601; see TestFieldValidationErrors' header.
+        set => _validationErrors.RunRecordingRefusal(() => Write(value), appendRefreshSuffix: true);
     }
 
     private void Write(string value)
@@ -2560,11 +2565,16 @@ internal sealed class PageVariableTestField : ITestField
                ?? TestPageBooleanValue.Format(RunnerPageInstance.GetValue(_expression))
                ?? Convert.ToString(ObjectValue, CultureInfo.InvariantCulture)
                ?? string.Empty;
+        // appendRefreshSuffix: false — a page-global control stages no row edit, so there is
+        // nothing for "Refresh to discard" to discard. Microsoft's Tests-SINGLESERVER
+        // Codeunit134614 asserts the bare text with exact equality for exactly this binding
+        // shape (verified mechanically to be page-variable-bound, not Rec-bound). This is the
+        // half no service-tier run has confirmed yet — corpus PR #184 asks it.
         set => _validationErrors.RunRecordingRefusal(() =>
         {
             RunnerPageInstance.SetValue(_expression, ToBoundValue(value));
             _page.RaiseOnValidate(_controlId);
-        });
+        }, appendRefreshSuffix: false);
     }
 
     public object? ObjectValue => LiveNavTestPage.Unwrap(RunnerPageInstance.GetValue(_expression));
