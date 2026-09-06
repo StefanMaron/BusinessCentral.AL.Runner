@@ -157,6 +157,40 @@ public sealed class AgentWorktreePathCollisionGuardTests
         }
     }
 
+    /// <summary>
+    /// The path fix above makes a same-identity/different-issue collision impossible to express.
+    /// This pins the independent check that catches the same incident from the other side, and
+    /// catches it even when the directory is the right one: before its first commit an agent must
+    /// verify the BRANCH its checkout is on, not only the toplevel directory.
+    ///
+    /// #3014's second loop was in a checkout whose HEAD was <c>agent/stma-auto-1/issue-3005</c>
+    /// while it worked issue 3011. <c>git rev-parse --show-toplevel</c> — the only verification
+    /// the definition asked for — would have looked correct to it. Comparing HEAD against its own
+    /// issue number would not have.
+    ///
+    /// This is a doc-shape assertion, and deliberately so: the requirement already existed as
+    /// prose in <c>.claude/skills/autonomous-cycle/SKILL.md</c> ("Two contributors must never
+    /// write to the same path or push to the same branch") and was not followed. Prose with no
+    /// test behind it is what this issue is made of, so the replacement prose gets a test.
+    /// </summary>
+    [Fact]
+    public void ImplAgentVerifiesTheBranchNotJustTheDirectoryBeforeCommitting()
+    {
+        var path = Path.Combine(AgentsDir, "impl-agent.md");
+        var text = File.ReadAllText(path);
+
+        Assert.True(text.Contains("git rev-parse --show-toplevel", StringComparison.Ordinal),
+            "impl-agent.md no longer tells the agent to verify the worktree directory before " +
+            "its first commit.");
+
+        Assert.True(text.Contains("git rev-parse --abbrev-ref HEAD", StringComparison.Ordinal),
+            "impl-agent.md tells the agent to verify its working DIRECTORY before the first " +
+            "commit but not its BRANCH. That is the #3014 hole: an agent sharing a checkout " +
+            "sees the directory it expected and a branch belonging to somebody else's issue, " +
+            "and commits onto it. Add a `git rev-parse --abbrev-ref HEAD` check against " +
+            "`agent/<AGENT-ID>/issue-<N>`.");
+    }
+
     private static string Render(string token, string identity, string issue) =>
         token.Replace("<AGENT-ID>", identity, StringComparison.Ordinal)
              .Replace(IssuePlaceholder, issue, StringComparison.Ordinal);

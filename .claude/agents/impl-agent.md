@@ -95,7 +95,18 @@ works here.
 
 Per-issue directories do not accumulate: `tools/preflight.py --reap` removes the worktrees of MERGED pull requests once they are clean, keyed on the pull request's state rather than on the directory's name.
 
-Verify with `git rev-parse --show-toplevel` before your first commit. Never `git add -A` / `git add .` in a tree that might carry another agent's edits — stage only the files you changed, by name.
+Before your first commit, verify **both** the directory and the branch:
+
+```
+git rev-parse --show-toplevel        # the worktree you meant to be in
+git rev-parse --abbrev-ref HEAD      # MUST equal agent/<AGENT-ID>/issue-<N>
+```
+
+The second line is the one that catches #3014, and it catches it even if the first passes. That agent was in a checkout whose HEAD was `agent/stma-auto-1/issue-3005` while it was working issue 3011; the directory looked right to it, and the branch did not match its issue. **A branch that names an issue other than yours is not yours to commit to** — stop and report, whatever the prefix says.
+
+Note what that prefix does and does not mean. `agent/<AGENT-ID>/` records who **created** a branch, not who may write to it, and nothing enforces it: a second agent committing there is a normal push that no check refuses. It is a naming convention, not an ownership boundary, and today it was used as one on `agent/impl-4/issue-2771` by two different writers. The assignee locks an *issue*; nothing plays that role for a *branch*.
+
+Never `git add -A` / `git add .` in a tree that might carry another agent's edits — stage only the files you changed, by name.
 
 ### RED → GREEN
 
@@ -222,6 +233,8 @@ If `mergeStateStatus` already reads `DIRTY`/`CONFLICTING` at this point, that is
 with `main`, not a CI problem — rebase, resolve, re-run your targeted tests (never carry a
 stale test result across a rebase), force-push with `--force-with-lease`, and re-check the
 SHA before returning.
+
+**If `--force-with-lease` is rejected, that is the finding — never force past it.** The rejection means the remote moved since you last fetched, so somebody else wrote to your branch, and the lease is the only thing standing between their work and your overwrite. Twice on 2026-09-06 it was the sole reason work survived: once where the repository owner had pushed to a corpus branch 44 minutes earlier, once where two agents shared a branch. Fetch, read what arrived with `git log @{u}...HEAD`, and report it. Do not reach for `--force`.
 
 Then report: the issue, the PR number, the head SHA, what you changed, what the RED → GREEN
 proved, and anything you deliberately left out. Return. Do not claim another issue.
