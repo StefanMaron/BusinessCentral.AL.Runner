@@ -1047,8 +1047,13 @@ public static partial class RecordPatches
             {
                 if (string.IsNullOrEmpty(ext.TargetTableName)) continue;
 
+                // ext.Keys carried too (#3216) — the precompiled sibling of the AL-source path's
+                // extKeys. Without it, a precompiled tableextension's keys were missing from the
+                // extended table's key list even though its fields were merged. The fields still
+                // go through ResolveExtensionCalcFormulas (#3121), which parses the CalcFormula
+                // text the symbol read carried along.
                 MergeExtensionFields(ext.TargetTableName, ext.ExtensionId,
-                    ResolveExtensionCalcFormulas(ext));
+                    ResolveExtensionCalcFormulas(ext), ext.Keys);
                 merged++;
             }
         }

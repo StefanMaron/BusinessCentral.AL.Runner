@@ -186,6 +186,20 @@ public static partial class RecordPatches
                 }
             }
 
+            // #3216 — the keys any tableextension declares on this table, appended after the
+            // table's own. This is the keys half of the extension merge whose fields half is
+            // `extFieldsNew` above; only the fields half existed, so RecordRef.KeyCount() /
+            // KeyIndex() reported the base table's keys alone while the extension's columns
+            // were already there. Appending (rather than interleaving) matches AL: the base
+            // table's keys keep their declared positions and the extension's follow, which is
+            // also what keeps a SetCurrentKey by position on the base table stable when an
+            // extension is added.
+            //
+            // Field NAMES are resolved to ids HERE and nowhere earlier, because this is the
+            // first point where the base table's fields and every merged extension field are
+            // both in hand — key(ExtMixed; "Status", "Ext Rank") names one of each.
+            AppendExtensionKeys(parsed, allParsed, allKeys);
+
             // Issue #1918: real BC's NavForm.RunModalAsync resolves a static
             // Page.RunModal(0, Record) from the record's table metadata —
             // `if (formId == 0 && record != null) formId = record.LookupFormId;` — and
@@ -1170,6 +1184,55 @@ public static partial class RecordPatches
             args[i] = p.ParameterType.IsValueType ? Activator.CreateInstance(p.ParameterType) : null;
         }
         return ctor.Invoke(args)!;
+    }
+
+    /// <summary>
+    /// Append a MetaKey for every key a tableextension declares on <paramref name="parsed"/>
+    /// to <paramref name="allKeys"/> (#3216), resolving each key's field NAMES against
+    /// <paramref name="allParsed"/> — the base table's own fields plus every merged extension
+    /// field, which is the only field list that can satisfy a key naming one of each.
+    /// <para>A key naming a field that resolves to nothing is SKIPPED WHOLE and reported on
+    /// stderr, never added with the unresolved position dropped. A two-field key silently
+    /// registered as a one-field key is a wrong answer to <c>KeyRef.FieldCount()</c> and a
+    /// wrong sort order, which is worse than the key being absent and much harder to notice —
+    /// absence is what the corpus test catches, a truncated key is not
+    /// (.claude/rules/loud-failures.md). The table's own key list, built above, has always
+    /// dropped names field-by-field; that path resolves against the very field list the names
+    /// were parsed alongside, so an unresolvable name there means malformed AL that would not
+    /// compile, not the ordering hazard this path has.</para>
+    /// </summary>
+    private static void AppendExtensionKeys(ParsedTable parsed, ParsedField[] allParsed, List<object> allKeys)
+    {
+        if (!_parsedExtensionKeys.TryGetValue(parsed.TableName.ToLowerInvariant(), out var extKeys)
+            || extKeys.Count == 0)
+            return;
+
+        var fieldIdByName = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var f in allParsed)
+            if (!string.IsNullOrEmpty(f.FieldName))
+                fieldIdByName[f.FieldName] = f.FieldId;
+
+        foreach (var ek in extKeys)
+        {
+            var ids = new List<int>(ek.FieldNames.Count);
+            string? unresolved = null;
+            foreach (var fn in ek.FieldNames)
+            {
+                if (fieldIdByName.TryGetValue(fn, out var fid)) ids.Add(fid);
+                else { unresolved = fn; break; }
+            }
+            if (unresolved != null)
+            {
+                Console.Error.WriteLine(
+                    $"[RecordPatches] tableextension key '{ek.Name}' on table {parsed.TableId} "
+                    + $"'{parsed.TableName}' names field '{unresolved}', which the table does not "
+                    + "have (neither its own fields nor any merged tableextension field). The key "
+                    + "is omitted from the table's key list rather than registered truncated.");
+                continue;
+            }
+            if (ids.Count == 0) continue;
+            allKeys.Add(BuildMetaKey(ek.Name, ids.Select(BuildFieldMetadataRelation).ToArray(), clustered: false));
+        }
     }
 
     private static object BuildMetaKey(string name, object[] fieldRelations, bool clustered)
