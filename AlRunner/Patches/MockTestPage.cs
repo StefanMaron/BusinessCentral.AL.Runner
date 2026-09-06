@@ -445,11 +445,34 @@ internal class LiveNavTestPage : MockITestPage
     /// exactly the distinction BC's own fallback pair encodes. Results outside those two
     /// pairs (Yes/No, Print, …) are left alone: this is about lookup-vs-normal closing,
     /// not a claim about which other built-ins a page has.
+    ///
+    /// <para>Plain <c>Cancel</c> carries a SECOND condition on top of that, and it is not
+    /// symmetric with OK: a page only has a built-in Cancel when its PageType gives the client
+    /// dialog chrome to put one on. See <see cref="HasDialogCancelAffordance(string?)"/>.</para>
     /// </summary>
     private bool Offers(FormResult formResult)
+        => OffersBuiltInAction(
+            formResult,
+            // Null, not false: no RunnerPageInstance means the page's lookup mode is UNKNOWN
+            // (a precompiled page the runner could not build one for), which is a different
+            // input from "opened as a normal page" and must not collapse into it.
+            lookupMode: _page?.LookupMode,
+            pageType: RecordPatches.TryGetAnyPageType(_pageId));
+
+    /// <summary>
+    /// The decision behind <see cref="Offers"/>, as a pure function of the three inputs, so it
+    /// can be pinned without a loaded BC runtime (the shape
+    /// <c>TestPageClientConstructionRule</c> uses for the same reason).
+    /// <paramref name="lookupMode"/> is null when the page's mode is unknown.
+    /// </summary>
+    internal static bool OffersBuiltInAction(FormResult formResult, bool? lookupMode, string? pageType)
     {
-        if (_page == null) return true;
-        bool lookup = _page.LookupMode;
+        // Asked before the lookup test on purpose: a lookup page must answer NULL for plain
+        // Cancel either way, so BC's FindBuiltInAction(Cancel, LookupCancel) falls through to
+        // LookupCancel. The two conditions agree there and only the non-lookup case differs.
+        if (formResult == FormResult.Cancel && !HasDialogCancelAffordance(pageType)) return false;
+
+        if (lookupMode is not bool lookup) return true;
         return formResult switch
         {
             FormResult.OK or FormResult.Cancel => !lookup,
@@ -457,6 +480,47 @@ internal class LiveNavTestPage : MockITestPage
             _ => true,
         };
     }
+
+    /// <summary>
+    /// Whether this page's PageType gives the client a real Cancel affordance, which is what
+    /// BC requires before <c>TestPage.Cancel()</c> resolves to anything. A page without one
+    /// gets <c>NavTestActionNotFoundException</c>: "The built-in action = Cancel is not found
+    /// on the page." — and that is NOT the same rule as plain OK, which every non-lookup page
+    /// has.
+    ///
+    /// <para>MEASURED ON A REAL SERVICE TIER, all eight cloud legs, and it is the correction of
+    /// a wrong prediction. Corpus "MQC Tests" (codeunit 60276) first carried an arm asserting
+    /// that a cancelled PLAIN modal reports Action::Cancel, by symmetry with the OK/LookupOK
+    /// pair. BC refused it, and the arm is now
+    /// <c>PlainModal_HasNoBuiltInCancelAction</c> — <c>Cancel().Invoke()</c> on
+    /// "MQC Trace Modal" (PageType = Worksheet) raises rather than closing the page
+    /// (StefanMaron/BusinessCentral.AL.Language.Tests#192). The corpus records the same refusal
+    /// on two further shapes: a plain Card opened with <c>OpenNew()</c>
+    /// (TestPageRecordTriggers.al) and the precompiled List page "Error Messages"
+    /// (TestPageModalHandler_PrecompiledPage.al). Its positive side is
+    /// <c>PageType = StandardDialog</c>, which every green <c>Cancel().Invoke()</c> in the
+    /// corpus and in tests/runner-extras is aimed at — and TestPageModalHandler_ModalPage.al
+    /// states the finding directly: "an action literally named Cancel is not enough on a plain
+    /// Card-type modal (still 'not found' even when declared); PageType = StandardDialog is
+    /// what actually gives the client OK/Cancel chrome."</para>
+    ///
+    /// <para>The set is the two page types built by a DIALOG builder, which is the same fact
+    /// <see cref="RunnerPageInstance"/>'s TargetPageOpensModally rests on and reached the same
+    /// way: <c>FormState.RunModal</c> is assigned in exactly two builders in BC 28.1's UI
+    /// builder assembly, <c>NavigatePageBuilder</c> and <c>StandardDialogBuilder</c>. Only
+    /// StandardDialog is measured on a service tier; NavigatePage rides on the shared builder
+    /// fact and keeps the behaviour it already had here, and issue #3131 tracks getting it —
+    /// and ConfirmationDialog — measured upstream rather than reasoned about.</para>
+    ///
+    /// <para>An UNKNOWN PageType keeps today's permissive answer rather than refusing: null
+    /// from <c>TryGetAnyPageType</c> means the page is not in this run's inventory at all, not
+    /// that it declares no dialog chrome, and turning that into a "not found" would refuse
+    /// pages on the strength of a lookup miss.</para>
+    /// </summary>
+    internal static bool HasDialogCancelAffordance(string? pageType)
+        => pageType == null
+           || string.Equals(pageType, "StandardDialog", StringComparison.OrdinalIgnoreCase)
+           || string.Equals(pageType, "NavigatePage", StringComparison.OrdinalIgnoreCase);
 
     private sealed class RecordingBuiltInAction : ITestAction
     {
