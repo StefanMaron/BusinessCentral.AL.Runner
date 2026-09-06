@@ -34,7 +34,14 @@ using Xunit;
 
 namespace AlRunner.Tests;
 
-[Collection("ObjectMetadataProvenance")]
+// RecordPatchesSerialCollection, not a collection of its own (#3101 review). The provenance flag
+// is process-wide, and the fix below makes RecordPatches.ResetForReload() clear it — so every one
+// of the ~20 classes in that collection which calls ResetForReload() can now land between a
+// MarkObjectMetadataRowsAreReal() here and the assertion that reads it. A private collection name
+// serialises this class against ITSELF only; xunit still runs it in parallel with every other
+// collection, which is exactly the accidental-parallelism shape #1696 documents. Joining the
+// serial collection is what actually fences the shared static.
+[Collection(RecordPatchesSerialCollection.Name)]
 public sealed class ObjectMetadataTestDataProvenanceTests
 {
     // 2000000071. Registered in _noSourceColumnNames; the only table that is.
@@ -44,7 +51,7 @@ public sealed class ObjectMetadataTestDataProvenanceTests
     private const int Customer = 18;
 
     public ObjectMetadataTestDataProvenanceTests()
-        => RecordPatches.ResetObjectMetadataRowProvenanceForTests();
+        => RecordPatches.ResetObjectMetadataRowProvenance();
 
     [Fact]
     public void Synthesised_TheDefault_RefusesThePayloadColumns()
@@ -87,5 +94,55 @@ public sealed class ObjectMetadataTestDataProvenanceTests
 
         Assert.True(RecordPatches.ObjectMetadataRowsAreReal);
         Assert.False(RecordPatches.NoSourceRefusalIsActiveFor(ObjectMetadata));
+    }
+
+    // ── THE RELOAD BOUNDARY (#3101 review) ────────────────────────────────────────────────
+    // Everything above is about ONE run. These two are about the seam between two of them.
+    //
+    // The flag summarises a fact about the in-memory row store: "a store for 2000000071 was
+    // found already holding rows". RecordPatches.ResetForReload() DROPS that store
+    // (_dataAccessByTable.Clear()) so a --server/--watch process can load the next bundle
+    // against empty tables. A latch that outlives the state it describes then answers for rows
+    // that no longer exist, and because it is one-way nothing can put it back.
+    //
+    // The consequence is silent, which is what makes it worth a test rather than a comment:
+    // NoSourceRefusalIsActiveFor(2000000071) answers false, and the nine payload columns go
+    // back to reading BLANK instead of refusing — #2771's original defect, reintroduced by the
+    // change that closes #2771. Same shape as #2478 and #2755 in RecordPatches.ResetForReload's
+    // own body, and as #3184's object-reference const memo: per-run derived state that the
+    // reload path did not know it owned.
+
+    [Fact]
+    public void BundleReload_ReArmsTheRefusal_BecauseTheRowsItDescribedAreGone()
+    {
+        RecordPatches.MarkObjectMetadataRowsAreReal();
+        Assert.False(RecordPatches.NoSourceRefusalIsActiveFor(ObjectMetadata));
+
+        // The --server/--watch bundle-reload path. It clears _dataAccessByTable, so after this
+        // line there is no store holding real Object Metadata rows for the flag to be about.
+        RecordPatches.ResetForReload();
+
+        Assert.False(RecordPatches.ObjectMetadataRowsAreReal);
+        Assert.True(RecordPatches.NoSourceRefusalIsActiveFor(ObjectMetadata));
+    }
+
+    [Fact]
+    public void BundleReload_DoesNotMakeTheClearOneWayInTheOtherDirection()
+    {
+        // The negative twin. Re-arming at the reload must not stop the NEXT bundle learning its
+        // own provenance: bundle 2 restores real rows too, the populator marks it again, and the
+        // refusal must go back off. A clear that could only ever be undone once would refuse
+        // over correct data from bundle 2 onwards — the loud-failure-on-good-data half of this
+        // file's defect, moved one bundle to the right.
+        RecordPatches.MarkObjectMetadataRowsAreReal();
+        RecordPatches.ResetForReload();
+        Assert.True(RecordPatches.NoSourceRefusalIsActiveFor(ObjectMetadata));
+
+        RecordPatches.MarkObjectMetadataRowsAreReal();
+
+        Assert.True(RecordPatches.ObjectMetadataRowsAreReal);
+        Assert.False(RecordPatches.NoSourceRefusalIsActiveFor(ObjectMetadata));
+        // ...and still not a global "refuse nothing" switch.
+        Assert.False(RecordPatches.NoSourceRefusalIsActiveFor(Customer));
     }
 }

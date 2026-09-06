@@ -345,6 +345,20 @@ public static partial class RecordPatches
         // Registered table connections cache one CrmTestDataProvider per table id, bound to
         // the previous run's NCLMetaTable — they go with the rows (#2725).
         TableConnectionPatches.ResetForReload();
+        // #3101 review: the Object Metadata row PROVENANCE goes with the rows too. The flag
+        // means "a store for 2000000071 was found already holding rows" — a fact about the store
+        // _dataAccessByTable.Clear() above just dropped. It is one-way, so nothing else can put
+        // it back, and while it is stale NoSourceRefusalIsActiveFor(2000000071) answers false and
+        // the nine payload columns read BLANK instead of refusing: #2771's original silent
+        // default, in the PR that closes #2771. Third time this reset path has outlived state it
+        // owned (#2478 and #2755 are commented above; #3184 is the same shape one file over).
+        // Safe because the next bundle re-derives it. GetDataAccessForTableCore routes EVERY
+        // access to 2000000071 through MaterialiseObjectMetadataStore, which runs the populate on
+        // every one of them rather than only at creation, and RunObjectMetadataPopulateOnce is
+        // keyed on the PROVIDER — which a reload replaces. So the first touch after this clear
+        // re-runs the populate and re-answers the question, and no read of a payload column can
+        // reach the guard before it has.
+        ResetObjectMetadataRowProvenance();
     }
 
     public static void AddSourceDir(string dir) => AddSourceDirs(new[] { dir });

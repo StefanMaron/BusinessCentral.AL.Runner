@@ -194,13 +194,59 @@ public static partial class RecordPatches
     // the populator sees it — or it carries none and every store synthesises. The flag is
     // therefore uniform across the stores of a run wherever it is uniform at all.
     //
-    // It is also deliberately ONE-WAY, which is what makes a mixed run safe rather than merely
-    // unlikely: once any store is found holding real rows, no later synthesising store can
-    // re-arm the refusal, so the failure mode this fix removes cannot come back through the
-    // ordering of two stores. The cost of that choice is the opposite error — a synthesised
-    // store read after a real one would return a blank instead of refusing — which is #2771's
-    // original silent blank, strictly less bad than failing loudly over correct data, and
-    // unreachable for the reason above.
+    // It is also deliberately ONE-WAY WITHIN A RUN, which is what makes a mixed run safe rather
+    // than merely unlikely: once any store is found holding real rows, no later synthesising
+    // store can re-arm the refusal, so the failure mode this fix removes cannot come back
+    // through the ordering of two stores. The cost of that choice is the opposite error — a
+    // synthesised store read after a real one would return a blank instead of refusing — which
+    // is #2771's original silent blank, strictly less bad than failing loudly over correct data,
+    // and unreachable for the reason above.
+    //
+    // "WITHIN A RUN" IS LOAD-BEARING, AND THE PARAGRAPH ABOVE USED TO OVERREACH (#3101 review).
+    // Its argument is about the BACKUP, and the backup is genuinely constant for a process:
+    // --test-data is parsed once from argv into TestDataOptions' process-wide statics, so no
+    // --server request and no --watch cycle can turn it on or off. But the backup is not the
+    // only thing that arms this flag. The arm condition is ProviderHasAnyRow(), and the doc
+    // comment below names the second source itself: "--test-data (or AN INSTALL BASELINE)".
+    // An install baseline is per dependency set — ResetForReload() sets _installBaseline = null
+    // and SetActiveDepCompanyBaseline(null) precisely because bundle 2 gets a different one —
+    // so "every store either sees real rows or none" is a statement about one bundle, not about
+    // a --server/--watch process that loads several. The reasoning never covered the reload
+    // seam, so the flag must be cleared there rather than argued away.
+    //
+    // Left un-cleared, the sequence is: bundle A's rows are real -> flag true -> ResetForReload
+    // drops the row store (_dataAccessByTable.Clear()) -> bundle B synthesises -> the flag still
+    // says "real" -> NoSourceRefusalIsActiveFor(2000000071) answers false -> the nine payload
+    // columns read BLANK instead of refusing. That is #2771's original silent default, restored
+    // by the change that closes #2771, and silent is the shape .claude/rules/loud-failures.md
+    // exists to prevent. ResetForReload() is the run boundary and clears it there, which costs
+    // the one-way property nothing: the reload has already dropped every store whose ordering
+    // the one-wayness was protecting, and the next bundle re-derives the answer on the same seam
+    // the first one did. GetDataAccessForTableCore routes every access to 2000000071 through
+    // MaterialiseObjectMetadataStore, which runs the populate on EVERY access rather than only at
+    // creation, and RunObjectMetadataPopulateOnce is keyed on the provider a reload replaces — so
+    // the first touch after the clear re-answers the question before any read of a payload column
+    // can reach the guard.
+    //
+    // Third instance of one shape in this reset path, and the two before it are commented in
+    // ResetForReload's own body: #2478 (a derived index left populated made a flag reset a
+    // permanent no-op) and #2755 (the registered set outlived the indexes derived from it).
+    // #3184 is the same again one file over. Per-run derived state that the reload path did not
+    // know it owned is the recurring defect here, not a one-off.
+    //
+    // KNOWN, TRACKED, AND NOT FIXED HERE: issue #3236. The reload clear above bounds the
+    // LIFETIME of this flag; it does not make the way the flag is DERIVED correct. The arm
+    // condition is ProviderHasAnyRow(), a property of the store — and an install-baseline
+    // restore replays this projection's OWN synthesised rows into a brand-new provider, where
+    // the populate runs again (it runs on every access, and its once-guard is keyed on the
+    // provider), reads its own replayed output as somebody else's rows, and arms the flag over
+    // synthesised data. That is exactly the wrong-shaped question #2875 removed for Object
+    // (2000000001); RecordPatches.BackupRowProvenance.cs's header argues it in full, and
+    // TestDataProvisioner.cs's NoteBackupContributedRows call site repeats it at the writer.
+    // It is not fixed here because neither available predicate is complete on its own —
+    // BackupOwnsRowsFor() is right for the replay case and wrong for an install-baseline
+    // DISK-cache hit, where the backup's rows are restored in a process whose on-demand loader
+    // never ran. #3236 has the table and the suggested direction.
     private static volatile bool _objectMetadataRowsAreReal;
 
     /// <summary>
@@ -213,12 +259,18 @@ public static partial class RecordPatches
     /// <summary>
     /// Called by <c>PopulateObjectMetadataSystemTable</c> on the branch where
     /// <c>ProviderHasAnyRow</c> answered true, i.e. exactly where it declines to synthesise.
-    /// One-way on purpose — see the block comment above.
+    /// One-way within a run on purpose, and cleared only at the reload boundary — see the block
+    /// comment above.
     /// </summary>
     public static void MarkObjectMetadataRowsAreReal() => _objectMetadataRowsAreReal = true;
 
-    /// <summary>Test hook. The flag is process-wide, so a test that sets it has to put it back.</summary>
-    internal static void ResetObjectMetadataRowProvenanceForTests() => _objectMetadataRowsAreReal = false;
+    /// <summary>
+    /// Forget the provenance, re-arming the refusal. Called by <see cref="ResetForReload"/> at
+    /// the --server/--watch bundle boundary, where the row store this flag describes is dropped;
+    /// tests use it to put the process-wide flag back. One mechanism for both on purpose — a
+    /// separate test-only clearer is how the production path came to have none.
+    /// </summary>
+    internal static void ResetObjectMetadataRowProvenance() => _objectMetadataRowsAreReal = false;
 
     /// <summary>
     /// Whether the no-source refusal should fire for <paramref name="tableId"/> at all. False for
