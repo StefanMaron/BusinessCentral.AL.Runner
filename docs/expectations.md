@@ -137,12 +137,22 @@ yet, and those belong in `docs/limitations.md`. Pass the full
 against `docs/scope.md`. Nothing about the classification changes either way.
 
 `Reason` matches on the anchor: throw sites may append free-text detail after
-an ` — ` (em-dash) separator, while the entry holds only the leading
-`docs/scope.md` anchor (e.g. a throw site's
-`query-join-rightouterjoin-not-implemented — only InnerJoin and …` matches an
-entry declaring `query-join-rightouterjoin-not-implemented`). Anchors are
-compared for **equality** after that trim, not by prefix or substring:
-`external-htt` does not match `external-http`.
+an ` — ` (em-dash) separator, while the entry holds only the leading anchor
+(e.g. a throw site's
+`not-yet-implemented — query-join-rightouterjoin-link-type: only InnerJoin and …`
+matches an entry declaring `not-yet-implemented`). Anchors are compared for
+**equality** after that trim, not by prefix or substring: `external-htt` does not
+match `external-http`.
+
+One consequence is worth stating plainly, because it costs the manifest real
+precision: every in-scope shape gap reports the SAME anchor,
+`not-yet-implemented`, so an entry declaring it matches whichever such refusal
+that test raises rather than one specific surface. That is the trade the anchor
+exists to make — the token is what stops an AL `[TryFunction]` from absorbing a
+runner gap into `false` (`ApplicationObjectBasePatches.IsPermanentOutOfScope`),
+and the surface's own anchor is kept as the reason's second token for a reader.
+Use `expect-fail-known-gap` with an `Issue` when the entry needs to name one
+surface and one piece of tracked work.
 
 ### `expect-divergence` vs the other two failure modes
 

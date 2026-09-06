@@ -224,11 +224,23 @@ invokes `OnInitReport` → `OnPreReport` → per-DataItem `OnPreDataItem` / `OnP
 |---|---|
 | `Debugger.Attach`, `Break`, `StepInto`, etc. | No debug loop. See `docs/limitations.md#no-debugger-infrastructure`. |
 
-### §3.13. NavQuery — multi-dataitem queries <a id="navquery"></a>
+### §3.13. NavQuery — RETIRED, NavQuery is in scope <a id="navquery"></a>
 
-| API | Reason |
-|---|---|
-| Multi-dataitem queries (JOINs), aggregations (`Sum`, `Avg`, `Min`, `Max`), `SaveAsCsv`/`SaveAsXml`/`SaveAsJson`/`SaveAsExcel` | NavQuery compiles AL into SQL projections. A faithful in-memory equivalent is a multi-day workstream. Single-dataitem queries are in scope today (§2). |
+**Nothing about NavQuery is permanently out of scope.** This section used to list
+multi-dataitem queries (JOINs), aggregations and `SaveAsCsv`/`SaveAsXml`/`SaveAsJson` as
+permanent, on the grounds that "a faithful in-memory equivalent is a multi-day workstream".
+That went stale: inner and left-outer joins across dataitems run a real in-memory join,
+pinned by the upstream corpus (`query/TestQueryJoin.al`, green on a real service tier), and
+`SaveAsJson` / `SaveAsXml` / `SaveAsCsv` run BC's own implementation against real query
+metadata. There is no `Query.SaveAsExcel` in the AL language.
+
+The section is kept as a pointer rather than deleted, because refusals raised by the query
+executor used to cite it and a reader may still arrive here. What remains is a **gap**, not a
+boundary: aggregation ([#2137](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2137))
+and the join sub-shapes the executor cannot take yet — see
+`docs/limitations.md#query-shape-gaps`. Both are tracked work, and the refusals now say so
+with the `not-yet-implemented` anchor
+([#2966](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2966)).
 
 ### §3.14. .NET interop (DotNet AL type) <a id="dotnet-interop"></a>
 

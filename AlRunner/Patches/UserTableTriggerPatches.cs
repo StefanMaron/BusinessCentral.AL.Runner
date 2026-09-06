@@ -95,17 +95,17 @@ public static class UserTableTriggerPatches
         if (sid == null || sid.IsZeroOrEmpty) return;
 
         var session = user.ParentSession
-            ?? throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+            ?? throw RunnerShapeGap.UserPropertyCompanionRow(
                 "User (2000000120) insert",
-                "user-property-companion-row — the User record under insert has no session, so the "
-                + "User Property row BC creates alongside it cannot be written; see docs/scope.md");
+                "the User record under insert has no session, so the User Property row BC creates "
+                + "alongside it cannot be written");
 
         using var property = new NavRecord(session, UserPropertyTableId, SecurityFiltering.Ignored);
         var propertyMeta = property.MetaTable
-            ?? throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+            ?? throw RunnerShapeGap.UserPropertyCompanionRow(
                 "User Property (2000000121)",
-                "user-property-companion-row — the User Property table has no metadata in this run, "
-                + "so the row BC creates alongside every User cannot be written; see docs/scope.md");
+                "the User Property table has no metadata in this run, so the row BC creates alongside "
+                + "every User cannot be written");
 
         property.SetFieldValue(FieldNoByName(propertyMeta, UserSecurityIdFieldName), sid);
         property.SetFieldValue(FieldNoByName(propertyMeta, TelemetryUserIdFieldName), NavGuid.NewGuid());
@@ -134,9 +134,9 @@ public static class UserTableTriggerPatches
         foreach (var f in RecordPatches.GetAllFields(table) ?? Enumerable.Empty<NCLMetaField>())
             if (string.Equals(f.FieldName, fieldName, StringComparison.OrdinalIgnoreCase))
                 return f.FieldNo;
-        throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+        throw RunnerShapeGap.UserPropertyCompanionRow(
             $"{table.TableName} ({table.TableId})",
-            $"user-property-companion-row — the table states no \"{fieldName}\" field, so the User "
-            + "Property row BC creates alongside every User cannot be written; see docs/scope.md");
+            $"the table states no \"{fieldName}\" field, so the User Property row BC creates alongside "
+            + "every User cannot be written");
     }
 }

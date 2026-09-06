@@ -296,6 +296,8 @@ runs. AL that needs the target codeunit's logic to actually execute should call 
 
 ### Query — joins and dataset export work; aggregation does not
 
+<a id="query-shape-gaps"></a>
+
 Query objects work in-memory: `Open` reads from the mock table store, `Read`
 iterates rows, `Close` releases the result set. `SetFilter`, `SetRange`, and
 `TopNumberOfRows` filter and limit the results, including runtime `SetRange`/
@@ -312,6 +314,19 @@ the query's real metadata and produce a genuine dataset — they are not stubbed
 
 There is no `Query.SaveAsExcel` method in the AL language; this doc previously
 listed one that doesn't exist.
+
+**Sub-shapes of a working join the executor refuses rather than guessing.** Nine
+guards in `AlRunner/Patches/RecordPatches.QueryProjection.cs` and
+`RecordPatches.QueryJoin.cs` raise `RunnerOutOfScopeException` when the query the
+executor is handed is a shape it cannot take: a synthesized sub-dataitem that is
+not the FlowField-calculation shape, a runtime `SetRange`/`SetFilter` or a static
+`ColumnFilter` keyed by a column outside the projected row, or a BC helper
+(`NavValue.GetDefaultNavValue`, `FlowFieldsHelper.NegateValue`) that is not on this
+build. They carry the reason anchor `not-yet-implemented`, so an AL `[TryFunction]`
+cannot trap one into `false`
+([#2966](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2966)).
+These are gaps, not scope boundaries: real BC answers every one of them, and
+`docs/scope.md` no longer claims otherwise.
 
 **Not supported: aggregation.** A column with `Method = Sum` (or `Count`,
 `Average`, `Min`, `Max`) does not aggregate or group — the runner returns each
@@ -888,6 +903,28 @@ why it is a separate type rather than a third reason anchor.
 
 These are not architectural limits. They can be fixed; report them at
 https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
+
+<a id="runtime-shape-gaps"></a>
+
+- **Runtime shape gaps outside the virtual tables — the runner refuses rather than answering
+  a shape it cannot produce.** Nine further guards raise `RunnerOutOfScopeException` with the
+  reason anchor `not-yet-implemented`, so an AL `[TryFunction]` cannot absorb one into `false`
+  ([#2966](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2966)):
+  - the **User Property** row BC writes alongside every `User` insert, when the record under
+    insert carries no session, when table 2000000121 has no metadata in this run, or when the
+    metatable states no field of the name the writer needs
+    (`AlRunner/Patches/UserTableTriggerPatches.cs`);
+  - the **per-codeunit install baseline**, when a table is backed by something other than
+    `TempTableDataProvider` and so cannot be snapshotted or restored across a codeunit
+    boundary (`RecordPatches.InstallBaseline.cs`);
+  - a **[ModalPageHandler]** asked for a form handle the runner's own form registry does not
+    hold (`RunnerTestClientSession.cs`), and modal/page dispatch handed a null test-execution
+    context or request (`RunnerModalDispatch.cs`);
+  - **report construction**, when the runner cannot build the report object at all to run it
+    or its request page (`NavReportSync.cs`).
+
+  Real BC does all of these, so each is the runner failing to keep up rather than a surface BC
+  also lacks — which is the test for whether a refusal may cite `docs/scope.md` at all.
 
 <a id="virtual-table-shape-gaps"></a>
 
